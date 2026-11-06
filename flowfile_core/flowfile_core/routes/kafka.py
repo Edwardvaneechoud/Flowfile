@@ -35,7 +35,6 @@ from flowfile_core.routes._connection_sharing import (
     authorize_connection_mutation,
     require_credentials_on_target_change,
 )
-from flowfile_core.routes._hub_forwarding import on_hub, through_hub
 from flowfile_core.schemas.catalog_schema import FlowRegistrationOut
 from flowfile_core.schemas.kafka_schemas import (
     KafkaConnectionCreate,
@@ -66,8 +65,6 @@ def create_kafka_connection(
 ):
     """Create a new Kafka/Redpanda connection."""
     logger.info("Creating Kafka connection: %s", connection.connection_name)
-    if on_hub():
-        return through_hub(hub_connections.create, current_user.id, "kafka", connection)
     try:
         return store_kafka_connection(db, connection, current_user.id)
     except ValueError as e:
@@ -79,10 +76,11 @@ def get_kafka_connections(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """List all Kafka connections for the current user."""
-    if on_hub():
-        return through_hub(hub_connections.listed, current_user.id, "kafka")
-    return list_kafka_connections(db, current_user.id)
+    """List the current user's Kafka connections: their own and granted ones, then the hub's (own wins)."""
+    own = list_kafka_connections(db, current_user.id)
+    names = {connection.connection_name for connection in own}
+    hub = [row for row in hub_connections.hub_rows(current_user.id, "kafka") if row.get("connection_name") not in names]
+    return [*own, *(KafkaConnectionOut.model_validate(row) for row in hub)]
 
 
 @router.put("/connections/{connection_id}", response_model=KafkaConnectionOut)
@@ -93,8 +91,6 @@ def update_kafka_connection_route(
     db: Session = Depends(get_db),
 ):
     """Update an existing Kafka connection (own, or group-shared with manage access)."""
-    if on_hub():
-        return through_hub(hub_connections.change, current_user.id, "kafka", update, connection_id)
     db_conn = get_kafka_connection(db, connection_id, current_user.id)
     if db_conn is None:
         raise HTTPException(status_code=404, detail=f"Kafka connection {connection_id} not found")
@@ -132,8 +128,6 @@ def delete_kafka_connection_route(
     db: Session = Depends(get_db),
 ):
     """Delete a Kafka connection (own, or group-shared with manage access)."""
-    if on_hub():
-        return through_hub(hub_connections.remove, current_user.id, "kafka", connection_id=connection_id)
     db_conn = get_kafka_connection(db, connection_id, current_user.id)
     if db_conn is None:
         raise HTTPException(status_code=404, detail=f"Kafka connection {connection_id} not found")

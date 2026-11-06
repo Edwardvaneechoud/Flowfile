@@ -210,9 +210,7 @@ class CloudStorageReader:
 
         if settings.FLOWFILE_COMPUTE_PROTOCOL and connection.auth_method in ("env_vars", "managed_identity"):
             return CloudStorageReader.get_plan_storage_options(connection), None
-        sealed = run_secrets.sealed_connection("cloud", connection.connection_name)
-        if sealed is None:
-            raise ValueError(run_secrets.hub_refusal(connection.connection_name))
+        sealed = run_secrets.hub_connection("cloud", connection.connection_name)
         provider = SealedConnectionProvider(connection.connection_name, sealed)
         return CloudStorageReader.get_plan_storage_options(connection), provider
 

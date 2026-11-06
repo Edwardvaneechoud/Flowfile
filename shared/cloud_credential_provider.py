@@ -137,9 +137,13 @@ def connection_credentials(settings: Mapping[str, Any]) -> tuple[dict[str, str],
     seals one to the node that runs a step (``shared.hub_sealed.SealedConnectionProvider``); they are resolved here as
     ``resolve_credential_ref`` resolves a stored one.
     """
+    import inspect
+
     from shared.cloud_storage.storage_options import build_storage_options
 
-    return _provider_credentials(settings["storage_type"], build_storage_options(**settings))
+    known = inspect.signature(build_storage_options).parameters
+    options = build_storage_options(**{key: value for key, value in settings.items() if key in known})
+    return _provider_credentials(settings["storage_type"], options)
 
 
 AMBIENT_AUTH_METHODS = frozenset({"env_vars", "managed_identity"})

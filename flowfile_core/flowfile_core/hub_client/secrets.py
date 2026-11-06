@@ -1,27 +1,41 @@
-"""A person's secrets on the hub, for a server that joined it with keys of its own: there every secret lives on the hub.
+"""A person's secrets on their hub, for any machine signed in to it: a desktop's Connect or a joined server's
+delegation, both ``session.load``.
 
-The Secrets page's routes forward to the hub's own ``/secrets`` routes with the person's delegated access token
-(``listed``, ``found``, ``create``, ``change``, ``remove``), so nothing of them is written to this server's database
-and sharing stays on the hub's pages. A lookup by name asks the hub's vend for the secret sealed to this server itself
-(``sealed_here``), which this server's core and worker open with its own key, as a server of the hub opens what is
-sealed to it. A named secret this server's database held before it joined stays there, unused; a stored connection
-lives on the hub with its secrets (``hub_client.connections``). The order a name resolves in is the hub's.
+The hub's secrets are never copied here and have no value on any machine. The Secrets page lists them after the
+machine's own, read-only and marked ``from_hub`` (``listed``, ``hub_rows``); a step that names one carries it only as
+the run's vend sealed it to the hub server that runs the step (``run_secrets.hub_value``).
 
 Requests log method, path and status only, never a body, a value or a token.
 """
 
 from __future__ import annotations
 
-import uuid
+import time
+from collections.abc import Callable
 
+from flowfile_core.configs import logger
 from flowfile_core.hub_client import client, session
-from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
-from shared import hub_node, hub_sealed
+from flowfile_core.hub_client.client import HubRefused
 
 SECRETS_PATH = "/secrets/secrets"
-NOT_SIGNED_IN = "Your secrets are on the hub, and your sign-in through it has ended; sign in again"
-NO_SUCH = "You have no secret named {name} on the hub"
-"""How the hub's 403 to a vend begins for a name the person reaches no secret of."""
+NOT_SIGNED_IN = "Your sign-in through the hub has ended; sign in again"
+LISTED_SECONDS = 10
+_listed: dict[tuple, tuple[float, list[dict]]] = {}
+
+
+def listed_once(key: tuple, read: Callable[[], list[dict]], what: str) -> list[dict]:
+    """``read()``'s rows, kept ``LISTED_SECONDS`` under ``key``: a run asks for the same list at every step that names
+    a connection. A hub that does not answer lists none, for as long."""
+    held = _listed.get(key)
+    if held is not None and time.monotonic() - held[0] < LISTED_SECONDS:
+        return held[1]
+    try:
+        rows = read()
+    except Exception as e:
+        logger.warning(f"The hub's {what} are not listed: {e}")
+        rows = []
+    _listed[key] = (time.monotonic(), rows)
+    return rows
 
 
 def _signed_in(user_id: int) -> tuple[str, str]:
@@ -44,72 +58,28 @@ def _bearer(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _path(name: str) -> str:
-    from urllib.parse import quote
-
-    return f"{SECRETS_PATH}/{quote(name, safe='')}"
+def marked(row: dict) -> dict:
+    """A row the hub lists, marked ``from_hub``; its id is the hub's, negated so it is never one of this machine's."""
+    row_id = row.get("id")
+    return {**row, "from_hub": True, "id": -row_id if isinstance(row_id, int) else row_id}
 
 
 def listed(user_id: int) -> list[dict]:
-    """The person's secrets as the hub lists them: names and metadata, never a value."""
+    """The person's secrets as the hub lists them: names and metadata, never a value, each marked ``from_hub``."""
     hub_url, token = _signed_in(user_id)
-    return client._request_list("GET", hub_url, SECRETS_PATH, None, headers=_bearer(token))
+    rows = client._request_list("GET", hub_url, SECRETS_PATH, None, headers=_bearer(token))
+    return [{**marked(row), "value": None} for row in rows]
 
 
-def found(user_id: int, name: str) -> dict:
-    """The person's secret ``name`` as the hub answers it; ``HubRefused`` 404 when the hub has none they reach."""
-    hub_url, token = _signed_in(user_id)
-    return client._request("GET", hub_url, _path(name), None, headers=_bearer(token))
+def hub_rows(user_id: int) -> list[dict]:
+    """``listed``, or none when the person has no sign-in to a hub here or the hub does not answer."""
+    if session.load(user_id) is None:
+        return []
+    return listed_once((user_id, "secret"), lambda: listed(user_id), "secrets")
 
 
-def create(user_id: int, name: str, value: str) -> dict:
-    """Add the secret ``name`` to the person's own secrets on the hub; the hub's 400 when they hold one of that name."""
-    hub_url, token = _signed_in(user_id)
-    body = {"name": name, "value": value}
-    return client._request("POST", hub_url, SECRETS_PATH, None, json=body, headers=_bearer(token))
-
-
-def change(user_id: int, name: str, value: str) -> dict:
-    """Give the person's own secret ``name`` on the hub a new value, keeping it and its shares; the hub's 404 else."""
-    hub_url, token = _signed_in(user_id)
-    return client._request("PUT", hub_url, _path(name), None, json={"value": value}, headers=_bearer(token))
-
-
-def remove(user_id: int, name: str) -> None:
-    """Delete the person's own secret ``name`` on the hub; the hub's 404 when they own none of that name."""
-    hub_url, token = _signed_in(user_id)
-    client._send("DELETE", hub_url, _path(name), None, headers=_bearer(token))
-
-
-def lookup_run_id() -> str:
-    """The run id a lookup outside a run's vend asks with; the hub's ledger records it as given."""
-    return f"core-lookup-{uuid.uuid4().hex}"
-
-
-def sealed_here(user_id: int, name: str, run_id: str | None = None) -> str | None:
-    """The person's secret ``name`` as the hub resolves it for them, sealed to this server: a ``sealed_secret`` string
-    that this server's core and worker open with its own key. ``None`` when the hub says they reach no secret of that
-    name.
-
-    Raises:
-        LookupError: A sentence: the sign-in through the hub ended, the hub refused for another reason, or it did not
-            answer.
-    """
-    from flowfile_core.hub_client import vend
-
-    here = hub_node.resolved().name
-    hub_url, token = _signed_in(user_id)
-    try:
-        answer = client.vend(hub_url, token, run_id or lookup_run_id(), [], [], targets=[here], secrets=[name])
-    except HubRefused as e:
-        if e.status == 403 and e.detail.startswith(NO_SUCH.format(name=name)):
-            return None
-        if e.status == 401:
-            raise LookupError(NOT_SIGNED_IN) from e
-        raise LookupError(vend.refusal_sentence(e.detail, e.status)) from e
-    except HubVersionRefused as e:
-        raise LookupError(vend.refusal_sentence(e.detail, 426)) from e
-    except HubUnreachable as e:
-        raise LookupError(str(e)) from e
-    sealed = next(secret["sealed"] for secret in answer["secrets"] if secret.get("name") == name)
-    return hub_sealed.sealed_secret(name, sealed)
+def found(user_id: int, name: str | None) -> dict | None:
+    """The hub's list row of the person's secret ``name``; ``None`` when the hub lists none."""
+    if not name:
+        return None
+    return next((row for row in hub_rows(user_id) if row.get("name") == name), None)

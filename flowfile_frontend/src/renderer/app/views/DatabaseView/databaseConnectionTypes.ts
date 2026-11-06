@@ -41,6 +41,7 @@ export interface PythonFullDatabaseConnectionInterface {
   url?: string;
   id?: number;
   access?: AccessInfo | null;
+  from_hub?: boolean;
 }
 
 export interface FullDatabaseConnectionInterface {
@@ -54,4 +55,6 @@ export interface FullDatabaseConnectionInterface {
   url?: string;
   id?: number;
   access?: AccessInfo | null;
+  // Listed by the person's hub: read-only here.
+  fromHub?: boolean;
 }

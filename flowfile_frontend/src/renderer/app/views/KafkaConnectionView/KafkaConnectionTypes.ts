@@ -38,6 +38,8 @@ export interface KafkaConnectionOut {
   schema_registry_url: string | null;
   created_at: string;
   updated_at: string;
+  // Listed by the person's hub: read-only here.
+  from_hub?: boolean;
 }
 
 export interface KafkaConnectionTestResult {

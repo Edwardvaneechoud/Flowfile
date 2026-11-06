@@ -133,7 +133,6 @@ from flowfile_core.routes._connection_sharing import (
     changed_target_fields,
     require_credentials_on_target_change,
 )
-from flowfile_core.routes._hub_forwarding import on_hub, through_hub
 from flowfile_core.routes.notebook import require_notebook_sync
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
@@ -883,8 +882,6 @@ def create_db_connection(
 ):
     """Creates and securely stores a new database connection."""
     logger.info(f"Creating database connection {input_connection.connection_name}")
-    if on_hub():
-        return through_hub(hub_connections.create, current_user.id, "database", input_connection)
     _require_known_database_type(input_connection.database_type)
     try:
         store_database_connection(db, input_connection, current_user.id)
@@ -904,8 +901,6 @@ def update_db_connection(
 ):
     """Updates an existing database connection (own, or group-shared with manage access)."""
     logger.info(f"Updating database connection {input_connection.connection_name}")
-    if on_hub():
-        return through_hub(hub_connections.change, current_user.id, "database", input_connection)
     db_connection = get_database_connection(db, input_connection.connection_name, current_user.id)
     if db_connection is None:
         raise HTTPException(404, "Database connection not found")
@@ -938,8 +933,6 @@ def delete_db_connection(
 ):
     """Deletes a stored database connection (own, or group-shared with manage access)."""
     logger.info(f"Deleting database connection {connection_name}")
-    if on_hub():
-        return through_hub(hub_connections.remove, current_user.id, "database", connection_name)
     db_connection = get_database_connection(db, connection_name, current_user.id)
     if db_connection is None:
         raise HTTPException(404, "Database connection not found")
@@ -954,11 +947,14 @@ def delete_db_connection(
 def get_db_connections(
     db: Session = Depends(get_db), current_user=Depends(get_current_active_user)
 ) -> list[input_schema.FullDatabaseConnectionInterface]:
-    """Retrieves all stored database connections for the current user (without passwords); on a server joined to its
-    hub with keys of its own, the hub's for the person (``hub_client.connections``)."""
-    if on_hub():
-        return through_hub(hub_connections.listed, current_user.id, "database")
-    return get_all_database_connections_interface(db, current_user.id)
+    """Retrieves the current user's database connections (without passwords): their own and granted ones, then the
+    ones the person's hub lists, marked ``from_hub`` (own wins a name)."""
+    own = get_all_database_connections_interface(db, current_user.id)
+    names = {connection.connection_name for connection in own}
+    hub = [
+        row for row in hub_connections.hub_rows(current_user.id, "database") if row.get("connection_name") not in names
+    ]
+    return own + [input_schema.FullDatabaseConnectionInterface.model_validate(row) for row in hub]
 
 
 @router.post("/editor/connect_node/", tags=["editor"], response_model=OperationResponse)

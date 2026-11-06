@@ -127,7 +127,7 @@ class FullCloudStorageConnection(AuthSettingsInput):
     endpoint_url: str | None = None
     verify_ssl: bool = True
     # A connection on the person's hub: its settings here hold no secret, sealed to the server that runs the step
-    from_hub: bool = False
+    from_hub: bool = Field(default=False, exclude=True)
 
     def get_worker_interface(self, user_id: int) -> "FullCloudStorageConnectionWorkerInterface":
         """

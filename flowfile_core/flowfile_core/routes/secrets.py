@@ -5,15 +5,14 @@ This router provides secure endpoints for creating, retrieving, and deleting
 sensitive credentials for the authenticated user. Secrets are encrypted before
 being stored and are associated with the user's ID.
 
-On a server joined to its hub with keys of its own, every secret lives on the hub:
-each route forwards to the hub's own with the person's delegated token, and nothing
-is written to this server's database (``hub_client.secrets``).
+Every route acts on this machine's own secrets. The list adds the secrets the person's
+hub lists, names only and marked ``from_hub`` (``hub_client.secrets``); they have no
+value here.
 """
 
 import os
 
-from fastapi import APIRouter, Body, Depends, HTTPException
-from pydantic import SecretStr
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
@@ -22,7 +21,6 @@ from flowfile_core.auth.models import Secret, SecretInput
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 from flowfile_core.hub_client import secrets as hub_secrets
-from flowfile_core.routes._hub_forwarding import on_hub, through_hub
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import delete_secret as delete_secret_action
 from flowfile_core.secret_manager.secret_manager import store_secret
@@ -61,8 +59,6 @@ def get_secrets(current_user=Depends(get_current_active_user), db: Session = Dep
     Returns:
         A list of `Secret` objects, each containing the name and encrypted value.
     """
-    if on_hub():
-        return through_hub(hub_secrets.listed, current_user.id)
     user_id = current_user.id
 
     db_secrets = db.query(db_models.Secret).filter(db_models.Secret.user_id == user_id).all()
@@ -79,6 +75,8 @@ def get_secrets(current_user=Depends(get_current_active_user), db: Session = Dep
             )
         )
     secrets.extend(_shared_secret_rows(db, user_id))
+    names = {secret.name for secret in secrets}
+    secrets.extend(Secret.model_validate(row) for row in hub_secrets.hub_rows(user_id) if row.get("name") not in names)
 
     return secrets
 
@@ -103,8 +101,6 @@ def create_secret(
     Returns:
         A `Secret` object containing the name and the *encrypted* value.
     """
-    if on_hub():
-        return through_hub(hub_secrets.create, current_user.id, secret.name, secret.value.get_secret_value())
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
     existing_secret = (
@@ -147,8 +143,6 @@ def get_secret(
     Returns:
         A `Secret` object containing the name and encrypted value.
     """
-    if on_hub():
-        return through_hub(hub_secrets.found, current_user.id, secret_name)
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
     db_secret = (
@@ -190,24 +184,7 @@ def delete_secret(
     Returns:
         An empty response with a 204 No Content status code upon success.
     """
-    if on_hub():
-        through_hub(hub_secrets.remove, current_user.id, secret_name)
-        return None
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
     delete_secret_action(db, secret_name, user_id)
     _project_sync_secret(user_id)
     return None
-
-
-@router.put("/secrets/{secret_name}", response_model=Secret)
-def change_secret(
-    secret_name: str, value: SecretStr = Body(..., embed=True), current_user=Depends(get_current_active_user)
-) -> Secret:
-    """Gives the caller's own secret on the hub a new value, keeping it and its shares there.
-
-    Only on a server joined to its hub with keys of its own; anywhere else this route
-    does not exist (405), as before.
-    """
-    if not on_hub():
-        raise HTTPException(status_code=405, detail="Method Not Allowed")
-    return through_hub(hub_secrets.change, current_user.id, secret_name, value.get_secret_value())

@@ -93,9 +93,6 @@
           <p class="page-description">
             Securely store and manage credentials for your integrations.
           </p>
-          <p v-if="onHub" class="page-description">
-            This server keeps your secrets on its hub; share them on the hub's pages.
-          </p>
         </div>
       </div>
 
@@ -190,7 +187,8 @@
               <div class="secret-name">
                 <i class="fa-solid fa-key"></i>
                 <span>{{ secret.name }}</span>
-                <SharedBadge :access="secret.access" />
+                <span v-if="secret.from_hub" class="badge">From your hub</span>
+                <SharedBadge v-else :access="secret.access" />
               </div>
               <div class="secret-value">
                 <input
@@ -203,7 +201,7 @@
               </div>
               <div class="secret-actions">
                 <button
-                  v-if="!onHub && isMultiUser && isOwned(secret) && secret.id != null"
+                  v-if="isMultiUser && isOwned(secret) && secret.id != null"
                   type="button"
                   class="btn btn-secondary"
                   :aria-label="`Share secret ${secret.name}`"
@@ -211,16 +209,6 @@
                 >
                   <i class="fa-solid fa-share-nodes"></i>
                   <span>Share</span>
-                </button>
-                <button
-                  v-if="onHub && isOwned(secret)"
-                  type="button"
-                  class="btn btn-secondary"
-                  :aria-label="`Change secret ${secret.name}`"
-                  @click="openChange(secret.name)"
-                >
-                  <i class="fa-solid fa-pen"></i>
-                  <span>Change</span>
                 </button>
                 <button
                   v-if="isOwned(secret)"
@@ -254,39 +242,6 @@
       :can-manage-grants="true"
     />
 
-    <div v-if="secretToChange" class="modal-overlay" @click="cancelChange">
-      <div class="modal-container" @click.stop>
-        <div class="modal-header">
-          <h3 class="modal-title">Change Secret</h3>
-          <button class="modal-close" aria-label="Close change secret" @click="cancelChange">
-            <i class="fa-solid fa-times"></i>
-          </button>
-        </div>
-        <div class="modal-content">
-          <label for="changed-secret-value" class="form-label">
-            New value for <strong>{{ secretToChange }}</strong>
-          </label>
-          <input
-            id="changed-secret-value"
-            v-model="changedValue"
-            type="password"
-            class="form-input"
-            placeholder="Enter the new value"
-          />
-        </div>
-        <div class="modal-actions">
-          <button class="btn btn-secondary" @click="cancelChange">Cancel</button>
-          <button
-            class="btn btn-primary"
-            :disabled="!changedValue || isChanging"
-            @click="handleChangeSecret"
-          >
-            {{ isChanging ? "Saving..." : "Save" }}
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- Delete Confirmation Modal -->
     <div v-if="showDeleteModal" class="modal-overlay" @click="cancelDelete">
       <div class="modal-container" @click.stop>
@@ -318,11 +273,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from "vue";
+import { ref, onMounted } from "vue";
 import type { Secret, SecretInput } from "./secretTypes";
 import { useSecretManager } from "./useSecretManager";
-import { SecretsApi } from "../../api/secrets.api";
-import { useHubConnectionStore } from "../../stores/hub-connection-store";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
@@ -384,37 +337,6 @@ const handleAddSecret = async () => {
   }
 };
 
-const hub = useHubConnectionStore();
-const onHub = computed(() => hub.joined);
-const secretToChange = ref("");
-const changedValue = ref("");
-const isChanging = ref(false);
-
-const openChange = (secretName: string) => {
-  secretToChange.value = secretName;
-  changedValue.value = "";
-};
-
-const cancelChange = () => {
-  secretToChange.value = "";
-  changedValue.value = "";
-};
-
-const handleChangeSecret = async () => {
-  if (!secretToChange.value || !changedValue.value) return;
-  isChanging.value = true;
-  try {
-    const name = secretToChange.value;
-    await SecretsApi.change(name, changedValue.value);
-    cancelChange();
-    alert(`Secret "${name}" changed.`);
-  } catch (error: any) {
-    alert(`Error changing secret: ${error.message || "unknown error"}`);
-  } finally {
-    isChanging.value = false;
-  }
-};
-
 const handleConfirmDelete = (secretName: string) => {
   secretToDelete.value = secretName;
   showDeleteModal.value = true;
@@ -446,11 +368,20 @@ onMounted(() => {
   loadSecrets().catch(() => {
     alert("Failed to load secrets. Please try again.");
   });
-  if (hub.connection === null) void hub.load();
 });
 </script>
 
 <style scoped>
+.badge {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border-radius: var(--border-radius-full);
+  padding: var(--spacing-1) var(--spacing-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  margin-left: var(--spacing-2);
+}
+
 /* Intro / landing screen */
 .secrets-intro {
   max-width: 760px;

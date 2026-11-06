@@ -91,40 +91,16 @@ def _resolve_cloud_node_connection(
     )
 
 
-_SECRET_FIELDS = (
-    "aws_secret_access_key",
-    "aws_session_token",
-    "azure_account_key",
-    "azure_client_secret",
-    "azure_sas_token",
-    "gcs_service_account_key",
-)
-
-_HUB_SECRET_FIELDS = {
-    ("s3", "access_key"): ["aws_secret_access_key"],
-    ("adls", "access_key"): ["azure_account_key"],
-    ("adls", "service_principal"): ["azure_client_secret"],
-    ("adls", "sas_token"): ["azure_sas_token"],
-    ("gcs", "service_account"): ["gcs_service_account_key"],
-}
-"""The secret field a hub connection's method holds, which its list row does not show."""
-
-
 def _worker_connection(
     connection: FullCloudStorageConnection, user_id: int
 ) -> FullCloudStorageConnectionWorkerInterface:
-    """The connection a cloud write carries, its secrets encrypted for ``user_id``; for a step the hub sealed its
-    connection for (``run_secrets``), each secret as the sealed string the server that runs the step opens."""
+    """The connection a cloud write carries, its secrets encrypted for ``user_id``; a hub connection's (``from_hub``)
+    carries each secret field the hub names as the sealed string the server that runs the step opens
+    (``run_secrets.hub_fields``, which refuses off a hub server)."""
     interface = connection.get_worker_interface(user_id)
-    name = connection.connection_name
-    if run_secrets.sealed_connection("cloud", name) is None:
-        if connection.from_hub and connection.auth_method not in ("env_vars", "managed_identity"):
-            raise ValueError(run_secrets.hub_refusal(name))
+    if not connection.from_hub:
         return interface
-    fields = [field for field in _SECRET_FIELDS if getattr(interface, field)]
-    if connection.from_hub:
-        fields = _HUB_SECRET_FIELDS.get((connection.storage_type, connection.auth_method), [])
-    return interface.model_copy(update={field: run_secrets.connection_secret("cloud", name, field) for field in fields})
+    return interface.model_copy(update=run_secrets.hub_fields("cloud", connection.connection_name))
 
 
 def _cloud_write_uses_delta_ops(settings: CloudStorageWriteSettings) -> bool:

@@ -8,10 +8,11 @@ of the hub asks the hub for those names in its vend (``names_for`` gives them), 
 with its own key. Outside such a step, which is every step of a server that never joined a hub, both answer exactly
 what the step carried before.
 
-A step that uses a connection the person's hub keeps names it (``connections_for``), on any machine signed in to a
-hub; the run's vend asks for it sealed to the hub server that runs the step, and ``use_sealed`` holds its sealed map:
-``connection_secret`` gives one secret field of it in a ciphertext's place, ``sealed_connection`` the map a cloud
-read's provider carries. Core never opens it; a step on no hub server is refused with ``hub_refusal``'s sentence.
+A connection is settings plus secrets. The person's hub keeps connections and secrets that have no value on any
+machine: a step that uses one names it (``connections_for``, ``hub_secret_names``), and the run's vend asks for it
+sealed to the hub server whose worker runs the step. Core gets every such value through ``hub_value`` (a connection's
+map through ``hub_connection``): the sealed form while the step runs, else the step fails with ``hub_refusal``'s
+sentence. This machine's own connection or secret of a name wins over the hub's.
 """
 
 from __future__ import annotations
@@ -31,19 +32,27 @@ _sealed: ContextVar[Mapping[str, str]] = ContextVar("sealed_secrets", default=Ma
 _connections: ContextVar[Mapping[tuple[str, str], Mapping[str, str]]] = ContextVar(
     "sealed_connections", default=MappingProxyType({})
 )
+_fields: ContextVar[Mapping[tuple[str, str], tuple[str, ...]]] = ContextVar(
+    "sealed_connection_fields", default=MappingProxyType({})
+)
 
 
 @contextmanager
 def use_sealed(
-    values: Mapping[str, str], connections: Mapping[tuple[str, str], Mapping[str, str]] | None = None
+    values: Mapping[str, str],
+    connections: Mapping[tuple[str, str], Mapping[str, str]] | None = None,
+    fields: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
 ) -> Iterator[None]:
-    """Hold ``values``, secret name to its sealed form, and ``connections``, each ``(kind, name)`` of a stored
-    connection to its sealed map, for the step that runs inside the block."""
+    """Hold ``values``, secret name to its sealed form, ``connections``, each ``(kind, name)`` of a stored connection
+    to its sealed map, and ``fields``, the names of the secret fields the hub says each holds, for the step that runs
+    inside the block."""
     token = _sealed.set(MappingProxyType(dict(values)))
     held = _connections.set(MappingProxyType(dict(connections or {})))
+    named = _fields.set(MappingProxyType(dict(fields or {})))
     try:
         yield
     finally:
+        _fields.reset(named)
         _connections.reset(held)
         _sealed.reset(token)
 
@@ -68,23 +77,87 @@ def connection_secret(kind: str, name: str | None, field: str) -> str | None:
     return hub_sealed.sealed_connection_secret(kind, name, field, sealed) if sealed is not None else None
 
 
-def hub_refusal(name: str | None, *, secret: bool = False) -> str:
-    """Why a step that uses the hub's connection or secret ``name`` cannot run where it was placed."""
-    return f"{name} is a hub {'secret' if secret else 'connection'}: run this step on a hub server"
+NO_STORE = "the hub has no exchange store set to bring its rows back"
+NO_SERVER = "you may run on none of the hub's servers"
 
 
-def _hub_cloud_connection(name: str | None, user_id: int) -> bool:
-    """Whether the cloud storage connection ``name`` a step of ``user_id`` uses is the hub's, not this machine's."""
-    from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_cloud_connection
+def hub_refusal(name: str | None, *, secret: bool = False, why: str | None = None) -> str:
+    """Why a step that uses the hub's connection or secret ``name`` cannot run where it was placed, in one sentence;
+    ``why`` says what kept it from moving to a hub server by itself."""
+    what = f"{name} is a hub {'secret' if secret else 'connection'}, which only a hub server opens"
+    return f"{what}, and {why}" if why else f"{what}: run this step on a hub server"
 
-    connection = get_local_cloud_connection(name, user_id) if name else None
-    return connection is not None and connection.from_hub
+
+def hub_connection(kind: str, name: str | None) -> Mapping[str, str]:
+    """The map the run's vend sealed the hub's ``kind`` connection ``name`` in for the step running now.
+
+    Raises:
+        ValueError: ``hub_refusal``'s sentence: the step runs on no hub server, or outside a run.
+    """
+    sealed_map = sealed_connection(kind, name)
+    if sealed_map is None:
+        raise ValueError(hub_refusal(name))
+    return sealed_map
 
 
-def _joined_with_keys() -> bool:
-    from flowfile_core.auth import issuer_accounts
+def hub_value(name: str | None, *, kind: str | None = None, field: str | None = None) -> str:
+    """What the running step carries in a ciphertext's place for the hub's secret ``name``, or, given ``kind``, for the
+    secret ``field`` of the hub's ``kind`` connection ``name``: the form sealed to the server that runs it.
 
-    return issuer_accounts.joined_with_keys() is not None
+    Raises:
+        ValueError: ``hub_refusal``'s sentence when the run's vend sealed the step none.
+    """
+    from shared import hub_sealed
+
+    if kind is not None:
+        return hub_sealed.sealed_connection_secret(kind, name, field, hub_connection(kind, name))
+    value = sealed(name)
+    if value is None:
+        raise ValueError(hub_refusal(name, secret=True))
+    return value
+
+
+def hub_fields(kind: str, name: str | None) -> dict[str, str]:
+    """Each secret field the hub's ``kind`` connection ``name`` holds, by its name in the connection's settings, as
+    the running step carries it in a ciphertext's place (``hub_value``). The hub's vend names the fields, so no kind
+    is told apart here.
+
+    Raises:
+        ValueError: ``hub_refusal``'s sentence when the run's vend sealed the step no such connection.
+    """
+    hub_connection(kind, name)
+    return {field: hub_value(name, kind=kind, field=field) for field in _fields.get().get((kind, name), ())}
+
+
+def hub_row(kind: str, name: str | None, user_id: int) -> dict | None:
+    """The hub's list row of the ``kind`` connection ``name`` a step of ``user_id`` uses, no secret; ``None`` when this
+    machine has its own or a granted one of that name, or the hub lists none."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.flowfile.database_connection_manager import db_connections
+    from flowfile_core.hub_client import connections as hub_connections
+    from flowfile_core.kafka.connection_manager import get_kafka_connection_by_name
+
+    if not name:
+        return None
+    lookups = {
+        "cloud": db_connections.get_cloud_connection,
+        "database": db_connections.get_database_connection,
+        "kafka": get_kafka_connection_by_name,
+    }
+    with get_db_context() as db:
+        if lookups[kind](db, name, user_id) is not None:
+            return None
+    return hub_connections.found(user_id, kind, name)
+
+
+def is_hub_secret(user_id: int, name: str | None) -> bool:
+    """Whether the secret ``name`` a step of ``user_id`` uses is the hub's: none of this machine's, and the hub's."""
+    from flowfile_core.hub_client import secrets as hub_secrets
+    from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
+
+    if not name or get_encrypted_secret(current_user_id=user_id, secret_name=name) is not None:
+        return False
+    return hub_secrets.found(user_id, name) is not None
 
 
 def sealed(name: str | None) -> str | None:
@@ -98,18 +171,22 @@ def in_place_of(name: str | None, encrypted: str | None) -> str | None:
 
 
 def encrypted_secret(user_id: int, name: str) -> str | None:
-    """The secret ``name`` as the running step carries it: its sealed form, else the user's ``$ffsec$`` ciphertext."""
+    """The secret ``name`` as the running step carries it: the user's ``$ffsec$`` ciphertext, else the hub's
+    secret's sealed form (``hub_value``, which refuses off a hub server); ``None`` when neither has it."""
     from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
 
-    return sealed(name) or get_encrypted_secret(current_user_id=user_id, secret_name=name)
+    own = get_encrypted_secret(current_user_id=user_id, secret_name=name)
+    if own is None and is_hub_secret(user_id, name):
+        return hub_value(name)
+    return own
 
 
 def database_secret_name(settings: input_schema.DatabaseSettings | input_schema.DatabaseWriteSettings, user_id: int):
     """The name of the secret a database reader's or writer's connection signs in with; ``None`` when it has none.
 
     An inline connection names its ``password_ref``; a stored one keeps its password as a secret of its own, whose name
-    is the one asked for. A file-based database, or a stored connection this user cannot reach, names none, and so
-    does a stored one on a server joined with keys, where the hub keeps it (``connections_for``).
+    is the one asked for. A file-based database, or a stored connection this user cannot reach here, names none; a
+    hub connection's password is its own field (``connections_for``).
     """
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.database.models import Secret
@@ -121,8 +198,6 @@ def database_secret_name(settings: input_schema.DatabaseSettings | input_schema.
         if connection is None or get_dialect_or_generic(connection.database_type).file_based:
             return None
         return connection.password_ref or None
-    if _joined_with_keys():
-        return None
     with get_db_context() as db:
         row = get_database_connection(db, settings.database_connection_name, user_id)
         secret = db.get(Secret, row.password_id) if row is not None and row.password_id else None
@@ -130,14 +205,12 @@ def database_secret_name(settings: input_schema.DatabaseSettings | input_schema.
 
 
 def kafka_secret_names(settings: input_schema.KafkaSourceSettings, user_id: int) -> dict[str, str]:
-    """The names of the secrets a Kafka source's stored connection holds, by the ``KafkaReadSettings`` field of each;
-    none on a server joined with keys, where the hub keeps the connection (``connections_for``)."""
+    """The names of the secrets a Kafka source's stored connection here holds, by the ``KafkaReadSettings`` field of
+    each; none for a hub connection, whose secrets are its own fields (``connections_for``)."""
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.database.models import Secret
     from flowfile_core.kafka.connection_manager import get_kafka_connection, get_kafka_connection_by_name
 
-    if _joined_with_keys():
-        return {}
     with get_db_context() as db:
         row = get_kafka_connection(db, settings.kafka_connection_id, user_id)
         if row is None and settings.kafka_connection_name:
@@ -196,29 +269,33 @@ def names_for(node: FlowNode) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def hub_secret_names(node: FlowNode) -> list[str]:
+    """The secret names ``node``'s settings use (``names_for``) that are the hub's (``is_hub_secret``)."""
+    user_id = getattr(node.setting_input, "user_id", None)
+    return [name for name in names_for(node) if is_hub_secret(user_id, name)] if user_id is not None else []
+
+
 def connections_for(node: FlowNode) -> list[tuple[str, str]]:
-    """The ``(kind, name)`` of each connection of the person's hub ``node``'s settings use: a cloud storage reader's or
-    writer's that this machine has none of by that name, on any machine; on a server joined with keys, where the hub
-    keeps them, a database reader's or writer's stored connection and a Kafka source's. Any other node names none.
+    """The ``(kind, name)`` of the hub connection ``node``'s settings use, when its name is none of this machine's
+    (``hub_row``): a database reader's or writer's stored connection, a cloud storage reader's or writer's and a Kafka
+    source's. Any other node names none.
     """
     settings = node.setting_input
     user_id = getattr(settings, "user_id", None)
     if user_id is None:
         return []
-    if isinstance(settings, input_schema.NodeCloudStorageReader | input_schema.NodeCloudStorageWriter):
-        name = settings.cloud_storage_settings.connection_name
-        return [("cloud", name)] if _hub_cloud_connection(name, user_id) else []
-    if not _joined_with_keys():
-        return []
+    ref: tuple[str, str | None] | None = None
     if isinstance(settings, input_schema.NodeDatabaseReader | input_schema.NodeDatabaseWriter):
         database = (
             settings.database_settings
             if isinstance(settings, input_schema.NodeDatabaseReader)
             else settings.database_write_settings
         )
-        name = database.database_connection_name if database.connection_mode == "reference" else None
-        return [("database", name)] if name else []
-    if isinstance(settings, input_schema.NodeKafkaSource):
-        name = settings.kafka_settings.kafka_connection_name
-        return [("kafka", name)] if name else []
-    return []
+        ref = ("database", database.database_connection_name if database.connection_mode == "reference" else None)
+    elif isinstance(settings, input_schema.NodeCloudStorageReader | input_schema.NodeCloudStorageWriter):
+        ref = ("cloud", settings.cloud_storage_settings.connection_name)
+    elif isinstance(settings, input_schema.NodeKafkaSource):
+        ref = ("kafka", settings.kafka_settings.kafka_connection_name)
+    if ref is None or hub_row(ref[0], ref[1], user_id) is None:
+        return []
+    return [ref]

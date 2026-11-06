@@ -4,7 +4,6 @@ import threading
 
 from fastapi.exceptions import HTTPException
 
-from flowfile_core.auth import issuer_accounts
 from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.database.connection import get_db_context
@@ -57,7 +56,6 @@ from flowfile_core.schemas.history_schema import (
 from flowfile_core.secret_manager.secret_manager import (
     _encrypt_with_master_key,
     decrypt_secret,
-    get_encrypted_secret,
 )
 from shared.db_dialects import get_dialect_or_generic
 from shared.kafka.consumer import make_kafka_commit_callback
@@ -93,7 +91,7 @@ def _resolve_database_credentials(
     )
     if database_settings.connection_mode == "inline" and not is_file_based:
         database_connection = database_settings.database_connection
-        encrypted_password = get_encrypted_secret(current_user_id=user_id, secret_name=database_connection.password_ref)
+        encrypted_password = run_secrets.encrypted_secret(user_id, database_connection.password_ref)
         if encrypted_password is None:
             raise HTTPException(status_code=400, detail="Password not found")
         return database_connection, encrypted_password, None
@@ -114,59 +112,50 @@ def _resolve_database_credentials(
 
 
 def _step_database_credentials(database_settings, user_id: int, resolved) -> tuple:
-    """The connection and password a database step carries: ``resolved()``'s, the password sealed by the hub when the
-    step runs on another server of the hub (``run_secrets``), so an inline password need not exist on this server, nor
-    a stored connection the hub keeps."""
-    if run_secrets.active():
-        if database_settings.connection_mode == "reference":
-            name = database_settings.database_connection_name
-            sealed = run_secrets.connection_secret("database", name, "password")
-            if sealed is not None:
-                return resolved()[0], sealed
-        sealed = run_secrets.sealed(run_secrets.database_secret_name(database_settings, user_id))
-        if sealed is not None and database_settings.connection_mode == "inline":
-            return database_settings.database_connection, sealed
-        if sealed is not None:
-            return resolved()[0], sealed
-    database_connection, encrypted_password, _ = resolved()
+    """The connection and password a database step carries: ``resolved()``'s connection, and for a hub connection
+    (``from_hub``) or a hub secret its password as the run's vend sealed it (``run_secrets.hub_value``, which refuses
+    off a hub server). The password is looked up per run, never kept with ``resolved()``'s."""
+    if database_settings.connection_mode == "inline":
+        connection = database_settings.database_connection
+        name = connection.password_ref if connection is not None else None
+        if name and run_secrets.is_hub_secret(user_id, name):
+            return connection, run_secrets.hub_value(name)
+    database_connection, encrypted_password, ref = resolved()
+    if ref is not None and ref.from_hub:
+        return database_connection, run_secrets.hub_value(ref.connection_name, kind="database", field="password")
     return database_connection, encrypted_password
 
 
 def _step_kafka_settings(read_settings: KafkaReadSettings, kafka_settings, user_id: int) -> KafkaReadSettings:
-    """The read settings a Kafka step carries: its connection's secrets sealed by the hub when the step runs on another
-    server of the hub (``run_secrets``); the offsets are committed here with ``read_settings`` as they are."""
-    if not run_secrets.active():
-        return read_settings
+    """The read settings a Kafka step carries: for a hub connection each secret field the hub names as the run's vend
+    sealed it (``run_secrets.hub_fields``, which refuses off a hub server)."""
     name = kafka_settings.kafka_connection_name
-    if run_secrets.sealed_connection("kafka", name) is not None:
-        fields = [field for field in ("sasl_password", "ssl_key_pem") if getattr(read_settings, field)]
-        return read_settings.model_copy(
-            update={field: run_secrets.connection_secret("kafka", name, field) for field in fields}
-        )
-    names = run_secrets.kafka_secret_names(kafka_settings, user_id)
-    sealed = {field: run_secrets.sealed(name) for field, name in names.items() if run_secrets.sealed(name)}
-    return read_settings.model_copy(update=sealed) if sealed else read_settings
+    if run_secrets.hub_row("kafka", name, user_id) is None:
+        return read_settings
+    fields = run_secrets.hub_fields("kafka", name)
+    return read_settings.model_copy(update={f: v for f, v in fields.items() if f in KafkaReadSettings.model_fields})
 
 
 def _kafka_consumer_config(kafka_settings, user_id: int) -> dict:
-    """The consumer config of a Kafka source's stored connection, its secrets encrypted: by id, else by name, from
-    this server's database; on a server joined to its hub with keys of its own, by name from the hub."""
-    if issuer_accounts.joined_with_keys() is not None:
-        from flowfile_core.hub_client import connections as hub_connections
+    """The consumer config of a Kafka source's connection, its secrets encrypted: this machine's own by id (when its
+    name matches), else by name, else the hub's list row by name, which holds no secret (``_step_kafka_settings``)."""
+    from flowfile_core.hub_client import connections as hub_connections
+    from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate
 
-        name = kafka_settings.kafka_connection_name
-        connection = hub_connections.kafka_here(user_id, name) if name else None
-        if connection is None:
-            raise HTTPException(status_code=400, detail="Kafka connection not found")
-        return consumer_config_of(connection, user_id)
+    name = kafka_settings.kafka_connection_name
     with get_db_context() as db:
         db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, user_id)
-        if db_conn is None:
-            if kafka_settings.kafka_connection_name:
-                db_conn = get_kafka_connection_by_name(db, kafka_settings.kafka_connection_name, user_id)
-            if db_conn is None:
-                raise HTTPException(status_code=400, detail="Kafka connection not found")
-        return build_consumer_config(db, db_conn, user_id)
+        if db_conn is not None and name and db_conn.connection_name != name:
+            db_conn = None
+        if db_conn is None and name:
+            db_conn = get_kafka_connection_by_name(db, name, user_id)
+        if db_conn is not None:
+            return build_consumer_config(db, db_conn, user_id)
+    row = hub_connections.found(user_id, "kafka", name)
+    if row is None:
+        raise HTTPException(status_code=400, detail="Kafka connection not found")
+    fields = {key: value for key, value in row.items() if key in KafkaConnectionCreate.model_fields}
+    return consumer_config_of(KafkaConnectionCreate.model_validate(fields), user_id)
 
 
 class ConnectorBuildersMixin(GraphMixinBase):
@@ -267,7 +256,9 @@ class ConnectorBuildersMixin(GraphMixinBase):
             # Prefer the cached schema so a saved flow renders columns without a live connection.
             if node_database_reader.fields:
                 return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_database_reader.fields]
-            database_connection, encrypted_password, _ = _get_creds()
+            database_connection, encrypted_password, ref = _get_creds()
+            if ref is not None and ref.from_hub:
+                raise ValueError(run_secrets.hub_refusal(ref.connection_name))
             sql_source = SqlSource(
                 connection_string=sql_utils.construct_sql_uri(
                     database_type=database_connection.database_type,
@@ -378,7 +369,12 @@ class ConnectorBuildersMixin(GraphMixinBase):
             fl = engine_from_read(backend, result.refs["result"])
             # Committed once the flow completes, so a failed or cancelled run commits nothing.
             offsets = result.metadata.get("offsets")
-            if offsets is not None:
+            if offsets is not None and _on_hub():
+                self.flow_logger.warning(
+                    f"Node {node_kafka_source.node_id} read through a hub connection, which core never opens: its "
+                    "offsets are not committed"
+                )
+            elif offsets is not None:
                 node._on_flow_complete = make_kafka_commit_callback(
                     kafka_read_settings,
                     offsets,
@@ -386,19 +382,25 @@ class ConnectorBuildersMixin(GraphMixinBase):
                     self.flow_logger,
                     _decrypt_fn,
                 )
-            # The read frame may have fewer columns than inferred (empty topic); align to the schema.
-            expected_columns = schema_callback()
-            fl = fl.align_to_schema(expected_columns)
+            if not _on_hub():
+                # The read frame may have fewer columns than inferred (empty topic); align to the schema.
+                fl = fl.align_to_schema(schema_callback())
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
         def _decrypt_fn(encrypted: str) -> str:
             return decrypt_secret(encrypted).get_secret_value()
 
+        def _on_hub() -> bool:
+            name = kafka_settings.kafka_connection_name
+            return run_secrets.hub_row("kafka", name, node_kafka_source.user_id) is not None
+
         def schema_callback():
             # Prefer the cached schema so a saved flow renders columns without sampling the topic.
             if node_kafka_source.fields:
                 return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_kafka_source.fields]
+            if _on_hub():
+                raise ValueError(run_secrets.hub_refusal(kafka_settings.kafka_connection_name))
             schema_pairs = root().infer_topic_schema(_get_kafka_read_settings(), sample_size=10, decrypt_fn=_decrypt_fn)
             # Since the schema callback takes quite some time, we only run the function once.
             if not schema_pairs:
@@ -572,9 +574,9 @@ class ConnectorBuildersMixin(GraphMixinBase):
         def _resolve_secret_encrypted() -> str | None:
             if _inline_encrypted is not None:
                 return _inline_encrypted
-            return run_secrets.in_place_of(
-                auth.secret_name, resolve_auth_secret_encrypted(auth, node_rest_api_reader.user_id)
-            )
+            if auth.secret_name:
+                return run_secrets.encrypted_secret(node_rest_api_reader.user_id, auth.secret_name)
+            return resolve_auth_secret_encrypted(auth, node_rest_api_reader.user_id)
 
         def _func() -> FlowDataEngine:
             backend = current_context(self).backend

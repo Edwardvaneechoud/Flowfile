@@ -46,19 +46,6 @@ export class SecretsApi {
   }
 
   /**
-   * Gives an own secret a new value; only a server that keeps its secrets on its hub takes it
-   */
-  static async change(secretName: string, value: string): Promise<void> {
-    try {
-      await axios.put(`${API_BASE_URL}/${encodeURIComponent(secretName)}`, { value });
-    } catch (error) {
-      console.error("API Error: Failed to change secret:", error);
-      const errorMsg = (error as any).response?.data?.detail || "Failed to change secret";
-      throw new Error(errorMsg);
-    }
-  }
-
-  /**
    * Deletes a secret via the API
    */
   static async delete(secretName: string): Promise<void> {

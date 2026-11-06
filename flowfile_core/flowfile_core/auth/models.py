@@ -70,6 +70,7 @@ class Secret(BaseModel):
     user_id: str
     id: int | None = None
     access: AccessInfo | None = None
+    from_hub: bool = False
 
 
 class SecretInDB(BaseModel):

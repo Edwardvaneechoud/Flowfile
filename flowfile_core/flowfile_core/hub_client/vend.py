@@ -70,8 +70,9 @@ class RunVend:
 
     ``bases`` is the storage root of each hub namespace id the run names, ``names`` its ``catalog.schema`` name.
     ``targets`` are the hub servers the vend was sealed to; empty for a vend the run's own worker opens with core's
-    master key. ``secrets`` maps each secret name the run asked for to its map of node name to sealed token, and
-    ``connections`` each ``(kind, name)`` of a stored connection to its map.
+    master key. ``secrets`` maps each secret name the run asked for to its map of node name to sealed token,
+    ``connections`` each ``(kind, name)`` of a stored connection to its map, and ``connection_fields`` each to the
+    names of the secret fields the hub says it holds.
     """
 
     run_id: str
@@ -82,6 +83,7 @@ class RunVend:
     targets: tuple[str, ...] = ()
     secrets: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
     connections: dict[tuple[str, str], dict[str, str]] = field(default_factory=dict, repr=False)
+    connection_fields: dict[tuple[str, str], tuple[str, ...]] = field(default_factory=dict, repr=False)
 
     def sealed_secrets(self, names: Iterable[str]) -> dict[str, str]:
         """Each of ``names`` the hub sealed to this run, as the string a step carries in place of its ciphertext."""
@@ -90,6 +92,10 @@ class RunVend:
     def sealed_connections(self, refs: Iterable[tuple[str, str]]) -> dict[tuple[str, str], dict[str, str]]:
         """The sealed map of each ``(kind, name)`` of ``refs`` the hub sealed to this run."""
         return {ref: dict(self.connections[ref]) for ref in refs if ref in self.connections}
+
+    def secret_fields(self, refs: Iterable[tuple[str, str]]) -> dict[tuple[str, str], tuple[str, ...]]:
+        """The names of the secret fields the hub says each ``(kind, name)`` of ``refs`` holds; never a value."""
+        return {ref: self.connection_fields[ref] for ref in refs if ref in self.connection_fields}
 
     @property
     def sealed(self) -> bool:
@@ -269,6 +275,11 @@ def request(
         secrets={secret["name"]: dict(secret["sealed"]) for secret in answer.get("secrets", []) if secrets},
         connections={
             (stored["kind"], stored["name"]): dict(stored["sealed"])
+            for stored in answer.get("connections", [])
+            if connections
+        },
+        connection_fields={
+            (stored["kind"], stored["name"]): tuple(stored.get("secret_fields") or ())
             for stored in answer.get("connections", [])
             if connections
         },

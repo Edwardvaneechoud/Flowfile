@@ -57,6 +57,7 @@ class KafkaConnectionOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None
+    from_hub: bool = False
 
 
 class KafkaTopicInfo(BaseModel):

@@ -46,7 +46,11 @@
 
         <!-- List of connections -->
         <div v-else class="connections-list">
-          <div v-for="connection in connections" :key="connection.id" class="connection-item">
+          <div
+            v-for="connection in connections"
+            :key="`${connection.from_hub ? 'hub' : 'own'}-${connection.id}`"
+            class="connection-item"
+          >
             <div class="connection-info">
               <div class="connection-name">
                 <i class="fa-solid fa-tower-broadcast"></i>
@@ -55,6 +59,7 @@
                 <span v-if="connection.sasl_mechanism" class="badge auth-badge">
                   {{ connection.sasl_mechanism }}
                 </span>
+                <span v-if="connection.from_hub" class="badge">From your hub</span>
               </div>
               <div class="connection-details">
                 <span>{{ connection.bootstrap_servers }}</span>
@@ -68,7 +73,7 @@
                 </span>
               </div>
             </div>
-            <div class="connection-actions">
+            <div v-if="!connection.from_hub" class="connection-actions">
               <button
                 type="button"
                 class="btn btn-secondary"

@@ -1122,6 +1122,8 @@ class FullDatabaseConnection(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    # A connection on the person's hub: its password here is empty, sealed to the server that runs the step
+    from_hub: bool = Field(default=False, exclude=True)
 
     @field_validator("database_type")
     @classmethod
@@ -1143,6 +1145,7 @@ class FullDatabaseConnectionInterface(BaseModel):
     url: str | None = None
     id: int | None = None
     access: AccessInfo | None = None
+    from_hub: bool = False
 
 
 class DatabaseSettings(BaseModel):

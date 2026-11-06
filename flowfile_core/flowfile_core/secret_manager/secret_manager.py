@@ -23,12 +23,6 @@ KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"
 SECRET_FORMAT_PREFIX = "$ffsec$1$"
 
 
-def _joined_with_keys() -> bool:
-    from flowfile_core.auth import issuer_accounts
-
-    return issuer_accounts.joined_with_keys() is not None
-
-
 def derive_user_key(user_id: int) -> bytes:
     """
     Derive a user-specific encryption key from the master key using HKDF.
@@ -106,11 +100,12 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
     Returns:
         SecretStr: The decrypted value wrapped in SecretStr
 
-    On a server joined to its hub with keys of its own, a secret the hub sealed to this
-    server (``shared.hub_sealed.sealed_secret``) is opened with this server's key.
+    Raises:
+        ValueError: The value is one a hub sealed to the server that runs a step
+            (``shared.hub_sealed.sealed_secret``): core opens none, on any machine.
     """
-    if hub_sealed.is_sealed_secret(encrypted_value) and _joined_with_keys():
-        return SecretStr(hub_sealed.open_secret(encrypted_value))
+    if hub_sealed.is_sealed_secret(encrypted_value):
+        raise ValueError("A hub secret is opened only by the hub server that runs the step, never by core")
     if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
         # Parse: $ffsec$1${user_id}${fernet_token}
         remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]
@@ -136,20 +131,9 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
 
 
 def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
-    """The secret ``secret_name`` as ``current_user_id`` reaches it, encrypted; ``None`` when they reach none.
-
-    On a server joined to its hub with keys of its own every secret lives on the hub: it is asked
-    there by name for the person, sealed to this server (``hub_client.secrets.sealed_here``), and
-    the hub's own order decides which secret of that name it is. Anywhere else it is this
-    server's own, else one granted to the user (``stored_encrypted_secret``).
-
-    Raises:
-        LookupError: On a joined server, the hub could not be asked or refused for another reason.
-    """
-    if _joined_with_keys():
-        from flowfile_core.hub_client import secrets as hub_secrets
-
-        return hub_secrets.sealed_here(current_user_id, secret_name)
+    """The secret ``secret_name`` as ``current_user_id`` reaches it on this machine, encrypted: their own, else one
+    granted to them (``stored_encrypted_secret``); ``None`` when they reach none. A hub secret has no value here: a
+    step carries it as the run's vend sealed it (``run_secrets.encrypted_secret``)."""
     return stored_encrypted_secret(current_user_id, secret_name)
 
 
