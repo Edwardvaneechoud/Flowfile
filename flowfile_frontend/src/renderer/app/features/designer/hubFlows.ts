@@ -10,6 +10,18 @@ export const warningLines = (uses: LocalPathUse[]): string[] =>
 
 export const OPENED_FROM_HUB = "Flow opened from hub";
 
+export const OPENED_LOCAL_COPY = "Opened your copy of the flow";
+
+export const LOCAL_COPY_TITLE = "Your copy has unpublished edits";
+
+/** What a local copy with unpublished edits asks before a version from the hub is written over it. */
+export const localCopyQuestion = (version: number): string =>
+  `Your copy of this flow has edits you have not published. Open your copy, or replace it with v${version} from the hub? Replacing it loses those edits.`;
+
+export const OPEN_MY_COPY = "Open my copy";
+
+export const replaceWithLabel = (version: number): string => `Replace with v${version}`;
+
 /** The author by the name the hub gives, else by id, as an older hub lists them. */
 export const authorLabel = (version: HubFlowVersion): string =>
   version.author_name || `user #${version.author_id}`;

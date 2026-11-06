@@ -209,7 +209,7 @@ describe("OpenDialog's Hub tab", () => {
     expect(mocks.success).toHaveBeenCalledWith("Flow opened from hub");
   });
 
-  it("asks before replacing a local copy and opens again with replace", async () => {
+  const openOverEditedCopy = async () => {
     mocks.openFromHub
       .mockRejectedValueOnce(
         httpError(409, { kind: "local_copy_exists", flow_path: "/flows/hub/orders.yaml" }),
@@ -219,16 +219,49 @@ describe("OpenDialog's Hub tab", () => {
     await click(find("open-hub-tab"));
     await click(find("pick-hub-namespace"));
     await click(host.querySelector('[data-testid="hub-open-flows"] .flow-row'));
-
     await click(find("hub-open"));
+  };
+
+  it("offers a copy with unpublished edits and opens it without asking the hub again", async () => {
+    await openOverEditedCopy();
 
     expect(mocks.confirm).toHaveBeenCalledOnce();
+    const [question, title, options] = mocks.confirm.mock.calls[0];
+    expect(question).toContain("replace it with v2 from the hub");
+    expect(title).toBe("Your copy has unpublished edits");
+    expect(options).toMatchObject({
+      confirmButtonText: "Open my copy",
+      cancelButtonText: "Replace with v2",
+      distinguishCancelAndClose: true,
+    });
+    expect(mocks.openFromHub).toHaveBeenCalledOnce();
+    expect(opened).toEqual([
+      { message: "Opened your copy of the flow", flowPath: "/flows/hub/orders.yaml" },
+    ]);
+  });
+
+  it("replaces the copy with the version picked when asked to", async () => {
+    mocks.confirm.mockRejectedValue("cancel");
+
+    await openOverEditedCopy();
+
     expect(mocks.openFromHub).toHaveBeenLastCalledWith({
       flow_uuid: orders.flow_uuid,
       version: 2,
       replace: true,
     });
-    expect(opened).toHaveLength(1);
+    expect(opened).toEqual([
+      { message: "Flow opened from hub", flowPath: "/flows/hub/orders.yaml" },
+    ]);
+  });
+
+  it("opens nothing when the question is closed", async () => {
+    mocks.confirm.mockRejectedValue("close");
+
+    await openOverEditedCopy();
+
+    expect(mocks.openFromHub).toHaveBeenCalledOnce();
+    expect(opened).toEqual([]);
   });
 
   it("shows the hub's refusal in its words and keeps the dialog open", async () => {

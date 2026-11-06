@@ -491,7 +491,7 @@ def test_another_users_flow_is_not_found_without_a_hub_connection_too(api, hub, 
     assert hub.calls == []
 
 
-def test_open_writes_a_registered_copy_refuses_a_repeat_and_overwrites_with_replace(
+def test_open_writes_a_registered_copy_and_asks_only_before_losing_unpublished_edits(
     connected, hub, user_id, tmp_path, hub_copies
 ):
     source = _new_flow(user_id, tmp_path / "source.yaml", name="Quarterly sales")
@@ -523,14 +523,32 @@ def test_open_writes_a_registered_copy_refuses_a_repeat_and_overwrites_with_repl
     assert [n.node_type for n in opened_flow.nodes] == ["manual_input"]
 
     repeat = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid})
-    assert repeat.status_code == 409
-    assert repeat.json()["detail"] == {"kind": "local_copy_exists", "flow_path": str(copy)}
+    assert repeat.status_code == 200, repeat.text
+    assert repeat.json() == {"flow_path": str(copy)}
+    assert _saved_origin(copy)["version"] == 1
 
+    # A copy that still equals the version it came from moves to the version asked for without a question.
     hub.add_version(flow_uuid, {**source.get_flowfile_data().model_dump(mode="json"), "flowfile_name": "v2"})
+    moved = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid})
+    assert moved.status_code == 200, moved.text
+    assert _saved_origin(copy)["version"] == 2
+    back = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid, "version": 1})
+    assert back.status_code == 200, back.text
+    assert _saved_origin(copy)["version"] == 1
+
+    edited = yaml.safe_load(copy.read_text(encoding="utf-8"))
+    edited["flowfile_settings"]["description"] = "edited here, never published"
+    copy.write_text(yaml.safe_dump(edited, sort_keys=False), encoding="utf-8")
+    refused = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid})
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == {"kind": "local_copy_exists", "flow_path": str(copy)}
+    assert "never published" in copy.read_text(encoding="utf-8")
+
     replaced = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid, "replace": True})
     assert replaced.status_code == 200, replaced.text
     assert replaced.json() == {"flow_path": str(copy)}
     assert _saved_origin(copy)["version"] == 2
+    assert "never published" not in copy.read_text(encoding="utf-8")
     assert yaml.safe_load(copy.read_text(encoding="utf-8"))["flowfile_id"] == first_id
     assert _registration(uuid=flow_uuid)["id"] == registration["id"]
     with get_db_context() as db:
@@ -545,20 +563,16 @@ def test_open_of_a_flow_published_from_here_points_at_its_own_file(connected, hu
     flow_uuid = flow.flow_settings.hub_origin.flow_uuid
     hub.add_version(flow_uuid, {**hub.versions[flow_uuid][0]["definition"]}, author_id=7)
 
-    refused = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid})
-    assert refused.status_code == 409
-    assert refused.json()["detail"] == {"kind": "local_copy_exists", "flow_path": str(path)}
-
-    replaced = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid, "replace": True})
-    assert replaced.status_code == 200, replaced.text
-    assert replaced.json()["flow_path"] == str(path)
+    opened = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid})
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["flow_path"] == str(path)
     assert _saved_origin(path)["version"] == 2
     assert yaml.safe_load(path.read_text(encoding="utf-8"))["flowfile_id"] == flow.flow_id
 
 
-def test_open_on_a_shared_core_refuses_to_name_or_replace_another_users_local_copy(shared_core, hub, tmp_path):
+def test_open_on_a_shared_core_gives_each_person_a_copy_of_their_own(shared_core, hub, tmp_path, hub_copies):
     owner_id, owner = shared_core["owner"]
-    _, stranger = shared_core["stranger"]
+    stranger_id, stranger = shared_core["stranger"]
     flow_uuid = "99999999-8888-4777-8666-555555555555"
     hub.seed(flow_uuid, "Payroll", _new_flow(owner_id, None).get_flowfile_data().model_dump(mode="json"))
     # A shared core registers a flow only inside its flow folders, so the owner's copy lives there.
@@ -570,13 +584,30 @@ def test_open_on_a_shared_core_refuses_to_name_or_replace_another_users_local_co
     register_flow_in_namespace(str(owners_copy), "Payroll", owner_id, namespace_id, flow_uuid=flow_uuid)
     registration = _registration(uuid=flow_uuid)
 
-    for body in ({"flow_uuid": flow_uuid}, {"flow_uuid": flow_uuid, "replace": True}):
-        refused = stranger.post("/hub_client/open", json=body)
-        assert refused.status_code == 403, refused.text
-        assert str(owners_copy) not in refused.text
+    opened = stranger.post("/hub_client/open", json={"flow_uuid": flow_uuid})
+    assert opened.status_code == 200, opened.text
+    own_copy = Path(opened.json()["flow_path"])
+    hub_copies.append(str(own_copy))
+    assert own_copy == (storage.flows_directory / "hub" / str(stranger_id) / f"Payroll_{flow_uuid[:8]}.yaml").resolve()
+    assert _saved_origin(own_copy) == {"hub_url": HUB_URL, "flow_uuid": flow_uuid, "version": 1}
+    own_registration = _registration(path=str(own_copy))
+    assert own_registration["name"] == "Payroll" and own_registration["flow_uuid"] != flow_uuid
+    # The owner's copy and the registration holding the hub's uuid are as they were.
     assert owners_copy.read_text(encoding="utf-8") == "flowfile_id: 1\n"
     assert _registration(uuid=flow_uuid) == registration
 
+    # A second open is the stranger's own copy again, written over only when nothing of theirs is lost.
+    again = stranger.post("/hub_client/open", json={"flow_uuid": flow_uuid})
+    assert again.status_code == 200, again.text
+    assert again.json()["flow_path"] == str(own_copy)
+    edited = yaml.safe_load(own_copy.read_text(encoding="utf-8"))
+    edited["flowfile_settings"]["description"] = "the stranger's edit"
+    own_copy.write_text(yaml.safe_dump(edited, sort_keys=False), encoding="utf-8")
+    asked = stranger.post("/hub_client/open", json={"flow_uuid": flow_uuid})
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["detail"] == {"kind": "local_copy_exists", "flow_path": str(own_copy)}
+
+    # The owner's file is no flow document, so it counts as edited: named, and written over only on replace.
     repeat = owner.post("/hub_client/open", json={"flow_uuid": flow_uuid})
     assert repeat.status_code == 409, repeat.text
     assert repeat.json()["detail"] == {"kind": "local_copy_exists", "flow_path": str(owners_copy)}
@@ -584,12 +615,13 @@ def test_open_on_a_shared_core_refuses_to_name_or_replace_another_users_local_co
     assert replaced.status_code == 200, replaced.text
     assert _saved_origin(owners_copy) == {"hub_url": HUB_URL, "flow_uuid": flow_uuid, "version": 1}
     assert _registration(uuid=flow_uuid) == registration
+    assert "the stranger's edit" in own_copy.read_text(encoding="utf-8")
     owners_copy.unlink(missing_ok=True)
 
 
 def test_open_on_a_shared_core_checks_the_owner_of_a_copy_stored_under_a_links_spelling(shared_core, hub, tmp_path):
-    """A copy registered before the rule under a link's spelling of the flows folder: a stranger's replace is
-    refused on that registration, the owner's writes the file where the link leads."""
+    """A copy registered before the rule under a link's spelling of the flows folder: a stranger's replace writes
+    a copy of their own, the owner's writes the file where the link leads."""
     owner_id, owner = shared_core["owner"]
     _, stranger = shared_core["stranger"]
     flow_uuid = "99999999-8888-4777-8666-333333333333"
@@ -606,9 +638,12 @@ def test_open_on_a_shared_core_checks_the_owner_of_a_copy_stored_under_a_links_s
             )
         )
         db.commit()
+    strangers_copy = None
     try:
-        refused = stranger.post("/hub_client/open", json={"flow_uuid": flow_uuid, "replace": True})
-        assert refused.status_code == 403, refused.text
+        own = stranger.post("/hub_client/open", json={"flow_uuid": flow_uuid, "replace": True})
+        assert own.status_code == 200, own.text
+        strangers_copy = Path(own.json()["flow_path"])
+        assert strangers_copy != real_copy.resolve()
         assert real_copy.read_text(encoding="utf-8") == "flowfile_id: 1\n"
         replaced = owner.post("/hub_client/open", json={"flow_uuid": flow_uuid, "replace": True})
         assert replaced.status_code == 200, replaced.text
@@ -616,6 +651,8 @@ def test_open_on_a_shared_core_checks_the_owner_of_a_copy_stored_under_a_links_s
         assert _saved_origin(real_copy)["flow_uuid"] == flow_uuid
     finally:
         real_copy.unlink(missing_ok=True)
+        if strangers_copy is not None:
+            strangers_copy.unlink(missing_ok=True)
 
 
 def test_open_on_a_shared_core_never_writes_over_a_local_copy_outside_the_flow_folders(shared_core, hub, tmp_path):

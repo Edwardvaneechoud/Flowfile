@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.auth import issuer_accounts
 from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user
+from flowfile_core.auth.sharing import sharing_enabled
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.exceptions import FlowExistsError, NamespaceNotFoundError, NotAuthorizedError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -51,6 +52,7 @@ from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.catalog_helpers import (
     FlowNameNamespaceCollision,
     FlowPathNamespaceCollision,
+    auto_register_flow,
     register_flow_in_namespace,
     require_flow_save_permitted,
     resolve_source_registration_id,
@@ -486,18 +488,24 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
     return HubPublishOut(version=published["version"], name=published["name"])
 
 
-def _local_copy_path(flow_uuid: str, name: str) -> tuple[str, bool]:
-    """Where this hub flow lives on this machine: its registration's file, else a new file under ``flows/hub``.
+def _local_copy_path(flow_uuid: str, name: str, current_user) -> tuple[str, str]:
+    """Where the caller's copy of this hub flow lives, and who holds the hub's uuid in this catalog.
 
-    Also says whether the uuid is registered here already. One local file per hub flow: the uuid is unique in the
-    catalog, so a second open is an overwrite of that file or a refusal.
+    ``"caller"``: a registration of the caller's holds it, and its file is the copy. ``"nobody"``: the copy is a file
+    under ``flows/hub``, to be registered under the uuid. ``"another"``: someone else's registration holds it, which
+    the caller never opens or writes; their copy is a file of their own. On a core that several people use, a
+    person's files under ``flows/hub`` sit in a folder of their own, so each has a working copy of the same flow.
     """
     with get_db_context() as db:
         reg = SQLAlchemyCatalogRepository(db).get_flow_by_uuid(flow_uuid)
-        if reg is not None:
-            return reg.flow_path, True
+        holder = "nobody" if reg is None else "another"
+        if reg is not None and (reg.owner_id == current_user.id or not sharing_enabled()):
+            return reg.flow_path, "caller"
+    folder = storage.flows_directory / "hub"
+    if sharing_enabled():
+        folder = folder / str(current_user.id)
     stem = _FILENAME_STEM_RE.sub("_", name).strip("_-") or "flow"
-    return str(storage.flows_directory / "hub" / f"{stem}_{flow_uuid[:8]}.yaml"), False
+    return str(folder / f"{stem}_{flow_uuid[:8]}.yaml"), holder
 
 
 def _local_flows_namespace_id() -> int | None:
@@ -507,16 +515,64 @@ def _local_flows_namespace_id() -> int | None:
         return namespace.id if namespace is not None else service.get_default_namespace_id()
 
 
+def _read_local_copy(flow_path: str) -> tuple[schemas.FlowfileData | None, int | None]:
+    """The document in the file and the flow id it stores; ``None`` for whichever cannot be read."""
+    try:
+        with open(flow_path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return None, None
+    flow_id = raw.get("flowfile_id") if isinstance(raw, dict) else None
+    try:
+        return schemas.FlowfileData.model_validate(raw), flow_id
+    except ValueError:
+        return None, flow_id
+
+
+def _content(document: schemas.FlowfileData) -> dict:
+    """A flow document without what belongs to one machine: its id, name, app version, registration and origin."""
+    content = document.model_dump(mode="json", exclude={"flowfile_id", "flowfile_name", "flowfile_version"})
+    content["flowfile_settings"].pop("source_registration_id", None)
+    content["flowfile_settings"].pop("hub_origin", None)
+    return content
+
+
+def _has_unpublished_edits(local: schemas.FlowfileData | None, hub_url: str, token: str, checked_out: dict) -> bool:
+    """Whether writing over the local copy would lose work: it differs from the hub version it came from.
+
+    A copy that cannot be read, that names no origin on this hub flow, or whose origin version the hub does not
+    answer counts as edited, so the caller is asked and nothing is written over unseen.
+    """
+    origin = local.flowfile_settings.hub_origin if local is not None else None
+    if origin is None or origin.flow_uuid != checked_out["flow_uuid"]:
+        return True
+    if origin.hub_url.rstrip("/") != hub_url.rstrip("/"):
+        return True
+    base = checked_out
+    if origin.version != checked_out["version"]:
+        try:
+            base = client.checkout(hub_url, token, origin.flow_uuid, origin.version)
+        except (HubUnreachable, HubRefused, HubVersionRefused):
+            return True
+    try:
+        return _content(local) != _content(schemas.FlowfileData.model_validate(base["definition"]))
+    except ValueError:
+        return True
+
+
 @router.post("/open", summary="Open a flow from the hub")
 def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_active_user)) -> HubOpenOut:
-    """Check a version out of the hub, write it as a local flow file and register it under the hub's uuid.
+    """Check a version out of the hub and write it as the caller's local copy of that flow.
 
-    The file lands under ``flows/hub`` with ``hub_origin`` stamped, so a later publish from it names this version as
-    its base, and the local registration carries the hub's uuid, so runs of it are the hub flow's runs. A local
-    copy that exists already (the file of the registration holding this uuid, or an earlier open) is 409
-    ``local_copy_exists`` unless ``replace`` is set, which overwrites the file and keeps the registration. On a
-    shared core the local copy may be another user's flow: a caller who may not save over it is refused with 403
-    before the copy is named or written, as every other save is.
+    The file carries ``hub_origin``, so a later publish from it names this version as its base and its runs are
+    reported as the hub flow's. The copy is the file of the caller's registration holding the hub's uuid (a flow
+    published from here, or an earlier open), else a file under ``flows/hub`` registered under that uuid. On a core
+    several people use, each person has a copy of their own: where another person's registration holds the uuid,
+    the caller's file is registered beside it under an id of its own, and the other's is never named or written.
+
+    A copy that exists already is written over when nothing is lost by it: it still equals the hub version it came
+    from. One with edits that were not published is 409 ``local_copy_exists`` with its path, unless ``replace`` is
+    set; the caller can open that path as any local flow instead.
     """
     hub_url, token = _hub(current_user)
     try:
@@ -524,8 +580,8 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         raise _hub_error(e) from e
 
-    flow_path, registered = _local_copy_path(checked_out["flow_uuid"], checked_out["name"])
-    namespace_id = None if registered else _local_flows_namespace_id()
+    flow_path, holder = _local_copy_path(checked_out["flow_uuid"], checked_out["name"], current_user)
+    namespace_id = _local_flows_namespace_id() if holder == "nobody" else None
     try:
         require_flow_save_permitted(flow_path, namespace_id, current_user)
     except NotAuthorizedError as err:
@@ -536,13 +592,9 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
         raise HTTPException(status_code=422, detail=str(err)) from None
     existing_id = None
     if os.path.exists(flow_path):
-        if not request.replace:
+        local, existing_id = _read_local_copy(flow_path)
+        if not request.replace and _has_unpublished_edits(local, hub_url, token, checked_out):
             raise HTTPException(status_code=409, detail={"kind": "local_copy_exists", "flow_path": flow_path})
-        try:
-            with open(flow_path, encoding="utf-8") as f:
-                existing_id = (yaml.safe_load(f) or {}).get("flowfile_id")
-        except (OSError, yaml.YAMLError):
-            existing_id = None
 
     document = schemas.FlowfileData.model_validate(checked_out["definition"])
     # The open editor keeps a reloaded file's id; a new file gets its own, never the publisher's.
@@ -552,7 +604,7 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
         hub_url=hub_url, flow_uuid=checked_out["flow_uuid"], version=checked_out["version"]
     )
 
-    if not registered:
+    if holder == "nobody":
         try:
             register_flow_in_namespace(
                 flow_path,
@@ -572,6 +624,8 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     Path(flow_path).parent.mkdir(parents=True, exist_ok=True)
     with open(flow_path, "w", encoding="utf-8") as f:
         yaml.dump(document.model_dump(mode="json"), f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    if holder == "another":
+        auto_register_flow(flow_path, checked_out["name"], current_user.id)
     return HubOpenOut(flow_path=flow_path)
 
 

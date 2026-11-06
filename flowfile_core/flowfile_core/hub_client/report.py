@@ -115,8 +115,20 @@ def _hub_output_ids(writers: list) -> dict[tuple[int, str], int]:
     return {(row.get("namespace_id"), row["name"]): row["id"] for row in rows}
 
 
+def hub_flow_uuid(flow, hub_url: str) -> str | None:
+    """The uuid ``flow`` has on the hub at ``hub_url``: its ``hub_origin``'s, ``None`` for a flow from elsewhere.
+
+    A run is reported under it before the local registration's uuid, which is another one for a copy of a hub flow
+    whose uuid a different person's copy holds in this catalog.
+    """
+    origin = getattr(flow.flow_settings, "hub_origin", None)
+    if origin is None or origin.hub_url.rstrip("/") != hub_url.rstrip("/"):
+        return None
+    return origin.flow_uuid
+
+
 def build_run_report(flow, run_info: RunInformation, flow_uuid: str) -> dict:
-    """The report of a finished run of ``flow``, a run of the registration ``flow_uuid``.
+    """The report of a finished run of ``flow``, a run of the hub flow or local registration ``flow_uuid``.
 
     ``inputs`` and ``outputs`` are the hub's tables that the catalog reader and writer nodes that ran and succeeded read
     and wrote, named by the hub's ids: a reader's ``hub_namespace_id`` and ``hub_table_id``, a writer's

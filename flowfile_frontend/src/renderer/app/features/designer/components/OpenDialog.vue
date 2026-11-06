@@ -223,11 +223,16 @@ import {
 import { useHubConnectionStore } from "../../../stores/hub-connection-store";
 import { detailOf } from "../../../utils/apiDetail";
 import {
+  LOCAL_COPY_TITLE,
   OPENED_FROM_HUB,
+  OPENED_LOCAL_COPY,
+  OPEN_MY_COPY,
   authorLabel,
   latestVersionLabel,
+  localCopyQuestion,
   publishedTime,
   refusalMessage,
+  replaceWithLabel,
 } from "../hubFlows";
 
 const props = defineProps({
@@ -458,7 +463,7 @@ async function openHubFlow(replace = false) {
     const refusal = refusalOf(err);
     if (refusal?.kind === "local_copy_exists" && !replace) {
       hubBusy.value = false;
-      await confirmReplace(refusal.flow_path, version);
+      await askAboutLocalCopy(refusal.flow_path, version);
       return;
     }
     hubError.value = refusal ? refusalMessage(refusal) : detailOf(err, "Couldn't open the flow.");
@@ -467,17 +472,22 @@ async function openHubFlow(replace = false) {
   }
 }
 
-async function confirmReplace(flowPath: string, version: number) {
+/** A copy with unpublished edits: open it, replace it with the version picked, or stay in the dialog. */
+async function askAboutLocalCopy(flowPath: string, version: number) {
   try {
-    await ElMessageBox.confirm(
-      `A local copy of this flow exists at ${flowPath}. Replace it with v${version} from the hub? Edits you have not published are lost.`,
-      "Replace the local copy?",
-      { type: "warning", confirmButtonText: "Replace", cancelButtonText: "Cancel" },
-    );
-  } catch {
+    await ElMessageBox.confirm(localCopyQuestion(version), LOCAL_COPY_TITLE, {
+      type: "warning",
+      confirmButtonText: OPEN_MY_COPY,
+      cancelButtonText: replaceWithLabel(version),
+      distinguishCancelAndClose: true,
+    });
+  } catch (action) {
+    if (action === "cancel") await openHubFlow(true);
     return;
   }
-  await openHubFlow(true);
+  emit("open-flow", { message: OPENED_LOCAL_COPY, flowPath });
+  ElMessage.success(OPENED_LOCAL_COPY);
+  isVisible.value = false;
 }
 
 defineExpose({

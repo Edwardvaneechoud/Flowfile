@@ -259,6 +259,14 @@ class TestPostRunReport:
         assert "run r-1" in warnings()[0].getMessage()
 
 
+def test_a_copy_of_a_hub_flow_is_reported_under_the_hubs_uuid_not_its_registrations():
+    graph = create_test_graph(flow_id=8135)
+    assert report.hub_flow_uuid(graph, HUB_URL) is None
+    graph.flow_settings.hub_origin = schemas.HubOrigin(hub_url=HUB_URL + "/", flow_uuid=FLOW_UUID, version=2)
+    assert report.hub_flow_uuid(graph, HUB_URL) == FLOW_UUID
+    assert report.hub_flow_uuid(graph, "https://another-hub.example") is None
+
+
 def _token() -> str:
     with TestClient(main.app) as client:
         return client.post("/auth/token").json()["access_token"]

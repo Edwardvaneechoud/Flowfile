@@ -123,7 +123,7 @@ from flowfile_core.flowfile.user_defined.registry import registry as user_define
 from flowfile_core.hub_client import connections as hub_connections
 from flowfile_core.hub_client import node_tokens
 from flowfile_core.hub_client.exchange_store import hub_store
-from flowfile_core.hub_client.report import build_run_report, hub_target, post_run_report
+from flowfile_core.hub_client.report import build_run_report, hub_flow_uuid, hub_target, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
 from flowfile_core.notebook.kernel_runner import close_flow_sessions, lineage_commits
 from flowfile_core.notebook.push import NotebookPushRequest, needs_confirmation, node_id_ceiling, plan_push
@@ -635,6 +635,8 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
     target = hub_target(flow, user_id)
     if target is None:
         return
+    hub_url, token = target
+    flow_uuid = hub_flow_uuid(flow, hub_url) or flow_uuid
     if not flow_uuid:
         logger.debug(f"Run {core_run_id} of flow '{flow_name}' not reported to the hub: no registration")
         return
@@ -643,7 +645,6 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
     except Exception as exc:
         logger.warning(f"Could not build the hub report for run {core_run_id} of flow '{flow_name}': {exc}")
         return
-    hub_url, token = target
     post_run_report(hub_url, token, report)
 
 
