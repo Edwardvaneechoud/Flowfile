@@ -27,6 +27,8 @@ from shared.delta_utils import make_json_safe
 
 PREVIEW_RUN_PREFIX = "preview-"
 SQL_RUN_PREFIX = "sql-"
+SAMPLE_ROWS = 10_000
+"""The most rows a backend hands back in one bounded read (the worker's ``SAMPLE_ROWS_CAP``)."""
 MIXED = (
     "This query names tables on the hub and tables of this Flowfile; the SQL editor reads one or the other. "
     "Combine them in a flow."
@@ -93,7 +95,8 @@ def sql(user_id: int, query: str, tables: dict[str, int], own: set[str], max_row
     tables does.
 
     The hub vends one read of the tables' namespaces and the plan, a SQL context over the vended scans, is read on
-    this machine's default backend: at most ``max_rows`` rows, and the count of all of them only when there are more.
+    this machine's default backend: at most ``max_rows`` rows and never more than one bounded read gives
+    (``SAMPLE_ROWS``), and the count of all of them only when the read came back full.
     A query that also names one of this machine's own tables (``own``) is refused with one sentence. Every failure is
     the result's ``error``, as the local run's is.
     """
@@ -110,17 +113,17 @@ def sql(user_id: int, query: str, tables: dict[str, int], own: set[str], max_row
             context.register(name, vended.scan_delta(found[hub_id]["file_path"], user_id, _columns(found[hub_id])))
         plan = context.execute(collapsed)
         backend = current_context().backend
-        frame = pl.from_arrow(head_rows(backend, plan, max_rows + 1))
-        total_rows = frame.height if frame.height <= max_rows else count_rows(backend, plan)
+        limit = min(max_rows, SAMPLE_ROWS)
+        frame = pl.from_arrow(head_rows(backend, plan, limit))
+        total_rows = frame.height if frame.height < limit else count_rows(backend, plan)
     except (LookupError, ValueError, ComputeError, pl.exceptions.PolarsError) as e:
         return SqlQueryResult(error=friendly_relation_error(str(e), query))
-    shown = frame.head(max_rows)
     return SqlQueryResult(
-        columns=shown.columns,
-        dtypes=[str(dtype) for dtype in shown.dtypes],
-        rows=[[make_json_safe(value) for value in row] for row in shown.rows()],
+        columns=frame.columns,
+        dtypes=[str(dtype) for dtype in frame.dtypes],
+        rows=[[make_json_safe(value) for value in row] for row in frame.rows()],
         total_rows=total_rows,
-        truncated=total_rows > max_rows,
+        truncated=total_rows > frame.height,
         execution_time_ms=(time.perf_counter() - started) * 1000,
         used_tables=sorted(tables),
     )
