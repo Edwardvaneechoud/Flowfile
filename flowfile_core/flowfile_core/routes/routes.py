@@ -525,12 +525,15 @@ def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tu
 def _hub_store_for(flow, user_id: int | None):
     """The hub's exchange store for a run of ``flow`` on a machine signed in to a hub, when one could apply.
 
-    A flow whose nodes all run on the run's backend, and that uses no connection or secret of the hub, crosses nothing,
-    so the hub is not asked for it.
+    A flow that runs whole on this machine's own worker, and that uses no connection or secret of the hub, crosses
+    nothing, so the hub is not asked for it. A flow set to another backend, or with a step set to one, may cross: a
+    step that backend cannot run, such as a read of a file on this machine, moves back here through the store.
     """
     run_backend_id = current_context(flow).backend_id
-    if not unmoved_without_store(flow.nodes, SingleBackendPolicy(run_backend_id)) and not flow.uses_hub_secrets():
-        return None
+    elsewhere = run_backend_id.startswith(compute_registry.CONFIGURED_WORKER_PREFIX)
+    if not elsewhere and not unmoved_without_store(flow.nodes, SingleBackendPolicy(run_backend_id)):
+        if not flow.uses_hub_secrets():
+            return None
     return hub_store(user_id)
 
 

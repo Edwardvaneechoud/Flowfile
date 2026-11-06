@@ -273,6 +273,9 @@ class WorkerBackend(_WorkerReferences):
     - ``ca_cert``: the PEM of the CA to verify an ``https://`` worker against (``trust_ca``). ``None`` uses the public
       CAs and drops a CA an earlier backend on ``url`` was given.
     - ``shares_core_disk``: the worker sees core's files, so ``capabilities`` adds ``file`` to its schemes.
+    - ``another_machine``: the worker runs on another machine than core, as a server of a hub does, so the ``file`` it
+      declares is its own disk's, not core's: ``capabilities`` takes ``file`` out of its schemes, and placement keeps
+      a step on core's files away from it. ``shares_core_disk`` wins.
 
     Materialisation policy: ``submit`` stores a plan when ``hints.must_materialise`` is set, or when it is ``wide``
     and either a preview is asked for (``preview_rows`` not ``None``) or more than one plan executes it (``fanout``),
@@ -297,11 +300,13 @@ class WorkerBackend(_WorkerReferences):
         ca_cert: str | None = None,
         shares_core_disk: bool = False,
         token_source: Callable[[], str] | None = None,
+        another_machine: bool = False,
     ) -> None:
         self.url = url
         self.id = backend_id
         self.token = token
         self.shares_core_disk = shares_core_disk
+        self.another_machine = another_machine
         self._token_source = token_source
         trust_ca(url, ca_cert)
         owns(self)
@@ -336,7 +341,8 @@ class WorkerBackend(_WorkerReferences):
         One request around the handshake gate (``gated=False``), signed with this backend's token and carrying its
         ``X-Protocol-Version``. Its ``operations`` are the kinds ``run_op`` sends the worker. With
         ``shares_core_disk``, ``file`` is added to both scheme sets: core knows that worker sees its files, which the
-        worker cannot know by itself.
+        worker cannot know by itself. With ``another_machine`` it is taken out of both: that worker declares ``file``
+        for the core on its own machine.
 
         Raises:
             ComputeUnavailable: The worker could not be reached, or the URL answers as no Flowfile worker
@@ -372,14 +378,21 @@ class WorkerBackend(_WorkerReferences):
         if not response.ok:
             raise _v1_failure(response.status_code, response.content, response.reason, backend_id=self.id)
         declared = capabilities_from_answer(self.url, response, backend_id=self.id)
-        if not self.shares_core_disk:
-            return declared
-        return declared.model_copy(
-            update={
-                "read_schemes": frozenset(declared.read_schemes) | {"file"},
-                "write_schemes": frozenset(declared.write_schemes) | {"file"},
-            }
-        )
+        if self.shares_core_disk:
+            return declared.model_copy(
+                update={
+                    "read_schemes": frozenset(declared.read_schemes) | {"file"},
+                    "write_schemes": frozenset(declared.write_schemes) | {"file"},
+                }
+            )
+        if self.another_machine:
+            return declared.model_copy(
+                update={
+                    "read_schemes": frozenset(declared.read_schemes) - {"file"},
+                    "write_schemes": frozenset(declared.write_schemes) - {"file"},
+                }
+            )
+        return declared
 
     def submit(
         self,

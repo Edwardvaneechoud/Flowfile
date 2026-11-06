@@ -100,8 +100,10 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
 
     It signs with the row's token, or for a hub-filled row with the token the hub mints for its node (``hub_token``
     when the caller holds it already), trusts the row's CA certificate, and offers ``file`` when the row is marked
-    ``shares_core_disk``. On a server joined with keys of its own a hub-filled row's backend asks ``_hub_token`` for
-    each call's token (``token_source``), so every call carries the token of the person it is made for.
+    ``shares_core_disk``. A hub-filled row is a server of the hub, another machine: it is never offered ``file`` on
+    its own word (``another_machine``), since the editor of that server declares it for its own disk. On a server
+    joined with keys of its own a hub-filled row's backend asks ``_hub_token`` for each call's token
+    (``token_source``), so every call carries the token of the person it is made for.
 
     Raises:
         LookupError: No row configures ``backend_id``; its token no longer decrypts (the master key changed), so it
@@ -145,6 +147,7 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
         ca_cert=ca_cert,
         shares_core_disk=shares_core_disk,
         token_source=token_source,
+        another_machine=hub_row is not None,
     )
 
 

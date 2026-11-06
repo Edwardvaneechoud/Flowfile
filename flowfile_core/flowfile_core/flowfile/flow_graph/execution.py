@@ -276,6 +276,18 @@ def _unsealed_crossing(
     return None
 
 
+def _may_cross(policy: MixedPlacementPolicy | SingleBackendPolicy, nodes: list[FlowNode]) -> bool:
+    """Whether an input of ``nodes`` may cross between backends under ``policy``: only the mixed policy crosses, when
+    its nodes are placed on more than one backend, or on one that is not the fallback, where a node it cannot run
+    goes."""
+    if not isinstance(policy, MixedPlacementPolicy):
+        return False
+    backends = {policy.backend_for(node) for node in nodes}
+    if nodes and policy.fallback_id:
+        backends.add(policy.fallback_id)
+    return len(backends) > 1
+
+
 def _stranded(step: tuple[list[str], list[tuple[str, str]]], why: str | None) -> str:
     """Why a step that uses a hub connection or secret (``step``: its secret names and its connections) cannot run:
     it is on no hub server, and ``why`` says what kept it from moving to one."""
@@ -621,8 +633,7 @@ class ExecutionMixin(GraphMixinBase):
         building = [node for node in upstream if not node.node_stats.has_run_with_current_setup] + [flow_node]
         inputs = [source for source, _ in flow_node._slot_input_pairs() if source is not None]
         nodes = list(dict.fromkeys([*building, *inputs]))
-        policy = self._run_policy(exchange_run)
-        crosses = exchange_run.vended() and len({policy.backend_for(node) for node in nodes}) > 1
+        crosses = exchange_run.vended() and _may_cross(self._run_policy(exchange_run), nodes)
         on_hub_table = any(hub_table_namespace(node.setting_input) for node in building)
         if not on_hub_table and not crosses and not self._hub_steps(building, exchange_run):
             return None
@@ -1851,12 +1862,12 @@ class ExecutionMixin(GraphMixinBase):
         The same on every machine. A server of the hub shares neither its master key nor its database with this core, so
         what it uses is sealed to it. The vend is sealed when a step uses a hub connection or secret (``steps``, each on
         a hub server), when a node on a hub table runs on another server of the hub (a ``worker:<name>`` row filled
-        from the hub), or when the run's store is the hub's (``ExchangeRun.vended``), its nodes go to more than one
-        backend and one of them is a server of the hub. It is sealed to the server of every step and hub-table node,
-        and with the store to every server of the hub the run names, the fallback, and this server when it is one,
-        which removes the run's prefix. On a machine that is no server of the hub, its own worker takes the store
-        unsealed instead (``ExchangeRun.own``). Otherwise ``((), exchange, [])``: an unsealed vend, which the run's own
-        worker opens with the master key it shares with core. The nodes are those whose credential is sealed.
+        from the hub), or when the run's store is the hub's (``ExchangeRun.vended``), its nodes may go to more than
+        one backend (``_may_cross``) and one of them is a server of the hub. It is sealed to the server of every step
+        and hub-table node, and with the store to every server of the hub the run names, the fallback, and this server
+        when it is one, which removes the run's prefix. On a machine that is no server of the hub, its own worker takes
+        the store unsealed instead (``ExchangeRun.own``). Otherwise ``((), exchange, [])``: an unsealed vend, which the
+        run's own worker opens with the master key it shares with core. The nodes are those whose credential is sealed.
 
         Raises:
             LookupError: A backend that must open a sealed credential is no server of the hub; the sentence names it.
@@ -1864,12 +1875,7 @@ class ExecutionMixin(GraphMixinBase):
         policy = self._run_policy(exchange_run)
         steps = [node for node in steps if node not in hub_nodes]
         run_backends = dict.fromkeys(policy.backend_for(node) for node in nodes)
-        exchange = bool(
-            settings.FLOWFILE_COMPUTE_PROTOCOL
-            and exchange_run.vended()
-            and isinstance(policy, MixedPlacementPolicy)
-            and len(run_backends) > 1
-        )
+        exchange = bool(settings.FLOWFILE_COMPUTE_PROTOCOL and exchange_run.vended() and _may_cross(policy, nodes))
         on_other_server = any(
             policy.backend_for(node).startswith(registry.CONFIGURED_WORKER_PREFIX) and self._on_hub_server(node, policy)
             for node in hub_nodes
