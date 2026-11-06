@@ -199,6 +199,38 @@ class HubSigner:
         }
         return self._seal(claims, enc_jwk, key, drop, extra)
 
+    def sealed_connection(
+        self,
+        enc_jwk: dict,
+        *,
+        connection_kind: str,
+        name: str,
+        settings: dict,
+        node: str = NODE_NAME,
+        run_id: str = "run-1",
+        vend_id: int = 1,
+        ttl: int = 900,
+        iss: str | None = None,
+        key: SigningKey | None = None,
+        drop: tuple[str, ...] = (),
+        **extra,
+    ) -> str:
+        """The ``connection_kind`` connection ``name`` with ``settings`` as the hub's vend seals it to ``node``."""
+        now = int(time.time())
+        claims = {
+            "iss": iss if iss is not None else self.url,
+            "aud": f"node:{node}",
+            "run_id": run_id,
+            "vend_id": vend_id,
+            "iat": now,
+            "exp": now + ttl,
+            "kind": "connection",
+            "connection_kind": connection_kind,
+            "name": name,
+            "settings": settings,
+        }
+        return self._seal(claims, enc_jwk, key, drop, extra)
+
     def _seal(self, claims: dict, enc_jwk: dict, key: SigningKey | None, drop: tuple[str, ...], extra: dict) -> str:
         claims.update(extra)
         for name in drop:

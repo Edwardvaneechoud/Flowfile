@@ -17,7 +17,12 @@ carries no secret; ``sealed_scan_kwargs`` gives a scan built here its plain opti
 ``sealed_storage_options`` the whole options for work that runs here, and ``scan_delta_sealed`` reads a Delta table as
 a Python scan, for a plan built where the options are not known; each pickles by reference, so a plan runs under
 another Python patch version than the one that built it. A secret travels as ``sealed_secret``'s string in
-place of a ``$ffsec$`` ciphertext, and ``open_secret`` gives its value where the step runs. Nothing runs at import.
+place of a ``$ffsec$`` ciphertext, and ``open_secret`` gives its value where the step runs.
+
+A stored connection the hub keeps (``kind`` ``"connection"``) carries ``connection_kind``, ``name`` and ``settings``,
+the connection's whole settings with its secrets in plain; ``open_connection`` gives them here. One secret of it
+travels as ``sealed_connection_secret``'s string in a ``$ffsec$`` ciphertext's place, which ``open_secret`` opens as it
+opens a secret's, and a cloud storage connection's credentials as ``SealedConnectionProvider``. Nothing runs at import.
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ KEY_BITS = 256
 SIGNED_CLAIMS = ["iss", "aud", "iat", "exp"]
 REQUIRED_CLAIMS = [*SIGNED_CLAIMS, "storage_options"]
 SECRET_CLAIMS = [*SIGNED_CLAIMS, "kind", "name", "value"]
+CONNECTION_CLAIMS = [*SIGNED_CLAIMS, "kind", "connection_kind", "name", "settings"]
 SEALED_SECRET_PREFIX = "$ffseal$1$"
 
 
@@ -156,8 +162,31 @@ def is_sealed_secret(value: object) -> bool:
     return isinstance(value, str) and value.startswith(SEALED_SECRET_PREFIX)
 
 
+def sealed_connection_secret(kind: str, name: str, field: str, sealed: Mapping[str, str]) -> str:
+    """The secret ``field`` of the ``kind`` connection ``name`` a vend sealed to each node of ``sealed``, as a string
+    that takes a ``$ffsec$`` ciphertext's place in what a step carries, as ``sealed_secret``'s does."""
+    body = {"name": name, "connection_kind": kind, "field": field, "sealed": dict(sealed)}
+    return SEALED_SECRET_PREFIX + hub_node_key.b64url(json.dumps(body, separators=(",", ":")).encode("utf-8"))
+
+
+def open_connection(sealed: Mapping[str, str], kind: str, name: str) -> dict[str, Any]:
+    """The whole settings, secrets in plain, of the ``kind`` connection ``name`` in this node's entry of ``sealed``.
+
+    Raises:
+        SealedCredentialRefused: The map has no entry for this node, the token does not open or verify, or it holds
+            another kind of credential or another connection than ``kind`` ``name``.
+    """
+    claims = _claims(_this_nodes_entry(sealed), CONNECTION_CLAIMS)
+    if claims["kind"] != "connection":
+        raise SealedCredentialRefused(f"it holds a {claims['kind']} credential, not a connection")
+    if claims["connection_kind"] != kind or claims["name"] != name or not isinstance(claims["settings"], dict):
+        raise SealedCredentialRefused(f'it does not hold the {kind} connection "{name}"')
+    return dict(claims["settings"])
+
+
 def open_secret(value: str) -> str:
-    """The value of the ``sealed_secret`` string ``value``: this node's entry opened with its key and verified.
+    """The value of the ``sealed_secret`` or ``sealed_connection_secret`` string ``value``: this node's entry opened
+    with its key and verified.
 
     Raises:
         SealedCredentialRefused: The string does not read, the map has no entry for this node, the token does not
@@ -171,6 +200,14 @@ def open_secret(value: str) -> str:
         raise SealedCredentialRefused("it is not a sealed secret") from None
     if not isinstance(name, str) or not isinstance(sealed, dict):
         raise SealedCredentialRefused("it is not a sealed secret")
+    if "field" in body:
+        kind, field = body.get("connection_kind"), body["field"]
+        if not isinstance(kind, str) or not isinstance(field, str):
+            raise SealedCredentialRefused("it is not a sealed secret")
+        secret = open_connection(sealed, kind, name).get(field)
+        if not isinstance(secret, str):
+            raise SealedCredentialRefused(f'the {kind} connection "{name}" holds no {field}')
+        return secret
     claims = _claims(_this_nodes_entry(sealed), SECRET_CLAIMS)
     if claims["kind"] != "secret":
         raise SealedCredentialRefused(f"it holds a {claims['kind']} credential, not a secret")
@@ -203,6 +240,28 @@ class SealedCredentialProvider:
 
     def __repr__(self) -> str:
         return f"SealedCredentialProvider(nodes={sorted(self.sealed)!r})"
+
+
+class SealedConnectionProvider:
+    """A Polars ``credential_provider`` holding a cloud storage connection's name and the map a vend sealed it in.
+
+    Called where the plan executes: that node opens its entry and resolves the connection's settings into the
+    credentials a scan takes, as ``shared.cloud_credential_provider.CredentialRefProvider`` resolves a stored one.
+    """
+
+    def __init__(self, name: str, sealed: Mapping[str, str]):
+        self.name = name
+        self.sealed = dict(sealed)
+        # Polars caches credentials by the pickled provider; the nonce keeps one entry per plan.
+        self.nonce = os.urandom(8).hex()
+
+    def __call__(self) -> tuple[dict[str, str], int | None]:
+        from shared.cloud_credential_provider import connection_credentials
+
+        return connection_credentials(open_connection(self.sealed, "cloud", self.name))
+
+    def __repr__(self) -> str:
+        return f"SealedConnectionProvider({self.name!r}, nodes={sorted(self.sealed)!r})"
 
 
 def sealed_scan_kwargs(sealed: Mapping[str, str]) -> dict[str, Any]:

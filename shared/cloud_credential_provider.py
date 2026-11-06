@@ -130,6 +130,18 @@ def resolve_credential_ref(connection_id: int, user_id: int) -> tuple[dict[str, 
     return _provider_credentials(fields["storage_type"], options)
 
 
+def connection_credentials(settings: Mapping[str, Any]) -> tuple[dict[str, str], int | None]:
+    """The Polars credentials of a cloud connection given whole, its secrets in plain, and their expiry.
+
+    ``settings`` are a stored connection's fields as core's ``FullCloudStorageConnection`` serialises them, as a hub
+    seals one to the node that runs a step (``shared.hub_sealed.SealedConnectionProvider``); they are resolved here as
+    ``resolve_credential_ref`` resolves a stored one.
+    """
+    from shared.cloud_storage.storage_options import build_storage_options
+
+    return _provider_credentials(settings["storage_type"], build_storage_options(**settings))
+
+
 AMBIENT_AUTH_METHODS = frozenset({"env_vars", "managed_identity"})
 """Auth methods whose connection holds no credential: a sink or scan of one takes none and resolves ambiently."""
 

@@ -279,3 +279,59 @@ def test_a_sealed_secret_for_other_nodes_or_garbled_names_why(hub_signer, node):
         hub_sealed.open_secret(hub_sealed.sealed_secret("pw", {"worker": secret_for(hub_signer, node)}))
     with pytest.raises(SealedCredentialRefused, match="not a sealed secret"):
         hub_sealed.open_secret(hub_sealed.SEALED_SECRET_PREFIX + "not-json")
+
+
+CLOUD = {
+    "storage_type": "s3",
+    "auth_method": "access_key",
+    "connection_name": "lake",
+    "aws_region": "eu-west-1",
+    "aws_access_key_id": "AKIA-sealed",
+    "aws_secret_access_key": "sealed-secret-key",
+    "endpoint_url": "http://minio:9000",
+    "verify_ssl": True,
+}
+
+
+def connection_for(signer: HubSigner, keys, kind: str = "cloud", name: str = "lake", settings=None, **claims) -> str:
+    settings = dict(CLOUD) if settings is None else settings
+    return signer.sealed_connection(
+        keys.public_jwks()["enc"], connection_kind=kind, name=name, settings=settings, **claims
+    )
+
+
+def test_a_sealed_connection_opens_to_its_whole_settings_and_one_field_takes_a_ciphertexts_place(hub_signer, node):
+    sealed = {NODE_NAME: connection_for(hub_signer, node, "database", "warehouse", {"password": "pg-pw", "port": 5432})}
+
+    assert hub_sealed.open_connection(sealed, "database", "warehouse") == {"password": "pg-pw", "port": 5432}
+    value = hub_sealed.sealed_connection_secret("database", "warehouse", "password", sealed)
+    assert hub_sealed.is_sealed_secret(value) and "pg-pw" not in value and "warehouse" not in value
+    assert hub_sealed.open_secret(value) == "pg-pw"
+    with pytest.raises(SealedCredentialRefused, match='"warehouse" holds no port'):
+        hub_sealed.open_secret(hub_sealed.sealed_connection_secret("database", "warehouse", "port", sealed))
+
+
+def test_a_sealed_connection_of_another_kind_or_name_or_a_secret_is_refused(hub_signer, node):
+    sealed = {NODE_NAME: connection_for(hub_signer, node)}
+
+    with pytest.raises(SealedCredentialRefused, match='does not hold the kafka connection "lake"'):
+        hub_sealed.open_connection(sealed, "kafka", "lake")
+    with pytest.raises(SealedCredentialRefused, match='does not hold the cloud connection "other"'):
+        hub_sealed.open_connection(sealed, "cloud", "other")
+    with pytest.raises(SealedCredentialRefused, match="missing claim connection_kind"):
+        hub_sealed.open_connection({NODE_NAME: secret_for(hub_signer, node)}, "cloud", "lake")
+    with pytest.raises(SealedCredentialRefused, match="missing claim value"):
+        hub_sealed.open_secret(hub_sealed.sealed_secret("lake", sealed))
+    with pytest.raises(SealedCredentialRefused, match=r"sealed it to worker, not to this server \(team\)"):
+        hub_sealed.open_connection({"worker": sealed[NODE_NAME]}, "cloud", "lake")
+
+
+def test_the_connection_provider_holds_the_name_and_map_and_answers_the_connections_keys(hub_signer, node):
+    provider = hub_sealed.SealedConnectionProvider("lake", {NODE_NAME: connection_for(hub_signer, node)})
+
+    credentials, expiry = provider()
+
+    assert credentials["aws_access_key_id"] == "AKIA-sealed"
+    assert credentials["aws_secret_access_key"] == "sealed-secret-key"
+    assert expiry is None
+    assert b"sealed-secret-key" not in pickle.dumps(provider) and "sealed" not in repr(provider).replace("Sealed", "")
