@@ -29,6 +29,7 @@ from tests.flowfile.conftest import (
     create_test_namespace,
     run_test_graph,
 )
+from tests.flowfile.execution.graph_helpers import add_filter_on, add_sort_on
 from tests.hub_client.conftest import FakeHubWithCatalog
 
 HUB_URL = "http://hub.test"
@@ -226,6 +227,111 @@ class TestBuildRunReport:
         assert {node["node_id"] for node in built["nodes"]} == {1, 2, 3}
 
 
+def _local_table(namespace_id: int, name: str = "people") -> int:
+    """The id of a new table ``name`` of this core's own catalog, holding the three rows of ``CATALOG_SAMPLE_DATA``."""
+    graph = create_test_graph(flow_id=8190)
+    add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
+    add_test_catalog_writer(graph, node_id=2, depending_on_id=1, table_name=name, namespace_id=namespace_id)
+    run_test_graph(graph)
+    return _table_ref(namespace_id, name)["table_id"]
+
+
+def _rows_out(graph) -> dict[int, int | None]:
+    """The rows out the report of a successful run of ``graph`` gives each step."""
+    built = report.build_run_report(graph, run_test_graph(graph), flow_uuid=FLOW_UUID)
+    return {node["node_id"]: node["rows_out"] for node in built["nodes"]}
+
+
+@pytest.fixture(params=["local", "remote"])
+def location(request) -> str:
+    """Where a flow runs: the embedded worker (``local``) or the session worker (``remote``)."""
+    if request.param == "remote":
+        request.getfixturevalue("running_worker")
+    return request.param
+
+
+class TestRowsOut:
+    """What the report counts, where a step's own result knows no count; nothing is run to count it."""
+
+    def test_a_performance_run_over_a_local_table_reports_the_rows_its_write_counted(self, protocol, location):
+        ns_id = create_test_namespace()
+        table_id = _local_table(ns_id)
+        graph = create_test_graph(flow_id=8191, execution_location=location, execution_mode="Performance")
+        _add_reader(graph, 1, catalog_table_id=table_id, user_id=1)
+        add_sort_on(graph, 2, 1, "name")
+        add_test_catalog_writer(graph, node_id=3, depending_on_id=2, table_name="sorted", namespace_id=ns_id)
+
+        assert _rows_out(graph) == {1: 3, 2: 3, 3: 3}
+        engines = [graph.get_node(node_id).peek_output_engine() for node_id in (1, 2, 3)]
+        assert [engine.known_record_count() for engine in engines] == [None, None, None], "only the report holds them"
+
+    @pytest.mark.parametrize("source", ["local-table", "manual-input"])
+    def test_a_write_counts_back_only_through_steps_that_keep_their_rows(self, protocol, location, source):
+        ns_id = create_test_namespace()
+        graph = create_test_graph(flow_id=8192, execution_location=location, execution_mode="Performance")
+        if source == "local-table":
+            _add_reader(graph, 1, catalog_table_id=_local_table(ns_id), user_id=1)
+        else:
+            add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
+        add_filter_on(graph, 2, 1, "[age] > 26")
+        add_test_catalog_writer(graph, node_id=3, depending_on_id=2, table_name="adults", namespace_id=ns_id)
+
+        # Nothing says how many rows the filter read, so a read with no count of its own stays unknown.
+        assert _rows_out(graph) == {1: None if source == "local-table" else 3, 2: 2, 3: 2}
+
+    def test_a_performance_run_nothing_reads_counts_nothing(self, protocol, location):
+        table_id = _local_table(create_test_namespace())
+        graph = create_test_graph(flow_id=8193, execution_location=location, execution_mode="Performance")
+        _add_reader(graph, 1, catalog_table_id=table_id, user_id=1)
+        add_sort_on(graph, 2, 1, "name")
+
+        assert _rows_out(graph) == {1: None, 2: None}
+
+    @pytest.mark.parametrize(
+        "writes",
+        [
+            {"write_mode": "upsert", "merge_keys": ["name"]},
+            {"write_mode": "scd2", "merge_keys": ["name"], "scd2": input_schema.Scd2Settings()},
+        ],
+        ids=["upsert", "scd2"],
+    )
+    def test_a_write_that_reports_the_whole_table_counts_no_step(self, protocol, writes):
+        ns_id = create_test_namespace()
+        table_id = _local_table(ns_id)
+        graph = create_test_graph(flow_id=8194, execution_mode="Performance")
+        _add_reader(graph, 1, catalog_table_id=table_id, user_id=1)
+        add_filter_on(graph, 2, 1, "[age] > 26")
+        add_test_catalog_writer(graph, node_id=3, depending_on_id=2, table_name="merged", namespace_id=ns_id, **writes)
+
+        assert _rows_out(graph) == {1: None, 2: None, 3: None}
+
+    @pytest.mark.parametrize("source", ["local-table", "manual-input"])
+    def test_a_development_run_reports_what_its_results_hold(self, protocol, location, source):
+        ns_id = create_test_namespace()
+        graph = create_test_graph(flow_id=8195, execution_location=location)
+        if source == "local-table":
+            _add_reader(graph, 1, catalog_table_id=_local_table(ns_id), user_id=1)
+        else:
+            add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
+        add_sort_on(graph, 2, 1, "name")
+        add_filter_on(graph, 3, 1, "[age] > 26")
+        add_test_catalog_writer(graph, node_id=4, depending_on_id=2, table_name="sorted", namespace_id=ns_id)
+        add_test_catalog_writer(graph, node_id=5, depending_on_id=3, table_name="adults", namespace_id=ns_id)
+
+        assert _rows_out(graph) == {1: 3, 2: 3, 3: None, 4: 3, 5: 2}
+
+    def test_a_performance_run_from_a_manual_input_keeps_the_counts_it_carries(self, protocol, location):
+        ns_id = create_test_namespace()
+        graph = create_test_graph(flow_id=8196, execution_location=location, execution_mode="Performance")
+        add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
+        add_sort_on(graph, 2, 1, "name")
+        add_filter_on(graph, 3, 1, "[age] > 26")
+        assert _rows_out(graph) == {1: 3, 2: 3, 3: None}
+
+        add_test_catalog_writer(graph, node_id=4, depending_on_id=2, table_name="sorted", namespace_id=ns_id)
+        assert _rows_out(graph) == {1: 3, 2: 3, 3: None, 4: 3}
+
+
 class TestPostRunReport:
     REPORT = {"run_id": "r-1", "flow_uuid": FLOW_UUID, "nodes": []}
 
@@ -381,6 +487,24 @@ class TestDesktopSession:
         uuid.UUID(body["run_id"])
         assert body["vend_ids"] == []
         assert warnings() == []
+
+    def test_a_performance_run_over_a_local_table_posts_the_rows_its_write_counted(self, hub, registered_flow, desktop):
+        desktop.connect(1)
+        flow_id, flow_uuid = registered_flow
+        flow = routes.flow_file_handler.get_flow(flow_id)
+        _origin(flow, flow_uuid, version=3)
+        flow.flow_settings.execution_mode = "Performance"
+        ns_id = create_test_namespace()
+        _add_reader(flow, 2, catalog_table_id=_local_table(ns_id), user_id=1)
+        add_sort_on(flow, 3, 2, "name")
+        add_test_catalog_writer(flow, node_id=4, depending_on_id=3, table_name="sorted", namespace_id=ns_id)
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1)
+
+        [sent] = hub.requests
+        rows_out = {node["node_id"]: node["rows_out"] for node in json.loads(sent.content)["nodes"]}
+        assert rows_out == {1: 3, 2: 3, 3: 3, 4: 3}
 
     def test_a_flow_without_an_origin_posts_nothing(self, hub, warnings, registered_flow, desktop):
         desktop.connect(1)

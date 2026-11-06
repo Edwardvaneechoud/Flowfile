@@ -83,8 +83,8 @@ def _session_target(user_id: int, hub_url: str) -> tuple[str, str] | None:
 def _rows_out(flow, node) -> int | None:
     """The row count the run already knows for ``node``'s output, else ``None``; nothing is counted.
 
-    A step over a hub table whose result the end of the run's vend released keeps the count it knew in
-    ``flow.hub_rows_out``.
+    ``flow.hub_rows_out`` holds what no result does: what a table write's report says about its steps, and the count a
+    step knew when the end of the run's vend released its result.
     """
     released = getattr(flow, "hub_rows_out", {}).get(node.node_id)
     if released is not None:

@@ -335,8 +335,8 @@ class ExecutionMixin(GraphMixinBase):
     sealed_secret_steps: dict[int | str, tuple[str, ...]] | None = None
     # Node id -> the (kind, name) of the stored connections the running run's vend sealed for that step.
     sealed_connection_steps: dict[int | str, tuple[tuple[str, str], ...]] | None = None
-    # Node id -> the rows out the last run knew for a step whose result the end of its vend released, for its report.
-    hub_rows_out: Mapping[int | str, int] = {}
+    # Node id -> the rows out the last run knew that no result holds: a table write's, a released result's.
+    hub_rows_out: dict[int | str, int]
 
     @property
     def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
@@ -2104,7 +2104,7 @@ class ExecutionMixin(GraphMixinBase):
             node._execution_state.has_run_with_current_setup = False
             node._execution_state.has_completed_last_run = rows is not None
         if keep_preview is None:
-            self.hub_rows_out = rows_out
+            self.hub_rows_out.update(rows_out)
 
     def _end_exchange_run(self, exchange_run: ExchangeRun) -> None:
         """Remove what the run wrote to the exchange store; a failure is a warning on the flow log, never the run's.

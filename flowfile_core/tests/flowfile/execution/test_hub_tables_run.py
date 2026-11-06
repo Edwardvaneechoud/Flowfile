@@ -16,6 +16,7 @@ from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.client import HubRefused
+from flowfile_core.hub_client.report import build_run_report
 from flowfile_core.schemas import input_schema
 from shared.cloud_credential_provider import PROVIDER_CREDENTIAL_KEYS, EncryptedCredentialProvider
 from tests.conftest import protocol_states
@@ -141,7 +142,9 @@ def add_hub_reader(graph, node_id: int, hub: FakeHubWithCatalog, table: str = "o
     )
 
 
-def add_hub_writer(graph, node_id: int, depending_on_id: int, namespace_id: int, name: str, mode: str = "overwrite"):
+def add_hub_writer(
+    graph, node_id: int, depending_on_id: int, namespace_id: int, name: str, mode: str = "overwrite", **settings
+):
     add_promise(graph, node_id, "catalog_writer")
     graph.add_catalog_writer(
         input_schema.NodeCatalogWriter(
@@ -150,11 +153,17 @@ def add_hub_writer(graph, node_id: int, depending_on_id: int, namespace_id: int,
             depending_on_id=depending_on_id,
             user_id=1,
             catalog_write_settings=input_schema.CatalogWriteSettings(
-                table_name=name, hub_namespace_id=namespace_id, write_mode=mode
+                table_name=name, hub_namespace_id=namespace_id, write_mode=mode, **settings
             ),
         )
     )
     connect(graph, depending_on_id, node_id)
+
+
+def rows_out_of(graph, run_info) -> dict[int, int | None]:
+    """The rows out the report of the successful run ``run_info`` gives each step."""
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    return {node["node_id"]: node["rows_out"] for node in build_run_report(graph, run_info, "flow-uuid")["nodes"]}
 
 
 def assert_ended_before_any_node(run_info, graph, refused: dict[int, str]) -> None:
@@ -449,8 +458,6 @@ def test_fetch_data_after_a_development_run_asks_the_hub_nothing(connected, carr
 def test_the_run_report_counts_the_rows_out_the_run_knew_after_its_vend_ends(
     connected, carrying_scans, operations, flag, mode
 ):
-    from flowfile_core.hub_client.report import build_run_report
-
     graph = make_graph(
         8723 + 100 * flag + 10 * (mode == "Development"), execution_location="local", execution_mode=mode
     )
@@ -458,14 +465,63 @@ def test_the_run_report_counts_the_rows_out_the_run_knew_after_its_vend_ends(
     add_sort_on(graph, 2, 1, "id")
     add_hub_writer(graph, 3, 2, connected.ids["curated"], "orders_out")
 
-    run_info = graph.run_graph()
-
-    assert run_info.success is True, [result.error for result in run_info.node_step_result]
-    report = build_run_report(graph, run_info, "flow-uuid")
-    rows_out = {node["node_id"]: node["rows_out"] for node in report["nodes"]}
-    # A Performance run computes only what its writer reads, so only the write knows a count, as off a hub.
-    assert rows_out == ({1: 2, 2: 2, 3: 2} if mode == "Development" else {1: None, 2: None, 3: 2})
+    # In a Performance run only the write counted; a sort keeps its rows, so its count holds back to the read.
+    assert rows_out_of(graph, graph.run_graph()) == {1: 2, 2: 2, 3: 2}
     assert graph.hub_vend is None
 
     graph.run_graph(node_ids={1})
     assert graph.hub_rows_out.get(3) is None, "a later run reports only its own counts"
+
+
+def test_a_performance_run_s_write_counts_back_only_through_steps_that_keep_their_rows(
+    connected, carrying_scans, operations, flag
+):
+    graph = make_graph(8724 + 100 * flag, execution_location="local", execution_mode="Performance")
+    add_hub_reader(graph, 1, connected)
+    add_filter_on(graph, 2, 1, "[id] > 0")
+    add_sort_on(graph, 3, 2, "id")
+    add_hub_writer(graph, 4, 3, connected.ids["curated"], "orders_out")
+
+    # Nothing says how many rows the filter read, so the read stays unknown.
+    assert rows_out_of(graph, graph.run_graph()) == {1: None, 2: 2, 3: 2, 4: 2}
+
+
+def test_a_merge_write_s_count_of_the_whole_table_is_no_step_s_rows_out(connected, carrying_scans, flag, monkeypatch):
+    def run_op(self, backend, op, payload, *, job_id):
+        assert op is OperationKind.delta_merge
+        return OpResult(
+            refs={},
+            metadata={
+                "table_path": "s3://acme/sales/orders_out",
+                "schema": COLUMNS,
+                "row_count": 99,
+                "column_count": 2,
+                "size_bytes": 1234,
+            },
+        )
+
+    monkeypatch.setattr(FlowNode, "run_op", run_op)
+    graph = make_graph(8725 + 100 * flag, execution_location="local", execution_mode="Performance")
+    add_hub_reader(graph, 1, connected)
+    add_sort_on(graph, 2, 1, "id")
+    add_hub_writer(graph, 3, 2, connected.ids["curated"], "orders_out", mode="upsert", merge_keys=["id"])
+
+    assert rows_out_of(graph, graph.run_graph()) == {1: None, 2: None, 3: None}
+
+
+@pytest.mark.parametrize("writes", [False, True], ids=["nothing-reads-the-sort", "a-write-reads-the-sort"])
+def test_a_performance_run_s_report_runs_no_plan_in_core(
+    connected, carrying_scans, operations, flag, monkeypatch, writes
+):
+    def refuse(self, *args, **kwargs):
+        raise AssertionError("a plan ran in core")
+
+    monkeypatch.setattr(pl.LazyFrame, "collect", refuse)
+    graph = make_graph(8726 + 100 * flag + 10 * writes, execution_location="local", execution_mode="Performance")
+    add_hub_reader(graph, 1, connected)
+    add_sort_on(graph, 2, 1, "id")
+    if writes:
+        add_hub_writer(graph, 3, 2, connected.ids["curated"], "orders_out")
+
+    # With nothing to read them a Performance run computes neither step, so neither has a count to report.
+    assert rows_out_of(graph, graph.run_graph()) == ({1: 2, 2: 2, 3: 2} if writes else {1: None, 2: None})

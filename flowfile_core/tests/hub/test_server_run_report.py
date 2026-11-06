@@ -396,3 +396,24 @@ def test_a_person_reads_and_writes_the_hubs_tables_on_its_storage_and_the_run_is
     assert posted["outputs"] == [{"namespace_id": sales["id"], "table_id": new_table["id"], "table_name": "orders_eu"}]
     assert {token for _, _, token in hub.received} == {delegated}
     assert not hub.asked_for_exchange_store()
+
+
+@requires_minio
+@pytest.mark.usefixtures("protocol_on")
+def test_a_performance_run_over_the_hubs_tables_reports_the_rows_its_write_counted(
+    hub, hub_url, minio_catalog, username, open_flow
+):
+    _, sales, orders = minio_catalog
+    person, access_token = sign_in(hub, username)
+    flow = open_flow(person, "hub_tables_in_performance")
+    flow.flow_settings.execution_mode = "Performance"
+    add_hub_tables_flow(flow, person, sales, orders)
+
+    ran = client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(access_token))
+
+    assert ran.status_code == 200, ran.text
+    [posted] = hub.catalog.reports
+    assert posted["success"] is True, posted["nodes"]
+    eu_rows = pl.DataFrame(ORDERS).filter(pl.col("country").is_in(EU)).height
+    # Nothing says how many rows the filter read, so the read stays unknown.
+    assert {node["node_id"]: node["rows_out"] for node in posted["nodes"]} == {1: None, 2: eu_rows, 3: eu_rows}

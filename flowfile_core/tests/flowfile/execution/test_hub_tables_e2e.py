@@ -263,6 +263,24 @@ def test_a_desktop_reads_and_writes_hub_tables_with_one_vend_and_one_report(hub,
         graph.close_flow()
 
 
+@pytest.mark.parametrize(
+    "mode, rows_out",
+    # In Performance only the write counted, and nothing says how many rows the filter read.
+    [("Performance", {1: None, 2: 3, 3: 3}), ("Development", {1: 5, 2: None, 3: 3})],
+)
+def test_a_run_reports_the_rows_it_knows(hub, location, tmp_path, mode, rows_out):
+    graph = build_flow(hub, location, tmp_path / "hub_tables.yaml")
+    graph.flow_settings.execution_mode = mode
+    try:
+        run_info = run(graph)
+
+        assert run_info.success is True, [(r.node_id, r.error) for r in run_info.node_step_result]
+        [posted] = hub.fake.reports
+        assert {node["node_id"]: node["rows_out"] for node in posted["nodes"]} == rows_out
+    finally:
+        graph.close_flow()
+
+
 def test_without_a_hub_session_the_flow_ends_before_anything_runs_and_nothing_is_reported(
     hub, location, tmp_path, backend_calls
 ):

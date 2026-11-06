@@ -44,6 +44,7 @@ from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _effective_namespace_id,
     _resolve_catalog_sql_tables,
 )
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
@@ -60,6 +61,7 @@ from shared.storage_config import storage
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph.graph import FlowGraph
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
 
 def _scd2_row_filter(
@@ -188,6 +190,9 @@ class CatalogDeltaWrite(NamedTuple):
 
 _TABLE_WRITE_METADATA_KEYS = ("schema", "row_count", "column_count", "size_bytes")
 
+# The steps that hand on exactly the rows they read; the engine carries a known count through these too.
+_KEEPS_ROWS = frozenset({"sort", "select", "formula"})
+
 
 def _catalog_delta_op(
     delta_mode: str,
@@ -253,6 +258,31 @@ def _catalog_delta_written(report: dict[str, Any]) -> CatalogDeltaWrite:
     if report.get("scd2_metrics"):
         meta["scd2_metrics"] = report["scd2_metrics"]
     return CatalogDeltaWrite(meta, version)
+
+
+def _keep_rows_written(
+    graph: "FlowGraph", writer: "FlowNode", delta_mode: str, meta: TableWriteMetadata | None
+) -> None:
+    """Keep what a write's report says about row counts for the run's report; nothing is counted for it.
+
+    In a Performance run the plans before a write run once, inside it, so its report is the only count the run has; a
+    Development run's results hold their own, so it keeps nothing. A write reads its input whole, so the step it reads
+    handed on the rows it wrote, and a step in ``_KEEPS_ROWS`` handed on what it read. Any other step may have dropped
+    rows, so what lies before it stays unknown. A merge or SCD2 write reports the table's whole size, which no step
+    handed on, so it keeps nothing. Only the run's report reads these counts and no engine holds them, so a flow that
+    never meets a hub runs and shows what it did.
+    """
+    rows = None if meta is None or delta_mode in MERGE_MODES or delta_mode == "scd2" else meta.get("row_count")
+    if rows is None or graph.flow_settings.execution_mode != "Performance":
+        return
+    graph.hub_rows_out[writer.node_id] = rows
+    step = writer
+    while step is writer or step.node_type in _KEEPS_ROWS:
+        inputs = step.main_input
+        if len(inputs) != 1 or step.input_edge_handle(inputs[0].node_id, "input-0") != DEFAULT_OUTPUT_HANDLE:
+            return
+        step = inputs[0]
+        graph.hub_rows_out[step.node_id] = rows
 
 
 def _same_location(left: str, right: str) -> bool:
@@ -728,7 +758,7 @@ def _handle_hub_table_write(
     under the namespace's storage root, and the compute writes it by identity with a connection whose secrets are
     encrypted for the worker. A new table is registered on the hub from the write's own report; an existing one's
     record on the hub is left as it is. Nothing is recorded in the local catalog, and the hub's grant check is the
-    vend's. The node's output carries the row count the write reports, so its run report counts the rows written.
+    vend's.
     """
     settings = node_catalog_writer.catalog_write_settings
     namespace_id = settings.hub_namespace_id
@@ -767,8 +797,7 @@ def _handle_hub_table_write(
     )
     report = writer_node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
     meta = _catalog_delta_written(report.metadata).meta
-    if meta is not None and meta.get("row_count") is not None:
-        df = FlowDataEngine(df.data_frame, schema=df.schema, number_of_records=meta["row_count"])
+    _keep_rows_written(graph, writer_node, settings.write_mode, meta)
     if existing is not None or meta is None:
         return df
     table_path = report.metadata.get("table_path") or dest_path
@@ -869,6 +898,7 @@ def _handle_physical_table_write(
     report = writer_node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
     written = _catalog_delta_written(report.metadata)
     meta_kwargs = written.meta
+    _keep_rows_written(graph, writer_node, delta_mode, meta_kwargs)
     # By identity a new table is where compute answered; an existing one stays where its record resolved.
     answered = report.metadata.get("table_path") if by_identity else None
     if answered and existing is None:
