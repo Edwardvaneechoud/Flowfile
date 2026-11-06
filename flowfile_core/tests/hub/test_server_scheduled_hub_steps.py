@@ -92,7 +92,7 @@ def registered():
         graph = make_graph(abs(hash(uuid.uuid4().hex)) % 10**8, execution_location=location)
         add_manual_input(graph, 1, ranks(3))
         add_sort_on(graph, 2, 1, "rank", description="Sort the ranks")
-        path = storage.flows_directory / f"t93_{uuid.uuid4().hex[:8]}.yaml"
+        path = storage.flows_directory / f"scheduled_{uuid.uuid4().hex[:8]}.yaml"
         graph.save_flow(str(path))
         with get_db_context() as db:
             flow = FlowRegistration(name=path.stem, flow_path=str(path), owner_id=owner_id, flow_uuid=str(uuid.uuid4()))
