@@ -45,6 +45,7 @@ PREVIEW_RUN_PREFIX = "preview-"
 SQL_RUN_PREFIX = "sql-"
 VISUAL_RUN_PREFIX = "visual-"
 NOTEBOOK_RUN_PREFIX = "notebook-"
+LISTED_SECONDS = 10
 VISUAL_KEPT_SECONDS = 240
 """How long one visual's source is reused: well inside the 15 minutes a hub's credential lives by default."""
 SAMPLE_ROWS = 10_000
@@ -176,23 +177,61 @@ def visual_source(user_id: int, query: str, tables: dict[str, int], own: set[str
     return source
 
 
-def for_notebook(user_id: int, reference: str) -> CatalogTableOut | None:
+_trees: dict[int, tuple[float, list[NamespaceTree]]] = {}
+
+
+def notebook_namespaces(user_id: int, parent_id: int | None) -> list[NamespaceTree]:
+    """The hub's catalogs as a kernel lists them beside this machine's (``parent_id`` ``None``), or the schemas of
+    the hub catalog whose row id is ``parent_id``. Nothing without a hub, or when it does not answer."""
+    tree = _tree(user_id)
+    if parent_id is None:
+        return tree
+    return [schema for root in tree if root.id == parent_id for schema in root.children]
+
+
+def notebook_tables(user_id: int, namespace_id: int) -> list[CatalogTableOut]:
+    """The tables of the hub namespace whose row id is ``namespace_id``, as a kernel lists them: each a view."""
+    return [
+        _as_view(table) for holder in _holders(_tree(user_id)) if holder.id == namespace_id for table in holder.tables
+    ]
+
+
+def for_notebook(user_id: int, reference: str, namespace_id: int | None = None) -> CatalogTableOut | None:
     """The hub table a notebook cell names by ``reference``, as the row its kernel resolves, or ``None`` when the
-    person's hub lists no table by that name.
+    person's hub lists no table by that name. With the row id of a hub namespace, the table of that name in it.
 
     The row says it is a view: a kernel reads a view through a file core has the worker write (``snapshot``), which is
     how a table on the hub's storage reaches a cell that holds no credential.
     """
-    if session.load(user_id) is None:
-        return None
-    tree = catalog.tree(user_id)
-    hub_id = _sql_names(tree, set()).get(_plain(reference))
+    name = _plain(reference)
+    if namespace_id is not None:
+        return next((table for table in notebook_tables(user_id, namespace_id) if table.name == name), None)
+    tree = _tree(user_id)
+    hub_id = _sql_names(tree, set()).get(name)
+    found = (table for holder in _holders(tree) for table in holder.tables if table.hub_id == hub_id)
+    return next((_as_view(table) for table in found), None) if hub_id is not None else None
+
+
+def _tree(user_id: int) -> list[NamespaceTree]:
+    """The person's hub catalogs for a kernel's lookups, kept ``LISTED_SECONDS``: one cell asks for them several
+    times in a row. Empty without a hub session."""
+    held = _trees.get(user_id)
+    if held is not None and time.monotonic() - held[0] < LISTED_SECONDS:
+        return held[1]
+    tree = catalog.tree(user_id) if session.load(user_id) is not None else []
+    _trees[user_id] = (time.monotonic(), tree)
+    return tree
+
+
+def _holders(tree: list[NamespaceTree]):
+    """Every hub namespace that holds tables: each catalog, then its schemas."""
     for root in tree:
-        for holder in (root, *root.children):
-            for table in holder.tables:
-                if hub_id is not None and table.hub_id == hub_id:
-                    return table.model_copy(update={"table_type": "virtual"})
-    return None
+        yield root
+        yield from root.children
+
+
+def _as_view(table: CatalogTableOut) -> CatalogTableOut:
+    return table.model_copy(update={"table_type": "virtual"})
 
 
 def snapshot(user_id: int, hub_table_id: int) -> CatalogTableMaterializeResult:

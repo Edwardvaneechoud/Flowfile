@@ -341,6 +341,25 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
     return current_user
 
 
+def kernel_owner_id(
+    x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
+    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
+    db: Session = Depends(get_db),
+) -> int | None:
+    """The id of the person whose kernel a request comes from, for what only a person may read through one.
+
+    ``None`` for every other caller: no kernel id, an internal token that does not verify, a kernel core does not
+    know, or one whose owner is disabled. It refuses nothing itself; the route decides.
+    """
+    if not x_kernel_id or not internal_token_valid(x_internal_token):
+        return None
+    kernel = db.query(db_models.Kernel).filter(db_models.Kernel.id == x_kernel_id).first()
+    if kernel is None:
+        return None
+    owner = db.query(db_models.User).filter(db_models.User.id == kernel.user_id).first()
+    return owner.id if owner is not None and not owner.disabled else None
+
+
 def get_user_or_internal_service(
     token: str = Depends(oauth2_scheme),
     x_internal_token: str | None = Header(None, alias="X-Internal-Token"),

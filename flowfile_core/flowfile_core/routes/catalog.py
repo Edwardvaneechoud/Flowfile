@@ -16,11 +16,11 @@ from functools import wraps
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
-from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
+from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service, kernel_owner_id
 from flowfile_core.catalog import (
     KEEP_PREDICTION,
     AmbiguousTableError,
@@ -319,10 +319,20 @@ def remove_demo(current_user=Depends(get_current_active_user)):
 @router.get("/namespaces", response_model=list[NamespaceOut])
 def list_namespaces(
     parent_id: int | None = None,
+    kernel_owner: int | None = Depends(kernel_owner_id),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """List namespaces, optionally filtered by parent."""
-    return service.list_namespaces(parent_id)
+    """List namespaces, optionally filtered by parent.
+
+    A kernel also gets the catalogs of its owner's hub after this machine's, and the schemas of one of those (a
+    negative ``parent_id``), so a notebook cell walks to a hub table as it does to a local one.
+    """
+    if kernel_owner is not None and parent_id is not None and parent_id < 0:
+        return hub_tables.notebook_namespaces(kernel_owner, parent_id)
+    rows = service.list_namespaces(parent_id)
+    if kernel_owner is not None and parent_id is None:
+        return [*rows, *hub_tables.notebook_namespaces(kernel_owner, None)]
+    return rows
 
 
 @router.post("/namespaces", response_model=NamespaceOut, status_code=201)
@@ -731,14 +741,18 @@ def remove_follow(
 @router.get("/tables", response_model=list[CatalogTableOut])
 def list_tables(
     namespace_id: int | None = None,
+    kernel_owner: int | None = Depends(kernel_owner_id),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """List catalog tables, optionally filtered by namespace.
 
     Accepts the kernel's internal token so ``flowfile_ctx.list_catalog_tables``
-    can enumerate available tables.
+    can enumerate available tables. A negative ``namespace_id`` is a namespace
+    of the kernel owner's hub.
     """
+    if kernel_owner is not None and namespace_id is not None and namespace_id < 0:
+        return hub_tables.notebook_tables(kernel_owner, namespace_id)
     return service.list_tables(namespace_id=namespace_id, user_id=current_user.id)
 
 
@@ -821,21 +835,13 @@ def refresh_table_metadata(
     )
 
 
-def _kernel_owner(x_kernel_id: str | None, current_user) -> int | None:
-    """The person a kernel's request acts as, for what only a person may read: the owner
-    ``get_user_or_internal_service`` found for ``X-Kernel-Id``; ``None`` for any other caller."""
-    if not x_kernel_id or current_user.username == "_internal_service":
-        return None
-    return current_user.id
-
-
 @router.get("/tables/resolve", response_model=ResolveTableResult)
 @handle_catalog_exceptions()
 def resolve_table(
     q: str,
     namespace_id: int | None = None,
     strict: bool = False,
-    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
+    kernel_owner: int | None = Depends(kernel_owner_id),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
@@ -843,9 +849,14 @@ def resolve_table(
 
     Strict mode raises ``AmbiguousTableError`` (→ 409) when a bare name matches >1 row.
     Default mode soft-picks deterministically and reports alternatives in ``warnings``.
-    A name this machine's catalog does not hold is looked up, for a kernel, among the tables of its owner's hub
-    (``hub_tables.for_notebook``).
+    For a kernel, a name this machine's catalog does not hold is looked up among the tables of its owner's hub, and
+    a negative ``namespace_id`` names a namespace there (``hub_tables.for_notebook``).
     """
+    if kernel_owner is not None and namespace_id is not None and namespace_id < 0:
+        in_namespace = hub_tables.for_notebook(kernel_owner, q, namespace_id)
+        if in_namespace is None:
+            raise HTTPException(404, "Catalog table not found")
+        return ResolveTableResult(table=in_namespace)
     try:
         table_out, warnings = service.resolve_table_out(
             q,
@@ -854,8 +865,7 @@ def resolve_table(
             user_id=current_user.id,
         )
     except (TableNotFoundError, NamespaceNotFoundError):
-        owner = _kernel_owner(x_kernel_id, current_user)
-        on_hub = hub_tables.for_notebook(owner, q) if owner is not None else None
+        on_hub = hub_tables.for_notebook(kernel_owner, q) if kernel_owner is not None else None
         if on_hub is None:
             raise
         return ResolveTableResult(table=on_hub)
@@ -924,7 +934,7 @@ def get_table_preview(
 @handle_catalog_exceptions()
 def materialize_table(
     table_id: int,
-    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
+    kernel_owner: int | None = Depends(kernel_owner_id),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
@@ -938,10 +948,9 @@ def materialize_table(
     kernel's owner (``hub_tables.snapshot``); any other caller gets 403.
     """
     if table_id < 0:
-        owner = _kernel_owner(x_kernel_id, current_user)
-        if owner is None:
+        if kernel_owner is None:
             raise HTTPException(403, "A table on the hub is read as a person, through a kernel of theirs")
-        return hub_tables.snapshot(owner, -table_id)
+        return hub_tables.snapshot(kernel_owner, -table_id)
     return service.materialize_table(table_id, user_id=current_user.id)
 
 
