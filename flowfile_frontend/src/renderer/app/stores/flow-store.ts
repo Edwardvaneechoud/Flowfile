@@ -62,11 +62,32 @@ export const useFlowStore = defineStore("flow", {
       pendingLayoutResetCounter: 0,
       // A run started or ended elsewhere; HeaderButtons re-reads the run state on it.
       pendingRunStateCounter: 0,
+      cacheRequestId: 0,
+      cachedResultState: null as {
+        flowId: number;
+        graphVersion: number;
+        runStart: string | null | undefined;
+        nodeIds: number[];
+      } | null,
     };
   },
 
   getters: {
     currentFlowId: (state) => state.flowId,
+    isNodeCached:
+      (state) =>
+      (nodeId: number): boolean => {
+        const cached = state.cachedResultState;
+        const editor = useEditorStore();
+        return Boolean(
+          cached &&
+          cached.flowId === state.flowId &&
+          cached.graphVersion === editor.graphVersion &&
+          !editor.isRunning &&
+          cached.runStart === useResultsStore().getRunResult(state.flowId)?.start_time &&
+          cached.nodeIds.includes(nodeId),
+        );
+      },
     canUndo: (state) => state.historyState.can_undo,
     canRedo: (state) => state.historyState.can_redo,
     undoDescription: (state) => state.historyState.undo_description,
@@ -75,6 +96,8 @@ export const useFlowStore = defineStore("flow", {
 
   actions: {
     setFlowId(flowId: number) {
+      this.cachedResultState = null;
+      this.cacheRequestId++;
       if (this.flowId === flowId) return;
       this.flowId = flowId;
       try {
@@ -142,10 +165,25 @@ export const useFlowStore = defineStore("flow", {
     async fetchSettingsValidation(flowId?: number) {
       const targetId = flowId ?? this.flowId;
       if (targetId < 0) return;
+      const requestId = ++this.cacheRequestId;
+      const graphVersion = useEditorStore().graphVersion;
+      const runStart = useResultsStore().getRunResult(targetId)?.start_time;
       try {
         const data = await FlowApi.getSettingsValidation(targetId);
         if (this.flowId !== targetId) return;
         useResultsStore().applySettingsValidation(targetId, data);
+        if (
+          requestId === this.cacheRequestId &&
+          graphVersion === useEditorStore().graphVersion &&
+          runStart === useResultsStore().getRunResult(targetId)?.start_time
+        ) {
+          this.cachedResultState = {
+            flowId: targetId,
+            graphVersion,
+            runStart,
+            nodeIds: data.cached_node_ids ?? [],
+          };
+        }
       } catch {
         // Validation is advisory; don't break the UI
       }

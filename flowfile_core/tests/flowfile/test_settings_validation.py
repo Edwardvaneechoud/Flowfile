@@ -600,6 +600,42 @@ def _get_test_client():
     return client
 
 
+@pytest.mark.parametrize("validation_enabled", [True, False])
+def test_endpoint_reports_a_cached_node_after_a_real_run(validation_enabled):
+    from flowfile_core import flow_file_handler
+
+    client = _get_test_client()
+    flow_id = 9872
+    if flow_file_handler.get_flow(flow_id) is not None:
+        flow_file_handler.delete_flow(flow_id)
+    flow_file_handler.register_flow(
+        schemas.FlowSettings(
+            flow_id=flow_id, name="sv_cached", path=".", execution_location="local",
+            validate_settings=validation_enabled,
+        ),
+        user_id=1,
+    )
+    try:
+        graph = flow_file_handler.get_flow(flow_id)
+        add_manual_input(graph, BASE_DATA, node_id=1)
+        graph.get_node(1).node_settings.cache_results = True
+
+        def cached_nodes():
+            response = client.get("/flow/settings_validation", params={"flow_id": flow_id})
+            assert response.status_code == 200
+            assert response.json()["enabled"] is validation_enabled
+            return response.json()["cached_node_ids"]
+
+        assert cached_nodes() == []
+        assert graph.run_graph().success
+        assert cached_nodes() == [1]
+
+        graph.flow_settings = graph.flow_settings.model_copy(update={"execution_location": "worker"})
+        assert cached_nodes() == []
+    finally:
+        flow_file_handler.delete_flow(flow_id)
+
+
 def test_endpoint_unknown_flow_returns_404():
     client = _get_test_client()
     response = client.get("/flow/settings_validation", params={"flow_id": 999999})
@@ -636,7 +672,7 @@ def test_endpoint_response_shape():
 
         graph.flow_settings.validate_settings = False
         response = client.get("/flow/settings_validation", params={"flow_id": flow_id})
-        assert response.json() == {"enabled": False, "nodes": []}
+        assert response.json() == {"enabled": False, "nodes": [], "cached_node_ids": []}
     finally:
         flow_file_handler.delete_flow(flow_id)
 
