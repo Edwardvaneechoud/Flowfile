@@ -341,7 +341,9 @@ class TableService:
             delta_table = DeltaTable(str(path))
             pa_schema = delta_table.schema().to_arrow()
             schema_list = [{"name": field.name, "dtype": str(field.type)} for field in pa_schema]
-            row_count = delta_table.to_pyarrow_dataset().count_rows()
+            from shared.delta_utils import delta_row_count
+
+            row_count = delta_row_count(delta_table)
             size_bytes = get_delta_table_size_bytes(path)
         else:
             dataset = ds.dataset(str(path), format="parquet")
