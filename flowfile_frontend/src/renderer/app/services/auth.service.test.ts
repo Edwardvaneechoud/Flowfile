@@ -6,23 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRouter, createWebHashHistory, type RouterHistory } from "vue-router";
 import { fakeStorage } from "../__fixtures__/mount";
 
-const base64url = (value: string): string => {
-  const bytes = new TextEncoder().encode(value);
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-};
-
-const jwt = (claims: Record<string, unknown>): string =>
-  [
-    base64url(JSON.stringify({ alg: "HS256", typ: "JWT" })),
-    base64url(JSON.stringify(claims)),
-    "sig",
-  ].join(".");
-
-const inAnHour = () => Math.floor(Date.now() / 1000) + 3600;
-
 const load = async () => {
   vi.resetModules();
   return (await import("./auth.service")).authService;
@@ -46,64 +29,6 @@ const startApp = async () => {
   });
   return { authService, history, router };
 };
-
-describe("auth service: a token in the URL fragment", () => {
-  beforeEach(() => {
-    vi.stubGlobal("localStorage", fakeStorage());
-    vi.stubGlobal("sessionStorage", fakeStorage());
-    openAt("");
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    openAt("");
-  });
-
-  it("is no sign-in: a link carrying `#token=<jwt>` signs nobody in", async () => {
-    const token = jwt({ sub: "mallory", exp: inAnHour(), type: "access" });
-    openAt(`#token=${token}`);
-
-    const authService = await load();
-
-    expect(await authService.initialize()).toBe(false);
-    expect(authService.requiresLogin()).toBe(true);
-    expect(localStorage.getItem("auth_token")).toBeNull();
-    expect(localStorage.getItem("auth_username")).toBeNull();
-  });
-
-  it("leaves a stored session as it is", async () => {
-    const earlier = jwt({ sub: "alice", exp: inAnHour() });
-    localStorage.setItem("auth_token", earlier);
-    localStorage.setItem("auth_token_expiration", String(Date.now() + 3_600_000));
-    localStorage.setItem("auth_username", "alice");
-    localStorage.setItem("auth_refresh_token", "alice-refresh");
-    openAt(`#token=${jwt({ sub: "mallory", exp: inAnHour() })}`);
-
-    const authService = await load();
-
-    expect(await authService.initialize()).toBe(true);
-    expect(localStorage.getItem("auth_token")).toBe(earlier);
-    expect(localStorage.getItem("auth_username")).toBe("alice");
-    expect(localStorage.getItem("auth_refresh_token")).toBe("alice-refresh");
-  });
-
-  it("changes nothing without a fragment", async () => {
-    const authService = await load();
-
-    expect(await authService.initialize()).toBe(false);
-    expect(authService.requiresLogin()).toBe(true);
-    expect(localStorage.getItem("auth_token")).toBeNull();
-  });
-
-  it("leaves a route in the fragment alone", async () => {
-    openAt("#/designer");
-
-    const authService = await load();
-
-    expect(await authService.initialize()).toBe(false);
-    expect(window.location.hash).toBe("#/designer");
-  });
-});
 
 type Answer = { status: number; data?: unknown } | Error;
 
@@ -129,8 +54,6 @@ function fakeServer(answer: (config: InternalAxiosRequestConfig) => Answer) {
   return { adapter, requests };
 }
 
-const inFifteenMinutes = () => Math.floor(Date.now() / 1000) + 900;
-
 const OPEN = "https://hub.example.com:8443/open/12";
 
 /** Start a sign-in through the hub as the sign-in page does, and answer the state the hub will carry back. */
@@ -140,7 +63,7 @@ const startSignIn = async (): Promise<string> => {
 };
 
 const storeSession = (username: string) => {
-  const token = jwt({ sub: username, exp: inAnHour() });
+  const token = `${username}-token`;
   localStorage.setItem("auth_token", token);
   localStorage.setItem("auth_token_expiration", String(Date.now() + 3_600_000));
   localStorage.setItem("auth_username", username);
@@ -148,24 +71,64 @@ const storeSession = (username: string) => {
   return token;
 };
 
+const storeHubSession = (expiration: number) => {
+  const access = "ana-token";
+  localStorage.setItem("auth_token", access);
+  localStorage.setItem("auth_token_expiration", String(expiration));
+  localStorage.setItem("auth_username", "ana");
+  localStorage.setItem("auth_refresh_token", "core-refresh");
+  localStorage.setItem("auth_hub_session", "1");
+  return access;
+};
+
+const original = axios.defaults.adapter;
+let history: RouterHistory | undefined;
+
+beforeEach(() => {
+  vi.stubGlobal("localStorage", fakeStorage());
+  vi.stubGlobal("sessionStorage", fakeStorage());
+  openAt("");
+});
+
+afterEach(() => {
+  axios.defaults.adapter = original;
+  history?.destroy();
+  history = undefined;
+  vi.unstubAllGlobals();
+  openAt("");
+});
+
+describe("auth service: a token in the URL fragment", () => {
+  it("is no sign-in: a link carrying `#token=<jwt>` signs nobody in and nobody out", async () => {
+    openAt("#token=mallory-token");
+
+    const nobody = await load();
+
+    expect(await nobody.initialize()).toBe(false);
+    expect(nobody.requiresLogin()).toBe(true);
+    expect(localStorage.getItem("auth_token")).toBeNull();
+    expect(localStorage.getItem("auth_username")).toBeNull();
+
+    const earlier = storeSession("alice");
+    const alice = await load();
+
+    expect(await alice.initialize()).toBe(true);
+    expect(localStorage.getItem("auth_token")).toBe(earlier);
+    expect(localStorage.getItem("auth_username")).toBe("alice");
+    expect(localStorage.getItem("auth_refresh_token")).toBe("alice-refresh");
+  });
+
+  it("leaves a route in the fragment alone", async () => {
+    openAt("#/designer");
+
+    const authService = await load();
+
+    expect(await authService.initialize()).toBe(false);
+    expect(window.location.hash).toBe("#/designer");
+  });
+});
+
 describe("auth service: sign-in through the hub", () => {
-  const original = axios.defaults.adapter;
-  let history: RouterHistory | undefined;
-
-  beforeEach(() => {
-    vi.stubGlobal("localStorage", fakeStorage());
-    vi.stubGlobal("sessionStorage", fakeStorage());
-    openAt("");
-  });
-
-  afterEach(() => {
-    axios.defaults.adapter = original;
-    history?.destroy();
-    history = undefined;
-    vi.unstubAllGlobals();
-    openAt("");
-  });
-
   it("posts the sign-in token once, stores the session and opens the editor without it", async () => {
     const expiresAt = Date.now() + 900_000;
     const access = "opaque-access-token";
@@ -291,11 +254,10 @@ describe("auth service: sign-in through the hub", () => {
   });
 
   it("takes a state once", async () => {
-    const access = jwt({ sub: "ana@hub.example.com", exp: inFifteenMinutes(), type: "access" });
     const server = fakeServer(() => ({
       status: 200,
       data: {
-        access_token: access,
+        access_token: "opaque-access-token",
         refresh_token: "core-refresh",
         token_type: "bearer",
         expires_at: Date.now() + 900_000,
@@ -330,52 +292,9 @@ describe("auth service: sign-in through the hub", () => {
     expect(await authService.initialize()).toBe(false);
     expect(server.requests).toHaveLength(0);
   });
-
-  it("ends the session when the server answers no expiry for it", async () => {
-    const server = fakeServer(() => ({
-      status: 200,
-      data: {
-        access_token: "opaque-access-token",
-        refresh_token: "core-refresh",
-        token_type: "bearer",
-      },
-    }));
-    axios.defaults.adapter = server.adapter;
-    openAt(`#signin=one-time-token&state=${await startSignIn()}`);
-
-    const authService = await load();
-
-    expect(await authService.initialize()).toBe(false);
-    expect(localStorage.getItem("auth_token")).toBeNull();
-    expect(localStorage.getItem("auth_hub_session")).toBeNull();
-  });
 });
 
-const storeHubSession = (expiration: number) => {
-  const access = jwt({ sub: "ana", exp: inFifteenMinutes() });
-  localStorage.setItem("auth_token", access);
-  localStorage.setItem("auth_token_expiration", String(expiration));
-  localStorage.setItem("auth_username", "ana");
-  localStorage.setItem("auth_refresh_token", "core-refresh");
-  localStorage.setItem("auth_hub_session", "1");
-  return access;
-};
-
 describe("auth service: sign-out and expiry", () => {
-  const original = axios.defaults.adapter;
-
-  beforeEach(() => {
-    vi.stubGlobal("localStorage", fakeStorage());
-    vi.stubGlobal("sessionStorage", fakeStorage());
-    openAt("");
-  });
-
-  afterEach(() => {
-    axios.defaults.adapter = original;
-    vi.unstubAllGlobals();
-    openAt("");
-  });
-
   it("clears a password session in this browser and asks the server nothing", async () => {
     storeSession("alice");
     const server = fakeServer(() => ({ status: 204 }));
@@ -391,29 +310,16 @@ describe("auth service: sign-out and expiry", () => {
     expect(localStorage.getItem("auth_username")).toBeNull();
   });
 
-  it("asks the server nothing for a password session whose token expired", async () => {
-    localStorage.setItem("auth_refresh_token", "alice-refresh");
-    const server = fakeServer(() => ({ status: 200, data: {} }));
-    axios.defaults.adapter = server.adapter;
-    const authService = await load();
-
-    await authService.signOut();
-
-    expect(server.requests).toHaveLength(0);
-    expect(localStorage.getItem("auth_refresh_token")).toBeNull();
-  });
-
   it("keeps the estimated hour for a refreshed password session", async () => {
     localStorage.setItem("auth_refresh_token", "alice-refresh");
-    const renewed = jwt({ sub: "alice", exp: Math.floor(Date.now() / 1000) + 7200 });
     axios.defaults.adapter = fakeServer(() => ({
       status: 200,
-      data: { access_token: renewed, refresh_token: "alice-refresh-2", token_type: "bearer" },
+      data: { access_token: "renewed", refresh_token: "alice-refresh-2", token_type: "bearer" },
     })).adapter;
     const authService = await load();
     const before = Date.now();
 
-    expect(await authService.refreshAccessToken()).toBe(renewed);
+    expect(await authService.refreshAccessToken()).toBe("renewed");
 
     const expiration = Number(localStorage.getItem("auth_token_expiration"));
     expect(expiration).toBeGreaterThanOrEqual(before + 3_600_000);

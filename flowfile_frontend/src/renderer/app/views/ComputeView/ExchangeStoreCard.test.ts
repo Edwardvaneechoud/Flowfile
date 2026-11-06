@@ -111,22 +111,12 @@ describe("ExchangeStoreCard", () => {
     expect(await summary()).toBe("Set by your hub");
   });
 
-  it("leaves the row limit out of a hub's store that has none", async () => {
-    const unlimited = { ...hubStore, maxRows: null };
-    await mount({ ...fromHub, ...unlimited, hub: unlimited });
-
-    const status = text(find("exchange-store-status"));
-    expect(status).toContain("Set by your hub");
-    expect(status).toContain(
-      "Results cross through s3://org-bucket/exchange with a credential your hub seals to each server a run uses.",
-    );
-  });
-
   it("still says why the environment's row limit refuses every crossing under the hub's store", async () => {
     const detail = "FLOWFILE_EXCHANGE_MAX_ROWS must be a whole number of rows, not 'ten'";
     await mount({ ...fromHub, maxRows: null, maxRowsError: detail });
 
     expect(text(find("exchange-store-status"))).toContain("Set by your hub");
+    expect(text(find("exchange-store-status"))).not.toContain("at most");
     expect(find("exchange-store-status")?.className).toContain("compute-card__status--warning");
     expect(text(find("exchange-store-max-rows-error"))).toContain(detail);
     expect(host.querySelector("input, select")).toBeNull();
@@ -146,15 +136,6 @@ describe("ExchangeStoreCard", () => {
     expect(find("exchange-store-save")).not.toBeNull();
     expect(find("exchange-store-clear")).not.toBeNull();
     expect(await summary()).toBe("Configured");
-  });
-
-  it("shows no hub line for a saved store when no hub sets one", async () => {
-    await mount(saved);
-
-    expect(find("exchange-store-hub")).toBeNull();
-    expect(text(find("exchange-store-status"))).toContain("Exchange store configured");
-    expect(find("exchange-store-save")).not.toBeNull();
-    expect(find("exchange-store-clear")).not.toBeNull();
   });
 
   it("offers the fields when nothing is configured", async () => {

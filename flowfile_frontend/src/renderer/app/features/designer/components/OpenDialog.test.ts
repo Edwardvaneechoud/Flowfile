@@ -71,7 +71,7 @@ const orders = {
   flow_uuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
   name: "orders",
   latest_version: 2,
-  author_name: null,
+  author_name: "Cal Jones",
 };
 const versions = [
   {
@@ -84,7 +84,7 @@ const versions = [
   {
     version: 1,
     author_id: 1,
-    author_name: null,
+    author_name: "Ada Lovelace",
     published_at: "2026-11-01T12:00:00Z",
     message: null,
   },
@@ -157,6 +157,7 @@ describe("OpenDialog's Hub tab", () => {
     expect(flows).toHaveLength(1);
     expect(text(flows[0])).toContain("orders");
     expect(text(flows[0])).toContain("v2");
+    expect(text(flows[0])).toContain("Cal Jones");
 
     await click(flows[0]);
 
@@ -167,26 +168,8 @@ describe("OpenDialog's Hub tab", () => {
     expect(text(rows[0])).toContain("v2");
     expect(text(rows[0])).toContain("user #7");
     expect(text(rows[0])).toContain("theirs");
-  });
-
-  it("names the authors of the flow's newest version and of each version when the hub sends their names", async () => {
-    mocks.listHubFlows.mockResolvedValue([{ ...orders, author_name: "Cal Jones" }]);
-    mocks.listHubFlowVersions.mockResolvedValue([
-      { ...versions[0], author_name: "Cal Jones" },
-      { ...versions[1], author_name: "Ada Lovelace" },
-    ]);
-    await mount(desktop);
-    await click(find("open-hub-tab"));
-    await click(find("pick-hub-namespace"));
-
-    const flow = host.querySelector('[data-testid="hub-open-flows"] .flow-row');
-    expect(text(flow)).toContain("Cal Jones");
-    await click(flow);
-
-    const rows = host.querySelectorAll('[data-testid="hub-open-versions"] .flow-row');
-    expect(text(rows[0])).toContain("Cal Jones");
     expect(text(rows[1])).toContain("Ada Lovelace");
-    expect(text(rows[0])).not.toContain("user #");
+    expect(text(rows[1])).not.toContain("user #");
   });
 
   it("opens the picked version through core and hands the flow's path on", async () => {

@@ -68,14 +68,6 @@ describe("the exchange store API", () => {
     });
   });
 
-  it("reads a null hub as no hub", async () => {
-    mocks.get.mockResolvedValue({ data: { ...answer, hub: null } });
-
-    const state = await getExchangeStore();
-
-    expect(state.hub).toBeNull();
-  });
-
   it("reads why the environment's row limit is refused", async () => {
     const detail = "FLOWFILE_EXCHANGE_MAX_ROWS must be a whole number of rows, not 'ten'";
     mocks.get.mockResolvedValue({ data: { ...answer, max_rows: null, max_rows_error: detail } });

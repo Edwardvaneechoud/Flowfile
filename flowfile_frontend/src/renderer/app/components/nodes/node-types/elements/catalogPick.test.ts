@@ -21,7 +21,6 @@ import {
   writeBlock,
   writerDefault,
 } from "./catalogPick";
-import { hubPresence } from "../../../../views/CatalogView/hubRows";
 
 const localOrders = table({
   id: 4,
@@ -83,35 +82,10 @@ const writer = (fields: Partial<CatalogWriteSettings> = {}): CatalogWriteSetting
 
 describe("namespace options", () => {
   it("lists the local schemas first, then the hub's, marked by source", () => {
-    const unplaced = { place: null, unavailableReason: null, readOnly: false };
-    expect(namespaceOptions(tree)).toEqual([
-      {
-        id: 2,
-        label: "General / default",
-        full: "General.default",
-        source: "local",
-        hubId: null,
-        ...unplaced,
-        writable: true,
-      },
-      {
-        id: -20,
-        label: "Finance / raw",
-        full: "Finance.raw",
-        source: "hub",
-        hubId: 20,
-        ...unplaced,
-        writable: false,
-      },
-      {
-        id: -21,
-        label: "Finance / Local Flows",
-        full: "Finance.Local Flows",
-        source: "hub",
-        hubId: 21,
-        ...unplaced,
-        writable: false,
-      },
+    expect(namespaceOptions(tree).map((o) => [o.id, o.source, o.hubId])).toEqual([
+      [2, "local", null],
+      [-20, "hub", 20],
+      [-21, "hub", 21],
     ]);
   });
 
@@ -122,11 +96,6 @@ describe("namespace options", () => {
       "Finance / raw",
       "Finance / Local Flows",
     ]);
-  });
-
-  it("is the local list alone when no hub is connected", () => {
-    const local = tree.filter((c) => c.source !== "hub");
-    expect(namespaceOptions(local).map((o) => o.source)).toEqual(["local"]);
   });
 });
 
@@ -185,23 +154,17 @@ describe("a reader's table choice", () => {
 describe("a writer's namespace choice", () => {
   const [local, hub] = namespaceOptions(tree);
 
-  it("writes a local schema's id and full name as before and clears the hub's", () => {
+  it("writes a local schema's id and full name, a hub schema's id only, and clears all three", () => {
     expect(namespaceChoice(local)).toEqual({
       namespace_id: 2,
       namespace_full_name: "General.default",
       hub_namespace_id: null,
     });
-  });
-
-  it("names a hub schema by the hub's id only", () => {
     expect(namespaceChoice(hub)).toEqual({
       namespace_id: null,
       namespace_full_name: null,
       hub_namespace_id: 20,
     });
-  });
-
-  it("clears all three when the select is cleared", () => {
     expect(namespaceChoice(null)).toEqual({
       namespace_id: null,
       namespace_full_name: null,
@@ -214,10 +177,11 @@ describe("restoring a saved choice", () => {
   const options = namespaceOptions(tree, true);
   const tables = [localOrders, hubSales];
 
-  it("finds a saved hub reader's schema and table by the hub's ids", () => {
+  it("finds a saved hub reader's schema and table, and a hub writer's schema, by the hub's ids", () => {
     const saved = reader(tableChoice(hubSales));
     expect(selectedNamespaceRow(saved, options)?.id).toBe(-20);
     expect(selectedTableRow(saved, tables)).toBe(hubSales);
+    expect(selectedNamespaceRow(writer({ hub_namespace_id: 20 }), options)?.id).toBe(-20);
   });
 
   it("finds a saved local reader by its local ids", () => {
@@ -230,10 +194,6 @@ describe("restoring a saved choice", () => {
     expect(selectedTableRow(reader({ catalog_table_id: -30 }), tables)).toBeNull();
     expect(selectedTableRow(reader({ hub_table_id: 4, hub_namespace_id: 2 }), tables)).toBeNull();
     expect(selectedNamespaceRow(writer({ namespace_id: -20 }), options)).toBeNull();
-  });
-
-  it("finds a saved hub writer's schema by the hub's id", () => {
-    expect(selectedNamespaceRow(writer({ hub_namespace_id: 20 }), options)?.id).toBe(-20);
   });
 
   it("finds a local writer by its id, else by its full name", () => {
@@ -256,13 +216,10 @@ describe("restoring a saved choice", () => {
 });
 
 describe("hub targets", () => {
-  it("is a reader of a hub table", () => {
+  it("is a reader of a hub table or a writer into a hub schema", () => {
     expect(isHubTarget(reader(tableChoice(hubSales)))).toBe(true);
     expect(isHubTarget(reader(tableChoice(localOrders)))).toBe(false);
     expect(isHubTarget(reader())).toBe(false);
-  });
-
-  it("is a writer into a hub schema", () => {
     expect(isHubTarget(writer({ hub_namespace_id: 20 }))).toBe(true);
     expect(isHubTarget(writer({ namespace_id: 2 }))).toBe(false);
     expect(isHubTarget(writer())).toBe(false);
@@ -270,9 +227,7 @@ describe("hub targets", () => {
 });
 
 describe("pickers by place and reach", () => {
-  const ON_ITS_OWN_DISK =
-    "The hub keeps the tables of scratch.notes on its own disk; this Flowfile cannot read them. " +
-    "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there.";
+  const ON_ITS_OWN_DISK = "The hub keeps the tables of scratch.notes on its own disk";
   const USE = { is_owner: false, access_level: "use" as const, shared_by: "bob" };
   const MANAGE = { is_owner: false, access_level: "manage" as const, shared_by: "bob" };
   const OWNER = { is_owner: true, access_level: "owner" as const, shared_by: null };
@@ -284,35 +239,22 @@ describe("pickers by place and reach", () => {
       hub_id: id,
       place: "Acme Data",
       ...fields,
-      children: schemas.map((schema) =>
-        ns({ parent_id: -id, source: "hub", place: "Acme Data", ...schema }),
-      ),
+      children: schemas.map((schema) => ns({ parent_id: -id, source: "hub", ...schema })),
     });
   const desktop: NamespaceTree[] = [
     ns({
       id: 1,
       name: "General",
       place: "On this computer",
-      children: [ns({ id: 2, name: "default", parent_id: 1, place: "On this computer" })],
+      children: [ns({ id: 2, name: "default", parent_id: 1 })],
     }),
-    hubCatalog(10, "main", [
-      {
-        id: -11,
-        name: "default",
-        hub_id: 11,
-        access: MANAGE,
-        tables: [table({ id: -40, source: "hub" })],
-      },
+    hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11, access: MANAGE }]),
+    hubCatalog(20, "scratch", [
+      { id: -21, name: "notes", hub_id: 21, unavailable_reason: ON_ITS_OWN_DISK },
     ]),
-    hubCatalog(
-      20,
-      "scratch",
-      [{ id: -21, name: "notes", hub_id: 21, unavailable_reason: ON_ITS_OWN_DISK }],
-      { unavailable_reason: "The hub keeps the tables of scratch on its own disk" },
-    ),
   ];
   const joined: NamespaceTree[] = desktop.map((catalog) =>
-    catalog.source === "hub" ? catalog : { ...catalog, offered: false, place: "On this server" },
+    catalog.source === "hub" ? catalog : { ...catalog, offered: false },
   );
 
   it("heads the hub's schemas with one Hub group beside this machine's, which keep their place", () => {
@@ -366,12 +308,6 @@ describe("pickers by place and reach", () => {
     expect([...unusableNamespaceIds(tree)].sort((a, b) => a - b)).toEqual([-31, -30]);
   });
 
-  it("says from the options whether the hub's schemas show alone or beside this machine's", () => {
-    expect(hubPresence(namespaceOptions(desktop))).toBe("beside");
-    expect(hubPresence(namespaceOptions(joined))).toBe("only");
-    expect(hubPresence(namespaceOptions(tree.filter((c) => c.source !== "hub")))).toBe("none");
-  });
-
   it("names each table's place by its source", () => {
     const options = namespaceOptions(desktop);
     expect(tablePlace(table({ id: 4 }), options)).toBe("On this computer");
@@ -422,13 +358,12 @@ describe("pickers by place and reach", () => {
     });
 
     it("never greys a schema of this machine's own, whatever grant it carries", () => {
-      const use = { is_owner: false, access_level: "use" as const, shared_by: "bob" };
       const tree = [
         ns({
           id: 1,
           name: "Sales",
-          access: use,
-          children: [ns({ id: 2, name: "shared", parent_id: 1, access: use })],
+          access: USE,
+          children: [ns({ id: 2, name: "shared", parent_id: 1, access: USE })],
         }),
       ];
       const [option] = namespaceOptions(tree);

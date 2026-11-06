@@ -51,23 +51,18 @@ const mount = async (namespace: NamespaceTree, hubPresence: HubPresence) => {
 };
 
 const badge = () => host.querySelector('[data-testid="hub-badge"]');
+const note = () => host.querySelector('[data-testid="hub-managed-note"]');
 
 describe("NamespaceDetailPanel", () => {
-  it("badges a hub catalog shown beside this machine's", async () => {
+  it("badges a hub catalog only beside this machine's, and none of this machine's own", async () => {
     await mount(hubCatalog, "beside");
-
     expect(badge()).not.toBeNull();
-    expect(host.querySelector('[data-testid="hub-managed-note"]')).not.toBeNull();
-  });
+    expect(note()).not.toBeNull();
 
-  it("badges nothing on a server whose every catalog is the hub's", async () => {
     await mount(hubCatalog, "only");
-
     expect(badge()).toBeNull();
-    expect(host.querySelector('[data-testid="hub-managed-note"]')).not.toBeNull();
-  });
+    expect(note()).not.toBeNull();
 
-  it("badges none of this machine's own, with or without a hub", async () => {
     await mount(catalog, "beside");
     expect(badge()).toBeNull();
 

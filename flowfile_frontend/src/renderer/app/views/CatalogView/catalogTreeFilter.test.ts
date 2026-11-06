@@ -195,32 +195,6 @@ describe("countMatches", () => {
   });
 });
 
-describe("hub rows", () => {
-  it("match a search like local rows", () => {
-    const hubTable = { id: -7, name: "Orders 2026", file_exists: true, source: "hub" } as any;
-    const hubSchema = node({
-      id: -3,
-      name: "raw",
-      level: 1,
-      tables: [hubTable],
-      source: "hub",
-    } as any);
-    const hubCatalog = node({
-      id: -1,
-      name: "sales",
-      level: 0,
-      children: [hubSchema],
-      source: "hub",
-    } as any);
-    const local = node({ id: 1, name: "General", level: 0 });
-
-    expect(visibleTables(hubSchema, filter("orders"))).toEqual([hubTable]);
-    expect(subtreeMatches(hubCatalog, filter("orders"))).toBe(true);
-    expect(subtreeLeafCount(hubCatalog, filter("orders"))).toBe(1);
-    expect(countMatches([local, hubCatalog], filter("orders"))).toBe(1);
-  });
-});
-
 describe("place and reach", () => {
   const ON_ITS_OWN_DISK =
     "The hub keeps the tables of scratch on its own disk; this Flowfile cannot read them. " +

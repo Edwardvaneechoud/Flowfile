@@ -64,16 +64,12 @@ const metaLabels = () =>
   Array.from(host.querySelectorAll(".meta-label")).map((el) => el.textContent?.trim());
 
 describe("TableDetailPanel", () => {
-  it("shows a local table its Read by card, as before", async () => {
+  it("shows a local table its Read by card, and a hub table none, whose flows are the hub's, and no Hub badge", async () => {
     await mount(localTable);
-
     expect(metaLabels()).toContain("Read by");
     expect(host.querySelector('[data-testid="hub-badge"]')).toBeNull();
-  });
 
-  it("shows a hub table no Hub badge and no Read by card, whose flows are the hub's", async () => {
     await mount(hubTable);
-
     expect(metaLabels()).not.toContain("Read by");
     expect(metaLabels()).not.toContain("Change tracking");
     expect(host.querySelector('[data-testid="hub-badge"]')).toBeNull();

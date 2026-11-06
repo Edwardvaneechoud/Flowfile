@@ -100,15 +100,6 @@ describe("LoginView", () => {
 
     expect(mocks.startHubSignIn).not.toHaveBeenCalled();
     expect(host.querySelector("form #username")).not.toBeNull();
-  });
-
-  it("asks for a username and password on a server that signs people in itself", async () => {
-    mocks.getSignInMethod.mockResolvedValue({ method: "password" });
-
-    await mount();
-
-    expect(host.querySelector("form #username")).not.toBeNull();
-    expect(host.querySelector("form input[type=password]")).not.toBeNull();
     expect(find("login-hub")).toBeNull();
   });
 

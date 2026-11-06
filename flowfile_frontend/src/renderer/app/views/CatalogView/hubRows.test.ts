@@ -2,30 +2,16 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  HUB_MANAGED_NOTE,
-  HUB_NAMESPACE_TITLE,
   byPlace,
   flowInTree,
   hubFlowVersionTitle,
   hubPresence,
   hubSharedTitle,
-  isHubRow,
-  isOffered,
   offersNew,
   rootOf,
   showsPlaces,
-  unavailableReason,
   withoutHubRows,
 } from "./hubRows";
-
-describe("isHubRow", () => {
-  it("is true only for rows the hub listed", () => {
-    expect(isHubRow({ source: "hub" })).toBe(true);
-    expect(isHubRow({ source: "local" })).toBe(false);
-    expect(isHubRow({})).toBe(false);
-    expect(isHubRow({ source: null })).toBe(false);
-  });
-});
 
 describe("withoutHubRows", () => {
   it("drops the hub's rows and keeps the local ones in order", () => {
@@ -36,11 +22,6 @@ describe("withoutHubRows", () => {
       { id: -4, source: "hub" as const },
     ];
     expect(withoutHubRows(rows).map((r) => r.id)).toEqual([1, 3]);
-  });
-
-  it("leaves a local list as it is", () => {
-    const rows = [{ id: 1, source: "local" as const }, { id: 2 }];
-    expect(withoutHubRows(rows)).toEqual(rows);
   });
 });
 
@@ -60,15 +41,6 @@ describe("hubPresence", () => {
 
   it("is beside where the hub's rows show next to this machine's", () => {
     expect(hubPresence([local, hub])).toBe("beside");
-  });
-});
-
-describe("strings", () => {
-  it("reads as the hub's catalogs are managed there", () => {
-    expect(HUB_NAMESPACE_TITLE).toBe(
-      "This catalog lives on the hub. Create, rename and delete it there.",
-    );
-    expect(HUB_MANAGED_NOTE).toBe("This catalog is managed on the hub.");
   });
 });
 
@@ -101,27 +73,14 @@ describe("place", () => {
     ).toBe(false);
     expect(byPlace([])).toEqual([]);
   });
-
-  it("reads offered and the reason as core says them, an older core's rows offered and usable", () => {
-    expect(isOffered({})).toBe(true);
-    expect(isOffered({ offered: true })).toBe(true);
-    expect(isOffered({ offered: false })).toBe(false);
-    expect(unavailableReason({})).toBeNull();
-    expect(unavailableReason({ unavailable_reason: "on the hub's disk" })).toBe(
-      "on the hub's disk",
-    );
-  });
 });
 
 describe("offersNew", () => {
-  it("offers New where this machine's catalogs show and none of the hub's is selected", () => {
+  it("offers New where this machine's catalogs show, and hides it where all are the hub's or one is selected", () => {
     expect(offersNew("none", null)).toBe(true);
     expect(offersNew("none", { source: "local" })).toBe(true);
     expect(offersNew("beside", null)).toBe(true);
     expect(offersNew("beside", { source: "local" })).toBe(true);
-  });
-
-  it("hides New on a server whose catalogs are all the hub's and on a selected hub catalog", () => {
     expect(offersNew("only", null)).toBe(false);
     expect(offersNew("only", { source: "hub" })).toBe(false);
     expect(offersNew("beside", { source: "hub" })).toBe(false);

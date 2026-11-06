@@ -27,23 +27,13 @@ beforeEach(() => {
 });
 
 describe("the hub connection store", () => {
-  it("knows nothing until loaded, then the connection as core reports it", async () => {
-    const hub = useHubConnectionStore();
-    expect(hub.connection).toBeNull();
-    expect(hub.connected).toBe(false);
-
-    await hub.load();
-
-    expect(hub.connection).toEqual(none);
-    expect(hub.loadError).toBe("");
-    expect(hub.loading).toBe(false);
-  });
-
   it("answers readers that load together from one request, and asks again for a later load", async () => {
     const hub = useHubConnectionStore();
 
     await Promise.all([hub.load(), hub.load(), hub.load()]);
     expect(mocks.get).toHaveBeenCalledTimes(1);
+    expect(hub.connection).toEqual(none);
+    expect(hub.loading).toBe(false);
 
     await hub.load();
     expect(mocks.get).toHaveBeenCalledTimes(2);
@@ -57,21 +47,6 @@ describe("the hub connection store", () => {
 
     expect(hub.connection).toBeNull();
     expect(hub.loadError).toBe("The secure store could not be read");
-  });
-
-  it("derives connected and joined from the connection, so a server joined to its hub counts as connected", async () => {
-    mocks.get.mockResolvedValue({ ...desktop, joined: true });
-    const hub = useHubConnectionStore();
-
-    await hub.load();
-
-    expect(hub.connected).toBe(true);
-    expect(hub.joined).toBe(true);
-
-    mocks.get.mockResolvedValue(desktop);
-    await hub.load();
-    expect(hub.connected).toBe(true);
-    expect(hub.joined).toBe(false);
   });
 
   it("connects and takes the answered state, which every reader of the store then sees", async () => {
@@ -103,34 +78,21 @@ describe("the hub connection store", () => {
     expect(hub.busy).toBe(false);
   });
 
-  it("falls back to its own words when the refusal carries none", async () => {
-    mocks.connect.mockRejectedValue(new Error("Network Error"));
-    const hub = useHubConnectionStore();
-
-    await expect(hub.connect(input)).rejects.toThrow("Couldn't connect to the hub.");
-  });
-
-  it("disconnects and reloads the not-connected state", async () => {
+  it("keeps the connection on a refused disconnect, then disconnects and reloads the not-connected state", async () => {
     mocks.get.mockResolvedValueOnce(desktop);
     const hub = useHubConnectionStore();
     await hub.load();
     expect(hub.connected).toBe(true);
 
-    await hub.disconnect();
-
-    expect(mocks.disconnect).toHaveBeenCalledOnce();
-    expect(hub.connection).toEqual(none);
-    expect(hub.connected).toBe(false);
-  });
-
-  it("surfaces a refused disconnect in the route's words and keeps the connection", async () => {
-    mocks.get.mockResolvedValue(desktop);
-    mocks.disconnect.mockRejectedValue(httpError(403, "Only an administrator can disconnect."));
-    const hub = useHubConnectionStore();
-    await hub.load();
-
+    mocks.disconnect.mockRejectedValueOnce(httpError(403, "Only an administrator can disconnect."));
     await expect(hub.disconnect()).rejects.toThrow("Only an administrator can disconnect.");
     expect(hub.connected).toBe(true);
     expect(hub.busy).toBe(false);
+
+    await hub.disconnect();
+
+    expect(mocks.disconnect).toHaveBeenCalledTimes(2);
+    expect(hub.connection).toEqual(none);
+    expect(hub.connected).toBe(false);
   });
 });

@@ -79,16 +79,12 @@ const withHub = [
 ];
 
 describe("filterSelectableNamespaces", () => {
-  it("drops a hub catalog and keeps the local ones", () => {
+  it("drops a hub catalog, a hub General too, and keeps the local ones", () => {
     const hubSales = fromHub(ns(-20, "sales", [ns(-21, "raw")]));
-    const filtered = filterSelectableNamespaces([...tree, hubSales]);
+    const filtered = filterSelectableNamespaces([...withHub, hubSales]);
     expect(filtered.map((n) => n.id)).toEqual([1, 4]);
     expect(filtered[0].children.map((c) => c.name)).toEqual(["default"]);
     expect(filtered[1].children.map((c) => c.name)).toEqual(["campaigns"]);
-  });
-
-  it("drops a hub General too, so only the local one is offered", () => {
-    expect(filterSelectableNamespaces(withHub).map((n) => n.id)).toEqual([1, 4]);
   });
 });
 

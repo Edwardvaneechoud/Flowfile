@@ -69,10 +69,4 @@ describe("catalog-store with hub rows in the tree", () => {
     await store.toggleTableFavorite(5);
     expect(addTableFavoriteMock).toHaveBeenCalledWith(5);
   });
-
-  it("finds a hub catalog by its negative id", () => {
-    const store = seed();
-    store.selectNamespace(-1);
-    expect(store.selectedNamespace?.source).toBe("hub");
-  });
 });

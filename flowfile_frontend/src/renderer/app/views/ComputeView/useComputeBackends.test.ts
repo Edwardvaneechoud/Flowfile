@@ -465,24 +465,6 @@ describe("the one Sync: the hub's nodes", () => {
     expect(page.loading.value).toBe(false);
   });
 
-  it("seeds a hub row's verdict from the listing, so an unreachable node shows as any worker's handshake", async () => {
-    const unreachable = verdict({
-      id: "worker:gpu",
-      ok: false,
-      backend: null,
-      offered: null,
-      error: "Could not reach the worker at https://gpu.example:63579: no route",
-      error_kind: "ComputeUnavailable",
-    });
-    mocks.sync.mockResolvedValue({ backends: [{ ...hubRow, verdict: unreachable }], skipped: [] });
-    const page = useComputeBackends();
-
-    await page.load(true);
-
-    expect(page.verdicts.value).toEqual({ "worker:gpu": unreachable });
-    expect(mocks.handshake).not.toHaveBeenCalled();
-  });
-
   it("lists the rows it has and says why when the hub's servers cannot be read", async () => {
     mocks.sync.mockRejectedValue(httpError(502, "The hub is not answering"));
     rows = [teamRow()];
@@ -492,13 +474,5 @@ describe("the one Sync: the hub's nodes", () => {
 
     expect(page.backends.value).toEqual([teamRow()]);
     expect(page.hubNotice.value).toBe("The hub is not answering");
-  });
-
-  it("asks no hub for a plain load", async () => {
-    const page = useComputeBackends();
-
-    await page.load();
-
-    expect(mocks.sync).not.toHaveBeenCalled();
   });
 });

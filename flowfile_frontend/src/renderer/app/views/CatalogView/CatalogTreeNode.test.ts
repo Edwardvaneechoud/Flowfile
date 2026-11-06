@@ -103,18 +103,15 @@ describe("CatalogTreeNode", () => {
     expect(storageBadges()).toBe(0);
   });
 
-  it("badges a hub catalog beside this machine's, never its schemas or tables", async () => {
+  it("badges a hub catalog beside this machine's, never its schemas or tables or this machine's", async () => {
     await mount(hub, "beside");
 
     expect(badges()).toBe(1);
     expect(host.querySelector(".tree-row [data-testid='hub-badge']")).not.toBeNull();
     expect(host.querySelector(".tree-table [data-testid='hub-badge']")).toBeNull();
     expect(storageBadges()).toBe(0);
-  });
 
-  it("leaves this machine's catalog unbadged beside the hub's", async () => {
     await mount(local, "beside");
-
     expect(badges()).toBe(0);
     expect(storageBadges()).toBe(1);
   });
@@ -151,14 +148,6 @@ describe("CatalogTreeNode", () => {
     expect(host.querySelector(".resource-badge")?.getAttribute("title")).toBe(
       "Shared by team:sales",
     );
-  });
-
-  it("lets a row's name keep its width only where the tree shows hub rows", async () => {
-    await mount(hub, "only");
-    expect(host.querySelector(".tree-row")?.classList.contains("keeps-name")).toBe(true);
-
-    await mount(local);
-    expect(host.querySelector(".tree-row")?.classList.contains("keeps-name")).toBe(false);
   });
 });
 
