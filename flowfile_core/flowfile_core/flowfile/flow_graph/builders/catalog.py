@@ -48,7 +48,7 @@ from flowfile_core.flowfile.flow_node.flow_node import (
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     validate_sql_query,
 )
-from flowfile_core.hub_client import catalog as hub_catalog
+from flowfile_core.hub_client import tables as hub_tables
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import (
     HistoryActionType,
@@ -66,22 +66,6 @@ def _filtered_frame(lf: pl.LazyFrame, row_filter: pl.Expr | None, backend: Compu
         return FlowDataEngine(plan)
     with _deferred(backend, plan) as ref:
         return FlowDataEngine(plan, schema=ref.schema)
-
-
-def _hub_reader_table(user_id: int | None, hub_table_id: int) -> dict:
-    """The hub's table ``hub_table_id`` as a reader takes it: a physical table on object storage.
-
-    Raises:
-        LookupError: The hub has no such table, does not answer, or this Flowfile is not connected to it.
-        ValueError: The hub keeps the table on its own disk, or it is a virtual table.
-    """
-    table = hub_catalog.table(user_id, hub_table_id)
-    if table.get("table_type", "physical") != "physical":
-        raise ValueError("A virtual table on the hub cannot be read from this Flowfile")
-    if not table.get("file_path") or not _is_cloud_uri(table["file_path"]):
-        namespace = hub_catalog.locate(user_id, table["namespace_id"]).full_name
-        raise ValueError(hub_catalog.on_own_disk(namespace))
-    return table
 
 
 class CatalogBuildersMixin(GraphMixinBase):
@@ -189,7 +173,7 @@ class CatalogBuildersMixin(GraphMixinBase):
         hub_table_id = node_catalog_reader.hub_table_id
         node_logger = self.flow_logger.get_node_logger(node_catalog_reader.node_id)
         try:
-            designed: dict | None = _hub_reader_table(user_id, hub_table_id)
+            designed: dict | None = hub_tables.readable(user_id, hub_table_id)
             unread = None
         except LookupError as e:
             designed, unread = None, str(e)
@@ -198,7 +182,7 @@ class CatalogBuildersMixin(GraphMixinBase):
         def _func() -> FlowDataEngine:
             if self.hub_vend is None:
                 raise ValueError("Run the flow to read a table on the hub")
-            table = designed or _hub_reader_table(user_id, hub_table_id)
+            table = designed or hub_tables.readable(user_id, hub_table_id)
             columns = {
                 column["name"]: cast_str_to_polars_type(column["dtype"]) for column in table.get("schema_columns") or ()
             }

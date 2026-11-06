@@ -36,7 +36,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import yaml
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
@@ -60,10 +60,12 @@ from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.hub_client import client, node_addresses, session
+from flowfile_core.hub_client import tables as hub_tables
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.routes.compute_backends import ComputeBackendOut, listed_backends
 from flowfile_core.routes.routes import get_flow_or_404
 from flowfile_core.schemas import schemas
+from flowfile_core.schemas.catalog_schema import CatalogTablePreview
 from shared._version import get_version
 from shared.storage_config import registered_flow_path, storage
 
@@ -571,3 +573,23 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     with open(flow_path, "w", encoding="utf-8") as f:
         yaml.dump(document.model_dump(mode="json"), f, default_flow_style=False, sort_keys=False, allow_unicode=True)
     return HubOpenOut(flow_path=flow_path)
+
+
+@router.get("/catalog/tables/{hub_table_id}/preview", summary="The first rows of a table in the hub's catalog")
+def hub_table_preview(
+    hub_table_id: int,
+    limit: int = Query(100, ge=1, le=10000),
+    current_user=Depends(get_current_active_user),
+) -> CatalogTablePreview:
+    """Preview a table the hub keeps, named by the hub's own id, as ``/catalog/tables/{id}/preview`` does a local one.
+
+    The hub vends one read of the table's namespace to this person and the rows are read on this machine's worker
+    (``hub_tables.preview``). Anything that stops it answers its sentence: 400 when the hub or the table says no, 502
+    when the worker could not read the rows.
+    """
+    try:
+        return hub_tables.preview(current_user.id, hub_table_id, limit)
+    except (LookupError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except ComputeError as e:
+        raise HTTPException(status_code=502, detail=f"This Flowfile could not read the table: {e}") from e

@@ -388,6 +388,13 @@ export class CatalogApi {
     return response.data;
   }
 
+  /** The first rows of a table in the hub's catalog, named by the hub's own id and read on this machine. */
+  static async getHubTablePreview(hubTableId: number, limit = 100): Promise<CatalogTablePreview> {
+    const url = `/hub_client/catalog/tables/${hubTableId}/preview`;
+    const response = await axios.get<CatalogTablePreview>(url, { params: { limit } });
+    return response.data;
+  }
+
   static async getTableHistory(tableId: number, limit?: number): Promise<DeltaTableHistory> {
     const url = `/catalog/tables/${tableId}/history`;
     const params: Record<string, any> = {};

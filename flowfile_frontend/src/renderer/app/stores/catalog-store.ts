@@ -581,7 +581,7 @@ export const useCatalogStore = defineStore("catalog", {
 
       if (tableId !== null) {
         this.selectedTable = found;
-        // Preview and history are local routes, and the hub refuses previews.
+        // A hub table's preview loads on demand, as an object-storage table's does; its history stays on the hub.
         if (hubRow) return;
         const isPhysical = this.selectedTable?.table_type !== "virtual";
         const isRemote = !!this.selectedTable?.is_remote_storage;
@@ -611,9 +611,16 @@ export const useCatalogStore = defineStore("catalog", {
     async loadTablePreview(tableId: number, limit = 100) {
       this.loadingTablePreview = true;
       this.previewError = null;
+      const table = this.findTableInTree(tableId);
+      const hubId = table && isHubRow(table) ? table.hub_id : null;
       try {
-        this.tablePreview = await CatalogApi.getTablePreview(tableId, limit, this.selectedVersion);
+        const preview =
+          hubId != null
+            ? await CatalogApi.getHubTablePreview(hubId, limit)
+            : await CatalogApi.getTablePreview(tableId, limit, this.selectedVersion);
+        if (this.selectedTableId === tableId) this.tablePreview = preview;
       } catch (e: any) {
+        if (this.selectedTableId !== tableId) return;
         this.tablePreview = null;
         this.previewError = e?.response?.data?.detail ?? "Failed to load preview.";
       } finally {

@@ -4,7 +4,6 @@ import { describe, it, expect } from "vitest";
 import {
   HUB_MANAGED_NOTE,
   HUB_NAMESPACE_TITLE,
-  HUB_PREVIEW_NOTE,
   byPlace,
   hubPresence,
   hubSharedTitle,
@@ -67,9 +66,6 @@ describe("strings", () => {
       "This catalog lives on the hub. Create, rename and delete it there.",
     );
     expect(HUB_MANAGED_NOTE).toBe("This catalog is managed on the hub.");
-    expect(HUB_PREVIEW_NOTE).toBe(
-      "Preview isn't available for tables on the hub. Read it with a catalog reader node.",
-    );
   });
 });
 

@@ -432,13 +432,7 @@
     </div>
 
     <!-- Data Preview -->
-    <div v-if="isHub" class="section">
-      <div class="section-header">
-        <h3>Data Preview</h3>
-      </div>
-      <div class="empty-state" data-testid="hub-preview-note">{{ HUB_PREVIEW_NOTE }}</div>
-    </div>
-    <div v-else class="section">
+    <div class="section">
       <div v-if="isViewingHistorical" class="version-banner">
         <i class="fa-solid fa-clock-rotate-left"></i>
         Viewing version {{ selectedVersion }}
@@ -452,7 +446,7 @@
           Showing {{ preview.rows.length }} of {{ preview.total_rows }} rows
         </span>
         <button
-          v-if="canEditData"
+          v-if="canEditData && !isHub"
           class="btn btn-sm btn-primary edit-data-btn"
           title="Edit table data (cells, rows, columns) in place"
           @click="showTableEditor = true"
@@ -495,11 +489,11 @@
           </tbody>
         </table>
       </div>
-      <div v-else-if="table.table_type === 'virtual'" class="empty-state">
+      <div v-else-if="table.table_type === 'virtual' && !isHub" class="empty-state">
         This is a virtual table, no data preview available. Use the SQL editor or a flow to view the
         data.
       </div>
-      <div v-else-if="table.is_remote_storage && !preview" class="empty-state">
+      <div v-else-if="(isHub || table.is_remote_storage) && !preview" class="empty-state">
         <el-button size="small" type="primary" @click="emit('loadPreview')">Load preview</el-button>
       </div>
       <div v-else class="empty-state">No data to preview.</div>
@@ -533,7 +527,7 @@ import TableEditorDialog from "./TableEditorDialog.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
-import { HUB_PREVIEW_NOTE, hubSharedTitle, isHubRow } from "./hubRows";
+import { hubSharedTitle, isHubRow } from "./hubRows";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
