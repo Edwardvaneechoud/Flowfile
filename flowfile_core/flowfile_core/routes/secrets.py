@@ -16,13 +16,13 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth import issuer_accounts, sharing
+from flowfile_core.auth import sharing
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import Secret, SecretInput
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 from flowfile_core.hub_client import secrets as hub_secrets
-from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
+from flowfile_core.routes._hub_forwarding import on_hub, through_hub
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import delete_secret as delete_secret_action
 from flowfile_core.secret_manager.secret_manager import store_secret
@@ -30,23 +30,6 @@ from flowfile_core.secret_manager.secret_manager import store_secret
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
-_PASSED_ON = (400, 404, 409, 422)
-
-
-def _on_hub() -> bool:
-    return issuer_accounts.joined_with_keys() is not None
-
-
-def _through_hub(call, *args):
-    """``call(*args)`` against the hub; its refusal as this route's answer, with the hub's own sentence."""
-    try:
-        return call(*args)
-    except LookupError as e:
-        raise HTTPException(status_code=401, detail=str(e)) from None
-    except HubRefused as e:
-        raise HTTPException(status_code=e.status if e.status in _PASSED_ON else 502, detail=e.detail) from None
-    except (HubUnreachable, HubVersionRefused) as e:
-        raise HTTPException(status_code=502, detail=str(e)) from None
 
 
 def _project_sync_secret(user_id: int) -> None:
@@ -78,8 +61,8 @@ def get_secrets(current_user=Depends(get_current_active_user), db: Session = Dep
     Returns:
         A list of `Secret` objects, each containing the name and encrypted value.
     """
-    if _on_hub():
-        return _through_hub(hub_secrets.listed, current_user.id)
+    if on_hub():
+        return through_hub(hub_secrets.listed, current_user.id)
     user_id = current_user.id
 
     db_secrets = db.query(db_models.Secret).filter(db_models.Secret.user_id == user_id).all()
@@ -120,8 +103,8 @@ def create_secret(
     Returns:
         A `Secret` object containing the name and the *encrypted* value.
     """
-    if _on_hub():
-        return _through_hub(hub_secrets.create, current_user.id, secret.name, secret.value.get_secret_value())
+    if on_hub():
+        return through_hub(hub_secrets.create, current_user.id, secret.name, secret.value.get_secret_value())
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
     existing_secret = (
@@ -164,8 +147,8 @@ def get_secret(
     Returns:
         A `Secret` object containing the name and encrypted value.
     """
-    if _on_hub():
-        return _through_hub(hub_secrets.found, current_user.id, secret_name)
+    if on_hub():
+        return through_hub(hub_secrets.found, current_user.id, secret_name)
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
     db_secret = (
@@ -207,8 +190,8 @@ def delete_secret(
     Returns:
         An empty response with a 204 No Content status code upon success.
     """
-    if _on_hub():
-        _through_hub(hub_secrets.remove, current_user.id, secret_name)
+    if on_hub():
+        through_hub(hub_secrets.remove, current_user.id, secret_name)
         return None
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
     delete_secret_action(db, secret_name, user_id)
@@ -225,6 +208,6 @@ def change_secret(
     Only on a server joined to its hub with keys of its own; anywhere else this route
     does not exist (405), as before.
     """
-    if not _on_hub():
+    if not on_hub():
         raise HTTPException(status_code=405, detail="Method Not Allowed")
-    return _through_hub(hub_secrets.change, current_user.id, secret_name, value.get_secret_value())
+    return through_hub(hub_secrets.change, current_user.id, secret_name, value.get_secret_value())

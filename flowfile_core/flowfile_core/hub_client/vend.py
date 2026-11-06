@@ -15,7 +15,9 @@ key with no server of the hub either, so a run that places a hub-table step on o
 map on unopened: a read's plan scans through a Python source that opens it where the plan runs, a write's connection
 carries it, and the exchange store's crossings send it (``SealedCredential``). Such a vend also names the secrets the
 run's steps on those servers use (``secrets``), and the hub answers each sealed the same way: a step carries
-``sealed_secrets``' strings in place of its ``$ffsec$`` ciphertext, and the server that runs it opens them.
+``sealed_secrets``' strings in place of its ``$ffsec$`` ciphertext, and the server that runs it opens them. It
+names the stored connections those steps use as well (``connections``, a kind and a name each), which the hub keeps
+for a server joined with keys and answers sealed the same way (``sealed_connections``).
 """
 
 from collections.abc import Iterable, Mapping
@@ -68,7 +70,8 @@ class RunVend:
 
     ``bases`` is the storage root of each hub namespace id the run names, ``names`` its ``catalog.schema`` name.
     ``targets`` are the hub servers the vend was sealed to; empty for a vend the run's own worker opens with core's
-    master key. ``secrets`` maps each secret name the run asked for to its map of node name to sealed token.
+    master key. ``secrets`` maps each secret name the run asked for to its map of node name to sealed token, and
+    ``connections`` each ``(kind, name)`` of a stored connection to its map.
     """
 
     run_id: str
@@ -78,10 +81,15 @@ class RunVend:
     names: dict[int, str]
     targets: tuple[str, ...] = ()
     secrets: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
+    connections: dict[tuple[str, str], dict[str, str]] = field(default_factory=dict, repr=False)
 
     def sealed_secrets(self, names: Iterable[str]) -> dict[str, str]:
         """Each of ``names`` the hub sealed to this run, as the string a step carries in place of its ciphertext."""
         return {name: hub_sealed.sealed_secret(name, self.secrets[name]) for name in names if name in self.secrets}
+
+    def sealed_connections(self, refs: Iterable[tuple[str, str]]) -> dict[tuple[str, str], dict[str, str]]:
+        """The sealed map of each ``(kind, name)`` of ``refs`` the hub sealed to this run."""
+        return {ref: dict(self.connections[ref]) for ref in refs if ref in self.connections}
 
     @property
     def sealed(self) -> bool:
@@ -191,6 +199,7 @@ def request(
     targets: Iterable[str] = (),
     exchange: bool = False,
     secrets: Iterable[str] = (),
+    connections: Iterable[tuple[str, str]] = (),
 ) -> RunVend:
     """Ask the hub, through ``user_id``'s hub session, for the credentials of a run over its tables.
 
@@ -199,13 +208,15 @@ def request(
     with the sentence the catalog tree marks it with (``catalog.unreachable``), which says what to do. A run with no
     namespace walks nothing. ``exchange`` also asks for the organisation's exchange store; ``targets``, the hub names
     of the servers the run's steps use, has the hub seal every credential to each of them, and ``secrets``, the names
-    of the secrets the run's steps on those servers use, each such secret too.
+    of the secrets the run's steps on those servers use, each such secret too, and ``connections``, the ``(kind,
+    name)`` of the stored connections they use, each such connection.
 
     Raises:
         LookupError: A sentence for the user: not connected to the hub, a namespace the hub keeps on its own disk or
             on other storage, the hub's refusal with its reason, or a hub that does not answer.
     """
     secrets = tuple(dict.fromkeys(secrets))
+    connections = tuple(dict.fromkeys(connections))
     try:
         hub_url, access_token = catalog.signed_in(user_id)
         found = catalog.namespaces(hub_url, access_token) if readers | writers else {}
@@ -230,6 +241,7 @@ def request(
             targets=targets,
             exchange=exchange,
             secrets=secrets,
+            connections=connections,
         )
     except HubRefused as e:
         if e.status == 401:
@@ -255,6 +267,11 @@ def request(
         names=names,
         targets=targets,
         secrets={secret["name"]: dict(secret["sealed"]) for secret in answer.get("secrets", []) if secrets},
+        connections={
+            (stored["kind"], stored["name"]): dict(stored["sealed"])
+            for stored in answer.get("connections", [])
+            if connections
+        },
     )
 
 

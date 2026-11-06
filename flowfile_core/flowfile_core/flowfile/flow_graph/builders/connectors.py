@@ -4,6 +4,7 @@ import threading
 
 from fastapi.exceptions import HTTPException
 
+from flowfile_core.auth import issuer_accounts
 from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.database.connection import get_db_context
@@ -45,6 +46,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 )
 from flowfile_core.kafka.connection_manager import (
     build_consumer_config,
+    consumer_config_of,
     get_kafka_connection,
     get_kafka_connection_by_name,
 )
@@ -113,8 +115,14 @@ def _resolve_database_credentials(
 
 def _step_database_credentials(database_settings, user_id: int, resolved) -> tuple:
     """The connection and password a database step carries: ``resolved()``'s, the password sealed by the hub when the
-    step runs on another server of the hub (``run_secrets``), so an inline password need not exist on this server."""
+    step runs on another server of the hub (``run_secrets``), so an inline password need not exist on this server, nor
+    a stored connection the hub keeps."""
     if run_secrets.active():
+        if database_settings.connection_mode == "reference":
+            name = database_settings.database_connection_name
+            sealed = run_secrets.connection_secret("database", name, "password")
+            if sealed is not None:
+                return resolved()[0], sealed
         sealed = run_secrets.sealed(run_secrets.database_secret_name(database_settings, user_id))
         if sealed is not None and database_settings.connection_mode == "inline":
             return database_settings.database_connection, sealed
@@ -129,9 +137,36 @@ def _step_kafka_settings(read_settings: KafkaReadSettings, kafka_settings, user_
     server of the hub (``run_secrets``); the offsets are committed here with ``read_settings`` as they are."""
     if not run_secrets.active():
         return read_settings
+    name = kafka_settings.kafka_connection_name
+    if run_secrets.sealed_connection("kafka", name) is not None:
+        fields = [field for field in ("sasl_password", "ssl_key_pem") if getattr(read_settings, field)]
+        return read_settings.model_copy(
+            update={field: run_secrets.connection_secret("kafka", name, field) for field in fields}
+        )
     names = run_secrets.kafka_secret_names(kafka_settings, user_id)
     sealed = {field: run_secrets.sealed(name) for field, name in names.items() if run_secrets.sealed(name)}
     return read_settings.model_copy(update=sealed) if sealed else read_settings
+
+
+def _kafka_consumer_config(kafka_settings, user_id: int) -> dict:
+    """The consumer config of a Kafka source's stored connection, its secrets encrypted: by id, else by name, from
+    this server's database; on a server joined to its hub with keys of its own, by name from the hub."""
+    if issuer_accounts.joined_with_keys() is not None:
+        from flowfile_core.hub_client import connections as hub_connections
+
+        name = kafka_settings.kafka_connection_name
+        connection = hub_connections.kafka_here(user_id, name) if name else None
+        if connection is None:
+            raise HTTPException(status_code=400, detail="Kafka connection not found")
+        return consumer_config_of(connection, user_id)
+    with get_db_context() as db:
+        db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, user_id)
+        if db_conn is None:
+            if kafka_settings.kafka_connection_name:
+                db_conn = get_kafka_connection_by_name(db, kafka_settings.kafka_connection_name, user_id)
+            if db_conn is None:
+                raise HTTPException(status_code=400, detail="Kafka connection not found")
+        return build_consumer_config(db, db_conn, user_id)
 
 
 class ConnectorBuildersMixin(GraphMixinBase):
@@ -315,18 +350,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
         def _get_kafka_read_settings() -> KafkaReadSettings:
             with _read_settings_lock:
                 if "v" not in _read_settings:
-                    with get_db_context() as db:
-                        db_conn = get_kafka_connection(
-                            db, kafka_settings.kafka_connection_id, node_kafka_source.user_id
-                        )
-                        if db_conn is None:
-                            if kafka_settings.kafka_connection_name:
-                                db_conn = get_kafka_connection_by_name(
-                                    db, kafka_settings.kafka_connection_name, node_kafka_source.user_id
-                                )
-                            if db_conn is None:
-                                raise HTTPException(status_code=400, detail="Kafka connection not found")
-                        consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
+                    consumer_config = _kafka_consumer_config(kafka_settings, node_kafka_source.user_id)
                     _read_settings["v"] = KafkaReadSettings.from_consumer_config(
                         consumer_config,
                         topic=kafka_settings.topic_name,

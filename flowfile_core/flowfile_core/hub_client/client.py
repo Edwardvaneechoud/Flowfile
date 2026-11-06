@@ -209,6 +209,7 @@ def vend(
     targets: list[str] | tuple[str, ...] = (),
     exchange: bool = False,
     secrets: list[str] | tuple[str, ...] = (),
+    connections: list[tuple[str, str]] | tuple[tuple[str, str], ...] = (),
     http: httpx.Client | None = None,
 ) -> dict:
     """A credential for each storage root the namespaces live under, for the run ``run_id``; the hub records the vend.
@@ -221,6 +222,8 @@ def vend(
     caller may not run on, or that is disabled, is the hub's 403, one unknown, removed or without keys its 422. Without
     targets the body is the one an older hub takes. ``secrets``, secret names, needs ``targets``: the answer's
     ``secrets`` holds each name with its ``sealed`` map, and a name the caller cannot reach is the hub's 403.
+    ``connections``, ``(kind, name)`` pairs of stored connections (``cloud``, ``kafka``, ``database``), needs
+    ``targets`` too: the answer's ``connections`` holds each with its ``kind``, ``name`` and ``sealed`` map.
     """
     request = {
         "run_id": run_id,
@@ -233,6 +236,8 @@ def vend(
         request["targets"] = list(targets)
     if secrets:
         request["secrets"] = list(secrets)
+    if connections:
+        request["connections"] = [{"kind": kind, "name": name} for kind, name in connections]
     body = _request("POST", url, "/hub/vend", http, json=request, headers=_bearer(access_token))
     _require(body, ("vend_id",), url, "/hub/vend")
     credentials = body.get("credentials")
@@ -255,6 +260,18 @@ def vend(
             for secret in answered
         )
         and set(secrets) <= {secret.get("name") for secret in answered}
+    ):
+        raise HubRefused(200, f"{url} did not answer /hub/vend as a Flowfile hub does.")
+    stored = body.get("connections", [])
+    if connections and not (
+        isinstance(stored, list)
+        and all(
+            isinstance(connection, dict)
+            and isinstance(connection.get("sealed"), dict)
+            and set(targets) <= set(connection["sealed"])
+            for connection in stored
+        )
+        and set(connections) <= {(connection.get("kind"), connection.get("name")) for connection in stored}
     ):
         raise HubRefused(200, f"{url} did not answer /hub/vend as a Flowfile hub does.")
     return body

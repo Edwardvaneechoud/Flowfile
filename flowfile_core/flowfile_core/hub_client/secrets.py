@@ -4,8 +4,8 @@ The Secrets page's routes forward to the hub's own ``/secrets`` routes with the 
 (``listed``, ``found``, ``create``, ``change``, ``remove``), so nothing of them is written to this server's database
 and sharing stays on the hub's pages. A lookup by name asks the hub's vend for the secret sealed to this server itself
 (``sealed_here``), which this server's core and worker open with its own key, as a server of the hub opens what is
-sealed to it. A named secret this server's database held before it joined stays there, unused; a secret a stored
-connection or setting holds stays here with it. The order a name resolves in is the hub's.
+sealed to it. A named secret this server's database held before it joined stays there, unused; a stored connection
+lives on the hub with its secrets (``hub_client.connections``). The order a name resolves in is the hub's.
 
 Requests log method, path and status only, never a body, a value or a token.
 """

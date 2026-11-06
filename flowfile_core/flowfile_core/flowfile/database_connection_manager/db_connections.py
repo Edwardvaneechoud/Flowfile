@@ -176,7 +176,26 @@ def get_database_connection_schema(db: Session, connection_name: str, user_id: i
     return None
 
 
+def _joined_with_keys() -> bool:
+    from flowfile_core.auth import issuer_accounts
+
+    return issuer_accounts.joined_with_keys() is not None
+
+
 def get_local_database_connection(connection_name: str, user_id: int) -> FullDatabaseConnection | None:
+    """The database connection ``connection_name`` a step of ``user_id`` uses, its password encrypted.
+
+    On a server joined to its hub with keys of its own every stored connection lives on the hub, which resolves the
+    name for the person and seals it to this server (``hub_client.connections.database_here``); elsewhere it is this
+    server's own, else one granted to the user.
+
+    Raises:
+        LookupError: On a joined server, the hub could not be asked or refused for another reason.
+    """
+    if _joined_with_keys():
+        from flowfile_core.hub_client import connections as hub_connections
+
+        return hub_connections.database_here(user_id, connection_name)
     with get_db_context() as db:
         return get_database_connection_schema(db, connection_name, user_id)
 
@@ -190,7 +209,17 @@ def get_local_cloud_connection(connection_name: str, user_id: int) -> FullCloudS
 
     Returns:
         FullCloudStorageConnection | None: The cloud storage connection schema if found, otherwise None.
+
+    On a server joined to its hub with keys of its own the connection is the hub's for the person, sealed to this
+    server (``hub_client.connections.cloud_here``).
+
+    Raises:
+        LookupError: On a joined server, the hub could not be asked or refused for another reason.
     """
+    if _joined_with_keys():
+        from flowfile_core.hub_client import connections as hub_connections
+
+        return hub_connections.cloud_here(user_id, connection_name)
     with get_db_context() as db:
         return get_cloud_connection_schema(db, connection_name, user_id)
 
