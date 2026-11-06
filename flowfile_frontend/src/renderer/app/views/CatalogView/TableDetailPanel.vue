@@ -31,7 +31,17 @@
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
-      <div v-if="!isHub" class="header-actions">
+      <div v-if="isHub" class="header-actions">
+        <button
+          class="action-btn-lg"
+          data-testid="hub-query-table"
+          @click="emit('queryTable', table.qualified_name ?? table.full_table_name ?? table.name)"
+        >
+          <i class="fa-solid fa-code"></i>
+          Query table
+        </button>
+      </div>
+      <div v-else class="header-actions">
         <button
           class="action-btn-lg"
           :disabled="!table.file_exists"

@@ -26,6 +26,7 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_resolve_virtual_table,
 )
+from flowfile_core.hub_client import tables as hub_tables
 from flowfile_core.schemas.catalog_schema import SqlQueryResult
 from shared import storage_config
 from shared._version import get_version
@@ -80,7 +81,8 @@ class SqlService:
         """Execute a SQL query against catalog tables (physical + virtual) via the worker.
 
         ``accessible_table_ids`` (multi-user mode) restricts the registered tables
-        to those the user may read.
+        to those the user may read. A query that names tables of the person's hub is
+        run over those instead (``hub_tables.sql``).
         """
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
@@ -97,6 +99,10 @@ class SqlService:
         queryable = {*delta_map, *virtual_map}
 
         cloud_aliases = virtual_tables.resolve_cloud_only_table_aliases(accessible_table_ids, exclude=queryable)
+        own = queryable | set(cloud_aliases)
+        on_hub = hub_tables.named(user_id, query, own)
+        if on_hub:
+            return hub_tables.sql(user_id, query, on_hub, own, max_rows)
         if cloud_aliases:
             # Collapse dotted references (any quoting) so detection matches regardless of form.
             detect_query = rewrite_qualified_references(query, queryable | set(cloud_aliases))
