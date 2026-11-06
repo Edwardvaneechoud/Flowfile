@@ -73,6 +73,10 @@ class RunVend:
     master key. ``secrets`` maps each secret name the run asked for to its map of node name to sealed token,
     ``connections`` each ``(kind, name)`` of a stored connection to its map, and ``connection_fields`` each to the
     names of the secret fields the hub says it holds.
+
+    ``own`` is the unsealed vend of the same run that a machine which is no server of the hub asks beside a sealed one,
+    for the steps on the hub's tables that run on the worker beside its core: a table on the hub reads and writes on
+    whichever machine its step runs (``here``).
     """
 
     run_id: str
@@ -84,6 +88,7 @@ class RunVend:
     secrets: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
     connections: dict[tuple[str, str], dict[str, str]] = field(default_factory=dict, repr=False)
     connection_fields: dict[tuple[str, str], tuple[str, ...]] = field(default_factory=dict, repr=False)
+    own: "RunVend | None" = field(default=None, repr=False)
 
     def sealed_secrets(self, names: Iterable[str]) -> dict[str, str]:
         """Each of ``names`` the hub sealed to this run, as the string a step carries in place of its ciphertext."""
@@ -101,6 +106,20 @@ class RunVend:
     def sealed(self) -> bool:
         """Whether the hub sealed this vend to its target servers, so no credential holds options here."""
         return bool(self.targets)
+
+    def sealed_for(self, backend_id: str) -> bool:
+        """Whether a step on ``backend_id`` opens this run's credentials sealed: the vend is sealed, and the backend
+        is not this machine's own worker with an unsealed vend of its own (``own``)."""
+        return self.sealed and (self.own is None or node_name(backend_id) is not None)
+
+    def here(self) -> "RunVend":
+        """The vend the step running now opens: this one, or ``own`` when the step runs on this machine's own worker
+        and the run holds an unsealed vend for it."""
+        from flowfile_core.flowfile.execution.context import current_context
+
+        if self.own is None or self.sealed_for(current_context().backend_id):
+            return self
+        return self.own
 
     def sealed_credential(self, uri: str) -> SealedCredential:
         """The sealed map of the credential for ``uri``, as an export, an import or a write's connection sends it.
@@ -134,11 +153,13 @@ class RunVend:
 
         Unsealed, the plan carries the options without their secrets and the secrets encrypted for ``user_id``
         (``scan_kwargs``). Sealed, core knows no option of the store, not even its endpoint, so the plan reads the table
-        through a Python source that opens the map where the plan runs, with ``schema`` as its columns.
+        through a Python source that opens the map where the plan runs, with ``schema`` as its columns. Which of the
+        two is the vend of the step running now (``here``).
         """
-        if self.sealed:
-            return hub_sealed.scan_delta_sealed(uri, self.sealed_credential(uri).sealed, schema)
-        return pl.scan_delta(uri, **self.scan_kwargs(uri, user_id))
+        here = self.here()
+        if here.sealed:
+            return hub_sealed.scan_delta_sealed(uri, here.sealed_credential(uri).sealed, schema)
+        return pl.scan_delta(uri, **here.scan_kwargs(uri, user_id))
 
     def for_namespace(self, hub_namespace_id: int) -> HubCredential:
         """The credential for the tables of the hub namespace ``hub_namespace_id``.
@@ -176,16 +197,17 @@ class RunVend:
         Raises:
             ValueError: The credential is for storage other than S3.
         """
-        credential = self.for_uri(uri)
+        here = self.here()
+        credential = here.for_uri(uri)
         scheme = catalog.scheme(credential.base_uri)
         if scheme != "s3":
             raise ValueError(catalog.other_scheme(scheme))
-        if self.sealed:
+        if here.sealed:
             return FullCloudStorageConnectionWorkerInterface(
                 storage_type="s3",
                 auth_method="access_key",
                 connection_name=None,
-                sealed=self.sealed_credential(uri).sealed,
+                sealed=here.sealed_credential(uri).sealed,
             )
         options = credential.storage_options
         fields: dict = {name: options[name] for name in _S3_FIELDS if options.get(name)}

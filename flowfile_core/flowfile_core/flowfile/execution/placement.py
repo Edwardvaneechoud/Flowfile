@@ -511,7 +511,7 @@ def _own_reasons(
                 f"it {'writes' if hub[1] else 'reads'} a table on the hub with a credential the hub vends to this run, "
                 "which this backend cannot take"
             )
-    elif hub is not None and flow.hub_vend is not None and flow.hub_vend.sealed:
+    elif hub is not None and flow.hub_vend is not None and flow.hub_vend.sealed_for(backend_id):
         unsealed = unsealed_for(backend_id, capabilities, flow.hub_vend.targets)
         if unsealed is not None:
             reasons.append(f"it {'writes' if hub[1] else 'reads'} a table on the hub, but {unsealed}")

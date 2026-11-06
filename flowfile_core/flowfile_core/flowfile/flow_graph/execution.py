@@ -1865,12 +1865,15 @@ class ExecutionMixin(GraphMixinBase):
         from the hub), or when the run's store is the hub's (``ExchangeRun.vended``), its nodes may go to more than
         one backend (``_may_cross``) and one of them is a server of the hub. It is sealed to the server of every step
         and hub-table node, and with the store to every server of the hub the run names, the fallback, and this server
-        when it is one, which removes the run's prefix. On a machine that is no server of the hub, its own worker takes
-        the store unsealed instead (``ExchangeRun.own``). Otherwise ``((), exchange, [])``: an unsealed vend, which the
-        run's own worker opens with the master key it shares with core. The nodes are those whose credential is sealed.
+        when it is one, which removes the run's prefix. On a machine that is no server of the hub, a backend that is
+        none of the hub's servers is the worker beside its core, which takes the store and its hub tables from an
+        unsealed vend of its own instead (``ExchangeRun.own``, ``RunVend.own``). Otherwise ``((), exchange, [])``: an
+        unsealed vend, which the run's own worker opens with the master key it shares with core. The nodes are those
+        whose credential is sealed.
 
         Raises:
-            LookupError: A backend that must open a sealed credential is no server of the hub; the sentence names it.
+            LookupError: On a server of the hub, a backend that must open a sealed credential is no server of the
+                hub; the sentence names it.
         """
         policy = self._run_policy(exchange_run)
         steps = [node for node in steps if node not in hub_nodes]
@@ -1884,7 +1887,6 @@ class ExecutionMixin(GraphMixinBase):
         if not steps and not on_other_server and not crosses_hub:
             return (), exchange, []
         backends = dict.fromkeys(policy.backend_for(node) for node in [*hub_nodes, *steps])
-        opened_sealed = set(backends)
         sealed_nodes = [*hub_nodes, *steps]
         if exchange:
             backends.update(run_backends)
@@ -1896,7 +1898,7 @@ class ExecutionMixin(GraphMixinBase):
             name = vend.node_name(backend_id)
             if name is not None:
                 targets.append(name)
-            elif backend_id in opened_sealed or here_is_hub_server:
+            elif here_is_hub_server:
                 raise LookupError(
                     f'The hub seals this run\'s credentials to the servers it runs on, and backend "{backend_id}" is '
                     "not one of the hub's servers; run the flow on a server of the hub"
@@ -1916,8 +1918,10 @@ class ExecutionMixin(GraphMixinBase):
         (``_moved`` found no server, or no exchange store carries its rows back) is refused with one sentence saying
         which. The vend is sealed to the hub servers the run's steps use (``_seal_targets``): the secrets and
         connections they name are held in ``sealed_secret_steps`` and ``sealed_connection_steps``, and the store's
-        credential in ``exchange_run.sealed``. A machine that is no server of the hub also takes the store for the
-        worker beside its core (``exchange_run.own``), in an unsealed vend of its own when the run's is sealed.
+        credential in ``exchange_run.sealed``. A machine that is no server of the hub also takes, in an unsealed vend
+        of its own when the run's is sealed (``RunVend.own``), the store for the worker beside its core
+        (``exchange_run.own``) and the credentials of the hub tables its steps there read and write, so a table on the
+        hub is read on whichever machine its step runs.
         Answers each refused node with its sentence when the hub cannot be asked or refuses, else ``None``.
         """
         self.last_hub_vend = None
@@ -1949,7 +1953,8 @@ class ExecutionMixin(GraphMixinBase):
         writers = {hub[node.node_id][0] for node in hub_nodes if hub[node.node_id][1]}
         names = {name for secret_names, _ in steps.values() for name in secret_names}
         refs = {ref for _, connection_refs in steps.values() for ref in connection_refs}
-        own_store = exchange and vend.node_name(registry.WORKER_BACKEND_ID) is None
+        on_hub_server = vend.node_name(registry.WORKER_BACKEND_ID) is not None
+        beside = [node for node in hub_nodes if vend.node_name(policy.backend_for(node)) is None]
         try:
             self.hub_vend = vend.request(
                 user_id,
@@ -1963,10 +1968,17 @@ class ExecutionMixin(GraphMixinBase):
             )
             if exchange and targets:
                 exchange_run.sealed = self.hub_vend.sealed_credential(exchange_run.hub_store.uri)
-            if own_store:
-                unsealed = self.hub_vend
-                if targets:
-                    unsealed = vend.request(user_id, exchange_run.run_id, set(), set(), exchange=True)
+            if targets and not on_hub_server and (beside or exchange):
+                own = vend.request(
+                    user_id,
+                    exchange_run.run_id,
+                    {hub[node.node_id][0] for node in beside if not hub[node.node_id][1]},
+                    {hub[node.node_id][0] for node in beside if hub[node.node_id][1]},
+                    exchange=exchange,
+                )
+                self.hub_vend = replace(self.hub_vend, own=own)
+            if exchange and not on_hub_server:
+                unsealed = self.hub_vend.own or self.hub_vend
                 exchange_run.own = unsealed.encrypted_credential(exchange_run.hub_store.uri, user_id)
         except LookupError as e:
             return [(node, str(e)) for node in sealed_nodes or hub_nodes or list(steps)]
