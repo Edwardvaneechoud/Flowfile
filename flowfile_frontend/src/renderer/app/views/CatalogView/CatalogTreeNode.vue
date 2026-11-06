@@ -442,9 +442,7 @@ const sectionCount = (count: number) => (quiet.value ? undefined : count);
 // Why this Flowfile cannot use a hub catalog's tables; the row shows only under "Show unavailable".
 const reason = computed(() => unavailableReason(props.node));
 
-// A hub table is browsed only, so it gets no context menu.
 function onTableContextMenu(table: CatalogTable, event: MouseEvent) {
-  if (isHubRow(table)) return;
   emit("tableContextMenu", { table, x: event.clientX, y: event.clientY });
 }
 

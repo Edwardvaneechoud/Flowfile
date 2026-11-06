@@ -643,12 +643,15 @@ import { useResourceSharing } from "../../composables/useResourceSharing";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import {
   byPlace,
+  HUB_TABLE_ACTIONS,
   hubPresence as hubPresenceOf,
+  isHubRow,
   isOffered,
   offersNew,
   showsPlaces,
   withoutHubRows,
 } from "./hubRows";
+import { tableChoice } from "../../components/nodes/node-types/elements/catalogPick";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import { useRecentFlows } from "../../composables/useRecentFlows";
 import { countMatches, normalizeQuery, shownNamespaces } from "./catalogTreeFilter";
@@ -893,7 +896,7 @@ const vizEditorSource = ref<VizSourceDescriptor | null>(null);
 
 // Right-click context menu for catalog tables
 const tableMenu = ref<{ table: CatalogTable; x: number; y: number } | null>(null);
-const tableMenuOptions: ContextMenuOption[] = [
+const TABLE_MENU_OPTIONS: ContextMenuOption[] = [
   { label: "View table", action: "view" },
   { label: "Use in flow", action: "read" },
   { label: "Insert into notebook", action: "notebook" },
@@ -901,6 +904,11 @@ const tableMenuOptions: ContextMenuOption[] = [
   { label: "Create visual", action: "visuals" },
   { label: "Copy reference", action: "copy" },
 ];
+const tableMenuOptions = computed<ContextMenuOption[]>(() =>
+  tableMenu.value && isHubRow(tableMenu.value.table)
+    ? TABLE_MENU_OPTIONS.filter((option) => HUB_TABLE_ACTIONS.has(option.action))
+    : TABLE_MENU_OPTIONS,
+);
 
 // Right-click context menu for catalog models (artifacts)
 const artifactMenu = ref<{ artifact: GlobalArtifact; x: number; y: number } | null>(null);
@@ -1144,6 +1152,17 @@ const NEW_FLOW_NODE_POSITION = { x: 200, y: 200 };
 // Spin up a fresh flow whose only node is a catalog reader pre-configured for the
 // given table, then open it in the designer. Mirrors the setting_input the
 // CatalogReader node persists for a configured table (is_setup: true).
+// A hub table is named by the hub's own ids, as the reader's picker writes it.
+function readerTarget(table: CatalogTable) {
+  if (isHubRow(table)) return tableChoice(table);
+  return {
+    catalog_table_id: table.id,
+    catalog_table_name: table.name,
+    catalog_full_table_name: null,
+    catalog_namespace_id: table.namespace_id,
+  };
+}
+
 async function createReadInFlow(table: CatalogTable) {
   try {
     const flowId = await FlowApi.createFlow(null, null, null, false);
@@ -1151,10 +1170,7 @@ async function createReadInFlow(table: CatalogTable) {
       flowId,
       "Add catalog_reader node",
       addConfiguredNodeOperations(flowId, 1, "catalog_reader", NEW_FLOW_NODE_POSITION, {
-        catalog_table_id: table.id,
-        catalog_table_name: table.name,
-        catalog_full_table_name: null,
-        catalog_namespace_id: table.namespace_id,
+        ...readerTarget(table),
         delta_version: null,
         sql_query: null,
         cache_results: false,
