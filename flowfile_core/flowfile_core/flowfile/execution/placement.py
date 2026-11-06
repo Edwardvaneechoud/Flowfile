@@ -141,16 +141,23 @@ class MixedPlacementPolicy:
     A node type its builder pins to a backend (``_PINNED_BACKENDS``) is placed there whatever its setting says. A saved
     id is taken as it is, ``local`` included; one the registry does not know is refused when the run is placed. A node
     the backend it is placed on cannot run goes to ``fallback_id`` when that backend can run it, a pinned type never.
+
+    ``moved`` maps a node id to the hub server's backend a step that uses a hub connection or secret runs on instead,
+    when the backend its settings name is no server of the hub: only a hub server opens what the hub seals, so the run
+    moves the step there and its output crosses back like any other (``ExecutionMixin._moved``).
     """
 
     backend_id: str
     fallback_id: str | None = None
+    moved: Mapping[int | str, str] = field(default_factory=dict, compare=False)
 
     def backend_for(self, node: FlowNode) -> str:
         """The id of the backend ``node`` runs on."""
         pinned = _PINNED_BACKENDS.get(node.node_type)
         if pinned is not None:
             return pinned
+        if node.node_id in self.moved:
+            return self.moved[node.node_id]
         location = node.setting_input.execution_location
         return self.backend_id if location == "auto" else location
 
@@ -633,6 +640,8 @@ def _child_refusals(
         with ephemeral_flow_graph(resolved.path, bound.user_id) as child:
             child._subflow_depth = depth
             child_policy = dataclasses.replace(policy, backend_id=backend_id)
+            if isinstance(child_policy, MixedPlacementPolicy):
+                child_policy = dataclasses.replace(child_policy, moved={})
             nodes = _child_run_nodes(child, bound, forwarded)
             placement = place(child, backends, child_policy, nodes=nodes, absent=absent, log=log)
     except Exception as e:

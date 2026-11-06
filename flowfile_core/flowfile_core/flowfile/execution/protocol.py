@@ -160,8 +160,26 @@ class SealedCredential:
         return f"SealedCredential({self.base_uri!r}, nodes={sorted(self.sealed)!r})"
 
 
-Credential: TypeAlias = CredentialRef | SealedCredential
-"""A credential an export, an import or the exchange store crosses with: a stored connection or a sealed vend."""
+@dataclass(frozen=True, repr=False)
+class EncryptedCredential:
+    """What a hub vended to a run for the storage under ``base_uri``, for the worker beside this core.
+
+    ``options`` hold no secret; ``encrypted`` is the secrets as a ``$ffsec$`` ciphertext, which that worker opens with
+    the master key it shares with core, as it opens a scan's (``EncryptedCredentialProvider``). A machine that is no
+    server of the hub crosses with it, since nothing can be sealed to it.
+    """
+
+    base_uri: str
+    options: dict[str, str]
+    encrypted: str
+
+    def __repr__(self) -> str:
+        return f"EncryptedCredential({self.base_uri!r})"
+
+
+Credential: TypeAlias = CredentialRef | SealedCredential | EncryptedCredential
+"""A credential an export, an import or the exchange store crosses with: a stored connection, a sealed vend, or a
+vend encrypted for the worker beside core."""
 
 
 class OperationKind(enum.Enum):

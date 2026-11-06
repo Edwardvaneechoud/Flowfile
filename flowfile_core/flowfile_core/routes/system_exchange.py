@@ -20,7 +20,7 @@ from flowfile_core.auth.jwt import get_current_admin_user
 from flowfile_core.auth.models import User
 from flowfile_core.configs import exchange_config
 from flowfile_core.configs.exchange_config import ExchangeConfig
-from flowfile_core.hub_client.exchange_store import joined_server_store
+from flowfile_core.hub_client.exchange_store import hub_store
 
 router = APIRouter()
 
@@ -74,8 +74,8 @@ def _eligible_connections() -> list[str]:
 
 
 def _hub_store(user: User) -> ExchangeConfig | None:
-    """The store this server's hub sets, asked with the admin's hub session on a server joined with keys of its own."""
-    return joined_server_store(user.id)
+    """The store this machine's hub sets, asked with the admin's hub session."""
+    return hub_store(user.id)
 
 
 def _state(hub: ExchangeConfig | None = None) -> ExchangeStoreState:

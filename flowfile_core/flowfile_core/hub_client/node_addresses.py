@@ -96,6 +96,40 @@ def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tu
     return synced, skipped
 
 
+def server_for(user_id: int) -> str | None:
+    """The backend id of the hub server a step of ``user_id`` moves to when the backend its settings name is no server
+    of the hub: the hub's default server when the person may run on it, else the first server the hub lists for them;
+    ``None`` when the person has no hub session, the hub lists them no server, or it cannot be read.
+
+    The hub lists a person only the enabled servers they may run on. The server's row is written when it has none yet
+    (``sync_nodes``), so the run reaches it. On a hub server whose own name the hub answers, that is this server's
+    ``worker``.
+    """
+    stored = session.load(user_id)
+    if stored is None:
+        return None
+    try:
+        token = session.access_token(user_id)
+        if token is None:
+            return None
+        nodes = [node for node in client.list_compute_nodes(stored["hub_url"], token) if node["enabled"]]
+    except _UNREAD as e:
+        logger.warning("Could not read %s's servers to move a step to one: %s", stored["hub_url"], e)
+        return None
+    if not nodes:
+        return None
+    node = next((node for node in nodes if node.get("is_default")), nodes[0])
+    if node["name"] == hub_node.resolved().name:
+        return registry.WORKER_BACKEND_ID
+    backend_id = registry.CONFIGURED_WORKER_PREFIX + node["name"]
+    with get_db_context() as db:
+        if db.get(ConfiguredBackend, backend_id) is None:
+            _sync_for(db, user_id, "to move a step to one")
+            if db.get(ConfiguredBackend, backend_id) is None:
+                return None
+    return backend_id
+
+
 def _sync_for(db: Session, user_id: int, when: str) -> bool:
     """``sync_nodes`` with the hub session of ``user_id``, best effort; whether the hub's list was read.
 

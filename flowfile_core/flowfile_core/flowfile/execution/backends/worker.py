@@ -78,6 +78,7 @@ from flowfile_core.flowfile.execution.payloads import (
 )
 from flowfile_core.flowfile.execution.protocol import (
     Credential,
+    EncryptedCredential,
     JobHandle,
     JobStatus,
     OperationKind,
@@ -1687,11 +1688,14 @@ def _credential_kwargs(credential: Credential | None) -> dict[str, Any]:
 
 def _wire_credential(credential: Credential | None) -> dict[str, Any] | None:
     """A credential as the export and import bodies and the export task carry it: the connection's id and its user's,
-    or a sealed vend's whole map of node name to token, of which the node that runs it opens its own entry."""
+    a sealed vend's whole map of node name to token, of which the node that runs it opens its own entry, or a vend's
+    plain options and its secrets as the ciphertext the worker beside core opens."""
     if credential is None:
         return None
     if isinstance(credential, SealedCredential):
         return {"sealed": dict(credential.sealed)}
+    if isinstance(credential, EncryptedCredential):
+        return {"options": dict(credential.options), "encrypted": credential.encrypted}
     return asdict(credential)
 
 

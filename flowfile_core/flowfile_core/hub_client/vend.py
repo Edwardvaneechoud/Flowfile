@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 import polars as pl
 from pydantic import SecretStr
 
-from flowfile_core.flowfile.execution.protocol import SealedCredential
+from flowfile_core.flowfile.execution.protocol import EncryptedCredential, SealedCredential
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.hub_client import catalog, client
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
@@ -112,6 +112,22 @@ class RunVend:
         if not credential.sealed:
             raise LookupError(f"The hub sealed this run no credential for {uri}")
         return SealedCredential(base_uri=credential.base_uri, sealed=dict(credential.sealed))
+
+    def encrypted_credential(self, uri: str, user_id: int | None) -> EncryptedCredential:
+        """The unsealed credential for ``uri`` as an export or an import on the worker beside this core takes it: its
+        options without their secrets, and the secrets encrypted for ``user_id`` as a scan's are (``scan_kwargs``).
+
+        Raises:
+            LookupError: No credential of this run covers ``uri``.
+        """
+        credential = self.for_uri(uri)
+        kwargs = self.scan_kwargs(uri, user_id)
+        provider = kwargs.get("credential_provider")
+        return EncryptedCredential(
+            base_uri=credential.base_uri,
+            options=dict(kwargs.get("storage_options") or {}),
+            encrypted=provider.encrypted_credentials if provider is not None else "",
+        )
 
     def scan_delta(self, uri: str, user_id: int | None, schema: Mapping[str, pl.DataType]) -> pl.LazyFrame:
         """A lazy scan of the Delta table at ``uri`` with the run's credential, its plan holding no secret.

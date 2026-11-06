@@ -224,11 +224,19 @@ class SealedCredentialBody(WireModel):
     sealed: dict[str, str] = Field(min_length=1)
 
 
+class EncryptedCredentialBody(WireModel):
+    """A credential a hub vended to a run of the core this worker runs beside: the options that hold no secret, and
+    the secrets as a ``$ffsec$`` ciphertext this worker opens with the master key it shares with that core."""
+
+    options: dict[str, str]
+    encrypted: str
+
+
 class ExportBody(WireModel):
     """Where ``export`` writes the result, and the stored connection or sealed credential the target needs."""
 
     uri: str
-    credential: CredentialRefBody | SealedCredentialBody | None = None
+    credential: CredentialRefBody | SealedCredentialBody | EncryptedCredentialBody | None = None
 
 
 class ImportBody(WireModel):
@@ -239,7 +247,7 @@ class ImportBody(WireModel):
     """
 
     uri: str
-    credential: CredentialRefBody | SealedCredentialBody | None = None
+    credential: CredentialRefBody | SealedCredentialBody | EncryptedCredentialBody | None = None
     columns: list[WireColumn]
     row_count: int | None = None
     kind: Literal["table", "blob"] = "table"

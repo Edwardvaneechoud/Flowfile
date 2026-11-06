@@ -2,9 +2,11 @@
 
 ``FLOWFILE_EXCHANGE_URI`` names its ``s3://`` root and ``FLOWFILE_EXCHANGE_CONNECTION`` the stored cloud connection
 that opens it, else the store saved from the Backends page (``exchange_config.effective_store``). The connection is the
-operator's, never a node's user's, and reaches a backend as a ``CredentialRef``. On a server joined to its hub with keys
-of its own, while neither names a store, the hub's store is opened by what the hub vends the run sealed to each server
-its steps run on (``ExchangeRun.sealed``), a ``SealedCredential`` each backend sends whole. A run writes under
+operator's, never a node's user's, and reaches a backend as a ``CredentialRef``. On a machine signed in to a hub, while
+neither names a store, the hub's store is opened by what the hub vends the run: sealed to each of the hub's servers its
+steps run on (``ExchangeRun.sealed``, a ``SealedCredential`` each such backend sends whole), and for a machine that is
+no server of the hub also encrypted for the worker beside its core (``ExchangeRun.own``, an ``EncryptedCredential``).
+Each side of a crossing takes the form its own worker opens (``credential_for``). A run writes under
 ``<uri>/<flow id>/<run id>/``, which ``run_graph`` removes when the run ends.
 """
 
@@ -15,8 +17,17 @@ from urllib.parse import urlsplit
 
 from flowfile_core.configs import exchange_config
 from flowfile_core.configs.exchange_config import ExchangeConfig
-from flowfile_core.flowfile.execution.protocol import Credential, CredentialRef, SealedCredential
-from shared.cloud_credential_provider import credential_ref_kwargs, resolve_credential_ref
+from flowfile_core.flowfile.execution.protocol import (
+    Credential,
+    CredentialRef,
+    EncryptedCredential,
+    SealedCredential,
+)
+from shared.cloud_credential_provider import (
+    EncryptedCredentialProvider,
+    credential_ref_kwargs,
+    resolve_credential_ref,
+)
 from shared.cloud_storage.storage_options import build_s3_client
 
 NOT_VENDED = "the hub vended this run no credential for its exchange store; run the flow again"
@@ -74,8 +85,10 @@ class ExchangeRun:
     """One run's prefix in the exchange store, ``<uri>/<flow id>/<run id>/``, and its removal when the run ends.
 
     The run looks the store up once, on the first ``prefix`` that finds one, and answers that store after; ``collect``
-    removes the run's prefix from it. ``hub_store`` is the store a joined server's hub set for this run, if any, which
-    applies, with its row limit, while neither the environment nor the saved store names one.
+    removes the run's prefix from it. ``hub_store`` is the store this machine's hub set for this run, if any, which
+    applies, with its row limit, while neither the environment nor the saved store names one. ``hub_steps`` and
+    ``moved`` are the run's own notes on its steps that use a hub connection or secret and the hub server each moved to
+    (``ExecutionMixin._hub_steps``, ``_moved``), read once per run.
     """
 
     def __init__(self, flow_id: int, run_id: str, hub_store: ExchangeConfig | None = None):
@@ -83,6 +96,10 @@ class ExchangeRun:
         self.run_id = run_id
         self.hub_store = hub_store
         self.sealed: SealedCredential | None = None
+        self.own: EncryptedCredential | None = None
+        self.hub_steps: dict | None = None
+        self.moved: dict | None = None
+        self.unmoved: str | None = None
         self._store: ExchangeStore | None = None
 
     def vended(self) -> bool:
@@ -99,14 +116,27 @@ class ExchangeRun:
                 and the hub vended this run no credential for it (``NOT_VENDED``).
         """
         if self._store is None and self.vended():
-            if self.sealed is None:
+            credential = self.own or self.sealed
+            if credential is None:
                 raise ValueError(NOT_VENDED)
-            self._store = ExchangeStore(uri=self.hub_store.uri.rstrip("/"), credential=self.sealed)
+            self._store = ExchangeStore(uri=self.hub_store.uri.rstrip("/"), credential=credential)
         if self._store is None:
             self._store = exchange_store()
         if self._store is None:
             return None
         return self._prefix(self._store), self._store.credential
+
+    def credential_for(self, backend_id: str) -> Credential | None:
+        """The store's credential as ``backend_id`` takes it for its side of a crossing: what the hub sealed to its
+        server when it is one of the vend's targets, else what this machine's own worker opens; ``None`` before
+        ``prefix`` found a store."""
+        from flowfile_core.hub_client import vend
+
+        if self._store is None:
+            return None
+        if self.sealed is not None and vend.node_name(backend_id) in self.sealed.sealed:
+            return self.sealed
+        return self.own or self._store.credential
 
     def max_rows(self) -> int | None:
         """The most rows an input may cross with in this run; ``None`` for no limit.
@@ -129,10 +159,11 @@ class ExchangeRun:
 def remove_prefix(store: ExchangeStore, prefix: str) -> None:
     """Delete every object under *prefix*, an ``s3://`` URI in *store*, resolving its connection as core does.
 
-    A sealed credential is opened with this server's own entry of the map: the vend always seals the exchange to the
-    server core runs on, which removes the run's prefix. Each listed page is deleted in one request, so an empty prefix
-    costs only the listing. Path-style addressing applies only to a connection with its own endpoint (MinIO and other
-    S3-compatible stores).
+    A sealed credential is opened with this server's own entry of the map: on a server of the hub the vend always
+    seals the exchange to the server core runs on, which removes the run's prefix. A machine that is no server of the
+    hub holds the store's keys encrypted for its own worker, and core opens those. Each listed page is deleted in one
+    request, so an empty prefix costs only the listing. Path-style addressing applies only to a connection with its
+    own endpoint (MinIO and other S3-compatible stores).
 
     Raises:
         OSError: The store refused to delete an object; the message names how many and the first reason.
@@ -142,6 +173,9 @@ def remove_prefix(store: ExchangeStore, prefix: str) -> None:
         from shared.hub_sealed import sealed_storage_options
 
         client = build_s3_client(sealed_storage_options(store.credential.sealed), path_style=True)
+    elif isinstance(store.credential, EncryptedCredential):
+        keys = EncryptedCredentialProvider(store.credential.encrypted)()[0] if store.credential.encrypted else {}
+        client = build_s3_client({**store.credential.options, **keys}, path_style=True)
     else:
         connection_id, user_id = store.credential.connection_id, store.credential.user_id
         options = credential_ref_kwargs(connection_id, user_id).get("storage_options", {})

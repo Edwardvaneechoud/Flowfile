@@ -199,7 +199,8 @@ def credential_body_kwargs(credential: Mapping[str, Any] | None) -> dict[str, An
 
     ``None`` takes nothing; ``{"connection_id", "user_id"}`` is a stored connection (``credential_ref_kwargs``);
     ``{"sealed": {<node>: <token>}}`` is what a hub vended and sealed to the nodes of a run, opened with this node's
-    key (``shared.hub_sealed.sealed_scan_kwargs``).
+    key (``shared.hub_sealed.sealed_scan_kwargs``); ``{"options", "encrypted"}`` is what a hub vended to the core this
+    process runs beside, its secrets a ciphertext opened where the sink or scan runs (``EncryptedCredentialProvider``).
 
     Raises:
         CredentialResolutionError: The catalog could not be read, or the sealed credential could not be opened.
@@ -210,6 +211,11 @@ def credential_body_kwargs(credential: Mapping[str, Any] | None) -> dict[str, An
         from shared.hub_sealed import sealed_scan_kwargs
 
         return sealed_scan_kwargs(credential["sealed"])
+    if "encrypted" in credential:
+        kwargs: dict[str, Any] = {"storage_options": dict(credential["options"])}
+        if credential["encrypted"]:
+            kwargs["credential_provider"] = EncryptedCredentialProvider(credential["encrypted"])
+        return kwargs
     return credential_ref_kwargs(credential["connection_id"], credential["user_id"])
 
 
