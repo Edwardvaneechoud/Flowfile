@@ -16,7 +16,7 @@ from functools import wraps
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -70,6 +70,7 @@ from flowfile_core.fileExplorer import validate_path_under_cwd
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.hub_client import catalog as hub_catalog
+from flowfile_core.hub_client import tables as hub_tables
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
@@ -820,12 +821,21 @@ def refresh_table_metadata(
     )
 
 
+def _kernel_owner(x_kernel_id: str | None, current_user) -> int | None:
+    """The person a kernel's request acts as, for what only a person may read: the owner
+    ``get_user_or_internal_service`` found for ``X-Kernel-Id``; ``None`` for any other caller."""
+    if not x_kernel_id or current_user.username == "_internal_service":
+        return None
+    return current_user.id
+
+
 @router.get("/tables/resolve", response_model=ResolveTableResult)
 @handle_catalog_exceptions()
 def resolve_table(
     q: str,
     namespace_id: int | None = None,
     strict: bool = False,
+    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
@@ -833,13 +843,22 @@ def resolve_table(
 
     Strict mode raises ``AmbiguousTableError`` (→ 409) when a bare name matches >1 row.
     Default mode soft-picks deterministically and reports alternatives in ``warnings``.
+    A name this machine's catalog does not hold is looked up, for a kernel, among the tables of its owner's hub
+    (``hub_tables.for_notebook``).
     """
-    table_out, warnings = service.resolve_table_out(
-        q,
-        default_namespace_id=namespace_id,
-        strict=strict,
-        user_id=current_user.id,
-    )
+    try:
+        table_out, warnings = service.resolve_table_out(
+            q,
+            default_namespace_id=namespace_id,
+            strict=strict,
+            user_id=current_user.id,
+        )
+    except (TableNotFoundError, NamespaceNotFoundError):
+        owner = _kernel_owner(x_kernel_id, current_user)
+        on_hub = hub_tables.for_notebook(owner, q) if owner is not None else None
+        if on_hub is None:
+            raise
+        return ResolveTableResult(table=on_hub)
     return ResolveTableResult(table=table_out, warnings=warnings)
 
 
@@ -905,6 +924,7 @@ def get_table_preview(
 @handle_catalog_exceptions()
 def materialize_table(
     table_id: int,
+    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
@@ -913,8 +933,15 @@ def materialize_table(
     Resolves the view (SQL, optimized plan, or producer re-run), has the
     worker collect it to an Arrow IPC file under the kernel-shared volume,
     and returns the host path. Used by ``flowfile_ctx.read_catalog_table``
-    for views; physical tables are rejected with 400.
+    for views; physical tables are rejected with 400. A negative id is a
+    table of the hub (``resolve_table``), written the same way for the
+    kernel's owner (``hub_tables.snapshot``); any other caller gets 403.
     """
+    if table_id < 0:
+        owner = _kernel_owner(x_kernel_id, current_user)
+        if owner is None:
+            raise HTTPException(403, "A table on the hub is read as a person, through a kernel of theirs")
+        return hub_tables.snapshot(owner, -table_id)
     return service.materialize_table(table_id, user_id=current_user.id)
 
 

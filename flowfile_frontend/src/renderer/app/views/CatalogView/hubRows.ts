@@ -6,19 +6,6 @@ export const HUB_MANAGED_NOTE = "This catalog is managed on the hub.";
 
 export const isHubRow = (row: { source?: string | null }): boolean => row.source === "hub";
 
-/**
- * The right-click actions a hub table offers: its panel, a new flow that reads it, a query in the SQL editor, a visual
- * on such a query and its name for one. The notebook finds a table by its name in this machine's own catalog, where
- * a hub table is not listed.
- */
-export const HUB_TABLE_ACTIONS: ReadonlySet<string> = new Set([
-  "view",
-  "read",
-  "sql",
-  "visuals",
-  "copy",
-]);
-
 interface PlacedRow {
   place?: string | null;
   offered?: boolean;

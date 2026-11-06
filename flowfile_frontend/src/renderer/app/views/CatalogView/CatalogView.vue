@@ -643,7 +643,6 @@ import { useResourceSharing } from "../../composables/useResourceSharing";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import {
   byPlace,
-  HUB_TABLE_ACTIONS,
   hubPresence as hubPresenceOf,
   isHubRow,
   isOffered,
@@ -896,7 +895,7 @@ const vizEditorSource = ref<VizSourceDescriptor | null>(null);
 
 // Right-click context menu for catalog tables
 const tableMenu = ref<{ table: CatalogTable; x: number; y: number } | null>(null);
-const TABLE_MENU_OPTIONS: ContextMenuOption[] = [
+const tableMenuOptions: ContextMenuOption[] = [
   { label: "View table", action: "view" },
   { label: "Use in flow", action: "read" },
   { label: "Insert into notebook", action: "notebook" },
@@ -904,11 +903,6 @@ const TABLE_MENU_OPTIONS: ContextMenuOption[] = [
   { label: "Create visual", action: "visuals" },
   { label: "Copy reference", action: "copy" },
 ];
-const tableMenuOptions = computed<ContextMenuOption[]>(() =>
-  tableMenu.value && isHubRow(tableMenu.value.table)
-    ? TABLE_MENU_OPTIONS.filter((option) => HUB_TABLE_ACTIONS.has(option.action))
-    : TABLE_MENU_OPTIONS,
-);
 
 // Right-click context menu for catalog models (artifacts)
 const artifactMenu = ref<{ artifact: GlobalArtifact; x: number; y: number } | null>(null);
@@ -1108,7 +1102,7 @@ function tableReference(table: CatalogTable): string {
 function openReadInNotebook(table: CatalogTable) {
   // The panel hydrates on mount, but the cell must exist before we navigate.
   notebookStore.ensureHydrated();
-  notebookStore.insertReadCell(tableReference(table));
+  notebookStore.insertReadCell(tableReference(table), isHubRow(table));
   catalogStore.clearTableSelection();
   router.push({ name: "catalog", query: { tab: "notebook" } });
 }

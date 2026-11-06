@@ -1,34 +1,50 @@
 """A table in the hub's catalog as this Flowfile reads it: the table itself, its first rows for the Catalog page, a
-query of the SQL editor over it and a visual on such a query.
+query of the SQL editor over it, a visual on such a query and a notebook cell's read of it.
 
-A reader step, the Catalog page's preview, the SQL editor and a visual find the table the same way (``readable``).
-A preview, a query or a visual asks the hub for one read of the tables' namespaces under a run id of its own
-(``preview-…``, ``sql-…`` or ``visual-…``, which the hub's vend ledger keeps), scans each table with that credential
-as a run's reader does (``RunVend.scan_delta``) and reads the rows on this machine's own worker. The credential
-lives for the call; a visual's plan carries it, encrypted, for a few minutes (``visual_source``).
+A reader step, the Catalog page's preview, the SQL editor, a visual and a notebook cell find the table the same way
+(``readable``). Each of the last four asks the hub for one read of the tables' namespaces under a run id of its own
+(``preview-…``, ``sql-…``, ``visual-…`` or ``notebook-…``, which the hub's vend ledger keeps), scans each table with
+that credential as a run's reader does (``RunVend.scan_delta``) and reads the rows on this machine's own worker. The
+credential lives for the call; a visual's plan carries it, encrypted, for a few minutes (``visual_source``), and a
+notebook cell reads a file the worker wrote (``snapshot``).
 """
 
 import base64
+import hashlib
 import re
 import time
 import uuid
 
 import polars as pl
+from requests.exceptions import RequestException
 
+from flowfile_core.catalog.exceptions import WorkerUnavailableError
 from flowfile_core.catalog.serializers import format_pyarrow_preview
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.catalog.text_utils import friendly_relation_error, is_table_reference, rewrite_qualified_references
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.bounded import count_rows, head_rows
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    trigger_resolve_virtual_table,
+)
 from flowfile_core.hub_client import catalog, session, vend
-from flowfile_core.schemas.catalog_schema import CatalogTablePreview, NamespaceTree, SqlQueryResult
-from shared.delta_utils import make_json_safe
+from flowfile_core.schemas.catalog_schema import (
+    CatalogTableMaterializeResult,
+    CatalogTableOut,
+    CatalogTablePreview,
+    NamespaceTree,
+    SqlQueryResult,
+)
+from shared.delta_utils import make_json_safe, validate_catalog_path
+from shared.storage_config import storage
 
 PREVIEW_RUN_PREFIX = "preview-"
 SQL_RUN_PREFIX = "sql-"
 VISUAL_RUN_PREFIX = "visual-"
+NOTEBOOK_RUN_PREFIX = "notebook-"
 VISUAL_KEPT_SECONDS = 240
 """How long one visual's source is reused: well inside the 15 minutes a hub's credential lives by default."""
 SAMPLE_ROWS = 10_000
@@ -158,6 +174,58 @@ def visual_source(user_id: int, query: str, tables: dict[str, int], own: set[str
     }
     _visual_sources[(user_id, query)] = (now, source)
     return source
+
+
+def for_notebook(user_id: int, reference: str) -> CatalogTableOut | None:
+    """The hub table a notebook cell names by ``reference``, as the row its kernel resolves, or ``None`` when the
+    person's hub lists no table by that name.
+
+    The row says it is a view: a kernel reads a view through a file core has the worker write (``snapshot``), which is
+    how a table on the hub's storage reaches a cell that holds no credential.
+    """
+    if session.load(user_id) is None:
+        return None
+    tree = catalog.tree(user_id)
+    hub_id = _sql_names(tree, set()).get(_plain(reference))
+    for root in tree:
+        for holder in (root, *root.children):
+            for table in holder.tables:
+                if hub_id is not None and table.hub_id == hub_id:
+                    return table.model_copy(update={"table_type": "virtual"})
+    return None
+
+
+def snapshot(user_id: int, hub_table_id: int) -> CatalogTableMaterializeResult:
+    """The hub's table ``hub_table_id`` written whole to an Arrow file on the kernels' shared volume, as a view is
+    for a notebook cell: one read the hub vends to ``user_id``, the rows written by this machine's worker.
+
+    Every call writes the table again over that person's file for it, so a cell reads the table as it was at its
+    last read.
+
+    Raises:
+        ValueError: A sentence for the person: no such table, one this Flowfile cannot read, or the hub's refusal.
+        WorkerUnavailableError: The worker could not write the file.
+    """
+    try:
+        table = readable(user_id, hub_table_id)
+        run_id = f"{NOTEBOOK_RUN_PREFIX}{uuid.uuid4().hex}"
+        vended = vend.request(user_id, run_id, {table["namespace_id"]}, set())
+        plan = vended.scan_delta(table["file_path"], user_id, _columns(table))
+    except LookupError as e:
+        raise ValueError(str(e)) from e
+    name = hashlib.sha256(f"hub:{hub_table_id}:{user_id}".encode()).hexdigest()
+    try:
+        result = trigger_resolve_virtual_table(
+            catalog.row_id(hub_table_id),
+            plan.serialize(),
+            name,
+            target="kernel_shared",
+            worker_url=registry.worker_url(),
+        )
+    except (RequestException, RuntimeError, ComputeError) as e:
+        raise WorkerUnavailableError(str(e)) from e
+    path = validate_catalog_path(result["ipc_path"], storage.shared_virtual_results_directory)
+    return CatalogTableMaterializeResult(path=str(path), row_count=result["row_count"], mtime=result["mtime"])
 
 
 def _plan(user_id: int, query: str, tables: dict[str, int], own: set[str], run_prefix: str) -> pl.LazyFrame:
