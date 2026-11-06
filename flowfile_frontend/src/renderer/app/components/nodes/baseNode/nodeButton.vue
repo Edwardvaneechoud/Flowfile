@@ -6,7 +6,6 @@
 
     <button
       :class="['node-button', { selected: isSelected, 'cached-node': showCachedIndicator }]"
-      :title="showCachedIndicator ? cacheExplanation : undefined"
       :aria-describedby="showCachedIndicator ? `node-tooltip-${props.nodeId}` : undefined"
       @click="onClick"
     >
@@ -17,7 +16,6 @@
       class="cache-indicator material-icons"
       role="img"
       aria-label="Cached result"
-      :title="cacheExplanation"
       >cached</span
     >
     <span
@@ -45,6 +43,7 @@ import { NodeTitleInfo } from "./nodeInterfaces";
 import { deriveNodeStatus, nodeStatusTooltip, type NodeStatusOutput } from "./nodeStatus";
 const description = ref<string>("");
 const nodeStore = useNodeStore();
+const flowStore = useFlowStore();
 
 const props = defineProps<{
   nodeId: number;
@@ -83,7 +82,6 @@ const tooltipContent = computed(
     (showCachedIndicator.value ? `\n${cacheExplanation}` : ""),
 );
 
-const flowStore = useFlowStore();
 const resultsStore = useResultsStore();
 const placementNote = computed(() =>
   nodePlacementNote(resultsStore.placements[flowStore.flowId], props.nodeId),
@@ -121,44 +119,7 @@ onMounted(() => {
 
 <style scoped>
 .node-button.cached-node {
-  --cache-ice: #d4f1fb;
-  --cache-edge: #4b93af;
-  --cache-shine: #ffffff80;
-  position: relative;
-  background: linear-gradient(145deg, var(--cache-ice), var(--color-background-primary));
-}
-
-[data-theme="dark"] .node-button.cached-node {
-  --cache-ice: #254b64;
-  --cache-edge: #8ac9e4;
-  --cache-shine: #bdefff50;
-}
-
-/* A static frosted shell; the tool stays opaque and its hit area is unchanged. */
-.node-button.cached-node::after {
-  content: "";
-  position: absolute;
-  inset: -3px;
-  border: 1px solid var(--cache-edge);
-  border-radius: 11px;
-  pointer-events: none;
-  background:
-    linear-gradient(135deg, transparent 30%, var(--cache-shine) 31% 34%, transparent 35%),
-    linear-gradient(35deg, transparent 73%, var(--cache-shine) 74% 77%, transparent 78%),
-    radial-gradient(ellipse at top left, var(--cache-shine), transparent 55%);
-  box-shadow:
-    inset 2px 2px 0 var(--cache-shine),
-    inset -2px -2px 0 var(--cache-edge);
-}
-
-@media (forced-colors: active) {
-  .node-button.cached-node {
-    background: Canvas;
-    outline: 1px solid CanvasText;
-  }
-  .node-button.cached-node::after {
-    display: none;
-  }
+  box-shadow: 0 0 0 1px var(--color-info);
 }
 
 .cache-indicator {

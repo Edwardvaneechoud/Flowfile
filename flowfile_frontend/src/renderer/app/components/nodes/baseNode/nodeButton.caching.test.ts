@@ -62,12 +62,13 @@ it.each(["success", "running", "failure", "warning", "skipped"])(
         status === "success",
       );
       expect(host.querySelector(`.status-indicator.${status}`)).not.toBeNull();
+      expect(host.querySelector("button.cached-node") !== null).toBe(status === "success");
     } finally {
       app.unmount();
     }
   },
 );
-it("uses the bundled cache icon and a frozen tool treatment with an explanation", () => {
+it("uses the cache border, icon and status tooltip alongside the placement badge", () => {
   state.cached = true;
   state.placements[83] = {
     available: true,
@@ -80,12 +81,14 @@ it("uses the bundled cache icon and a frozen tool treatment with an explanation"
   };
   const { host, app } = mountNode();
   try {
-    const button = host.querySelector("button.cached-node");
+    const button = host.querySelector("button.node-button");
     expect(button).not.toBeNull();
+    expect(button?.classList.contains("cached-node")).toBe(true);
     expect(host.querySelector(".cache-indicator.material-icons")?.textContent?.trim()).toBe(
       "cached",
     );
-    expect(button?.getAttribute("title")).toContain("settings and upstream configuration");
+    expect(button?.hasAttribute("title")).toBe(false);
+    expect(host.querySelector(".cache-indicator")?.hasAttribute("title")).toBe(false);
     expect(
       host.querySelector(`#${button?.getAttribute("aria-describedby")}`)?.textContent,
     ).toContain("Cache validity");
@@ -103,6 +106,7 @@ it("does not mark an uncached result", () => {
   const { host, app } = mountNode();
   try {
     expect(host.querySelector('[aria-label="Cached result"]')).toBeNull();
+    expect(host.querySelector("button.cached-node")).toBeNull();
   } finally {
     app.unmount();
   }
@@ -115,6 +119,7 @@ it("reactively clears the badge when cache knowledge is invalidated", async () =
     state.cached = false;
     await nextTick();
     expect(host.querySelector('[aria-label="Cached result"]')).toBeNull();
+    expect(host.querySelector("button.cached-node")).toBeNull();
     expect(host.querySelector(".status-indicator.success")).not.toBeNull();
   } finally {
     app.unmount();
