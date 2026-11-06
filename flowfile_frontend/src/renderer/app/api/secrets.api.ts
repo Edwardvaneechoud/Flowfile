@@ -1,5 +1,5 @@
 import axios from "../services/axios.config";
-import type { KeptSecret, Secret, SecretInput, SecretValueResponse } from "../types";
+import type { Secret, SecretInput, SecretValueResponse } from "../types";
 
 const API_BASE_URL = "/secrets/secrets";
 
@@ -56,14 +56,6 @@ export class SecretsApi {
       const errorMsg = (error as any).response?.data?.detail || "Failed to change secret";
       throw new Error(errorMsg);
     }
-  }
-
-  /**
-   * The secrets that stayed on a server whose other secrets moved to its hub, each with why
-   */
-  static async getKept(): Promise<KeptSecret[]> {
-    const response = await axios.get<KeptSecret[]>("/secrets/kept");
-    return response.data;
   }
 
   /**

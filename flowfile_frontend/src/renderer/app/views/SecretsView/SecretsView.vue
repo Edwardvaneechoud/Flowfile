@@ -243,23 +243,6 @@
           </div>
         </div>
       </div>
-
-      <div v-if="onHub && kept.length > 0" class="card mb-3">
-        <div class="card-header">
-          <h3 class="card-title">Kept on this server ({{ kept.length }})</h3>
-        </div>
-        <div class="card-content">
-          <div class="secrets-list">
-            <div v-for="item in kept" :key="item.name" class="secret-item">
-              <div class="secret-name">
-                <i class="fa-solid fa-server"></i>
-                <span>{{ item.name }}</span>
-              </div>
-              <div class="kept-reason">{{ item.reason }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
     </template>
 
     <ShareDialog
@@ -336,7 +319,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from "vue";
-import type { KeptSecret, Secret, SecretInput } from "./secretTypes";
+import type { Secret, SecretInput } from "./secretTypes";
 import { useSecretManager } from "./useSecretManager";
 import { SecretsApi } from "../../api/secrets.api";
 import { useHubConnectionStore } from "../../stores/hub-connection-store";
@@ -403,7 +386,6 @@ const handleAddSecret = async () => {
 
 const hub = useHubConnectionStore();
 const onHub = computed(() => hub.joined);
-const kept = ref<KeptSecret[]>([]);
 const secretToChange = ref("");
 const changedValue = ref("");
 const isChanging = ref(false);
@@ -430,17 +412,6 @@ const handleChangeSecret = async () => {
     alert(`Error changing secret: ${error.message || "unknown error"}`);
   } finally {
     isChanging.value = false;
-  }
-};
-
-const loadKept = async () => {
-  if (hub.connection === null) await hub.load();
-  if (!onHub.value) return;
-  try {
-    kept.value = await SecretsApi.getKept();
-  } catch (error) {
-    console.error("Failed to load the secrets kept on this server:", error);
-    kept.value = [];
   }
 };
 
@@ -475,17 +446,11 @@ onMounted(() => {
   loadSecrets().catch(() => {
     alert("Failed to load secrets. Please try again.");
   });
-  loadKept();
+  if (hub.connection === null) void hub.load();
 });
 </script>
 
 <style scoped>
-.kept-reason {
-  flex: 1;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-}
-
 /* Intro / landing screen */
 .secrets-intro {
   max-width: 760px;

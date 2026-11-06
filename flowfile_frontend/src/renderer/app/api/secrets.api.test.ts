@@ -8,7 +8,7 @@ const loadModule = async () => {
   vi.resetModules();
   const axios = (await import("../services/axios.config")).default;
   const api = await import("./secrets.api");
-  return { get: axios.get as unknown as Mock, put: axios.put as unknown as Mock, api };
+  return { put: axios.put as unknown as Mock, api };
 };
 
 describe("secrets.api", () => {
@@ -30,14 +30,5 @@ describe("secrets.api", () => {
     put.mockRejectedValue({ response: { data: { detail: "Secret not found" } } });
 
     await expect(api.SecretsApi.change("gone", "v")).rejects.toThrow("Secret not found");
-  });
-
-  it("reads the secrets kept on this server, each with its reason", async () => {
-    const { get, api } = await loadModule();
-    const kept = [{ name: "old", reason: "a secret named old is already on the hub" }];
-    get.mockResolvedValue({ data: kept });
-
-    expect(await api.SecretsApi.getKept()).toEqual(kept);
-    expect(get).toHaveBeenCalledWith("/secrets/kept");
   });
 });
