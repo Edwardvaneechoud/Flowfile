@@ -396,7 +396,7 @@ async def classify_intent(
 
     try:
         content = await asyncio.wait_for(_do_call(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.info("intent classifier timed out after %.1fs", timeout)
         return IntentClassification(
             kind="chat",

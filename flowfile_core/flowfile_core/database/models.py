@@ -10,7 +10,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -607,11 +606,9 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     # Virtual Table fields (NULL for physical tables)
     table_type = Column(String, nullable=False, default="physical", server_default="physical")
     producer_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
-    # Cached plan of an optimized virtual table; never a cloud scan, which would embed its credentials.
-    serialized_lazy_frame = Column(LargeBinary, nullable=True)
     is_optimized = Column(Boolean, nullable=True, default=False)
     sql_query = Column(Text, nullable=True)  # SQL definition for query-based virtual tables
-    polars_plan = Column(Text, nullable=True)  # Polars explain() plan for optimized virtual tables
+    polars_plan = Column(Text, nullable=True)  # print_tree drawing of a flow virtual table's producer branch
     source_table_versions = Column(Text, nullable=True)  # JSON list of SourceTableVersion for staleness detection
 
     # Timestamps

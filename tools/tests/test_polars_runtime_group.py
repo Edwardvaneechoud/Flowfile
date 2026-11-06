@@ -5,13 +5,8 @@ and the Docker images install the ``runtime64`` group, whose exact ``polars-runt
 ``polars``: a runtime of another version is skipped with only a warning and Polars loads the 32-bit one.
 """
 
-import sys
+import tomllib
 from pathlib import Path
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 

@@ -45,7 +45,7 @@ assumptions already exists somewhere:
 - **Check `flowfile-failure-archaeology` before proposing a fix** that touches
   worker transport, kernel lifecycle, codegen, flow save/open, Tauri
   packaging, or CI ordering. Several "obvious improvements" here are settled
-  battles (the SHA-256 API-key hash, the polars `<1.44` ceiling and its 1.43.0/1.43.1 exclusions, the
+  battles (the SHA-256 API-key hash, the polars `<2.2` ceiling, the
   fastapi pin) — re-fighting one wastes a review cycle.
 - **Cross-service contracts are where silent wrong assumptions hurt most.**
   If your change touches the `$ffsec$` format, the worker offload protocol,

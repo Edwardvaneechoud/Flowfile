@@ -226,9 +226,10 @@ FORBIDDEN_MODULES_IN_SPAWNED_CHILD = (
     "shared.db_dialects",
     "shared.delta_utils",
 )
-# Measured 345 after Phase 2b (513 before). Headroom is deliberately small: re-eagerizing
+# Measured 345 after Phase 2b (513 before), 418 on Polars 2.1, whose own import loads ~72 more
+# (importlib.metadata and the email stack). Headroom is deliberately small: re-eagerizing
 # models costs ~161 modules and pl_fuzzy_frame_match ~62, so either trips this.
-CHILD_MODULE_CEILING = 380
+CHILD_MODULE_CEILING = 450
 
 _PROBE_TARGET = '''
 import json

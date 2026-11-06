@@ -5,13 +5,11 @@ consumers in one parallel stage read the same upstream concurrently (no
 cross-node locks since the AB-BA deadlock fix). Some node functions mutate
 their input (``df.lazy = True`` in the writers, cross_join/fuzzy prep) or
 return it unchanged (output/filter passthroughs), after which the framework's
-own post-processing (``set_streamable``) mutates whatever was returned. The
-input-collection seam therefore hands every node function a
+own post-processing mutates whatever was returned. The input-collection seam therefore hands every node function a
 ``FlowDataEngine.shallow_copy()`` — these tests pin that isolation.
 """
 
 import polars as pl
-import pytest
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -49,9 +47,7 @@ def test_shallow_copy_shares_frame_but_isolates_flags():
 
     # Mutations on the copy must not reach the source.
     copy.lazy = True
-    copy.set_streamable(False)
     assert src.lazy is False, "source flipped to lazy through the copy"
-    assert src._streamable is True, "source streamable flag mutated through the copy"
     assert copy.lazy is True
     assert isinstance(src.data_frame, pl.DataFrame), "source frame rebound through the copy"
 
@@ -74,8 +70,8 @@ def test_shallow_copy_is_collect_free_when_schema_cached(monkeypatch):
 
 def test_passthrough_node_result_is_not_the_upstream_engine(flowfile_worker):
     """The filter passthrough edge (basic mode, basic_filter=None) returns its
-    input unchanged; the seam copy must keep the node's memoized result — and
-    the framework's set_streamable — off the upstream's engine."""
+    input unchanged; the seam copy must keep the node's memoized result off the
+    upstream's engine."""
     graph = _make_graph()
     _add_manual_input(graph, [{"a": 1}, {"a": 2}], node_id=1)
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=2, node_type="filter"))
@@ -133,15 +129,12 @@ def test_pivot_schema_callback_does_not_mutate_memoized_upstream():
 
 
 def test_writer_style_mutation_on_copy_does_not_leak_upstream():
-    """Simulates what database/cloud writers do to their input (df.lazy = True)
-    and what the framework does to a passthrough return (set_streamable):
-    both must land on the seam copy, never the shared source."""
+    """Simulates what database/cloud writers do to their input (df.lazy = True):
+    it must land on the seam copy, never the shared source."""
     src = FlowDataEngine(pl.DataFrame({"a": [1]}))
     handed_to_node_function = src.shallow_copy()
 
-    handed_to_node_function.lazy = True          # writer behavior
-    handed_to_node_function.set_streamable(False)  # framework post-processing
+    handed_to_node_function.lazy = True
 
     assert src.lazy is False
-    assert src._streamable is True
     assert isinstance(src.data_frame, pl.DataFrame)

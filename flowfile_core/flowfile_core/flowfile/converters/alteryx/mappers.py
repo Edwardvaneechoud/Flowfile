@@ -3270,7 +3270,7 @@ def _summarize_expression(item: _Summarization) -> str:
     if item.action in _SUMMARIZE_GENERATED:
         return _SUMMARIZE_GENERATED[item.action].format(c=quoted)
     if item.action == "concat":
-        return f"pl.col({quoted}).cast(pl.Utf8).str.concat(delimiter=',')"
+        return f"pl.col({quoted}).cast(pl.Utf8).str.join(',')"
     return f"pl.{item.action}({quoted})"
 
 
@@ -4413,7 +4413,7 @@ def _emit_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         node_id = rename_id
         messages.append(
             "The file is read without headers, so a Select node renames Polars' "
-            f"column_1..column_{len(tool.output_fields)} to the Alteryx names "
+            f"column_0..column_{len(tool.output_fields) - 1} to the Alteryx names "
             f"({tool.output_fields[0]}, ...)."
         )
     ctx.register_all_outputs(tool.tool_id, node_id)
@@ -4423,7 +4423,7 @@ def _emit_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
 def _emit_positional_header_rename(tool: AlteryxTool, ctx: EmitContext, names: list[str]) -> int:
     select_input = [
-        transform_schema.SelectInput(old_name=f"column_{index + 1}", new_name=name, keep=True)
+        transform_schema.SelectInput(old_name=f"column_{index}", new_name=name, keep=True)
         for index, name in enumerate(names)
     ]
     settings = input_schema.NodeSelect(

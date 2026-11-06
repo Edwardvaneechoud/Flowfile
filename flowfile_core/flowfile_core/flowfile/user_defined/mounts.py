@@ -10,7 +10,7 @@ them as-is.
 import json
 import logging
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from shared import storage
@@ -105,7 +105,7 @@ def add_mount(path_str: str, base_dir: Path | None = None) -> NodeMount:
         if resolved.is_relative_to(existing_resolved) or existing_resolved.is_relative_to(resolved):
             raise MountValidationError(f"Mount path may not nest with existing mount: {existing.path}")
 
-    mount = NodeMount(path=str(candidate), added_at=datetime.now(timezone.utc).isoformat())
+    mount = NodeMount(path=str(candidate), added_at=datetime.now(UTC).isoformat())
     mounts.append(mount)
     save_mounts(mounts, base_dir)
     logger.info("Added custom-node mount %s", mount.path)

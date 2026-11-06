@@ -477,8 +477,7 @@ class _Cell:
         try:
             script = PythonScriptFunction._from_source(self.code, decorator.lineno, view, **keywords)
         except Exception as exc:
-            # 3.10 reports a failing decorator application on the `def` line
-            raise _error(exc, node.lineno if sys.version_info < (3, 11) else decorator.lineno) from exc
+            raise _error(exc, decorator.lineno) from exc
         self.namespace[node.name] = script
 
     def name(self, node: ast.Name) -> Any:
@@ -688,12 +687,10 @@ class _Cell:
         kind, attr, usage = self.entry(receiver, node.attr, line)
         if usage == allowlist.DECORATOR:
             raise _needs_kernel(f"Calling `ff.{attr}` outside a decorator", line)
-        # 3.10 compiles a method call with keywords as a plain call, reported on the call's first line
-        call_line = call.lineno if sys.version_info < (3, 11) and call.keywords else line
         if usage in (allowlist.CALL, allowlist.BOTH):
             function = self.attribute(receiver, kind, attr, line)
-            return self.invoke(function, (kind, attr), call, call_line)
-        return self.call_value(self.checked(self.attribute(receiver, kind, attr, line), node, line), call, call_line)
+            return self.invoke(function, (kind, attr), call, line)
+        return self.call_value(self.checked(self.attribute(receiver, kind, attr, line), node, line), call, line)
 
     def call_value(self, callee: Any, call: ast.Call, line: int | None = None) -> Any:
         """Calling a value by its kind's ``__call__`` entry (a helper, a reader, a script, a custom node)."""

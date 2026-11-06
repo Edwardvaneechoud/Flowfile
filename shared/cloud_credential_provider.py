@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping
+from datetime import UTC
 from typing import Any
 
 PROVIDER_CREDENTIAL_KEYS = frozenset(
@@ -230,7 +231,6 @@ def _azure_bearer_token(tenant_id: str, client_id: str, client_secret: str) -> t
 
 def _gcs_bearer_token(service_account_key: str) -> tuple[dict[str, str], int | None]:
     """A read-only token for a GCS service-account key; google-auth answers the expiry as a naive UTC datetime."""
-    from datetime import timezone
 
     import google.auth.transport.requests
     from google.oauth2 import service_account
@@ -241,4 +241,4 @@ def _gcs_bearer_token(service_account_key: str) -> tuple[dict[str, str], int | N
     credentials.refresh(google.auth.transport.requests.Request())
     if credentials.expiry is None:
         return {"bearer_token": credentials.token}, None
-    return {"bearer_token": credentials.token}, int(credentials.expiry.replace(tzinfo=timezone.utc).timestamp())
+    return {"bearer_token": credentials.token}, int(credentials.expiry.replace(tzinfo=UTC).timestamp())

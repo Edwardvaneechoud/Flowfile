@@ -57,7 +57,6 @@ EDITED: dict[str, tuple[str, str]] = {
     "var": ("src.var()", "polars_code"),
     "null_count": ("src.null_count()", "polars_code"),
     "quantile": ("src.quantile(0.5)", "polars_code"),
-    "melt": ("src.melt(id_vars=['b'])", "polars_code"),
     "explode": ("src.explode('a')", "polars_code"),
     "cast": ("src.cast({'a': ff.Float64})", "polars_code"),
     "count": ("src.count()", "polars_code"),
@@ -157,7 +156,7 @@ def test_every_input_only_polars_code_call_is_seeded_with_the_columns_polars_pla
     with _snapshot_session({"flowfile_data": _empty_flow(), "schemas": {}}, {}) as (mode, namespace):
         _run_in(namespace, "cell-0", f"{IMPORTS}\n{SOURCE}\n{edited_cell(names)}")
         column_less = {name for name in names if namespace[f"out_{name}"].node_id in mode.column_less}
-        assert _names(namespace["out_melt"]) == ["b", "variable", "value"]
+        assert _names(namespace["out_cast"]) == ["a", "b"]
     assert column_less == set(UNPLANNED)
 
 

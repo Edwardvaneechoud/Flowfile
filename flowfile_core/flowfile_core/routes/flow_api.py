@@ -197,7 +197,7 @@ async def run_published_flow(
         # Node-level detail (paths, SQL, columns) is logged for the owner, never returned to the caller.
         logger.error("Published flow '%s' failed: %s", slug, exc)
         raise HTTPException(status_code=500, detail="Flow execution failed") from exc
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise HTTPException(status_code=504, detail="Flow execution timed out") from exc
     finally:
         _API_RUN_SEMAPHORE.release()
@@ -408,7 +408,7 @@ async def test_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (ApiConfigError, ApiExecutionError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise HTTPException(status_code=504, detail="Flow execution timed out") from exc
 
 

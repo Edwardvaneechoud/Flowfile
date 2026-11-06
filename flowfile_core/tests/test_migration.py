@@ -599,7 +599,7 @@ class TestSnapshotDatabase:
     def _freeze_time(self, monkeypatch) -> None:
         import flowfile_core.database.backup as backup_mod
 
-        fixed = backup_mod.datetime.now(backup_mod.timezone.utc)
+        fixed = backup_mod.datetime.now(backup_mod.UTC)
 
         class _Frozen:
             @staticmethod

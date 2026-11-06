@@ -400,7 +400,7 @@ def _dry_run_publish_global(
             python_type=python_type,
             serialization_format=serialization_format,
             size_bytes=None,
-            created_at=datetime.datetime.now(datetime.timezone.utc),
+            created_at=datetime.datetime.now(datetime.UTC),
             tags=list(tags or []),
             owner_id=-1,
         ),

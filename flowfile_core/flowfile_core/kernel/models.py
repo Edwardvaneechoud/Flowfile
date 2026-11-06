@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal
 
@@ -78,7 +78,7 @@ class KernelInfo(BaseModel):
     image_flavour: ImageFlavour = ImageFlavour.BASE
     custom_image: str | None = None
     image: str | None = None  # Resolved image tag, populated when the kernel starts
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     error_message: str | None = None
     kernel_version: str | None = None
     # Persistence configuration

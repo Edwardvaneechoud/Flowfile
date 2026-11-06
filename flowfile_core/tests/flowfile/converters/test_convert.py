@@ -2586,7 +2586,7 @@ def test_a_headerless_excel_read_renames_the_positional_columns():
     """`FirstRowData=True` is the Excel spelling of "no header row", and it never used to be read.
 
     Only the CSV/JSON spelling (`HeaderRow`) was, so the positional-rename branch — the one that
-    stops every downstream reference to Alteryx's Field_1..N silently missing Polars' column_1..N —
+    stops every downstream reference to Alteryx's Field_1..N silently missing Polars' column_0..N-1 —
     was unreachable for Excel however the tool was configured.
     """
     result = convert_yxmd(EXCEL_HEADER_BOTH_WAYS, source_name="excel_header.yxmd")
@@ -2598,8 +2598,8 @@ def test_a_headerless_excel_read_renames_the_positional_columns():
     read, rename = (nodes[node_id] for node_id in headerless.flowfile_node_ids)
     assert read["setting_input"]["received_file"]["table_settings"]["has_headers"] is False
     assert [(entry["old_name"], entry["new_name"]) for entry in rename["setting_input"]["select_input"]] == [
-        ("column_1", "Field_1"),
-        ("column_2", "Field_2"),
+        ("column_0", "Field_1"),
+        ("column_1", "Field_2"),
     ]
     assert any("read without headers" in message for message in headerless.messages)
 
@@ -3732,13 +3732,13 @@ def test_headerless_read_renames_polars_columns_to_the_alteryx_names(price_paid:
     row = report_row(price_paid, 1)
     assert row.status == "converted"
     assert len(row.flowfile_node_ids) == 2
-    assert any("column_1" in message for message in row.messages)
+    assert any("column_0" in message for message in row.messages)
     nodes = dumped_nodes(price_paid)
     read_id, rename_id = row.flowfile_node_ids
     assert nodes[read_id]["type"] == "read"
     assert nodes[read_id]["outputs"] == [rename_id]
     renames = nodes[rename_id]["setting_input"]["select_input"]
-    assert renames[0] == {"old_name": "column_1", "new_name": "Field_1"}
+    assert renames[0] == {"old_name": "column_0", "new_name": "Field_1"}
     assert len(renames) == 16
 
 
@@ -3756,7 +3756,7 @@ def test_headered_csv_input_is_read_with_headers_in_both_xml_shapes(header_row: 
     row, table_settings = read_settings(header_row)
     assert table_settings["has_headers"] is True
     assert len(row.flowfile_node_ids) == 1
-    assert not any("column_1" in message for message in row.messages)
+    assert not any("column_0" in message for message in row.messages)
 
 
 @pytest.mark.parametrize("header_row", ["<HeaderRow>False</HeaderRow>", '<HeaderRow value="False" />'])
@@ -3764,7 +3764,7 @@ def test_headerless_csv_input_still_gets_the_positional_rename_in_both_xml_shape
     row, table_settings = read_settings(header_row)
     assert table_settings["has_headers"] is False
     assert len(row.flowfile_node_ids) == 2
-    assert any("column_1" in message for message in row.messages)
+    assert any("column_0" in message for message in row.messages)
 
 
 def test_an_unwritten_header_option_leaves_the_reader_default_alone():

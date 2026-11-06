@@ -406,7 +406,7 @@ class EmbeddedWorkerBackend(_WorkerReferences):
         for (name, frame), result_id in zip(frames.items(), service._op_outputs(job.job_id, len(frames)), strict=True):
             path = service._output_file(job.flow_id, result_id)
             try:
-                frame.lazy().collect(engine="streaming").write_ipc(path)
+                frame.lazy().collect().write_ipc(path)
                 written = pl.scan_ipc(path)
                 row_count = written.select(pl.len()).collect().item()
                 held = service._hold_output(

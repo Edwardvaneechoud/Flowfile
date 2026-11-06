@@ -39,10 +39,10 @@ import itertools
 from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Mapping, Set
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, NotRequired
 
 from pydantic import BaseModel, Field
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from flowfile_core.flowfile.util.layout.placement import placer_from_payload
 from flowfile_core.notebook.compare import parameters_equal, settings_equal

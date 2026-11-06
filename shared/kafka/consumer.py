@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import NamedTuple
 
 import polars as pl
@@ -270,7 +270,7 @@ def _extract_timestamp(msg) -> datetime | None:
     ts_type, ts_value = msg.timestamp()
     if ts_type == 0:  # TIMESTAMP_NOT_AVAILABLE
         return None
-    return datetime.fromtimestamp(ts_value / 1000.0, tz=timezone.utc)
+    return datetime.fromtimestamp(ts_value / 1000.0, tz=UTC)
 
 
 def commit_offsets(

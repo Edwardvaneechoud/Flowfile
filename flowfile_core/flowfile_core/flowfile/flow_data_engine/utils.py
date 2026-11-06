@@ -131,13 +131,6 @@ def write_polars_frame(
         return False
 
 
-def collect(df: pl.LazyFrame, streamable: bool = True):
-    try:
-        return df.collect(engine="streaming" if streamable else "auto")
-    except Exception:
-        return df.collect(engine="auto")
-
-
 def cache_polars_frame_to_temp(_df: pl.LazyFrame | pl.DataFrame, tempdir: str = None) -> pl.LazyFrame:
     path = f"{tempdir}\\fl_file_{id(_df)}"
     result = write_polars_frame(_df, path)
