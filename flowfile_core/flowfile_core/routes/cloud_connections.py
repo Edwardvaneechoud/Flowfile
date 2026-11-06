@@ -119,7 +119,7 @@ def delete_cloud_connection_with_connection_name(
     logger.info(f"Deleting cloud connection {connection_name}")
     db_connection = get_cloud_connection(db, connection_name, current_user.id)
     if db_connection is None:
-        raise HTTPException(404, "Cloud connection connection not found")
+        raise HTTPException(404, "Cloud connection not found")
     authorize_connection_mutation(db, current_user, "cloud_connection", db_connection)
     delete_cloud_connection(db, connection_name, db_connection.user_id)
     return {"message": "Cloud connection deleted successfully"}

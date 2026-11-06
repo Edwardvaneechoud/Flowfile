@@ -49,7 +49,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
 from flowfile_core.schemas.catalog_schema import CatalogTableMaterializeResult, CatalogTableOut
 from shared.delta_utils import validate_catalog_path
-from shared.storage_config import storage
+from shared.storage_config import require_flow_in_storage, storage
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.services.sql import SqlService
@@ -467,7 +467,7 @@ class VirtualTableService:
         if producer is None:
             raise FlowNotFoundError(registration_id=table.producer_registration_id)
 
-        flow = open_flow(Path(producer.flow_path), user_id=user_id)
+        flow = open_flow(require_flow_in_storage(Path(producer.flow_path)), user_id=user_id)
         selected_node = None
         for node in flow.nodes:
             if node.name == "catalog_writer" and node.setting_input.catalog_write_settings.table_name == table.name:

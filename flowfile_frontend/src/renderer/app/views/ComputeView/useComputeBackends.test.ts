@@ -12,6 +12,11 @@ const mocks = vi.hoisted(() => ({
   add: vi.fn(),
   remove: vi.fn(),
   handshake: vi.fn(),
+  sync: vi.fn(),
+}));
+
+vi.mock("../../api/hubConnection.api", () => ({
+  syncHubComputeNodes: mocks.sync,
 }));
 
 vi.mock("../../api/computeBackends.api", () => ({
@@ -26,6 +31,7 @@ import {
   emptyBackendForm,
   plainHttpOffLoopback,
   serverFilesLabel,
+  skippedNotice,
   useComputeBackends,
   workersSummary,
 } from "./useComputeBackends";
@@ -40,6 +46,7 @@ const teamRow = (
   url: TEAM_URL,
   shares_core_disk,
   verdict: seen,
+  source: "local",
 });
 
 let rows: ComputeBackend[] = [];
@@ -53,6 +60,7 @@ beforeEach(() => {
       url: input.url,
       shares_core_disk: input.shares_core_disk ?? false,
       verdict: null,
+      source: "local" as const,
     };
     rows.push(row);
     return { ...row };
@@ -61,6 +69,7 @@ beforeEach(() => {
     rows = rows.filter((row) => row.id !== id);
   });
   mocks.handshake.mockReset();
+  mocks.sync.mockReset();
 });
 
 const checked = verdict();
@@ -86,6 +95,7 @@ describe("load", () => {
         url: "https://gpu.example:63579",
         shares_core_disk: false,
         verdict: null,
+        source: "local",
       },
     ];
     const page = useComputeBackends();
@@ -429,5 +439,66 @@ describe("workersSummary", () => {
       tone: "neutral",
       label: "2 not checked",
     });
+  });
+});
+
+describe("the one Sync: the hub's nodes", () => {
+  const hubRow: ComputeBackend = { ...teamRow(), id: "worker:gpu", source: "hub" };
+
+  it("names the worker added here that a sync kept, and says nothing when none was", () => {
+    expect(skippedNotice([])).toBe("");
+    expect(skippedNotice(["worker:own"])).toBe(
+      "Kept the worker added here under worker:own; the hub's node of that name is not listed.",
+    );
+  });
+
+  it("fills the rows from the hub's answer, no list in between", async () => {
+    mocks.sync.mockResolvedValue({ backends: [teamRow(), hubRow], skipped: [] });
+    const page = useComputeBackends();
+
+    await page.load(true);
+
+    expect(mocks.sync).toHaveBeenCalledTimes(1);
+    expect(mocks.list).not.toHaveBeenCalled();
+    expect(page.backends.value).toEqual([teamRow(), hubRow]);
+    expect(page.hubNotice.value).toBe("");
+    expect(page.loading.value).toBe(false);
+  });
+
+  it("seeds a hub row's verdict from the listing, so an unreachable node shows as any worker's handshake", async () => {
+    const unreachable = verdict({
+      id: "worker:gpu",
+      ok: false,
+      backend: null,
+      offered: null,
+      error: "Could not reach the worker at https://gpu.example:63579: no route",
+      error_kind: "ComputeUnavailable",
+    });
+    mocks.sync.mockResolvedValue({ backends: [{ ...hubRow, verdict: unreachable }], skipped: [] });
+    const page = useComputeBackends();
+
+    await page.load(true);
+
+    expect(page.verdicts.value).toEqual({ "worker:gpu": unreachable });
+    expect(mocks.handshake).not.toHaveBeenCalled();
+  });
+
+  it("lists the rows it has and says why when the hub's servers cannot be read", async () => {
+    mocks.sync.mockRejectedValue(httpError(502, "The hub is not answering"));
+    rows = [teamRow()];
+    const page = useComputeBackends();
+
+    await page.load(true);
+
+    expect(page.backends.value).toEqual([teamRow()]);
+    expect(page.hubNotice.value).toBe("The hub is not answering");
+  });
+
+  it("asks no hub for a plain load", async () => {
+    const page = useComputeBackends();
+
+    await page.load();
+
+    expect(mocks.sync).not.toHaveBeenCalled();
   });
 });

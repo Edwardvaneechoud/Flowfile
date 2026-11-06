@@ -47,6 +47,9 @@ class NamespaceOut(BaseModel):
     # How the requesting user accesses this resource (multi-user mode); None when
     # unrestricted (admin / electron / internal) — the frontend shows no badge then.
     access: AccessInfo | None = None
+    # Where the namespace lives; a hub's row carries the negative of the hub's id as ``id`` and that id as ``hub_id``.
+    source: Literal["local", "hub"] = "local"
+    hub_id: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -59,8 +62,18 @@ class ScratchCleanupOut(BaseModel):
 
 
 class NamespaceTree(NamespaceOut):
-    """Recursive tree node – children are nested schemas of the same hierarchy."""
+    """Recursive tree node – children are nested schemas of the same hierarchy.
 
+    ``place`` says in words where the catalog lives (``On this computer`` or ``On this server`` for this machine's,
+    the hub's name for a hub's), set once a hub's catalogs are listed beside this machine's. ``offered`` is false for
+    this machine's catalogs on a server joined to a hub with keys of its own: the Catalog panel and the catalog
+    reader's and writer's pickers leave them out, while the flow pickers still find them. ``unavailable_reason`` says
+    why this Flowfile cannot use a hub catalog's tables (on the hub's own disk, or on storage it does not write).
+    """
+
+    place: str | None = None
+    offered: bool = True
+    unavailable_reason: str | None = None
     children: list["NamespaceTree"] = Field(default_factory=list)
     flows: list["FlowRegistrationOut"] = Field(default_factory=list)
     artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
@@ -476,6 +489,10 @@ class CatalogTableOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None
+    # Where the table lives; a hub's row carries negated ids and the hub's own ids beside them.
+    source: Literal["local", "hub"] = "local"
+    hub_id: int | None = None
+    hub_namespace_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

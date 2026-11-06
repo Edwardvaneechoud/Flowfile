@@ -46,6 +46,15 @@ def get_run_user_id(run_id: int) -> int | None:
         return run.user_id if run else None
 
 
+def get_run_schedule_id(run_id: int) -> int | None:
+    """Return the id of the schedule the FlowRun ran for, or ``None`` for a run of no schedule or a missing row."""
+    engine = get_catalog_engine(get_database_url())
+
+    with Session(engine) as session:
+        run = session.get(FlowRun, run_id)
+        return run.schedule_id if run else None
+
+
 def _close_run(run: FlowRun, success: bool, now: datetime) -> None:
     """Stamp the terminal fields on a run row. The caller owns the commit."""
     run.ended_at = now

@@ -76,7 +76,7 @@ def _run_flow(flow_path: str, run_id: int, backend: str | None) -> int:
         return 1
 
     if backend is None and flow.execution_location not in ("local", "remote", "auto"):
-        backend_id = flow.execution_location
+        backend_id = registry.headless_backend_id(flow.execution_location)
         registry.set_default_override(backend_id)
     flow.execution_location = "local" if backend_id == registry.LOCAL_BACKEND_ID else "remote"
 
@@ -97,7 +97,10 @@ def _run_flow(flow_path: str, run_id: int, backend: str | None) -> int:
 
     core_telemetry.install_headless()
     try:
-        result = flow.run_graph()
+        from flowfile_core.hub_client import node_tokens
+
+        with node_tokens.for_run_record(run_id):
+            result = flow.run_graph()
     except Exception as e:
         _cli_logger.exception("Error running flow: %s", e)
         _complete_run(run_id, success=False, nodes_completed=0)

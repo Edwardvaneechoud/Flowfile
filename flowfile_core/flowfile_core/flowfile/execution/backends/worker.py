@@ -77,7 +77,7 @@ from flowfile_core.flowfile.execution.payloads import (
     unpack,
 )
 from flowfile_core.flowfile.execution.protocol import (
-    CredentialRef,
+    Credential,
     JobHandle,
     JobStatus,
     OperationKind,
@@ -85,6 +85,7 @@ from flowfile_core.flowfile.execution.protocol import (
     OpResult,
     ResultRef,
     Schema,
+    SealedCredential,
     SubmitHints,
     SubmitResult,
     worker_stores,
@@ -158,7 +159,7 @@ from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared import compute_protocol as wire
-from shared.cloud_credential_provider import credential_ref_kwargs
+from shared.cloud_credential_provider import credential_body_kwargs
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 from shared.google_analytics.models import GoogleAnalyticsFilter, GoogleAnalyticsOrderBy, GoogleAnalyticsReadSettings
 from shared.kafka.models import KafkaReadSettings
@@ -260,9 +261,14 @@ class WorkerBackend(_WorkerReferences):
     - ``backend_id``: the id it answers to, ``"worker"`` built in or ``worker:<name>`` configured. Its refs and
       handles carry it, and it refuses those of any other id.
     - ``token``: the worker's own token, sent as ``X-Flowfile-Internal`` by ``capabilities``, every ``/v1`` request
-      and the ``/v1`` submit socket. ``None`` signs with the process's internal token, as the task routes always do.
+      and the ``/v1`` submit socket, and by every task-route call and legacy socket to ``url`` while this backend owns
+      it (``handshake.owner``). ``None`` signs with the process's internal token.
       A token that is no header value (``is_header_value``) fails each call as a ``TaskFailed`` naming
       ``TOKEN_RULE`` before any client is handed it, so no message or log line carries it.
+    - ``token_source``: asked for the token of each call in place of ``token``, which is then only the token the
+      backend was made with. A server joined to its hub with keys of its own gives one to a backend the hub filled, so
+      each call carries the token of the person it is made for. A ``LookupError`` it raises fails the call as a
+      ``TaskFailed`` with its message, before anything is sent.
     - ``ca_cert``: the PEM of the CA to verify an ``https://`` worker against (``trust_ca``). ``None`` uses the public
       CAs and drops a CA an earlier backend on ``url`` was given.
     - ``shares_core_disk``: the worker sees core's files, so ``capabilities`` adds ``file`` to its schemes.
@@ -289,14 +295,16 @@ class WorkerBackend(_WorkerReferences):
         token: str | None = None,
         ca_cert: str | None = None,
         shares_core_disk: bool = False,
+        token_source: Callable[[], str] | None = None,
     ) -> None:
         self.url = url
         self.id = backend_id
         self.token = token
         self.shares_core_disk = shares_core_disk
+        self._token_source = token_source
         trust_ca(url, ca_cert)
         owns(self)
-        self._auth = _TokenAuth(token, backend_id) if token is not None else None
+        self._auth = _TokenAuth(self._call_token, backend_id) if token is not None else None
         self._lock = threading.Lock()
         self._socket_refused_under: Verdict | None = None
         self._deferred: dict[str, _DeferredPlan] = {}
@@ -348,7 +356,9 @@ class WorkerBackend(_WorkerReferences):
                 timeout=_WORKER_TIMEOUT,
             )
         except requests.RequestException as e:
-            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
+            raise ComputeUnavailable(
+                f"Could not reach the worker at {self.url}: {e}", backend_id=self.id, url=self.url
+            ) from e
         if response.status_code == 404:
             cause = "so it is an older release than core"
             if not settings.FLOWFILE_COMPUTE_PROTOCOL:
@@ -359,7 +369,7 @@ class WorkerBackend(_WorkerReferences):
                 f"The worker at {self.url} does not report its capabilities (GET {route} answered 404), {cause}"
             )
         if not response.ok:
-            raise _v1_failure(response.status_code, response.content, response.reason)
+            raise _v1_failure(response.status_code, response.content, response.reason, backend_id=self.id)
         declared = capabilities_from_answer(self.url, response, backend_id=self.id)
         if not self.shares_core_disk:
             return declared
@@ -614,7 +624,7 @@ class WorkerBackend(_WorkerReferences):
             return held.sample_file if held is not None else None
         return self._file(ref)
 
-    def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
+    def export(self, ref: ResultRef, uri: str, credential: Credential | None) -> str:
         """Write ``ref``'s rows to ``uri`` as parquet where they are held, and return ``uri``.
 
         A result is exported over the routes that minted it, whatever the flag says: a ``/v1`` result by a worker child
@@ -673,7 +683,7 @@ class WorkerBackend(_WorkerReferences):
         uri: str,
         schema: Schema | None,
         row_count: int | None,
-        credential: CredentialRef | None,
+        credential: Credential | None,
         kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
         """Hold a scan of the parquet at ``uri`` as a deferred result with the caller's ``schema`` and ``row_count``.
@@ -839,7 +849,9 @@ class WorkerBackend(_WorkerReferences):
             )
         except requests.ReadTimeout as e:
             if not waits:
-                raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
+                raise ComputeUnavailable(
+                    f"Could not reach the worker at {self.url}: {e}", backend_id=self.id, url=self.url
+                ) from e
             if job_id is not None:
                 self._give_up(job_id)
             raise TaskFailed(
@@ -847,10 +859,12 @@ class WorkerBackend(_WorkerReferences):
                 "poll deadline (FLOWFILE_WORKER_POLL_TIMEOUT); giving up"
             ) from e
         except requests.RequestException as e:
-            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
+            raise ComputeUnavailable(
+                f"Could not reach the worker at {self.url}: {e}", backend_id=self.id, url=self.url
+            ) from e
         if response.ok or (missing_ok and response.status_code == 404):
             return response
-        raise _v1_failure(response.status_code, response.content, response.reason)
+        raise _v1_failure(response.status_code, response.content, response.reason, backend_id=self.id)
 
     def _give_up(self, job_id: str) -> None:
         """Cancel the ``/v1`` job ``job_id`` core stopped waiting on, so it holds no child or output; best effort."""
@@ -881,7 +895,7 @@ class WorkerBackend(_WorkerReferences):
         verdict = cached_verdict(self)
         if verdict is not None and (verdict is self._socket_refused_under or not _takes_submit_socket(verdict)):
             return None
-        token = self._internal_token()
+        token = self.signing_token()
         try:
             ws = connect(
                 _get_ws_url(self.url) + "/v1/ws/submit",
@@ -922,13 +936,32 @@ class WorkerBackend(_WorkerReferences):
             raise _v1_error(frame["status_code"], frame["detail"])
         return wire.SubmitResult.model_validate(frame["result"])
 
-    def _internal_token(self) -> str:
-        """The token this backend signs the worker's ``/v1`` calls with: its own, else the process's internal token.
+    @property
+    def request_auth(self) -> requests.auth.AuthBase | None:
+        """What a session call signed as this backend carries: its own token's signer, ``None`` for the process's."""
+        return self._auth
+
+    def signing_token(self) -> str:
+        """The token this backend signs the worker's calls with: its own (its ``token_source``'s answer when it has
+        one), else the process's internal token.
 
         Raises:
-            TaskFailed: Its own token is no header value (``_sendable_token``).
+            TaskFailed: Its own token is no header value (``_sendable_token``), or its ``token_source`` gave none.
         """
-        return _sendable_token(self.token, self.id) if self.token is not None else get_internal_token()
+        return _sendable_token(self._call_token(), self.id) if self.token is not None else get_internal_token()
+
+    def _call_token(self) -> str:
+        """The token of the call being made: ``token_source``'s answer when the backend has one, else ``token``.
+
+        Raises:
+            TaskFailed: ``token_source`` raised ``LookupError``; its message says why.
+        """
+        if self._token_source is None:
+            return self.token
+        try:
+            return self._token_source()
+        except LookupError as e:
+            raise TaskFailed(str(e)) from e
 
     def _is_v1(self, ref: ResultRef) -> bool:
         """Whether ``/v1`` minted ``ref``: its location is a ``WorkerLocation`` JSON, which is not decoded here.
@@ -1480,20 +1513,23 @@ def _sendable_token(token: str, backend_id: str) -> str:
 class _TokenAuth(requests.auth.AuthBase):
     """Signs a worker request with one configured backend's own token in place of the process's internal token.
 
-    The check of the token (``_sendable_token``) runs as the request is prepared, before ``http.client`` sees it, and
-    its ``TaskFailed`` leaves ``requests`` as it is raised.
+    The token is ``token()``'s answer as the request is prepared, so a backend whose token is the person's of each
+    call signs each with theirs. The check of the token (``_sendable_token``) runs then too, before ``http.client``
+    sees it, and its ``TaskFailed`` leaves ``requests`` as it is raised.
     """
 
-    def __init__(self, token: str, backend_id: str) -> None:
+    def __init__(self, token: Callable[[], str], backend_id: str) -> None:
         self._token = token
         self._backend_id = backend_id
 
     def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
-        request.headers["X-Flowfile-Internal"] = _sendable_token(self._token, self._backend_id)
+        request.headers["X-Flowfile-Internal"] = _sendable_token(self._token(), self._backend_id)
         return request
 
 
-def _v1_error(status_code: int, detail: Any, *, answered_by: str = "The worker") -> ComputeError:
+def _v1_error(
+    status_code: int, detail: Any, *, answered_by: str = "The worker", backend_id: str | None = None
+) -> ComputeError:
     """The typed error for a ``/v1`` failure the worker answered with ``status_code`` and ``detail``.
 
     REST answers, refused socket upgrades, ``error`` frames and an ``HTTPException`` a ``/v1`` body raised in this
@@ -1503,8 +1539,14 @@ def _v1_error(status_code: int, detail: Any, *, answered_by: str = "The worker")
     - 404: ``ResultMissing``, a result or input it does not hold.
     - 422: ``PlanRejected``, what a body refuses before anything runs.
     - 500 carrying a child's ``status``: through ``worker_failure``, as a failed task.
+    - 401 "Invalid or missing internal token" from a server filled from a hub (``backend_id`` names it,
+      ``registry.hub_server``): a ``TaskFailed`` saying that server runs an older Flowfile, which knows only its
+      internal token and so cannot take the hub's run tokens, and that an admin joins it again. Any other worker's
+      refusal of a token keeps the worker's own answer.
     - Any other code: a ``TaskFailed`` naming the code and ``answered_by``.
     """
+    from flowfile_core.flowfile.execution import registry  # imported here: the registry imports this module
+
     if status_code == 426:
         return VersionMismatch(str(detail))
     if status_code == 404:
@@ -1513,11 +1555,18 @@ def _v1_error(status_code: int, detail: Any, *, answered_by: str = "The worker")
         return PlanRejected(str(detail))
     if status_code == 500 and isinstance(detail, dict) and "status" in detail:
         return worker_failure(detail.get("error_kind"), detail.get("error_message") or detail["status"])
+    if status_code == 401 and detail == "Invalid or missing internal token":
+        server = registry.hub_server(backend_id)
+        if server is not None:
+            return TaskFailed(
+                f"The hub's server {server} runs an older Flowfile, which can't take this hub's runs; an admin joins "
+                "it again with the line from the hub's Add a server."
+            )
     return TaskFailed(f"{answered_by} answered {status_code}: {detail}")
 
 
-def _v1_failure(status_code: int, body: bytes, reason: str) -> ComputeError:
-    """The typed error for an HTTP ``/v1`` answer that is no success, through ``_v1_error``.
+def _v1_failure(status_code: int, body: bytes, reason: str, *, backend_id: str | None = None) -> ComputeError:
+    """The typed error for an HTTP ``/v1`` answer that is no success, through ``_v1_error``, for ``backend_id``.
 
     The detail is the ``detail`` of the JSON ``body``, else the body as text, else the code and its ``reason``.
     """
@@ -1528,7 +1577,7 @@ def _v1_failure(status_code: int, body: bytes, reason: str) -> ComputeError:
     detail = answer.get("detail") if isinstance(answer, dict) else None
     if detail is None:
         detail = body.decode(errors="replace") or f"{status_code} {reason}"
-    return _v1_error(status_code, detail)
+    return _v1_error(status_code, detail, backend_id=backend_id)
 
 
 _CONNECTION_CREDENTIALS = (
@@ -1624,23 +1673,26 @@ def _delta_job(
     return write, operation, {**destination, **{name: getattr(write, name) for name in fields}}
 
 
-def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
+def _credential_kwargs(credential: Credential | None) -> dict[str, Any]:
     """What a scan of a URI takes for ``credential``: its provider and its connection's plain options.
 
     Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     The provider carries the stored connection's id and user only, and resolves it where the plan runs. The options
     (``credential_ref_kwargs``, no secret among them) carry the endpoint and region, so an S3-compatible store is
-    reached.
+    reached. A sealed credential is opened here, which only this server's own entry of the map allows.
     """
+    return credential_body_kwargs(_wire_credential(credential))
+
+
+def _wire_credential(credential: Credential | None) -> dict[str, Any] | None:
+    """A credential as the export and import bodies and the export task carry it: the connection's id and its user's,
+    or a sealed vend's whole map of node name to token, of which the node that runs it opens its own entry."""
     if credential is None:
-        return {}
-    return credential_ref_kwargs(credential.connection_id, credential.user_id)
-
-
-def _wire_credential(credential: CredentialRef | None) -> dict[str, int] | None:
-    """A credential as the export and import bodies and the export task carry it: the connection's id and its user's."""
-    return None if credential is None else asdict(credential)
+        return None
+    if isinstance(credential, SealedCredential):
+        return {"sealed": dict(credential.sealed)}
+    return asdict(credential)
 
 
 def _wire_columns(schema: Schema) -> list[dict[str, str]]:

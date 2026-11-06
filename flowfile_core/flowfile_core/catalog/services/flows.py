@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
+from pathlib import Path
 
 from flowfile_core.catalog.constants import (
     LOCAL_FLOWS,
@@ -25,6 +27,7 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRegistrationOut,
     GlobalArtifactOut,
 )
+from shared.storage_config import may_touch_flow_file, registered_flow_path, removable_flow_file
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +68,20 @@ def _warn_missing_file_once(flow: FlowRegistration) -> None:
     )
 
 
+def flow_file_exists(flow: FlowRegistration) -> bool:
+    """Whether the registration's file is there to use.
+
+    On a multi-user server a path outside the flow folders answers False whatever is there, so the catalog
+    never tells one user whether another file exists on the server.
+    """
+    if not flow.flow_path or not may_touch_flow_file(Path(flow.flow_path)):
+        return False
+    exists = os.path.exists(flow.flow_path)
+    if not exists:
+        _warn_missing_file_once(flow)
+    return exists
+
+
 class FlowRegistrationService:
     """Owns flow registration CRUD, enrichment and auto-registration."""
 
@@ -84,9 +101,7 @@ class FlowRegistrationService:
         artifact_count = self.repo.count_active_artifacts_for_flow(flow.id)
         produced_tables = self.repo.list_tables_for_flow(flow.id)
         read_tables = self.repo.list_read_tables_for_flow(flow.id)
-        file_exists = os.path.exists(flow.flow_path) if flow.flow_path else False
-        if not file_exists:
-            _warn_missing_file_once(flow)
+        file_exists = flow_file_exists(flow)
         return FlowRegistrationOut(
             id=flow.id,
             name=flow.name,
@@ -132,9 +147,7 @@ class FlowRegistrationService:
             run_count, last_run = run_stats.get(flow.id, (0, None))
             produced = tables_by_flow.get(flow.id, [])
             read = read_tables_by_flow.get(flow.id, [])
-            file_exists = os.path.exists(flow.flow_path) if flow.flow_path else False
-            if not file_exists:
-                _warn_missing_file_once(flow)
+            file_exists = flow_file_exists(flow)
             result.append(
                 FlowRegistrationOut(
                     id=flow.id,
@@ -168,12 +181,28 @@ class FlowRegistrationService:
         owner_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
+        flow_uuid: str | None = None,
     ) -> FlowRegistrationOut:
-        """Register a new flow in the catalog."""
+        """Register a new flow in the catalog.
+
+        ``flow_uuid`` lets a flow that already has an identity (a saved flow document, a flow
+        brought over from another server) keep it, so its run history stays under one id. It is
+        parsed as a uuid (``ValueError`` when malformed) and stored in canonical form; a uuid that
+        another registration already holds raises ``FlowExistsError``. Without it a new uuid is
+        generated, as before.
+
+        On a multi-user server ``flow_path`` must lie inside the server's flow folders and is stored
+        resolved (``ValueError`` otherwise), so no registration points anywhere else.
+        """
+        flow_path = registered_flow_path(flow_path)
+        if flow_uuid is not None:
+            flow_uuid = str(uuid.UUID(flow_uuid))
         if namespace_id is not None:
             namespace = self.repo.get_namespace(namespace_id)
             if namespace is None:
                 raise NamespaceNotFoundError(namespace_id=namespace_id)
+        if flow_uuid is not None and self.repo.get_flow_by_uuid(flow_uuid) is not None:
+            raise FlowExistsError(name, namespace_id)
         flow = FlowRegistration(
             name=name,
             description=description,
@@ -181,6 +210,8 @@ class FlowRegistrationService:
             namespace_id=namespace_id,
             owner_id=owner_id,
         )
+        if flow_uuid is not None:
+            flow.flow_uuid = flow_uuid
         flow = self.repo.create_flow(flow)
         return self.enrich_flow_registration(flow, owner_id)
 
@@ -224,7 +255,10 @@ class FlowRegistrationService:
         """Delete a flow and its related favourites/follows.
 
         When ``delete_file`` is set, also remove the flow file from disk — but
-        only once no other registration still points at the same path.
+        only once no other registration still points at the same path, and on a
+        multi-user server only when it lies inside the server's flow folders: a
+        registration stores whatever path it was given, so a file outside them
+        is left where it is and the registration alone goes.
         """
         flow = self.repo.get_flow(registration_id)
         if flow is None:
@@ -239,12 +273,22 @@ class FlowRegistrationService:
         self.repo.delete_flow(registration_id)
 
         if delete_file and flow_path and self.repo.count_flows_by_path(flow_path) == 0:
-            try:
-                os.remove(flow_path)
-            except FileNotFoundError:
-                pass
-            except OSError:
-                logger.warning("Failed to delete flow file %s", flow_path, exc_info=True)
+            target = removable_flow_file(Path(flow_path))
+            if target is None:
+                logger.warning(
+                    "Registered flow %s (id=%d) removed from the catalog; its file %s is outside the server's "
+                    "flow folders and was left in place",
+                    flow.name,
+                    registration_id,
+                    flow_path,
+                )
+            else:
+                try:
+                    os.remove(target)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    logger.warning("Failed to delete flow file %s", flow_path, exc_info=True)
 
         _project_sync_flow_deleted(flow_uuid, owner_id)
 

@@ -158,6 +158,18 @@ def get_prio_execution_location(
         return local_execution_location
 
 
+class HubOrigin(BaseModel):
+    """Where a flow document came from on a hub, kept in the document so it travels with the file.
+
+    ``version`` is the hub version this document was checked out from or published as last; the next
+    publish sends it as its base, which is how the hub tells a publish from a stale copy apart.
+    """
+
+    hub_url: str
+    flow_uuid: str
+    version: int
+
+
 class FlowGraphConfig(BaseModel):
     """
     Configuration model for a flow graph's basic properties.
@@ -174,6 +186,7 @@ class FlowGraphConfig(BaseModel):
         max_parallel_workers (int): Maximum number of threads used for parallel node execution within a
             stage. Set to 1 to disable parallelism. Defaults to 4.
         parameters (list[FlowParameter]): Flow-level parameters referenceable via ${name} syntax.
+        hub_origin (Optional[HubOrigin]): The hub flow and version this document came from, if any.
     """
 
     flow_id: int = Field(default_factory=create_unique_id, description="Unique identifier for the flow.")
@@ -189,6 +202,7 @@ class FlowGraphConfig(BaseModel):
     execution_location: ExecutionLocationsLiteral = Field(default_factory=default_execution_location)
     max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")
     parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
+    hub_origin: HubOrigin | None = None
 
     @field_validator("execution_mode", mode="before")
     @classmethod
@@ -289,6 +303,7 @@ class FlowfileSettings(BaseModel):
     max_parallel_workers: int = Field(default=4, ge=1)
     source_registration_id: int | None = None
     parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
+    hub_origin: HubOrigin | None = None
 
     @field_validator("execution_mode", mode="before")
     @classmethod

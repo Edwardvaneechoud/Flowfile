@@ -33,7 +33,7 @@ from flowfile_core.project.manifest import (
     write_manifest,
 )
 from flowfile_core.project.models import ActiveProject, NoActiveProjectError, SetupResult
-from shared.storage_config import storage
+from shared.storage_config import flow_path_spellings, storage
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +188,12 @@ class ProjectSyncService:
         try:
             with git_ops.repo_lock(proj.root):
                 with get_db_context() as db:
-                    reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).first()
+                    reg = (
+                        db.query(FlowRegistration)
+                        .filter(FlowRegistration.flow_path.in_(flow_path_spellings(flow_path)))
+                        .order_by(FlowRegistration.id)
+                        .first()
+                    )
                     if reg is not None and reg.owner_id == proj.owner_id:
                         namespace = projection._namespace_path(db, reg.namespace_id)
                         target = projection.project_flow(proj.root, reg, namespace)

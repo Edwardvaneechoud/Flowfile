@@ -24,11 +24,14 @@
           <span v-if="table.scd2" class="scd2-badge" title="Slowly changing dimension (type 2)"
             >SCD2</span
           >
-          <SharedBadge :access="table.access" />
+          <SharedBadge
+            :access="table.access"
+            :title="isHub ? hubSharedTitle(table.access) : undefined"
+          />
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
-      <div class="header-actions">
+      <div v-if="!isHub" class="header-actions">
         <button
           class="action-btn-lg"
           :disabled="!table.file_exists"
@@ -96,7 +99,10 @@
     />
 
     <!-- File missing banner (physical tables only) -->
-    <div v-if="table.table_type !== 'virtual' && !table.file_exists" class="missing-banner">
+    <div
+      v-if="!isHub && table.table_type !== 'virtual' && !table.file_exists"
+      class="missing-banner"
+    >
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div>
         <strong>Table data not found</strong>
@@ -166,7 +172,7 @@
           </div>
         </el-popover>
       </div>
-      <div v-if="table.table_type !== 'virtual'" class="meta-card">
+      <div v-if="!isHub && table.table_type !== 'virtual'" class="meta-card">
         <span class="meta-label">Change tracking</span>
         <el-popover
           v-if="table.cdc_enabled"
@@ -207,8 +213,15 @@
         <span class="meta-label">Created</span>
         <span class="meta-value">{{ formatDate(table.created_at) }}</span>
       </div>
+      <div v-if="isHub && hubProducer" class="meta-card" data-testid="hub-table-producer">
+        <span class="meta-label">Produced by</span>
+        <span class="meta-value meta-static" :title="hubProducer">
+          <i class="fa-solid fa-diagram-project"></i>
+          <span class="meta-link-text">{{ hubProducer }}</span>
+        </span>
+      </div>
       <div
-        v-if="
+        v-else-if="
           table.table_type === 'virtual' &&
           table.producer_registration_id &&
           table.producer_registration_name
@@ -267,7 +280,7 @@
         </ul>
       </div>
       <div
-        v-if="table.read_by_flows && table.read_by_flows.length > 0"
+        v-if="!isHub && table.read_by_flows && table.read_by_flows.length > 0"
         class="meta-card meta-card-clickable"
         @click="showReadByModal = true"
       >
@@ -419,7 +432,13 @@
     </div>
 
     <!-- Data Preview -->
-    <div class="section">
+    <div v-if="isHub" class="section">
+      <div class="section-header">
+        <h3>Data Preview</h3>
+      </div>
+      <div class="empty-state" data-testid="hub-preview-note">{{ HUB_PREVIEW_NOTE }}</div>
+    </div>
+    <div v-else class="section">
       <div v-if="isViewingHistorical" class="version-banner">
         <i class="fa-solid fa-clock-rotate-left"></i>
         Viewing version {{ selectedVersion }}
@@ -487,7 +506,7 @@
     </div>
 
     <!-- Visualizations -->
-    <div class="section viz-section">
+    <div v-if="!isHub" class="section viz-section">
       <VisualizationsTab :table-id="table.id" />
     </div>
   </div>
@@ -514,6 +533,7 @@ import TableEditorDialog from "./TableEditorDialog.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { HUB_PREVIEW_NOTE, hubSharedTitle, isHubRow } from "./hubRows";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
@@ -545,11 +565,20 @@ const emit = defineEmits([
   "editsSaved",
 ]);
 
+const isHub = computed(() => isHubRow(props.table));
+// The flow ids are the hub's, so the producer is shown by name and links nowhere.
+const hubProducer = computed(
+  () => props.table.producer_registration_name ?? props.table.source_registration_name ?? null,
+);
+
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
 
 // Show the Version History section when there's history (cached or freshly loaded) or while it loads.
 const showVersionHistory = computed(
-  () => props.table.table_type !== "virtual" && (!!hasHistory.value || props.loadingTableHistory),
+  () =>
+    !isHub.value &&
+    props.table.table_type !== "virtual" &&
+    (!!hasHistory.value || props.loadingTableHistory),
 );
 
 const historyStale = computed(() => !!hasHistory.value && props.tableHistoryStale);

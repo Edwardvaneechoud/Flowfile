@@ -9,6 +9,28 @@ import time
 from multiprocessing.context import SpawnContext
 from typing import TYPE_CHECKING
 
+
+def _launched_as_worker() -> bool:
+    """Whether this process is the worker itself, started by its console script or as ``python -m flowfile_worker``.
+
+    Only then is the command line the worker's: core, a library host and every spawned child import this package too.
+    While ``python -m`` imports the package, ``sys.argv[0]`` is ``-m`` and ``sys.orig_argv`` names the module.
+    """
+    if multiprocessing.current_process().name != "MainProcess" or not sys.argv:
+        return False
+    if os.path.splitext(os.path.basename(sys.argv[0]))[0] == "flowfile_worker":
+        return True
+    command = getattr(sys, "orig_argv", [])
+    return sys.argv[0] == "-m" and "-m" in command and command[command.index("-m") + 1 :][:1] == ["flowfile_worker"]
+
+
+# A join without a storage dir and secure store of its own is refused before `shared.storage_config` reads one.
+if _launched_as_worker():
+    from flowfile_worker import configs as _configs
+    from shared import hub_node as _hub_node
+
+    _hub_node.require_own_storage_dir(_configs.JOIN_TOKEN)
+
 from shared._version import get_version
 from shared.storage_config import storage
 

@@ -10,6 +10,7 @@
     <div class="compute-content">
       <KernelManagerView v-if="activeTab === 'kernels'" />
       <ComputeBackendsPanel v-else-if="activeTab === 'backends'" />
+      <HubPanel v-else-if="activeTab === 'hub' && authStore.isAdmin" />
       <PrivacyPanel v-else-if="activeTab === 'privacy'" />
       <BackupsPanel v-else-if="activeTab === 'backups'" />
     </div>
@@ -22,6 +23,7 @@ import { useRoute, useRouter } from "vue-router";
 import SettingsTabBar from "../../components/settings/SettingsTabBar.vue";
 import KernelManagerView from "../KernelManagerView/KernelManagerView.vue";
 import ComputeBackendsPanel from "./ComputeBackendsPanel.vue";
+import HubPanel from "./HubPanel.vue";
 import PrivacyPanel from "./PrivacyPanel.vue";
 import BackupsPanel from "./BackupsPanel.vue";
 import { computeTabs, COMPUTE_TAB_GROUP_LABELS, resolveComputeTab } from "./computeTabs";

@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import type { AxiosRequestConfig } from "axios";
 import { CatalogApi } from "../api/catalog.api";
 import { ARTIFACT_VERSIONS_PAGE_SIZE } from "../views/CatalogView/artifactVersions";
+import { isHubRow } from "../views/CatalogView/hubRows";
 import type {
   ActiveFlowRun,
   ArtifactPruneResult,
@@ -379,7 +380,7 @@ export const useCatalogStore = defineStore("catalog", {
 
     async toggleTableFavorite(tableId: number) {
       const table = this.findTableInTree(tableId);
-      if (!table) return;
+      if (!table || isHubRow(table)) return;
       try {
         if (table.is_favorite) {
           await CatalogApi.removeTableFavorite(tableId);
@@ -591,13 +592,17 @@ export const useCatalogStore = defineStore("catalog", {
       this.previewError = null;
       // Show recently-loaded version history automatically from the sessionStorage cache (flagged
       // stale after 5 min). Only the data preview stays gated for object-storage tables.
-      const cachedHistory = tableId !== null ? readCachedHistory(tableId) : null;
+      const found = tableId !== null ? this.findTableInTree(tableId) : null;
+      const hubRow = !!found && isHubRow(found);
+      const cachedHistory = tableId !== null && !hubRow ? readCachedHistory(tableId) : null;
       this.tableHistory = cachedHistory?.history ?? null;
       this.tableHistoryStale = cachedHistory?.stale ?? false;
       this.selectedVersion = null;
 
       if (tableId !== null) {
-        this.selectedTable = this.findTableInTree(tableId) ?? null;
+        this.selectedTable = found;
+        // Preview and history are local routes, and the hub refuses previews.
+        if (hubRow) return;
         const isPhysical = this.selectedTable?.table_type !== "virtual";
         const isRemote = !!this.selectedTable?.is_remote_storage;
         // Data preview: local auto-loads; object storage loads on demand (a button).

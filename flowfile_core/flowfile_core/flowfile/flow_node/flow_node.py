@@ -281,6 +281,8 @@ class FlowNode:
     _flow_canceled: Callable[[], bool] | None
     # warning text when prediction would require executing an un-run kernel node
     _schema_prediction_blocked: str | None
+    # the sentence a server of the hub refused the last prediction with; the next prediction asks again
+    _prediction_refused: str | None
     _prediction_requires_data: bool  # stamped at placement: prediction needs a collect
     _executes_on_kernel: bool  # stamped at placement: function runs on a kernel container
     deferred_until_run: bool  # seeded placeholder output; only a real run may execute the node
@@ -382,6 +384,7 @@ class FlowNode:
         self._execution_context_getter = None
         self._flow_canceled = None
         self._schema_prediction_blocked = None
+        self._prediction_refused = None
         self._prediction_requires_data = False
         self._executes_on_kernel = False
         self.deferred_until_run = False
@@ -458,6 +461,7 @@ class FlowNode:
                     return result.schema
             except Exception as e:
                 logger.warning(f"Error with the schema callback: {e}")
+                self._note_prediction_refusal(e)
                 return []
 
         return schema_callback
@@ -500,6 +504,7 @@ class FlowNode:
             logger.warning(e)
 
             self.node_settings.setup_errors = True
+            self._note_prediction_refusal(e)
             return []
 
         self._schema_callback = SingleExecutionFuture(f, error_callback)
@@ -1148,6 +1153,7 @@ class FlowNode:
             f"has_schema_callback={self.schema_callback is not None}, "
             f"has_output_field_config={_has_output_field_config}"
         )
+        self._forget_prediction_refusal()
 
         if self.node_schema.predicted_schema and not force:
             logger.debug(f"get_predicted_schema: node_id={self.node_id} - returning cached predicted_schema")
@@ -1211,6 +1217,32 @@ class FlowNode:
                 )
 
         return self.node_schema.predicted_schema
+
+    def _note_prediction_refusal(self, error: BaseException) -> None:
+        """Show the sentence a server of the hub refused this node's prediction with as its prediction warning, when
+        ``error`` is such a refusal (``node_tokens.refusal``): the person asking has no sign-in through the hub here.
+
+        Without it the refusal reads as a node with no columns. Other errors are left as they are.
+        """
+        from flowfile_core.hub_client import node_tokens
+
+        sentence = node_tokens.refusal(error)
+        if sentence is None:
+            return
+        self._prediction_refused = self._schema_prediction_blocked = self.results.warnings = sentence
+
+    def _forget_prediction_refusal(self) -> None:
+        """Drop the refusal ``_note_prediction_refusal`` recorded, and the schema callback's cached failure, so this
+        prediction asks the server again: the person asking now may be signed in through the hub."""
+        sentence, self._prediction_refused = self._prediction_refused, None
+        if sentence is None:
+            return
+        if self._schema_prediction_blocked == sentence:
+            self._schema_prediction_blocked = None
+        if self.results.warnings == sentence:
+            self.results.warnings = None
+        if self._schema_callback is not None:
+            self._schema_callback.reset()
 
     @property
     def is_setup(self) -> bool:
@@ -1497,6 +1529,7 @@ class FlowNode:
         except Exception as e:
             logger.warning("there was an issue with the function, returning an empty Flowfile")
             logger.warning(e)
+            self._note_prediction_refusal(e)
         finally:
             if restorations:
                 restore_parameters(restorations)
@@ -2654,6 +2687,8 @@ class FlowNode:
             node.prediction_warning = warning
         if self.is_setup and include_output:
             node.main_output = self.get_table_example(include_example)
+            # A refusal of this node's own prediction is known only once its output was asked for.
+            node.prediction_warning = node.prediction_warning or self._prediction_refused
         # Generated/updated settings are only a proposal for the panel; a save applies them.
         node = setting_generator.get_setting_generator(self.node_type)(node)
         node = setting_updator.get_setting_updator(self.node_type)(node)

@@ -12,27 +12,49 @@ from fastapi.responses import JSONResponse
 
 from flowfile_worker import mp_context
 from flowfile_worker.auth import carries_internal_token
-from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
+from flowfile_worker.configs import (
+    FLOWFILE_CORE_URI,
+    HUB_URL,
+    JOIN_TOKEN,
+    NODE_NAME,
+    NODE_URL,
+    SERVICE_HOST,
+    SERVICE_PORT,
+    logger,
+)
 from flowfile_worker.pool import task_pool
 from flowfile_worker.protocol_routes import router as protocol_router
 from flowfile_worker.routes import router
 from flowfile_worker.streaming import streaming_router, v1_streaming_router
+from shared import hub_node
+from shared._version import get_version
 from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
 should_exit = False
 server_instance = None
+serving_port: int | None = None
+"""The port ``run`` serves on, which each heartbeat names this machine's addresses on; ``None`` outside ``run``."""
 
 
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
-    """Handle application startup and shutdown"""
+    """Handle application startup and shutdown.
+
+    A worker that joined a hub alone, with keys of its own, tells the hub the node is up while it serves, and at which
+    addresses on its port; beside a core that joined for both, the core does (``hub_node.start_heartbeat``).
+    """
     logger.info("Starting application...")
+    beating = hub_node.start_heartbeat(
+        "worker", port=serving_port, tls=bool(os.environ.get("FLOWFILE_WORKER_TLS_CERT"))
+    )
     task_pool.prewarm()
     try:
         yield
     finally:
         logger.info("Shutting down application...")
+        if beating is not None:
+            beating.set()
         try:
             task_pool.shutdown()
         except Exception as e:
@@ -71,6 +93,23 @@ async def request_validation_without_input(request: Request, exc: RequestValidat
     """FastAPI's 422 without each error's ``input``, which repeats the body (an export or import's presigned URI)."""
     errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    """Say the worker is up and which Flowfile release it runs, to any caller, with or without a token.
+
+    A worker whose storage dir joined a hub also says the name it joined under, as ``node``: that name is what the hub
+    shows on its Compute page, and without it the hub could not tell this server from another machine at the same
+    private address on another network when it looks for a server that moved. Nothing more: the host, Python, Polars
+    and the operations are in ``/v1/capabilities``, behind a token. Core never calls this route, so it is not part of
+    the worker contract.
+    """
+    answer = {"status": "ok", "version": get_version()}
+    node = hub_node.read()
+    if node is not None:
+        answer["node"] = node.name
+    return answer
 
 
 def _supervising_shell(request: Request) -> bool:
@@ -117,17 +156,64 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
+def _worker_url(host: str, port: int, *, tls: bool) -> str:
+    url = hub_node.default_url(port, tls=tls)
+    if hub_node.is_loopback_host(host):
+        logger.warning(
+            "This worker serves on %s, which only this machine reaches, and gives the hub %s; to be reached from other "
+            "machines, start it with --host 0.0.0.0",
+            host,
+            url,
+        )
+    return url
+
+
+def join_hub(port: int | None = None, host: str | None = None) -> None:
+    """Join the hub ``--join`` names, before the worker serves on ``host`` and ``port``; without a join token, nothing.
+
+    The worker asks for ``--name``, else the machine's name, and gives ``--url``, else this machine's full name and the
+    port it serves on (``hub_node.default_url``), ``https`` when it serves TLS; bound to a loopback address, which only
+    this machine reaches, it warns. A worker that joined already makes no request (``shared.hub_node``).
+    """
+    if not JOIN_TOKEN:
+        return
+    port = port or SERVICE_PORT
+    tls = bool(os.environ.get("FLOWFILE_WORKER_TLS_CERT"))
+    worker_url = NODE_URL or _worker_url(host or SERVICE_HOST, port, tls=tls)
+    if hub_node.already_joined(JOIN_TOKEN) is None:
+        logger.info("Telling the hub this worker is at %s", worker_url)
+    hub_node.join_at_start(
+        HUB_URL,
+        JOIN_TOKEN,
+        name=NODE_NAME or hub_node.default_name(),
+        worker_url=worker_url,
+    )
+
+
 def run(host: str = None, port: int = None):
     """Run the FastAPI app with graceful shutdown.
 
+    Without a join token uvicorn binds the port, as it always has. A worker started with a join token binds its socket
+    first, on the port it was started with (``hub_node.serving_socket``), then joins its hub (``join_hub``) with that
+    port, and serves on that same socket: one whose port is in use exits with code 1 before any request to the hub,
+    one the hub refuses with code 2 before it serves.
     Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
     """
-    global server_instance
+    global server_instance, serving_port
 
     if host is None:
         host = SERVICE_HOST
     if port is None:
         port = SERVICE_PORT
+
+    sock = None
+    if JOIN_TOKEN:
+        sock = hub_node.serving_socket(host, port)
+        try:
+            join_hub(port, host)
+        except BaseException:
+            sock.close()
+            raise
 
     from connectorx import __version__ as connectorx_version
 
@@ -146,6 +232,7 @@ def run(host: str = None, port: int = None):
     config = uvicorn.Config(app, host=host, port=port, loop="asyncio", ssl_certfile=tls_cert, ssl_keyfile=tls_key)
     server = uvicorn.Server(config)
     server_instance = server
+    serving_port = port
 
     # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.
     start_parent_death_watcher(lambda: setattr(server, "should_exit", True))
@@ -154,11 +241,12 @@ def run(host: str = None, port: int = None):
     logger.info("Server started")
 
     try:
-        server.run()
+        server.run(sockets=[sock] if sock is not None else None)
     except KeyboardInterrupt:
         logger.info("Received interrupt signal, shutting down...")
     finally:
         server_instance = None
+        serving_port = None
         logger.info("Server shutdown complete")
 
 

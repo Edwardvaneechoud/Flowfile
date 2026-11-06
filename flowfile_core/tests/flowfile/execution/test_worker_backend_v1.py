@@ -81,7 +81,13 @@ from flowfile_core.schemas.input_schema import (
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared import compute_protocol as wire
-from shared.compute_protocol import PROTOCOL_VERSION_HEADER, WorkerLocation, file_uri, local_capabilities
+from shared.compute_protocol import (
+    PROTOCOL_VERSION,
+    PROTOCOL_VERSION_HEADER,
+    WorkerLocation,
+    file_uri,
+    local_capabilities,
+)
 from shared.storage_config import storage
 from tests.flowfile.execution.conftest import fuzzy_settings, serve
 from tests.flowfile.execution.graph_helpers import input_then_sort, make_graph, ranks
@@ -306,7 +312,7 @@ def test_every_call_goes_to_the_v1_routes_with_the_protocol_version(backend, kep
         ("GET", "/v1/capabilities"),
         ("DELETE", held),
     ]
-    assert {version for _, _, version in sent} == {"1"}
+    assert {version for _, _, version in sent} == {str(PROTOCOL_VERSION)}
 
 
 @STATES
@@ -430,7 +436,7 @@ def test_export_goes_to_the_v1_export_route_and_the_worker_writes_the_uri(
 
     assert backend.export(ref, target, None) == target
 
-    assert sent == [("POST", f"/v1/results/{ref.result_id}/export", "1")]
+    assert sent == [("POST", f"/v1/results/{ref.result_id}/export", str(PROTOCOL_VERSION))]
     assert pl.read_parquet(tmp_path / "out.parquet").equals(PEOPLE)
     assert backend.exists(ref) is True
 
@@ -464,7 +470,7 @@ def test_import_uri_posts_to_the_v1_import_route_and_answers_a_deferred_v1_refer
     ref = backend.import_uri(file_uri(path), schema, PEOPLE.height, None)
 
     try:
-        assert sent == [("POST", f"/v1/results/{ref.result_id}/import", "1")]
+        assert sent == [("POST", f"/v1/results/{ref.result_id}/import", str(PROTOCOL_VERSION))]
         assert (ref.backend_id, ref.state, ref.row_count) == ("worker", "deferred", PEOPLE.height)
         assert [(c.column_name, c.data_type) for c in ref.schema] == [(c.column_name, c.data_type) for c in schema]
         assert location(ref).kind == "plan"
@@ -478,7 +484,7 @@ def test_import_uri_posts_to_the_v1_import_route_and_answers_a_deferred_v1_refer
         assert pl.from_arrow(read_stream(backend.sample(ref, 3))).equals(PEOPLE.head(3))
     finally:
         backend.release(ref)
-    assert ("DELETE", f"/v1/results/{ref.result_id}", "1") in sent
+    assert ("DELETE", f"/v1/results/{ref.result_id}", str(PROTOCOL_VERSION)) in sent
     assert backend.exists(ref) is False
     assert path.is_file()
 
@@ -522,7 +528,7 @@ def test_a_blob_import_posts_kind_blob_and_answers_a_blob_reference(backend, sen
     ref = backend.import_uri(file_uri(source), None, None, None, kind="blob")
 
     try:
-        assert sent == [("POST", f"/v1/results/{ref.result_id}/import", "1")]
+        assert sent == [("POST", f"/v1/results/{ref.result_id}/import", str(PROTOCOL_VERSION))]
         assert bodies == [
             {"uri": file_uri(source), "credential": None, "columns": [], "row_count": None, "kind": "blob"}
         ]
@@ -542,11 +548,11 @@ def test_a_blob_import_posts_kind_blob_and_answers_a_blob_reference(backend, sen
         assert sent == []
         target = tmp_path / "copy.bin"
         assert backend.export(ref, file_uri(target), None) == file_uri(target)
-        assert sent == [("POST", f"/v1/results/{ref.result_id}/export", "1")]
+        assert sent == [("POST", f"/v1/results/{ref.result_id}/export", str(PROTOCOL_VERSION))]
         assert target.read_bytes() == BLOB
     finally:
         backend.release(ref)
-    assert ("DELETE", f"/v1/results/{ref.result_id}", "1") in sent
+    assert ("DELETE", f"/v1/results/{ref.result_id}", str(PROTOCOL_VERSION)) in sent
     assert backend.exists(ref) is False
     assert target.read_bytes() == BLOB
 
@@ -605,9 +611,11 @@ def test_a_plan_the_worker_cannot_load_is_rejected(backend, core_only_udf_plan):
 def test_a_backend_on_another_protocol_version_is_refused_and_nothing_is_held(backend, sent, transport):
     """A 426 on the socket's upgrade is final: the plan is not posted instead."""
     result_id = new_result_id()
-    backend.protocol_version = 2
+    backend.protocol_version = PROTOCOL_VERSION + 1
 
-    with pytest.raises(VersionMismatch, match=r"protocol version 1; the request carries 2"):
+    with pytest.raises(
+        VersionMismatch, match=rf"protocol version {PROTOCOL_VERSION}; the request carries {PROTOCOL_VERSION + 1}"
+    ):
         backend.submit(people(), [], hints(True), result_id, flow_id=-1, node_id=-1)
 
     submits = [(method, path) for method, path, _ in sent if "submit" in path]
@@ -1343,7 +1351,7 @@ def test_the_socket_is_dialled_under_the_workers_url_with_the_token_and_version(
 
     WorkerBackend(url=worker_url).submit(people(), [], hints(False), result_id, flow_id=-1, node_id=-1)
 
-    headers = {"X-Flowfile-Internal": get_internal_token(), PROTOCOL_VERSION_HEADER: "1"}
+    headers = {"X-Flowfile-Internal": get_internal_token(), PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION)}
     dialled_with = {"additional_headers": headers, "max_size": None, "ssl": None, "close_timeout": 1.0}
     assert dials == [(socket_url, dialled_with)]
 

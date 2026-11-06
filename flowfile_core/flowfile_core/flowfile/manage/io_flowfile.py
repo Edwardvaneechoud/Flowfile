@@ -9,30 +9,12 @@ from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
-from shared.storage_config import storage
+from shared.storage_config import flow_storage_directories, storage
 
 try:
     import yaml
 except ImportError:
     yaml = None
-
-
-def _flow_storage_directories() -> list[Path]:
-    return [storage.flows_directory, storage.uploads_directory, storage.temp_directory_for_flows]
-
-
-def require_flow_in_storage(flow_path: Path) -> Path:
-    """``flow_path`` resolved; in docker mode it must lie under the flows, uploads or temp flows folder.
-
-    Stricter than ``_validate_flow_path``, which lets any absolute path through: a catalog registration
-    stores whatever path it was given, so reading a registered file must not reach past these folders.
-    """
-    resolved = flow_path.resolve()
-    if is_docker_mode() and not any(
-        resolved.is_relative_to(directory.resolve()) for directory in _flow_storage_directories()
-    ):
-        raise ValueError("the flow's file is outside the server's flow folders")
-    return resolved
 
 
 def _validate_flow_path(flow_path: Path) -> Path:
@@ -47,7 +29,7 @@ def _validate_flow_path(flow_path: Path) -> Path:
         raise FileNotFoundError(f"Flow file not found: {resolved}")
 
     if is_docker_mode():
-        is_safe = any(resolved.is_relative_to(safe_dir) for safe_dir in _flow_storage_directories())
+        is_safe = any(resolved.is_relative_to(safe_dir) for safe_dir in flow_storage_directories())
     else:
         is_safe = True
 
@@ -266,6 +248,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         max_parallel_workers=flowfile_data.flowfile_settings.max_parallel_workers,
         source_registration_id=flowfile_data.flowfile_settings.source_registration_id,
         parameters=flowfile_data.flowfile_settings.parameters,
+        hub_origin=getattr(flowfile_data.flowfile_settings, "hub_origin", None),
     )
 
     return schemas.FlowInformation(

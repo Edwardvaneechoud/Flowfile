@@ -94,6 +94,9 @@ class FullCloudStorageConnectionWorkerInterface(AuthSettingsInput):
     endpoint_url: str | None = None
     verify_ssl: bool = True
 
+    # What a hub vended to the run, sealed to its nodes (node name -> token); the node that runs the step opens it
+    sealed: dict[str, str] | None = None
+
 
 class FullCloudStorageConnection(AuthSettingsInput):
     """Internal model with decrypted secrets"""

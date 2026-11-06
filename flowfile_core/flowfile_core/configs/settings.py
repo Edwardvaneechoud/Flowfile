@@ -1,5 +1,5 @@
 # flowfile_core/flowfile_core/configs/settings.py
-import argparse
+import logging
 import os
 import platform
 import tempfile
@@ -8,11 +8,12 @@ from passlib.context import CryptContext
 from starlette.config import Config
 
 from flowfile_core.configs import exchange_config
+from flowfile_core.configs.command_line import DEFAULT_SERVER_HOST, parse_args
 from flowfile_core.configs.utils import MutableBool
+from shared import hub_node
 from shared.storage_config import storage
 
 # Constants for server and worker configuration
-DEFAULT_SERVER_HOST = "0.0.0.0"
 DEFAULT_SERVER_PORT = 63578
 DEFAULT_WORKER_PORT = 63579
 
@@ -175,21 +176,6 @@ def get_community_github_client_id() -> str:
     return config("FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID", cast=str, default="") or COMMUNITY_GITHUB_CLIENT_ID_DEFAULT
 
 
-def parse_args():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description="Flowfile Backend Server")
-    parser.add_argument("--host", type=str, default=DEFAULT_SERVER_HOST, help="Host to bind to")
-    parser.add_argument("--port", type=int, help="Port to bind to")
-    parser.add_argument(
-        "--worker-port",
-        type=int,
-        help="Port for the worker process",
-    )
-    args = parser.parse_known_args()[0]
-
-    return args
-
-
 def get_temp_dir() -> str:
     """Get the appropriate temp directory path based on environment"""
     docker_temp = os.getenv("TEMP_DIR")
@@ -230,6 +216,54 @@ SERVER_PORT = args.port if args.port is not None else int(os.getenv("CORE_PORT",
 WORKER_PORT = (
     args.worker_port if args.worker_port is not None else int(os.getenv("FLOWFILE_WORKER_PORT", DEFAULT_WORKER_PORT))
 )
+# What ``--join`` and its flags name: the hub to join before serving, and how this node and its worker are reached.
+JOIN_TOKEN = args.join
+JOIN_HUB_URL = args.hub
+JOIN_NODE_NAME = args.name
+JOIN_CORE_URL = args.url
+JOIN_WORKER_URL = args.worker_url
+
+
+def join_addresses(
+    core_port: int | None = None,
+    core_host: str | None = None,
+    *,
+    worker_path: str | None = None,
+    editor_path: str | None = None,
+) -> tuple[str, str, str | None]:
+    """The addresses a join gives the hub for this node: core's, its worker's, and its editor's.
+
+    Core's is ``--url`` when given. Else it is this machine's full name (``hub_node.default_url``) on core's port
+    (``core_port``, the one core serves on, else ``SERVER_PORT``); when core binds a loopback address (``core_host``,
+    else ``SERVER_HOST``), which only this machine reaches, one warning says how to be reached from others. The
+    worker's is ``--worker-url`` when given, else core's address and ``worker_path`` for a worker mounted in core's
+    app, else this machine's full name on ``WORKER_PORT``. The editor's is core's address and ``editor_path``, and
+    ``None`` when core serves no editor. Plain ``http``; composed when called, never at import, since the machine's
+    full name can wait on a reverse lookup.
+    """
+    port = core_port or SERVER_PORT
+    host = core_host or SERVER_HOST
+    if JOIN_CORE_URL:
+        core_url = JOIN_CORE_URL
+    else:
+        core_url = hub_node.default_url(port, tls=False)
+        if hub_node.is_loopback_host(host):
+            logging.getLogger(__name__).warning(
+                "Core serves on %s, which only this machine reaches, and gives the hub %s; to be reached from other "
+                "machines, start it with --host 0.0.0.0 and --url <its address as they reach it>",
+                host,
+                core_url,
+            )
+    if JOIN_WORKER_URL:
+        worker_url = JOIN_WORKER_URL
+    elif worker_path:
+        worker_url = core_url.rstrip("/") + worker_path
+    else:
+        worker_url = hub_node.default_url(WORKER_PORT, tls=False)
+    ui_url = core_url.rstrip("/") + editor_path if editor_path else None
+    return core_url, worker_url, ui_url
+
+
 WORKER_HOST = os.getenv("WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")
 
 config = Config(".env" if os.path.isfile(".env") else None)
@@ -241,13 +275,22 @@ WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_
 WORKER_ADDRESS_CONFIGURED = bool(config("FLOWFILE_WORKER_URL", cast=str, default="")) or bool(os.getenv("WORKER_HOST"))
 TEMP_DIR = storage.temp_directory
 
-# "electron" (desktop app), "package" (Python package) or "docker" (container).
+# "electron" (desktop app), "package" (Python package), "docker" (container) or "hub" (server behind a hub).
 FLOWFILE_MODE = os.getenv("FLOWFILE_MODE", "electron")
 
 
 def is_docker_mode() -> bool:
     """Check if running in Docker container mode"""
     return FLOWFILE_MODE == "docker"
+
+
+def is_server_mode() -> bool:
+    """Check if running as a multi-user server: the docker image or a node behind a hub.
+
+    Gates server security (a configured master key, an admin user seeded from the environment), not container
+    plumbing, which stays on ``is_docker_mode()``. Reads ``FLOWFILE_MODE`` per call, as those gates always have.
+    """
+    return os.environ.get("FLOWFILE_MODE") in ("docker", "hub")
 
 
 def is_electron_mode() -> bool:

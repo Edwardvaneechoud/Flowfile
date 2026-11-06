@@ -14,6 +14,8 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.schemas import FlowParameter
+from shared.storage_config import storage
+from tests.flowfile_core_test_utils import as_server
 
 # Helpers
 
@@ -966,3 +968,21 @@ def test_load_with_over_range_keyed_edge_keeps_valid_edges(two_port_subflow, tmp
     # The valid edge's lead must survive the dropped over-range entry.
     assert any(lead.node_id == 9 for lead in reloaded.get_node(1).leads_to_nodes)
     run_and_assert_ok(reloaded)
+
+
+@pytest.mark.parametrize("mode", ["docker", "hub"])
+def test_server_resolves_a_run_flow_reference_only_inside_the_flow_folders(head_subflow, monkeypatch, mode):
+    """A flow inside the folders must not reach an outside file through the registration its run_flow node names."""
+    outside_id = register_flow_file(head_subflow["path"], f"outside_{uuid.uuid4().hex[:8]}")
+    storage.flows_directory.mkdir(parents=True, exist_ok=True)
+    inside_path = storage.flows_directory / f"head_inside_{uuid.uuid4().hex[:8]}.yaml"
+    inside_path.write_bytes(Path(head_subflow["path"]).read_bytes())
+    inside_id = register_flow_file(inside_path, f"inside_{uuid.uuid4().hex[:8]}")
+    try:
+        as_server(monkeypatch, mode)
+        with pytest.raises(subflow.SubflowResolutionError, match="outside the server's flow folders"):
+            subflow.resolve_subflow_path(input_schema.SubflowReference(registration_id=outside_id), user_id=1)
+        resolved = subflow.resolve_subflow_path(input_schema.SubflowReference(registration_id=inside_id), user_id=1)
+        assert resolved.path == inside_path.resolve()
+    finally:
+        inside_path.unlink(missing_ok=True)

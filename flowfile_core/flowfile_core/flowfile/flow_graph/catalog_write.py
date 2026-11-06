@@ -5,14 +5,17 @@ import io as _io
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
+from uuid import uuid4
 
 import polars as pl
 
+from flowfile_core.auth import issuer_accounts
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
     is_delta_table,
 )
+from flowfile_core.catalog.exceptions import TableExistsError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import (
     _catalog_table_dir_name,
@@ -41,6 +44,9 @@ from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _effective_namespace_id,
     _resolve_catalog_sql_tables,
 )
+from flowfile_core.hub_client import catalog as hub_catalog
+from flowfile_core.hub_client import client as hub_client
+from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
@@ -496,6 +502,8 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
         if node.node_type != "catalog_reader":
             continue
         setting = node.setting_input
+        if getattr(setting, "hub_table_id", None) is not None:
+            continue
         if getattr(setting, "sql_query", None):
             return None
         table_id = getattr(setting, "catalog_table_id", None)
@@ -548,7 +556,7 @@ def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
     """Return ``True`` when any catalog source feeding this flow lives in object storage.
 
     Such a flow can't cache a serialized plan: it would freeze the source's decrypted cloud
-    credentials. Detection is DB-only (no object-storage I/O).
+    credentials. A table on the hub is always in object storage. Detection is DB-only (no object-storage I/O).
     """
     physical_ids: list[int] = []
     seen: set[int] = set()
@@ -556,6 +564,8 @@ def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
         if node.node_type != "catalog_reader":
             continue
         setting = node.setting_input
+        if getattr(setting, "hub_table_id", None) is not None:
+            return True
         if getattr(setting, "sql_query", None):
             try:
                 resolved = _resolve_catalog_sql_tables(setting.node_id, getattr(setting, "user_id", None))
@@ -583,6 +593,30 @@ def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
         logger.warning("Could not determine catalog cloud sources; treating as cloud", exc_info=True)
         return True
     return False
+
+
+NO_HUB_CATALOG = (
+    "No catalog on the hub is picked for this table; pick one you may write to, or ask an admin or your team's "
+    "manager for write access to one."
+)
+
+
+def refuse_without_hub_catalog(settings: input_schema.CatalogWriteSettings) -> None:
+    """Refuse a write that names no namespace, on a server that joined its hub with keys of its own.
+
+    Such a write would land in the server's own default catalog, whose tables only this server sees, while the people
+    there work in the hub's catalogs (``hub_client.catalog.merged`` offers them nothing else). The usual case is a new
+    writer the editor preselected nothing for, because the hub lets the person write into none of its catalogs.
+
+    Raises:
+        ValueError: ``NO_HUB_CATALOG``, before anything is written.
+    """
+    if settings.hub_namespace_id is not None or issuer_accounts.joined_with_keys() is None:
+        return
+    with get_db_context() as db:
+        if _effective_namespace_id(CatalogService(SQLAlchemyCatalogRepository(db)), settings) is not None:
+            return
+    raise ValueError(NO_HUB_CATALOG)
 
 
 def _handle_virtual_table_write(
@@ -682,6 +716,83 @@ def _handle_virtual_table_write(
     return df
 
 
+def _handle_hub_table_write(
+    graph: "FlowGraph",
+    node_catalog_writer: input_schema.NodeCatalogWriter,
+    df: FlowDataEngine,
+    user_id: int,
+) -> FlowDataEngine:
+    """Write a Delta table into a namespace on the hub with the credential the hub vended to the run.
+
+    The hub is the record: its table of that name in the namespace is the destination, a new one gets a directory
+    under the namespace's storage root, and the compute writes it by identity with a connection whose secrets are
+    encrypted for the worker. A new table is registered on the hub from the write's own report; an existing one's
+    record on the hub is left as it is. Nothing is recorded in the local catalog, and the hub's grant check is the
+    vend's. The node's output carries the row count the write reports, so its run report counts the rows written.
+    """
+    settings = node_catalog_writer.catalog_write_settings
+    namespace_id = settings.hub_namespace_id
+    if graph.hub_vend is None:
+        raise ValueError("Run the flow to write a table on the hub")
+    credential = graph.hub_vend.for_namespace(namespace_id)
+    hub_url, access_token = hub_catalog.signed_in(user_id)
+    existing = next(
+        (
+            table
+            for table in hub_client.list_tables(hub_url, access_token, namespace_id=namespace_id)
+            if table["name"] == settings.table_name
+        ),
+        None,
+    )
+    if existing is not None and settings.write_mode == "error":
+        raise TableExistsError(name=settings.table_name, namespace_id=namespace_id)
+    dest_path = (existing or {}).get("file_path") or join_catalog_uri(
+        credential.base_uri, f"{settings.table_name}_{uuid4().hex[:8]}"
+    )
+    connection = graph.hub_vend.worker_connection(dest_path, user_id)
+    table = _catalog_table_identity(settings.table_name, None, dest_path, credential.base_uri)
+
+    writer_node = graph.get_node(node_catalog_writer.node_id)
+    operation, write = _catalog_delta_op(
+        settings.write_mode,
+        settings,
+        plan=df.data_frame,
+        path=None,
+        table=table,
+        connection=connection,
+        scd2_config=None,
+        run_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        flow_id=graph.flow_id,
+        node_id=writer_node.node_id,
+    )
+    report = writer_node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
+    meta = _catalog_delta_written(report.metadata).meta
+    if meta is not None and meta.get("row_count") is not None:
+        df = FlowDataEngine(df.data_frame, schema=df.schema, number_of_records=meta["row_count"])
+    if existing is not None or meta is None:
+        return df
+    table_path = report.metadata.get("table_path") or dest_path
+    try:
+        hub_client.register_table_from_data(
+            hub_url,
+            access_token,
+            {
+                "name": settings.table_name,
+                "table_path": table_path,
+                "namespace_id": namespace_id,
+                "description": settings.description,
+                "storage_format": "delta",
+                "schema_columns": meta.get("schema"),
+                "row_count": meta.get("row_count"),
+                "column_count": meta.get("column_count"),
+                "size_bytes": meta.get("size_bytes"),
+            },
+        )
+    except (HubRefused, HubUnreachable, HubVersionRefused) as e:
+        raise ValueError(f"The table was written to {table_path} but could not be registered on the hub: {e}") from e
+    return df
+
+
 def _handle_physical_table_write(
     graph: "FlowGraph",
     node_catalog_writer: input_schema.NodeCatalogWriter,
@@ -690,6 +801,8 @@ def _handle_physical_table_write(
     """Handle physical-mode catalog write: materialize data as a Delta table and register it."""
     settings = node_catalog_writer.catalog_write_settings
     user_id = node_catalog_writer.user_id or 1
+    if settings.hub_namespace_id is not None:
+        return _handle_hub_table_write(graph, node_catalog_writer, df, user_id)
 
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)

@@ -22,6 +22,7 @@ const none: ExchangeStoreState = {
   source: "none",
   envOverride: false,
   saved: { uri: null, connection: null, maxRows: null },
+  hub: null,
   connections: ["exchange"],
 };
 

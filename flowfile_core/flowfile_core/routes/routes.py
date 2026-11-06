@@ -91,6 +91,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.payloads import FileWritePayload, RestApiReadPayload, op_payload
+from flowfile_core.flowfile.execution.placement import SingleBackendPolicy, unmoved_without_store
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
     get_formula_chain_check,
@@ -119,6 +120,9 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
+from flowfile_core.hub_client import node_tokens
+from flowfile_core.hub_client.exchange_store import joined_server_store
+from flowfile_core.hub_client.report import build_run_report, hub_target, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
 from flowfile_core.notebook.kernel_runner import close_flow_sessions, lineage_commits
 from flowfile_core.notebook.push import NotebookPushRequest, needs_confirmation, node_id_ceiling, plan_push
@@ -138,7 +142,7 @@ from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared.db_dialects import KNOWN_DIALECT_NAMES, DialectInfo, dialect_catalog
-from shared.storage_config import storage
+from shared.storage_config import registered_flow_path, require_flow_in_storage, storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -343,7 +347,9 @@ async def trigger_fetch_node_data(
         if not await asyncio.to_thread(flow.try_claim_run):
             raise HTTPException(422, "Flow is already running")
         background_tasks.add_task(
-            flow.trigger_fetch_node,
+            _fetch_for,
+            current_user.id,
+            flow,
             node_id,
             performance_mode=performance_mode,
             reset_cache=not performance_mode,
@@ -352,6 +358,33 @@ async def trigger_fetch_node_data(
     return RunStartedResponse(
         content={"message": "Data started", "flow_id": flow_id, "node_id": node_id}, status_code=status.HTTP_200_OK
     )
+
+
+@contextmanager
+def _editor_call_for(user_id: int) -> Iterator[None]:
+    """The block of an editor call made for ``user_id``: a schema prediction, a preview, its statistics or export.
+
+    On a server joined with keys of its own, each call to a server of the hub inside it carries the token minted with
+    that person's own sign-in through the hub (``node_tokens.acting_for``), as their runs do. A call refused because
+    they have no such sign-in answers 403 with the sentence that says to sign in through the hub again, never a 500;
+    a prediction the server refused shows that sentence as the node's ``prediction_warning``. Elsewhere nothing reads
+    the person, and the block changes nothing.
+    """
+    with node_tokens.acting_for(user_id):
+        try:
+            yield
+        except Exception as e:
+            sentence = node_tokens.refusal(e)
+            if sentence is None:
+                raise
+            raise HTTPException(403, sentence) from None
+
+
+def _fetch_for(user_id: int, flow, node_id: int, **kwargs) -> None:
+    """``flow.trigger_fetch_node`` for ``user_id``: on a server joined with keys of its own, a server of the hub takes
+    that person's run token (``node_tokens.acting_for``)."""
+    with node_tokens.acting_for(user_id):
+        flow.trigger_fetch_node(node_id, **kwargs)
 
 
 def _with_display_name(settings: schemas.FlowSettingsResponse) -> schemas.FlowSettingsResponse:
@@ -408,24 +441,28 @@ def _discard_relocated_scratch_file(previous_path: str | None, new_path: str) ->
         logger.info(f"Could not unlink old scratch flow file {previous_path}", exc_info=True)
 
 
-def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
-    """Return ``(registration_id, display_name, flow_path)`` for run-tracking.
+def _resolve_run_identity(flow) -> tuple[int | None, str, str | None, str | None]:
+    """Return ``(registration_id, display_name, flow_path, flow_uuid)`` for run-tracking.
 
     Prefers the catalog registration's user-typed ``name`` over
     ``flow.flow_settings.name``, which after a save is the file stem
     (``9_house_price`` for ``9_house_price.yaml``) — that prefix is a filename
     collision-avoidance trick that should never reach the run-history UI.
+    ``flow_uuid`` is read from the same registration, for the report to the hub.
     """
     fallback_name = getattr(flow.flow_settings, "name", None) or getattr(flow, "__name__", "unknown")
     flow_path = flow.flow_settings.path or flow.flow_settings.save_location
     reg_id = getattr(flow.flow_settings, "source_registration_id", None)
     display_name = fallback_name
+    flow_uuid = None
     if reg_id is not None:
         with get_db_context() as db:
             reg = SQLAlchemyCatalogRepository(db).get_flow(reg_id)
-            if reg is not None and reg.name:
-                display_name = reg.name
-    return reg_id, display_name, flow_path
+            if reg is not None:
+                flow_uuid = reg.flow_uuid
+                if reg.name:
+                    display_name = reg.name
+    return reg_id, display_name, flow_path, flow_uuid
 
 
 def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tuple:
@@ -444,7 +481,7 @@ def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tu
                 resolve_source_registration_id(flow)
             except Exception:
                 logger.info("First-run catalog registration failed (non-critical)", exc_info=True)
-    reg_id, flow_name, flow_path = _resolve_run_identity(flow)
+    reg_id, flow_name, flow_path, flow_uuid = _resolve_run_identity(flow)
     logger.debug(f"source_registration_id for flow '{flow_name}': {reg_id}")
 
     run_id = None
@@ -471,7 +508,18 @@ def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tu
             logger.info(f"Flow '{flow_name}' run started: run_id={run_id}")
     except Exception as exc:
         logger.error(f"Failed to create run record for flow '{flow_name}': {exc}", exc_info=True)
-    return reg_id, flow_name, flow_path, run_id, snapshot_yaml
+    return reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml
+
+
+def _joined_server_store(flow, user_id: int | None):
+    """The hub's exchange store for a run of ``flow`` on a server joined with keys of its own, when one could apply.
+
+    A flow whose nodes all run on the run's backend crosses nothing, so the hub is not asked for it.
+    """
+    run_backend_id = current_context(flow).backend_id
+    if not unmoved_without_store(flow.nodes, SingleBackendPolicy(run_backend_id)):
+        return None
+    return joined_server_store(user_id)
 
 
 def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
@@ -485,20 +533,37 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
     here when the pre-work fails, by ``run_graph`` otherwise. If DB persistence fails, the run still
     completed but won't appear in the run history. Failures are logged at ERROR level so they're
     visible in logs.
+
+    A run whose record was written is then reported to the hub ``hub_target`` names, if any: on a server joined
+    with keys of its own, the hub the user signed in through, with their delegated access token; elsewhere the user's
+    hub session for a flow that came from that hub. A run of a flow with no registration is not reported.
+
+    On a server joined with keys of its own the run takes the exchange store its hub sets, asked once before the run
+    with the user's hub session and only for a flow with a node set to another backend than the run's, the one case a
+    store changes (``_joined_server_store``), and holds it until the run ends. The run is the user's
+    (``node_tokens.acting_for``), so each call to a server of the hub carries the run token minted with that user's
+    own sign-in through the hub.
     """
     try:
-        reg_id, flow_name, flow_path, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
+        reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
         # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
         commit_sources = node_ids is None or lineage_commits(flow, node_ids)
+        flow.hub_exchange_store = _joined_server_store(flow, user_id)
     except BaseException:
+        flow.hub_exchange_store = None
         flow.release_run()
         raise
 
-    run_info = flow.run_graph(node_ids=node_ids, commit_sources=commit_sources, claimed=True)
+    try:
+        with node_tokens.acting_for(user_id):
+            run_info = flow.run_graph(node_ids=node_ids, commit_sources=commit_sources, claimed=True)
+    finally:
+        flow.hub_exchange_store = None
     if run_info is None:
         logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
         return
 
+    core_run_id = None
     try:
         node_results = None
         try:
@@ -517,6 +582,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                     nodes_completed=run_info.nodes_completed,
                     node_results_json=node_results,
                 )
+            core_run_id = run_id
 
             logger.info(
                 f"Flow '{flow_name}' run completed: success={run_info.success}, "
@@ -526,7 +592,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
             # Fallback: create the full record if phase 1 failed
             with get_db_context() as db:
                 service = CatalogService(SQLAlchemyCatalogRepository(db))
-                service.create_completed_run(
+                completed = service.create_completed_run(
                     registration_id=reg_id,
                     flow_name=flow_name,
                     flow_path=flow_path,
@@ -540,6 +606,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                     node_results_json=node_results,
                     flow_snapshot=snapshot_yaml,
                 )
+                core_run_id = completed.id
     except Exception as exc:
         logger.error(
             f"Failed to update run record for flow '{flow_name}'. "
@@ -547,6 +614,22 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
             f"Error: {exc}",
             exc_info=True,
         )
+
+    if core_run_id is None:
+        return
+    target = hub_target(flow, user_id)
+    if target is None:
+        return
+    if not flow_uuid:
+        logger.debug(f"Run {core_run_id} of flow '{flow_name}' not reported to the hub: no registration")
+        return
+    try:
+        report = build_run_report(flow, run_info, flow_uuid)
+    except Exception as exc:
+        logger.warning(f"Could not build the hub report for run {core_run_id} of flow '{flow_name}': {exc}")
+        return
+    hub_url, token = target
+    post_run_report(hub_url, token, report)
 
 
 async def _start_run(flow, flow_id: int, user_id, background_tasks: BackgroundTasks, node_ids=None) -> None:
@@ -1403,6 +1486,17 @@ def _require_flow_save_permitted(flow_path: str | None, namespace_id: int | None
         raise HTTPException(status_code=403, detail=str(err)) from None
 
 
+def _require_registrable_flow_path(flow_path: str | None) -> None:
+    """422 before any write when the catalog would refuse to register a flow at ``flow_path``: on a
+    multi-user server a registered flow lives inside the server's flow folders."""
+    if flow_path is None:
+        return
+    try:
+        registered_flow_path(flow_path)
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from None
+
+
 @router.post("/editor/create_flow/", tags=["editor"])
 def create_flow(
     flow_path: str = None,
@@ -1446,6 +1540,8 @@ def create_flow(
     if namespace_id is not None and not namespace_exists(namespace_id):
         raise HTTPException(404, "Namespace not found")
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
+    if register_in_catalog:
+        _require_registrable_flow_path(flow_path)
     if namespace_id is not None and flow_path is not None:
         # Before add_flow writes YAML, so a rejected create leaves no file or session behind.
         reg_name = name or Path(flow_path).stem
@@ -2035,13 +2131,13 @@ def get_node(
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(422, "Not found")
-    v = node.get_node_data(
-        flow_id=flow.flow_id,
-        include_example=get_data,
-        include_output=include_output,
-        include_inputs=include_inputs,
-    )
-    return v
+    with _editor_call_for(current_user.id):
+        return node.get_node_data(
+            flow_id=flow.flow_id,
+            include_example=get_data,
+            include_output=include_output,
+            include_inputs=include_inputs,
+        )
 
 
 @router.get("/node/input_names", tags=["editor"])
@@ -2187,7 +2283,8 @@ def get_table_example(
     """
     flow = get_flow_or_404(flow_id, current_user)
     node = flow.get_node(node_id)
-    return node.get_table_example(True, output_handle=output_handle)
+    with _editor_call_for(current_user.id):
+        return node.get_table_example(True, output_handle=output_handle)
 
 
 @router.get("/node/column_stats", response_model=output_model.FileColumn, tags=["editor"])
@@ -2214,15 +2311,16 @@ def get_node_column_stats(
         raise HTTPException(404, "Could not find the node")
     if flow.flow_settings.execution_mode == "Performance":
         raise HTTPException(409, "Column statistics are not computed in Performance mode.")
-    try:
-        return node.get_column_stats(column_name, output_handle=output_handle)
-    except ColumnStatsUnavailable as e:
-        raise HTTPException(409, str(e)) from None
-    except ColumnNotFoundError:
-        raise HTTPException(404, f"Column '{column_name}' not found in the node result") from None
-    except Exception as e:
-        logger.error(f"Failed to compute column stats for node {node_id}, column '{column_name}': {e}")
-        raise HTTPException(422, "Could not compute column statistics") from e
+    with _editor_call_for(current_user.id):
+        try:
+            return node.get_column_stats(column_name, output_handle=output_handle)
+        except ColumnStatsUnavailable as e:
+            raise HTTPException(409, str(e)) from None
+        except ColumnNotFoundError:
+            raise HTTPException(404, f"Column '{column_name}' not found in the node result") from None
+        except Exception as e:
+            logger.error(f"Failed to compute column stats for node {node_id}, column '{column_name}': {e}")
+            raise HTTPException(422, "Could not compute column statistics") from e
 
 
 @router.get("/node/data/export", tags=["editor"])
@@ -2241,6 +2339,12 @@ def export_node_data(
     ``bounded.head_rows`` on the backend that holds the node's result, so core opens no file a backend stored.
     """
     flow, node = _get_analysis_node(flow_id, node_id, current_user)
+    with _editor_call_for(current_user.id):
+        return _export_node_rows(flow, node, flow_id, node_id, output_handle, file_format, limit)
+
+
+def _export_node_rows(flow, node, flow_id: int, node_id: int, output_handle: str, file_format: str, limit: int):
+    """``export_node_data``'s file of the node's cached rows."""
     try:
         engine = node.get_cached_result(output_handle)
     except ColumnStatsUnavailable as e:
@@ -2360,6 +2464,8 @@ def _save_flow_impl(
 
     # Before any YAML write: a refused save leaves no orphan and overwrites no other user's flow.
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
+    if (is_new_path and register_in_catalog) or namespace_id is not None:
+        _require_registrable_flow_path(flow_path)
 
     if is_new_path:
         user_id = current_user.id if current_user else None
@@ -2504,6 +2610,7 @@ def save_flow_to_catalog(
     flow_path = _resolve_catalog_save_path(flow_id, safe_stem, own_registration)
     if own_registration is not None:
         _require_flow_save_permitted(flow_path, namespace_id, current_user)
+    _require_registrable_flow_path(flow_path)
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
@@ -2596,6 +2703,10 @@ def overwrite_flow_in_catalog(
         )
 
     target_path = validate_path_under_cwd(target.flow_path)
+    try:
+        target_path = str(require_flow_in_storage(Path(target_path)))
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from None
     managed_root = str(Path(storage.flows_directory).resolve()) + os.sep
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
@@ -2664,6 +2775,7 @@ _SERVER_OWNED_FLOW_SETTINGS = (
     "path",
     "save_location",
     "source_registration_id",
+    "hub_origin",
     "modified_on",
     "is_running",
     "is_canceled",
@@ -2720,15 +2832,19 @@ def get_flow_artifacts(flow_id: int, current_user=Depends(get_current_active_use
 def get_flow_settings_validation(flow_id: int, current_user=Depends(get_current_active_user)) -> FlowSettingsValidation:
     """Conservative static check: node settings that reference missing input columns."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
-    return validate_flow_settings(flow)
+    with _editor_call_for(current_user.id):
+        return validate_flow_settings(flow)
 
 
 @router.get("/flow/placement", tags=["editor"], response_model=output_model.PlacementPreview)
 def get_flow_placement(flow_id: int, current_user=Depends(get_current_active_user)) -> output_model.PlacementPreview:
     """Where a run would place each node now: the backend it would run on, the nodes moved to the default backend
-    because theirs cannot run them, and the nodes no backend can run. Runs nothing and changes nothing."""
+    because theirs cannot run them, and the nodes no backend can run. Runs nothing and changes nothing.
+
+    On a server joined with keys of its own the preview takes the exchange store the hub sets, asked as a run of the
+    caller asks it (``_joined_server_store``), so a node a run would carry through that store is not shown refused."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
-    placement = flow.preview_placement()
+    placement = flow.preview_placement(hub_store=_joined_server_store(flow, current_user.id))
     if placement is None:
         return output_model.PlacementPreview(available=False)
     return output_model.PlacementPreview(
@@ -2844,14 +2960,15 @@ def compute_node_visualization(
     successive calls skip the load.
     """
     flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user)
-    try:
-        return node_viz.compute_node_rows(flow, node, body.payload, body.max_rows)
-    except node_viz.NodeNotRunError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except node_viz.CloudPlanNotVisualizableError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(502, str(exc)) from exc
+    with _editor_call_for(current_user.id):
+        try:
+            return node_viz.compute_node_rows(flow, node, body.payload, body.max_rows)
+        except node_viz.NodeNotRunError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except node_viz.CloudPlanNotVisualizableError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
 
 
 @router.post("/analysis_data/fields", tags=["analysis"], response_model=VisualizationFieldsResponse)
@@ -2861,14 +2978,15 @@ def get_node_visualization_fields(
 ):
     """Return the Graphic Walker field schema for an Explore Data node's result."""
     flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user)
-    try:
-        return node_viz.get_node_fields(flow, node)
-    except node_viz.NodeNotRunError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except node_viz.CloudPlanNotVisualizableError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(502, str(exc)) from exc
+    with _editor_call_for(current_user.id):
+        try:
+            return node_viz.get_node_fields(flow, node)
+        except node_viz.NodeNotRunError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except node_viz.CloudPlanNotVisualizableError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
 
 
 @router.get("/custom_functions/instant_result", tags=[])
@@ -2877,12 +2995,12 @@ async def get_instant_function_result(
 ):
     """Executes a simple, instant function on a node's data and returns the result."""
     flow = get_flow_or_404(flow_id, current_user)
-    try:
-        node = flow_file_handler.get_node(flow.flow_id, node_id)
-        result = await asyncio.to_thread(get_instant_func_results, node, func_string)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    with _editor_call_for(current_user.id):
+        try:
+            node = flow_file_handler.get_node(flow.flow_id, node_id)
+            return await asyncio.to_thread(get_instant_func_results, node, func_string)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/custom_functions/formula_chain_check", tags=[])
@@ -2892,11 +3010,12 @@ async def check_formula_chain(
 ) -> output_model.FormulaChainCheckResponse:
     """Validates a formula node's entries, each against the schema its predecessors leave behind."""
     flow = get_flow_or_404(request.flow_id, current_user)
-    try:
-        node = flow_file_handler.get_node(flow.flow_id, request.node_id)
-        return await asyncio.to_thread(get_formula_chain_check, node, request.entries)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    with _editor_call_for(current_user.id):
+        try:
+            node = flow_file_handler.get_node(flow.flow_id, request.node_id)
+            return await asyncio.to_thread(get_formula_chain_check, node, request.entries)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/custom_functions/formula_chain_instant_result", tags=[])
@@ -2906,11 +3025,12 @@ async def get_formula_chain_instant_function_result(
 ) -> output_model.InstantFuncResult:
     """Evaluates one formula entry on a preview row, with the entries above it applied first."""
     flow = get_flow_or_404(request.flow_id, current_user)
-    try:
-        node = flow_file_handler.get_node(flow.flow_id, request.node_id)
-        return await asyncio.to_thread(get_formula_chain_instant_result, node, request.entries, request.index)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    with _editor_call_for(current_user.id):
+        try:
+            node = flow_file_handler.get_node(flow.flow_id, request.node_id)
+            return await asyncio.to_thread(get_formula_chain_instant_result, node, request.entries, request.index)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/api/get_xlsx_sheet_names", tags=["excel_reader"], response_model=list[str])

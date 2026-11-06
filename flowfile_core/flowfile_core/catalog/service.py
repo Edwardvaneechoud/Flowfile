@@ -136,7 +136,7 @@ from flowfile_core.schemas.catalog_schema import (
     VizSourceDescriptor,
 )
 from flowfile_core.schemas.sharing_schema import AccessInfo
-from shared.storage_config import storage
+from shared.storage_config import registered_flow_path, storage
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
@@ -169,7 +169,7 @@ class CatalogService:
         self.access = access
         self._namespaces = NamespaceService(repo)
         self._flows = FlowRegistrationService(repo, self._namespaces)
-        self._runs = FlowRunService(repo)
+        self._runs = FlowRunService(repo, access=access)
         self._engagement = FlowEngagementService(repo, self._flows)
         self._schedules = ScheduleService(repo, self._runs, self._namespaces)
         self._tables = TableService(repo, self._namespaces, self._flows, self._schedules, access=access)
@@ -593,10 +593,11 @@ class CatalogService:
         owner_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
+        flow_uuid: str | None = None,
     ) -> FlowRegistrationOut:
-        """Register a new flow in the catalog."""
+        """Register a new flow in the catalog, under ``flow_uuid`` when the caller supplies one."""
         self._require_namespace_writable(namespace_id)
-        return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description)
+        return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description, flow_uuid=flow_uuid)
 
     def update_flow(
         self,
@@ -696,23 +697,14 @@ class CatalogService:
         offset: int = 0,
         search: str | None = None,
     ) -> PaginatedFlowRuns:
-        """List run summaries (without snapshots) with total count for pagination."""
-        if self._restricted and registration_id is not None:
-            self._require_use("flow", registration_id)
-        elif self._restricted and schedule_id is not None:
-            schedule = self._schedules.get_schedule(schedule_id)
-            self._require_use("flow", schedule.registration_id)
-        result = self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset, search)
-        if self._restricted and registration_id is None and schedule_id is None:
-            # Best-effort page filter, so totals may drift; by-id run reads are guarded separately.
-            allowed_flows = self.access.accessible_ids("flow")
-            user_id = self.access.user_id
-            result.items = [r for r in result.items if r.user_id == user_id or (r.registration_id in allowed_flows)]
-        return result
+        """List run summaries (without snapshots) with total count for pagination.
+
+        Restricted callers get only their visible runs; the filter is in the query, so totals match.
+        """
+        return self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset, search)
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
-        """Get a single run including the YAML snapshot."""
-        self._require_use_run(run_id)
+        """Get a single run including the YAML snapshot; a run the caller may not see is not found."""
         return self._runs.get_run_detail(run_id)
 
     def get_run(self, run_id: int) -> FlowRun:
@@ -804,6 +796,7 @@ class CatalogService:
                 ROOT_CATALOG.name,
             )
             return None
+        flow_path = registered_flow_path(flow_path)
         existing = self.repo.get_flow_by_path(flow_path)
         if existing:
             return None
@@ -1434,13 +1427,8 @@ class CatalogService:
     # Active runs + cancel
 
     def list_active_runs(self) -> list[ActiveFlowRun]:
-        """List all currently running flows (``ended_at IS NULL``)."""
-        runs = self._runs.list_active_runs()
-        if self._restricted:
-            allowed = self.access.accessible_ids("flow")
-            user_id = self.access.user_id
-            runs = [r for r in runs if r.user_id == user_id or r.registration_id in allowed]
-        return runs
+        """List all currently running flows (``ended_at IS NULL``) the caller may see."""
+        return self._runs.list_active_runs()
 
     def cancel_run(self, run_id: int) -> None:
         """Cancel a running flow by terminating its subprocess and marking the run failed."""

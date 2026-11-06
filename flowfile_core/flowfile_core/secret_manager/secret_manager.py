@@ -13,6 +13,7 @@ from flowfile_core.auth.models import SecretInput
 from flowfile_core.auth.secrets import get_master_key
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
+from shared import hub_sealed
 
 # Version identifier for key derivation scheme (allows future migrations)
 KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"
@@ -20,6 +21,12 @@ KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"
 # Encrypted secret format: $ffsec$1${user_id}${fernet_token}
 # This embeds the user_id so the worker can derive the correct key
 SECRET_FORMAT_PREFIX = "$ffsec$1$"
+
+
+def _joined_with_keys() -> bool:
+    from flowfile_core.auth import issuer_accounts
+
+    return issuer_accounts.joined_with_keys() is not None
 
 
 def derive_user_key(user_id: int) -> bytes:
@@ -98,7 +105,12 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
 
     Returns:
         SecretStr: The decrypted value wrapped in SecretStr
+
+    On a server joined to its hub with keys of its own, a secret the hub sealed to this
+    server (``shared.hub_sealed.sealed_secret``) is opened with this server's key.
     """
+    if hub_sealed.is_sealed_secret(encrypted_value) and _joined_with_keys():
+        return SecretStr(hub_sealed.open_secret(encrypted_value))
     if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
         # Parse: $ffsec$1${user_id}${fernet_token}
         remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]
@@ -124,6 +136,25 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
 
 
 def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
+    """The secret ``secret_name`` as ``current_user_id`` reaches it, encrypted; ``None`` when they reach none.
+
+    On a server joined to its hub with keys of its own every secret lives on the hub: it is asked
+    there by name for the person, sealed to this server (``hub_client.secrets.sealed_here``), and
+    the hub's own order decides which secret of that name it is. Anywhere else it is this
+    server's own, else one granted to the user (``stored_encrypted_secret``).
+
+    Raises:
+        LookupError: On a joined server, the hub could not be asked or refused for another reason.
+    """
+    if _joined_with_keys():
+        from flowfile_core.hub_client import secrets as hub_secrets
+
+        return hub_secrets.sealed_here(current_user_id, secret_name)
+    return stored_encrypted_secret(current_user_id, secret_name)
+
+
+def stored_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
+    """The secret ``secret_name`` in this server's database: the user's own, else the lowest-id one granted to them."""
     with get_db_context() as db:
         user_id = current_user_id
         # (user_id, name) is not unique at the DB level; order by id so resolution

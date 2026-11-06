@@ -220,6 +220,18 @@ def invalidate_user_cache(username: str | None = None) -> None:
             _user_cache.pop(username, None)
 
 
+def _user_from_row(row: db_models.User) -> User:
+    return User(
+        username=row.username,
+        id=row.id,
+        email=row.email,
+        full_name=row.full_name,
+        disabled=row.disabled,
+        is_admin=row.is_admin,
+        must_change_password=row.must_change_password,
+    )
+
+
 def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPException) -> User:
     """Token subject → ``User``.
 
@@ -240,15 +252,7 @@ def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPE
         row = db.query(db_models.User).filter(db_models.User.username == username).first()
         if row is None:
             raise credentials_exception
-        user = User(
-            username=row.username,
-            id=row.id,
-            email=row.email,
-            full_name=row.full_name,
-            disabled=row.disabled,
-            is_admin=row.is_admin,
-            must_change_password=row.must_change_password,
-        )
+        user = _user_from_row(row)
         with _user_cache_lock:
             _user_cache[username] = (now + USER_CACHE_TTL_SECONDS, user)
     if user.disabled:
@@ -308,8 +312,9 @@ def create_refresh_token(data: dict) -> str:
     return jwt.encode(to_encode, get_jwt_secret(), algorithm=ALGORITHM)
 
 
-def decode_refresh_token(token: str) -> str:
-    """Decode a refresh token and return the username.
+def decode_refresh_token(token: str) -> dict:
+    """Decode a refresh token and return its claims: ``sub`` is the username, ``sid`` the sign-in through a hub it
+    renews, when it was issued for one.
 
     Raises HTTPException(401) if the token is invalid, expired, or not a refresh token.
     """
@@ -322,10 +327,9 @@ def decode_refresh_token(token: str) -> str:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
         if payload.get("type") != "refresh":
             raise credentials_exception
-        username: str = payload.get("sub")
-        if username is None:
+        if payload.get("sub") is None:
             raise credentials_exception
-        return username
+        return payload
     except JWTError:
         raise credentials_exception from None
 

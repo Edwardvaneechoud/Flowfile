@@ -13,10 +13,13 @@ from time import time
 from typing import Any, Literal
 
 import polars as pl
+import pyarrow as pa
 from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
-from flowfile_core.configs import logger, settings
+from flowfile_core.auth import issuer_accounts
+from flowfile_core.configs import exchange_config, logger, settings
+from flowfile_core.configs.exchange_config import ExchangeConfig
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.events import publish
@@ -24,7 +27,7 @@ from flowfile_core.flowfile.catalog_cdc import (
     read_cursor,
     resolve_consumer_key,
 )
-from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution import registry, run_secrets
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
 from flowfile_core.flowfile.execution.errors import ComputeError, VersionMismatch
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
@@ -34,10 +37,14 @@ from flowfile_core.flowfile.execution.placement import (
     Placement,
     Refusal,
     SingleBackendPolicy,
+    held_on_this_server,
+    hub_table_namespace,
     place,
     remedy_for,
+    unmoved_without_store,
+    unsealed_for,
 )
-from flowfile_core.flowfile.execution.protocol import CredentialRef, ResultRef
+from flowfile_core.flowfile.execution.protocol import Credential, ResultRef, SealedCredential
 from flowfile_core.flowfile.flow_data_engine.bounded import DEFERRED_HINTS, head_rows
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -72,6 +79,8 @@ from flowfile_core.flowfile.util.skip_rules import (
     parameter_gate_is_open,
     uses_any_rule,
 )
+from flowfile_core.hub_client import node_addresses, node_tokens, vend
+from flowfile_core.hub_client import session as hub_session
 from flowfile_core.kernel.execution import (
     KernelHold,
 )
@@ -165,7 +174,7 @@ class BoundaryEdge:
     source_backend_id: str
     target_backend_id: str
     uri: str
-    credential: CredentialRef
+    credential: Credential
     node_logger: NodeLogger
     ref: ResultRef | None = None
 
@@ -242,6 +251,53 @@ class BoundaryEdge:
             registry.backend(self.target_backend_id).release(ref)
 
 
+def _unsealed_crossing(
+    credential: Credential, assignment: Mapping[int, str], ends: tuple[int, int], declared: Mapping[str, Capabilities]
+) -> str | None:
+    """Why a crossing with ``credential`` cannot run between the backends of its two ``ends``; ``None`` when it can.
+
+    Only a sealed credential is checked: each end's backend must open what the hub sealed to the run's servers.
+    """
+    if not isinstance(credential, SealedCredential):
+        return None
+    for node_id in ends:
+        backend_id = assignment[node_id]
+        if backend_id in declared:
+            reason = unsealed_for(backend_id, declared[backend_id], tuple(credential.sealed))
+            if reason is not None:
+                return f'on backend "{backend_id}" {reason}'
+    return None
+
+
+def _desktop_unsealed(node: FlowNode, server: str, *, mixed: bool = False) -> str:
+    """Why a desktop's ``node`` on a hub table cannot run on the hub's server ``server``, and to run it here instead.
+
+    ``mixed``: the run's other nodes on the hub's tables run on this computer, which opens no sealed credential.
+    """
+    verb = "writes" if hub_table_namespace(node.setting_input)[1] else "reads"
+    why = (
+        "the hub cannot seal the run's credential to that server while the run's other steps on the hub's tables run "
+        "on this computer"
+        if mixed
+        else "the hub sealed no credential to that server for it"
+    )
+    return (
+        f'Node {node.node_id} runs on the hub\'s server "{server}" and {verb} a table on the hub, but {why}, so run '
+        "the step on this computer"
+    )
+
+
+def _read_preview(node: FlowNode) -> pa.Table | None:
+    """The preview rows ``node`` read for its grid in a run that succeeded; ``None`` when it read none."""
+    if node.results.errors is not None or node.results.example_data_generator is None:
+        return None
+    try:
+        return node.results.example_data_generator()
+    except Exception as e:
+        logger.debug(f"Node {node.node_id} kept no preview rows: {e}")
+        return None
+
+
 def _release_boundary_inputs(node: FlowNode, edges: Sequence[BoundaryEdge]) -> None:
     """Forget ``node``'s boundary inputs and release each import; a failed release is a warning on the node's log."""
     node._boundary_inputs = {}
@@ -257,6 +313,16 @@ def _release_boundary_inputs(node: FlowNode, edges: Sequence[BoundaryEdge]) -> N
 class ExecutionMixin(GraphMixinBase):
     # The running run's prefix in the exchange store; None between runs.
     exchange_run: ExchangeRun | None = None
+    # What the hub vended to the running run over its tables; None between runs and in a run with no hub table.
+    hub_vend: vend.RunVend | None = None
+    # The exchange store a joined server's hub set for the run about to start; None between runs and elsewhere.
+    hub_exchange_store: ExchangeConfig | None = None
+    # (run id, vend id) of the last run's vend, for its report; holds no credential.
+    last_hub_vend: tuple[str, int] | None = None
+    # Node id -> the secret names the running run's vend sealed for that step; None between runs.
+    sealed_secret_steps: dict[int | str, tuple[str, ...]] | None = None
+    # Node id -> the rows out the last run knew for a step whose result the end of its vend released, for its report.
+    hub_rows_out: Mapping[int | str, int] = {}
 
     @property
     def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
@@ -439,14 +505,17 @@ class ExecutionMixin(GraphMixinBase):
         as the fetch route does before it answers; the slot is released here either way.
 
         The node and its inputs are placed as a run's nodes are (``_place_run``), under an ``exchange_run`` of the
-        fetch's own. A refusal runs nothing, each refused node a failed row. A placement that raises fails the node's
-        row and is raised again. Otherwise the node runs on its assigned backend: an input that ran with its current
-        setup on another backend crosses through the exchange store, and one that has not run is composed into the
-        node's plan. The fetch's nodes are the node and its inputs, so its hints count no consumer.
+        fetch's own, after the same refusal a run of a person with no sign-in through the hub gets
+        (``_signed_out_refusal``). A refusal runs nothing, each refused node a failed row. A placement that raises
+        fails the node's row and is raised again. Otherwise the node runs on its assigned backend: an input that ran
+        with its current setup on another backend crosses through the exchange store, and one that has not run is
+        composed into the node's plan. The fetch's nodes are the node and its inputs, so its hints count no consumer.
         """
         if not claimed and not self.try_claim_run():
             raise Exception("Flow is already running")
-        exchange_run = self.exchange_run = ExchangeRun(self.flow_id, uuid.uuid4().hex)
+        exchange_run = self.exchange_run = ExchangeRun(
+            self.flow_id, uuid.uuid4().hex, hub_store=self.hub_exchange_store
+        )
         try:
             flow_node = self.get_node(node_id)
             self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
@@ -459,6 +528,15 @@ class ExecutionMixin(GraphMixinBase):
             inputs = dict.fromkeys(source for source, _ in flow_node._slot_input_pairs() if source is not None)
             stage = ExecutionStage(nodes=[*inputs, flow_node])
             try:
+                hub_refusal = self._signed_out_refusal(stage.nodes, exchange_run) or self._vend_for_fetch(
+                    flow_node, exchange_run
+                )
+                if hub_refusal:
+                    self._record_hub_refusal(hub_refusal)
+                    self.latest_run_info.end_time = datetime.datetime.now()
+                    self.release_run()
+                    self._end_exchange_run(exchange_run)
+                    return self.get_run_info()
                 placement, edges = self._place_run(ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run)
             except Exception as e:
                 node_logger.error(f"Error in node {flow_node.node_id}: {e}")
@@ -525,8 +603,28 @@ class ExecutionMixin(GraphMixinBase):
             node_logger.error(f"Error in node {flow_node.node_id}: {e}")
             node_result.finish(success=False, error=str(e))
         finally:
+            self._end_hub_vend(exchange_run, keep_preview=flow_node)
             self.release_run()
             self._end_exchange_run(exchange_run)
+
+    def _vend_for_fetch(self, flow_node: FlowNode, exchange_run: ExchangeRun) -> list[tuple[FlowNode, str]] | None:
+        """Ask the hub for the credentials of the hub tables a fetch of ``flow_node`` reads, as a run does.
+
+        A run keeps no hub reader's plan once it ends (``_end_hub_vend``), so a fetch after a Performance run builds
+        its node's plan over the hub table again: the node and every upstream node that has not run with its current
+        setup are vended for (``_vend_hub_tables``) under the fetch's own run id. A fetch that reads no hub table asks
+        nothing, and the run's ``last_hub_vend``, which its report names, is kept. Answers the nodes and the sentence
+        when the hub cannot be asked or refuses, else ``None``.
+        """
+        upstream = [self.get_node(node_id) for node_id in self._get_upstream_node_ids(flow_node.node_id)]
+        building = [node for node in upstream if not node.node_stats.has_run_with_current_setup] + [flow_node]
+        if not any(hub_table_namespace(node.setting_input) for node in building):
+            return None
+        run_vend = self.last_hub_vend
+        try:
+            return self._vend_hub_tables(building, exchange_run)
+        finally:
+            self.last_hub_vend = run_vend
 
     @staticmethod
     def _resolve_input_names(node: FlowNode | None, table_count: int) -> list[str] | None:
@@ -677,6 +775,9 @@ class ExecutionMixin(GraphMixinBase):
             run_context = current_context(self)
             if backend_id is not None and backend_id != run_context.backend_id:
                 params_scope.enter_context(use_context(replace(run_context, backend_id=backend_id)))
+            sealed_names = (self.sealed_secret_steps or {}).get(node.node_id)
+            if sealed_names and self.hub_vend is not None:
+                params_scope.enter_context(run_secrets.use_sealed(self.hub_vend.sealed_secrets(sealed_names)))
             node._boundary_inputs = {(edge.source.node_id, edge.handle): edge for edge in edges}
             params_scope.callback(_release_boundary_inputs, node, edges)
             try:
@@ -1068,11 +1169,18 @@ class ExecutionMixin(GraphMixinBase):
         """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
         With an exchange store (``FLOWFILE_EXCHANGE_URI``) the policy is ``MixedPlacementPolicy``, falling back to
-        ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend. Each backend
-        named is read through its handshake verdict (``handshake.verdict_for``), except ``local`` in a process that
-        serves, which runs no node and is never asked. A backend refused whole, a ``VersionMismatch`` or an id the
-        registry does not know refuses every node assigned to it. Any other ``ComputeError`` keeps the backend's nodes
-        on it unchecked, and each fails with that error when it runs (``Placement.unreachable``).
+        ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend, and a node
+        whose own Compute backend names one of the hub's servers (``vend.node_name``: a row filled from the hub, or
+        this server once joined with keys of its own) is refused (``unmoved_without_store``) rather than run on the
+        run's backend, on a joined server and a desktop connected to the hub alike. On a server joined with keys of its
+        own, under either policy, a node placed on another server of the hub whose stored connection holds this
+        server's secret is refused too (``held_on_this_server``); a node refused already keeps its first refusal. Each
+        backend named is read through
+        its handshake verdict (``handshake.verdict_for``), except ``local`` in a process that serves, which runs no
+        node and is never asked. On a joined server the hub's servers named are first moved to the addresses the hub
+        lists now (``node_addresses.refresh``). A backend refused whole, a ``VersionMismatch`` or an id the registry
+        does not know refuses every node assigned to it. Any other ``ComputeError`` keeps the
+        backend's nodes on it unchecked, and each fails with that error when it runs (``Placement.unreachable``).
 
         Each boundary becomes one ``BoundaryEdge`` per output the importing node reads, written to
         ``<prefix><from>-<handle>-<to>.parquet`` under the run's exchange prefix. The importing node is refused, once,
@@ -1083,12 +1191,8 @@ class ExecutionMixin(GraphMixinBase):
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
         nodes = execution_plan.all_nodes
-        run_backend_id = current_context(self).backend_id
         fallback_id = registry.fallback_backend_id()
-        if settings.get_exchange_uri():
-            policy = MixedPlacementPolicy(run_backend_id, fallback_id=fallback_id)
-        else:
-            policy = SingleBackendPolicy(run_backend_id)
+        policy = self._run_policy(exchange_run)
         declared: dict[str, Capabilities] = {}
         absent: dict[str, dict[str, str]] = {}
         refused: dict[str, str] = {}
@@ -1096,6 +1200,7 @@ class ExecutionMixin(GraphMixinBase):
         named = dict.fromkeys(policy.backend_for(node) for node in nodes)
         if isinstance(policy, MixedPlacementPolicy) and nodes:
             named.setdefault(fallback_id)
+        node_addresses.refresh(named)
         for backend_id in named:
             if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
                 continue
@@ -1133,13 +1238,18 @@ class ExecutionMixin(GraphMixinBase):
             source, target = self.get_node(source_id), self.get_node(target_id)
             try:
                 crossing = exchange_run.prefix()
-                max_rows = settings.get_exchange_max_rows() if crossing is not None else None
+                max_rows = exchange_run.max_rows() if crossing is not None else None
             except ValueError as e:
                 crossing_refusals.setdefault(target_id, Refusal(target_id, placement.assignment[target_id], str(e)))
                 continue
             if crossing is None:
                 continue
             prefix, credential = crossing
+            unsealed = _unsealed_crossing(credential, placement.assignment, (source_id, target_id), declared)
+            if unsealed is not None:
+                reason = f"its input from node {source_id} crosses through the hub's exchange store, but {unsealed}"
+                crossing_refusals.setdefault(target_id, Refusal(target_id, placement.assignment[target_id], reason))
+                continue
             handles = dict.fromkeys(handle for node, handle in target._slot_input_pairs() if node is source)
             for handle in handles:
                 edge = BoundaryEdge(
@@ -1182,19 +1292,51 @@ class ExecutionMixin(GraphMixinBase):
                     for refusal in placement.refusals
                 ],
             )
+        late = []
+        if isinstance(policy, SingleBackendPolicy):
+            late += [r for r in unmoved_without_store(nodes, policy) if vend.node_name(r.backend_id) is not None]
+        if issuer_accounts.joined_with_keys() is not None:
+            late += held_on_this_server(nodes, placement.assignment)
+        refused_ids = {refusal.node_id for refusal in placement.refusals}
+        added = []
+        for refusal in late:
+            if refusal.node_id not in refused_ids:
+                refused_ids.add(refusal.node_id)
+                added.append(refusal)
+        if added:
+            placement = replace(placement, refusals=[*placement.refusals, *added])
         return placement, edges
 
-    def preview_placement(self) -> Placement | None:
+    def preview_placement(self, hub_store: ExchangeConfig | None = None) -> Placement | None:
         """Where a run would place each of the flow's nodes now, without running, logging or changing anything.
 
         ``None`` with the protocol flag off. Every node is placed as if every gate were open, under an exchange run that
         is never collected, and the boundary edges are dropped. Placement reads a resolved copy of each node's settings,
         so a preview beside an edit or a run leaves both as they are.
+
+        ``hub_store`` is the store a joined server's hub sets, as a run takes it (``ExchangeRun.hub_store``). Nothing
+        is vended for a preview: its crossings are checked against the servers a run's vend would be sealed to
+        (``_seal_targets``), and a backend that is none of the hub's servers refuses the nodes the run would refuse,
+        with the run's sentence.
         """
-        stage = ExecutionStage(nodes=list(self.nodes))
-        placement, _ = self._place_run(
-            ExecutionPlan(skip_nodes=[], stages=[stage]), ExchangeRun(self.flow_id, "preview"), log=False
-        )
+        nodes = list(self.nodes)
+        exchange_run = ExchangeRun(self.flow_id, "preview", hub_store=hub_store)
+        unsealable = None
+        if settings.FLOWFILE_COMPUTE_PROTOCOL and exchange_run.vended():
+            try:
+                targets, exchange, _ = self._seal_targets(nodes, [], exchange_run)
+            except LookupError as e:
+                targets, exchange, unsealable = (), True, str(e)
+            if exchange:
+                exchange_run.sealed = SealedCredential(hub_store.uri, dict.fromkeys(targets, ""))
+        stage = ExecutionStage(nodes=nodes)
+        placement, _ = self._place_run(ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run, log=False)
+        if placement is not None and unsealable is not None:
+            refused = [node for node in nodes if hub_table_namespace(node.setting_input)] or nodes
+            placement = replace(
+                placement,
+                refusals=[Refusal(node.node_id, placement.assignment[node.node_id], unsealable) for node in refused],
+            )
         return placement
 
     def _record_fallbacks(self, fallbacks: list[Fallback]) -> None:
@@ -1225,21 +1367,24 @@ class ExecutionMixin(GraphMixinBase):
         The node's error is ``cannot run on backend "<id>": <reason>``, then its remedy as a sentence when it has one.
         """
         for refusal in refusals:
-            node = self.get_node(refusal.node_id)
             error = f'cannot run on backend "{refusal.backend_id}": {refusal.reason}'
             if refusal.remedy:
                 error += f"{'' if error.endswith('.') else '.'} {refusal.remedy}"
-            self.flow_logger.get_node_logger(node.node_id).error(error)
-            node_result = NodeResult(
-                node_id=node.node_id,
-                node_name=node.name,
-                description=node.get_node_information().description,
-                compute_error="Refusal",
-            )
-            node_result.finish(success=False, error=error)
-            self.latest_run_info.node_step_result.append(node_result)
+            self._record_refused(self.get_node(refusal.node_id), error)
         backend_ids = ", ".join(sorted({refusal.backend_id for refusal in refusals}))
         self.flow_logger.error(f"{len(refusals)} node(s) cannot run on backend {backend_ids}; no node was started")
+
+    def _record_refused(self, node: FlowNode, error: str) -> None:
+        """Log ``error`` for ``node`` and append it to the run as a failed result with ``compute_error="Refusal"``."""
+        self.flow_logger.get_node_logger(node.node_id).error(error)
+        node_result = NodeResult(
+            node_id=node.node_id,
+            node_name=node.name,
+            description=node.get_node_information().description,
+            compute_error="Refusal",
+        )
+        node_result.finish(success=False, error=error)
+        self.latest_run_info.node_step_result.append(node_result)
 
     def _run_post_execution_callbacks(
         self,
@@ -1372,6 +1517,8 @@ class ExecutionMixin(GraphMixinBase):
             if not cloud_change_read:
                 if node.node_type != "catalog_reader" or not isinstance(settings, input_schema.NodeCatalogReader):
                     continue
+                if settings.hub_table_id is not None:
+                    continue
                 if not settings.sql_query and settings.delta_version is not None:
                     continue
             try:
@@ -1474,6 +1621,11 @@ class ExecutionMixin(GraphMixinBase):
         input from another backend crossing through the exchange store. ``RunInformation.boundaries`` lists those
         edges, a refused run's included.
 
+        A run with nodes on tables on the hub first asks the hub for their credentials, once (``_vend_hub_tables``),
+        before placement; a hub that cannot be asked or refuses ends the run before a node starts, each of those nodes a
+        failed result with the reason. ``hub_vend`` holds the answer for the run only, and once the run ends neither it
+        nor any node's result holds the credential (``_end_hub_vend``).
+
         The run holds ``exchange_run`` from before ``flow_run_started`` is published. However the run ends, its prefix
         is removed and ``exchange_run`` is ``None`` again (``_end_exchange_run``).
 
@@ -1511,7 +1663,9 @@ class ExecutionMixin(GraphMixinBase):
             raise Exception("Flow is already running")
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False
-        exchange_run = self.exchange_run = ExchangeRun(self.flow_id, uuid.uuid4().hex)
+        exchange_run = self.exchange_run = ExchangeRun(
+            self.flow_id, uuid.uuid4().hex, hub_store=self.hub_exchange_store
+        )
         try:
             with use_context(current_context(self)):
                 self.flow_logger.info("Starting to run flowfile flow...")
@@ -1536,8 +1690,15 @@ class ExecutionMixin(GraphMixinBase):
                     closed_gate_handles=closed_gate_handles,
                 )
 
-                placement, edges = self._place_run(execution_plan, exchange_run)
-                if placement is not None and placement.refusals:
+                self.hub_rows_out = {}
+                hub_refusal = self._signed_out_refusal(run_nodes, exchange_run) or self._vend_hub_tables(
+                    run_nodes, exchange_run
+                )
+                placement, edges = (None, []) if hub_refusal else self._place_run(execution_plan, exchange_run)
+                if hub_refusal:
+                    self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
+                    self._record_hub_refusal(hub_refusal)
+                elif placement is not None and placement.refusals:
                     # Refused before any node starts: nothing is prepared, executed, skipped or committed.
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
                     self.latest_run_info.boundaries = list(placement.boundaries)
@@ -1576,6 +1737,7 @@ class ExecutionMixin(GraphMixinBase):
 
                 self.latest_run_info.end_time = datetime.datetime.now()
                 self.end_datetime = datetime.datetime.now()
+                self._end_hub_vend(exchange_run)
                 self.release_run()
                 released = True
                 if self.flow_settings.is_canceled:
@@ -1591,8 +1753,296 @@ class ExecutionMixin(GraphMixinBase):
             ambient_kernel_hold.reset(ambient)
             # Released once: a second release would end a run another caller claimed meanwhile.
             if not released:
+                self._end_hub_vend(exchange_run)
                 self.release_run()
             self._end_exchange_run(exchange_run)
+
+    def _run_policy(
+        self, exchange_run: ExchangeRun, run_backend_id: str | None = None
+    ) -> MixedPlacementPolicy | SingleBackendPolicy:
+        """The run's placement policy: mixed, falling back to ``registry.fallback_backend_id``, while an exchange store
+        is in use (``FLOWFILE_EXCHANGE_URI``, the saved one or the hub's), else the run's backend for every node.
+
+        The run's backend is ``run_backend_id`` when given, else the current context's."""
+        run_backend_id = run_backend_id or current_context(self).backend_id
+        if exchange_config.effective_store(hub=exchange_run.hub_store).uri:
+            return MixedPlacementPolicy(run_backend_id, fallback_id=registry.fallback_backend_id())
+        return SingleBackendPolicy(run_backend_id)
+
+    def _seal_targets(
+        self,
+        nodes: list[FlowNode],
+        hub_nodes: list[FlowNode],
+        exchange_run: ExchangeRun,
+        secret_nodes: Collection[FlowNode] = (),
+    ) -> tuple[tuple[str, ...], bool, list[FlowNode]]:
+        """The hub servers a vend for this run is sealed to, whether it asks for the exchange store, and its nodes.
+
+        Only on a server joined to its hub with keys of its own, where a server of the hub shares neither its master
+        key nor its database. A node on a hub table that the run's policy places on a hub-filled ``worker:<name>`` row
+        seals the vend to every hub-table node's server; a run whose store is the hub's (``ExchangeRun.vended``) and
+        whose nodes go to more than one backend asks for the store too, sealed to every backend it names, the fallback
+        and this server, which removes the run's prefix. ``secret_nodes``, the steps on hub servers that name secrets
+        (``_secret_steps``), seal the vend as a hub-table node there does. Otherwise ``((), False, [])``: today's vend,
+        which the run's own worker opens with the master key it shares with core. The nodes are those whose credential
+        is sealed. A desktop's run is sealed by ``_desktop_servers`` instead.
+
+        Raises:
+            LookupError: A backend to seal to is no server of the hub; the sentence names it.
+        """
+        if issuer_accounts.joined_with_keys() is None:
+            return (), False, []
+        policy = self._run_policy(exchange_run)
+        hub_nodes = hub_nodes + [node for node in secret_nodes if node not in hub_nodes]
+        hub_backends = {policy.backend_for(node) for node in hub_nodes}
+        run_backends = dict.fromkeys(policy.backend_for(node) for node in nodes)
+        exchange = (
+            settings.FLOWFILE_COMPUTE_PROTOCOL
+            and exchange_run.vended()
+            and isinstance(policy, MixedPlacementPolicy)
+            and len(run_backends) > 1
+        )
+        on_hub_server = any(backend.startswith(registry.CONFIGURED_WORKER_PREFIX) for backend in hub_backends)
+        if not exchange and not on_hub_server:
+            return (), False, []
+        backends = dict.fromkeys(policy.backend_for(node) for node in hub_nodes)
+        sealed_nodes = list(hub_nodes)
+        if exchange:
+            backends.update(run_backends)
+            backends.update(dict.fromkeys(b for b in (policy.fallback_id, registry.WORKER_BACKEND_ID) if b))
+            sealed_nodes = list(nodes)
+        targets = []
+        for backend_id in backends:
+            name = vend.node_name(backend_id)
+            if name is None:
+                raise LookupError(
+                    f'The hub seals this run\'s credentials to the servers it runs on, and backend "{backend_id}" is '
+                    "not one of the hub's servers; run the flow on a server of the hub"
+                )
+            targets.append(name)
+        return tuple(dict.fromkeys(targets)), bool(exchange), sealed_nodes
+
+    def _desktop_servers(self, hub_nodes: list[FlowNode], exchange_run: ExchangeRun) -> dict[FlowNode, str]:
+        """On a desktop connected to a hub, each node on a hub table that the run's policy places on a server of the
+        hub, with that server's hub name; ``{}`` elsewhere.
+
+        A desktop shares its master key with no server of the hub, so a credential it encrypted could open only on its
+        own workers: the vend for such a node is sealed to its server, which opens it with the keys of its join. Only
+        rows filled from the hub are named (``vend.node_name``); a worker row added by hand, and the desktop's own
+        workers, keep today's vend. Empty too when the nodes' person has no hub session here, whose vend is refused as
+        before.
+        """
+        if not hub_nodes or issuer_accounts.joined_with_keys() is not None:
+            return {}
+        if hub_session.load(hub_nodes[0].setting_input.user_id) is None:
+            return {}
+        policy = self._run_policy(exchange_run)
+        servers = {node: vend.node_name(policy.backend_for(node)) for node in hub_nodes}
+        return {node: name for node, name in servers.items() if name is not None}
+
+    def _secret_steps(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> dict[FlowNode, list[str]]:
+        """The run's steps that the policy places on a server of the hub and that name secrets, with their names.
+
+        Only on a server joined to its hub with keys of its own: another server of the hub has a master key of its
+        own, so the names are asked of the hub (``run_secrets.names_for``). A step whose names cannot be read names
+        none and fails as it runs. A step whose stored connection holds this server's secret asks nothing, since
+        placement refuses it (``held_on_this_server``) with its own sentence before any vend would.
+        """
+        if issuer_accounts.joined_with_keys() is None:
+            return {}
+        policy = self._run_policy(exchange_run)
+        steps: dict[FlowNode, list[str]] = {}
+        for node in nodes:
+            backend_id = policy.backend_for(node)
+            if not backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX) or vend.node_name(backend_id) is None:
+                continue
+            if held_on_this_server([node], {node.node_id: backend_id}):
+                continue
+            try:
+                names = run_secrets.names_for(node)
+            except Exception as e:
+                logger.debug(f"Could not read the secret names of node {node.node_id}: {e}")
+                continue
+            if names:
+                steps[node] = names
+        return steps
+
+    def _vend_hub_tables(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> list[tuple[FlowNode, str]] | None:
+        """Ask the hub once for the credentials of the run's nodes on hub tables, held as ``hub_vend`` for the run.
+
+        ``last_hub_vend`` is the run's ``(run_id, vend_id)``, ``None`` when nothing was vended. A run with no node on a
+        hub table, and no crossing through its hub's store on a joined server, asks nothing. The user is the hub
+        nodes' own; nodes of two users ask as the first, which the flow log says; a run with only crossings asks as
+        the user whose hub session found the store. On a server joined with keys of its own the vend is sealed to the
+        hub servers the run's steps use (``_seal_targets``), and the exchange store's credential is the run's
+        ``exchange_run.sealed``. The secrets the steps on those servers name are asked by name in the same vend and
+        held in ``sealed_secret_steps``. A desktop connected to the hub seals the vend to the hub's servers its
+        hub-table nodes run on (``_desktop_servers``); when the hub seals nothing for them, or the run's other hub-table
+        nodes run on the desktop, which no sealed credential opens, each of those nodes is refused with a sentence
+        saying to run it on this computer, never a credential the server could not open. Answers each refused node
+        with its sentence when the hub cannot be asked or refuses, else ``None``.
+        """
+        self.last_hub_vend = None
+        self.sealed_secret_steps = None
+        hub = {node.node_id: hub_table_namespace(node.setting_input) for node in nodes}
+        hub_nodes = [node for node in nodes if hub[node.node_id] is not None]
+        servers = self._desktop_servers(hub_nodes, exchange_run)
+        if servers and len(servers) < len(hub_nodes):
+            return [(node, _desktop_unsealed(node, name, mixed=True)) for node, name in servers.items()]
+        secret_steps = self._secret_steps(nodes, exchange_run)
+        try:
+            if servers:
+                targets, exchange, sealed_nodes = tuple(dict.fromkeys(servers.values())), False, list(servers)
+            else:
+                targets, exchange, sealed_nodes = self._seal_targets(nodes, hub_nodes, exchange_run, secret_steps)
+        except LookupError as e:
+            return [(node, str(e)) for node in hub_nodes or list(secret_steps) or nodes]
+        if not hub_nodes and not exchange and not secret_steps:
+            return None
+        asking = hub_nodes + [node for node in secret_steps if node not in hub_nodes]
+        user_ids = list(dict.fromkeys(node.setting_input.user_id for node in asking))
+        if len(user_ids) > 1:
+            self.flow_logger.warning(
+                f"The nodes the hub vends to belong to users {', '.join(map(str, user_ids))}; "
+                f"the hub is asked as user {user_ids[0]}"
+            )
+        user_id = user_ids[0] if user_ids else exchange_run.hub_store.vended_for
+        readers = {hub[node.node_id][0] for node in hub_nodes if not hub[node.node_id][1]}
+        writers = {hub[node.node_id][0] for node in hub_nodes if hub[node.node_id][1]}
+        names = {name for step in secret_steps.values() for name in step}
+        try:
+            self.hub_vend = vend.request(
+                user_id,
+                exchange_run.run_id,
+                readers,
+                writers,
+                targets=targets,
+                exchange=exchange,
+                secrets=sorted(names),
+            )
+            if exchange:
+                exchange_run.sealed = self.hub_vend.sealed_credential(exchange_run.hub_store.uri)
+        except LookupError as e:
+            if servers:
+                self.flow_logger.warning(f"The hub sealed no credential to {', '.join(targets)}: {e}")
+                return [(node, _desktop_unsealed(node, name)) for node, name in servers.items()]
+            return [(node, str(e)) for node in sealed_nodes or hub_nodes]
+        if targets:
+            self.flow_logger.info(f"The hub sealed this run's credentials to {', '.join(targets)}")
+        self.sealed_secret_steps = {node.node_id: tuple(step) for node, step in secret_steps.items()} or None
+        self.last_hub_vend = (exchange_run.run_id, self.hub_vend.vend_id)
+        return None
+
+    def _signed_out_refusal(
+        self, nodes: list[FlowNode], exchange_run: ExchangeRun
+    ) -> list[tuple[FlowNode, str]] | None:
+        """On a server joined with keys of its own, the run's nodes on the hub's servers, each with the sentence of
+        ``node_tokens.signed_out``, when the person the run is for (``node_tokens.acting``) has no sign-in through the
+        hub here, else ``None``.
+
+        The hub mints a run's token for those servers with that person's own sign-in, never another's, so a run for
+        nobody or for a person whose sign-in ended is refused before a node starts. A schedule's run
+        (``node_tokens.scheduled``) has nobody behind it and is refused with ``node_tokens.SCHEDULED``, every such node
+        of it. A sign-in the hub no longer takes is found when the token is minted, and refused there.
+        """
+        if not nodes or issuer_accounts.joined_with_keys() is None:
+            return None
+        person = node_tokens.acting()
+        if person is not None and node_tokens.signed_in_through_hub(person):
+            return None
+        on_hub = self._on_hub_servers(nodes, self._run_policy(exchange_run))
+        if not on_hub:
+            return None
+        if person is None and node_tokens.scheduled():
+            return [(node, f"{node_tokens.SCHEDULED}.") for on in on_hub.values() for node in on]
+        name, on = next(iter(on_hub.items()))
+        return [(node, node_tokens.refused(name)) for node in on]
+
+    @staticmethod
+    def _on_hub_servers(
+        nodes: list[FlowNode], policy: MixedPlacementPolicy | SingleBackendPolicy
+    ) -> dict[str, list[FlowNode]]:
+        """The nodes ``policy`` places on another of the hub's servers (a ``worker:<name>`` row filled from the hub),
+        by the hub's name of that server, in the order the servers are first named."""
+        on_backend: dict[str, list[FlowNode]] = {}
+        for node in nodes:
+            backend_id = policy.backend_for(node)
+            if backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX):
+                on_backend.setdefault(backend_id, []).append(node)
+        named = {backend_id: vend.node_name(backend_id) for backend_id in on_backend}
+        return {name: on_backend[backend_id] for backend_id, name in named.items() if name is not None}
+
+    def scheduled_hub_steps(self) -> list[FlowNode]:
+        """The steps a scheduled run of this flow would place on the hub's other servers, on a server joined with keys
+        of its own; empty elsewhere.
+
+        A scheduled run is headless: it runs on ``registry.headless_backend_id`` of the flow's saved location, with no
+        hub-set exchange store and no explore-data node, and it has nobody behind it to mint those servers' tokens
+        with, so ``_signed_out_refusal`` refuses every such step before a node starts.
+        """
+        if issuer_accounts.joined_with_keys() is None:
+            return []
+        run_backend_id = registry.headless_backend_id(self.flow_settings.execution_location)
+        policy = self._run_policy(ExchangeRun(self.flow_id, "schedule"), run_backend_id)
+        nodes = [node for node in self.nodes if node.node_type != "explore_data"]
+        return [node for on in self._on_hub_servers(nodes, policy).values() for node in on]
+
+    def _record_hub_refusal(self, refused: list[tuple[FlowNode, str]]) -> None:
+        """Record each node the hub vends to or mints no token for as a failed result, its sentence its error, in a run
+        that starts none."""
+        for node, sentence in refused:
+            self._record_refused(node, sentence)
+        sentences = {sentence for _, sentence in refused}
+        reason = f": {next(iter(sentences)).rstrip('.')}" if len(sentences) == 1 else ""
+        self.flow_logger.error(f"{len(refused)} node(s) cannot run{reason}; no node was started")
+
+    def _end_hub_vend(self, exchange_run: ExchangeRun, keep_preview: FlowNode | None = None) -> None:
+        """Forget what the hub vended to the run: ``hub_vend``, and every node result that embeds its credential.
+
+        A hub reader's scan carries the credential, so a hub reader's result, and each result downstream of one, that
+        is still a plan (deferred, not handed to a backend, or with named outputs) is released and its node counts as
+        not run: a later preview or run reads the hub table again under a vend of its own. A result the backend stored
+        is kept, since it reads the stored file. Called before the run releases its slot, and only the run's own vend
+        is reset, so a run claimed afterwards keeps its own.
+
+        ``keep_preview``, the node a fetch was for, keeps the preview rows it already read, which hold no credential,
+        and still reads as completed, so its grid shows them; its plan is released like any other. At a run's end the
+        row count each released node knew is kept in ``hub_rows_out`` for the run's report.
+        """
+        run_vend = self.hub_vend
+        if run_vend is None or run_vend.run_id != exchange_run.run_id:
+            return
+        self.hub_vend = None
+        self.sealed_secret_steps = None
+        seen: set[int] = set()
+        rows_out: dict[int | str, int] = {}
+        stack = [node for node in self.nodes if (hub := hub_table_namespace(node.setting_input)) and not hub[1]]
+        while stack:
+            node = stack.pop()
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            stack.extend(node.leads_to_nodes)
+            ref = node.results.result_ref
+            if ref is not None and ref.state == "materialised" and not node._named_outputs:
+                continue
+            rows = _read_preview(node) if node is keep_preview else None
+            engine = node.peek_output_engine()
+            count = ref.row_count if ref is not None else None
+            if count is None and engine is not None:
+                count = engine.known_record_count()
+            if count is not None:
+                rows_out[node.node_id] = count
+            node.release_result()
+            node.results.reset()
+            node.results.example_data_generator = None if rows is None else (lambda rows=rows: rows)
+            node._named_outputs = {}
+            node.node_stats.has_run_with_current_setup = False
+            node.node_stats.has_completed_last_run = rows is not None
+            node._execution_state.has_run_with_current_setup = False
+            node._execution_state.has_completed_last_run = rows is not None
+        if keep_preview is None:
+            self.hub_rows_out = rows_out
 
     def _end_exchange_run(self, exchange_run: ExchangeRun) -> None:
         """Remove what the run wrote to the exchange store; a failure is a warning on the flow log, never the run's.

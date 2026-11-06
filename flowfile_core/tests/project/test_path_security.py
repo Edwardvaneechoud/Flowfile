@@ -420,3 +420,27 @@ class TestRoundTripWithPathSecurity:
             assert snap1 == snap3, "project→import→project must round-trip byte-identically!"
         finally:
             project_sync.close_project(owner_id)
+
+
+class TestProjectReadsRegisteredFlowsInsideTheFlowFolders:
+    """The project's sync and init read a registration's file through ``_load_flow_data``; on a multi-user server
+    a path outside the server's flow folders reads as nothing, whatever is there."""
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_reads_nothing_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
+        from flowfile_core.project.projection import _load_flow_data
+        from shared.storage_config import storage
+        from tests.flowfile_core_test_utils import as_server
+
+        outside = tmp_path / "server_config.yaml"
+        outside.write_text("token: canary-7f3a\n", encoding="utf-8")
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        inside = storage.flows_directory / f"projected_{uuid4().hex[:8]}.yaml"
+        inside.write_text("flowfile_name: projected\n", encoding="utf-8")
+        try:
+            assert _load_flow_data(str(outside)) == {"token": "canary-7f3a"}
+            as_server(monkeypatch, mode)
+            assert _load_flow_data(str(outside)) is None
+            assert _load_flow_data(str(inside)) == {"flowfile_name": "projected"}
+        finally:
+            inside.unlink(missing_ok=True)

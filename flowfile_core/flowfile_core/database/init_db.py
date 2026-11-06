@@ -7,6 +7,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.password import get_password_hash
+from flowfile_core.configs.settings import is_server_mode
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import SessionLocal
 from flowfile_core.database.migration import run_startup_migration
@@ -44,11 +45,11 @@ def create_default_local_user(db: Session):
 
 def create_docker_admin_user(db: Session):
     """
-    Create admin user for Docker mode from environment variables.
-    Only runs when FLOWFILE_MODE=docker.
+    Create admin user for docker or hub mode from environment variables.
+    Only runs when FLOWFILE_MODE is docker or hub.
     Reads FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD from environment.
     """
-    if os.environ.get("FLOWFILE_MODE") != "docker":
+    if not is_server_mode():
         return False
 
     admin_username = os.environ.get("FLOWFILE_ADMIN_USER")
@@ -56,7 +57,7 @@ def create_docker_admin_user(db: Session):
 
     if not admin_username or not admin_password:
         logger.warning(
-            "Docker mode detected but FLOWFILE_ADMIN_USER or FLOWFILE_ADMIN_PASSWORD "
+            "Docker or hub mode detected but FLOWFILE_ADMIN_USER or FLOWFILE_ADMIN_PASSWORD "
             "not set. Admin user will not be created."
         )
         return False

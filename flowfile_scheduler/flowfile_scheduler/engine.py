@@ -14,6 +14,7 @@ import uuid
 import zoneinfo
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 
 from croniter import croniter
 from sqlalchemy.orm import Session, sessionmaker
@@ -30,7 +31,7 @@ from shared.database import create_catalog_engine
 from shared.notifications.processor import process_pending_notifications
 from shared.run_completion import reap_orphaned_runs
 from shared.run_logs import cleanup_old_logs
-from shared.storage_config import get_database_url
+from shared.storage_config import get_database_url, require_flow_in_storage
 
 logger = logging.getLogger("flowfile.scheduler")
 
@@ -502,6 +503,13 @@ class FlowScheduler:
             logger.info("Skipping schedule %s — flow '%s' already has an active run", sched.id, reg.name)
             return LaunchOutcome.SKIPPED
 
+        try:
+            flow_path = str(require_flow_in_storage(Path(reg.flow_path)))
+        except ValueError as exc:
+            # On a multi-user server a flow outside the flow folders is not run, scheduled or not.
+            logger.warning("Schedule %s not launched — flow '%s': %s", sched.id, reg.name, exc)
+            return LaunchOutcome.FAILED
+
         # Create a run record *before* spawning so it shows as active
         run = FlowRun(
             registration_id=reg.id,
@@ -525,11 +533,11 @@ class FlowScheduler:
             reg.name,
             reg.id,
             run.id,
-            reg.flow_path,
+            flow_path,
         )
 
         try:
-            pid = self._spawn_flow(reg.flow_path, run.id)
+            pid = self._spawn_flow(flow_path, run.id)
         except Exception:
             logger.exception("Spawn raised for run %s", run.id)
             pid = None

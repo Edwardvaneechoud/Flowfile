@@ -1,11 +1,13 @@
 # app_routes/auth.py
 
 import os
+import time
+from datetime import timedelta
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth import sharing
+from flowfile_core.auth import issuer_accounts, sharing
 from flowfile_core.auth.jwt import (
     create_access_token,
     create_refresh_token,
@@ -16,8 +18,13 @@ from flowfile_core.auth.jwt import (
 )
 from flowfile_core.auth.models import ChangePassword, Token, User, UserCreate, UserUpdate
 from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash, validate_password, verify_password
+from flowfile_core.configs import logger
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from flowfile_core.hub_client import delegation, node_addresses
+from flowfile_core.hub_client import session as hub_session
+from flowfile_core.hub_client.client import HubRefused, HubUnreachable
+from shared import hub_node, hub_tokens
 
 router = APIRouter()
 
@@ -35,6 +42,7 @@ def login_for_access_token(
         return {"access_token": access_token, "token_type": "bearer"}
     else:
         # In Docker mode, authenticate against database
+        _refuse_passwords_once_joined()
         if not username or not password:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -56,13 +64,34 @@ def login_for_access_token(
         return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
+def _refuse_passwords_once_joined() -> None:
+    """403 while this storage dir's node joined its hub with keys of its own: people sign in here through that hub
+    only, so neither a password nor a session that began with one is taken.
+    """
+    node = issuer_accounts.joined_with_keys()
+    if node is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"This server signs people in through {issuer_accounts.hub_host(node.hub_url)}",
+        )
+
+
 @router.post("/refresh", response_model=Token)
 def refresh_access_token(
     refresh_token: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    """Exchange a valid refresh token for a new access token and refresh token."""
-    username = decode_refresh_token(refresh_token)
+    """Exchange a valid refresh token for a new access token and refresh token.
+
+    For a person who signed in through the hub, the sign-in the token was issued for is refreshed at the hub first, so
+    this server's session never outlives the hub's: once the hub no longer takes it, or it was replaced here by a later
+    sign-in or ended by a sign-out, the answer is a 401 and nothing is issued. The hub's answer then sets whether the
+    account administers this server, and its full name, so someone the hub no longer lets manage the server stops
+    administering it here at their next refresh. On a server that joined its hub with keys of its own, the session of
+    any other account is not renewed: 403, as its password sign-in is.
+    """
+    claims = decode_refresh_token(refresh_token)
+    username, sid = claims["sub"], claims.get("sid")
 
     user = db.query(db_models.User).filter(db_models.User.username == username).first()
     if user is None:
@@ -78,9 +107,147 @@ def refresh_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    new_access_token = create_access_token(data={"sub": user.username})
-    new_refresh_token = create_refresh_token(data={"sub": user.username})
-    return {"access_token": new_access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
+    expires = None
+    expires_at = None
+    renewed = {"sub": user.username}
+    mapping = db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user.id).first()
+    if mapping is not None:
+        refreshed = _refresh_through_hub(user.id, mapping.issuer, sid)
+        user.is_admin = refreshed.user["node_admin"]
+        user.full_name = refreshed.user["full_name"]
+        db.commit()
+        invalidate_user_cache(user.username)
+        expires = timedelta(seconds=refreshed.expires_in)
+        expires_at = _expires_at(refreshed.expires_in)
+        renewed["sid"] = sid
+    else:
+        _refuse_passwords_once_joined()
+    new_access_token = create_access_token(data={"sub": user.username}, expires_delta=expires)
+    new_refresh_token = create_refresh_token(data=renewed)
+    return {
+        "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+        "expires_at": expires_at,
+    }
+
+
+def _expires_at(seconds: int) -> int:
+    """An access token's expiry in milliseconds since the epoch, taken before it is signed so it is never late."""
+    return int(time.time() + seconds) * 1000
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(current_user: User = Depends(get_current_active_user)) -> None:
+    """Sign out: a sign-in through the hub is revoked at the hub as far as it answers, and forgotten here.
+
+    Answers 204 whether or not the hub took the revocation. Any other hub connection of the account is left as it is.
+    """
+    stored = hub_session.load(current_user.id)
+    if stored is None or stored.get("kind") != "delegation":
+        return None
+    try:
+        delegation.revoke(stored["hub_url"], hub_node.resolved().issuer, stored["refresh_token"])
+    except (HubRefused, HubUnreachable, LookupError) as e:
+        logger.warning("The hub was not told of a sign-out on this server: %s", e)
+    hub_session.clear(current_user.id)
+    return None
+
+
+def _refresh_through_hub(user_id: int, issuer: str, sid: str | None) -> delegation.Delegation:
+    """Refresh the sign-in through the hub ``sid`` names at the hub and answer what the hub said; a 401 when the hub no
+    longer takes it or it is not the one kept here for ``user_id``, a 502 when the hub does not answer.
+    """
+    try:
+        refreshed = hub_session.refresh_delegation(user_id, sid)
+    except HubUnreachable as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
+    except HubRefused:
+        refreshed = None
+    if refreshed is None:
+        host = issuer_accounts.hub_host(hub_node.resolved().hub_url or issuer)
+        raise _refused(f"Your sign-in through {host} has ended; sign in again")
+    return refreshed
+
+
+@router.get("/sign_in_method")
+def sign_in_method() -> dict:
+    """How people sign in on this server: with a password, or through the hub this server joined.
+
+    Through the hub, ``url`` is the hub's Open page for this node, where a person's browser starts the sign-in.
+    """
+    node = issuer_accounts.joined_with_keys()
+    if node is None:
+        return {"method": "password"}
+    hub_url = node.hub_url.rstrip("/")
+    return {"method": "hub", "url": f"{hub_url}/open/{node.node_id}", "hub_url": hub_url}
+
+
+def _refused(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail=detail, headers={"WWW-Authenticate": "Bearer"}
+    )
+
+
+def _sentence(text: str) -> str:
+    return text.rstrip(".") + "."
+
+
+@router.post("/hub/signin", response_model=Token)
+def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depends(get_db)):
+    """Sign a person in with the one-time sign-in token the hub's Open page gave their browser.
+
+    The token is verified against the hub's keys as a ``signin`` token for this node, then traded at the hub for a
+    delegation signed with this node's own key. The person's local account is the one mapped to the hub's issuer and
+    their id there, made at their first sign-in; whether it administers this server follows ``node_admin`` at every
+    sign-in. The delegation is kept as the person's hub session, never in the database, and the answer is this core's
+    own token pair, as ``/auth/token`` answers, its access token living as long as the hub's (the delegation's
+    ``expires_in``, answered as ``expires_at``) and its refresh token naming this sign-in (``sid``). A token or an
+    exchange the hub refuses is a 401 with one sentence.
+
+    The hub's servers this person may run on then become backend rows with their new session
+    (``node_addresses.sync_for``), so they are there to pick with nobody opening Compute; a hub whose list cannot be
+    read leaves one warning and the sign-in stands.
+    """
+    if issuer_accounts.joined_with_keys() is None:
+        raise _refused("This server does not sign people in through a hub.")
+    settings = hub_node.resolved()
+    try:
+        claims = hub_tokens.verify(token, scopes=("signin",))
+    except hub_tokens.HubTokenRefused as e:
+        raise _refused(_sentence(f"The hub's sign-in token was refused: {e.reason}")) from None
+    if claims is None or claims.user_id is None:
+        raise _refused("This is not a sign-in token from the hub.")
+    user = issuer_accounts.issuer_account(db, settings.issuer, claims.user_id)
+    if user is not None and user.disabled:
+        raise _refused("This account is disabled on this server.")
+    try:
+        granted = delegation.exchange(settings.hub_url, settings.issuer, token)
+    except HubRefused as e:
+        raise _refused(_sentence(f"The hub refused this sign-in: {e.detail}")) from None
+    except HubUnreachable as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
+    except LookupError as e:
+        logger.warning("A sign-in through the hub could not be traded: %s", e)
+        raise _refused("This server cannot sign for itself at its hub.") from None
+    if granted.user["uid"] != claims.user_id:
+        raise _refused("The hub answered this sign-in for another person.")
+    if user is None:
+        user = issuer_accounts.new_issuer_account(db, settings.issuer, settings.hub_url, granted.user)
+    user.is_admin = granted.user["node_admin"]
+    db.commit()
+    invalidate_user_cache(user.username)
+    sid = hub_session.save_delegation(user.id, settings.hub_url, granted)
+    node_addresses.sync_for(user.id)
+    expires_at = _expires_at(granted.expires_in)
+    access_token = create_access_token(data={"sub": user.username}, expires_delta=timedelta(seconds=granted.expires_in))
+    refresh_token = create_refresh_token(data={"sub": user.username, "sid": sid})
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_at": expires_at,
+    }
 
 
 @router.get("/users/me", response_model=User)
@@ -258,6 +425,11 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
     db.query(db_models.WorkspaceProject).filter(db_models.WorkspaceProject.owner_id == user_id).delete(
         synchronize_session=False
     )
+    # A hub person's mapping and hub session go too: a reused rowid would otherwise hand both to the next account.
+    db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    hub_session.clear(user_id)
 
     # Notification channels hold an encrypted webhook credential and rules keep alerting
     # after the owner is gone — a reused user rowid would inherit both. History rows go

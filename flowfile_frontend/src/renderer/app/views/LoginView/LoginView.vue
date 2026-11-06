@@ -9,12 +9,22 @@
         <p class="login-subtitle">Sign in to continue</p>
       </div>
 
-      <form class="login-form" @submit.prevent="handleLogin">
-        <div v-if="error" class="error-message">
-          <i class="fa-solid fa-circle-exclamation"></i>
-          <span>{{ error }}</span>
-        </div>
+      <div v-if="error" class="error-message" data-testid="login-error">
+        <i class="fa-solid fa-circle-exclamation"></i>
+        <span>{{ error }}</span>
+      </div>
 
+      <a
+        v-if="signInMethod.method === 'hub'"
+        :href="signInMethod.url"
+        class="btn btn-primary login-button"
+        data-testid="login-hub"
+        @click.prevent="startHubSignIn"
+      >
+        Sign in with {{ hubAddress(signInMethod.hub_url) }}
+      </a>
+
+      <form v-else class="login-form" @submit.prevent="handleLogin">
         <div class="form-field">
           <label for="username" class="form-label">Username</label>
           <div class="input-wrapper">
@@ -75,18 +85,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
-import { useRouter } from "vue-router";
+import { onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../../stores/auth-store";
+import authService, { type SignInMethod } from "../../services/auth.service";
+import { hubAddress } from "../../components/layout/Header/hubIdentity";
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 
 const username = ref("");
 const password = ref("");
 const showPassword = ref(false);
 const isLoading = ref(false);
-const error = ref("");
+const error = ref(authService.takeHubSignInError() ?? "");
+// The password form until the server says it signs people in through a hub.
+const signInMethod = ref<SignInMethod>({ method: "password" });
+
+const startHubSignIn = () => {
+  if (signInMethod.value.method === "hub") authService.startHubSignIn(signInMethod.value.url);
+};
+
+// `#/login?hub_signin=1` is the sign-in start the hub's Continue page sends people to.
+onMounted(async () => {
+  signInMethod.value = await authService.getSignInMethod();
+  if (route.query.hub_signin === "1") {
+    await router.replace({ path: route.path, query: {} });
+    startHubSignIn();
+  }
+});
 
 const handleLogin = async () => {
   if (!username.value || !password.value) {
@@ -178,6 +206,7 @@ const handleLogin = async () => {
 }
 
 .error-message {
+  margin-bottom: var(--spacing-4);
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
@@ -273,6 +302,8 @@ const handleLogin = async () => {
 
 .login-button {
   width: 100%;
+  box-sizing: border-box;
+  text-decoration: none;
   height: 44px;
   margin-top: var(--spacing-4);
   font-size: var(--font-size-base);

@@ -2,7 +2,9 @@
 
 With ``FLOWFILE_EXCHANGE_URI`` set, it and ``FLOWFILE_EXCHANGE_CONNECTION`` replace the saved URI and connection.
 ``FLOWFILE_EXCHANGE_MAX_ROWS``, when set, replaces the saved row limit. The file, ``exchange_store.yaml`` under core's
-internal storage, is read per call, so a save takes effect on the next run with no restart.
+internal storage, is read per call, so a save takes effect on the next run with no restart. A server joined to its hub
+with keys of its own takes the store its hub sets when neither the environment nor the file names one
+(``hub.exchange_store``).
 ``settings.get_exchange_*`` read through ``effective_store`` and ``effective_max_rows``.
 """
 
@@ -21,11 +23,17 @@ MAX_ROWS_VAR = "FLOWFILE_EXCHANGE_MAX_ROWS"
 
 @dataclass(frozen=True)
 class ExchangeConfig:
-    """Where results cross between backends (``uri``), the stored S3 connection that opens it, and the row limit."""
+    """Where results cross between backends (``uri``), the stored S3 connection that opens it, and the row limit.
+
+    ``vended_for`` is set only on the store a server joined to its hub with keys of its own takes from that hub: the
+    connection is named in the hub's database, not here, so the store is opened by what the hub vends each run through
+    that user's hub session.
+    """
 
     uri: str | None = None
     connection: str | None = None
     max_rows: int | None = None
+    vended_for: int | None = None
 
 
 def _settings_file() -> Path:
@@ -85,16 +93,24 @@ def save(config: ExchangeConfig) -> None:
     os.replace(tmp, target)
 
 
-def effective_store(stored: ExchangeConfig | None = None) -> ExchangeConfig:
-    """The store's URI and connection a run uses, with no row limit; never raises, so a bad limit stops no run."""
+def effective_store(stored: ExchangeConfig | None = None, hub: ExchangeConfig | None = None) -> ExchangeConfig:
+    """The store's URI and connection a run uses, with no row limit; never raises, so a bad limit stops no run.
+
+    The environment where it pins, else the saved store when it has a URI, else ``hub``, the store this server's hub
+    sets, when there is one.
+    """
     if env_pins_store():
         return ExchangeConfig(uri=os.environ.get(URI_VAR) or None, connection=os.environ.get(CONNECTION_VAR) or None)
     stored = saved() if stored is None else stored
+    if hub is not None and not stored.uri:
+        return ExchangeConfig(uri=hub.uri, connection=hub.connection)
     return ExchangeConfig(uri=stored.uri, connection=stored.connection)
 
 
-def effective_max_rows(stored: ExchangeConfig | None = None) -> int | None:
-    """The row limit a crossing is held to: ``FLOWFILE_EXCHANGE_MAX_ROWS`` when set, else the saved one.
+def effective_max_rows(stored: ExchangeConfig | None = None, hub: ExchangeConfig | None = None) -> int | None:
+    """The row limit a crossing is held to: ``FLOWFILE_EXCHANGE_MAX_ROWS`` when set, else the limit of the store in use.
+
+    That is the hub's limit when ``effective_store`` picks the hub's store, the saved one otherwise.
 
     Raises:
         ValueError: ``FLOWFILE_EXCHANGE_MAX_ROWS`` is set to something other than a whole number.
@@ -104,7 +120,10 @@ def effective_max_rows(stored: ExchangeConfig | None = None) -> int | None:
         if not value.isdecimal():
             raise ValueError(f"{MAX_ROWS_VAR} must be a whole number of rows, not {value!r}")
         return int(value)
-    return (saved() if stored is None else stored).max_rows
+    stored = saved() if stored is None else stored
+    if hub is not None and not env_pins_store() and not stored.uri:
+        return hub.max_rows
+    return stored.max_rows
 
 
 def effective() -> ExchangeConfig:

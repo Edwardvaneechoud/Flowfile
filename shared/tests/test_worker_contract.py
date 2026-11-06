@@ -17,7 +17,8 @@ Descriptions, summaries, titles and operation ids are not shape and are left out
 entry that is no operation, fails until ``PROTOCOL_VERSION`` is bumped and the pin rewritten
 (``python shared/tests/test_worker_contract.py``); a new operation passes without a bump, as a worker that does not
 declare it is refused only that operation's nodes. Not pinned, as no model describes them: the sockets' frame envelopes
-(``type``, ``progress``, the error frame), the legacy submit's ``X-*`` header names and its socket's metadata keys.
+(``type``, ``progress``, the error frame), the legacy submit's ``X-*`` header names and its socket's metadata keys. Nor
+``GET /health``, which core never calls: it answers whoever watches the worker, without a token.
 
 Every model a worker route's request reaches refuses an unknown field, so a field core sends that a worker does not know
 fails the request instead of being dropped; ``FuzzyMapping``, a third-party dataclass inside ``FuzzyJoinInput``, is the
@@ -65,7 +66,7 @@ BUMP = (
 
 
 def worker_routes() -> list[Sequence]:
-    """The worker's routes, one sequence per router, and the app's own ``/shutdown``."""
+    """The worker's routes, one sequence per router, and the app's own ``/shutdown`` (not ``/health``)."""
     from fastapi.routing import APIRoute
 
     from flowfile_worker import main, protocol_routes, routes, streaming
@@ -75,7 +76,7 @@ def worker_routes() -> list[Sequence]:
         protocol_routes.router.routes,
         streaming.streaming_router.routes,
         streaming.v1_streaming_router.routes,
-        [route for route in main.app.routes if isinstance(route, APIRoute)],
+        [route for route in main.app.routes if isinstance(route, APIRoute) and route.path != "/health"],
     ]
 
 

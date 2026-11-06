@@ -1041,6 +1041,8 @@ export interface CatalogWriteSettings {
   scd2: Scd2Settings | null;
   // Enable-only: turns the Delta change data feed on, never off.
   track_changes: boolean;
+  // A schema on the hub, by the hub's own id; namespace_id and namespace_full_name are null then.
+  hub_namespace_id?: number | null;
 }
 
 export interface NodeCatalogWriter extends NodeBase {
@@ -1062,6 +1064,9 @@ export interface NodeCatalogReader extends NodeBase {
   cdc_consumer_name: string | null;
   cdc_start: CdcStart;
   cdc_include_preimage: boolean;
+  // A table on the hub, by the hub's own ids; catalog_table_id and catalog_namespace_id are null then.
+  hub_table_id: number | null;
+  hub_namespace_id: number | null;
 }
 
 /** Change-feed read settings; the cursor fields exist only on the catalog reader. */
@@ -1460,6 +1465,7 @@ export interface CatalogNamespaceOut {
   level: number;
   description?: string | null;
   access?: AccessInfo | null;
+  source?: "local" | "hub";
 }
 
 export interface CatalogNamespaceTree extends CatalogNamespaceOut {

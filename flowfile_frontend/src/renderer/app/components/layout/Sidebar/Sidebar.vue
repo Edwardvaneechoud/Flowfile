@@ -239,9 +239,9 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => stopHelpRequestNode?.());
 
-const handleLogout = () => {
+const handleLogout = async () => {
   // Store logout, not authService: per-user store state must be torn down too.
-  authStore.logout();
+  await authStore.logout();
   router.push({ name: "login" });
 };
 </script>

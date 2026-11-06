@@ -20,19 +20,29 @@
         <div class="catalog-field">
           <label class="catalog-label">Catalog / Schema</label>
           <el-select
-            v-model="nodeData.catalog_write_settings.namespace_id"
+            v-model="selectedNamespaceId"
             size="small"
             placeholder="Select namespace"
             clearable
             @change="onNamespaceChange"
           >
-            <el-option
-              v-for="ns in catalogNamespaces"
-              :key="ns.id"
-              :label="ns.label"
-              :value="ns.id"
-            />
+            <el-option-group v-for="(group, i) in namespaceGroups" :key="i" :label="group.label">
+              <el-option
+                v-for="ns in group.rows"
+                :key="ns.id"
+                :label="ns.label"
+                :value="ns.id"
+                :disabled="writeBlock(ns) !== null"
+                :title="writeBlock(ns) ?? undefined"
+              >
+                {{ ns.label }}
+                <span v-if="ns.readOnly" class="option-note">{{ READ_ONLY }}</span>
+              </el-option>
+            </el-option-group>
           </el-select>
+          <p v-if="selectedUnavailableReason" class="field-error">
+            {{ selectedUnavailableReason }}
+          </p>
         </div>
 
         <!-- Target table status: exists vs new -->
@@ -73,7 +83,11 @@
                   <el-option label="Upsert" value="upsert" />
                   <el-option label="Update" value="update" />
                   <el-option label="Delete" value="delete" />
-                  <el-option label="SCD2 (slowly changing dimension)" value="scd2" />
+                  <el-option
+                    v-if="!hubTarget"
+                    label="SCD2 (slowly changing dimension)"
+                    value="scd2"
+                  />
                 </el-select>
               </div>
 
@@ -189,7 +203,8 @@
                 </CollapsibleSection>
               </template>
 
-              <div class="catalog-field">
+              <p v-if="hubTarget" class="partition-hint">{{ HUB_CHANGE_TRACKING_NOTE }}</p>
+              <div v-else class="catalog-field">
                 <el-tooltip
                   :disabled="trackChangesDisabledReason === null"
                   :content="trackChangesDisabledReason ?? ''"
@@ -217,7 +232,10 @@
             </div>
           </el-tab-pane>
 
-          <el-tab-pane label="Virtual Table" name="virtual">
+          <el-tab-pane name="virtual" :disabled="hubTarget">
+            <template #label>
+              <span :title="hubTarget ? HUB_VIRTUAL_NOTE : undefined">Virtual Table</span>
+            </template>
             <div class="tab-content">
               <div class="virtual-info">
                 <i class="fa-solid fa-bolt"></i>
@@ -282,12 +300,25 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useWritableNamespaces } from "../../../../../composables/useWritableNamespaces";
 import { validateCatalogName } from "../../../../../composables/catalogNameValidation";
 import { CatalogApi } from "../../../../../api/catalog.api";
-import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
+import { isHubRow, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
+import {
+  READ_ONLY,
+  isHubTarget,
+  namespaceChoice,
+  namespaceOptions,
+  optionGroups,
+  pickerPlace,
+  pickable,
+  selectedNamespaceRow,
+  writeBlock,
+  writerDefault,
+  type NamespaceOption,
+} from "../catalogPick";
 import axios from "../../../../../services/axios.config";
 import { buildOutputHandles } from "../../../../../utils/nodeHandles";
 import * as writeModes from "../../../../../utils/deltaWriteModes";
 import { CollapsibleSection, DeltaTableStatusLine, MergeKeysSelect } from "../../../../common";
-import type { CatalogTable } from "../../../../../types/catalog.types";
+import type { CatalogTable, NamespaceTree } from "../../../../../types/catalog.types";
 import {
   DEFAULT_SCD2_SETTINGS,
   type CatalogWriteMode,
@@ -332,27 +363,84 @@ const { saveSettings, saveSettingsDroppingEdges, pushNodeData, handleGenericSett
     },
   });
 
-const catalogNamespaces = ref<{ id: number; label: string; full: string }[]>([]);
+const HUB_VIRTUAL_NOTE = "Virtual tables are kept in the local catalog.";
+const HUB_CHANGE_TRACKING_NOTE = "Change tracking is set on the hub.";
+
+const catalogNamespaces = ref<NamespaceOption[]>([]);
 // System-stripped but unpruned — for restoring a configured target the pruned list hides.
-const allCatalogNamespaces = ref<{ id: number; label: string; full: string }[]>([]);
+const allCatalogNamespaces = ref<NamespaceOption[]>([]);
 const { pruneNonWritable } = useWritableNamespaces();
+// The select binds the tree id (negative for a hub schema); the settings hold a local or a hub id.
+const selectedNamespaceId = ref<number | null>(null);
+// The hub's tables, for the exists-or-new line of a hub target.
+const hubTables = ref<CatalogTable[]>([]);
+
+const hubTarget = computed(
+  () => !!nodeData.value && isHubTarget(nodeData.value.catalog_write_settings),
+);
+
+// A schema this machine cannot use stays out of the list unless the node already points at it; one the
+// person may only read is listed greyed.
+const shownNamespaceOptions = computed(() =>
+  pickable(catalogNamespaces.value, selectedNamespaceId.value),
+);
+const namespaceGroups = computed(() => optionGroups(shownNamespaceOptions.value, pickerPlace));
+const selectedUnavailableReason = computed(() => {
+  const selected = catalogNamespaces.value.find((ns) => ns.id === selectedNamespaceId.value);
+  return selected ? writeBlock(selected) : null;
+});
 
 // Keep the portable name in sync with the numeric selection. ``namespace_full_name`` ("catalog.schema")
-// is what survives recreation on another machine; the id is install-local. Mirrors the catalog reader.
-function onNamespaceChange(id: number | null) {
+// is what survives recreation on another machine; the id is install-local. A hub schema is its hub id only.
+async function onNamespaceChange(id: number | null) {
   const settings = nodeData.value?.catalog_write_settings;
   if (!settings) return;
-  const match = catalogNamespaces.value.find((ns) => ns.id === id);
-  settings.namespace_full_name = match ? match.full : null;
+  const match = catalogNamespaces.value.find((ns) => ns.id === id) ?? null;
+  Object.assign(settings, namespaceChoice(match));
+  if (match?.source === "hub") await leaveLocalOnlyModes();
+}
+
+// A hub target takes no virtual table, SCD2 write or change tracking, so a saved node always validates.
+async function leaveLocalOnlyModes() {
+  const settings = nodeData.value?.catalog_write_settings;
+  if (!settings) return;
+  settings.track_changes = false;
+  const wasScd2 = physicalWriteMode.value === "scd2";
+  if (wasScd2) physicalWriteMode.value = "overwrite";
+  if (activeTab.value === "virtual") {
+    activeTab.value = "physical";
+    settings.write_mode = physicalWriteMode.value;
+  } else if (wasScd2) {
+    settings.write_mode = "overwrite";
+    await handleWriteModeChange("overwrite");
+  }
 }
 
 // On load, an imported flow may carry only ``namespace_full_name`` (id nulled by projection). Restore
 // the numeric selection from the name so the dropdown shows it; runs once both options + data exist.
 function reconcileNamespaceSelection() {
   const settings = nodeData.value?.catalog_write_settings;
-  if (!settings || settings.namespace_id != null || !settings.namespace_full_name) return;
-  const match = allCatalogNamespaces.value.find((ns) => ns.full === settings.namespace_full_name);
-  if (match) settings.namespace_id = match.id;
+  if (!settings) return;
+  preselectDefault();
+  const match = selectedNamespaceRow(settings, allCatalogNamespaces.value);
+  if (match?.source === "local" && settings.namespace_id == null) settings.namespace_id = match.id;
+  selectedNamespaceId.value = match ? match.id : settings.namespace_id;
+}
+
+// A new writer with no target takes the writer's default: the hub's default schema where only a hub's are offered.
+function preselectDefault() {
+  const node = nodeData.value;
+  const settings = node?.catalog_write_settings;
+  if (!node || !settings || node.is_setup || allCatalogNamespaces.value.length === 0) return;
+  if (
+    settings.namespace_id != null ||
+    settings.namespace_full_name ||
+    settings.hub_namespace_id != null
+  ) {
+    return;
+  }
+  const preset = writerDefault(allCatalogNamespaces.value);
+  if (preset) Object.assign(settings, namespaceChoice(preset));
 }
 
 // A pre-configured target outside the writable list (manage-granted table in a
@@ -361,11 +449,7 @@ function reconcileNamespaceSelection() {
 function ensureConfiguredOption() {
   const settings = nodeData.value?.catalog_write_settings;
   if (!settings) return;
-  const current = allCatalogNamespaces.value.find(
-    (ns) =>
-      ns.id === settings.namespace_id ||
-      (settings.namespace_full_name != null && ns.full === settings.namespace_full_name),
-  );
+  const current = selectedNamespaceRow(settings, allCatalogNamespaces.value);
   if (current && !catalogNamespaces.value.some((ns) => ns.id === current.id)) {
     catalogNamespaces.value.push(current);
   }
@@ -552,7 +636,25 @@ async function lookupExistingTable() {
     tableLookupDone.value = false;
     return;
   }
-  const namespaceId = nodeData.value?.catalog_write_settings.namespace_id ?? null;
+  const settings = nodeData.value!.catalog_write_settings;
+  if (isHubTarget(settings)) {
+    // The hub's own listing answers whether the table is there; no local lookup.
+    const listed = allCatalogNamespaces.value.some(
+      (ns) => ns.source === "hub" && ns.hubId === settings.hub_namespace_id,
+    );
+    if (!listed) {
+      existingTable.value = null;
+      tableLookupDone.value = false;
+      return;
+    }
+    existingTable.value =
+      hubTables.value.find(
+        (t) => t.hub_namespace_id === settings.hub_namespace_id && t.name === name,
+      ) ?? null;
+    tableLookupDone.value = true;
+    return;
+  }
+  const namespaceId = settings.namespace_id ?? null;
   try {
     existingTable.value = await CatalogApi.resolveTableByName(name, namespaceId);
     tableLookupDone.value = true;
@@ -577,6 +679,7 @@ watch(
   () => [
     nodeData.value?.catalog_write_settings.table_name,
     nodeData.value?.catalog_write_settings.namespace_id,
+    nodeData.value?.catalog_write_settings.hub_namespace_id,
   ],
   () => scheduleLookup(),
 );
@@ -640,34 +743,30 @@ async function fetchLazinessCheck() {
   }
 }
 
-function collectSchemaOptions(tree: { name: string; children?: { id: number; name: string }[] }[]) {
-  const options: { id: number; label: string; full: string }[] = [];
-  for (const catalog of tree) {
-    for (const schema of catalog.children ?? []) {
-      // Hide system-managed schemas so only "default" + user-created
-      // namespaces are offered as a write target.
-      if (catalog.name === "General" && SYSTEM_NAMESPACE_NAMES.has(schema.name)) continue;
-      options.push({
-        id: schema.id,
-        label: `${catalog.name} / ${schema.name}`,
-        full: `${catalog.name}.${schema.name}`,
-      });
-    }
-  }
-  return options;
+function collectHubTables(tree: NamespaceTree[]): CatalogTable[] {
+  return tree
+    .filter(isHubRow)
+    .flatMap((catalog) => [catalog, ...(catalog.children ?? [])])
+    .flatMap((ns) => ns.tables ?? []);
 }
 
 onMounted(async () => {
   try {
     const fetched = await CatalogApi.getNamespaceTree();
-    allCatalogNamespaces.value = collectSchemaOptions(fetched);
-    // Read-only ("use" grant) schemas are pruned — the backend refuses writes there.
-    catalogNamespaces.value = collectSchemaOptions(pruneNonWritable(fetched));
+    allCatalogNamespaces.value = namespaceOptions(fetched);
+    // Read-only ("use" grant) local schemas are pruned — the backend refuses writes there. A hub
+    // schema stays: the hub decides at run time.
+    catalogNamespaces.value = namespaceOptions([
+      ...pruneNonWritable(withoutHubRows(fetched)),
+      ...fetched.filter(isHubRow),
+    ]);
+    hubTables.value = collectHubTables(fetched);
   } catch {
     // Catalog not available
   }
   reconcileNamespaceSelection();
   ensureConfiguredOption();
+  if (hubTarget.value) scheduleLookup();
 });
 
 async function loadNodeData(nodeId: number) {
@@ -687,6 +786,9 @@ async function loadNodeData(nodeId: number) {
     }
     if (nodeData.value!.catalog_write_settings.track_changes === undefined) {
       nodeData.value!.catalog_write_settings.track_changes = false;
+    }
+    if (nodeData.value!.catalog_write_settings.hub_namespace_id === undefined) {
+      nodeData.value!.catalog_write_settings.hub_namespace_id = null;
     }
     if (
       nodeData.value!.catalog_write_settings.scd2 &&
@@ -712,6 +814,7 @@ async function loadNodeData(nodeId: number) {
         partition_by: [],
         scd2: null,
         track_changes: false,
+        hub_namespace_id: null,
       },
       flow_id: nodeStore.flow_id,
       node_id: nodeId,
@@ -787,6 +890,11 @@ defineExpose({
   margin: 0;
   font-size: 11px;
   color: var(--el-color-danger);
+}
+
+.option-note {
+  margin-left: 8px;
+  font-size: 11px;
 }
 
 .writer-tabs {

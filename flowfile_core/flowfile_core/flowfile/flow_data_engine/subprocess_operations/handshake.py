@@ -366,16 +366,24 @@ def last_verdict(backend_id: str) -> Verdict | None:
 
 
 def owns(backend: WorkerBackend) -> None:
-    """Make *backend* the one a URL-only gate call on its URL is checked by.
+    """Make *backend* the one a URL-only gate call on its URL is checked by and signed as (``owner``).
 
-    Such a call signs with the process token, so a backend that does too keeps the URL from one with a token of its
-    own. Otherwise the last one made wins.
+    A backend that signs with the process token keeps the URL from one with a token of its own, so a worker core's
+    process token reaches is never signed for with another's. Otherwise the last one made wins, so a hub-filled
+    backend made again with a new token signs the URL's calls with it.
     """
     with _lock:
         current = _by_url.get(backend.url)
         if current is None or backend.token is None or current.token is not None:
             _by_url[backend.url] = backend
             _stand_ins.pop(backend.url, None)
+
+
+def owner(worker_url: str) -> WorkerBackend | None:
+    """The backend ``owns`` made the one a URL-only call on *worker_url* is checked by and signed as; ``None`` when no
+    backend was made on it."""
+    with _lock:
+        return _by_url.get(worker_url)
 
 
 def ensure_handshake(worker_url: str, *, backend_id: str | None = None) -> None:

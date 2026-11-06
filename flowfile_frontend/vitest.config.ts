@@ -7,11 +7,16 @@
 
 import Path from "path";
 import { fileURLToPath } from "url";
+import vuePlugin from "@vitejs/plugin-vue";
 import { defineConfig } from "vitest/config";
 
 const __dirname = Path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  // Compiles .vue files, so a test can mount a component under happy-dom.
+  plugins: [vuePlugin()],
+  // The app's public folder, so a component that shows one of its images can mount.
+  publicDir: "src/renderer/public",
   test: {
     include: ["src/**/*.test.ts"],
     environment: "node",

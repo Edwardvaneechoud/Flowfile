@@ -19,9 +19,20 @@ export interface CatalogNamespace {
   storage_uri?: string | null;
   storage_connection_name?: string | null;
   access?: AccessInfo | null;
+  // "hub" for a connected hub's catalog: its id is the negative of the hub's own id, kept in hub_id.
+  source?: "local" | "hub";
+  hub_id?: number | null;
 }
 
 export interface NamespaceTree extends CatalogNamespace {
+  // Where the catalog lives, in words ("On this computer", "On this server", the hub's name); set by core
+  // once a hub's catalogs are listed beside this machine's.
+  place?: string | null;
+  // False for this machine's catalogs on a server joined to a hub: the Catalog panel and the catalog
+  // reader's and writer's pickers leave them out. Absent from an older core, which means offered.
+  offered?: boolean;
+  // Why this Flowfile cannot use a hub catalog's tables, in the words a run over it is refused with.
+  unavailable_reason?: string | null;
   children: NamespaceTree[];
   flows: FlowRegistration[];
   artifacts: GlobalArtifact[];
@@ -42,14 +53,16 @@ export const SYSTEM_NAMESPACE_NAMES = new Set([
 // get a bulk "clean up" action; the cleanup route enforces the same set server-side.
 export const SCRATCH_NAMESPACE_NAMES = new Set(["Unnamed Flows", "Python Editor"]);
 
-// Shallow copy of the tree with system schemas removed from the "General" root.
-// Scoped to "General" so a user-created schema sharing a name elsewhere is kept.
+// Shallow copy of the local tree (a hub's catalogs left out) with system schemas removed
+// from the "General" root; scoped to it so a same-named schema elsewhere is kept.
 export function filterSelectableNamespaces(tree: NamespaceTree[]): NamespaceTree[] {
-  return tree.map((node) =>
-    node.name === "General" && node.parent_id === null
-      ? { ...node, children: node.children.filter((c) => !SYSTEM_NAMESPACE_NAMES.has(c.name)) }
-      : node,
-  );
+  return tree
+    .filter((node) => node.source !== "hub")
+    .map((node) =>
+      node.name === "General" && node.parent_id === null
+        ? { ...node, children: node.children.filter((c) => !SYSTEM_NAMESPACE_NAMES.has(c.name)) }
+        : node,
+    );
 }
 
 // Ancestry names from root to the namespace with the given id (e.g.
@@ -343,6 +356,10 @@ export interface CatalogTable {
   created_at: string;
   updated_at: string;
   access?: AccessInfo | null;
+  // "hub" for a table on a connected hub: id and namespace_id are negated, the hub's own ids beside them.
+  source?: "local" | "hub";
+  hub_id?: number | null;
+  hub_namespace_id?: number | null;
 }
 
 export interface OptimizeTableRequest {

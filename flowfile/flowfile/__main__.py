@@ -92,7 +92,7 @@ def _run_flow(flow_path: str, param_overrides: list[str] | None, run_id: int | N
 
     # Run on the embedded worker unless --backend, the flow's saved backend id or FLOWFILE_COMPUTE_BACKEND names one
     if backend is None and flow.execution_location not in ("local", "remote", "auto"):
-        backend_id = flow.execution_location
+        backend_id = registry.headless_backend_id(flow.execution_location)
         registry.set_default_override(backend_id)
     flow.execution_location = "local" if backend_id == registry.LOCAL_BACKEND_ID else "remote"
 
@@ -122,7 +122,10 @@ def _run_flow(flow_path: str, param_overrides: list[str] | None, run_id: int | N
         pass
 
     try:
-        result = flow.run_graph()
+        from flowfile_core.hub_client import node_tokens
+
+        with node_tokens.for_run_record(run_id):
+            result = flow.run_graph()
     except Exception as e:
         print(f"Error running flow: {e}", file=sys.stderr)
         _complete_run_if_needed(run_id, success=False, nodes_completed=0)
@@ -435,8 +438,18 @@ def main():
     parser.add_argument(
         "file_path", nargs="?", help="Flow file path, project folder, version message, or file/dir to convert"
     )
-    parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
-    parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind the server to; for run ui, a host other machines reach needs FLOWFILE_MODE=docker, "
+        "where everyone signs in",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=63578,
+        help="Port to bind the server to; for run ui and run core, a server joining a hub exits when it is in use",
+    )
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
     parser.add_argument(
         "--param",
@@ -465,6 +478,25 @@ def main():
     parser.add_argument("--format", default="md", choices=["md", "json"], help="Format of the --inspect report")
     parser.add_argument("--csv", action="store_true", help="Convert to CSV instead of Parquet")
     parser.add_argument("--overwrite", action="store_true", help="Replace existing converted files or flows")
+    # Core's settings read these from this same command line; listed here so run ui and run core take them.
+    parser.add_argument(
+        "--join",
+        metavar="TOKEN",
+        help="A join token from the hub's Compute page; the server joins that hub for itself and its worker before "
+        "it serves (or FLOWFILE_HUB_JOIN_TOKEN)",
+    )
+    parser.add_argument("--hub", metavar="URL", help="The hub to join (or FLOWFILE_HUB_URL)")
+    parser.add_argument("--name", help="This node's name on the hub; the machine's name when not given")
+    parser.add_argument(
+        "--url",
+        metavar="URL",
+        help="This server's address as a browser and the hub reach it; else this machine's full name and port",
+    )
+    parser.add_argument(
+        "--worker-url",
+        metavar="URL",
+        help="The worker's address as desktops reach it; for run ui, the server's address with /worker",
+    )
 
     args = parser.parse_args()
 
@@ -473,7 +505,7 @@ def main():
             try:
                 from flowfile.web import start_server as start_web_ui
 
-                start_web_ui(open_browser=not args.no_browser)
+                start_web_ui(host=args.host, port=args.port, open_browser=not args.no_browser)
             except KeyboardInterrupt:
                 print("\nFlowFile service stopped.")
         elif args.component == "core":
@@ -541,7 +573,8 @@ def main():
         print("  flowfile run worker  # Start only the worker service")
         print("")
         print("  # Options")
-        print("  flowfile run ui --host 0.0.0.0 --port 8080  # Custom host/port")
+        print("  flowfile run ui --port 8080  # Custom port")
+        print("  FLOWFILE_MODE=docker flowfile run ui --host 0.0.0.0  # Serve other machines; everyone signs in")
         print("  flowfile run ui --no-browser  # Don't open browser")
         print("")
         print("  # Python API usage examples")

@@ -59,6 +59,7 @@
 import { computed, ref, watch } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { NamespaceTree, VizSourceDescriptor } from "../../types";
+import { withoutHubRows } from "./hubRows";
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{
@@ -107,7 +108,7 @@ const toCascade = (node: NamespaceTree): CascadeOption => {
   };
 };
 
-const tableOptions = computed<CascadeOption[]>(() => store.tree.map(toCascade));
+const tableOptions = computed<CascadeOption[]>(() => withoutHubRows(store.tree).map(toCascade));
 
 // Tracks the in-flight loadTree() triggered when the dialog opens; goes back
 // to false on success or failure so the empty-state hint can render.

@@ -93,6 +93,9 @@
           <p class="page-description">
             Securely store and manage credentials for your integrations.
           </p>
+          <p v-if="onHub" class="page-description">
+            This server keeps your secrets on its hub; share them on the hub's pages.
+          </p>
         </div>
       </div>
 
@@ -200,7 +203,7 @@
               </div>
               <div class="secret-actions">
                 <button
-                  v-if="isMultiUser && isOwned(secret) && secret.id != null"
+                  v-if="!onHub && isMultiUser && isOwned(secret) && secret.id != null"
                   type="button"
                   class="btn btn-secondary"
                   :aria-label="`Share secret ${secret.name}`"
@@ -208,6 +211,16 @@
                 >
                   <i class="fa-solid fa-share-nodes"></i>
                   <span>Share</span>
+                </button>
+                <button
+                  v-if="onHub && isOwned(secret)"
+                  type="button"
+                  class="btn btn-secondary"
+                  :aria-label="`Change secret ${secret.name}`"
+                  @click="openChange(secret.name)"
+                >
+                  <i class="fa-solid fa-pen"></i>
+                  <span>Change</span>
                 </button>
                 <button
                   v-if="isOwned(secret)"
@@ -230,6 +243,23 @@
           </div>
         </div>
       </div>
+
+      <div v-if="onHub && kept.length > 0" class="card mb-3">
+        <div class="card-header">
+          <h3 class="card-title">Kept on this server ({{ kept.length }})</h3>
+        </div>
+        <div class="card-content">
+          <div class="secrets-list">
+            <div v-for="item in kept" :key="item.name" class="secret-item">
+              <div class="secret-name">
+                <i class="fa-solid fa-server"></i>
+                <span>{{ item.name }}</span>
+              </div>
+              <div class="kept-reason">{{ item.reason }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </template>
 
     <ShareDialog
@@ -240,6 +270,39 @@
       :resource-name="shareSecret.name"
       :can-manage-grants="true"
     />
+
+    <div v-if="secretToChange" class="modal-overlay" @click="cancelChange">
+      <div class="modal-container" @click.stop>
+        <div class="modal-header">
+          <h3 class="modal-title">Change Secret</h3>
+          <button class="modal-close" aria-label="Close change secret" @click="cancelChange">
+            <i class="fa-solid fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-content">
+          <label for="changed-secret-value" class="form-label">
+            New value for <strong>{{ secretToChange }}</strong>
+          </label>
+          <input
+            id="changed-secret-value"
+            v-model="changedValue"
+            type="password"
+            class="form-input"
+            placeholder="Enter the new value"
+          />
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" @click="cancelChange">Cancel</button>
+          <button
+            class="btn btn-primary"
+            :disabled="!changedValue || isChanging"
+            @click="handleChangeSecret"
+          >
+            {{ isChanging ? "Saving..." : "Save" }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Delete Confirmation Modal -->
     <div v-if="showDeleteModal" class="modal-overlay" @click="cancelDelete">
@@ -272,9 +335,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
-import type { Secret, SecretInput } from "./secretTypes";
+import { computed, ref, onMounted } from "vue";
+import type { KeptSecret, Secret, SecretInput } from "./secretTypes";
 import { useSecretManager } from "./useSecretManager";
+import { SecretsApi } from "../../api/secrets.api";
+import { useHubConnectionStore } from "../../stores/hub-connection-store";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
@@ -336,6 +401,49 @@ const handleAddSecret = async () => {
   }
 };
 
+const hub = useHubConnectionStore();
+const onHub = computed(() => hub.joined);
+const kept = ref<KeptSecret[]>([]);
+const secretToChange = ref("");
+const changedValue = ref("");
+const isChanging = ref(false);
+
+const openChange = (secretName: string) => {
+  secretToChange.value = secretName;
+  changedValue.value = "";
+};
+
+const cancelChange = () => {
+  secretToChange.value = "";
+  changedValue.value = "";
+};
+
+const handleChangeSecret = async () => {
+  if (!secretToChange.value || !changedValue.value) return;
+  isChanging.value = true;
+  try {
+    const name = secretToChange.value;
+    await SecretsApi.change(name, changedValue.value);
+    cancelChange();
+    alert(`Secret "${name}" changed.`);
+  } catch (error: any) {
+    alert(`Error changing secret: ${error.message || "unknown error"}`);
+  } finally {
+    isChanging.value = false;
+  }
+};
+
+const loadKept = async () => {
+  if (hub.connection === null) await hub.load();
+  if (!onHub.value) return;
+  try {
+    kept.value = await SecretsApi.getKept();
+  } catch (error) {
+    console.error("Failed to load the secrets kept on this server:", error);
+    kept.value = [];
+  }
+};
+
 const handleConfirmDelete = (secretName: string) => {
   secretToDelete.value = secretName;
   showDeleteModal.value = true;
@@ -367,10 +475,17 @@ onMounted(() => {
   loadSecrets().catch(() => {
     alert("Failed to load secrets. Please try again.");
   });
+  loadKept();
 });
 </script>
 
 <style scoped>
+.kept-reason {
+  flex: 1;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
 /* Intro / landing screen */
 .secrets-intro {
   max-width: 760px;

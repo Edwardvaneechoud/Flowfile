@@ -46,6 +46,15 @@
               <span class="material-icons save-as-icon">save_as</span>
               Save As…
             </el-dropdown-item>
+            <el-dropdown-item
+              v-if="hub.connected"
+              divided
+              data-testid="publish-to-hub"
+              @click="openHubPublishDialog"
+            >
+              <span class="material-icons save-as-icon">cloud_upload</span>
+              Publish to hub…
+            </el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -164,6 +173,14 @@
   />
 
   <alteryx-import-dialog v-model:visible="modalVisibleForAlteryx" @imported="emit('refreshFlow')" />
+
+  <hub-publish-dialog
+    v-model:visible="modalVisibleForHubPublish"
+    :flow-id="nodeStore.flow_id"
+    :hub-origin="flowSettings?.hub_origin ?? null"
+    @published="handleHubPublished"
+    @open-flow="handleOpenFromDialog"
+  />
 
   <el-dialog
     v-model="modalVisibleForSettings"
@@ -290,6 +307,7 @@ import SaveDialog from "../../../features/designer/components/SaveDialog.vue";
 import OpenDialog from "../../../features/designer/components/OpenDialog.vue";
 import CreateDialog from "../../../features/designer/components/CreateDialog.vue";
 import AlteryxImportDialog from "../../../features/designer/components/AlteryxImportDialog.vue";
+import HubPublishDialog from "../../../features/designer/components/HubPublishDialog.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useFlowStore } from "../../../stores/flow-store";
 import { useEditorStore } from "../../../stores/editor-store";
@@ -308,6 +326,7 @@ import {
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 import { executionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
 import { listComputeBackends } from "../../../api/computeBackends.api";
+import { useHubConnectionStore } from "../../../stores/hub-connection-store";
 import BackendHandshakeStatus from "../../settings/BackendHandshakeStatus.vue";
 
 const nodeStore = useNodeStore();
@@ -316,6 +335,7 @@ const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
 const projectStore = useProjectStore();
 const catalogStore = useCatalogStore();
+const hub = useHubConnectionStore();
 const { recordFlow, recordFlowFromSettings, reconcileWithCatalog, removeFlow } = useRecentFlows();
 
 const modalVisibleForOpen = ref(false);
@@ -323,6 +343,18 @@ const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
 const modalVisibleForAlteryx = ref(false);
 const modalVisibleForSettings = ref(false);
+const modalVisibleForHubPublish = ref(false);
+
+const openHubPublishDialog = () => {
+  modalVisibleForHubPublish.value = true;
+};
+
+// A publish saves the flow with its new hub version; refresh what the header caches about it.
+const handleHubPublished = async () => {
+  emit("flowSaved", nodeStore.flow_id);
+  projectStore.onSourceChanged();
+  await loadFlowSettings();
+};
 
 // Save is a no-op when no flow is loaded; hide the button entirely rather
 // than leaving a disabled control in the header.

@@ -34,6 +34,7 @@ from flowfile_core.project.manifest import (
 from flowfile_core.project.models import ActiveProject
 from flowfile_core.project.normalize import write_yaml, dump_yaml
 from flowfile_core.project.service import project_root_base, _confine_project_root
+from shared.storage_config import storage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -792,10 +793,11 @@ class TestMA3_NamespaceResolutionOwnFirst:
         assert seed_owner != alice_id, "test requires Alice to be a non-seed user"
 
         flow_uuid = str(uuid4())
-        # Pre-register Alice's flow with NO namespace and a writable on-disk path (so the importer
-        # re-points to it instead of writing under the real flows_directory). The reconcile step in
-        # _import_flow is what must set namespace_id from the public-fallback resolution.
-        seeded_path = str(tmp_path / f"alice_{flow_uuid[:8]}.flow.yaml")
+        # Pre-register Alice's flow with NO namespace and a path inside the server's flows folder (the
+        # importer writes over a registration's file only there). The reconcile step in _import_flow is
+        # what must set namespace_id from the public-fallback resolution.
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        seeded_path = str(storage.flows_directory / f"alice_{flow_uuid[:8]}.flow.yaml")
         with get_db_context() as db:
             reg = db_models.FlowRegistration(
                 name="public_ns_flow",

@@ -69,6 +69,7 @@ from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.utils import create_unique_id
+from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
@@ -144,7 +145,7 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationUpdate,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
-from shared.storage_config import storage
+from shared.storage_config import require_flow_in_storage, storage
 
 router = APIRouter(
     prefix="/catalog",
@@ -392,8 +393,14 @@ def get_namespace_tree(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return the full catalog tree with flows nested under schemas."""
-    return service.get_namespace_tree(user_id=current_user.id)
+    """Return the full catalog tree with flows nested under schemas.
+
+    The local catalogs come first; a user connected to a hub gets the hub's catalogs and tables after them, each
+    row marked ``source: "hub"`` with the negative of the hub's id as its ``id``. Beside the hub's, every row says
+    where it lives (``place``), a hub catalog this Flowfile cannot use says why (``unavailable_reason``), and on a
+    server joined to its hub with keys of its own the server's own rows are not ``offered`` (``hub_catalog.merged``).
+    """
+    return hub_catalog.merged(current_user.id, service.get_namespace_tree(user_id=current_user.id))
 
 
 # Default namespace helper
@@ -452,13 +459,15 @@ def get_flow_interface(
     """The flow's callable surface (flow_input/flow_output ports + typed parameters).
 
     Degrades to empty lists with ``file_exists=False`` when the flow file is
-    missing or unparseable, so the run_flow picker can still render.
+    missing or unparseable, so the run_flow picker can still render. On a
+    multi-user server a file outside the flow folders is refused (422), not read.
     """
     from flowfile_core.flowfile import subflow
 
     registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
+    path = require_flow_in_storage(Path(registration.flow_path))
     try:
-        interface = subflow.get_subflow_interface(Path(registration.flow_path))
+        interface = subflow.get_subflow_interface(path)
     except Exception:  # noqa: BLE001 - degrade like the flow-API parameter lookup
         return FlowInterfaceOut(registration_id=flow_id, file_exists=False)
     return FlowInterfaceOut(
@@ -486,14 +495,16 @@ def get_flow_code(
     """
     from flowfile_core.flowfile.code_generator import export_flow_to_flowframe, export_flow_to_polars
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
-    from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
     from flowfile_core.notebook.render import render
 
     registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
+    try:
+        path = require_flow_in_storage(Path(registration.flow_path))
+    except ValueError as exc:
+        return FlowCodeOut(registration_id=flow_id, format=format, error=str(exc))
     if not registration.file_exists:
         return FlowCodeOut(registration_id=flow_id, format=format, file_exists=False)
     try:
-        path = require_flow_in_storage(Path(registration.flow_path))
         if format == "yaml":
             if path.suffix.lower() not in (".yaml", ".yml", ".json"):
                 raise ValueError("the flow is stored in the legacy binary format; save it from the designer first")
@@ -1687,12 +1698,13 @@ def get_catalog_overview(
 
     FastAPI caches ``get_db`` per request, so ``db`` is the session the service was
     built on: the whole screen costs one pooled connection instead of one per call.
-    The individual endpoints stay for detail views, mutations and the poll loop.
+    The individual endpoints stay for detail views, mutations and the poll loop. The tree is the one
+    ``/namespaces/tree`` answers, a connected hub's catalogs after the local ones.
     """
     user_id = current_user.id
     return CatalogOverview(
         stats=service.get_catalog_stats(user_id=user_id),
-        tree=service.get_namespace_tree(user_id=user_id),
+        tree=hub_catalog.merged(user_id, service.get_namespace_tree(user_id=user_id)),
         flows=service.list_flows(user_id=user_id),
         tables=service.list_tables(user_id=user_id),
         favorites=service.list_favorites(user_id=user_id),

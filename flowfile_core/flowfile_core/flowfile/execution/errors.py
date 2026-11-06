@@ -1,4 +1,9 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
 _ADVICE = "Start it, or check the Backends page."
+_HUB_ADVICE = "Start it, or check its address on the hub's Compute page."
 
 
 class ComputeError(Exception):
@@ -8,24 +13,57 @@ class ComputeError(Exception):
 class ComputeUnavailable(ComputeError):
     """Compute cannot be reached.
 
-    ``backend_id`` names the unreachable backend when the code raising the error knows it, else ``None``.
+    ``backend_id`` names the unreachable backend when the code raising the error knows it, else ``None``; ``url`` the
+    address that did not answer, when the error is a transport's failure to reach it and is raised from that failure.
     """
 
-    def __init__(self, message: str, *, backend_id: str | None = None) -> None:
+    def __init__(self, message: str, *, backend_id: str | None = None, url: str | None = None) -> None:
         super().__init__(message)
         self.backend_id = backend_id
+        self.url = url
+        if url is not None and _hub_server(backend_id) is not None:
+            logger.warning(message)
 
     def __str__(self) -> str:
         """The message, plus a hint to start the backend when the connection was refused (POSIX or Windows wording).
 
-        The hint is added once, so an error rebuilt from a run report row's text keeps the one it has.
+        A server filled from a hub (``registry.hub_server``) is named by its name on the hub, and the hint, given for
+        any failure to reach it, points at its address on the hub's Compute page, where the hub keeps it. When such a
+        server did not answer at its ``url``, the sentence says that and why in a few words (``_reason``) in place of
+        the transport's text, which is logged as the error is raised. The hint is added once, so an error rebuilt from
+        a run report row's text keeps the one it has.
         """
         message = super().__str__()
-        if "refused" not in message.lower() or message.endswith(_ADVICE):
+        if message.endswith((_ADVICE, _HUB_ADVICE)):
+            return message
+        server = _hub_server(self.backend_id)
+        if server is not None:
+            if self.url is not None and self.__cause__ is not None:
+                reason = _reason(self.__cause__)
+                return f'The hub\'s server "{server}" did not answer at {self.url} ({reason}). {_HUB_ADVICE}'
+            return f'{message}. Is the hub\'s server "{server}" running? {_HUB_ADVICE}'
+        if "refused" not in message.lower():
             return message
         if self.backend_id is None:
             return f"{message}. Is the compute backend running? {_ADVICE}"
         return f'{message}. Is backend "{self.backend_id}" running? {_ADVICE}'
+
+
+def _hub_server(backend_id: str | None) -> str | None:
+    from flowfile_core.flowfile.execution import registry  # imported here: the registry imports this module
+
+    return registry.hub_server(backend_id)
+
+
+def _reason(failure: BaseException) -> str:
+    """Why a transport failed to reach a worker, in a few words: "connection refused" (POSIX or Windows wording),
+    "timed out", else the failure's class name."""
+    text = str(failure).lower()
+    if "refused" in text:
+        return "connection refused"
+    if "timed out" in text or "timeout" in text:
+        return "timed out"
+    return type(failure).__name__
 
 
 class VersionMismatch(ComputeError):

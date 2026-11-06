@@ -16,6 +16,10 @@ describe("resolveComputeTab", () => {
     expect(resolveComputeTab(["backends"])).toBeNull();
   });
 
+  it("shows the Hub tab to administrators only", () => {
+    expect(computeTabs.find((t) => t.key === "hub")?.requiresAdmin).toBe(true);
+  });
+
   it("lists no retired tab in the tab bar or the sidebar", () => {
     expect(computeTabs.map((t) => t.key)).not.toContain("performance");
   });
