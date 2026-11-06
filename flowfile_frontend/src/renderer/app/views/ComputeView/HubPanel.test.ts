@@ -89,7 +89,7 @@ describe("HubPanel", () => {
     expect(connectHub).toHaveBeenCalledTimes(1);
     expect(connectHub).toHaveBeenCalledWith(
       expect.objectContaining({
-        hubUrl: "https://hub.acme.test:8443",
+        hub_url: "https://hub.acme.test:8443",
         username: "ana",
         password: "secret",
       }),
@@ -128,7 +128,7 @@ describe("HubPanel", () => {
   });
 
   it("names the hub by its address when it does not answer its name", async () => {
-    await mount({ ...server, orgName: null });
+    await mount({ ...server, org_name: null });
 
     expect(text(find("hub-joined"))).toContain(
       "This server belongs to the hub at https://hub.acme.test:8443.",

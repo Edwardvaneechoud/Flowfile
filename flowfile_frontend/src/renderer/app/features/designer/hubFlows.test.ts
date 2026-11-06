@@ -15,12 +15,12 @@ import {
 
 const base: HubFlowVersion = {
   version: 1,
-  authorId: 1,
-  authorName: null,
-  publishedAt: "2026-11-01T12:00:00Z",
+  author_id: 1,
+  author_name: null,
+  published_at: "2026-11-01T12:00:00Z",
   message: "mine",
 };
-const current: HubFlowVersion = { ...base, version: 2, authorId: 7, message: "theirs" };
+const current: HubFlowVersion = { ...base, version: 2, author_id: 7, message: "theirs" };
 
 describe("publish dialog words", () => {
   it("names the version a publish became", () => {
@@ -71,7 +71,7 @@ describe("conflict panel", () => {
   });
 
   it("names the author by the name the hub sends, and by id from a hub that sends none", () => {
-    const named = { ...current, authorName: "Cal Jones" };
+    const named = { ...current, author_name: "Cal Jones" };
     expect(versionFacts(named)[1].value).toBe("Cal Jones");
     expect(conflictLabel(base, named)).toBe(
       "Version 1 is no longer the latest; Cal Jones published v2",
@@ -79,22 +79,24 @@ describe("conflict panel", () => {
     expect(conflictLabel(null, named)).toBe(
       "This flow already has v2 on the hub; Cal Jones published it",
     );
-    expect(versionFacts({ ...current, authorName: "" })[1].value).toBe("user #7");
+    expect(versionFacts({ ...current, author_name: "" })[1].value).toBe("user #7");
   });
 });
 
 describe("refusalMessage", () => {
   it("has a line for every kind", () => {
-    expect(refusalMessage({ kind: "stale_base", flowUuid: "u", base, current })).toMatch(
+    expect(refusalMessage({ kind: "stale_base", flow_uuid: "u", base, current })).toMatch(
       /no longer the latest/,
     );
     expect(refusalMessage({ kind: "refused", status: 403, detail: "no write access" })).toBe(
       "The hub refused the request (403): no write access",
     );
-    expect(refusalMessage({ kind: "other_hub", hubUrl: "https://other" })).toMatch(
+    expect(refusalMessage({ kind: "other_hub", hub_url: "https://other" })).toMatch(
       /another hub \(https:\/\/other\)/,
     );
-    expect(refusalMessage({ kind: "local_copy_exists", flowPath: "/f.yaml" })).toMatch(/\/f\.yaml/);
+    expect(refusalMessage({ kind: "local_copy_exists", flow_path: "/f.yaml" })).toMatch(
+      /\/f\.yaml/,
+    );
   });
 });
 
@@ -127,6 +129,6 @@ describe("publishedTime", () => {
   });
 
   it("is what the version facts show as Published", () => {
-    expect(versionFacts(current)[2].value).toBe(publishedTime(current.publishedAt));
+    expect(versionFacts(current)[2].value).toBe(publishedTime(current.published_at));
   });
 });

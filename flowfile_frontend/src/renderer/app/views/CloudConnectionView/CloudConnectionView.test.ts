@@ -32,7 +32,7 @@ vi.mock("element-plus", async () => {
 
 import CloudConnectionView from "./CloudConnectionView.vue";
 
-const desktop: HubConnection = { ...connected, organisationStorage: "s3://acme/flowfile" };
+const desktop: HubConnection = { ...connected, organisation_storage: "s3://acme/flowfile" };
 const server: HubConnection = { ...desktop, joined: true };
 
 let host: HTMLElement;
@@ -65,7 +65,7 @@ describe("the organisation's storage row", () => {
   });
 
   it("shows no row when the hub does not say", async () => {
-    await mount({ ...server, organisationStorage: null });
+    await mount({ ...server, organisation_storage: null });
 
     expect(row()).toBeNull();
   });

@@ -68,20 +68,26 @@ const stubs: Record<string, FunctionalComponent> = {
 };
 
 const orders = {
-  flowUuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+  flow_uuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
   name: "orders",
-  latestVersion: 2,
-  authorName: null,
+  latest_version: 2,
+  author_name: null,
 };
 const versions = [
   {
     version: 2,
-    authorId: 7,
-    authorName: null,
-    publishedAt: "2026-11-01T12:01:00Z",
+    author_id: 7,
+    author_name: null,
+    published_at: "2026-11-01T12:01:00Z",
     message: "theirs",
   },
-  { version: 1, authorId: 1, authorName: null, publishedAt: "2026-11-01T12:00:00Z", message: null },
+  {
+    version: 1,
+    author_id: 1,
+    author_name: null,
+    published_at: "2026-11-01T12:00:00Z",
+    message: null,
+  },
 ];
 
 let host: HTMLElement;
@@ -112,7 +118,7 @@ beforeEach(() => {
   mocks.getFlows.mockReset().mockResolvedValue([]);
   mocks.listHubFlows.mockReset().mockResolvedValue([orders]);
   mocks.listHubFlowVersions.mockReset().mockResolvedValue(versions);
-  mocks.openFromHub.mockReset().mockResolvedValue({ flowPath: "/flows/hub/orders.yaml" });
+  mocks.openFromHub.mockReset().mockResolvedValue({ flow_path: "/flows/hub/orders.yaml" });
   mocks.confirm.mockReset().mockResolvedValue("confirm");
   mocks.success.mockReset();
 });
@@ -154,7 +160,7 @@ describe("OpenDialog's Hub tab", () => {
 
     await click(flows[0]);
 
-    expect(mocks.listHubFlowVersions).toHaveBeenCalledWith(orders.flowUuid);
+    expect(mocks.listHubFlowVersions).toHaveBeenCalledWith(orders.flow_uuid);
     const rows = host.querySelectorAll('[data-testid="hub-open-versions"] .flow-row');
     expect(rows).toHaveLength(2);
     expect(rows[0].className).toContain("selected");
@@ -164,10 +170,10 @@ describe("OpenDialog's Hub tab", () => {
   });
 
   it("names the authors of the flow's newest version and of each version when the hub sends their names", async () => {
-    mocks.listHubFlows.mockResolvedValue([{ ...orders, authorName: "Cal Jones" }]);
+    mocks.listHubFlows.mockResolvedValue([{ ...orders, author_name: "Cal Jones" }]);
     mocks.listHubFlowVersions.mockResolvedValue([
-      { ...versions[0], authorName: "Cal Jones" },
-      { ...versions[1], authorName: "Ada Lovelace" },
+      { ...versions[0], author_name: "Cal Jones" },
+      { ...versions[1], author_name: "Ada Lovelace" },
     ]);
     await mount(desktop);
     await click(find("open-hub-tab"));
@@ -193,7 +199,7 @@ describe("OpenDialog's Hub tab", () => {
     await click(find("hub-open"));
 
     expect(mocks.openFromHub).toHaveBeenCalledWith({
-      flowUuid: orders.flowUuid,
+      flow_uuid: orders.flow_uuid,
       version: 1,
       replace: false,
     });
@@ -208,7 +214,7 @@ describe("OpenDialog's Hub tab", () => {
       .mockRejectedValueOnce(
         httpError(409, { kind: "local_copy_exists", flow_path: "/flows/hub/orders.yaml" }),
       )
-      .mockResolvedValueOnce({ flowPath: "/flows/hub/orders.yaml" });
+      .mockResolvedValueOnce({ flow_path: "/flows/hub/orders.yaml" });
     await mount(desktop);
     await click(find("open-hub-tab"));
     await click(find("pick-hub-namespace"));
@@ -218,7 +224,7 @@ describe("OpenDialog's Hub tab", () => {
 
     expect(mocks.confirm).toHaveBeenCalledOnce();
     expect(mocks.openFromHub).toHaveBeenLastCalledWith({
-      flowUuid: orders.flowUuid,
+      flow_uuid: orders.flow_uuid,
       version: 2,
       replace: true,
     });

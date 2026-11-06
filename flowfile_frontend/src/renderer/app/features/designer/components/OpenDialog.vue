@@ -133,9 +133,9 @@
             <ul v-else class="flows-list" data-testid="hub-open-flows">
               <li
                 v-for="flow in hubFlows"
-                :key="flow.flowUuid"
+                :key="flow.flow_uuid"
                 class="flow-row"
-                :class="{ selected: selectedHubFlow?.flowUuid === flow.flowUuid }"
+                :class="{ selected: selectedHubFlow?.flow_uuid === flow.flow_uuid }"
                 @click="selectHubFlow(flow)"
                 @dblclick="openHubFlow()"
               >
@@ -144,8 +144,8 @@
                   <span>{{ flow.name }}</span>
                 </div>
                 <div class="flow-meta">
-                  <span v-if="flow.authorName">{{ flow.authorName }}</span>
-                  <span class="flow-last-run">{{ latestVersionLabel(flow.latestVersion) }}</span>
+                  <span v-if="flow.author_name">{{ flow.author_name }}</span>
+                  <span class="flow-last-run">{{ latestVersionLabel(flow.latest_version) }}</span>
                 </div>
               </li>
             </ul>
@@ -395,7 +395,7 @@ const canOpenHubFlow = computed(
   () => !!selectedHubFlow.value && hubVersions.value.length > 0 && !hubBusy.value,
 );
 
-const publishedAt = (version: HubFlowVersion) => publishedTime(version.publishedAt);
+const publishedAt = (version: HubFlowVersion) => publishedTime(version.published_at);
 
 function resetHub() {
   hubError.value = "";
@@ -434,7 +434,7 @@ async function selectHubFlow(flow: HubFlow) {
   hubError.value = "";
   loadingHubVersions.value = true;
   try {
-    hubVersions.value = await listHubFlowVersions(flow.flowUuid);
+    hubVersions.value = await listHubFlowVersions(flow.flow_uuid);
     selectedHubVersion.value = hubVersions.value[0]?.version ?? null;
   } catch (err) {
     hubError.value = detailOf(err, "Couldn't list the flow's versions.");
@@ -447,18 +447,18 @@ async function openHubFlow(replace = false) {
   if (!selectedHubFlow.value || selectedHubVersion.value === null) return;
   hubBusy.value = true;
   hubError.value = "";
-  const flowUuid = selectedHubFlow.value.flowUuid;
+  const { flow_uuid } = selectedHubFlow.value;
   const version = selectedHubVersion.value;
   try {
-    const opened = await openFromHub({ flowUuid, version, replace });
-    emit("open-flow", { message: OPENED_FROM_HUB, flowPath: opened.flowPath });
+    const opened = await openFromHub({ flow_uuid, version, replace });
+    emit("open-flow", { message: OPENED_FROM_HUB, flowPath: opened.flow_path });
     ElMessage.success(OPENED_FROM_HUB);
     isVisible.value = false;
   } catch (err) {
     const refusal = refusalOf(err);
     if (refusal?.kind === "local_copy_exists" && !replace) {
       hubBusy.value = false;
-      await confirmReplace(refusal.flowPath, version);
+      await confirmReplace(refusal.flow_path, version);
       return;
     }
     hubError.value = refusal ? refusalMessage(refusal) : detailOf(err, "Couldn't open the flow.");

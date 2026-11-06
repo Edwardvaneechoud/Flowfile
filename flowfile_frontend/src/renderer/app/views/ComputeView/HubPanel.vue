@@ -46,18 +46,18 @@
             <template v-if="state.joined">
               <strong
                 >This server belongs to
-                {{ state.orgName ? `${state.orgName}'s hub` : "the hub" }} at
-                {{ state.hubUrl ?? "an unknown address" }}.</strong
+                {{ state.org_name ? `${state.org_name}'s hub` : "the hub" }} at
+                {{ state.hub_url ?? "an unknown address" }}.</strong
               >
               <p v-if="state.account" data-testid="hub-account">
                 Signed in as {{ state.account }}.
               </p>
             </template>
             <template v-else>
-              <strong>{{ state.orgName ?? state.hubUrl }}</strong>
+              <strong>{{ state.org_name ?? state.hub_url }}</strong>
               <p>
-                Connected to <code>{{ state.hubUrl }}</code> as the device
-                <code>{{ state.deviceName }}</code
+                Connected to <code>{{ state.hub_url }}</code> as the device
+                <code>{{ state.device_name }}</code
                 >.
               </p>
             </template>
@@ -69,7 +69,7 @@
           <dt>Account</dt>
           <dd>{{ state.account ?? "—" }}</dd>
           <dt>Hub version</dt>
-          <dd>{{ state.hubVersion ?? "—" }}</dd>
+          <dd>{{ state.hub_version ?? "—" }}</dd>
           <dt>Session expires</dt>
           <dd>{{ expiresLabel }}</dd>
         </dl>
@@ -155,7 +155,7 @@ const state = computed(() => hub.connection);
 const form = reactive({ hubUrl: "", username: "", password: "", deviceName: "" });
 
 watch(state, (next) => {
-  if (next && !next.connected && !form.deviceName) form.deviceName = next.deviceName ?? "";
+  if (next && !next.connected && !form.deviceName) form.deviceName = next.device_name ?? "";
 });
 
 const summary = computed<StatusSummary | null>(() => {
@@ -167,7 +167,7 @@ const summary = computed<StatusSummary | null>(() => {
 });
 
 const expiresLabel = computed(() =>
-  state.value?.expiresAt ? new Date(state.value.expiresAt).toLocaleString() : "—",
+  state.value?.expires_at ? new Date(state.value.expires_at).toLocaleString() : "—",
 );
 
 const canConnect = computed(
@@ -178,12 +178,12 @@ const onConnect = async () => {
   if (!canConnect.value || hub.busy) return;
   try {
     const next = await hub.connect({
-      hubUrl: form.hubUrl.trim(),
+      hub_url: form.hubUrl.trim(),
       username: form.username.trim(),
       password: form.password,
-      deviceName: form.deviceName.trim() || undefined,
+      device_name: form.deviceName.trim() || undefined,
     });
-    ElMessage.success(`Connected to ${next.orgName ?? next.hubUrl}.`);
+    ElMessage.success(`Connected to ${next.org_name ?? next.hub_url}.`);
   } catch (error) {
     ElMessage.error((error as Error).message);
   } finally {

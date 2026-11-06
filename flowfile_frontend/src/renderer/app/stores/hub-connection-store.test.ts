@@ -17,7 +17,7 @@ vi.mock("../api/hubConnection.api", () => ({
 
 import { useHubConnectionStore } from "./hub-connection-store";
 
-const input = { hubUrl: "https://hub.example.test", username: "ana", password: "s3cret" };
+const input = { hub_url: "https://hub.example.test", username: "ana", password: "s3cret" };
 
 beforeEach(() => {
   setActivePinia(createPinia());
@@ -82,7 +82,7 @@ describe("the hub connection store", () => {
 
     expect(mocks.connect).toHaveBeenCalledWith(input);
     expect(next.connected).toBe(true);
-    expect(hub.connection?.orgName).toBe("Acme Data");
+    expect(hub.connection?.org_name).toBe("Acme Data");
     expect(hub.connected).toBe(true);
     expect(hub.busy).toBe(false);
     expect(mocks.get).toHaveBeenCalledTimes(1);

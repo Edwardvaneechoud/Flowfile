@@ -171,8 +171,8 @@ import {
   publishCheck,
   publishToHub,
   refusalOf,
-  type HubFlowVersion,
   type HubPublishResult,
+  type HubRefusal,
 } from "../../../api/hubFlows.api";
 import type { HubOrigin } from "../../../types";
 import { detailOf } from "../../../utils/apiDetail";
@@ -200,12 +200,6 @@ const emit = defineEmits<{
   (e: "open-flow", payload: { message: string; flowPath: string }): void;
 }>();
 
-interface Conflict {
-  flowUuid: string;
-  base: HubFlowVersion | null;
-  current: HubFlowVersion | null;
-}
-
 const isVisible = ref(props.visible);
 const picker = ref<InstanceType<typeof CatalogNamespacePicker> | null>(null);
 const loading = ref(false);
@@ -215,7 +209,7 @@ const namespaceId = ref<number | null>(null);
 const message = ref("");
 const warnings = ref<string[]>([]);
 const result = ref<HubPublishResult | null>(null);
-const conflict = ref<Conflict | null>(null);
+const conflict = ref<Extract<HubRefusal, { kind: "stale_base" }> | null>(null);
 
 watch(
   () => props.visible,
@@ -251,10 +245,10 @@ async function publish(overwriteVersion?: number) {
   error.value = "";
   try {
     const published = await publishToHub({
-      flowId: props.flowId,
-      namespaceId: props.hubOrigin ? null : picker.value?.hubIdOf(namespaceId.value),
+      flow_id: props.flowId,
+      namespace_id: props.hubOrigin ? null : picker.value?.hubIdOf(namespaceId.value),
       message: message.value.trim() || undefined,
-      overwriteVersion,
+      overwrite_version: overwriteVersion,
     });
     conflict.value = null;
     result.value = published;
@@ -262,7 +256,7 @@ async function publish(overwriteVersion?: number) {
   } catch (err) {
     const refusal = refusalOf(err);
     if (refusal?.kind === "stale_base") {
-      conflict.value = { flowUuid: refusal.flowUuid, base: refusal.base, current: refusal.current };
+      conflict.value = refusal;
     } else {
       error.value = refusal ? refusalMessage(refusal) : detailOf(err, "Couldn't publish the flow.");
     }
@@ -287,11 +281,11 @@ async function openInstead() {
   error.value = "";
   try {
     const opened = await openFromHub({
-      flowUuid: conflict.value.flowUuid,
+      flow_uuid: conflict.value.flow_uuid,
       version: current.version,
       replace: true,
     });
-    emit("open-flow", { message: OPENED_FROM_HUB, flowPath: opened.flowPath });
+    emit("open-flow", { message: OPENED_FROM_HUB, flowPath: opened.flow_path });
     ElMessage.success(OPENED_FROM_HUB);
     isVisible.value = false;
   } catch (err) {

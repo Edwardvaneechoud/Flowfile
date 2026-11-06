@@ -4,21 +4,22 @@ import axios from "../services/axios.config";
 
 const BASE = "/hub_client";
 
+// Core answers more on each (ids of registrations, owners, the flow's uuid); the editor reads these.
 export interface HubFlow {
-  flowUuid: string;
+  flow_uuid: string;
   name: string;
   /** The newest version published through the hub; null when the flow has none yet. */
-  latestVersion: number | null;
+  latest_version: number | null;
   /** Who published the newest version, by name; null when the hub does not say. */
-  authorName: string | null;
+  author_name: string | null;
 }
 
 export interface HubFlowVersion {
   version: number;
-  authorId: number;
+  author_id: number;
   /** The author's display name; null from a hub that sends the id only. */
-  authorName: string | null;
-  publishedAt: string;
+  author_name: string | null;
+  published_at: string;
   message: string | null;
 }
 
@@ -29,12 +30,12 @@ export interface LocalPathUse {
 }
 
 export interface HubPublishInput {
-  flowId: number;
+  flow_id: number;
   /** Read by the hub on a first publish only; a later publish never moves the flow. */
-  namespaceId?: number | null;
+  namespace_id?: number | null;
   message?: string;
   /** The version to publish over after a stale-base refusal. */
-  overwriteVersion?: number;
+  overwrite_version?: number;
 }
 
 export interface HubPublishResult {
@@ -43,134 +44,62 @@ export interface HubPublishResult {
 }
 
 export interface HubOpenInput {
-  flowUuid: string;
+  flow_uuid: string;
   version?: number;
   /** Overwrite the local copy of this hub flow when one exists. */
   replace?: boolean;
 }
 
 export interface HubOpenResult {
-  flowPath: string;
+  flow_path: string;
 }
 
 /** A refusal of publish or open, branched on its `kind`. */
 export type HubRefusal =
   | {
       kind: "stale_base";
-      flowUuid: string;
+      flow_uuid: string;
       base: HubFlowVersion | null;
       current: HubFlowVersion | null;
     }
   | { kind: "refused"; status: number; detail: string }
-  | { kind: "other_hub"; hubUrl: string }
-  | { kind: "local_copy_exists"; flowPath: string };
+  | { kind: "other_hub"; hub_url: string }
+  | { kind: "local_copy_exists"; flow_path: string };
 
-// Core answers more on each (ids of registrations, owners, authors' uuids); the editor reads these.
-interface PyFlow {
-  flow_uuid: string;
-  name: string;
-  latest_version: number | null;
-  author_name?: string | null;
-}
-
-interface PyVersion {
-  version: number;
-  author_id: number;
-  author_name?: string | null;
-  published_at: string;
-  message: string | null;
-}
-
-interface PyLocalPathUse {
-  label: string;
-  path: string;
-}
-
-interface PyPublishOut {
-  version: number;
-  name: string;
-}
-
-interface PyOpenOut {
-  flow_path: string;
-}
-
-const flowFromPy = (raw: PyFlow): HubFlow => ({
-  flowUuid: raw.flow_uuid,
-  name: raw.name,
-  latestVersion: raw.latest_version,
-  authorName: raw.author_name ?? null,
-});
-
-const versionFromPy = (raw: PyVersion | null | undefined): HubFlowVersion | null =>
-  raw
-    ? {
-        version: raw.version,
-        authorId: raw.author_id,
-        authorName: raw.author_name ?? null,
-        publishedAt: raw.published_at,
-        message: raw.message,
-      }
-    : null;
+const REFUSAL_KINDS: unknown[] = ["stale_base", "refused", "other_hub", "local_copy_exists"];
 
 export async function listHubFlows(namespaceId?: number | null): Promise<HubFlow[]> {
   const params = namespaceId == null ? undefined : { namespace_id: namespaceId };
-  const response = await axios.get<PyFlow[]>(`${BASE}/flows`, { params });
-  return response.data.map(flowFromPy);
+  const response = await axios.get<HubFlow[]>(`${BASE}/flows`, { params });
+  return response.data;
 }
 
 export async function listHubFlowVersions(flowUuid: string): Promise<HubFlowVersion[]> {
-  const response = await axios.get<PyVersion[]>(`${BASE}/flows/${flowUuid}/versions`);
-  return response.data.map((raw) => versionFromPy(raw) as HubFlowVersion);
+  const response = await axios.get<HubFlowVersion[]>(`${BASE}/flows/${flowUuid}/versions`);
+  return response.data;
 }
 
 /** The nodes of the flow that read or write a path on this machine; a warning, never a block. */
 export async function publishCheck(flowId: number): Promise<LocalPathUse[]> {
-  const response = await axios.get<PyLocalPathUse[]>(`${BASE}/publish_check`, {
+  const response = await axios.get<LocalPathUse[]>(`${BASE}/publish_check`, {
     params: { flow_id: flowId },
   });
-  return response.data.map((raw) => ({ label: raw.label, path: raw.path }));
+  return response.data;
 }
 
 export async function publishToHub(input: HubPublishInput): Promise<HubPublishResult> {
-  const response = await axios.post<PyPublishOut>(`${BASE}/publish`, {
-    flow_id: input.flowId,
-    namespace_id: input.namespaceId ?? null,
-    message: input.message ?? null,
-    overwrite_version: input.overwriteVersion ?? null,
-  });
-  return { version: response.data.version, name: response.data.name };
+  const response = await axios.post<HubPublishResult>(`${BASE}/publish`, input);
+  return response.data;
 }
 
 export async function openFromHub(input: HubOpenInput): Promise<HubOpenResult> {
-  const response = await axios.post<PyOpenOut>(`${BASE}/open`, {
-    flow_uuid: input.flowUuid,
-    version: input.version ?? null,
-    replace: input.replace ?? false,
-  });
-  return { flowPath: response.data.flow_path };
+  const response = await axios.post<HubOpenResult>(`${BASE}/open`, input);
+  return response.data;
 }
 
 /** The structured refusal in a failed publish or open, null for any other error. */
 export function refusalOf(error: unknown): HubRefusal | null {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  if (!detail || typeof detail !== "object") return null;
-  const raw = detail as Record<string, unknown>;
-  switch (raw.kind) {
-    case "stale_base":
-      return {
-        kind: "stale_base",
-        flowUuid: String(raw.flow_uuid),
-        base: versionFromPy(raw.base as PyVersion | null),
-        current: versionFromPy(raw.current as PyVersion | null),
-      };
-    case "refused":
-      return { kind: "refused", status: Number(raw.status), detail: String(raw.detail) };
-    case "other_hub":
-      return { kind: "other_hub", hubUrl: String(raw.hub_url) };
-    case "local_copy_exists":
-      return { kind: "local_copy_exists", flowPath: String(raw.flow_path) };
-    default:
-      return null;
-  }
+  const failure = error as { response?: { data?: { detail?: HubRefusal } } };
+  const detail = failure?.response?.data?.detail;
+  return REFUSAL_KINDS.includes(detail?.kind) ? (detail as HubRefusal) : null;
 }

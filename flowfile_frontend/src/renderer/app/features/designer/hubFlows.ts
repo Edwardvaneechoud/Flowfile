@@ -12,7 +12,7 @@ export const OPENED_FROM_HUB = "Flow opened from hub";
 
 /** The author by the name the hub gives, else by id, as an older hub lists them. */
 export const authorLabel = (version: HubFlowVersion): string =>
-  version.authorName || `user #${version.authorId}`;
+  version.author_name || `user #${version.author_id}`;
 
 /** Why a publish was refused as stale, from the versions the hub named. */
 export function conflictLabel(base: HubFlowVersion | null, current: HubFlowVersion | null): string {
@@ -53,7 +53,7 @@ export function versionFacts(version: HubFlowVersion | null): VersionFact[] {
   return [
     { label: "Version", value: `v${version.version}` },
     { label: "Author", value: authorLabel(version) },
-    { label: "Published", value: publishedTime(version.publishedAt) },
+    { label: "Published", value: publishedTime(version.published_at) },
     { label: "Message", value: version.message?.trim() || "—" },
   ];
 }
@@ -66,9 +66,9 @@ export function refusalMessage(refusal: HubRefusal): string {
     case "refused":
       return `The hub refused the request (${refusal.status}): ${refusal.detail}`;
     case "other_hub":
-      return `This flow came from another hub (${refusal.hubUrl}); connect to that hub to publish it.`;
+      return `This flow came from another hub (${refusal.hub_url}); connect to that hub to publish it.`;
     case "local_copy_exists":
-      return `A local copy of this flow exists at ${refusal.flowPath}.`;
+      return `A local copy of this flow exists at ${refusal.flow_path}.`;
   }
 }
 

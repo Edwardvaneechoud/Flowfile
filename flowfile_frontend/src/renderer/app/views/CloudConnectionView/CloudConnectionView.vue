@@ -18,7 +18,7 @@
       </div>
       <div class="card-content">
         <div
-          v-if="hub.joined && hub.connection?.organisationStorage"
+          v-if="hub.joined && hub.connection?.organisation_storage"
           class="info-box mb-3"
           data-testid="hub-organisation-storage"
         >
@@ -26,7 +26,7 @@
           <div>
             <p><strong>Set by your hub</strong></p>
             <p>
-              The organisation's storage at {{ hub.connection.organisationStorage }}; each run gets
+              The organisation's storage at {{ hub.connection.organisation_storage }}; each run gets
               access from the hub.
             </p>
           </div>

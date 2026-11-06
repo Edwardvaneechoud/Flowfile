@@ -18,7 +18,7 @@ describe("the header's who and where", () => {
   });
 
   it("names the hub by its address when it does not answer its name", () => {
-    const unreachable = { ...desktop, orgName: null, reachable: false };
+    const unreachable = { ...desktop, org_name: null, reachable: false };
     expect(hubIdentity(unreachable)?.where).toBe("hub.acme.test:8443");
   });
 

@@ -24,11 +24,11 @@ export function hubAddress(url: string): string {
  * signed in through it, a desktop connected to one the account it connected with. Nothing on a desktop with no hub.
  */
 export function hubIdentity(connection: HubConnection | null): HubIdentity | null {
-  if (!connection?.connected || !connection.hubUrl) return null;
+  if (!connection?.connected || !connection.hub_url) return null;
   return {
     who: connection.account || null,
-    where: connection.orgName || hubAddress(connection.hubUrl),
-    url: connection.hubUrl,
+    where: connection.org_name || hubAddress(connection.hub_url),
+    url: connection.hub_url,
   };
 }
 
