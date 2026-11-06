@@ -11,6 +11,31 @@ import {
   deriveHandles,
 } from "./nodeHandles";
 
+describe("declarative handles", () => {
+  it("uses server ids and kinds instead of legacy counts", () => {
+    const result = deriveHandles({
+      input: 9,
+      output: 9,
+      inputs: [
+        { id: "input-3", name: "Control", kind: "parameter", multiple: false, required: false },
+      ],
+      outputs: [{ id: "output-2", name: "Result" }],
+    });
+    expect(result.inputs.map((h) => h.id)).toEqual(["input-3"]);
+    expect(result.inputs[0].position).toBe(Position.Bottom);
+    expect(result.inputs[0].multiple).toBe(false);
+    expect(result.inputs[0].required).toBe(false);
+    expect(result.outputs.map((h) => h.id)).toEqual(["output-2"]);
+  });
+
+  it("treats empty server port lists as authoritative", () => {
+    expect(deriveHandles({ input: 1, output: 1, inputs: [], outputs: [] })).toEqual({
+      inputs: [],
+      outputs: [],
+    });
+  });
+});
+
 const staticTemplate = {
   input: 2,
   output: 1,
@@ -276,4 +301,24 @@ describe("buildOutputHandles (regression)", () => {
     const { outputs } = deriveHandles({ input: 1, output: 0 });
     expect(outputs).toEqual([]);
   });
+});
+
+it("keeps a declared hidden parameter port out of the canvas presentation", () => {
+  const result = deriveHandles({
+    input: 1,
+    output: 0,
+    dynamic_inputs: true,
+    inputs: [
+      {
+        id: "input-0",
+        name: "",
+        kind: "parameter",
+        multiple: false,
+        required: false,
+        hidden: true,
+      },
+    ],
+    outputs: [],
+  });
+  expect(result.inputs).toEqual([]);
 });

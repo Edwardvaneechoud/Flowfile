@@ -94,8 +94,15 @@ def validate_connection(
     from_node: FlowNode,
     to_node: FlowNode,
     output_handle: str | None = None,
+    input_handle: str | None = None,
+    *,
+    replacing: bool = False,
+    validate_ports: bool = True,
 ) -> ConnectionValidationError | None:
     """Non-mutating topology check for from_node -> to_node; None when valid.
+
+    ``replacing`` is reserved for an explicit splice of an existing edge.
+    Low-level add_node_connection retains its replacement semantics.
 
     ``output_handle`` is the source handle the new edge would read. Pass it to
     also refuse double-wiring two different exits of one source into the same
@@ -113,6 +120,26 @@ def validate_connection(
             "would_create_cycle",
             f"Connecting node {from_node.node_id} -> {to_node.node_id} would create a cycle",
         )
+    inputs = to_node.get_node_input().inputs if input_handle is not None else []
+    for node, handle, ports in (
+        (from_node, output_handle, from_node.get_node_input().outputs if output_handle is not None else []),
+        (to_node, input_handle, inputs),
+    ):
+        if validate_ports and handle is not None and not any(port.id == handle for port in ports):
+            return ConnectionValidationError(
+                "handle_not_available",
+                f"Handle {handle} is not available on node {node.node_id}",
+            )
+    if input_handle is not None and not replacing:
+        port = next(port for port in inputs if port.id == input_handle)
+        for occupant in to_node.all_inputs:
+            existing = to_node.input_edge_handle(occupant.node_id, input_handle)
+            if (
+                not port.multiple
+                and existing is not None
+                and (occupant.node_id != from_node.node_id or existing != (output_handle or DEFAULT_OUTPUT_HANDLE))
+            ):
+                return ConnectionValidationError("input_occupied", f"Handle {input_handle} already has a connection")
     if output_handle is not None:
         existing_handle = live_source_handle(to_node, from_node.node_id)
         if existing_handle is not None and existing_handle != output_handle:
@@ -126,7 +153,9 @@ def validate_connection(
     return None
 
 
-def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection) -> None:
+def add_connection(
+    flow: FlowGraph, node_connection: input_schema.NodeConnection, *, validate_ports: bool = False
+) -> None:
     """Adds a connection between two nodes in the flow graph.
 
     Args:
@@ -148,9 +177,25 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
             if not n
         ]
         raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
-    error = validate_connection(from_node, to_node, node_connection.output_connection.connection_class)
+    # Internal graph assembly retains replacement, positional fan-in and legacy
+    # handles. Editor connections and explicit dynamic slots enforce port contracts.
+    check_ports = validate_ports or to_node.accepts_dynamic_inputs
+    error = validate_connection(
+        from_node,
+        to_node,
+        node_connection.output_connection.connection_class,
+        node_connection.input_connection.connection_class if check_ports else None,
+        validate_ports=check_ports,
+    )
     if error is not None:
         raise HTTPException(422, error.detail)
+    # Public replay is idempotent; internal callers retain positional duplicates.
+    if (
+        check_ports
+        and to_node.input_edge_handle(from_node.node_id, node_connection.input_connection.connection_class)
+        == node_connection.output_connection.connection_class
+    ):
+        return
     if to_node.accepts_dynamic_inputs:
         _add_keyed_connection_validated(to_node, from_node, node_connection)
         return
@@ -183,7 +228,7 @@ def insert_node_on_edge(flow: FlowGraph, node_id: int, node_connection: input_sc
     from_node, to_node = flow.get_node(source_id), flow.get_node(target_id)
     if from_node is None or to_node is None or to_node.input_edge_handle(source_id, slot) != source_handle:
         raise HTTPException(422, "Connection does not exist on the input node")
-    error = validate_connection(node, to_node, DEFAULT_OUTPUT_HANDLE)
+    error = validate_connection(node, to_node, DEFAULT_OUTPUT_HANDLE, slot, replacing=True)
     if error is not None:
         raise HTTPException(422, error.detail)
     add_connection(
@@ -235,15 +280,11 @@ def restore_dynamic_input_connections(graph: FlowGraph, flow_info: schemas.FlowI
 def _add_keyed_connection_validated(
     to_node: FlowNode, from_node: FlowNode, node_connection: input_schema.NodeConnection
 ) -> None:
-    """Connect-API validation for dynamic-input targets: one edge per existing handle."""
+    """Wire a dynamic input after shared port validation; require configured settings."""
     handle = node_connection.input_connection.connection_class
     if isinstance(to_node.setting_input, input_schema.NodePromise):
         raise HTTPException(422, "Configure the node before connecting inputs")
-    slot_count = len(getattr(to_node.setting_input, "input_slots", None) or [])
-    if input_handle_index(handle) > slot_count:
-        raise HTTPException(422, f"Handle {handle} is not available on node {to_node.node_id}")
-    if to_node.node_inputs.keyed_inputs and handle in to_node.node_inputs.keyed_inputs:
-        raise HTTPException(422, f"Handle {handle} already has a connection")
+
     to_node.add_node_connection(
         from_node,
         "main",
