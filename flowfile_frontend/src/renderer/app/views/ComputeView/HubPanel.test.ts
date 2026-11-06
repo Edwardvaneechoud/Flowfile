@@ -15,6 +15,7 @@ vi.mock("../../api/hubConnection.api", () => ({
 }));
 vi.mock("element-plus", () => ({ ElMessage: { success: vi.fn(), error: vi.fn() } }));
 
+import { connectHub } from "../../api/hubConnection.api";
 import HubPanel from "./HubPanel.vue";
 
 const element = (tag: string): FunctionalComponent => {
@@ -26,7 +27,15 @@ const element = (tag: string): FunctionalComponent => {
 const stubs: Record<string, FunctionalComponent> = {
   "el-collapse-transition": (_, { slots }) => slots.default?.(),
   "el-button": element("button"),
-  "el-input": element("input"),
+  "el-input": (_, { attrs }) => {
+    const { modelValue, "onUpdate:modelValue": update, ...rest } = attrs;
+    return h("input", {
+      ...rest,
+      value: modelValue,
+      onInput: (e: Event) =>
+        (update as (v: string) => void)?.((e.target as HTMLInputElement).value),
+    });
+  },
   "router-link": element("a"),
 };
 
@@ -110,6 +119,37 @@ describe("HubPanel", () => {
     expect(find("hub-connect")).not.toBeNull();
     expect(find("hub-status")).toBeNull();
     expect(find("hub-joined")).toBeNull();
+  });
+
+  it("connects when Enter is pressed in the form, once every field it needs is filled", async () => {
+    await mount(none);
+    const type = (testId: string, value: string) => {
+      const input = find(testId) as HTMLInputElement;
+      input.value = value;
+      input.dispatchEvent(new Event("input"));
+    };
+    const enter = () =>
+      find("hub-password")!.dispatchEvent(
+        new KeyboardEvent("keyup", { key: "Enter", bubbles: true }),
+      );
+
+    type("hub-url", "https://hub.acme.test:8443");
+    type("hub-username", "ana");
+    enter();
+    await settle();
+    expect(connectHub).not.toHaveBeenCalled();
+
+    type("hub-password", "secret");
+    enter();
+    await settle();
+    expect(connectHub).toHaveBeenCalledTimes(1);
+    expect(connectHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hubUrl: "https://hub.acme.test:8443",
+        username: "ana",
+        password: "secret",
+      }),
+    );
   });
 
   it("says which hub a desktop is connected to, as whom, with its version and when the session ends", async () => {

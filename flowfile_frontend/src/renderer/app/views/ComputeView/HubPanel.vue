@@ -80,7 +80,7 @@
         </p>
       </template>
 
-      <div v-else-if="state" class="hub-card__fields">
+      <div v-else-if="state" class="hub-card__fields" @keyup.enter="onConnect">
         <label class="compute-field hub-card__wide">
           <span class="compute-field__label">Hub URL</span>
           <el-input
@@ -175,7 +175,7 @@ const canConnect = computed(
 );
 
 const onConnect = async () => {
-  if (!canConnect.value) return;
+  if (!canConnect.value || hub.busy) return;
   try {
     const next = await hub.connect({
       hubUrl: form.hubUrl.trim(),
