@@ -8,10 +8,10 @@ of the hub asks the hub for those names in its vend (``names_for`` gives them), 
 with its own key. Outside such a step, which is every step of a server that never joined a hub, both answer exactly
 what the step carried before.
 
-On a server joined with keys every stored cloud storage, Kafka and database connection lives on the hub too. Such a
-step names the connection (``connections_for``), the run's vend asks for it, and ``use_sealed`` holds its sealed map:
+A step that uses a connection the person's hub keeps names it (``connections_for``), on any machine signed in to a
+hub; the run's vend asks for it sealed to the hub server that runs the step, and ``use_sealed`` holds its sealed map:
 ``connection_secret`` gives one secret field of it in a ciphertext's place, ``sealed_connection`` the map a cloud
-read's provider carries. A connection this server's database held before it joined names no secret here.
+read's provider carries. Core never opens it; a step on no hub server is refused with ``hub_refusal``'s sentence.
 """
 
 from __future__ import annotations
@@ -66,6 +66,19 @@ def connection_secret(kind: str, name: str | None, field: str) -> str | None:
 
     sealed = sealed_connection(kind, name)
     return hub_sealed.sealed_connection_secret(kind, name, field, sealed) if sealed is not None else None
+
+
+def hub_refusal(name: str | None, *, secret: bool = False) -> str:
+    """Why a step that uses the hub's connection or secret ``name`` cannot run where it was placed."""
+    return f"{name} is a hub {'secret' if secret else 'connection'}: run this step on a hub server"
+
+
+def _hub_cloud_connection(name: str | None, user_id: int) -> bool:
+    """Whether the cloud storage connection ``name`` a step of ``user_id`` uses is the hub's, not this machine's."""
+    from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_cloud_connection
+
+    connection = get_local_cloud_connection(name, user_id) if name else None
+    return connection is not None and connection.from_hub
 
 
 def _joined_with_keys() -> bool:
@@ -184,12 +197,18 @@ def names_for(node: FlowNode) -> list[str]:
 
 
 def connections_for(node: FlowNode) -> list[tuple[str, str]]:
-    """The ``(kind, name)`` of each stored connection ``node``'s settings use, on a server joined with keys, where the
-    hub keeps them: a database reader's or writer's stored connection, a cloud storage reader's or writer's and a Kafka
-    source's. Elsewhere, and for any other node, none.
+    """The ``(kind, name)`` of each connection of the person's hub ``node``'s settings use: a cloud storage reader's or
+    writer's that this machine has none of by that name, on any machine; on a server joined with keys, where the hub
+    keeps them, a database reader's or writer's stored connection and a Kafka source's. Any other node names none.
     """
     settings = node.setting_input
-    if getattr(settings, "user_id", None) is None or not _joined_with_keys():
+    user_id = getattr(settings, "user_id", None)
+    if user_id is None:
+        return []
+    if isinstance(settings, input_schema.NodeCloudStorageReader | input_schema.NodeCloudStorageWriter):
+        name = settings.cloud_storage_settings.connection_name
+        return [("cloud", name)] if _hub_cloud_connection(name, user_id) else []
+    if not _joined_with_keys():
         return []
     if isinstance(settings, input_schema.NodeDatabaseReader | input_schema.NodeDatabaseWriter):
         database = (
@@ -199,9 +218,6 @@ def connections_for(node: FlowNode) -> list[tuple[str, str]]:
         )
         name = database.database_connection_name if database.connection_mode == "reference" else None
         return [("database", name)] if name else []
-    if isinstance(settings, input_schema.NodeCloudStorageReader | input_schema.NodeCloudStorageWriter):
-        name = settings.cloud_storage_settings.connection_name
-        return [("cloud", name)] if name else []
     if isinstance(settings, input_schema.NodeKafkaSource):
         name = settings.kafka_settings.kafka_connection_name
         return [("kafka", name)] if name else []

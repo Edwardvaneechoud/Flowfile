@@ -1811,7 +1811,9 @@ class ExecutionMixin(GraphMixinBase):
             and isinstance(policy, MixedPlacementPolicy)
             and len(run_backends) > 1
         )
-        on_hub_server = any(backend.startswith(registry.CONFIGURED_WORKER_PREFIX) for backend in hub_backends)
+        on_hub_server = any(backend.startswith(registry.CONFIGURED_WORKER_PREFIX) for backend in hub_backends) or any(
+            vend.node_name(policy.backend_for(node)) is not None for node in secret_nodes
+        )
         if not exchange and not on_hub_server:
             return (), False, []
         backends = dict.fromkeys(policy.backend_for(node) for node in hub_nodes)
@@ -1875,25 +1877,32 @@ class ExecutionMixin(GraphMixinBase):
 
     def _connection_steps(
         self, nodes: list[FlowNode], exchange_run: ExchangeRun
-    ) -> dict[FlowNode, list[tuple[str, str]]]:
-        """The run's steps that the policy places on a server of the hub and that use stored connections, with the
-        ``(kind, name)`` of each.
+    ) -> tuple[dict[FlowNode, list[tuple[str, str]]], list[tuple[FlowNode, str]]]:
+        """The run's steps that use connections of the person's hub, with the ``(kind, name)`` of each, and the steps
+        refused for one, each with its sentence.
 
-        Only on a server joined to its hub with keys of its own, where the hub keeps every stored connection
-        (``run_secrets.connections_for``), so the run's vend asks for each sealed to the server that runs the step.
+        On every machine: a step whose backend is a hub server's worker (``vend.node_name``), a joined server's own
+        ``worker`` included, gets each connection in the run's vend sealed to that server; one on any other backend,
+        core's own ``local`` included, is refused before any node starts (``run_secrets.hub_refusal``). On a server
+        joined with keys a database or Kafka connection is still asked for only on a ``worker:<name>`` row.
         """
-        if issuer_accounts.joined_with_keys() is None:
-            return {}
         policy = self._run_policy(exchange_run)
         steps: dict[FlowNode, list[tuple[str, str]]] = {}
+        refused: list[tuple[FlowNode, str]] = []
         for node in nodes:
-            backend_id = policy.backend_for(node)
-            if not backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX) or vend.node_name(backend_id) is None:
-                continue
             refs = run_secrets.connections_for(node)
-            if refs:
+            if not refs:
+                continue
+            backend_id = policy.backend_for(node)
+            on_hub_server = backend_id != registry.LOCAL_BACKEND_ID and vend.node_name(backend_id) is not None
+            if any(kind != "cloud" for kind, _ in refs):
+                if on_hub_server and backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX):
+                    steps[node] = refs
+            elif on_hub_server:
                 steps[node] = refs
-        return steps
+            else:
+                refused.append((node, run_secrets.hub_refusal(refs[0][1])))
+        return steps, refused
 
     def _vend_hub_tables(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> list[tuple[FlowNode, str]] | None:
         """Ask the hub once for the credentials of the run's nodes on hub tables, held as ``hub_vend`` for the run.
@@ -1908,8 +1917,9 @@ class ExecutionMixin(GraphMixinBase):
         connected to the hub seals the vend to the hub's servers its hub-table nodes run on (``_desktop_servers``); when
         the hub seals nothing for them, or the run's other hub-table nodes run on the desktop, which no sealed
         credential opens, each of those nodes is refused with a sentence saying to run it on this computer, never a
-        credential the server could not open. Answers each refused node with its sentence when the hub cannot be asked
-        or refuses, else ``None``.
+        credential the server could not open. On any machine a step on a hub connection gets it sealed to the hub server
+        that runs it, or the run is refused (``_connection_steps``). Answers each refused node with its sentence when
+        the hub cannot be asked or refuses, else ``None``.
         """
         self.last_hub_vend = None
         self.sealed_secret_steps = None
@@ -1920,13 +1930,20 @@ class ExecutionMixin(GraphMixinBase):
         if servers and len(servers) < len(hub_nodes):
             return [(node, _desktop_unsealed(node, name, mixed=True)) for node, name in servers.items()]
         secret_steps = self._secret_steps(nodes, exchange_run)
-        connection_steps = self._connection_steps(nodes, exchange_run)
+        connection_steps, refused = self._connection_steps(nodes, exchange_run)
+        if refused:
+            return refused
         named_steps = list(secret_steps) + [node for node in connection_steps if node not in secret_steps]
+        policy = self._run_policy(exchange_run)
+        named_targets = tuple(dict.fromkeys(vend.node_name(policy.backend_for(node)) for node in connection_steps))
         try:
             if servers:
-                targets, exchange, sealed_nodes = tuple(dict.fromkeys(servers.values())), False, list(servers)
+                targets = tuple(dict.fromkeys([*servers.values(), *named_targets]))
+                exchange, sealed_nodes = False, list(servers) + [n for n in connection_steps if n not in servers]
             else:
                 targets, exchange, sealed_nodes = self._seal_targets(nodes, hub_nodes, exchange_run, named_steps)
+                if not targets and connection_steps:
+                    targets, sealed_nodes = named_targets, list(connection_steps)
         except LookupError as e:
             return [(node, str(e)) for node in hub_nodes or named_steps or nodes]
         if not hub_nodes and not exchange and not named_steps:

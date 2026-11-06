@@ -1,5 +1,5 @@
-"""The editor's cloud storage connections: stored on this server, or on its hub when it joined one with keys of its
-own, where each route forwards to the hub's own with the person's delegated token (``hub_client.connections``)."""
+"""The editor's cloud storage connections: this machine's own, which these routes add, change and delete, listed with
+the ones the person's hub lists, read-only and marked ``from_hub`` (``hub_client.connections``)."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -22,7 +22,6 @@ from flowfile_core.routes._connection_sharing import (
     changed_target_fields,
     require_credentials_on_target_change,
 )
-from flowfile_core.routes._hub_forwarding import on_hub, through_hub
 
 # Schema and models
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
@@ -54,8 +53,6 @@ def create_cloud_storage_connection(
         Dict with a success message
     """
     logger.info(f"Create cloud connection {input_connection.connection_name}")
-    if on_hub():
-        return through_hub(hub_connections.create, current_user.id, "cloud", input_connection)
     _refuse_server_identity(input_connection, current_user)
     try:
         store_cloud_connection(db, input_connection, current_user.id)
@@ -75,8 +72,6 @@ def update_cloud_storage_connection(
 ):
     """Update an existing cloud storage connection (own, or group-shared with manage access)."""
     logger.info(f"Update cloud connection {input_connection.connection_name}")
-    if on_hub():
-        return through_hub(hub_connections.change, current_user.id, "cloud", input_connection)
     db_connection = get_cloud_connection(db, input_connection.connection_name, current_user.id)
     if db_connection is None:
         raise HTTPException(404, "Cloud connection not found")
@@ -126,8 +121,6 @@ def delete_cloud_connection_with_connection_name(
     Delete a cloud connection (own, or group-shared with manage access).
     """
     logger.info(f"Deleting cloud connection {connection_name}")
-    if on_hub():
-        return through_hub(hub_connections.remove, current_user.id, "cloud", connection_name)
     db_connection = get_cloud_connection(db, connection_name, current_user.id)
     if db_connection is None:
         raise HTTPException(404, "Cloud connection not found")
@@ -141,7 +134,7 @@ def get_cloud_connections(
     db: Session = Depends(get_db), current_user=Depends(get_current_active_user)
 ) -> list[FullCloudStorageConnectionInterface]:
     """
-    Get all cloud storage connections for the current user.
+    Get all cloud storage connections for the current user: their own and granted ones, then the hub's (own wins).
     Parameters
         db: Session obtained from Depends(get_db)
         current_user: User obtained from Depends(get_current_active_user)
@@ -149,6 +142,7 @@ def get_cloud_connections(
     Returns
         List[FullCloudStorageConnectionInterface]
     """
-    if on_hub():
-        return through_hub(hub_connections.listed, current_user.id, "cloud")
-    return get_all_cloud_connections_interface(db, current_user.id)
+    own = get_all_cloud_connections_interface(db, current_user.id)
+    names = {connection.connection_name for connection in own}
+    hub = [row for row in hub_connections.hub_rows(current_user.id, "cloud") if row.get("connection_name") not in names]
+    return own + [FullCloudStorageConnectionInterface.model_validate(row) for row in hub]

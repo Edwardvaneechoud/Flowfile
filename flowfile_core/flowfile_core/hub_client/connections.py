@@ -1,15 +1,11 @@
-"""A person's stored connections on the hub, for a server that joined it with keys of its own: they live on the hub.
+"""The stored connections a person reaches on their hub, for any machine signed in to it: a desktop's Connect or a
+joined server's delegation, both ``session.load``.
 
-On such a server every secret lives on the hub, and so does every stored cloud storage, Kafka and database connection,
-since each holds secrets. The editor's connection pages forward to the hub's own routes, core's as the hub mounts them,
-with the person's delegated access token (``listed``, ``create``, ``change``, ``remove``), so nothing of them is written
-to this server's database; the hub lists the person's own and those shared with them, each marked with its ``access``.
-A step that names a connection asks the hub's vend for it by name, sealed to this server itself (``opened_here``),
-and gets its whole settings as core's model for the kind; its secrets are encrypted here for the step as a connection
-stored here would carry them (``database_here``, ``cloud_here``, ``kafka_here``). A step on another server of the hub
-gets the connection sealed to that server in the run's own vend instead (``flow_graph.execution``). The order a name
-resolves in, and who may use a connection, are the hub's. Connections this server held before it joined stay in its
-database, unused.
+The hub's connections are never copied here. Each connection page lists them after the machine's own, read-only and
+marked ``from_hub`` (``listed``, ``hub_rows``); a step that names one gets its list row, no secret (``found``), and the
+run's vend seals its secrets to the hub server that runs the step (``flow_graph.execution``). Core never opens them.
+That is so for cloud storage connections; on a server joined with keys the database and Kafka pages still forward to
+the hub (``create``, ``change``, ``remove``) and a step there opens those by name (``opened_here``).
 
 Requests log method, path and status only, never a body, a value or a token.
 """
@@ -21,10 +17,10 @@ from urllib.parse import quote
 
 from pydantic import BaseModel, SecretStr
 
-from flowfile_core.hub_client import client
+from flowfile_core.configs import logger
+from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.hub_client.secrets import _bearer, _signed_in, lookup_run_id
-from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.schemas.input_schema import FullDatabaseConnection
 from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate
 from shared import hub_node, hub_sealed
@@ -59,9 +55,27 @@ def plain(model: BaseModel) -> dict[str, Any]:
 
 
 def listed(user_id: int, kind: Kind) -> list[dict]:
-    """The person's connections of ``kind`` as the hub lists them: their own and those shared with them, no secret."""
+    """The person's connections of ``kind`` as the hub lists them: their own and those shared with them, no secret,
+    each marked ``from_hub``."""
     hub_url, token = _signed_in_for_connections(user_id)
-    return client._request_list("GET", hub_url, LIST_PATHS[kind], None, headers=_bearer(token))
+    rows = client._request_list("GET", hub_url, LIST_PATHS[kind], None, headers=_bearer(token))
+    return [{**row, "from_hub": True} for row in rows]
+
+
+def hub_rows(user_id: int, kind: Kind) -> list[dict]:
+    """``listed``, or none when the person has no sign-in to a hub here or the hub does not answer."""
+    try:
+        return listed(user_id, kind) if session.load(user_id) is not None else []
+    except Exception as e:
+        logger.warning(f"The hub's {LABELS[kind]}s are not listed: {e}")
+        return []
+
+
+def found(user_id: int, kind: Kind, name: str | None) -> dict | None:
+    """The hub's list row of the person's ``kind`` connection ``name``, no secret; ``None`` when the hub lists none."""
+    if not name:
+        return None
+    return next((row for row in hub_rows(user_id, kind) if row.get("connection_name") == name), None)
 
 
 def create(user_id: int, kind: Kind, connection: BaseModel) -> dict:
@@ -129,13 +143,6 @@ def database_here(user_id: int, name: str) -> FullDatabaseConnection | None:
     return connection.model_copy(
         update={"password": SecretStr(encrypt_secret(connection.password.get_secret_value(), user_id))}
     )
-
-
-def cloud_here(user_id: int, name: str) -> FullCloudStorageConnection | None:
-    """The person's cloud storage connection ``name`` from the hub, its secrets in plain as a connection stored here
-    resolves to."""
-    settings = opened_here(user_id, "cloud", name)
-    return None if settings is None else FullCloudStorageConnection.model_validate(settings)
 
 
 def kafka_here(user_id: int, name: str) -> KafkaConnectionCreate | None:

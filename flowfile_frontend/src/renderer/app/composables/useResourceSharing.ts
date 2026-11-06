@@ -4,6 +4,8 @@ import { useMultiUser } from "./useMultiUser";
 
 interface HasAccess {
   access?: AccessInfo | null;
+  // A row the person's hub lists: read-only here, managed on the hub.
+  from_hub?: boolean;
 }
 
 // Shared helpers for the catalog/secrets/connection Share affordances. `access` is
@@ -16,11 +18,13 @@ export function useResourceSharing() {
   const isShared = (r: HasAccess) => !!r.access && r.access.is_owner === false;
   // Owner, manage-grantee, or admin can edit/delete; use-grantees cannot.
   const canManage = (r: HasAccess) =>
-    !r.access || r.access.is_owner || r.access.access_level === "manage" || authStore.isAdmin;
+    !r.from_hub &&
+    (!r.access || r.access.is_owner || r.access.access_level === "manage" || authStore.isAdmin);
   // Who may open the Share dialog at all (multi-user + can manage the resource).
   const canShare = (r: HasAccess) => isMultiUser.value && canManage(r);
   // Who may mint manage-level grants (owner or admin only — backend enforces too).
-  const canManageGrants = (r: HasAccess) => r.access?.is_owner !== false || authStore.isAdmin;
+  const canManageGrants = (r: HasAccess) =>
+    !r.from_hub && (r.access?.is_owner !== false || authStore.isAdmin);
   const sharedLabel = (r: HasAccess) => `Shared · ${r.access?.access_level}`;
   const sharedTitle = (r: HasAccess) =>
     r.access?.shared_by ? `Shared by ${r.access.shared_by}` : "Shared with you";

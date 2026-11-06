@@ -201,27 +201,20 @@ def get_local_database_connection(connection_name: str, user_id: int) -> FullDat
 
 
 def get_local_cloud_connection(connection_name: str, user_id: int) -> FullCloudStorageConnection | None:
-    """
-    Get a cloud storage connection schema by its name and user ID.
-    Args:
-        connection_name (str): The name of the cloud storage connection.
-        user_id (int): The ID of the user who owns the connection.
-
-    Returns:
-        FullCloudStorageConnection | None: The cloud storage connection schema if found, otherwise None.
-
-    On a server joined to its hub with keys of its own the connection is the hub's for the person, sealed to this
-    server (``hub_client.connections.cloud_here``).
-
-    Raises:
-        LookupError: On a joined server, the hub could not be asked or refused for another reason.
-    """
-    if _joined_with_keys():
-        from flowfile_core.hub_client import connections as hub_connections
-
-        return hub_connections.cloud_here(user_id, connection_name)
+    """The cloud storage connection ``connection_name`` a step of ``user_id`` uses: this machine's own, else one
+    granted to the user, else the one the person's hub lists (``from_hub``, no secret; the run's vend seals its secrets
+    to the server that runs the step). ``None`` when none of them has it."""
     with get_db_context() as db:
-        return get_cloud_connection_schema(db, connection_name, user_id)
+        connection = get_cloud_connection_schema(db, connection_name, user_id)
+    if connection is not None:
+        return connection
+    from flowfile_core.hub_client import connections as hub_connections
+
+    row = hub_connections.found(user_id, "cloud", connection_name)
+    if row is None:
+        return None
+    fields = {key: value for key, value in row.items() if key in FullCloudStorageConnection.model_fields}
+    return FullCloudStorageConnection.model_validate({**fields, "from_hub": True})
 
 
 def delete_database_connection(db: Session, connection_name: str, user_id: int) -> None:

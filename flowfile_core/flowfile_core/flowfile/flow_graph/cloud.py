@@ -100,6 +100,15 @@ _SECRET_FIELDS = (
     "gcs_service_account_key",
 )
 
+_HUB_SECRET_FIELDS = {
+    ("s3", "access_key"): ["aws_secret_access_key"],
+    ("adls", "access_key"): ["azure_account_key"],
+    ("adls", "service_principal"): ["azure_client_secret"],
+    ("adls", "sas_token"): ["azure_sas_token"],
+    ("gcs", "service_account"): ["gcs_service_account_key"],
+}
+"""The secret field a hub connection's method holds, which its list row does not show."""
+
 
 def _worker_connection(
     connection: FullCloudStorageConnection, user_id: int
@@ -109,8 +118,12 @@ def _worker_connection(
     interface = connection.get_worker_interface(user_id)
     name = connection.connection_name
     if run_secrets.sealed_connection("cloud", name) is None:
+        if connection.from_hub and connection.auth_method not in ("env_vars", "managed_identity"):
+            raise ValueError(run_secrets.hub_refusal(name))
         return interface
     fields = [field for field in _SECRET_FIELDS if getattr(interface, field)]
+    if connection.from_hub:
+        fields = _HUB_SECRET_FIELDS.get((connection.storage_type, connection.auth_method), [])
     return interface.model_copy(update={field: run_secrets.connection_secret("cloud", name, field) for field in fields})
 
 

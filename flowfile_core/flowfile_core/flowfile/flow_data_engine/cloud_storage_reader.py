@@ -170,13 +170,14 @@ class CloudStorageReader:
         ``managed_identity`` get no provider. Otherwise (flag off, or no saved connection) core resolves the options
         and the plan carries their credentials encrypted.
 
-        On a server joined to its hub with keys of its own a named connection is the hub's (``_hub_read_credentials``).
+        A connection the person's hub keeps (``from_hub``) is read with what the run's vend sealed for the step
+        (``_hub_read_credentials``).
 
         Raises:
             ValueError: With the flag on, the connection is named but not stored for *user_id*, or *user_id* is None.
         """
-        if connection.connection_name and _joined_with_keys():
-            return CloudStorageReader._hub_read_credentials(connection, user_id)
+        if connection.from_hub:
+            return CloudStorageReader._hub_read_credentials(connection)
         if settings.FLOWFILE_COMPUTE_PROTOCOL:
             if connection.auth_method in ("env_vars", "managed_identity"):
                 return CloudStorageReader.get_plan_storage_options(connection), None
@@ -195,25 +196,25 @@ class CloudStorageReader:
 
     @staticmethod
     def _hub_read_credentials(
-        connection: FullCloudStorageConnection, user_id: int | None
-    ) -> tuple[dict[str, Any], EncryptedCredentialProvider | SealedConnectionProvider | None]:
-        """A read's options and provider for a connection the hub keeps for a server joined with keys of its own.
+        connection: FullCloudStorageConnection,
+    ) -> tuple[dict[str, Any], SealedConnectionProvider | None]:
+        """A read's options and provider for a connection the person's hub keeps, which core never opens.
 
-        This server's database holds no reference to it, so none is made: ``env_vars`` and ``managed_identity`` get no
-        provider with the flag on, a step the hub sealed the connection for (``run_secrets``) gets a
-        ``SealedConnectionProvider``, opened by the server that runs it, and any other read the credentials core
-        resolved, encrypted for *user_id* as with the flag off.
+        ``env_vars`` and ``managed_identity`` get no provider with the flag on; a step the hub sealed the connection for
+        (``run_secrets``) gets a ``SealedConnectionProvider``, opened by the server that runs it.
+
+        Raises:
+            ValueError: The hub sealed the step nothing, as for a schema preview or a step on no hub server.
         """
         from flowfile_core.flowfile.execution import run_secrets
 
         if settings.FLOWFILE_COMPUTE_PROTOCOL and connection.auth_method in ("env_vars", "managed_identity"):
             return CloudStorageReader.get_plan_storage_options(connection), None
         sealed = run_secrets.sealed_connection("cloud", connection.connection_name)
-        if sealed is not None:
-            provider = SealedConnectionProvider(connection.connection_name, sealed)
-            return CloudStorageReader.get_plan_storage_options(connection), provider
-        storage_options = CloudStorageReader.get_storage_options(connection)
-        return storage_options, CloudStorageReader.get_credential_provider(storage_options, user_id)
+        if sealed is None:
+            raise ValueError(run_secrets.hub_refusal(connection.connection_name))
+        provider = SealedConnectionProvider(connection.connection_name, sealed)
+        return CloudStorageReader.get_plan_storage_options(connection), provider
 
     @staticmethod
     def get_scan_kwargs(
@@ -244,12 +245,6 @@ class CloudStorageReader:
         return CloudStorageReader.get_scan_kwargs(
             storage_options, CloudStorageReader.get_credential_provider(storage_options, user_id)
         )
-
-
-def _joined_with_keys() -> bool:
-    from flowfile_core.auth import issuer_accounts
-
-    return issuer_accounts.joined_with_keys() is not None
 
 
 def _profile_region(profile: str | None) -> str | None:
