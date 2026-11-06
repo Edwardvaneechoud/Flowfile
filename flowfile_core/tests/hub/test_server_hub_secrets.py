@@ -148,7 +148,6 @@ def test_a_desktop_that_never_joined_a_hub_keeps_its_secrets_in_its_own_database
         assert encrypted.startswith("$ffsec$1$1$") and decrypt_secret(encrypted).get_secret_value() == "local"
         assert name in [row["name"] for row in client.get("/secrets/secrets", headers=headers).json()]
         assert client.put(f"/secrets/secrets/{name}", json={"value": "x"}, headers=headers).status_code == 405
-        assert client.get("/secrets/kept", headers=headers).status_code == 404
     finally:
         assert client.delete(f"/secrets/secrets/{name}", headers=headers).status_code == 204
     assert rows_named(name) == 0

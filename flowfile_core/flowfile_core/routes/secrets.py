@@ -13,7 +13,7 @@ is written to this server's database (``hub_client.secrets``).
 import os
 
 from fastapi import APIRouter, Body, Depends, HTTPException
-from pydantic import BaseModel, SecretStr
+from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import issuer_accounts, sharing
@@ -31,13 +31,6 @@ router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
 _PASSED_ON = (400, 404, 409, 422)
-
-
-class KeptSecret(BaseModel):
-    """A secret that stayed in this server's database, and why it did not move to the hub."""
-
-    name: str
-    reason: str
 
 
 def _on_hub() -> bool:
@@ -235,14 +228,3 @@ def change_secret(
     if not _on_hub():
         raise HTTPException(status_code=405, detail="Method Not Allowed")
     return _through_hub(hub_secrets.change, current_user.id, secret_name, value.get_secret_value())
-
-
-@router.get("/kept", response_model=list[KeptSecret])
-def kept_secrets(current_user=Depends(get_current_active_user)) -> list[KeptSecret]:
-    """The caller's secrets that stayed in this server's database when the rest moved to the hub, each with why.
-
-    Only on a server joined to its hub with keys of its own; anywhere else 404, as before.
-    """
-    if not _on_hub():
-        raise HTTPException(status_code=404, detail="Not Found")
-    return [KeptSecret(name=kept.name, reason=kept.reason) for kept in hub_secrets.kept(current_user.id)]

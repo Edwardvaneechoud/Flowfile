@@ -46,7 +46,6 @@ from flowfile_core.configs.settings import (
 )
 from flowfile_core.events import publish
 from flowfile_core.flowfile.execution import registry as compute_registry
-from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.lsp.admin_routes import router as lsp_admin_router
 from flowfile_core.lsp.routes import router as lsp_router
@@ -111,8 +110,7 @@ async def shutdown_handler(app: FastAPI):
     containers, are cleaned up properly when the application is terminated.
     A core that joined a hub for itself and its worker, with keys of its own,
     tells the hub the node is up while it serves, and at which addresses on its
-    port (``hub_node.start_heartbeat``), and moves the secrets in its database
-    to their owners on the hub (``hub_secrets.start_move``).
+    port (``hub_node.start_heartbeat``).
     """
     # Ensure scheduler and subprocess loggers are visible on stdout (Electron pipes this)
     logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
@@ -144,7 +142,6 @@ async def shutdown_handler(app: FastAPI):
 
     publish("app_started")
     beating = hub_node.start_heartbeat("core", port=serving_port)
-    hub_secrets.start_move()
 
     # Only auto-start scheduler if explicitly opted in via env var
     if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "").lower() in ("true", "1", "yes"):
