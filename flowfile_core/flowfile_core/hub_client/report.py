@@ -135,7 +135,8 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str) -> dict:
     ``hub_namespace_id`` and the id the hub lists for the written name (``None`` when it lists none or does not answer).
     A table of this core's own catalog is never named. ``flow_version`` is the hub version of the flow's
     ``hub_origin``, ``None`` for a flow that never met a hub. A run that vended from the hub (``flow.last_hub_vend``) is
-    reported under the vend's run id with its ``vend_ids``; any other run gets a new run id and no vend.
+    reported under the vend's run id with its ``vend_ids``; a run the hub dispatched here under the id the hub gave it
+    (``flow.hub_run_id``); any other run gets a new run id and no vend.
     """
     nodes, readers, writers = [], [], []
     for result in run_info.node_step_result or []:
@@ -190,7 +191,7 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str) -> dict:
     ended_at = run_info.end_time or datetime.now()
     started_at = run_info.start_time or ended_at
     return {
-        "run_id": vend[0] if vend is not None else str(uuid.uuid4()),
+        "run_id": vend[0] if vend is not None else getattr(flow, "hub_run_id", None) or str(uuid.uuid4()),
         "flow_uuid": flow_uuid,
         "flow_version": origin.version if origin is not None else None,
         "started_at": started_at.astimezone(timezone.utc).isoformat(),

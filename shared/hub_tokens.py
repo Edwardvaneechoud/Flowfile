@@ -24,9 +24,11 @@ from shared import hub_node
 
 logger = logging.getLogger("flowfile.hub_tokens")
 
-SCOPES = ("run", "signin")
+SCOPES = ("run", "signin", "dispatch")
 """What a hub token is for: ``run`` sends work to this node's worker as a user; ``signin`` signs a person in on this
-node's core once, and is taken only by the route that does that."""
+node's core once, and is taken only by the route that does that; ``dispatch`` has this node's core run one version of a
+hub flow as a person, and is taken only by ``POST /hub/dispatch``."""
+DISPATCH_CLAIMS = ["run_id", "flow_uuid", "flow_version", "uid"]
 ALGORITHMS = ["ES256", "RS256"]
 LEEWAY_SECONDS = 30
 REQUIRED_CLAIMS = ["exp", "iat", "sub", "aud", "scope", "jti"]
@@ -52,6 +54,20 @@ class HubClaims:
     subject: str
     user_id: int | None
     scope: str
+
+
+@dataclass(frozen=True)
+class DispatchClaims:
+    """What a verified ``dispatch`` token says: the person (``subject``, ``user_id``), the run the hub keeps it as
+    (``run_id``), the flow version to check out and run (``flow_uuid``, ``flow_version``), and when the token expires
+    (``expires_at``, epoch seconds), which bounds how long the run id is remembered against a replay."""
+
+    subject: str
+    user_id: int
+    run_id: str
+    flow_uuid: str
+    flow_version: int
+    expires_at: int
 
 
 _client: jwt.PyJWKClient | None = None
@@ -154,3 +170,32 @@ def verify(token: str, scopes: tuple[str, ...] = ("run",)) -> HubClaims | None:
     except (TypeError, ValueError):
         raise HubTokenRefused("malformed claim uid") from None
     return HubClaims(subject=str(payload["sub"]), user_id=user_id, scope=scope)
+
+
+def verify_dispatch(token: str) -> DispatchClaims | None:
+    """The claims of ``token`` when it is a ``dispatch`` token this node accepts; ``None`` and ``HubTokenRefused`` as
+    ``verify`` answers them. Every claim of ``DISPATCH_CLAIMS`` must be there and well formed: ``run_id`` and
+    ``flow_uuid`` non-empty text of at most 64 characters, ``flow_version`` and ``uid`` whole numbers."""
+    if not isinstance(token, str) or token.count(".") < 2:
+        return None
+    settings = _settings()
+    if settings is None:
+        return None
+    payload = decode(token, *settings, required=REQUIRED_CLAIMS + DISPATCH_CLAIMS)
+    if payload["scope"] != "dispatch":
+        raise HubTokenRefused(f"a {payload['scope']} token is not accepted here")
+    run_id, flow_uuid = payload["run_id"], payload["flow_uuid"]
+    for name, value in (("run_id", run_id), ("flow_uuid", flow_uuid)):
+        if not isinstance(value, str) or not 0 < len(value) <= 64:
+            raise HubTokenRefused(f"malformed claim {name}")
+    for name in ("flow_version", "uid"):
+        if not isinstance(payload[name], int) or isinstance(payload[name], bool):
+            raise HubTokenRefused(f"malformed claim {name}")
+    return DispatchClaims(
+        subject=str(payload["sub"]),
+        user_id=payload["uid"],
+        run_id=run_id,
+        flow_uuid=flow_uuid,
+        flow_version=payload["flow_version"],
+        expires_at=int(payload["exp"]),
+    )

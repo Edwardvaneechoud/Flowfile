@@ -21,7 +21,7 @@ from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash
 from flowfile_core.configs import logger
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
-from flowfile_core.hub_client import delegation, node_addresses
+from flowfile_core.hub_client import delegation, signin
 from flowfile_core.hub_client import session as hub_session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable
 from shared import hub_node, hub_tokens
@@ -198,50 +198,32 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     """Sign a person in with the one-time sign-in token the hub's Open page gave their browser.
 
     The token is verified against the hub's keys as a ``signin`` token for this node, then traded at the hub for a
-    delegation signed with this node's own key. The person's local account is the one mapped to the hub's issuer and
-    their id there, made at their first sign-in; whether it administers this server follows ``node_admin`` at every
-    sign-in. The delegation is kept as the person's hub session, never in the database, and the answer is this core's
-    own token pair, as ``/auth/token`` answers, its access token living as long as the hub's (the delegation's
-    ``expires_in``, answered as ``expires_at``) and its refresh token naming this sign-in (``sid``). A token or an
-    exchange the hub refuses is a 401 with one sentence.
-
-    The hub's servers this person may run on then become backend rows with their new session
-    (``node_addresses.sync_for``), so they are there to pick with nobody opening Compute; a hub whose list cannot be
-    read leaves one warning and the sign-in stands.
+    delegation signed with this node's own key (``hub_client.signin.sign_in``: the person's account here, made at their
+    first sign-in, the delegation kept as their hub session, the hub's servers they may run on as backend rows). The
+    answer is this core's own token pair, as ``/auth/token`` answers, its access token living as long as the hub's (the
+    delegation's ``expires_in``, answered as ``expires_at``) and its refresh token naming this sign-in (``sid``). A
+    token or an exchange the hub refuses is a 401 with one sentence.
     """
     if issuer_accounts.joined_with_keys() is None:
         raise _refused("This server does not sign people in through a hub.")
-    settings = hub_node.resolved()
     try:
         claims = hub_tokens.verify(token, scopes=("signin",))
     except hub_tokens.HubTokenRefused as e:
         raise _refused(_sentence(f"The hub's sign-in token was refused: {e.reason}")) from None
     if claims is None or claims.user_id is None:
         raise _refused("This is not a sign-in token from the hub.")
-    user = issuer_accounts.issuer_account(db, settings.issuer, claims.user_id)
-    if user is not None and user.disabled:
-        raise _refused("This account is disabled on this server.")
     try:
-        granted = delegation.exchange(settings.hub_url, settings.issuer, token)
-    except HubRefused as e:
-        raise _refused(_sentence(f"The hub refused this sign-in: {e.detail}")) from None
+        signed_in = signin.sign_in(db, token, claims.user_id)
+    except signin.SignInRefused as e:
+        raise _refused(str(e)) from None
     except HubUnreachable as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
-    except LookupError as e:
-        logger.warning("A sign-in through the hub could not be traded: %s", e)
-        raise _refused("This server cannot sign for itself at its hub.") from None
-    if granted.user["uid"] != claims.user_id:
-        raise _refused("The hub answered this sign-in for another person.")
-    if user is None:
-        user = issuer_accounts.new_issuer_account(db, settings.issuer, settings.hub_url, granted.user)
-    user.is_admin = granted.user["node_admin"]
-    db.commit()
-    invalidate_user_cache(user.username)
-    sid = hub_session.save_delegation(user.id, settings.hub_url, granted)
-    node_addresses.sync_for(user.id)
-    expires_at = _expires_at(granted.expires_in)
-    access_token = create_access_token(data={"sub": user.username}, expires_delta=timedelta(seconds=granted.expires_in))
-    refresh_token = create_refresh_token(data={"sub": user.username, "sid": sid})
+    user = signed_in.user
+    expires_at = _expires_at(signed_in.expires_in)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=timedelta(seconds=signed_in.expires_in)
+    )
+    refresh_token = create_refresh_token(data={"sub": user.username, "sid": signed_in.sid})
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,

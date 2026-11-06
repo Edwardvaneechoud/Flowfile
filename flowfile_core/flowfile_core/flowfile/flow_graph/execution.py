@@ -327,6 +327,8 @@ class ExecutionMixin(GraphMixinBase):
     hub_vend: vend.RunVend | None = None
     # The exchange store a joined server's hub set for the run about to start; None between runs and elsewhere.
     hub_exchange_store: ExchangeConfig | None = None
+    # The run id the hub keeps a run it dispatched here as: the run's vends and report carry it; None for any other.
+    hub_run_id: str | None = None
     # (run id, vend id) of the last run's vend, for its report; holds no credential.
     last_hub_vend: tuple[str, int] | None = None
     # Node id -> the secret names the running run's vend sealed for that step; None between runs.
@@ -1689,7 +1691,7 @@ class ExecutionMixin(GraphMixinBase):
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False
         exchange_run = self.exchange_run = ExchangeRun(
-            self.flow_id, uuid.uuid4().hex, hub_store=self.hub_exchange_store
+            self.flow_id, self.hub_run_id or uuid.uuid4().hex, hub_store=self.hub_exchange_store
         )
         try:
             with use_context(current_context(self)):
