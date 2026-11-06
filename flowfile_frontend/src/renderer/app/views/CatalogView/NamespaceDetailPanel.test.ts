@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
 // The catalog panel's Hub badge follows the tree's rule: none on a server whose every catalog is the hub's, one on a
 // hub catalog shown beside this machine's, never on this machine's own.
-import { createApp, h, nextTick, type App, type FunctionalComponent } from "vue";
+import { h, type FunctionalComponent } from "vue";
 import { createPinia } from "pinia";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { ns } from "../../__fixtures__/catalogTree";
+import { element, mountIn } from "../../__fixtures__/mount";
 import type { NamespaceTree } from "../../types/catalog.types";
 import type { HubPresence } from "./hubRows";
 
@@ -29,57 +31,26 @@ vi.mock("./EditCatalogStorageModal.vue", () => ({ default: { render: () => null 
 
 import NamespaceDetailPanel from "./NamespaceDetailPanel.vue";
 
-const element = (tag: string): FunctionalComponent => {
-  const stub: FunctionalComponent = (_, { attrs, slots }) => h(tag, attrs, slots.default?.());
-  stub.inheritAttrs = false;
-  return stub;
-};
-
 const stubs: Record<string, FunctionalComponent> = {
   "el-tooltip": (_, { slots }) => h("span", slots.default?.()),
   "el-button": element("button"),
 };
 
-const catalog = (over: Partial<NamespaceTree> = {}): NamespaceTree =>
-  ({
-    id: 1,
-    name: "Sales",
-    level: 0,
-    parent_id: null,
-    storage_uri: "s3://acme/data",
-    storage_connection_name: null,
-    children: [],
-    tables: [],
-    flows: [],
-    artifacts: [],
-    visualizations: [],
-    notebooks: [],
-    source: "local",
-    ...over,
-  }) as unknown as NamespaceTree;
+const storage_uri = "s3://acme/data";
+const catalog = ns({ storage_uri });
+const hubCatalog = ns({ storage_uri, id: -10, name: "main", source: "hub", hub_id: 10 });
 
-const hubCatalog = catalog({ id: -10, name: "main", source: "hub", hub_id: 10 });
-
-let app: App | null = null;
 let host: HTMLElement;
 
 const mount = async (namespace: NamespaceTree, hubPresence: HubPresence) => {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  app = createApp(NamespaceDetailPanel, { namespace, hubPresence });
-  app.use(createPinia());
-  for (const [name, stub] of Object.entries(stubs)) app.component(name, stub);
-  app.mount(host);
-  await nextTick();
+  host = await mountIn(NamespaceDetailPanel, {
+    props: { namespace, hubPresence },
+    pinia: createPinia(),
+    stubs,
+  });
 };
 
 const badge = () => host.querySelector('[data-testid="hub-badge"]');
-
-afterEach(() => {
-  app?.unmount();
-  app = null;
-  host?.remove();
-});
 
 describe("NamespaceDetailPanel", () => {
   it("badges a hub catalog shown beside this machine's", async () => {
@@ -97,12 +68,10 @@ describe("NamespaceDetailPanel", () => {
   });
 
   it("badges none of this machine's own, with or without a hub", async () => {
-    await mount(catalog(), "beside");
+    await mount(catalog, "beside");
     expect(badge()).toBeNull();
-    app?.unmount();
-    host.remove();
 
-    await mount(catalog(), "none");
+    await mount(catalog, "none");
     expect(badge()).toBeNull();
   });
 });

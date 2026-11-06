@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 // The organisation's storage row: on a server that joined its hub, read-only and set by the hub; never on a desktop.
-import { createApp, nextTick, type App } from "vue";
 import { createPinia } from "pinia";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { desktop as connected } from "../../__fixtures__/hubConnection";
+import { mountIn, text } from "../../__fixtures__/mount";
 import type { HubConnection } from "../../api/hubConnection.api";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), connections: vi.fn() }));
@@ -31,39 +32,14 @@ vi.mock("element-plus", async () => {
 
 import CloudConnectionView from "./CloudConnectionView.vue";
 
-const desktop: HubConnection = {
-  connected: true,
-  hubUrl: "https://hub.acme.test:8443",
-  deviceName: "ana-laptop",
-  expiresAt: null,
-  orgName: "Acme Data",
-  hubVersion: null,
-  reachable: true,
-  error: null,
-  account: "Ana Lima",
-  joined: false,
-  organisationStorage: "s3://acme/flowfile",
-};
+const desktop: HubConnection = { ...connected, organisationStorage: "s3://acme/flowfile" };
 const server: HubConnection = { ...desktop, joined: true };
 
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
-  await nextTick();
-};
-
-const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-
-let app: App | null = null;
 let host: HTMLElement;
 
 const mount = async (connection: HubConnection) => {
   mocks.get.mockResolvedValue(connection);
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  app = createApp(CloudConnectionView);
-  app.use(createPinia());
-  app.mount(host);
-  await settle();
+  host = await mountIn(CloudConnectionView, { pinia: createPinia() });
 };
 
 const row = () => host.querySelector('[data-testid="hub-organisation-storage"]');
@@ -71,12 +47,6 @@ const row = () => host.querySelector('[data-testid="hub-organisation-storage"]')
 beforeEach(() => {
   mocks.get.mockReset();
   mocks.connections.mockReset().mockResolvedValue([]);
-});
-
-afterEach(() => {
-  app?.unmount();
-  app = null;
-  host?.remove();
 });
 
 describe("the organisation's storage row", () => {

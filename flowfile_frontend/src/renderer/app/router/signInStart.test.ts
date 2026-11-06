@@ -2,6 +2,7 @@
 // `#/login?hub_signin=1` (the hub's Continue) through the app's own router, booted as main.ts boots it.
 import type { AxiosAdapter, InternalAxiosRequestConfig } from "axios";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeStorage } from "../__fixtures__/mount";
 
 const OPEN_URL = "https://hub.example.com:8443/open/12";
 
@@ -28,16 +29,6 @@ function server() {
     return answer({});
   };
   return { adapter, paths };
-}
-
-function fakeStorage() {
-  const store = new Map<string, string>();
-  return {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => void store.set(key, value),
-    removeItem: (key: string) => void store.delete(key),
-    clear: () => store.clear(),
-  };
 }
 
 const flush = async () => {

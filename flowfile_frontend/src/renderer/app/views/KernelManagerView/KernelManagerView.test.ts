@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 // The kernels page points at the Backends tab only for an administrator, the one reader who can open it.
-import { createApp, nextTick, ref, type App } from "vue";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { ref } from "vue";
+import { describe, expect, it, vi } from "vitest";
+import { mountIn } from "../../__fixtures__/mount";
 
 const auth = vi.hoisted(() => ({ isAdmin: false }));
 
@@ -30,24 +31,11 @@ vi.mock("./KernelDetailsModal.vue", () => ({ default: { render: () => null } }))
 
 import KernelManagerView from "./KernelManagerView.vue";
 
-let app: App | null = null;
-let host: HTMLElement;
-
 const description = async (isAdmin: boolean): Promise<string> => {
   auth.isAdmin = isAdmin;
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  app = createApp(KernelManagerView);
-  app.mount(host);
-  await nextTick();
+  const host = await mountIn(KernelManagerView);
   return (host.querySelector(".page-description")?.textContent ?? "").replace(/\s+/g, " ").trim();
 };
-
-afterEach(() => {
-  app?.unmount();
-  app = null;
-  host?.remove();
-});
 
 describe("KernelManagerView", () => {
   it("points an administrator at the Backends tab", async () => {

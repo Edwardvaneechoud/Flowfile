@@ -1,30 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { HubConnection } from "../../../api/hubConnection.api";
+import { desktop, none } from "../../../__fixtures__/hubConnection";
 import { hubAddress, hubIdentity, hubIdentityTitle } from "./hubIdentity";
-
-const none: HubConnection = {
-  connected: false,
-  hubUrl: null,
-  deviceName: "ana-laptop",
-  expiresAt: null,
-  orgName: null,
-  hubVersion: null,
-  reachable: false,
-  error: null,
-  account: null,
-  joined: false,
-  organisationStorage: null,
-};
-
-const joined: HubConnection = {
-  ...none,
-  connected: true,
-  hubUrl: "https://hub.acme.test:8443",
-  orgName: "Acme Data",
-  reachable: true,
-  account: "Ana Lima",
-};
 
 describe("the header's who and where", () => {
   it("says nothing on a desktop with no hub", () => {
@@ -33,7 +10,7 @@ describe("the header's who and where", () => {
   });
 
   it("names who is signed in and the hub's organisation, linking back to the hub", () => {
-    expect(hubIdentity(joined)).toEqual({
+    expect(hubIdentity(desktop)).toEqual({
       who: "Ana Lima",
       where: "Acme Data",
       url: "https://hub.acme.test:8443",
@@ -41,18 +18,18 @@ describe("the header's who and where", () => {
   });
 
   it("names the hub by its address when it does not answer its name", () => {
-    const unreachable = { ...joined, orgName: null, reachable: false };
+    const unreachable = { ...desktop, orgName: null, reachable: false };
     expect(hubIdentity(unreachable)?.where).toBe("hub.acme.test:8443");
   });
 
   it("names only the hub when the connection does not say who", () => {
-    const identity = hubIdentity({ ...joined, account: null })!;
+    const identity = hubIdentity({ ...desktop, account: null })!;
     expect(identity.who).toBeNull();
     expect(hubIdentityTitle(identity)).toBe("Connected to Acme Data. Open the hub.");
   });
 
   it("says who, through which hub, and what a click does", () => {
-    expect(hubIdentityTitle(hubIdentity(joined)!)).toBe(
+    expect(hubIdentityTitle(hubIdentity(desktop)!)).toBe(
       "Signed in as Ana Lima through Acme Data. Open the hub.",
     );
   });

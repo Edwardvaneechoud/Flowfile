@@ -2,10 +2,12 @@
 // A catalog row in the tree beside a hub: no Hub badge where everything is the hub's, one on a hub catalog beside
 // this machine's, the storage kind off a hub row, counts only on collapsed rows with hub rows in the tree, and the
 // row a desktop without a hub has always had.
-import { createApp, h, nextTick, type App, type FunctionalComponent } from "vue";
+import { h, nextTick, type FunctionalComponent } from "vue";
 import { createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CatalogTable, NamespaceTree } from "../../types";
+import { ns, table } from "../../__fixtures__/catalogTree";
+import { fakeStorage, mountIn } from "../../__fixtures__/mount";
+import type { NamespaceTree } from "../../types";
 import type { HubPresence } from "./hubRows";
 
 vi.mock("../../services/axios.config", () => ({ default: {} }));
@@ -27,93 +29,42 @@ const stubs: Record<string, FunctionalComponent> = {
   "el-tooltip": (_, { slots }) => h("span", slots.default?.()),
 };
 
-const table = (id: number, name: string, source: "local" | "hub" = "local"): CatalogTable =>
-  ({
-    id,
-    name,
-    namespace_id: 0,
-    table_type: "physical",
-    file_exists: true,
-    source,
-  }) as CatalogTable;
+const storage_uri = "s3://acme/data";
+const local = ns({
+  storage_uri,
+  children: [ns({ id: 2, name: "default", level: 1, parent_id: 1, tables: [table()] })],
+});
+const hub = ns({
+  id: -10,
+  name: "main",
+  source: "hub",
+  storage_uri,
+  children: [
+    ns({
+      id: -11,
+      name: "curated",
+      level: 1,
+      parent_id: -10,
+      source: "hub",
+      tables: [table({ id: -12, name: "sales", source: "hub" })],
+    }),
+  ],
+});
 
-const schema = (
-  id: number,
-  name: string,
-  parentId: number,
-  tables: CatalogTable[],
-  source: "local" | "hub" = "local",
-): NamespaceTree =>
-  ({
-    id,
-    name,
-    level: 1,
-    parent_id: parentId,
-    source,
-    children: [],
-    tables,
-    flows: [],
-    artifacts: [],
-    visualizations: [],
-    notebooks: [],
-  }) as unknown as NamespaceTree;
-
-const catalog = (
-  id: number,
-  name: string,
-  children: NamespaceTree[],
-  source: "local" | "hub" = "local",
-): NamespaceTree =>
-  ({
-    id,
-    name,
-    level: 0,
-    parent_id: null,
-    source,
-    storage_uri: "s3://acme/data",
-    children,
-    tables: [],
-    flows: [],
-    artifacts: [],
-    visualizations: [],
-    notebooks: [],
-  }) as unknown as NamespaceTree;
-
-const local = catalog(1, "Sales", [schema(2, "default", 1, [table(3, "orders")])]);
-const hub = catalog(
-  -10,
-  "main",
-  [schema(-11, "curated", -10, [table(-12, "sales", "hub")], "hub")],
-  "hub",
-);
-
-const fakeLocalStorage = () => {
-  const map = new Map<string, string>();
-  return {
-    getItem: (k: string) => map.get(k) ?? null,
-    setItem: (k: string, v: string) => void map.set(k, v),
-    removeItem: (k: string) => void map.delete(k),
-    clear: () => map.clear(),
-  } as unknown as Storage;
-};
-
-let app: App | null = null;
 let host: HTMLElement;
 
 const mount = async (node: NamespaceTree, hubPresence: HubPresence = "none") => {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  app = createApp(CatalogTreeNode, {
-    node,
-    selectedFlowId: null,
-    selectedArtifactId: null,
-    selectedTableId: null,
-    hubPresence,
+  host = await mountIn(CatalogTreeNode, {
+    props: {
+      node,
+      selectedFlowId: null,
+      selectedArtifactId: null,
+      selectedTableId: null,
+      hubPresence,
+    },
+    pinia: createPinia(),
+    stubs,
   });
-  app.use(createPinia());
-  for (const [name, stub] of Object.entries(stubs)) app.component(name, stub);
-  app.mount(host);
-  await nextTick();
 };
 
 const badges = () => host.querySelectorAll('[data-testid="hub-badge"]').length;
@@ -126,13 +77,10 @@ const collapse = async () => {
 };
 
 beforeEach(() => {
-  vi.stubGlobal("localStorage", fakeLocalStorage());
+  vi.stubGlobal("localStorage", fakeStorage());
 });
 
 afterEach(() => {
-  app?.unmount();
-  app = null;
-  host?.remove();
   vi.unstubAllGlobals();
 });
 
@@ -184,8 +132,6 @@ describe("CatalogTreeNode", () => {
     const sharedBy = (by: string) => ({ is_owner: false, access_level: "use", shared_by: by });
     await mount({ ...hub, access: sharedBy("team:sales") } as NamespaceTree, "only");
     expect(host.querySelector(".resource-badge")?.getAttribute("title")).toBe("Shared with you");
-    app?.unmount();
-    host.remove();
 
     await mount({ ...hub, access: sharedBy("ada") } as NamespaceTree, "only");
     expect(host.querySelector(".resource-badge")?.getAttribute("title")).toBe("Shared by ada");
@@ -210,8 +156,6 @@ describe("CatalogTreeNode", () => {
   it("lets a row's name keep its width only where the tree shows hub rows", async () => {
     await mount(hub, "only");
     expect(host.querySelector(".tree-row")?.classList.contains("keeps-name")).toBe(true);
-    app?.unmount();
-    host.remove();
 
     await mount(local);
     expect(host.querySelector(".tree-row")?.classList.contains("keeps-name")).toBe(false);

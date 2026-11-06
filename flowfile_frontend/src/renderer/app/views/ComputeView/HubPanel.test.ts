@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
 // The Hub card as an administrator sees it: the connect form, the connected desktop's facts, and on a server
 // that joined its hub the line saying whose hub it belongs to, with nothing to type.
-import { createApp, h, nextTick, type App, type FunctionalComponent } from "vue";
+import { h, type FunctionalComponent } from "vue";
 import { createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { desktop, none, server } from "../../__fixtures__/hubConnection";
+import { element, fakeStorage, mountIn, settle, text } from "../../__fixtures__/mount";
 import type { HubConnection } from "../../api/hubConnection.api";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn() }));
@@ -17,12 +19,6 @@ vi.mock("element-plus", () => ({ ElMessage: { success: vi.fn(), error: vi.fn() }
 
 import { connectHub } from "../../api/hubConnection.api";
 import HubPanel from "./HubPanel.vue";
-
-const element = (tag: string): FunctionalComponent => {
-  const stub: FunctionalComponent = (_, { attrs, slots }) => h(tag, attrs, slots.default?.());
-  stub.inheritAttrs = false;
-  return stub;
-};
 
 const stubs: Record<string, FunctionalComponent> = {
   "el-collapse-transition": (_, { slots }) => slots.default?.(),
@@ -39,73 +35,21 @@ const stubs: Record<string, FunctionalComponent> = {
   "router-link": element("a"),
 };
 
-const none: HubConnection = {
-  connected: false,
-  hubUrl: null,
-  deviceName: "ana-laptop",
-  expiresAt: null,
-  orgName: null,
-  hubVersion: null,
-  reachable: false,
-  error: null,
-  account: null,
-  joined: false,
-  organisationStorage: null,
-};
-const desktop: HubConnection = {
-  ...none,
-  connected: true,
-  hubUrl: "https://hub.acme.test:8443",
-  expiresAt: "2026-11-08T12:00:00Z",
-  orgName: "Acme Data",
-  hubVersion: "0.3.0",
-  reachable: true,
-  account: "Ana Lima",
-};
-const server: HubConnection = { ...desktop, joined: true };
-
-const fakeLocalStorage = () => {
-  const map = new Map<string, string>();
-  return {
-    getItem: (k: string) => map.get(k) ?? null,
-    setItem: (k: string, v: string) => void map.set(k, v),
-    removeItem: (k: string) => void map.delete(k),
-    clear: () => map.clear(),
-  } as unknown as Storage;
-};
-
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
-  await nextTick();
-};
-
-const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-
-let app: App | null = null;
 let host: HTMLElement;
 
 const mount = async (connection: HubConnection) => {
   mocks.get.mockResolvedValue(connection);
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  app = createApp(HubPanel);
-  app.use(createPinia());
-  for (const [name, stub] of Object.entries(stubs)) app.component(name, stub);
-  app.mount(host);
-  await settle();
+  host = await mountIn(HubPanel, { pinia: createPinia(), stubs });
 };
 
 const find = (testId: string) => host.querySelector(`[data-testid="${testId}"]`);
 
 beforeEach(() => {
-  vi.stubGlobal("localStorage", fakeLocalStorage());
+  vi.stubGlobal("localStorage", fakeStorage());
   mocks.get.mockReset();
 });
 
 afterEach(() => {
-  app?.unmount();
-  app = null;
-  host?.remove();
   vi.unstubAllGlobals();
 });
 

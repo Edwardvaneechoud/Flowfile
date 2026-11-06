@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { desktop, none } from "../__fixtures__/hubConnection";
 import { httpError } from "../__fixtures__/promises";
-import type { HubConnection } from "../api/hubConnection.api";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -17,37 +17,12 @@ vi.mock("../api/hubConnection.api", () => ({
 
 import { useHubConnectionStore } from "./hub-connection-store";
 
-const none: HubConnection = {
-  connected: false,
-  hubUrl: null,
-  deviceName: "ana-laptop",
-  expiresAt: null,
-  orgName: null,
-  hubVersion: null,
-  reachable: false,
-  error: null,
-  account: null,
-  joined: false,
-  organisationStorage: null,
-};
-
-const connected: HubConnection = {
-  ...none,
-  connected: true,
-  hubUrl: "https://hub.example.test",
-  expiresAt: "2026-11-08T12:00:00Z",
-  orgName: "Acme Data",
-  hubVersion: "0.3.0",
-  reachable: true,
-  account: "Ana Lima",
-};
-
 const input = { hubUrl: "https://hub.example.test", username: "ana", password: "s3cret" };
 
 beforeEach(() => {
   setActivePinia(createPinia());
   mocks.get.mockReset().mockResolvedValue(none);
-  mocks.connect.mockReset().mockResolvedValue(connected);
+  mocks.connect.mockReset().mockResolvedValue(desktop);
   mocks.disconnect.mockReset().mockResolvedValue(undefined);
 });
 
@@ -85,7 +60,7 @@ describe("the hub connection store", () => {
   });
 
   it("derives connected and joined from the connection, so a server joined to its hub counts as connected", async () => {
-    mocks.get.mockResolvedValue({ ...connected, joined: true });
+    mocks.get.mockResolvedValue({ ...desktop, joined: true });
     const hub = useHubConnectionStore();
 
     await hub.load();
@@ -93,7 +68,7 @@ describe("the hub connection store", () => {
     expect(hub.connected).toBe(true);
     expect(hub.joined).toBe(true);
 
-    mocks.get.mockResolvedValue(connected);
+    mocks.get.mockResolvedValue(desktop);
     await hub.load();
     expect(hub.connected).toBe(true);
     expect(hub.joined).toBe(false);
@@ -136,7 +111,7 @@ describe("the hub connection store", () => {
   });
 
   it("disconnects and reloads the not-connected state", async () => {
-    mocks.get.mockResolvedValueOnce(connected);
+    mocks.get.mockResolvedValueOnce(desktop);
     const hub = useHubConnectionStore();
     await hub.load();
     expect(hub.connected).toBe(true);
@@ -149,7 +124,7 @@ describe("the hub connection store", () => {
   });
 
   it("surfaces a refused disconnect in the route's words and keeps the connection", async () => {
-    mocks.get.mockResolvedValue(connected);
+    mocks.get.mockResolvedValue(desktop);
     mocks.disconnect.mockRejectedValue(httpError(403, "Only an administrator can disconnect."));
     const hub = useHubConnectionStore();
     await hub.load();

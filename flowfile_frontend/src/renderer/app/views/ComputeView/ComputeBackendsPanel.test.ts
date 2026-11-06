@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
 // The Backends list as an administrator sees it beside a hub: it loads without waiting for the hub connection, a
 // row the hub filled carries its chip and no Remove, and only a server that joined its hub loads through Sync.
-import { createApp, h, nextTick, type App, type FunctionalComponent } from "vue";
+import type { FunctionalComponent } from "vue";
 import { createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { desktop, none, server } from "../../__fixtures__/hubConnection";
+import { element, fakeStorage, mountIn, settle } from "../../__fixtures__/mount";
 import { deferred } from "../../__fixtures__/promises";
 import type { ComputeBackend } from "../../api/computeBackends.api";
 import type { HubConnection } from "../../api/hubConnection.api";
@@ -34,41 +36,12 @@ vi.mock("../../components/settings/WorkerPoolCard.vue", () => ({
 
 import ComputeBackendsPanel from "./ComputeBackendsPanel.vue";
 
-const element = (tag: string): FunctionalComponent => {
-  const stub: FunctionalComponent = (_, { attrs, slots }) => h(tag, attrs, slots.default?.());
-  stub.inheritAttrs = false;
-  return stub;
-};
-
 const stubs: Record<string, FunctionalComponent> = {
   "el-collapse-transition": (_, { slots }) => slots.default?.(),
   "el-button": element("button"),
   "el-input": element("input"),
   "el-checkbox": element("input"),
 };
-
-const none: HubConnection = {
-  connected: false,
-  hubUrl: null,
-  deviceName: "ana-laptop",
-  expiresAt: null,
-  orgName: null,
-  hubVersion: null,
-  reachable: false,
-  error: null,
-  account: null,
-  joined: false,
-  organisationStorage: null,
-};
-const desktop: HubConnection = {
-  ...none,
-  connected: true,
-  hubUrl: "https://hub.acme.test:8443",
-  orgName: "Acme Data",
-  reachable: true,
-  account: "ana",
-};
-const server: HubConnection = { ...desktop, joined: true };
 
 const row = (id: string, source: ComputeBackend["source"]): ComputeBackend => ({
   id,
@@ -78,48 +51,23 @@ const row = (id: string, source: ComputeBackend["source"]): ComputeBackend => ({
   source,
 });
 
-const fakeLocalStorage = () => {
-  const map = new Map<string, string>();
-  return {
-    getItem: (k: string) => map.get(k) ?? null,
-    setItem: (k: string, v: string) => void map.set(k, v),
-    removeItem: (k: string) => void map.delete(k),
-    clear: () => map.clear(),
-  } as unknown as Storage;
-};
-
-const settle = async () => {
-  for (let i = 0; i < 10; i++) await Promise.resolve();
-  await nextTick();
-};
-
-let app: App | null = null;
 let host: HTMLElement;
 
 const mount = async () => {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  app = createApp(ComputeBackendsPanel);
-  app.use(createPinia());
-  for (const [name, stub] of Object.entries(stubs)) app.component(name, stub);
-  app.mount(host);
-  await settle();
+  host = await mountIn(ComputeBackendsPanel, { pinia: createPinia(), stubs });
 };
 
 const find = (testId: string) => host.querySelector(`[data-testid="${testId}"]`);
 const remove = (id: string) => host.querySelector(`[aria-label="Remove ${id}"]`);
 
 beforeEach(() => {
-  vi.stubGlobal("localStorage", fakeLocalStorage());
+  vi.stubGlobal("localStorage", fakeStorage());
   mocks.connection.mockReset();
   mocks.list.mockReset();
   mocks.sync.mockReset();
 });
 
 afterEach(() => {
-  app?.unmount();
-  app = null;
-  host?.remove();
   vi.unstubAllGlobals();
 });
 

@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 // The card as an admin sees it: the store a run uses, where it comes from, and the fields only when it is this node's.
-import { createApp, h, nextTick, type App, type FunctionalComponent } from "vue";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { nextTick, type FunctionalComponent } from "vue";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { element, mountIn, text } from "../../__fixtures__/mount";
 import type { ExchangeStoreState } from "../../api/system.api";
 
 const mocks = vi.hoisted(() => ({
@@ -19,12 +20,6 @@ vi.mock("element-plus", () => ({
 }));
 
 import ExchangeStoreCard from "./ExchangeStoreCard.vue";
-
-const element = (tag: string): FunctionalComponent => {
-  const stub: FunctionalComponent = (_, { attrs, slots }) => h(tag, attrs, slots.default?.());
-  stub.inheritAttrs = false;
-  return stub;
-};
 
 const stubs: Record<string, FunctionalComponent> = {
   "el-collapse-transition": (_, { slots }) => slots.default?.(),
@@ -73,24 +68,11 @@ const fromEnv: ExchangeStoreState = {
   envOverride: true,
 };
 
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
-  await nextTick();
-};
-
-const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-
-let app: App | null = null;
 let host: HTMLElement;
 
 const mount = async (state: ExchangeStoreState) => {
   mocks.get.mockResolvedValue(state);
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  app = createApp(ExchangeStoreCard);
-  for (const [name, stub] of Object.entries(stubs)) app.component(name, stub);
-  app.mount(host);
-  await settle();
+  host = await mountIn(ExchangeStoreCard, { stubs });
 };
 
 const find = (testId: string) => host.querySelector(`[data-testid="${testId}"]`);
@@ -109,12 +91,6 @@ beforeEach(() => {
   } catch {
     // no localStorage here, so nothing carries the card's open state to the next mount
   }
-});
-
-afterEach(() => {
-  app?.unmount();
-  app = null;
-  host.remove();
 });
 
 describe("ExchangeStoreCard", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { CatalogTable, NamespaceTree } from "../../../../types/catalog.types";
+import { ns, table } from "../../../../__fixtures__/catalogTree";
+import type { NamespaceTree } from "../../../../types/catalog.types";
 import type { CatalogWriteSettings, NodeCatalogReader } from "../../../../types/node.types";
 import {
   READ_ONLY,
@@ -21,12 +22,6 @@ import {
   writerDefault,
 } from "./catalogPick";
 import { hubPresence } from "../../../../views/CatalogView/hubRows";
-
-const table = (fields: Partial<CatalogTable>): CatalogTable =>
-  ({ name: "t", full_table_name: null, ...fields }) as CatalogTable;
-
-const ns = (fields: Partial<NamespaceTree>): NamespaceTree =>
-  ({ children: [], tables: [], parent_id: null, ...fields }) as NamespaceTree;
 
 const localOrders = table({
   id: 4,

@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
 // The Open dialog's Hub tab: there only while connected to a hub, and then the hub's namespaces, a namespace's
 // flows and the picked flow's versions, the newest preselected, opened through core.
-import { createApp, h, nextTick, type App, type FunctionalComponent, type SetupContext } from "vue";
+import { h, type FunctionalComponent, type SetupContext } from "vue";
 import { createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { desktop, none } from "../../../__fixtures__/hubConnection";
+import { element, fakeStorage, mountIn, settle, text } from "../../../__fixtures__/mount";
 import { httpError } from "../../../__fixtures__/promises";
 import type { HubConnection } from "../../../api/hubConnection.api";
 
@@ -59,37 +61,10 @@ vi.mock("./CatalogNamespacePicker.vue", async () => {
 
 import OpenDialog from "./OpenDialog.vue";
 
-const element = (tag: string): FunctionalComponent => {
-  const stub: FunctionalComponent = (_, { attrs, slots }) => h(tag, attrs, slots.default?.());
-  stub.inheritAttrs = false;
-  return stub;
-};
-
 const stubs: Record<string, FunctionalComponent> = {
   "el-dialog": (_, { slots }) => h("div", [slots.default?.(), slots.footer?.()]),
   "el-button": element("button"),
   "el-alert": (_, { attrs }) => h("div", attrs, String(attrs.title ?? "")),
-};
-
-const none: HubConnection = {
-  connected: false,
-  hubUrl: null,
-  deviceName: "ana-laptop",
-  expiresAt: null,
-  orgName: null,
-  hubVersion: null,
-  reachable: false,
-  error: null,
-  account: null,
-  joined: false,
-  organisationStorage: null,
-};
-const connected: HubConnection = {
-  ...none,
-  connected: true,
-  hubUrl: "https://hub.example.test",
-  orgName: "Acme Data",
-  reachable: true,
 };
 
 const orders = {
@@ -109,40 +84,17 @@ const versions = [
   { version: 1, authorId: 1, authorName: null, publishedAt: "2026-11-01T12:00:00Z", message: null },
 ];
 
-// The dialog remembers its tab in localStorage, which this environment does not provide.
-const fakeLocalStorage = () => {
-  const map = new Map<string, string>();
-  return {
-    getItem: (k: string) => map.get(k) ?? null,
-    setItem: (k: string, v: string) => void map.set(k, v),
-    removeItem: (k: string) => void map.delete(k),
-    clear: () => map.clear(),
-  } as unknown as Storage;
-};
-
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
-  await nextTick();
-};
-
-const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-
-let app: App | null = null;
 let host: HTMLElement;
 let opened: unknown[] = [];
 
 const mount = async (connection: HubConnection) => {
   mocks.getHubConnection.mockResolvedValue(connection);
-  host = document.createElement("div");
-  document.body.appendChild(host);
   opened = [];
-  app = createApp(OpenDialog, {
-    visible: true,
-    onOpenFlow: (payload: unknown) => opened.push(payload),
+  host = await mountIn(OpenDialog, {
+    props: { visible: true, onOpenFlow: (payload: unknown) => opened.push(payload) },
+    pinia: createPinia(),
+    stubs,
   });
-  app.use(createPinia());
-  for (const [name, stub] of Object.entries(stubs)) app.component(name, stub);
-  app.mount(host);
   const { useHubConnectionStore } = await import("../../../stores/hub-connection-store");
   await useHubConnectionStore().load();
   await settle();
@@ -155,7 +107,7 @@ const click = async (el: Element | null) => {
 };
 
 beforeEach(() => {
-  vi.stubGlobal("localStorage", fakeLocalStorage());
+  vi.stubGlobal("localStorage", fakeStorage());
   mocks.getHubConnection.mockReset();
   mocks.getFlows.mockReset().mockResolvedValue([]);
   mocks.listHubFlows.mockReset().mockResolvedValue([orders]);
@@ -166,9 +118,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  app?.unmount();
-  app = null;
-  host?.remove();
   vi.unstubAllGlobals();
 });
 
@@ -191,7 +140,7 @@ describe("OpenDialog's Hub tab", () => {
   });
 
   it("lists a hub namespace's flows by the hub's id, then the picked flow's versions with the newest preselected", async () => {
-    await mount(connected);
+    await mount(desktop);
     await click(find("open-hub-tab"));
     expect(find("open-hub-panel")).not.toBeNull();
 
@@ -220,7 +169,7 @@ describe("OpenDialog's Hub tab", () => {
       { ...versions[0], authorName: "Cal Jones" },
       { ...versions[1], authorName: "Ada Lovelace" },
     ]);
-    await mount(connected);
+    await mount(desktop);
     await click(find("open-hub-tab"));
     await click(find("pick-hub-namespace"));
 
@@ -235,7 +184,7 @@ describe("OpenDialog's Hub tab", () => {
   });
 
   it("opens the picked version through core and hands the flow's path on", async () => {
-    await mount(connected);
+    await mount(desktop);
     await click(find("open-hub-tab"));
     await click(find("pick-hub-namespace"));
     await click(host.querySelector('[data-testid="hub-open-flows"] .flow-row'));
@@ -260,7 +209,7 @@ describe("OpenDialog's Hub tab", () => {
         httpError(409, { kind: "local_copy_exists", flow_path: "/flows/hub/orders.yaml" }),
       )
       .mockResolvedValueOnce({ flowPath: "/flows/hub/orders.yaml" });
-    await mount(connected);
+    await mount(desktop);
     await click(find("open-hub-tab"));
     await click(find("pick-hub-namespace"));
     await click(host.querySelector('[data-testid="hub-open-flows"] .flow-row'));
@@ -280,7 +229,7 @@ describe("OpenDialog's Hub tab", () => {
     mocks.openFromHub.mockRejectedValue(
       httpError(403, { kind: "refused", status: 403, detail: "no read access" }),
     );
-    await mount(connected);
+    await mount(desktop);
     await click(find("open-hub-tab"));
     await click(find("pick-hub-namespace"));
     await click(host.querySelector('[data-testid="hub-open-flows"] .flow-row'));

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // The sign-in page as the server's sign-in method shapes it: a password form, or one button to the hub.
-import { createApp, nextTick, type App } from "vue";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mountIn, text } from "../../__fixtures__/mount";
 
 const mocks = vi.hoisted(() => ({
   getSignInMethod: vi.fn(),
@@ -22,18 +22,10 @@ vi.mock("vue-router", () => ({
 
 import LoginView from "./LoginView.vue";
 
-const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-
-let app: App | null = null;
 let host: HTMLElement;
 
 const mount = async () => {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  app = createApp(LoginView);
-  app.mount(host);
-  for (let i = 0; i < 5; i++) await Promise.resolve();
-  await nextTick();
+  host = await mountIn(LoginView);
 };
 
 const find = (testId: string) => host.querySelector(`[data-testid="${testId}"]`);
@@ -50,12 +42,6 @@ beforeEach(() => {
   mocks.startHubSignIn.mockReset();
   mocks.replace.mockReset().mockResolvedValue(undefined);
   mocks.query = {};
-});
-
-afterEach(() => {
-  app?.unmount();
-  app = null;
-  host.remove();
 });
 
 describe("LoginView", () => {

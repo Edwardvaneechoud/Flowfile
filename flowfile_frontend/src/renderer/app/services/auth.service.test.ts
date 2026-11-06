@@ -4,6 +4,7 @@
 import axios, { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from "axios";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRouter, createWebHashHistory, type RouterHistory } from "vue-router";
+import { fakeStorage } from "../__fixtures__/mount";
 
 const base64url = (value: string): string => {
   const bytes = new TextEncoder().encode(value);
@@ -21,17 +22,6 @@ const jwt = (claims: Record<string, unknown>): string =>
   ].join(".");
 
 const inAnHour = () => Math.floor(Date.now() / 1000) + 3600;
-
-function fakeLocalStorage() {
-  const store = new Map<string, string>();
-  return {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => void store.set(key, value),
-    removeItem: (key: string) => void store.delete(key),
-    clear: () => store.clear(),
-    values: () => [...store.values()],
-  };
-}
 
 const load = async () => {
   vi.resetModules();
@@ -59,8 +49,8 @@ const startApp = async () => {
 
 describe("auth service: a token in the URL fragment", () => {
   beforeEach(() => {
-    vi.stubGlobal("localStorage", fakeLocalStorage());
-    vi.stubGlobal("sessionStorage", fakeLocalStorage());
+    vi.stubGlobal("localStorage", fakeStorage());
+    vi.stubGlobal("sessionStorage", fakeStorage());
     openAt("");
   });
 
@@ -163,8 +153,8 @@ describe("auth service: sign-in through the hub", () => {
   let history: RouterHistory | undefined;
 
   beforeEach(() => {
-    vi.stubGlobal("localStorage", fakeLocalStorage());
-    vi.stubGlobal("sessionStorage", fakeLocalStorage());
+    vi.stubGlobal("localStorage", fakeStorage());
+    vi.stubGlobal("sessionStorage", fakeStorage());
     openAt("");
   });
 
@@ -256,7 +246,10 @@ describe("auth service: sign-in through the hub", () => {
     authService.startHubSignIn(OPEN);
 
     expect(replace).toHaveBeenCalledTimes(1);
-    expect(new URL(replace.mock.calls[0][0] as string).origin + new URL(replace.mock.calls[0][0] as string).pathname).toBe(OPEN);
+    expect(
+      new URL(replace.mock.calls[0][0] as string).origin +
+        new URL(replace.mock.calls[0][0] as string).pathname,
+    ).toBe(OPEN);
     expect(assign).not.toHaveBeenCalled();
     replace.mockRestore();
     assign.mockRestore();
@@ -372,8 +365,8 @@ describe("auth service: sign-out and expiry", () => {
   const original = axios.defaults.adapter;
 
   beforeEach(() => {
-    vi.stubGlobal("localStorage", fakeLocalStorage());
-    vi.stubGlobal("sessionStorage", fakeLocalStorage());
+    vi.stubGlobal("localStorage", fakeStorage());
+    vi.stubGlobal("sessionStorage", fakeStorage());
     openAt("");
   });
 

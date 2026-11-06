@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import type { CatalogTable, NamespaceTree } from "../types";
+import { ns, table } from "../__fixtures__/catalogTree";
 
 const { getTablePreviewMock, getTableHistoryMock, addTableFavoriteMock } = vi.hoisted(() => ({
   getTablePreviewMock: vi.fn(),
@@ -18,24 +18,8 @@ vi.mock("../api/catalog.api", () => ({
 
 import { useCatalogStore } from "./catalog-store";
 
-const table = (overrides: Partial<CatalogTable> = {}): CatalogTable =>
-  ({
-    id: 5,
-    name: "orders",
-    table_type: "physical",
-    is_remote_storage: false,
-    is_favorite: false,
-    ...overrides,
-  }) as unknown as CatalogTable;
-
-const schema = (id: number, tables: CatalogTable[], source?: "hub"): NamespaceTree =>
-  ({ id, name: "raw", level: 1, children: [], tables, source }) as unknown as NamespaceTree;
-
-const catalog = (id: number, children: NamespaceTree[], source?: "hub"): NamespaceTree =>
-  ({ id, name: "sales", level: 0, children, tables: [], source }) as unknown as NamespaceTree;
-
-const localTable = table();
-const hubTable = table({ id: -5, source: "hub", hub_id: 5, hub_namespace_id: 3 });
+const localTable = table({ id: 5, is_remote_storage: false, is_favorite: false });
+const hubTable = table({ ...localTable, id: -5, source: "hub", hub_id: 5, hub_namespace_id: 3 });
 
 describe("catalog-store with hub rows in the tree", () => {
   beforeEach(() => {
@@ -49,8 +33,12 @@ describe("catalog-store with hub rows in the tree", () => {
   const seed = () => {
     const store = useCatalogStore();
     store.tree = [
-      catalog(1, [schema(2, [localTable])]),
-      catalog(-1, [schema(-3, [hubTable], "hub")], "hub"),
+      ns({ id: 1, children: [ns({ id: 2, level: 1, tables: [localTable] })] }),
+      ns({
+        id: -1,
+        source: "hub",
+        children: [ns({ id: -3, level: 1, source: "hub", tables: [hubTable] })],
+      }),
     ];
     return store;
   };
