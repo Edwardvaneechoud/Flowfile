@@ -133,8 +133,9 @@ def test_unauthenticated_returns_401(unauth_client: TestClient) -> None:
     assert unauth_client.post("/telemetry/consent", json={"enabled": True}).status_code == 401
 
 
-def test_docker_non_admin_cannot_manage(non_admin_client: TestClient, monkeypatch) -> None:
-    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+@pytest.mark.parametrize("mode", ["docker", "hub"])
+def test_server_non_admin_cannot_manage(non_admin_client: TestClient, monkeypatch, mode: str) -> None:
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
     status = non_admin_client.get("/telemetry/status")
     assert status.status_code == 200
     assert status.json()["can_manage"] is False
@@ -144,16 +145,18 @@ def test_docker_non_admin_cannot_manage(non_admin_client: TestClient, monkeypatc
     assert telemetry.consent() is None
 
 
-def test_docker_admin_can_manage(admin_client: TestClient, monkeypatch) -> None:
-    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+@pytest.mark.parametrize("mode", ["docker", "hub"])
+def test_server_admin_can_manage(admin_client: TestClient, monkeypatch, mode: str) -> None:
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
     post = admin_client.post("/telemetry/consent", json={"enabled": True})
     assert post.status_code == 200
     assert post.json()["can_manage"] is True
     assert post.json()["consent"] is True
 
 
-def test_non_docker_non_admin_can_manage(non_admin_client: TestClient, monkeypatch) -> None:
-    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+@pytest.mark.parametrize("mode", ["electron", "package"])
+def test_desktop_non_admin_can_manage(non_admin_client: TestClient, monkeypatch, mode: str) -> None:
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
     post = non_admin_client.post("/telemetry/consent", json={"enabled": True})
     assert post.status_code == 200
     assert post.json()["can_manage"] is True

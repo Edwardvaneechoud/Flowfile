@@ -6,16 +6,20 @@ Another person's row stays theirs on a joined server, and a desktop's sync is it
 
 import logging
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from fastapi.testclient import TestClient
 
+from flowfile_core import main
 from flowfile_core.configs import logger as core_logger
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import ConfiguredBackend
+from flowfile_core.database.models import ConfiguredBackend, User
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.hub_client import client, node_tokens, session
+from flowfile_core.hub_client import client, node_addresses, node_tokens, session
+from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared import hub_node
 from shared.tests import hub_join
 from tests.conftest import closed_url
@@ -256,9 +260,48 @@ def test_a_row_of_a_person_no_longer_signed_in_follows_the_next_persons_list(joi
     assert rows()[BACKEND_ID][2] == USER_ID
 
 
-def test_a_desktops_sync_is_its_one_users_list(hub):
-    from flowfile_core.hub_client import node_addresses
+def test_deleting_a_person_leaves_their_row_to_the_others_and_an_account_with_their_id_inherits_none(joined, hub):
+    api = TestClient(main.app)
+    api.headers["Authorization"] = f"Bearer {api.post('/auth/token').json()['access_token']}"
+    with get_db_context() as db:
+        person = User(username=f"leaver-{uuid.uuid4().hex[:8]}", hashed_password="!")
+        db.add(person)
+        db.commit()
+        person_id, username = person.id, person.username
+        db.get(ConfiguredBackend, BACKEND_ID).hub_user_id = person_id
+        db.add(ConfiguredBackend(id="worker:own", url=closed_url(), token=encrypt_secret("t", 1)))
+        db.commit()
+    sign_in_through_hub(hub, person_id)
+    sign_in_through_hub(hub, OTHER_ID)
+    registry.backend(BACKEND_ID)
 
+    deleted = api.delete(f"/auth/users/{person_id}")
+
+    assert deleted.status_code == 200, deleted.text
+    assert rows()[BACKEND_ID][1:] == (NODE_ID, None)
+    assert "worker:own" in rows()
+    with node_tokens.acting_for(OTHER_ID):
+        backend = registry.backend(BACKEND_ID)
+        assert backend.signing_token() == node_tokens.token_for(OTHER_ID, NODE_ID, "team")
+
+    with get_db_context() as db:
+        db.add(User(id=person_id, username=username, hashed_password="!"))
+        db.commit()
+    try:
+        sign_in_through_hub(hub, person_id)
+        with pytest.raises(LookupError, match="no hub session mints a token"):
+            registry.backend(BACKEND_ID)
+        hub.nodes = []
+        node_addresses.sync_for(OTHER_ID)
+        assert set(rows()) == {"worker:own"}
+    finally:
+        session.clear(person_id)
+        with get_db_context() as db:
+            db.query(User).filter(User.id == person_id).delete()
+            db.commit()
+
+
+def test_a_desktops_sync_is_its_one_users_list(hub):
     sales_row_of(OTHER_ID)
     with get_db_context() as db:
         node_addresses.sync_nodes(db, USER_ID, hub.url, session.access_token(USER_ID))
