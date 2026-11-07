@@ -446,95 +446,9 @@ class TestProjectReadsRegisteredFlowsInsideTheFlowFolders:
             inside.unlink(missing_ok=True)
 
 
-class TestWhereTheEditorMayKeepAFlow:
-    """``may_edit_flow_at`` under the real mode: the flow folders and the user data folder on a server, never the
-    storage folder, even where the user data folder holds it as a hub server's home holds ``~/.flowfile``."""
-
-    @pytest.fixture(params=["docker", "hub"])
-    def server(self, request, tmp_path, monkeypatch):
-        from shared.storage_config import storage
-
-        monkeypatch.setenv("FLOWFILE_MODE", request.param)
-        monkeypatch.setattr(storage, "_user_data_dir", tmp_path / "user")
-        monkeypatch.setattr(storage, "_base_dir", tmp_path / "store")
-        monkeypatch.chdir(tmp_path)
-        return storage
-
-    def test_flow_folders_and_user_data_are_allowed(self, server):
-        from shared.storage_config import may_edit_flow_at
-
-        assert may_edit_flow_at(server.flows_directory / "flow.yaml")
-        assert may_edit_flow_at(server.uploads_directory / "flow.yaml")
-        assert may_edit_flow_at(server.user_data_directory / "sub" / "flow.yaml")
-
-    def test_storage_and_working_folders_are_refused(self, server, tmp_path):
-        from shared.storage_config import may_edit_flow_at
-
-        assert not may_edit_flow_at(server.base_directory / "hub_node_key.json")
-        assert not may_edit_flow_at(server.base_directory / "hub_node.json")
-        assert not may_edit_flow_at(tmp_path / "node.yaml")
-        assert not may_edit_flow_at(Path("node.yaml"))
-
-    def test_a_link_in_user_data_does_not_lead_into_storage(self, server):
-        from shared.storage_config import may_edit_flow_at
-
-        server.user_data_directory.mkdir(parents=True)
-        server.base_directory.mkdir(parents=True)
-        link = server.user_data_directory / "store_link"
-        link.symlink_to(server.base_directory, target_is_directory=True)
-        assert not may_edit_flow_at(link / "hub_node_key.json")
-
-    def test_storage_inside_user_data_stays_refused(self, server, tmp_path, monkeypatch):
-        from shared.storage_config import may_edit_flow_at
-
-        monkeypatch.setattr(server, "_user_data_dir", tmp_path)
-        assert not may_edit_flow_at(server.base_directory / "hub_node_key.json")
-        assert may_edit_flow_at(tmp_path / "elsewhere" / "flow.yaml")
-
-    def test_user_data_inside_storage_stays_allowed(self, server, monkeypatch):
-        from shared.storage_config import may_edit_flow_at
-
-        monkeypatch.setattr(server, "_user_data_dir", server.base_directory / "user")
-        assert may_edit_flow_at(server.user_data_directory / "flow.yaml")
-        assert not may_edit_flow_at(server.base_directory / "hub_node_key.json")
-
-    def test_a_desktop_keeps_a_flow_anywhere(self, tmp_path, monkeypatch):
-        from shared.storage_config import may_edit_flow_at
-
-        monkeypatch.setenv("FLOWFILE_MODE", "electron")
-        assert may_edit_flow_at(tmp_path / "anywhere.yaml")
-
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
-    def test_create_flow_refuses_a_key_file_past_the_real_path_limits(self, tmp_path, monkeypatch, mode):
-        """The route under the real mode, whose path limits take the storage folder: only the new check holds it."""
-        from types import SimpleNamespace
-
-        from fastapi import HTTPException
-
-        from flowfile_core.configs import settings
-        from flowfile_core.routes.routes import create_flow
-        from shared.storage_config import storage
-
-        monkeypatch.setattr(settings, "FLOWFILE_MODE", mode)
-        monkeypatch.setenv("FLOWFILE_MODE", mode)
-        monkeypatch.setattr(storage, "_user_data_dir", tmp_path / "user")
-        key = storage.base_directory / f"hub_node_key_{os.getpid()}.json"
-        key.write_text('{"sig": "keep"}', encoding="utf-8")
-        user = SimpleNamespace(id=1, is_admin=False, username="someone")
-        try:
-            assert validate_path_under_cwd(str(key)) == os.path.realpath(key)
-            with pytest.raises(HTTPException) as refused:
-                create_flow(flow_path=str(key), register_in_catalog=False, persist=True, current_user=user)
-            assert refused.value.status_code == 422
-            assert str(storage.flows_directory) in refused.value.detail
-            assert key.read_text(encoding="utf-8") == '{"sig": "keep"}'
-        finally:
-            key.unlink(missing_ok=True)
-
-
 class TestEditorLimitsOnAHubServer:
-    """A hub server's path limits are the working folder, the storage folder and its user data folder, the home
-    folder: the file browser and the project root start there, so projects, new folders and the Excel read do too."""
+    """A hub server gets docker's path limits: the working folder and the storage folder, never the home folder
+    its user data directory points at."""
 
     @staticmethod
     def _hub(monkeypatch) -> None:
@@ -543,36 +457,16 @@ class TestEditorLimitsOnAHubServer:
         monkeypatch.setattr(settings, "FLOWFILE_MODE", "hub")
         monkeypatch.setenv("FLOWFILE_MODE", "hub")
 
-    @staticmethod
-    def _home(monkeypatch, home: Path) -> None:
+    def test_hub_server_refuses_the_home_folder(self, monkeypatch):
+        from fastapi import HTTPException
+
         from shared.storage_config import storage
 
-        monkeypatch.setenv("HOME", str(home))
-        monkeypatch.setattr(storage, "_user_data_dir", None)
-
-    def test_hub_server_allows_the_home_folder(self, tmp_path, monkeypatch):
         self._hub(monkeypatch)
-        self._home(monkeypatch, tmp_path)
-        path = tmp_path / "Documents" / "flow.yaml"
-        assert validate_path_under_cwd(str(path)) == os.path.realpath(path)
-
-    def test_hub_server_makes_a_project_under_the_home_folder(self, tmp_path, monkeypatch):
-        from types import SimpleNamespace
-
-        from flowfile_core.project import project_sync
-        from flowfile_core.project.manifest import read_manifest
-        from flowfile_core.routes.project import InitProjectRequest, init_project
-
-        self._hub(monkeypatch)
-        self._home(monkeypatch, tmp_path)
-        owner_id = 1
-        root = tmp_path / "projects" / str(owner_id) / "myproj"
-        project_sync.close_project(owner_id)
-        try:
-            init_project(InitProjectRequest(folder_path=str(root), name="Home"), SimpleNamespace(id=owner_id))
-            assert read_manifest(root).name == "Home"
-        finally:
-            project_sync.close_project(owner_id)
+        monkeypatch.setattr(storage, "_user_data_dir", Path.home())
+        with pytest.raises(HTTPException) as exc_info:
+            validate_path_under_cwd(str(Path.home() / "Documents" / "flow.yaml"))
+        assert exc_info.value.status_code == 403
 
     def test_hub_server_allows_the_storage_folder(self, monkeypatch):
         from shared.storage_config import storage

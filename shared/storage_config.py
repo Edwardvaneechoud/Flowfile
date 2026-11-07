@@ -416,24 +416,6 @@ def may_touch_flow_file(flow_path: Path) -> bool:
     return not is_server_mode() or _inside_flow_folders(flow_path.resolve())
 
 
-def may_edit_flow_at(flow_path: Path) -> bool:
-    """Whether the editor may open or write a flow at a path a request named.
-
-    On a multi-user server: inside the flow folders, or inside the user data folder but not the storage folder, which
-    holds the node's keys and may lie in the user data folder (a hub server's home holds ``~/.flowfile``). A desktop's
-    flows live anywhere on the person's machine.
-    """
-    if not is_server_mode():
-        return True
-    resolved = flow_path.resolve()
-    if _inside_flow_folders(resolved):
-        return True
-    user_data = storage.user_data_directory.resolve()
-    base = storage.base_directory.resolve()
-    in_storage = base.is_relative_to(user_data) and resolved.is_relative_to(base)
-    return resolved.is_relative_to(user_data) and not in_storage
-
-
 def require_flow_in_storage(flow_path: Path) -> Path:
     """``flow_path`` resolved, the one path to act on; on a multi-user server it must lie inside the flow folders.
 
