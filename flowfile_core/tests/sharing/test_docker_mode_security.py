@@ -21,7 +21,6 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import (
 from flowfile_core.flowfile.user_defined.registry import registry
 from shared.storage_config import storage
 
-_TMP_FLOW_DIR = Path.cwd() / "flowfile_core/tests/support_files/flows/tmp"
 _PROBE = "pl.Config.set_tbl_rows(7)"
 _PROBE_ENV = "POLARS_FMT_MAX_ROWS"
 _EXEC_MARKER_ENV = "FLOWFILE_TEST_CUSTOM_NODE_EXEC"
@@ -45,11 +44,10 @@ def flow_session_cleanup():
 
 @pytest.fixture
 def own_flow(flow_session_cleanup):
-    _TMP_FLOW_DIR.mkdir(parents=True, exist_ok=True)
     created: list[Path] = []
 
     def _make(client) -> int:
-        path = _TMP_FLOW_DIR / f"sec_{uuid.uuid4().hex[:10]}.yaml"
+        path = storage.user_data_directory / f"sec_{uuid.uuid4().hex[:10]}.yaml"
         created.append(path)
         resp = client.post("/editor/create_flow/", params={"flow_path": str(path), "register_in_catalog": False})
         assert resp.status_code == 200, resp.text
@@ -127,6 +125,24 @@ def test_codegen_dtype_expr_keeps_emittable_forms():
     assert _dtype_expr("Int64") == "ff.Int64"
     assert _dtype_expr("Datetime(time_unit='us', time_zone=None)") == "ff.Datetime(time_unit='us', time_zone=None)"
     assert _dtype_expr("List(Int64)") is None
+
+
+@pytest.mark.parametrize("register", [True, False])
+def test_a_user_cannot_write_or_open_a_key_file_by_path(users, client_for, flow_session_cleanup, register):
+    """Through the real docker path limits and a real non-admin sign-in: the storage folder is a path limit's root."""
+    bob = client_for("bob")
+    key = storage.base_directory / f"hub_node_key_{uuid.uuid4().hex[:10]}.json"
+    key.write_text('{"sig": "private-key-canary"}', encoding="utf-8")
+    try:
+        created = bob.post("/editor/create_flow/", params={"flow_path": str(key), "register_in_catalog": register})
+        opened = bob.get("/import_flow/", params={"flow_path": str(key)})
+        for answer in (created, opened):
+            assert answer.status_code == 422, answer.text
+            assert str(storage.flows_directory) in answer.json()["detail"]
+            assert "canary" not in answer.text
+        assert key.read_text(encoding="utf-8") == '{"sig": "private-key-canary"}'
+    finally:
+        key.unlink(missing_ok=True)
 
 
 def test_dtype_string_via_update_settings_is_not_evaluated(users, client_for, own_flow, probe_env):

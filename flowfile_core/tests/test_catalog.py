@@ -2403,6 +2403,60 @@ class TestEditorOpensRegisteredFilesInsideTheFlowFolders:
         finally:
             inside.unlink(missing_ok=True)
 
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("register", [True, False])
+    def test_server_refuses_to_create_a_flow_over_a_registered_file_outside_the_flow_folders(
+        self, tmp_path, monkeypatch, mode, register
+    ):
+        outside = tmp_path / "outside.yaml"
+        TestFlowCode._save_flow(outside)
+        before = outside.read_text(encoding="utf-8")
+        self._register(outside, "outside")
+        sessions = {flow.flow_id for flow in flow_file_handler.flowfile_flows}
+        as_server(monkeypatch, mode)
+        refused = client.post(
+            "/editor/create_flow/", params={"flow_path": str(outside), "register_in_catalog": register}
+        )
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["detail"] == "the flow's file is outside the server's flow folders"
+        assert outside.read_text(encoding="utf-8") == before
+        assert {flow.flow_id for flow in flow_file_handler.flowfile_flows} == sessions
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_refuses_a_file_registered_under_a_links_spelling(self, tmp_path, monkeypatch, mode):
+        """A row from before the rule holds a link's spelling, and the editor asks by the resolved path."""
+        real = tmp_path / "elsewhere"
+        real.mkdir()
+        link = tmp_path / "linked"
+        link.symlink_to(real, target_is_directory=True)
+        target = real / "pre_rule.yaml"
+        TestFlowCode._save_flow(target)
+        before = target.read_text(encoding="utf-8")
+        self._register(link / "pre_rule.yaml", "pre_rule")
+        flow_id = client.get("/import_flow/", params={"flow_path": str(target)}).json()
+        try:
+            as_server(monkeypatch, mode)
+            calls = (
+                client.get("/import_flow/", params={"flow_path": str(target)}),
+                client.post("/save_flow", params={"flow_id": flow_id}),
+                client.post("/editor/create_flow/", params={"flow_path": str(target), "register_in_catalog": False}),
+            )
+            for refused in calls:
+                assert refused.status_code == 422, refused.text
+                assert refused.json()["detail"] == "the flow's file is outside the server's flow folders"
+            assert target.read_text(encoding="utf-8") == before
+        finally:
+            flow_file_handler.delete_flow(flow_id)
+
+    def test_desktop_asks_nothing_about_a_registered_file(self, tmp_path, monkeypatch):
+        from flowfile_core.routes import routes
+
+        def must_not_ask(flow_path: str) -> bool:
+            raise AssertionError(f"asked the catalog about {flow_path}")
+
+        monkeypatch.setattr(routes, "is_registered_flow_file", must_not_ask)
+        routes._require_registered_file_in_storage(str(tmp_path / "anywhere.yaml"))
+
     def test_desktop_opens_and_saves_its_own_flow_anywhere(self, tmp_path):
         anywhere = tmp_path / "anywhere.yaml"
         TestFlowCode._save_flow(anywhere)
@@ -2413,6 +2467,122 @@ class TestEditorOpensRegisteredFilesInsideTheFlowFolders:
             assert client.post("/save_flow", params={"flow_id": opened.json()}).status_code == 200
         finally:
             flow_file_handler.delete_flow(opened.json())
+
+
+class TestEditorKeepsFlowsInTheServersFolders:
+    """On a server the editor opens and writes a flow by path only in the flow folders and the user data folder: the
+    storage and working folders hold a node's keys and settings. A desktop's flows live anywhere."""
+
+    KEY_FILE = '{"sig": "private-key-canary", "enc": "private-key-canary"}'
+    REFUSAL = "lives in its flows folder"
+
+    @pytest.fixture
+    def folders(self, tmp_path, monkeypatch):
+        user_data = tmp_path / "user"
+        working = tmp_path / "work"
+        user_data.mkdir()
+        working.mkdir()
+        monkeypatch.setattr(storage, "_user_data_dir", user_data)
+        monkeypatch.chdir(working)
+        key = storage.base_directory / f"hub_node_key_{os.getpid()}.json"
+        key.write_text(self.KEY_FILE, encoding="utf-8")
+        local = working / "node_settings.yaml"
+        local.write_text("keep: me\n", encoding="utf-8")
+        before = {flow.flow_id for flow in flow_file_handler.flowfile_flows}
+        yield {"user_data": user_data, "key": key, "local": local}
+        key.unlink(missing_ok=True)
+        for flow in list(flow_file_handler.flowfile_flows):
+            if flow.flow_id not in before:
+                flow_file_handler.delete_flow(flow.flow_id)
+
+    @staticmethod
+    def _blank_flow() -> int:
+        return client.post("/editor/create_flow/", params={"persist": False, "register_in_catalog": False}).json()
+
+    def _assert_refused(self, answer) -> None:
+        assert answer.status_code == 422, answer.text
+        assert self.REFUSAL in answer.json()["detail"]
+        assert str(storage.flows_directory) in answer.json()["detail"]
+        assert "canary" not in answer.text
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("register", [True, False])
+    @pytest.mark.parametrize("target", ["key", "local"])
+    def test_server_refuses_to_create_or_save_outside_its_folders(self, folders, monkeypatch, mode, register, target):
+        path = folders[target]
+        before = path.read_text(encoding="utf-8")
+        flow_id = self._blank_flow()
+        sessions = {flow.flow_id for flow in flow_file_handler.flowfile_flows}
+        as_server(monkeypatch, mode)
+        params = {"flow_path": str(path), "register_in_catalog": register}
+        self._assert_refused(client.post("/editor/create_flow/", params=params))
+        self._assert_refused(client.post("/save_flow", params={"flow_id": flow_id, **params}))
+        assert path.read_text(encoding="utf-8") == before
+        assert {flow.flow_id for flow in flow_file_handler.flowfile_flows} == sessions
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("target", ["key", "local"])
+    def test_server_refuses_to_open_outside_its_folders(self, folders, monkeypatch, mode, target):
+        sessions = {flow.flow_id for flow in flow_file_handler.flowfile_flows}
+        as_server(monkeypatch, mode)
+        self._assert_refused(client.get("/import_flow/", params={"flow_path": str(folders[target])}))
+        assert {flow.flow_id for flow in flow_file_handler.flowfile_flows} == sessions
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("register", [True, False])
+    def test_server_creates_saves_and_opens_in_the_flows_folder(self, folders, monkeypatch, mode, register):
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        created = storage.flows_directory / f"inside_created_{os.getpid()}_{register}.yaml"
+        saved = storage.flows_directory / f"inside_saved_{os.getpid()}_{register}.yaml"
+        flow_id = self._blank_flow()
+        as_server(monkeypatch, mode)
+        try:
+            params = {"register_in_catalog": register}
+            answer = client.post("/editor/create_flow/", params={"flow_path": str(created), **params})
+            assert answer.status_code == 200, answer.text
+            answer = client.post("/save_flow", params={"flow_id": flow_id, "flow_path": str(saved), **params})
+            assert answer.status_code == 200, answer.text
+            assert created.is_file() and saved.is_file()
+            assert client.get("/import_flow/", params={"flow_path": str(saved)}).status_code == 200
+        finally:
+            created.unlink(missing_ok=True)
+            saved.unlink(missing_ok=True)
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_creates_saves_and_opens_in_the_user_data_folder(self, folders, monkeypatch, mode):
+        created = folders["user_data"] / "created.yaml"
+        saved = folders["user_data"] / "saved.yaml"
+        flow_id = self._blank_flow()
+        as_server(monkeypatch, mode)
+        params = {"register_in_catalog": False}
+        answer = client.post("/editor/create_flow/", params={"flow_path": str(created), **params})
+        assert answer.status_code == 200, answer.text
+        answer = client.post("/save_flow", params={"flow_id": flow_id, "flow_path": str(saved), **params})
+        assert answer.status_code == 200, answer.text
+        assert created.is_file() and saved.is_file()
+        assert client.get("/import_flow/", params={"flow_path": str(saved)}).status_code == 200
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_still_says_registering_outside_the_flow_folders_is_refused(self, folders, monkeypatch, mode):
+        as_server(monkeypatch, mode)
+        answer = client.post(
+            "/editor/create_flow/",
+            params={"flow_path": str(folders["user_data"] / "filed.yaml"), "register_in_catalog": True},
+        )
+        assert answer.status_code == 422, answer.text
+        assert answer.json()["detail"] == "the flow's file is outside the server's flow folders"
+
+    def test_desktop_creates_saves_and_opens_anywhere(self, folders, tmp_path):
+        created = tmp_path / "created.yaml"
+        saved = folders["local"].with_name("saved.yaml")
+        flow_id = self._blank_flow()
+        params = {"register_in_catalog": False}
+        answer = client.post("/editor/create_flow/", params={"flow_path": str(created), **params})
+        assert answer.status_code == 200, answer.text
+        answer = client.post("/save_flow", params={"flow_id": flow_id, "flow_path": str(saved), **params})
+        assert answer.status_code == 200, answer.text
+        assert created.is_file() and saved.is_file()
+        assert client.get("/import_flow/", params={"flow_path": str(saved)}).status_code == 200
 
 
 class TestTriggerArmingAndRunVisibility:

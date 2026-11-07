@@ -64,6 +64,7 @@ from flowfile_core.flowfile.catalog_helpers import (
     find_registration_by_name,
     find_registration_by_path,
     find_registration_by_registration_id,
+    is_registered_flow_file,
     namespace_exists,
     register_flow_in_namespace,
     require_flow_save_permitted,
@@ -143,7 +144,13 @@ from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared.db_dialects import KNOWN_DIALECT_NAMES, DialectInfo, dialect_catalog
-from shared.storage_config import registered_flow_path, require_flow_in_storage, storage
+from shared.storage_config import (
+    may_edit_flow_at,
+    may_touch_flow_file,
+    registered_flow_path,
+    require_flow_in_storage,
+    storage,
+)
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -1510,15 +1517,28 @@ def _require_flow_save_permitted(flow_path: str | None, namespace_id: int | None
         raise HTTPException(status_code=403, detail=str(err)) from None
 
 
-def _require_registered_file_in_storage(flow_path: str) -> None:
+def _require_registered_file_in_storage(flow_path: str | None) -> None:
     """422 on a server when ``flow_path`` is a registered flow's file outside the flow folders: a registration
-    from before the rule is not opened or written over through the editor either."""
-    if find_registration_by_path(flow_path) is None:
+    from before the rule is not opened or written over through the editor either, whichever spelling it holds.
+    Off a server this returns before any file or catalog read."""
+    if flow_path is None or may_touch_flow_file(Path(flow_path)) or not is_registered_flow_file(flow_path):
         return
     try:
         require_flow_in_storage(Path(flow_path))
     except ValueError as err:
         raise HTTPException(status_code=422, detail=str(err)) from None
+
+
+def _require_editor_flow_location(flow_path: str | None) -> None:
+    """422 on a server before the editor opens or writes a flow outside the flow folders and the user data folder:
+    the storage and working folders hold the node's keys and settings, and the path limits let a request name them."""
+    if flow_path is not None and not may_edit_flow_at(Path(flow_path)):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"A flow on this server lives in its flows folder ({storage.flows_directory}) or the user data folder"
+            ),
+        )
 
 
 def _require_registrable_flow_path(flow_path: str | None) -> None:
@@ -1575,6 +1595,8 @@ def create_flow(
     if namespace_id is not None and not namespace_exists(namespace_id):
         raise HTTPException(404, "Namespace not found")
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
+    _require_registered_file_in_storage(flow_path)
+    _require_editor_flow_location(flow_path)
     if register_in_catalog:
         _require_registrable_flow_path(flow_path)
     if namespace_id is not None and flow_path is not None:
@@ -2446,6 +2468,7 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     """
     validated_path = validate_path_under_cwd(flow_path)
     _require_registered_file_in_storage(validated_path)
+    _require_editor_flow_location(validated_path)
     if not os.path.exists(validated_path):
         raise HTTPException(404, "File not found")
     user_id = current_user.id if current_user else None
@@ -2501,6 +2524,7 @@ def _save_flow_impl(
     # Before any YAML write: a refused save leaves no orphan and overwrites no other user's flow.
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
     _require_registered_file_in_storage(flow_path)
+    _require_editor_flow_location(flow_path)
     if (is_new_path and register_in_catalog) or namespace_id is not None:
         _require_registrable_flow_path(flow_path)
 

@@ -247,6 +247,12 @@ def find_registration_by_path(flow_path: str) -> FlowRegistrationSnapshot | None
         return _snapshot(service.repo.get_flow_by_path(flow_path))
 
 
+def is_registered_flow_file(flow_path: str) -> bool:
+    """Whether any registration names the file at ``flow_path``, under any spelling of its path."""
+    with get_db_context() as db:
+        return SQLAlchemyCatalogRepository(db).count_flows_by_path(flow_path) > 0
+
+
 def resolve_display_names(flow_paths: Iterable[str | None]) -> dict[str, str]:
     """Map each registered ``flow_path`` to its catalog display name, in one query.
 
