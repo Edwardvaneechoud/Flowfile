@@ -70,12 +70,9 @@ def get_kernel_manager() -> KernelManager:
             if _manager is None:
                 from shared.storage_config import storage
 
-                # Use a sub-directory of the standard temp/internal_storage tree.
-                # In Docker mode this resolves to /app/internal_storage/temp/kernel_shared
-                # which is on the flowfile-internal-storage volume already shared
-                # between core, worker, and (via KernelManager) kernel containers.
-                shared_path = str(storage.temp_directory / "kernel_shared")
-                _manager = KernelManager(shared_volume_path=shared_path)
+                # The folder the worker writes kernel exchanges into (artifacts, view snapshots): FLOWFILE_SHARED_DIR
+                # when set, as on a server joined to a hub, else <internal storage>/temp/kernel_shared.
+                _manager = KernelManager(shared_volume_path=str(storage.shared_directory))
     return _manager
 
 
