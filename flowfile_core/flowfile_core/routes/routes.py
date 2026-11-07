@@ -551,8 +551,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
 
     A run whose record was written is then reported to the hub ``hub_target`` names, if any: on a server joined
     with keys of its own, the hub the user signed in through, with their delegated access token; elsewhere the user's
-    hub session for a flow that came from that hub. A run of a flow with no registration is not reported. The report is
-    built for the same user (``node_tokens.acting_for``), since it asks the hub for the ids of the tables the run wrote.
+    hub session for a flow that came from that hub. A run of a flow with no registration is not reported.
 
     On a machine signed in to a hub the run takes the exchange store the hub sets, asked once before the run with the
     user's hub session and only for a flow with a node set to another backend than the run's or a step on a hub
@@ -642,8 +641,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
         logger.debug(f"Run {core_run_id} of flow '{flow_name}' not reported to the hub: no registration")
         return
     try:
-        with node_tokens.acting_for(user_id):
-            report = build_run_report(flow, run_info, flow_uuid)
+        report = build_run_report(flow, run_info, flow_uuid)
     except Exception as exc:
         logger.warning(f"Could not build the hub report for run {core_run_id} of flow '{flow_name}': {exc}")
         return

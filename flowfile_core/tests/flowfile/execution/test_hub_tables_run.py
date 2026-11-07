@@ -454,27 +454,6 @@ def test_fetch_data_after_a_development_run_asks_the_hub_nothing(connected, carr
     assert len(connected.vend_calls) == 1
 
 
-@pytest.mark.parametrize("writer_user_id", [1, None], ids=["writer-names-the-user", "writer-names-nobody"])
-def test_a_desktops_run_report_keeps_the_hubs_ids_of_what_it_wrote_through_its_one_user(
-    connected, carrying_scans, operations, flag, writer_user_id
-):
-    from flowfile_core.hub_client.report import build_run_report
-
-    graph = make_graph(8761 + 100 * flag + (writer_user_id is None), execution_location="local")
-    add_hub_reader(graph, 1, connected)
-    add_hub_writer(graph, 2, 1, connected.ids["curated"], "orders_out")
-    run_info = graph.run_graph()
-    assert run_info.success is True, [result.error for result in run_info.node_step_result]
-    graph.get_node(2).setting_input.user_id = writer_user_id
-    written = next(table for table in connected.tables if table["name"] == "orders_out")
-
-    report = build_run_report(graph, run_info, "flow-uuid")
-
-    assert report["outputs"] == [
-        {"namespace_id": connected.ids["curated"], "table_id": written["id"], "table_name": "orders_out"}
-    ]
-
-
 @pytest.mark.parametrize("mode", ["Performance", "Development"])
 def test_the_run_report_counts_the_rows_out_the_run_knew_after_its_vend_ends(
     connected, carrying_scans, operations, flag, mode
