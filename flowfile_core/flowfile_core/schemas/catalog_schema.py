@@ -118,6 +118,13 @@ class FlowRegistrationOut(BaseModel):
     tables_produced: list["CatalogTableSummary"] = Field(default_factory=list)
     tables_read: list["CatalogTableSummary"] = Field(default_factory=list)
     access: AccessInfo | None = None
+    # Where the flow lives; a hub's row carries the negative of the hub's registration id as ``id``, that id as
+    # ``hub_id``, the flow's uuid, and its newest published version with who published it.
+    source: Literal["local", "hub"] = "local"
+    hub_id: int | None = None
+    flow_uuid: str | None = None
+    latest_version: int | None = None
+    author_name: str | None = None
 
     model_config = {"from_attributes": True}
 

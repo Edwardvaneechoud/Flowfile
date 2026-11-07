@@ -1,9 +1,11 @@
-"""The hub's catalogs and tables in core's catalog tree, beside the local ones, and the node fields naming a hub table.
+"""The hub's catalogs, tables and flows in core's catalog tree, beside the local ones, and the node fields naming a hub
+table.
 
 A connected user's ``GET /catalog/namespaces/tree`` answers the local catalogs first and then the hub's, each hub row
 marked ``source: "hub"`` with the negative of the hub's id as its ``id``. Beside the hub's, every row says where it
-lives (``place``), and a hub catalog this Flowfile cannot use says why (``unavailable_reason``). Every other catalog
-route stays local.
+lives (``place``), and a hub catalog this Flowfile cannot use says why (``unavailable_reason``). A hub schema lists
+its published flows with the newest version and who published it; a hub that refuses the flows read keeps its tables.
+Every other catalog route stays local.
 """
 
 import logging
@@ -178,8 +180,60 @@ def test_connected_lists_the_hub_catalogs_after_the_local_ones(connected, hub, u
         ("/catalog/namespaces", f"parent_id={seeded['sales']['id']}"),
         ("/catalog/namespaces", f"parent_id={seeded['finance']['id']}"),
         ("/catalog/tables", ""),
+        ("/hub/flows", ""),
     ]
-    assert not any(path.startswith("/hub/flows") for _, path in hub.calls)
+
+
+def test_a_hub_schemas_published_flows_are_listed_under_it_with_the_newest_version(connected, hub):
+    seeded = _seed(hub)
+    clean = hub.seed_flow(seeded["raw"], "orders-clean", latest_version=3, author_name="ana", owner_id=7)
+    hub.seed_flow(seeded["raw"], "draft", latest_version=None)
+    hub.seed_flow(seeded["finance"], "close-the-books", author_name=None)
+
+    tree = connected.get("/catalog/namespaces/tree").json()
+
+    [sales] = [root for root in tree if root["name"] == "sales"]
+    raw, curated = sales["children"]
+    assert sales["flows"] == [] and curated["flows"] == []
+    [flow] = raw["flows"]
+    assert flow["source"] == "hub" and flow["id"] == -clean["registration_id"]
+    assert flow["hub_id"] == clean["registration_id"] and flow["flow_uuid"] == clean["flow_uuid"]
+    assert flow["name"] == "orders-clean" and flow["namespace_id"] == raw["id"] and flow["owner_id"] == 7
+    assert flow["latest_version"] == 3 and flow["author_name"] == "ana"
+    assert flow["flow_path"] == f"hub://flows/{clean['flow_uuid']}"
+    assert flow["file_exists"] is True and flow["run_count"] == 0 and flow["last_run_success"] is None
+    assert flow["created_at"] == flow["updated_at"] == "2026-11-01T12:00:00Z"
+    [finance] = [root for root in tree if root["name"] == "finance"]
+    assert [(f["name"], f["latest_version"], f["author_name"]) for f in finance["flows"]] == [
+        ("close-the-books", 1, None)
+    ]
+    assert hub.catalog_calls[-1] == ("/hub/flows", "")
+
+
+def test_a_hub_that_refuses_its_flows_keeps_its_tables_in_the_tree_with_one_warning(connected, hub, warnings):
+    seeded = _seed(hub)
+    hub.seed_flow(seeded["raw"], "orders-clean")
+    hub.flows_failure = 404
+
+    tree = connected.get("/catalog/namespaces/tree").json()
+
+    [sales] = [root for root in tree if root["name"] == "sales"]
+    raw = sales["children"][0]
+    assert [t["name"] for t in raw["tables"]] == ["orders", "customers"] and raw["flows"] == []
+    assert len(warnings) == 1 and "flows of the hub" in warnings[0] and HUB_URL in warnings[0]
+
+
+def test_a_hub_answering_flow_rows_core_cannot_read_keeps_its_tables_with_one_warning(connected, hub, warnings):
+    seeded = _seed(hub)
+    hub.seed_flow(seeded["raw"], "orders-clean")
+    hub.flows[0]["published_at"] = None
+
+    tree = connected.get("/catalog/namespaces/tree").json()
+
+    [sales] = [root for root in tree if root["name"] == "sales"]
+    assert [t["name"] for t in sales["children"][0]["tables"]] == ["orders", "customers"]
+    assert sales["children"][0]["flows"] == []
+    assert len(warnings) == 1 and "did not answer /hub/flows as a Flowfile hub does" in warnings[0]
 
 
 def test_a_hub_catalog_this_flowfile_cannot_use_says_why_on_each_of_its_rows(connected, hub):

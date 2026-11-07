@@ -52,7 +52,14 @@ local_user = test_hub_sign_in.local_user
 
 client = TestClient(main.app)
 UID = 7
-CATALOG_PATHS = ("/catalog/namespaces", "/catalog/tables", "/catalog/tables/from-data", "/hub/vend", "/hub/runs")
+CATALOG_PATHS = (
+    "/catalog/namespaces",
+    "/catalog/tables",
+    "/catalog/tables/from-data",
+    "/hub/flows",
+    "/hub/vend",
+    "/hub/runs",
+)
 
 
 class OrganisationHub(PersonHub):

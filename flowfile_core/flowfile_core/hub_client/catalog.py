@@ -1,10 +1,16 @@
-"""The hub's catalogs and tables as rows of the local catalog tree.
+"""The hub's catalogs, tables and flows as rows of the local catalog tree.
 
-A connected desktop lists the hub's namespaces and tables beside its own, in the one tree the Catalog tab reads. Each
-hub row carries ``source = "hub"``, the negative of the hub's id as its ``id`` (local ids are positive
+A connected desktop lists the hub's namespaces, tables and published flows beside its own, in the one tree the Catalog
+tab reads. Each hub row carries ``source = "hub"``, the negative of the hub's id as its ``id`` (local ids are positive
 autoincrements, so the two never meet) and the hub's own id as ``hub_id``. The hub is read on every listing and
 nothing is kept; a hub that does not answer, or no longer accepts the session, leaves its catalogs out of the tree
 with one warning in the log.
+
+A hub flow's row (``_flow``) is the registration as the hub lists it, with ``flow_uuid``, ``latest_version`` and
+``author_name`` so the Catalog tab can open the version a person picks as Open Flow → Hub does; a flow with no
+published version has nothing to open and is left out. The flows are one read after the tables; a hub that refuses
+that read, or answers rows core cannot read, keeps its catalogs and tables in the tree and lists no flows, after one
+warning.
 
 Each row also says where it lives and whether this Flowfile can use it (``merged``): the hub's rows carry the hub's
 name as their ``place`` and, for a catalog on the hub's own disk or on storage other than S3, the sentence a run over
@@ -27,7 +33,7 @@ from flowfile_core.configs.settings import is_server_mode
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.hub_client.node_tokens import RECONNECT
-from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceTree
+from flowfile_core.schemas.catalog_schema import CatalogTableOut, FlowRegistrationOut, NamespaceTree
 
 HUB = "hub"
 _NAMESPACE_FIELDS = (
@@ -123,12 +129,13 @@ def _marked(node: NamespaceTree, **fields) -> NamespaceTree:
 
 
 def tree(user_id: int) -> list[NamespaceTree]:
-    """The hub's catalogs, their schemas and their tables, for ``user_id``'s hub connection; ``[]`` without one.
+    """The hub's catalogs, their schemas, their tables and their flows, for ``user_id``'s hub connection; ``[]``
+    without one.
 
     One walk per call: the hub's root namespaces, the children of each root (a catalog nests catalog → schema, so
-    no deeper), and every table the account can see in one request, grouped under their namespaces. The hub's
-    order is kept. A hub that cannot be reached, refuses (an expired session included) or refuses this client's
-    version answers ``[]`` after one warning naming the hub and the reason.
+    no deeper), every table the account can see in one request and every published flow in another, each grouped
+    under its namespace. The hub's order is kept. A hub that cannot be reached, refuses (an expired session included)
+    or refuses this client's version answers ``[]`` after one warning naming the hub and the reason.
 
     Every namespace row carries the hub's name as its ``place`` (its organisation as the stored connection names it,
     else its URL) and, when this Flowfile cannot use the catalog's tables, the reason as its
@@ -234,15 +241,38 @@ def _walk(hub_url: str, access_token: str) -> list[NamespaceTree]:
         if table.get("namespace_id") is not None:
             row = _table(hub_url, table)
             tables.setdefault(row.hub_namespace_id, []).append(row)
+    flows = _flows(hub_url, access_token)
     walked = []
     for root in roots:
         storage_uri = root.get("storage_uri") or None
         schemas = [
-            _namespace(hub_url, schema, tables, unreachable(storage_uri, f"{root['name']}.{schema['name']}"))
+            _namespace(hub_url, schema, tables, flows, unreachable(storage_uri, f"{root['name']}.{schema['name']}"))
             for schema in children[root["id"]]
         ]
-        walked.append(_namespace(hub_url, root, tables, unreachable(storage_uri, root["name"]), schemas))
+        walked.append(_namespace(hub_url, root, tables, flows, unreachable(storage_uri, root["name"]), schemas))
     return walked
+
+
+def _flows(hub_url: str, access_token: str) -> dict[int, list[FlowRegistrationOut]]:
+    """The hub's published flows by the hub id of their namespace, from one ``GET /hub/flows``.
+
+    A flow with no published version (``latest_version`` null) or in no namespace is left out. A hub that refuses the
+    read (an older hub without the route, a session it no longer accepts) or answers rows core cannot read lists no
+    flows, after one warning: the catalogs and tables stay in the tree.
+    """
+    try:
+        rows = client.list_flows(hub_url, access_token)
+        flows: dict[int, list[FlowRegistrationOut]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                raise HubRefused(200, f"{hub_url} did not answer /hub/flows as a Flowfile hub does.")
+            if row.get("latest_version") is None or row.get("namespace_id") is None:
+                continue
+            flows.setdefault(row["namespace_id"], []).append(_flow(hub_url, row))
+        return flows
+    except HubRefused as e:
+        logger.warning("Leaving the flows of the hub at %s out of the catalog tree: %s", hub_url, e)
+        return {}
 
 
 def _namespaces(hub_url: str, rows: list) -> list[dict]:
@@ -257,6 +287,7 @@ def _namespace(
     hub_url: str,
     namespace: dict,
     tables: dict[int, list[CatalogTableOut]],
+    flows: dict[int, list[FlowRegistrationOut]],
     unavailable_reason: str | None,
     children: list | None = None,
 ) -> NamespaceTree:
@@ -270,9 +301,32 @@ def _namespace(
             unavailable_reason=unavailable_reason,
             children=children or [],
             tables=tables.get(namespace["id"], []),
+            flows=flows.get(namespace["id"], []),
         )
     except (ValidationError, KeyError, TypeError) as e:
         raise HubRefused(200, f"{hub_url} did not answer /catalog/namespaces as a Flowfile hub does.") from e
+
+
+def _flow(hub_url: str, flow: dict) -> FlowRegistrationOut:
+    """A hub flow as a row of the tree: the hub's registration under its negative id, its path the hub's synthetic
+    ``hub://flows/<uuid>``, the newest version's publication as its timestamps, and nothing of a local flow's runs."""
+    try:
+        return FlowRegistrationOut(
+            id=row_id(flow["registration_id"]),
+            name=flow["name"],
+            flow_path=f"hub://flows/{flow['flow_uuid']}",
+            namespace_id=row_id(flow["namespace_id"]),
+            owner_id=flow["owner_id"],
+            created_at=flow["published_at"],
+            updated_at=flow["published_at"],
+            source=HUB,
+            hub_id=flow["registration_id"],
+            flow_uuid=flow["flow_uuid"],
+            latest_version=flow["latest_version"],
+            author_name=flow.get("author_name"),
+        )
+    except (ValidationError, KeyError, TypeError) as e:
+        raise HubRefused(200, f"{hub_url} did not answer /hub/flows as a Flowfile hub does.") from e
 
 
 def _table(hub_url: str, table: dict) -> CatalogTableOut:

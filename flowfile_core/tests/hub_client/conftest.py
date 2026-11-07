@@ -194,8 +194,9 @@ class FakeHubWithCatalog(FakeHub):
     ``namespaces`` and ``tables`` hold the hub's rows as core 0.24.0 dumps ``NamespaceOut`` and ``CatalogTableOut``;
     ``catalog_calls`` records each catalog request as ``(path, query string)``. ``GET /catalog/tables/{id}`` answers a
     row of ``tables`` (404 for another id) and ``POST /catalog/tables/from-data`` appends one (409 on a name taken in
-    the namespace), each body kept in ``registered``. A vend checks ``grants`` (``"use"`` or ``"manage"`` per
-    namespace id) and answers one static credential per root ``storage_uri``, its options ``vend_options`` of that
+    the namespace), each body kept in ``registered``. ``GET /hub/flows`` answers ``flows``, the published flows as
+    the hub lists them (``seed_flow``; ``flows_failure`` set answers that status instead). A vend checks ``grants``
+    (``"use"`` or ``"manage"`` per namespace id) and answers one static credential per root ``storage_uri``, its options ``vend_options`` of that
     root; each body is kept in ``vend_calls``. ``vend_failure`` set answers that status instead. With ``says_sentences``
     a refused grant is answered as a hub that says what to do does (team-spaces TS10), naming the schema; otherwise
     as core's bare reason. ``POST /hub/runs``
@@ -206,6 +207,8 @@ class FakeHubWithCatalog(FakeHub):
         super().__init__()
         self.namespaces: list[dict] = []
         self.tables: list[dict] = []
+        self.flows: list[dict] = []
+        self.flows_failure: int | None = None
         self.catalog_calls: list[tuple[str, str]] = []
         self.grants: dict[int, str] = {}
         self.vend_options: dict[str, dict] = {}
@@ -237,6 +240,31 @@ class FakeHubWithCatalog(FakeHub):
             **fields,
         ).model_dump(mode="json", exclude=_LOCAL_ONLY)
         self.tables.append(row)
+        return row
+
+    def seed_flow(
+        self,
+        namespace: dict,
+        name: str,
+        *,
+        latest_version: int | None = 1,
+        author_name: str | None = "bob",
+        owner_id: int = 1,
+        flow_uuid: str | None = None,
+    ) -> dict:
+        """A flow registered in ``namespace`` on the hub, as ``GET /hub/flows`` lists it; ``latest_version`` ``None``
+        is one registered but never published."""
+        row = {
+            "registration_id": len(self.flows) + 201,
+            "flow_uuid": flow_uuid or str(uuid.uuid5(uuid.NAMESPACE_URL, f"{namespace['id']}/{name}")),
+            "name": name,
+            "namespace_id": namespace["id"],
+            "owner_id": owner_id,
+            "latest_version": latest_version,
+            "author_name": author_name if latest_version is not None else None,
+            "published_at": _STAMP if latest_version is not None else None,
+        }
+        self.flows.append(row)
         return row
 
     def _add_namespace(self, name: str, parent_id: int | None, level: int, fields: dict) -> dict:
@@ -331,7 +359,7 @@ class FakeHubWithCatalog(FakeHub):
     def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         catalog_read = request.method == "GET" and (
-            path in ("/catalog/namespaces", "/catalog/tables") or path.startswith("/catalog/tables/")
+            path in ("/catalog/namespaces", "/catalog/tables", "/hub/flows") or path.startswith("/catalog/tables/")
         )
         catalog_write = request.method == "POST" and path in ("/hub/vend", "/catalog/tables/from-data", "/hub/runs")
         if not (catalog_read or catalog_write):
@@ -360,6 +388,12 @@ class FakeHubWithCatalog(FakeHub):
             parent_id = None if parent is None else int(parent)
             return httpx.Response(200, json=[ns for ns in self.namespaces if ns["parent_id"] == parent_id])
         namespace = request.url.params.get("namespace_id")
+        if path == "/hub/flows":
+            if self.flows_failure is not None:
+                return httpx.Response(self.flows_failure, json={"detail": "Not Found"})
+            return httpx.Response(
+                200, json=[f for f in self.flows if namespace is None or f["namespace_id"] == int(namespace)]
+            )
         return httpx.Response(
             200, json=[t for t in self.tables if namespace is None or t["namespace_id"] == int(namespace)]
         )
