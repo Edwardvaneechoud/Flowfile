@@ -41,12 +41,14 @@ def bearer(token: str) -> dict:
 
 
 @pytest.fixture
-def node_file(node_file, tmp_path, monkeypatch):
+def node_file(tmp_path, monkeypatch):
     """A server's storage dir of the test's own: docker mode, its own secure store, no hub settings in the variables."""
     monkeypatch.setenv("FLOWFILE_MODE", "docker")
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-for-hub-sign-in-tests")
     for name in VARIABLES:
         monkeypatch.delenv(name, raising=False)
+    target = tmp_path / "storage" / hub_node.FILE_NAME
+    monkeypatch.setattr(hub_node, "path", lambda: target)
     monkeypatch.setattr(hub_tokens, "_client", None)
     monkeypatch.setattr(hub_client, "_module_http", None)
     secure = tmp_path / "secure_storage"
@@ -55,7 +57,7 @@ def node_file(node_file, tmp_path, monkeypatch):
     monkeypatch.setattr(core_secrets, "_storage", core_secrets.SecureStorage())
     monkeypatch.setattr(session, "_access_tokens", {})
     invalidate_user_cache()
-    yield node_file
+    yield target
     invalidate_user_cache()
 
 

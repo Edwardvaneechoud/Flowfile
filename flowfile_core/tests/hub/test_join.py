@@ -45,6 +45,14 @@ CONNECT = {"hub_url": HUB_URL, "username": "ana", "password": "s3cret", "device_
 
 
 @pytest.fixture
+def node_file(tmp_path, monkeypatch):
+    """Core's ``hub_node.json`` in a storage dir of the test's own, absent until a join or the test writes it."""
+    target = tmp_path / "storage" / hub_node.FILE_NAME
+    monkeypatch.setattr(hub_node, "path", lambda: target)
+    return target
+
+
+@pytest.fixture
 def no_variables(monkeypatch):
     for name in VARIABLES:
         monkeypatch.delenv(name, raising=False)

@@ -25,15 +25,17 @@ VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME"
 
 
 @pytest.fixture(autouse=True)
-def node_file(node_file, monkeypatch):
+def node_file(tmp_path, monkeypatch):
     """Core's storage dir is the test's own; no warning is spent before the test, a beat follows every 0.2 s and no
     earlier test's ``run`` left a serving port behind."""
+    target = tmp_path / "storage" / hub_node.FILE_NAME
+    monkeypatch.setattr(hub_node, "path", lambda: target)
     monkeypatch.setattr(hub_node, "_warned_beats", set())
     monkeypatch.setattr(hub_node, "HEARTBEAT_SECONDS", 0.2)
     monkeypatch.setattr(main, "serving_port", None)
     for name in VARIABLES:
         monkeypatch.delenv(name, raising=False)
-    return node_file
+    return target
 
 
 def core_joins(monkeypatch, hub: FakeJoinHub, *, enabled: bool = True) -> dict:

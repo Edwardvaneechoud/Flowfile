@@ -71,13 +71,14 @@ def clean_catalog():
 
 
 @pytest.fixture
-def desktop(node_file, tmp_path, monkeypatch) -> str:
+def desktop(tmp_path, monkeypatch) -> str:
     """A desktop that never joined a hub: electron mode, no ``hub_node.json``, a secure store of the test's own holding
     the suite's keys; its own access token."""
     core_secrets.get_master_key()
     keys = core_secrets._storage._read_store("flowfile")
     monkeypatch.setenv("FLOWFILE_MODE", "electron")
     monkeypatch.delenv("FLOWFILE_EXCHANGE_URI", raising=False)
+    monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
     monkeypatch.setattr(hub_tokens, "_client", None)
     monkeypatch.setattr(hub_client, "_module_http", None)
     secure = tmp_path / "secure_storage"
