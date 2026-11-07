@@ -23,6 +23,7 @@ HUB_RUN_LOG_PREFIX = "hub_run_"  # a run the hub dispatched to this server, kept
 # Mirrors shared.run_completion.REAPABLE_RUN_TYPES; duplicated rather than
 # imported so this module stays free of the sqlalchemy import.
 SUBPROCESS_RUN_TYPES = ("scheduled", "manual", "on_demand")
+LOGGED_RUN_TYPES = SUBPROCESS_RUN_TYPES + ("hub",)  # a hub run runs in core and copies its log under run_log_path
 
 DEFAULT_LOG_RETENTION_DAYS = 30
 

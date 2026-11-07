@@ -24,7 +24,7 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRunOut,
     PaginatedFlowRuns,
 )
-from shared.run_logs import SUBPROCESS_RUN_TYPES, run_log_path
+from shared.run_logs import LOGGED_RUN_TYPES, run_log_path
 from shared.storage_config import require_flow_in_storage
 from shared.subprocess_utils import spawn_flow_subprocess
 
@@ -77,7 +77,7 @@ class FlowRunService:
     @staticmethod
     def _resolve_log_path(run_id: int, run_type: str) -> str | None:
         """Return the log file path if it exists for subprocess-spawned runs."""
-        if run_type not in SUBPROCESS_RUN_TYPES:
+        if run_type not in LOGGED_RUN_TYPES:
             return None
         log_file = run_log_path(run_id)
         return str(log_file) if log_file.exists() else None

@@ -7,13 +7,15 @@ is also their sign-in, ``hub_client.signin``), the version is checked out from t
 id and run as a flow opened from the hub runs for them, with their vends, their run token on the hub's other servers and
 the hub's exchange store, and reported to the hub under the hub's run id with their delegated token, failed or not. A
 run that cannot start, a checkout the hub refuses or a flow that does not build, is reported failed with no nodes, so
-the hub does not wait for it. Nothing is registered or saved here; the run's log is kept beside the flow logs as
-``hub_run_<run id>.log``.
+the hub does not wait for it. Nothing is registered or saved here; the run is in this server's own run history as
+the hub's (``run_type`` ``hub``, the person's, no registration), and its log is kept beside the flow logs as
+``hub_run_<run id>.log`` and under the name the run history reads it by.
 
 A run id is taken once per process (``taken``): a second dispatch with it is refused while its token could still be
 alive. A restart forgets them; the hub's row still says the run was dispatched.
 """
 
+import json
 import shutil
 import tempfile
 import threading
@@ -23,6 +25,8 @@ from pathlib import Path
 
 import yaml
 
+from flowfile_core.catalog import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import get_flow_log_file
 from flowfile_core.database.connection import get_db_context
@@ -33,7 +37,7 @@ from flowfile_core.hub_client.report import build_run_report, post_run_report
 from flowfile_core.schemas import schemas
 from shared import hub_node
 from shared.hub_tokens import DispatchClaims
-from shared.run_logs import HUB_RUN_LOG_PREFIX
+from shared.run_logs import HUB_RUN_LOG_PREFIX, run_log_path
 from shared.storage_config import storage
 
 _taken: dict[str, int] = {}
@@ -103,8 +107,8 @@ def _checked_out(user_id: int, claims: DispatchClaims) -> schemas.FlowfileData:
 
 
 def _run(user_id: int, claims: DispatchClaims, document: schemas.FlowfileData, label: str) -> None:
-    """Build the document under a fresh id in a file of its own, run it as the person and report it; the file goes,
-    the log stays."""
+    """Build the document under a fresh id in a file of its own, run it as the person, record it in this server's run
+    history and report it to the hub; the file goes, the log stays."""
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
     from flowfile_core.hub_client.report import hub_flow_uuid, hub_target
     from flowfile_core.routes.routes import _hub_store_for
@@ -117,13 +121,16 @@ def _run(user_id: int, claims: DispatchClaims, document: schemas.FlowfileData, l
         with ephemeral_flow_graph(path, user_id) as flow:
             flow.hub_run_id = claims.run_id
             logger.info(f"The hub's {label} runs here as user {user_id}, flow id {flow.flow_id}")
+            core_run_id = _open_record(flow, user_id, claims, document.flowfile_name)
+            run_info = None
             try:
                 flow.hub_exchange_store = _hub_store_for(flow, user_id)
                 with node_tokens.acting_for(user_id):
                     run_info = flow.run_graph()
             finally:
                 flow.hub_exchange_store = None
-                _keep_log(flow.flow_id, claims.run_id)
+                _close_record(core_run_id, run_info)
+                _keep_log(flow.flow_id, claims.run_id, core_run_id)
             if run_info is None:
                 raise RuntimeError("the run gave no result")
             target = hub_target(flow, user_id)
@@ -137,13 +144,63 @@ def _run(user_id: int, claims: DispatchClaims, document: schemas.FlowfileData, l
         shutil.rmtree(folder, ignore_errors=True)
 
 
-def _keep_log(flow_id: int, run_id: str) -> None:
-    """Copy the run's flow log beside the flow logs as ``hub_run_<run id>.log``; the graph's release removes the
+def _open_record(flow, user_id: int, claims: DispatchClaims, name: str | None) -> int | None:
+    """Open the run in this server's own run history, as an editor run's record is opened (``routes._open_run_record``):
+    no registration (the flow is not saved here), the hub's flow uuid and the name the checkout gave (the built graph
+    is named after its temp file), ``run_type`` ``hub``. ``None`` when the
+    row could not be written; the run goes on, and the hub's ledger still gets it."""
+    try:
+        snapshot = flow.get_flowfile_data().model_dump_json()
+    except Exception as e:
+        logger.warning(f"The hub's run {claims.run_id}: snapshot serialization failed: {e}")
+        snapshot = None
+    try:
+        with get_db_context() as db:
+            row = FlowRunService(SQLAlchemyCatalogRepository(db)).start_run(
+                registration_id=None,
+                flow_name=name or claims.flow_uuid,
+                flow_path=f"hub://flows/{claims.flow_uuid}",
+                user_id=user_id,
+                number_of_nodes=len(flow.nodes),
+                run_type="hub",
+                flow_snapshot=snapshot,
+                flow_uuid=claims.flow_uuid,
+            )
+            return row.id
+    except Exception as e:
+        logger.warning(f"The hub's run {claims.run_id} is not in this server's run history: {e}")
+        return None
+
+
+def _close_record(core_run_id: int | None, run_info) -> None:
+    """Close the run history row with the run's outcome; a run that ended without a result is closed as failed."""
+    if core_run_id is None:
+        return
+    try:
+        results = None
+        if run_info is not None:
+            results = json.dumps([r.model_dump(mode="json") for r in (run_info.node_step_result or [])])
+        with get_db_context() as db:
+            FlowRunService(SQLAlchemyCatalogRepository(db)).complete_run(
+                run_id=core_run_id,
+                success=bool(run_info is not None and run_info.success),
+                nodes_completed=run_info.nodes_completed if run_info is not None else 0,
+                node_results_json=results,
+            )
+    except Exception as e:
+        logger.warning(f"This server's run history row {core_run_id} was not closed: {e}")
+
+
+def _keep_log(flow_id: int, run_id: str, core_run_id: int | None) -> None:
+    """Copy the run's flow log beside the flow logs as ``hub_run_<run id>.log`` and, when the run is in this server's
+    run history, under the name that history reads it by (``run_log_path``); the graph's release removes the
     original."""
     source = get_flow_log_file(flow_id)
     try:
         if source.exists():
             shutil.copyfile(source, source.with_name(f"{HUB_RUN_LOG_PREFIX}{run_id}.log"))
+            if core_run_id is not None:
+                shutil.copyfile(source, run_log_path(core_run_id))
     except OSError as e:
         logger.warning(f"The log of the hub's run {run_id} was not kept: {e}")
 

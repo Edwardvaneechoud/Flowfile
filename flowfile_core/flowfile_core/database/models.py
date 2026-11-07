@@ -19,7 +19,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
-RunType = Literal["in_designer_run", "scheduled", "manual", "on_demand"]
+RunType = Literal["in_designer_run", "scheduled", "manual", "on_demand", "hub"]
 
 Base = declarative_base()
 

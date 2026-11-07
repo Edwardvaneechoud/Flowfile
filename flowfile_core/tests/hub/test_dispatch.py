@@ -25,6 +25,7 @@ from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.hub_client import signin
 from flowfile_core.schemas import input_schema, transform_schema
+from shared.run_logs import run_log_path
 from shared.tests.hub_join import TOKEN_EXCHANGE, TOKEN_PATH
 from shared.tests.hub_jwks import HubSigner
 from tests import test_hub_sign_in
@@ -208,6 +209,10 @@ def test_a_good_token_signs_the_person_in_checks_the_version_out_as_them_runs_it
     with get_db_context() as db:
         account = signin.account(db, UID)
         assert account is not None and account.username == username and account.is_admin is False
+        [row] = db.query(db_models.FlowRun).filter_by(flow_uuid=flow_uuid).all()
+        assert (row.run_type, row.registration_id, row.flow_name, row.user_id) == ("hub", None, "demo-flow", account.id)
+        assert (row.success, row.nodes_completed, row.number_of_nodes) == (True, 1, 1)
+        assert row.ended_at is not None and run_log_path(row.id).exists()
     assert (get_flow_log_file(1).parent / f"hub_run_{run_id}.log").exists()
 
 
@@ -283,6 +288,9 @@ def test_a_flow_that_fails_is_reported_failed_under_the_hubs_run_id(hub, usernam
     failed = [node for node in posted["nodes"] if not node["success"]]
     assert [node["node_type"] for node in failed] == ["polars_code"]
     assert "nope" in failed[0]["error"]
+    with get_db_context() as db:
+        [row] = db.query(db_models.FlowRun).filter_by(flow_uuid=flow_uuid).all()
+        assert (row.run_type, row.success, row.ended_at is not None) == ("hub", False, True)
 
 
 def test_a_checkout_the_hub_refuses_is_reported_failed_with_no_nodes_so_the_hub_does_not_wait(hub, username):
@@ -295,6 +303,8 @@ def test_a_checkout_the_hub_refuses_is_reported_failed_with_no_nodes_so_the_hub_
     [posted] = hub.catalog.reports
     assert (posted["run_id"], posted["flow_uuid"], posted["flow_version"]) == (run_id, flow_uuid, VERSION)
     assert (posted["success"], posted["nodes"]) == (False, [])
+    with get_db_context() as db:
+        assert db.query(db_models.FlowRun).filter_by(flow_uuid=flow_uuid).count() == 0
 
 
 def test_off_a_server_not_joined_with_keys_the_route_is_not_there(node_file):
