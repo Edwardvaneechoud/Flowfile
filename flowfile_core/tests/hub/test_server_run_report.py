@@ -10,6 +10,7 @@ the hub, as an install may set it on a server that joined. The case that reads a
 them on the suite's MinIO and skips without it.
 """
 
+import logging
 import uuid
 from pathlib import Path
 
@@ -23,7 +24,8 @@ from flowfile_core import main
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRun
-from flowfile_core.hub_client import report
+from flowfile_core.hub_client import node_tokens, report, session
+from flowfile_core.hub_client.delegation import Delegation
 from flowfile_core.routes import routes
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.output_model import NodeResult, RunInformation
@@ -285,6 +287,89 @@ def test_a_report_names_only_the_hubs_tables_with_the_servers_keys_or_without(hu
 
     assert "core_run_id" not in without_keys
     assert (without_keys["inputs"], without_keys["outputs"]) == ([hub_table], [])
+
+
+def keep_a_sign_in(hub: OrganisationHub, account: int, uid: int, name: str) -> str:
+    """Person ``uid``'s sign-in through the hub kept for the local account ``account``; its access token."""
+    token = f"hub-access-{uuid.uuid4().hex}"
+    person = {"uid": uid, "username": name, "full_name": None, "node_admin": False}
+    hub.people[uid] = person
+    hub.issued[token] = uid
+    granted = Delegation(
+        access_token=token,
+        expires_in=3600,
+        refresh_token=f"hub-refresh-{uuid.uuid4().hex}",
+        refresh_expires_in=3600,
+        user=person,
+    )
+    session.save_delegation(account, hub.url, granted)
+    return token
+
+
+def finished_writer(flow_id: int, hub: OrganisationHub, *, user_id: int | None):
+    """A graph with one writer of the hub's table ``written``, set by ``user_id``, its run finished; with the row the
+    hub lists for that table."""
+    catalog = hub.catalog.seed_catalog(f"hub_{uuid.uuid4().hex[:8]}", storage_uri=f"s3://{_BUCKET}/written")
+    sales = hub.catalog.seed_schema(catalog, "sales")
+    table = hub.catalog.seed_table(sales, "written", file_path=f"s3://{_BUCKET}/written/t", is_remote_storage=True)
+    graph = create_test_graph(flow_id=flow_id)
+    add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
+    add_promise(graph, 2, "catalog_writer")
+    graph.add_catalog_writer(
+        input_schema.NodeCatalogWriter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            user_id=user_id,
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name="written", hub_namespace_id=sales["id"], write_mode="overwrite"
+            ),
+        )
+    )
+    connect(graph, 1, 2)
+    result = NodeResult(node_id=2)
+    result.finish(success=True, error="")
+    finished = RunInformation(
+        flow_id=graph.flow_id,
+        success=True,
+        nodes_completed=1,
+        number_of_nodes=1,
+        node_step_result=[result],
+        run_type="full_run",
+    )
+    return graph, finished, table
+
+
+@pytest.mark.parametrize("writer_names", ["nobody", "someone else"])
+def test_a_report_reads_the_hubs_ids_as_the_person_the_run_is_for_and_no_one_else(hub, hub_url, username, writer_names):
+    person, _ = sign_in(hub, username)
+    [delegated] = hub.issued
+    keep_a_sign_in(hub, 1, 99, "first-account")
+    graph, finished, table = finished_writer(8132, hub, user_id=None if writer_names == "nobody" else 1)
+
+    with node_tokens.acting_for(person):
+        built = report.build_run_report(graph, finished, flow_uuid=str(uuid.uuid4()))
+
+    assert hub.sent_with("GET", "/catalog/tables") == [delegated]
+    [output] = built["outputs"]
+    assert output == {"namespace_id": table["namespace_id"], "table_id": table["id"], "table_name": "written"}
+
+
+def test_a_report_with_nobody_to_ask_as_leaves_the_ids_out_and_asks_under_no_ones_session(
+    hub, hub_url, monkeypatch, caplog
+):
+    monkeypatch.setattr(report.logger, "propagate", True)
+    caplog.set_level(logging.WARNING, logger=report.logger.name)
+    keep_a_sign_in(hub, 1, 99, "first-account")
+    graph, finished, table = finished_writer(8133, hub, user_id=None)
+
+    built = report.build_run_report(graph, finished, flow_uuid=str(uuid.uuid4()))
+
+    assert hub.sent_with("GET", "/catalog/tables") == []
+    [output] = built["outputs"]
+    assert output == {"namespace_id": table["namespace_id"], "table_id": None, "table_name": "written"}
+    logged = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("Could not read the hub's ids of the tables this run wrote" in line for line in logged)
 
 
 @pytest.fixture

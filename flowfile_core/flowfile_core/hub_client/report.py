@@ -24,7 +24,7 @@ from flowfile_core.auth import issuer_accounts
 from flowfile_core.configs import logger
 from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client import client as hub_client
-from flowfile_core.hub_client import session
+from flowfile_core.hub_client import node_tokens, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import RunInformation
@@ -99,15 +99,19 @@ def _rows_out(flow, node) -> int | None:
 def _hub_output_ids(writers: list) -> dict[tuple[int, str], int]:
     """The hub's id of each table in the namespaces ``writers`` wrote to, by ``(namespace id, name)``.
 
-    One request through the writers' hub session: that namespace's tables, or every table the account sees when the
-    writers wrote to several. A hub that does not answer costs one warning and answers ``{}``.
+    One request through one hub session: that namespace's tables, or every table the account sees when the writers
+    wrote to several. A hub that does not answer costs one warning and answers ``{}``. On a server joined with keys of
+    its own the session is the one of the person the run is for (``node_tokens.acting``) and no one else's, so a report
+    with nobody to ask as leaves the ids out with that warning. Anywhere else it is the writers' session, a desktop's
+    one user for a writer that names none.
     """
     namespace_ids = {writer.catalog_write_settings.hub_namespace_id for writer in writers}
     if not namespace_ids:
         return {}
     only = next(iter(namespace_ids)) if len(namespace_ids) == 1 else None
+    asking = node_tokens.acting() if issuer_accounts.joined_with_keys() is not None else writers[0].user_id or 1
     try:
-        hub_url, access_token = hub_catalog.signed_in(writers[0].user_id or 1)
+        hub_url, access_token = hub_catalog.signed_in(asking)
         rows = hub_client.list_tables(hub_url, access_token, namespace_id=only)
     except (LookupError, HubUnreachable, HubRefused, HubVersionRefused) as exc:
         logger.warning(f"Could not read the hub's ids of the tables this run wrote: {exc}")
