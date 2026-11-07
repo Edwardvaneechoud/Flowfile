@@ -1,33 +1,26 @@
-"""A hub that answers joins for the tests: ``POST /hub/nodes/join`` as the hub's contract has it, served from a thread.
+"""A hub that answers joins for the tests: the routes a node calls, as the hub's contract has them, in a thread.
 
-``mint()`` hands out an opaque join token (``code=True``: a short code as a hub's Compute page shows one, ``K7QX-M2PD``,
-which a node posts as given); the join route checks a body as the hub's model does, the editor's
-``ui_url`` included (a 422 in FastAPI's shape), refuses a token it did not mint, an expired one and a used one with
-the hub's sentences, and answers the others once. Given a ``HubSigner`` it also serves that signer's keys at
-``/.well-known/jwks.json`` and names the signer's URL as the issuer, so one URL is the whole hub for a node that joins
-it and then verifies its tokens. ``POST /hub/nodes/heartbeat`` takes a beat from a node that joined with keys and is
-enabled, checking its node assertion against the ``sig`` key the join sent, as the hub's contract says: the ``kid``, the
-signature, the audience (the issuer and the route's path), at most 60 seconds between ``iat`` and ``exp``, 30 seconds
-of leeway, a ``jti`` used once, and the body. ``POST /hub/token`` exchanges a sign-in token the signer signed
-(``sign_in_token``) for a delegation to the node whose assertion comes with it, and refreshes one with its rotating
-refresh token; ``POST /hub/token/revoke`` ends one. Both take the form fields and answer the OAuth errors of the
-hub's contract, after checking the assertion as the heartbeat does, with the route's own path as its audience. Import
-the fixture into a test module: ``from shared.tests.hub_join import join_hub  # noqa: F401``.
+``POST /hub/nodes/join`` takes a token ``mint()`` handed out (``code=True``: a short code as a hub's Compute page shows
+one), once; it checks a body as the hub's model does and refuses other tokens with the hub's sentences. Given a
+``HubSigner`` it also serves that signer's keys and names the signer's URL as the issuer, so one URL is the whole hub
+for a node that joins it and then verifies its tokens. ``POST /hub/nodes/heartbeat``, ``POST /hub/token`` and
+``POST /hub/token/revoke`` take a node that joined with keys and is enabled, its assertion checked as the hub's
+contract says. Import the fixtures into a test module: ``from shared.tests.hub_join import join_hub  # noqa: F401``.
 """
 
 import json
-import re
 import secrets
 import threading
 import time
 import uuid
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 import jwt
 import pytest
+from pydantic import BaseModel, Field, ValidationError
 
-from shared.tests.hub_jwks import JWKS_PATH, HubSigner
+from shared import hub_node
+from shared.tests.hub_jwks import JWKS_PATH, FakeHubServer, HubSigner
 
 JOIN_PATH = "/hub/nodes/join"
 HEARTBEAT_PATH = "/hub/nodes/heartbeat"
@@ -49,33 +42,14 @@ EXPIRED = "this join token has expired; create a new one on the hub's Compute pa
 USED = "this join token has been used; create a new one on the hub's Compute page"
 
 
-def _validation_errors(body) -> list[dict]:
-    """The errors FastAPI's ``NodeJoin`` model would answer for ``body``, ``input`` included as FastAPI sends it."""
-    if not isinstance(body, dict):
-        return [{"type": "model_attributes_type", "loc": ["body"], "msg": "Input should be a valid dictionary"}]
-    errors = []
-    fields = (("token", None, True), ("name", NAME_PATTERN, True), ("worker_url", URL_PATTERN, True))
-    optional = (("core_url", URL_PATTERN, False), ("ui_url", URL_PATTERN, False))
-    for field, pattern, required in (*fields, *optional):
-        loc = ["body", field]
-        if field not in body or (not required and body[field] is None):
-            if required:
-                errors.append({"type": "missing", "loc": loc, "msg": "Field required", "input": body})
-            continue
-        value = body[field]
-        if not isinstance(value, str):
-            errors.append({"type": "string_type", "loc": loc, "msg": "Input should be a valid string", "input": value})
-        elif pattern is not None and re.search(pattern, value) is None:
-            errors.append(
-                {
-                    "type": "string_pattern_mismatch",
-                    "loc": loc,
-                    "msg": f"String should match pattern '{pattern}'",
-                    "input": value,
-                    "ctx": {"pattern": pattern},
-                }
-            )
-    return errors
+class NodeJoin(BaseModel):
+    """The body of a join, as the hub's model checks it."""
+
+    token: str
+    name: str = Field(pattern=NAME_PATTERN)
+    worker_url: str = Field(pattern=URL_PATTERN)
+    core_url: str | None = Field(None, pattern=URL_PATTERN)
+    ui_url: str | None = Field(None, pattern=URL_PATTERN)
 
 
 def _form(content_type: str | None, raw: bytes) -> dict | None:
@@ -89,18 +63,14 @@ def _oauth(error: str, description: str) -> dict:
     return {"error": error, "error_description": description}
 
 
-class FakeJoinHub:
-    """Answers ``POST /hub/nodes/join`` for the tokens it minted, and the heartbeats and token requests of the nodes
-    that joined.
+class FakeJoinHub(FakeHubServer):
+    """Answers joins for the tokens it minted, and the heartbeats and token requests of the nodes that joined.
 
     ``calls`` keeps each request's path and body (a token request's form fields); ``beats`` each heartbeat taken, its
-    assertion's verified ``header`` and ``claims`` and its ``body``; ``token_requests`` each token request answered
-    200, its ``grant_type`` and its assertion's ``header`` and ``claims``. ``people`` holds what the hub knows of each
-    person a sign-in token was made for, by user id, and answers as their ``user``; a test changes it to model a
-    person whose name or rights changed. A user id in ``refused_people`` may not use any node now. Setting
-    ``refuse_next_refresh`` ends the delegation the next refresh names, as the hub ends one by itself ("Sign out
-    everywhere", the node removed): that refresh is ``invalid_grant`` and its token is refused from then on.
-    ``sign_out_everywhere`` ends every delegation of one person at once.
+    verified ``header`` and ``claims`` and its ``body``; ``token_requests`` each token request answered 200, its
+    ``grant_type``, ``header`` and ``claims``. ``people`` holds what the hub knows of each person by user id, and a
+    test changes it to model a person whose name or rights changed; a user id in ``refused_people`` may not use any
+    node now. Setting ``refuse_next_refresh`` ends the delegation the next refresh names, as the hub ends one itself.
     """
 
     def __init__(self, signer: HubSigner | None = None):
@@ -118,54 +88,29 @@ class FakeJoinHub:
         self._nodes: dict[str, dict] = {}
         self._jtis: set[str] = set()
         self._lock = threading.Lock()
-        hub = self
+        super().__init__()
 
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                hub.calls.append((self.path, None))
-                if hub.signer is None or self.path != JWKS_PATH:
-                    self._answer(404, {"detail": "Not Found"})
-                    return
-                self._answer(200, {"keys": [key.jwk() for key in hub.signer.served]})
+    def _get(self, path: str) -> tuple[int, dict | None]:
+        self.calls.append((path, None))
+        if self.signer is None or path != JWKS_PATH:
+            return 404, {"detail": "Not Found"}
+        return 200, {"keys": [key.jwk() for key in self.signer.served]}
 
-            def do_POST(self):
-                length = int(self.headers.get("Content-Length") or 0)
-                raw = self.rfile.read(length)
-                if self.path in (TOKEN_PATH, REVOKE_PATH):
-                    form = _form(self.headers.get("Content-Type"), raw)
-                    hub.calls.append((self.path, form))
-                    self._answer(*(hub.token(form) if self.path == TOKEN_PATH else hub.revoke(form)))
-                    return
-                try:
-                    body = json.loads(raw)
-                except ValueError:
-                    body = None
-                hub.calls.append((self.path, body))
-                if self.path == JOIN_PATH:
-                    self._answer(*hub.answer(body))
-                elif self.path == HEARTBEAT_PATH:
-                    self._answer(*hub.beat(self.headers.get("Authorization"), body))
-                else:
-                    self._answer(404, {"detail": "Not Found"})
-
-            def _answer(self, status: int, payload: dict | None):
-                self.send_response(status)
-                if payload is None:
-                    self.end_headers()
-                    return
-                data = json.dumps(payload).encode()
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-
-            def log_message(self, *args):
-                pass
-
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-        self._thread.start()
+    def _post(self, path: str, headers, raw: bytes) -> tuple[int, dict | None]:
+        if path in (TOKEN_PATH, REVOKE_PATH):
+            form = _form(headers.get("Content-Type"), raw)
+            self.calls.append((path, form))
+            return self.token(form) if path == TOKEN_PATH else self.revoke(form)
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        self.calls.append((path, body))
+        if path == JOIN_PATH:
+            return self.answer(body)
+        if path == HEARTBEAT_PATH:
+            return self.beat(headers.get("Authorization"), body)
+        return 404, {"detail": "Not Found"}
 
     @property
     def issuer(self) -> str:
@@ -185,9 +130,11 @@ class FakeJoinHub:
 
     def answer(self, body) -> tuple[int, dict]:
         """The status and body the join route answers ``body`` with."""
-        errors = _validation_errors(body)
-        if errors:
-            return 422, {"detail": errors}
+        try:
+            NodeJoin.model_validate(body)
+        except ValidationError as exc:
+            errors = exc.errors(include_url=False)
+            return 422, {"detail": [{**error, "loc": ["body", *error["loc"]]} for error in errors]}
         with self._lock:
             grant = self._grants.get(body["token"])
             if grant is None:
@@ -211,9 +158,8 @@ class FakeJoinHub:
             self._nodes[name]["enabled"] = enabled
 
     def check_assertion(self, assertion: str, path: str) -> tuple[str | None, dict | None]:
-        """A node assertion sent to ``path`` checked as the hub's contract says: ``(None, verified)`` when it holds,
-        ``verified`` naming the ``node`` and the assertion's ``header`` and ``claims``, else the sentence refusing it.
-        """
+        """A node assertion sent to ``path`` checked as the hub's contract says: ``(None, verified)``, which names the
+        ``node`` and the assertion's ``header`` and ``claims``, or the sentence refusing it."""
         try:
             header = jwt.get_unverified_header(assertion)
             issuer = str(jwt.decode(assertion, options={"verify_signature": False}).get("iss", ""))
@@ -250,10 +196,8 @@ class FakeJoinHub:
         return None, {"node": name, "header": header, "claims": claims}
 
     def beat(self, authorization: str | None, body) -> tuple[int, dict | None]:
-        """The status and body the heartbeat route answers: 204 for a beat taken, else 401 or 422 with a sentence.
-
-        A beat is ``{version, process}`` and may carry ``addresses``, a list of strings, as the hub's schema takes it.
-        """
+        """204 for a beat taken, else 401 or 422 with a sentence; a beat is ``{version, process}`` and may carry
+        ``addresses``, a list of strings, as the hub's schema takes it."""
         scheme, _, assertion = (authorization or "").partition(" ")
         if scheme != "Bearer" or not assertion:
             return 401, {"detail": "a heartbeat needs a node assertion"}
@@ -295,10 +239,8 @@ class FakeJoinHub:
         ttl: int = 120,
         **claims,
     ) -> str:
-        """A sign-in token for ``node`` as the hub's Open page hands it to the browser, signed with the signer's key.
-
-        The person is kept in ``people`` as the hub knows them; ``claims`` adds or overrides the token's own claims.
-        """
+        """A sign-in token for ``node`` as the hub's Open page hands it to the browser, signed with the signer's key;
+        the person is kept in ``people`` and ``claims`` adds or overrides the token's own claims."""
         if self.signer is None:
             raise RuntimeError("a hub without a signer signs no sign-in tokens")
         self.people[uid] = {"uid": uid, "username": username, "full_name": full_name, "node_admin": node_admin}
@@ -410,9 +352,7 @@ class FakeJoinHub:
         return 200, {}
 
     def sign_out_everywhere(self, uid: int) -> None:
-        """End every delegation of the person ``uid`` on every node, as "Sign out everywhere" on the hub does: each of
-        their refresh tokens is refused from then on.
-        """
+        """End every delegation of the person ``uid`` on every node, as "Sign out everywhere" on the hub does."""
         with self._lock:
             for refresh_token in [token for token, held in self._delegations.items() if held["uid"] == uid]:
                 del self._delegations[refresh_token]
@@ -421,10 +361,6 @@ class FakeJoinHub:
         """The refresh tokens the hub would take now, for any node."""
         with self._lock:
             return list(self._delegations)
-
-    def close(self):
-        self._server.shutdown()
-        self._server.server_close()
 
 
 @pytest.fixture
@@ -435,3 +371,11 @@ def join_hub():
         yield hub
     finally:
         hub.close()
+
+
+@pytest.fixture
+def node_file(tmp_path, monkeypatch):
+    """This node's ``hub_node.json`` in a storage dir of the test's own, absent until a join or the test writes it."""
+    target = tmp_path / "storage" / hub_node.FILE_NAME
+    monkeypatch.setattr(hub_node, "path", lambda: target)
+    return target

@@ -28,13 +28,11 @@ VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME"
 
 
 @pytest.fixture
-def node_file(tmp_path, monkeypatch):
-    target = tmp_path / "storage" / hub_node.FILE_NAME
-    monkeypatch.setattr(hub_node, "path", lambda: target)
+def node_file(node_file, monkeypatch):
     monkeypatch.setattr(client, "_module_http", None)
     for name in VARIABLES:
         monkeypatch.delenv(name, raising=False)
-    return target
+    return node_file
 
 
 @pytest.fixture

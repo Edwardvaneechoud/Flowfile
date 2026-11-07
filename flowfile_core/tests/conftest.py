@@ -81,6 +81,7 @@ if 'FLOWFILE_SHARED_DIR' not in os.environ:
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import socket
 
+from shared.tests.hub_join import node_file  # noqa: E402, F401
 from test_utils.mssql import fixtures as mssql_fixtures
 from test_utils.mysql import fixtures as mysql_fixtures
 from test_utils.postgres import fixtures as pg_fixtures

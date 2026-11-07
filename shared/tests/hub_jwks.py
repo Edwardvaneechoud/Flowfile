@@ -1,9 +1,8 @@
 """A hub that signs tokens for the tests: an EC P-256 key, its JWKS served from a thread, and ``token()``.
 
-Core and the worker verify hub tokens against the keys at ``<FLOWFILE_HUB_URL>/.well-known/jwks.json``. The
-``hub_signer`` fixture serves such a document from a free port on this machine, points the verifier at it through the
-environment and signs the tokens a test sends, so every test runs the real verifier against real keys with nothing of
-PyJWT replaced. Import the fixture into a test module: ``from shared.tests.hub_jwks import hub_signer  # noqa: F401``.
+The ``hub_signer`` fixture serves the keys at ``<FLOWFILE_HUB_URL>/.well-known/jwks.json`` from a free port and points
+this process's verifier at them, so every test runs the real verifier against real keys. Import the fixture into a
+test module: ``from shared.tests.hub_jwks import hub_signer  # noqa: F401``.
 """
 
 import json
@@ -71,36 +70,64 @@ class SigningKey:
         return {**public, "kid": self.kid, "use": "sig", "alg": "ES256"}
 
 
-class HubSigner:
-    """Serves a JWKS of ``served`` keys and signs tokens with ``key``."""
+class FakeHubServer:
+    """A hub's HTTP server on a free port of this machine, in a thread: ``_get`` and ``_post`` answer a request with a
+    status and a JSON payload, ``None`` for no body."""
 
     def __init__(self):
-        self.key = SigningKey()
-        self.served: list[SigningKey] = [self.key]
-        self.fetches = 0
-        signer = self
+        hub = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                if self.path != JWKS_PATH:
-                    self.send_response(404)
+                self._answer(*hub._get(self.path))
+
+            def do_POST(self):
+                raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self._answer(*hub._post(self.path, self.headers, raw))
+
+            def _answer(self, status: int, payload: dict | None):
+                self.send_response(status)
+                if payload is None:
                     self.end_headers()
                     return
-                signer.fetches += 1
-                body = json.dumps({"keys": [key.jwk() for key in signer.served]}).encode()
-                self.send_response(200)
+                data = json.dumps(payload).encode()
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(body)
+                self.wfile.write(data)
 
             def log_message(self, *args):
                 pass
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-        self._thread.start()
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+
+    def _get(self, path: str) -> tuple[int, dict | None]:
+        return 404, None
+
+    def _post(self, path: str, headers, raw: bytes) -> tuple[int, dict | None]:
+        return 501, None
+
+    def close(self):
+        self._server.shutdown()
+        self._server.server_close()
+
+
+class HubSigner(FakeHubServer):
+    """Serves a JWKS of ``served`` keys and signs tokens with ``key``."""
+
+    def __init__(self):
+        self.key = SigningKey()
+        self.served: list[SigningKey] = [self.key]
+        self.fetches = 0
+        super().__init__()
+
+    def _get(self, path: str) -> tuple[int, dict | None]:
+        if path != JWKS_PATH:
+            return super()._get(path)
+        self.fetches += 1
+        return 200, {"keys": [key.jwk() for key in self.served]}
 
     def token(
         self,
@@ -136,12 +163,22 @@ class HubSigner:
         return jwt.encode(claims, key.private, algorithm=algorithm, headers={"kid": key.kid})
 
     def sealed(
+        self, enc_jwk: dict, *, base_uri: str = "s3://bucket/root", storage_options: dict | None = None, **claims
+    ) -> str:
+        """A credential as the hub's vend seals it; ``claims`` go on to ``_seal``."""
+        body = {"kind": "storage", "base_uri": base_uri, "storage_options": storage_options or {}}
+        return self._seal(enc_jwk, body, **claims)
+
+    def sealed_secret(self, enc_jwk: dict, *, name: str, value: str, **claims) -> str:
+        """The secret ``name`` with ``value`` as the hub's vend seals it; ``claims`` go on to ``_seal``."""
+        return self._seal(enc_jwk, {"kind": "secret", "name": name, "value": value}, **claims)
+
+    def _seal(
         self,
         enc_jwk: dict,
+        body: dict,
         *,
         node: str = NODE_NAME,
-        base_uri: str = "s3://bucket/root",
-        storage_options: dict | None = None,
         run_id: str = "run-1",
         vend_id: int = 1,
         ttl: int = 900,
@@ -150,10 +187,8 @@ class HubSigner:
         drop: tuple[str, ...] = (),
         **extra,
     ) -> str:
-        """A credential as the hub's vend seals it to the node ``node`` whose X25519 public JWK is ``enc_jwk``.
-
-        The JWS is signed with ``key`` (the served key by default, header ``alg`` and ``kid`` only) and sealed with
-        ``seal``; ``drop`` leaves claims out, ``extra`` adds or overrides them.
+        """``body`` signed with ``key`` (the served key by default, header ``alg`` and ``kid`` only) and sealed to the
+        node ``node`` whose X25519 public JWK is ``enc_jwk``; ``drop`` leaves claims out, ``extra`` adds or overrides.
         """
         now = int(time.time())
         claims = {
@@ -163,9 +198,8 @@ class HubSigner:
             "vend_id": vend_id,
             "iat": now,
             "exp": now + ttl,
-            "kind": "storage",
-            "base_uri": base_uri,
-            "storage_options": storage_options or {},
+            **body,
+            **extra,
         }
         return self._seal(claims, enc_jwk, key, drop, extra)
 
@@ -233,15 +267,11 @@ class HubSigner:
 
     def _seal(self, claims: dict, enc_jwk: dict, key: SigningKey | None, drop: tuple[str, ...], extra: dict) -> str:
         claims.update(extra)
-        for name in drop:
-            claims.pop(name, None)
+        for claim in drop:
+            claims.pop(claim, None)
         key = key or self.key
         signed = jwt.encode(claims, key.private, algorithm="ES256", headers={"kid": key.kid, "typ": None})
         return seal(signed, enc_jwk)
-
-    def close(self):
-        self._server.shutdown()
-        self._server.server_close()
 
 
 @pytest.fixture
