@@ -63,6 +63,41 @@ export const offersNew = (
   selected: { source?: string | null } | null,
 ): boolean => presence !== "only" && !(selected && isHubRow(selected));
 
+interface HubFlowRow {
+  latest_version?: number | null;
+  author_name?: string | null;
+}
+
+/** A hub flow's version chip title: the newest version and, when the hub says, who published it. */
+export function hubFlowVersionTitle(flow: HubFlowRow): string {
+  const version = `Version ${flow.latest_version ?? "?"} on the hub`;
+  return flow.author_name ? `${version}, published by ${flow.author_name}` : version;
+}
+
+interface TreeRow<F> {
+  id: number;
+  flows: F[];
+  children: TreeRow<F>[];
+}
+
+/** The flow of `id` anywhere in `rows`, a hub flow being found by its negative id; null when the tree has none. */
+export function flowInTree<F extends { id: number }>(rows: TreeRow<F>[], id: number): F | null {
+  for (const row of rows) {
+    const found = row.flows.find((f) => f.id === id) ?? flowInTree(row.children, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** The root row (the catalog) that holds namespace `namespaceId`, itself included; null when none does. */
+export function rootOf<R extends { id: number; children: R[] }>(
+  rows: R[],
+  namespaceId: number,
+): R | null {
+  const holds = (row: R): boolean => row.id === namespaceId || row.children.some(holds);
+  return rows.find(holds) ?? null;
+}
+
 /** An older hub's granter written as a team's or the organisation's account id, such as `team:sales`. */
 const RAW_PRINCIPAL = /^(team|org):\S+$/;
 

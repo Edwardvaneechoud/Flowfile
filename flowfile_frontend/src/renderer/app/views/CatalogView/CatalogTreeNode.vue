@@ -138,6 +138,13 @@
         >
           <i class="fa-solid fa-diagram-project flow-icon"></i>
           <span class="flow-name">{{ flow.name }}</span>
+          <span
+            v-if="isHubRow(flow) && flow.latest_version != null"
+            class="flow-version"
+            :title="hubFlowVersionTitle(flow)"
+            data-testid="hub-flow-version"
+            >v{{ flow.latest_version }}</span
+          >
           <el-tooltip
             v-if="!flow.file_exists"
             content="Flow file not found on disk"
@@ -146,7 +153,8 @@
           >
             <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
           </el-tooltip>
-          <div class="flow-actions" @click.stop>
+          <!-- A hub flow's favourite, delete and run dot act on a local registration, which it has not. -->
+          <div v-if="!isHubRow(flow)" class="flow-actions" @click.stop>
             <button
               class="action-btn star-btn"
               :class="{ active: flow.is_favorite }"
@@ -368,7 +376,13 @@ import {
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
 import HubBadge from "./HubBadge.vue";
-import { hubSharedTitle, isHubRow, unavailableReason, type HubPresence } from "./hubRows";
+import {
+  hubFlowVersionTitle,
+  hubSharedTitle,
+  isHubRow,
+  unavailableReason,
+  type HubPresence,
+} from "./hubRows";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const { isMultiUser, isOwned, canManage } = useResourceSharing();
@@ -707,6 +721,17 @@ const totalFlows = computed(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.flow-version {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--color-background-tertiary);
+  padding: 0 5px;
+  border-radius: var(--border-radius-sm);
+  line-height: 18px;
+  flex-shrink: 0;
+  font-family: var(--font-family-mono);
 }
 
 .flow-actions {

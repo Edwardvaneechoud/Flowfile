@@ -5,11 +5,14 @@ import {
   HUB_MANAGED_NOTE,
   HUB_NAMESPACE_TITLE,
   byPlace,
+  flowInTree,
+  hubFlowVersionTitle,
   hubPresence,
   hubSharedTitle,
   isHubRow,
   isOffered,
   offersNew,
+  rootOf,
   showsPlaces,
   unavailableReason,
   withoutHubRows,
@@ -144,5 +147,48 @@ describe("hubSharedTitle", () => {
   it("says shared with you when the granter is not known", () => {
     expect(hubSharedTitle({ shared_by: null })).toBe("Shared with you");
     expect(hubSharedTitle(null)).toBe("Shared with you");
+  });
+});
+
+describe("hubFlowVersionTitle", () => {
+  it("names the newest version and who published it", () => {
+    expect(hubFlowVersionTitle({ latest_version: 3, author_name: "ana" })).toBe(
+      "Version 3 on the hub, published by ana",
+    );
+  });
+
+  it("names the version alone when the hub does not say who published it", () => {
+    expect(hubFlowVersionTitle({ latest_version: 1, author_name: null })).toBe(
+      "Version 1 on the hub",
+    );
+  });
+});
+
+describe("flowInTree and rootOf", () => {
+  const tree = [
+    {
+      id: 1,
+      flows: [{ id: 4 }],
+      children: [{ id: 2, flows: [{ id: 5 }], children: [] }],
+    },
+    {
+      id: -10,
+      flows: [],
+      children: [{ id: -11, flows: [{ id: -20 }, { id: -21 }], children: [] }],
+    },
+  ];
+
+  it("finds a flow under a schema by its id, a hub flow by its negative one", () => {
+    expect(flowInTree(tree, 5)).toEqual({ id: 5 });
+    expect(flowInTree(tree, -21)).toEqual({ id: -21 });
+    expect(flowInTree(tree, 4)).toEqual({ id: 4 });
+    expect(flowInTree(tree, 99)).toBeNull();
+  });
+
+  it("gives the catalog that holds a schema, or the catalog itself", () => {
+    expect(rootOf(tree, -11)?.id).toBe(-10);
+    expect(rootOf(tree, 2)?.id).toBe(1);
+    expect(rootOf(tree, 1)?.id).toBe(1);
+    expect(rootOf(tree, 7)).toBeNull();
   });
 });

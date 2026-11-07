@@ -205,7 +205,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, onMounted } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage } from "element-plus";
 import FileBrowser from "../../../components/common/FileBrowser/fileBrowser.vue";
 import { FLOWFILE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
 import type { FileInfo } from "../../../types";
@@ -215,25 +215,13 @@ import type { FlowRegistration } from "../../../types";
 import {
   listHubFlowVersions,
   listHubFlows,
-  openFromHub,
-  refusalOf,
   type HubFlow,
   type HubFlowVersion,
 } from "../../../api/hubFlows.api";
 import { useHubConnectionStore } from "../../../stores/hub-connection-store";
 import { detailOf } from "../../../utils/apiDetail";
-import {
-  LOCAL_COPY_TITLE,
-  OPENED_FROM_HUB,
-  OPENED_LOCAL_COPY,
-  OPEN_MY_COPY,
-  authorLabel,
-  latestVersionLabel,
-  localCopyQuestion,
-  publishedTime,
-  refusalMessage,
-  replaceWithLabel,
-} from "../hubFlows";
+import { authorLabel, latestVersionLabel, publishedTime } from "../hubFlows";
+import { OpenFromHubCancelled, OpenFromHubRefused, openHubFlowVersion } from "../openFromHub";
 
 const props = defineProps({
   visible: {
@@ -448,46 +436,26 @@ async function selectHubFlow(flow: HubFlow) {
   }
 }
 
-async function openHubFlow(replace = false) {
+/** Opens the picked version as the person's copy (`openHubFlowVersion` asks about a copy with unpublished edits). */
+async function openHubFlow() {
   if (!selectedHubFlow.value || selectedHubVersion.value === null) return;
   hubBusy.value = true;
   hubError.value = "";
-  const { flow_uuid } = selectedHubFlow.value;
-  const version = selectedHubVersion.value;
   try {
-    const opened = await openFromHub({ flow_uuid, version, replace });
-    emit("open-flow", { message: OPENED_FROM_HUB, flowPath: opened.flow_path });
-    ElMessage.success(OPENED_FROM_HUB);
+    const opened = await openHubFlowVersion(
+      selectedHubFlow.value.flow_uuid,
+      selectedHubVersion.value,
+    );
+    emit("open-flow", { message: opened.message, flowPath: opened.flowPath });
+    ElMessage.success(opened.message);
     isVisible.value = false;
   } catch (err) {
-    const refusal = refusalOf(err);
-    if (refusal?.kind === "local_copy_exists" && !replace) {
-      hubBusy.value = false;
-      await askAboutLocalCopy(refusal.flow_path, version);
-      return;
-    }
-    hubError.value = refusal ? refusalMessage(refusal) : detailOf(err, "Couldn't open the flow.");
+    if (err instanceof OpenFromHubCancelled) return;
+    hubError.value =
+      err instanceof OpenFromHubRefused ? err.message : detailOf(err, "Couldn't open the flow.");
   } finally {
     hubBusy.value = false;
   }
-}
-
-/** A copy with unpublished edits: open it, replace it with the version picked, or stay in the dialog. */
-async function askAboutLocalCopy(flowPath: string, version: number) {
-  try {
-    await ElMessageBox.confirm(localCopyQuestion(version), LOCAL_COPY_TITLE, {
-      type: "warning",
-      confirmButtonText: OPEN_MY_COPY,
-      cancelButtonText: replaceWithLabel(version),
-      distinguishCancelAndClose: true,
-    });
-  } catch (action) {
-    if (action === "cancel") await openHubFlow(true);
-    return;
-  }
-  emit("open-flow", { message: OPENED_LOCAL_COPY, flowPath });
-  ElMessage.success(OPENED_LOCAL_COPY);
-  isVisible.value = false;
 }
 
 defineExpose({

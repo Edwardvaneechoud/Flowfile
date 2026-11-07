@@ -138,6 +138,13 @@ export interface FlowRegistration {
   tables_produced: CatalogTableSummary[];
   tables_read: CatalogTableSummary[];
   access?: AccessInfo | null;
+  // "hub" for a flow published to a connected hub: its id is the negative of the hub's registration id, kept in
+  // hub_id, with the flow's uuid and its newest version and who published it. Absent from this machine's flows.
+  source?: "local" | "hub";
+  hub_id?: number | null;
+  flow_uuid?: string | null;
+  latest_version?: number | null;
+  author_name?: string | null;
 }
 
 export type FlowCodeFormat = "yaml" | "notebook" | "flowframe" | "polars";

@@ -152,7 +152,7 @@
                 v-for="node in group.rows"
                 :key="node.id"
                 :node="node"
-                :selected-flow-id="catalogStore.selectedFlowId"
+                :selected-flow-id="selectedHubFlowId ?? catalogStore.selectedFlowId"
                 :selected-artifact-id="catalogStore.selectedArtifactId"
                 :selected-table-id="catalogStore.selectedTableId"
                 :selected-namespace-id="catalogStore.selectedNamespaceId"
@@ -257,6 +257,15 @@
           @load-preview="catalogStore.loadSelectedPreview()"
           @refresh-history="catalogStore.refreshTableHistory()"
           @edits-saved="catalogStore.handleTableEdited($event)"
+        />
+        <!-- A flow published on the hub: its versions, and Open as Open Flow → Hub opens it -->
+        <HubFlowDetailPanel
+          v-else-if="selectedHubFlow"
+          :flow="selectedHubFlow"
+          :place="selectedHubFlowRoot?.place ?? null"
+          :schema-path="selectedHubFlowSchema"
+          @close="handleCloseDetail"
+          @open="selectedHubFlow && openHubFlowInDesigner(selectedHubFlow, $event)"
         />
         <!-- Flow detail view -->
         <FlowDetailPanel
@@ -616,6 +625,7 @@ import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
 import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
+import HubFlowDetailPanel from "./HubFlowDetailPanel.vue";
 import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
 import TableDetailPanel from "./TableDetailPanel.vue";
 import NamespaceDetailPanel from "./NamespaceDetailPanel.vue";
@@ -643,13 +653,21 @@ import { useResourceSharing } from "../../composables/useResourceSharing";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import {
   byPlace,
+  flowInTree,
   hubPresence as hubPresenceOf,
   isHubRow,
   isOffered,
   offersNew,
+  rootOf,
   showsPlaces,
   withoutHubRows,
 } from "./hubRows";
+import {
+  OpenFromHubCancelled,
+  OpenFromHubRefused,
+  openHubFlowVersion,
+} from "../../features/designer/openFromHub";
+import { detailOf } from "../../utils/apiDetail";
 import { tableChoice } from "../../components/nodes/node-types/elements/catalogPick";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import { useRecentFlows } from "../../composables/useRecentFlows";
@@ -916,15 +934,41 @@ const artifactMenuOptions = computed<ContextMenuOption[]>(() => [
   { label: "Delete model", action: "delete", danger: true },
 ]);
 
-// Right-click context menu for catalog flows
+// Right-click context menu for catalog flows; a hub flow has no run history here, the hub keeps its runs.
 const flowMenu = ref<{ flow: FlowRegistration; x: number; y: number } | null>(null);
-const flowMenuOptions = computed<ContextMenuOption[]>(() => [
-  { label: "Open flow in editor", action: "open", disabled: !flowMenu.value?.flow.file_exists },
-  { label: "Flow overview", action: "view" },
-  { label: "Run history", action: "runs" },
-]);
+const flowMenuOptions = computed<ContextMenuOption[]>(() => {
+  const flow = flowMenu.value?.flow;
+  if (flow && isHubRow(flow)) {
+    return [
+      { label: "Open flow in editor", action: "open", disabled: flow.latest_version == null },
+      { label: "Flow overview", action: "view" },
+    ];
+  }
+  return [
+    { label: "Open flow in editor", action: "open", disabled: !flow?.file_exists },
+    { label: "Flow overview", action: "view" },
+    { label: "Run history", action: "runs" },
+  ];
+});
 // One-shot signal: scroll the flow detail panel to its Run History section.
 const flowDetailFocusRuns = ref(false);
+
+// A hub flow selected in the tree, by its negative id in the URL. It is found in the tree, never through the store's
+// local flow list, and nothing of a local registration (runs, schedules, artifacts) is loaded for it.
+const selectedHubFlowId = ref<number | null>(null);
+const selectedHubFlow = computed(() =>
+  selectedHubFlowId.value === null ? null : flowInTree(catalogStore.tree, selectedHubFlowId.value),
+);
+const selectedHubFlowRoot = computed(() =>
+  selectedHubFlow.value?.namespace_id != null
+    ? rootOf(catalogStore.tree, selectedHubFlow.value.namespace_id)
+    : null,
+);
+const selectedHubFlowSchema = computed(() =>
+  selectedHubFlow.value?.namespace_id != null
+    ? findNamespacePath(catalogStore.tree, selectedHubFlow.value.namespace_id).join(".")
+    : "",
+);
 
 const showCreateVirtualTable = ref(false);
 
@@ -1134,8 +1178,10 @@ function onFlowMenuSelect(action: string) {
   const flow = flowMenu.value?.flow;
   if (!flow) return;
   if (action === "view") selectFlow(flow.id);
-  else if (action === "open") openFlowInDesigner(flow);
-  else if (action === "runs") {
+  else if (action === "open") {
+    if (isHubRow(flow)) openHubFlowInDesigner(flow);
+    else openFlowInDesigner(flow);
+  } else if (action === "runs") {
     flowDetailFocusRuns.value = true;
     selectFlow(flow.id);
   }
@@ -1620,6 +1666,27 @@ async function openFlowInDesigner(
   }
 }
 
+/**
+ * Opens `version` of a hub flow (the newest when none is given) as the person's own copy, exactly as Open Flow → Hub
+ * does, then shows it in the designer. The question about a copy with unpublished edits is the shared module's.
+ */
+async function openHubFlowInDesigner(flow: FlowRegistration, version?: number | null) {
+  const wanted = version ?? flow.latest_version;
+  if (!flow.flow_uuid || wanted == null) return;
+  try {
+    const opened = await openHubFlowVersion(flow.flow_uuid, wanted);
+    const flowId = await openFlow(opened.flowPath, { name: flow.name });
+    if (flowId === null) return;
+    ElMessage.success(opened.message);
+    router.push({ name: "designer" });
+  } catch (err) {
+    if (err instanceof OpenFromHubCancelled) return;
+    ElMessage.error(
+      err instanceof OpenFromHubRefused ? err.message : detailOf(err, "Couldn't open the flow."),
+    );
+  }
+}
+
 function navigateToFlow(registrationId: number) {
   router.push({
     name: "catalog",
@@ -1850,6 +1917,9 @@ function applyRouteToStore() {
     catalogStore.clearNamespaceSelection();
   }
 
+  // A hub flow stays selected only while the URL names it (a negative flowId).
+  if (flowId === null || flowId >= 0) selectedHubFlowId.value = null;
+
   // Handle selections (mutually exclusive: table, artifact, schedule, or flow+run)
   if (tableId !== null) {
     if (tableId !== catalogStore.selectedTableId) catalogStore.selectTable(tableId);
@@ -1873,7 +1943,16 @@ function applyRouteToStore() {
     if (catalogStore.selectedSchedule) catalogStore.clearScheduleSelection();
 
     // Flow selection (set manually to avoid selectFlow clearing run detail)
-    if (flowId !== null) {
+    if (flowId !== null && flowId < 0) {
+      // A hub flow: found in the tree once it is loaded, nothing of a local registration's loaded for it.
+      if (catalogStore.selectedFlowId !== null) catalogStore.selectedFlowId = null;
+      if (flowId !== selectedHubFlowId.value) {
+        selectedHubFlowId.value = flowId;
+        catalogStore.clearTableSelection();
+        catalogStore.clearArtifactSelection();
+        catalogStore.clearScheduleSelection();
+      }
+    } else if (flowId !== null) {
       if (flowId !== catalogStore.selectedFlowId) {
         catalogStore.selectedFlowId = flowId;
         catalogStore.clearTableSelection();

@@ -5,7 +5,7 @@
 import { h, nextTick, type FunctionalComponent } from "vue";
 import { createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ns, table } from "../../__fixtures__/catalogTree";
+import { flow, ns, table } from "../../__fixtures__/catalogTree";
 import { fakeStorage, mountIn } from "../../__fixtures__/mount";
 import type { NamespaceTree } from "../../types";
 import type { HubPresence } from "./hubRows";
@@ -159,5 +159,72 @@ describe("CatalogTreeNode", () => {
 
     await mount(local);
     expect(host.querySelector(".tree-row")?.classList.contains("keeps-name")).toBe(false);
+  });
+});
+
+// Expansion is remembered per namespace id across the tests above, so these rows get ids of their own.
+describe("a hub flow's row", () => {
+  const published = ns({
+    id: -30,
+    name: "main",
+    source: "hub",
+    storage_uri,
+    children: [
+      ns({
+        id: -31,
+        name: "default",
+        level: 1,
+        parent_id: -30,
+        source: "hub",
+        flows: [
+          flow({
+            id: -40,
+            name: "demo-flow",
+            namespace_id: -31,
+            flow_path: "hub://flows/u-1",
+            source: "hub",
+            hub_id: 20,
+            flow_uuid: "u-1",
+            latest_version: 3,
+            author_name: "ana",
+            last_run_success: true,
+          }),
+        ],
+      }),
+    ],
+  });
+
+  it("shows the flow with its newest version and who published it, and none of a local flow's actions", async () => {
+    await mount(published, "only");
+
+    const row = host.querySelector(".tree-flow");
+    expect(row?.querySelector(".flow-name")?.textContent).toBe("demo-flow");
+    const chip = row?.querySelector("[data-testid='hub-flow-version']");
+    expect(chip?.textContent).toBe("v3");
+    expect(chip?.getAttribute("title")).toBe("Version 3 on the hub, published by ana");
+    expect(row?.querySelector(".flow-actions")).toBeNull();
+    expect(row?.querySelector(".run-indicator")).toBeNull();
+  });
+
+  it("keeps a local flow's favourite, delete and run dot", async () => {
+    const own = ns({
+      id: 50,
+      storage_uri,
+      children: [
+        ns({
+          id: 51,
+          name: "default",
+          level: 1,
+          parent_id: 50,
+          flows: [flow({ id: 52, namespace_id: 51, last_run_success: true })],
+        }),
+      ],
+    });
+    await mount(own);
+
+    const row = host.querySelector(".tree-flow");
+    expect(row?.querySelector("[data-testid='hub-flow-version']")).toBeNull();
+    expect(row?.querySelectorAll(".flow-actions .action-btn").length).toBe(2);
+    expect(row?.querySelector(".run-indicator")).not.toBeNull();
   });
 });
