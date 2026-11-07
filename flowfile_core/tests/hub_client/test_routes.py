@@ -5,7 +5,6 @@ No hub state answers 401 here: the frontend reads a 401 as its own expired sessi
 
 import json
 import socket
-import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,11 +12,11 @@ from fastapi.testclient import TestClient
 from flowfile_core import main
 from flowfile_core.auth import secrets as core_secrets
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import ConfiguredBackend, User
+from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.hub_client import client, node_tokens, session
+from flowfile_core.hub_client import node_tokens, session
 from flowfile_core.routes import hub_client as hub_routes
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared._version import get_version
@@ -422,41 +421,6 @@ def test_disconnecting_removes_the_callers_hub_filled_rows_and_the_token_cache_b
     assert [row["id"] for row in api.get("/compute_backends").json()] == ["worker:own"]
     with pytest.raises(LookupError, match="no compute_backends row"):
         registry.backend("worker:team")
-
-
-def test_deleting_a_person_removes_the_rows_their_session_filled_and_their_id_inherits_none(api, hub):
-    with get_db_context() as db:
-        person = User(username=f"leaver-{uuid.uuid4().hex[:8]}", hashed_password="!")
-        db.add(person)
-        db.commit()
-        person_id, username = person.id, person.username
-        others = person_id + 1
-        db.add(
-            ConfiguredBackend(id="worker:team", url=TEAM["worker_url"], hub_node_id=TEAM["id"], hub_user_id=person_id)
-        )
-        db.add(ConfiguredBackend(id="worker:gpu", url=GPU["worker_url"], hub_node_id=GPU["id"], hub_user_id=others))
-        db.add(ConfiguredBackend(id="worker:own", url="https://own.example.test:63579", token=encrypt_secret("t", 1)))
-        db.commit()
-    hub.nodes = [TEAM, GPU]
-    refresh_token = client.sign_in(HUB_URL, "ana", "s3cret")["refresh_token"]
-    session.save(person_id, {"hub_url": HUB_URL, "refresh_token": refresh_token})
-    registry.backend("worker:team")
-
-    deleted = api.delete(f"/auth/users/{person_id}")
-
-    assert deleted.status_code == 200, deleted.text
-    assert sorted(_rows()) == ["worker:gpu", "worker:own"]
-    with get_db_context() as db:
-        db.add(User(id=person_id, username=username, hashed_password="!"))
-        db.commit()
-    try:
-        assert sorted(_rows()) == ["worker:gpu", "worker:own"]
-        with pytest.raises(LookupError, match="no compute_backends row"):
-            registry.backend("worker:team")
-    finally:
-        with get_db_context() as db:
-            db.query(User).filter(User.id == person_id).delete()
-            db.commit()
 
 
 def test_a_hub_filled_row_is_not_removed_on_the_backends_page(api, hub):

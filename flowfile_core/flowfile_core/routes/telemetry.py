@@ -4,9 +4,9 @@ Two routes, no trailing slashes (the renderer matches these byte-for-byte;
 a trailing slash would 307 and drop the POST body in Docker).
 
 ``can_manage`` is the only mode-dependent bit: on a single-user desktop or pip
-install anyone may flip the toggle, while on a shared server (Docker, or a node
-behind a hub) the choice belongs to an admin. A non-manager POST is 403 and
-never 401 — the axios interceptor logs the user out on 401. A consent write that does not stick
+install anyone may flip the toggle, while in a shared Docker deployment the
+choice belongs to an admin. A non-manager POST is 403 and never 401 — the axios
+interceptor logs the user out on 401. A consent write that does not stick
 (read-only storage) is 503 ``TELEMETRY_PERSIST_FAILED`` rather than a 200 the
 renderer would toast as success.
 
@@ -16,13 +16,14 @@ use for it and it is the one field that is even weakly identifying.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.events import publish
 from shared import telemetry
-from shared.storage_config import is_server_mode
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 
@@ -44,8 +45,8 @@ class TelemetryStatusOut(BaseModel):
 
 
 def _can_manage(current_user) -> bool:
-    # Reads FLOWFILE_MODE per call: configs.settings caches the constant at import.
-    if not is_server_mode():
+    # Read per call: configs.settings caches FLOWFILE_MODE at import.
+    if os.environ.get("FLOWFILE_MODE", "electron") != "docker":
         return True
     return bool(getattr(current_user, "is_admin", False))
 

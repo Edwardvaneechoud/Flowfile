@@ -39,29 +39,6 @@ def drop_row(db: Session, row: ConfiguredBackend) -> None:
     handshake.reset_handshake(row.url)
 
 
-def release_rows(db: Session, user_id: int) -> None:
-    """Untie the hub-filled rows of ``user_id`` from them, as their account is deleted: an account that later takes the
-    same id would otherwise mint with those rows and count as their person. The caller commits.
-
-    On a server joined with keys of its own a row serves everyone the hub lets run on it and each call signs for its
-    own person, so the row stays with no person, and the next person's list takes it or drops it (``sync_nodes``).
-    Elsewhere only the row's person's session mints its tokens, so nobody can use it any more and it goes. Either way
-    the registry's instance goes, as it holds the person's id. A row added by hand names no person and stays.
-    """
-    joined = issuer_accounts.joined_with_keys() is not None
-    rows = (
-        db.query(ConfiguredBackend)
-        .filter(ConfiguredBackend.hub_user_id == user_id, ConfiguredBackend.hub_node_id.isnot(None))
-        .all()
-    )
-    for row in rows:
-        if joined:
-            row.hub_user_id = None
-            registry.forget(row.id)
-        else:
-            drop_row(db, row)
-
-
 def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tuple[list[str], list[str]]:
     """Fill the backends table from the hub's enabled compute nodes for ``user_id``; ``(synced ids, skipped ids)``.
 
