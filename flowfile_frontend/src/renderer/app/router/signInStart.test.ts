@@ -15,7 +15,10 @@ vi.mock("../views/LoginView/LoginView.vue", () => ({ default: { render: () => nu
 vi.mock("../views/HomeView/HomeView.vue", () => ({ default: { render: () => null } }));
 vi.mock("../stores/auth-store", () => ({ useAuthStore: () => ({ user: {} }) }));
 vi.mock("../services/setup.service", () => ({
-  default: { getSetupStatus: async () => ({ mode: "docker", setup_required: false }) },
+  default: {
+    getSetupStatus: async () => ({ mode: "docker", setup_required: false }),
+    isOnHub: () => false,
+  },
 }));
 vi.mock("../services/auth.service", () => ({
   default: {

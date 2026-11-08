@@ -402,3 +402,59 @@ describe("auth service: sign-out and expiry", () => {
     expect(localStorage.getItem("auth_hub_session")).toBeNull();
   });
 });
+
+// On a page the hub serves itself (`/data`), the hub's session cookie is the sign-in: no token is held, and core,
+// asked who the person is, answers through that cookie.
+describe("auth service on a hub's own page", () => {
+  const status = (mode: string): Answer => ({
+    status: 200,
+    data: { setup_required: false, master_key_configured: true, mode },
+  });
+
+  /** The app fetches the status once before its first route, which is where the mode is read from. */
+  const onHub = async (answer: (config: InternalAxiosRequestConfig) => Answer, mode = "hub") => {
+    const server = fakeServer((config) =>
+      config.url?.endsWith("/health/status") ? status(mode) : answer(config),
+    );
+    axios.defaults.adapter = server.adapter;
+    const authService = await load();
+    const setupService = (await import("./setup.service")).default;
+    authService.setModeFromBackend((await setupService.getSetupStatus()).mode);
+    return { authService, server, setupService };
+  };
+
+  it("is signed in when core answers who they are, holding no token", async () => {
+    const { authService, server, setupService } = await onHub((config) =>
+      config.url?.endsWith("/auth/users/me")
+        ? { status: 200, data: { username: "ana", is_admin: false } }
+        : { status: 404 },
+    );
+
+    expect(setupService.isOnHub()).toBe(true);
+    expect(authService.isInDesktopMode()).toBe(false);
+    expect(await authService.initialize()).toBe(true);
+    expect(authService.isAuthenticated()).toBe(true);
+    expect(authService.requiresLogin()).toBe(false);
+    expect((await authService.getCurrentUser())?.username).toBe("ana");
+    expect(localStorage.getItem("auth_token")).toBeNull();
+    const asked = server.requests.filter(({ config }) => config.url !== "/health/status");
+    expect(asked.map(({ config }) => config.url)).toEqual(["/auth/users/me", "/auth/users/me"]);
+    expect(asked.every(({ config }) => !config.headers?.Authorization)).toBe(true);
+  });
+
+  it("is not signed in when the hub's session is gone", async () => {
+    const { authService } = await onHub(() => ({
+      status: 401,
+      data: { detail: "Not authenticated" },
+    }));
+
+    expect(await authService.initialize()).toBe(false);
+    expect(authService.isAuthenticated()).toBe(false);
+    expect(authService.requiresLogin()).toBe(true);
+  });
+
+  it("is on no hub on a server, where the status says docker", async () => {
+    const { setupService } = await onHub(() => ({ status: 404 }), "docker");
+    expect(setupService.isOnHub()).toBe(false);
+  });
+});

@@ -14,6 +14,10 @@ export interface GeneratedKey {
   instructions: string;
 }
 
+// The mode a hub answers on a page it serves itself (`/data`): there its session cookie signs the person in, the
+// catalog shown is the hub's, and what needs a worker is hidden.
+const HUB_MODE = "hub";
+
 class SetupService {
   private cachedStatus: SetupStatus | null = null;
   private statusPromise: Promise<SetupStatus> | null = null;
@@ -71,6 +75,11 @@ class SetupService {
 
   clearCache(): void {
     this.cachedStatus = null;
+  }
+
+  /** Whether a hub serves this page itself; read from the status the app fetched once before its first route. */
+  isOnHub(): boolean {
+    return this.cachedStatus?.mode === HUB_MODE;
   }
 }
 

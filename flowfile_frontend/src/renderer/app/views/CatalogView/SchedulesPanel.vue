@@ -2,7 +2,7 @@
   <div class="schedules-panel">
     <div class="panel-header">
       <h3>Schedules</h3>
-      <el-button size="small" type="primary" @click="$emit('createSchedule')">
+      <el-button v-if="!onHub" size="small" type="primary" @click="$emit('createSchedule')">
         <i class="fa-solid fa-plus" /> Add
       </el-button>
     </div>
@@ -39,26 +39,29 @@
           </div>
         </div>
         <div class="schedule-actions">
-          <el-tooltip
-            v-if="isRunning(schedule)"
-            content="Cancel run"
-            placement="top"
-            :show-after="400"
-          >
-            <el-button
-              size="small"
-              type="warning"
-              text
-              @click="$emit('cancelScheduleRun', schedule)"
+          <!-- Run Now and Cancel run core's own scheduler, which a hub has none of -->
+          <template v-if="!onHub">
+            <el-tooltip
+              v-if="isRunning(schedule)"
+              content="Cancel run"
+              placement="top"
+              :show-after="400"
             >
-              <i class="fa-solid fa-stop" />
-            </el-button>
-          </el-tooltip>
-          <el-tooltip v-else content="Run Now" placement="top" :show-after="400">
-            <el-button size="small" type="success" text @click="$emit('runNow', schedule.id)">
-              <i class="fa-solid fa-play" />
-            </el-button>
-          </el-tooltip>
+              <el-button
+                size="small"
+                type="warning"
+                text
+                @click="$emit('cancelScheduleRun', schedule)"
+              >
+                <i class="fa-solid fa-stop" />
+              </el-button>
+            </el-tooltip>
+            <el-tooltip v-else content="Run Now" placement="top" :show-after="400">
+              <el-button size="small" type="success" text @click="$emit('runNow', schedule.id)">
+                <i class="fa-solid fa-play" />
+              </el-button>
+            </el-tooltip>
+          </template>
           <el-switch
             :model-value="schedule.enabled"
             size="small"
@@ -77,6 +80,10 @@
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowSchedule } from "../../types";
 import { formatDate, formatScheduleType, scheduleIcon } from "./catalog-formatters";
+import setupService from "../../services/setup.service";
+
+// Run Now and Cancel run core's own scheduler, which a hub has none of.
+const onHub = setupService.isOnHub();
 
 defineProps<{
   schedules: FlowSchedule[];

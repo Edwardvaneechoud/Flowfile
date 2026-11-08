@@ -14,7 +14,8 @@
         </div>
         <p class="description" data-testid="hub-flow-home">{{ home }}</p>
       </div>
-      <div class="header-actions">
+      <!-- On the hub itself Open makes no copy there: the flow is run from this panel (plan/PLAN-one-catalog.md) -->
+      <div v-if="!onHub" class="header-actions">
         <button
           class="btn btn-primary btn-sm"
           :disabled="selectedVersion === null"
@@ -47,7 +48,7 @@
         </li>
       </ul>
     </section>
-    <p class="note">
+    <p v-if="!onHub" class="note">
       Open makes your own copy of the version you pick, as Open Flow → Hub does; publish it back
       from the designer. The hub runs it and keeps its schedules.
     </p>
@@ -59,6 +60,7 @@ import { computed, ref, watch } from "vue";
 import { listHubFlowVersions, type HubFlowVersion } from "../../api/hubFlows.api";
 import { authorLabel, publishedTime } from "../../features/designer/hubFlows";
 import { detailOf } from "../../utils/apiDetail";
+import setupService from "../../services/setup.service";
 import type { FlowRegistration } from "../../types";
 
 // A flow published on the hub, selected in the catalog tree: its versions, and Open for the one picked. The copy is
@@ -76,6 +78,7 @@ const emit = defineEmits<{
   (e: "open", version: number): void;
 }>();
 
+const onHub = setupService.isOnHub();
 const versions = ref<HubFlowVersion[]>([]);
 const selectedVersion = ref<number | null>(null);
 const loading = ref(false);

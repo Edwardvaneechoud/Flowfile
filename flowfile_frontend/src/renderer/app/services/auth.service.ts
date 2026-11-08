@@ -2,6 +2,7 @@
 import axios from "axios";
 import { ref } from "vue";
 import { isDesktop } from "../../lib/desktop";
+import setupService from "./setup.service";
 
 interface AuthResponse {
   access_token: string;
@@ -60,6 +61,8 @@ class AuthService {
   // Held in memory only, from the fragment until `initialize` posts it.
   private hubSignInToken: string | null = null;
   private hubSignInError: string | null = null;
+  // Signed in on a hub's own page by its session cookie, which rides on every request: no token is held here.
+  private hubSession = false;
 
   constructor() {
     // Initial detection based on the Tauri runtime presence.
@@ -79,8 +82,7 @@ class AuthService {
   setModeFromBackend(mode: string): void {
     if (!this.modeInitialized) {
       if (!this.detectDesktopMode()) {
-        this.isDesktopMode.value =
-          mode === "electron" || mode === "tauri" || mode === "desktop";
+        this.isDesktopMode.value = mode === "electron" || mode === "tauri" || mode === "desktop";
       }
       this.modeInitialized = true;
     }
@@ -113,6 +115,12 @@ class AuthService {
     return this.isDesktopMode.value;
   }
 
+  /** The hub's sign-in page, coming back to this page once signed in: where an ended hub session goes. */
+  toHubSignIn(): void {
+    const { pathname, search, hash } = window.location;
+    window.location.assign(`/login?next=${encodeURIComponent(pathname + search + hash)}`);
+  }
+
   private clearStoredTokens(): void {
     const savedExpiration = localStorage.getItem("auth_token_expiration");
     if (!savedExpiration || parseInt(savedExpiration, 10) <= Date.now()) {
@@ -124,6 +132,11 @@ class AuthService {
 
   async initialize(): Promise<boolean> {
     this.clearStoredTokens();
+
+    if (setupService.isOnHub()) {
+      this.hubSession = await this.signedInOnHub();
+      return this.hubSession;
+    }
 
     const signInToken = this.hubSignInToken;
     this.hubSignInToken = null;
@@ -142,6 +155,21 @@ class AuthService {
 
     // In Docker/web mode, require manual login.
     return false;
+  }
+
+  /**
+   * On a hub's own page the session cookie is the sign-in: the person is signed in when core, asked
+   * without a token, answers who they are. Asked on a client without the interceptors, which would
+   * send the browser to the sign-in page on a refusal; `initialize` answering false does that.
+   */
+  private async signedInOnHub(): Promise<boolean> {
+    try {
+      const response = await axios.create().get<UserInfo>("/auth/users/me");
+      this.currentUsername.value = response.data?.username ?? null;
+      return Boolean(response.data?.username);
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -270,7 +298,7 @@ class AuthService {
   }
 
   async getCurrentUser(): Promise<UserInfo | null> {
-    if (!this.hasValidToken()) {
+    if (!this.hasValidToken() && !this.hubSession) {
       return null;
     }
 
@@ -289,7 +317,7 @@ class AuthService {
   }
 
   requiresLogin(): boolean {
-    return !this.isDesktopMode.value && !this.hasValidToken();
+    return !this.isDesktopMode.value && !this.hasValidToken() && !this.hubSession;
   }
 
   private async getDesktopToken(): Promise<boolean> {
@@ -419,7 +447,7 @@ class AuthService {
   }
 
   isAuthenticated(): boolean {
-    return this.hasValidToken();
+    return this.hasValidToken() || this.hubSession;
   }
 
   /**
@@ -430,6 +458,10 @@ class AuthService {
    * the browser to the sign-in page on a refusal.
    */
   async signOut(): Promise<void> {
+    if (setupService.isOnHub()) {
+      await this.endHubSession();
+      return;
+    }
     if (localStorage.getItem(HUB_SESSION) === null) {
       this.logout();
       return;
@@ -452,6 +484,18 @@ class AuthService {
     } finally {
       this.logout();
     }
+  }
+
+  /** On a hub's own page the session is the hub's: end it there, then go to the hub's sign-in page. */
+  private async endHubSession(): Promise<void> {
+    try {
+      await axios.create().post("/app/api/session/end");
+    } catch (error) {
+      console.error("The hub was not told of the sign-out:", error);
+    }
+    this.hubSession = false;
+    this.logout();
+    window.location.assign("/login");
   }
 
   logout(): void {
@@ -494,6 +538,9 @@ axios.interceptors.response.use(
           originalRequest.headers["Authorization"] = `Bearer ${newToken}`;
           return axios(originalRequest);
         }
+      } else if (setupService.isOnHub()) {
+        // The hub's session ended; its sign-in page brings the person back to this page.
+        authService.toHubSignIn();
       } else {
         // In Docker mode, try refresh token before redirecting to login.
         const newToken = await authService.refreshAccessToken();

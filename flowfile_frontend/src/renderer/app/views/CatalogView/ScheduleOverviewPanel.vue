@@ -2,7 +2,7 @@
   <div class="schedule-overview">
     <div class="schedule-header">
       <h2>Schedules Overview</h2>
-      <el-button type="primary" size="small" @click="$emit('createSchedule')">
+      <el-button v-if="!onHub" type="primary" size="small" @click="$emit('createSchedule')">
         <i class="fa-solid fa-plus" /> Create Schedule
       </el-button>
     </div>
@@ -105,7 +105,7 @@
       description="Create a schedule to automatically run your flows on a timer or when a table updates."
     >
       <template #actions>
-        <el-button type="primary" @click="$emit('createSchedule')">
+        <el-button v-if="!onHub" type="primary" @click="$emit('createSchedule')">
           <i class="fa-solid fa-plus" /> Create Schedule
         </el-button>
       </template>
@@ -146,6 +146,10 @@ import { authService } from "../../services/auth.service";
 import { formatDate } from "./catalog-formatters";
 import { EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
+import setupService from "../../services/setup.service";
+
+// A schedule made here is core's, which fires on core's scheduler; a hub has none, so none is made there.
+const onHub = setupService.isOnHub();
 
 const catalogStore = useCatalogStore();
 const isDockerMode = computed(() => !authService.isInDesktopMode());

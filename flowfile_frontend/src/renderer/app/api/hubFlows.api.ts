@@ -1,8 +1,10 @@
 // Paths match the FastAPI decorators exactly: a trailing slash would answer 307.
 
 import axios from "../services/axios.config";
+import setupService from "../services/setup.service";
 
-const BASE = "/hub_client";
+// On a server the hub is reached through core's own routes; on the hub's own page the hub answers directly.
+const base = () => (setupService.isOnHub() ? "/hub" : "/hub_client");
 
 // Core answers more on each (ids of registrations, owners, the flow's uuid); the editor reads these.
 export interface HubFlow {
@@ -70,30 +72,30 @@ const REFUSAL_KINDS: unknown[] = ["stale_base", "refused", "other_hub", "local_c
 
 export async function listHubFlows(namespaceId?: number | null): Promise<HubFlow[]> {
   const params = namespaceId == null ? undefined : { namespace_id: namespaceId };
-  const response = await axios.get<HubFlow[]>(`${BASE}/flows`, { params });
+  const response = await axios.get<HubFlow[]>(`${base()}/flows`, { params });
   return response.data;
 }
 
 export async function listHubFlowVersions(flowUuid: string): Promise<HubFlowVersion[]> {
-  const response = await axios.get<HubFlowVersion[]>(`${BASE}/flows/${flowUuid}/versions`);
+  const response = await axios.get<HubFlowVersion[]>(`${base()}/flows/${flowUuid}/versions`);
   return response.data;
 }
 
 /** The nodes of the flow that read or write a path on this machine; a warning, never a block. */
 export async function publishCheck(flowId: number): Promise<LocalPathUse[]> {
-  const response = await axios.get<LocalPathUse[]>(`${BASE}/publish_check`, {
+  const response = await axios.get<LocalPathUse[]>(`${base()}/publish_check`, {
     params: { flow_id: flowId },
   });
   return response.data;
 }
 
 export async function publishToHub(input: HubPublishInput): Promise<HubPublishResult> {
-  const response = await axios.post<HubPublishResult>(`${BASE}/publish`, input);
+  const response = await axios.post<HubPublishResult>(`${base()}/publish`, input);
   return response.data;
 }
 
 export async function openFromHub(input: HubOpenInput): Promise<HubOpenResult> {
-  const response = await axios.post<HubOpenResult>(`${BASE}/open`, input);
+  const response = await axios.post<HubOpenResult>(`${base()}/open`, input);
   return response.data;
 }
 

@@ -32,26 +32,29 @@
         </p>
       </div>
       <div class="header-actions">
-        <button
-          v-if="isScheduleRunning"
-          class="btn btn-warning btn-sm"
-          @click="$emit('cancelScheduleRun', schedule)"
-        >
-          <i class="fa-solid fa-stop"></i>
-          Cancel Run
-        </button>
-        <button
-          v-else-if="!isFlowRunning"
-          class="btn btn-success btn-sm"
-          @click="$emit('runNow', schedule.id)"
-        >
-          <i class="fa-solid fa-play"></i>
-          Run Now
-        </button>
-        <button v-else class="btn btn-success btn-sm" disabled title="Flow is already running">
-          <i class="fa-solid fa-play"></i>
-          Run Now
-        </button>
+        <!-- Run Now and Cancel run core's own scheduler, which a hub has none of -->
+        <template v-if="!onHub">
+          <button
+            v-if="isScheduleRunning"
+            class="btn btn-warning btn-sm"
+            @click="$emit('cancelScheduleRun', schedule)"
+          >
+            <i class="fa-solid fa-stop"></i>
+            Cancel Run
+          </button>
+          <button
+            v-else-if="!isFlowRunning"
+            class="btn btn-success btn-sm"
+            @click="$emit('runNow', schedule.id)"
+          >
+            <i class="fa-solid fa-play"></i>
+            Run Now
+          </button>
+          <button v-else class="btn btn-success btn-sm" disabled title="Flow is already running">
+            <i class="fa-solid fa-play"></i>
+            Run Now
+          </button>
+        </template>
         <el-switch
           :model-value="schedule.enabled"
           size="default"
@@ -213,6 +216,10 @@ import {
 import RunHistoryTable from "./RunHistoryTable.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
+import setupService from "../../services/setup.service";
+
+// Run Now and Cancel run core's own scheduler, which a hub has none of.
+const onHub = setupService.isOnHub();
 
 const router = useRouter();
 const catalogStore = useCatalogStore();

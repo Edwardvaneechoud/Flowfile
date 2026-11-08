@@ -120,10 +120,15 @@
           <div v-if="catalogStore.loading" class="loading-state">Loading...</div>
           <div v-else-if="catalogStore.tree.length === 0" class="empty-state">
             <p>No catalogs yet.</p>
-            <button class="btn btn-primary btn-sm" @click="showCreateNamespace = true">
+            <button
+              v-if="!onHub"
+              class="btn btn-primary btn-sm"
+              @click="showCreateNamespace = true"
+            >
               <i class="fa-solid fa-plus"></i> Create your first catalog
             </button>
             <button
+              v-if="!onHub"
               class="btn btn-secondary btn-sm"
               :disabled="demoBusy"
               @click="handleLoadDemoData"
@@ -578,7 +583,7 @@
             foreign-exchange sync flow to explore Flowfile. Remove it again at any time.
           </p>
           <button
-            v-if="!hasDemoCatalog"
+            v-if="!hasDemoCatalog && !onHub"
             class="btn btn-primary btn-sm demo-card-btn"
             :disabled="demoBusy"
             @click="handleLoadDemoData"
@@ -586,7 +591,7 @@
             <i class="fa-solid fa-flask"></i> Load demo data
           </button>
           <button
-            v-else
+            v-else-if="!onHub"
             class="btn btn-ghost btn-sm demo-card-btn"
             :disabled="demoBusy"
             @click="handleRemoveDemoData"
@@ -675,7 +680,13 @@ import { countMatches, normalizeQuery, shownNamespaces } from "./catalogTreeFilt
 import { apiErrorMessage, artifactRef, pageAfterDelete } from "./artifactVersions";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { findNamespacePath } from "../../types";
-import { CATALOG_TAB_GROUP_LABELS, catalogSectionOfTab, catalogTabsInSection } from "./catalogTabs";
+import {
+  CATALOG_TAB_GROUP_LABELS,
+  catalogSectionOfTab,
+  catalogTabsInSection,
+  shownOnHub,
+} from "./catalogTabs";
+import setupService from "../../services/setup.service";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   ArtifactVersionInfo,
@@ -702,6 +713,10 @@ const notificationsStore = useNotificationsStore();
 const { openFlow } = useFlowOpener();
 const { renameFlow: renameRecentFlow, reconcileWithCatalog } = useRecentFlows();
 
+// A hub serves this page itself: it shows what the hub holds and hides what needs a worker (the tabs and actions
+// gated below); every flow here is the hub's, selected by its own id.
+const onHub = setupService.isOnHub();
+
 // Namespace sharing (one dialog for the whole tree).
 const { canManageGrants } = useResourceSharing();
 const { writableSchemaNamespaces } = useWritableNamespaces();
@@ -716,7 +731,7 @@ const openNamespaceShare = (node: NamespaceTree) => {
 // shown; group captions are noise when the section is a single group.
 const tabs = computed(() => {
   const section = catalogSectionOfTab(catalogStore.activeTab) ?? "catalog";
-  const shown = catalogTabsInSection(section);
+  const shown = catalogTabsInSection(section).filter((t) => !onHub || shownOnHub(t.key));
   const captioned = new Set(shown.map((t) => t.group)).size > 1;
   return shown.map((tab, i) => ({
     key: tab.key as CatalogTab,
@@ -781,7 +796,9 @@ const treeGroups = computed(() =>
 );
 const hubPresence = computed(() => hubPresenceOf(catalogStore.tree));
 const hasHubRows = computed(() => hubPresence.value !== "none");
-const showsNew = computed(() => offersNew(hubPresence.value, catalogStore.selectedNamespace));
+const showsNew = computed(
+  () => !onHub && offersNew(hubPresence.value, catalogStore.selectedNamespace),
+);
 // Why the tree is empty though catalogs were listed: none offered here, or all out of this Flowfile's reach.
 const treeEmptyNote = computed(() => {
   if (treeGroups.value.length > 0 || catalogStore.tree.length === 0) return null;
@@ -939,10 +956,13 @@ const flowMenu = ref<{ flow: FlowRegistration; x: number; y: number } | null>(nu
 const flowMenuOptions = computed<ContextMenuOption[]>(() => {
   const flow = flowMenu.value?.flow;
   if (flow && isHubRow(flow)) {
-    return [
-      { label: "Open flow in editor", action: "open", disabled: flow.latest_version == null },
-      { label: "Flow overview", action: "view" },
-    ];
+    // On the hub itself Open makes no copy: the flow's panel is where it is run from.
+    const open = {
+      label: "Open flow in editor",
+      action: "open",
+      disabled: flow.latest_version == null,
+    };
+    return [...(onHub ? [] : [open]), { label: "Flow overview", action: "view" }];
   }
   return [
     { label: "Open flow in editor", action: "open", disabled: !flow?.file_exists },
@@ -1443,21 +1463,23 @@ async function confirmDeleteWithFile(opts: {
   question: string;
   fileLabel: string;
 }): Promise<{ deleteFile: boolean } | null> {
-  const deleteFile = ref(true);
+  // The hub holds no file: nothing on a disk there to delete.
+  const deleteFile = ref(!onHub);
+  const checkbox = () =>
+    h(
+      ElCheckbox,
+      {
+        modelValue: deleteFile.value,
+        "onUpdate:modelValue": (v: boolean | string | number) => (deleteFile.value = Boolean(v)),
+      },
+      () => opts.fileLabel,
+    );
   try {
     await ElMessageBox.confirm(
       () =>
         h("div", [
           h("p", { style: "margin: 0 0 12px" }, opts.question),
-          h(
-            ElCheckbox,
-            {
-              modelValue: deleteFile.value,
-              "onUpdate:modelValue": (v: boolean | string | number) =>
-                (deleteFile.value = Boolean(v)),
-            },
-            () => opts.fileLabel,
-          ),
+          ...(onHub ? [] : [checkbox()]),
         ]),
       opts.title,
       { confirmButtonText: "Delete", cancelButtonText: "Cancel", type: "warning" },
@@ -1917,8 +1939,8 @@ function applyRouteToStore() {
     catalogStore.clearNamespaceSelection();
   }
 
-  // A hub flow stays selected only while the URL names it (a negative flowId).
-  if (flowId === null || flowId >= 0) selectedHubFlowId.value = null;
+  // A hub flow stays selected only while the URL names it (a negative flowId; on the hub itself, any).
+  if (flowId === null || (flowId >= 0 && !onHub)) selectedHubFlowId.value = null;
 
   // Handle selections (mutually exclusive: table, artifact, schedule, or flow+run)
   if (tableId !== null) {
@@ -1943,7 +1965,7 @@ function applyRouteToStore() {
     if (catalogStore.selectedSchedule) catalogStore.clearScheduleSelection();
 
     // Flow selection (set manually to avoid selectFlow clearing run detail)
-    if (flowId !== null && flowId < 0) {
+    if (flowId !== null && (flowId < 0 || onHub)) {
       // A hub flow: found in the tree once it is loaded, nothing of a local registration's loaded for it.
       if (catalogStore.selectedFlowId !== null) catalogStore.selectedFlowId = null;
       if (flowId !== selectedHubFlowId.value) {
