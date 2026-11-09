@@ -137,7 +137,9 @@ def _run(user_id: int, claims: DispatchClaims, document: schemas.FlowfileData, l
             if target is None:
                 raise LookupError("the person's sign-in through the hub is gone")
             hub_url, access_token = target
-            report = build_run_report(flow, run_info, hub_flow_uuid(flow, hub_url) or claims.flow_uuid)
+            report = build_run_report(
+                flow, run_info, hub_flow_uuid(flow, hub_url) or claims.flow_uuid, run_row_id=core_run_id
+            )
         post_run_report(hub_url, access_token, report)
         logger.info(f"The hub's {label} ended: success={run_info.success}, reported to {hub_url}")
     finally:
@@ -147,13 +149,10 @@ def _run(user_id: int, claims: DispatchClaims, document: schemas.FlowfileData, l
 def _open_record(flow, user_id: int, claims: DispatchClaims, name: str | None) -> int | None:
     """Open the run in this server's own run history, as an editor run's record is opened (``routes._open_run_record``):
     no registration (the flow is not saved here), the hub's flow uuid and the name the checkout gave (the built graph
-    is named after its temp file), ``run_type`` ``hub``. ``None`` when the
-    row could not be written; the run goes on, and the hub's ledger still gets it."""
-    try:
-        snapshot = flow.get_flowfile_data().model_dump_json()
-    except Exception as e:
-        logger.warning(f"The hub's run {claims.run_id}: snapshot serialization failed: {e}")
-        snapshot = None
+    is named after its temp file), ``run_type`` ``dispatched``, the run id the hub gave as ``remote_run_id`` and the
+    published version that runs in place of a snapshot (the hub holds it). This row is the execution; the hub's
+    record of the run is written from the report. ``None`` when the row could not be written; the run goes on, and
+    the hub still gets the report."""
     try:
         with get_db_context() as db:
             row = FlowRunService(SQLAlchemyCatalogRepository(db)).start_run(
@@ -162,9 +161,10 @@ def _open_record(flow, user_id: int, claims: DispatchClaims, name: str | None) -
                 flow_path=f"hub://flows/{claims.flow_uuid}",
                 user_id=user_id,
                 number_of_nodes=len(flow.nodes),
-                run_type="hub",
-                flow_snapshot=snapshot,
+                run_type="dispatched",
                 flow_uuid=claims.flow_uuid,
+                remote_run_id=claims.run_id,
+                flow_version=claims.flow_version,
             )
             return row.id
     except Exception as e:

@@ -16,7 +16,7 @@ from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
-RunType = Literal["in_designer_run", "scheduled", "manual", "on_demand", "hub"]
+RunType = Literal["in_designer_run", "scheduled", "manual", "on_demand", "dispatched"]
 
 
 class FlowSchedule(Base):

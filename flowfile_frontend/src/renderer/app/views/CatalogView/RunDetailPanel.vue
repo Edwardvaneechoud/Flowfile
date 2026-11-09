@@ -37,6 +37,10 @@
         <span class="meta-label">Nodes succeeded</span>
         <span class="meta-value">{{ run.nodes_completed }} / {{ run.number_of_nodes }}</span>
       </div>
+      <div v-if="run.executed_on" class="meta-card">
+        <span class="meta-label">Executed on</span>
+        <span class="meta-value">{{ run.executed_on }}</span>
+      </div>
       <div class="meta-card">
         <span class="meta-label">Run Type</span>
         <span v-if="run.run_type === 'scheduled' && run.schedule_id" class="meta-value">
@@ -123,19 +127,38 @@
       </div>
     </div>
 
-    <!-- Run Log (scheduled runs) -->
+    <!-- Run Log (scheduled runs; a run executed elsewhere keeps its log there) -->
     <div v-if="run.has_log" class="section">
       <div class="snapshot-header">
         <h3>
           <i class="fa-solid fa-file-lines"></i>
           Run Log
         </h3>
-        <button v-if="!logContent && !loadingLog" class="btn btn-primary btn-sm" @click="loadLog">
+        <a
+          v-if="run.log_url"
+          class="btn btn-primary btn-sm"
+          :href="run.log_url"
+          target="_blank"
+          rel="noopener"
+        >
+          <i class="fa-solid fa-arrow-up-right-from-square"></i>
+          Open the log on {{ run.executed_on ?? "the server that ran it" }}
+        </a>
+        <button
+          v-else-if="!logContent && !loadingLog"
+          class="btn btn-primary btn-sm"
+          @click="loadLog"
+        >
           <i class="fa-solid fa-eye"></i>
           View log
         </button>
       </div>
-      <div v-if="loadingLog" class="log-viewer">
+      <div v-if="run.log_url" class="log-viewer">
+        <pre class="snapshot-code">
+The log is kept where the run happened; open it there with your sign-in.</pre
+        >
+      </div>
+      <div v-else-if="loadingLog" class="log-viewer">
         <pre class="snapshot-code">Loading...</pre>
       </div>
       <div v-else-if="logContent !== null" class="log-viewer">
@@ -212,7 +235,7 @@ watch(
   () => props.run.id,
   () => {
     logContent.value = null;
-    if (props.run.has_log) {
+    if (props.run.has_log && !props.run.log_url) {
       loadLog();
     }
   },

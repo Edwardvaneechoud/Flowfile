@@ -17,6 +17,7 @@ from pathlib import Path
 
 import yaml
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -59,6 +60,7 @@ from flowfile_core.catalog import (
     VisualizationExistsError,
     VisualizationNotFoundError,
     WorkerUnavailableError,
+    run_records,
 )
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.services.tables import catalog_table_location
@@ -620,8 +622,15 @@ def get_run_log(
     run_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return the log content for a subprocess-spawned run."""
+    """Return the log content for a subprocess-spawned run; a run executed elsewhere (``log_ref``) is a 307 to the
+    executor's own log route, which the caller fetches with their sign-in there, or a 404 when this core cannot name
+    it (``catalog/run_records.py``)."""
     run = service.get_run_detail(run_id)
+    if run.log_ref:
+        backend = run_records.parse_log_ref(run.log_ref)
+        if run.log_url is None:
+            raise HTTPException(404, run_records.LOG_ELSEWHERE.format(backend=backend[0] if backend else "elsewhere"))
+        return RedirectResponse(run.log_url, status_code=307)
 
     log_path = service.resolve_run_log_path(run.id, run.run_type)
     if log_path is None:

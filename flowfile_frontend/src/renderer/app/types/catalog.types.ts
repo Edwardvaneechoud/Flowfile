@@ -202,10 +202,15 @@ export interface FlowRun {
   nodes_completed: number;
   number_of_nodes: number;
   duration_seconds: number | null;
-  run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "hub";
+  run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "dispatched";
   schedule_id: number | null;
   has_snapshot: boolean;
   has_log: boolean;
+  // A run executed elsewhere: where, under which run id, where its log is and the published version that ran.
+  executed_on?: string | null;
+  remote_run_id?: string | null;
+  log_ref?: string | null;
+  flow_version?: number | null;
 }
 
 export interface PaginatedFlowRuns {
@@ -219,6 +224,8 @@ export interface PaginatedFlowRuns {
 export interface FlowRunDetail extends FlowRun {
   flow_snapshot: string | null;
   node_results_json: string | null;
+  // The executor's log route for a run whose log is kept elsewhere, when core can name it.
+  log_url?: string | null;
 }
 
 // Global Artifact
@@ -608,7 +615,7 @@ export interface ActiveFlowRun {
   started_at: string;
   nodes_completed: number;
   number_of_nodes: number;
-  run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "hub";
+  run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "dispatched";
 }
 
 // Catalog Stats

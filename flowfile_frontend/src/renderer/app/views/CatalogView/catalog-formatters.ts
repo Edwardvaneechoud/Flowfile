@@ -111,22 +111,22 @@ export function getScheduleDisplayName(
 }
 
 export function formatRunType(
-  runType: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "hub",
+  runType: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "dispatched",
 ): string {
   if (runType === "scheduled") return "Scheduled";
   if (runType === "manual") return "Manual";
   if (runType === "on_demand") return "On-demand";
-  if (runType === "hub") return "Hub";
+  if (runType === "dispatched") return "Dispatched";
   return "Designer";
 }
 
 export function runTypeIcon(
-  runType: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "hub",
+  runType: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "dispatched",
 ): string {
   if (runType === "scheduled") return "fa-solid fa-calendar-days";
   if (runType === "manual") return "fa-solid fa-hand-pointer";
   if (runType === "on_demand") return "fa-solid fa-bolt";
-  if (runType === "hub") return "fa-solid fa-building";
+  if (runType === "dispatched") return "fa-solid fa-paper-plane";
   return "fa-solid fa-pencil-ruler";
 }
 

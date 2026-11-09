@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from flowfile_core.catalog import run_records
 from flowfile_core.catalog.exceptions import (
     FlowAlreadyRunningError,
     FlowNotFoundError,
@@ -148,6 +149,7 @@ class FlowRunService:
             reg = self.repo.get_flow(run.registration_id)
             if reg is not None and reg.name:
                 display_name = reg.name
+        snapshot = run_records.snapshot_of(run)
         return FlowRunDetail(
             id=run.id,
             registration_id=run.registration_id,
@@ -163,10 +165,15 @@ class FlowRunService:
             duration_seconds=run.duration_seconds,
             run_type=run.run_type,
             schedule_id=run.schedule_id,
-            has_snapshot=run.flow_snapshot is not None,
-            has_log=self._resolve_log_path(run.id, run.run_type) is not None,
-            flow_snapshot=run.flow_snapshot,
+            has_snapshot=snapshot is not None,
+            has_log=self._resolve_log_path(run.id, run.run_type) is not None or run.log_ref is not None,
+            flow_snapshot=snapshot,
             node_results_json=run.node_results_json,
+            executed_on=run.executed_on,
+            remote_run_id=run.remote_run_id,
+            log_ref=run.log_ref,
+            flow_version=run.flow_version,
+            log_url=run_records.log_location(run.log_ref) if run.log_ref else None,
         )
 
     def get_run(self, run_id: int) -> FlowRun:
@@ -186,6 +193,10 @@ class FlowRunService:
         run_type: RunType,
         flow_snapshot: str | None = None,
         flow_uuid: str | None = None,
+        executed_on: str | None = None,
+        remote_run_id: str | None = None,
+        log_ref: str | None = None,
+        flow_version: int | None = None,
     ) -> FlowRun:
         """Record a new flow run start.
 
@@ -206,6 +217,10 @@ class FlowRunService:
             number_of_nodes=number_of_nodes,
             run_type=run_type,
             flow_snapshot=flow_snapshot,
+            executed_on=executed_on,
+            remote_run_id=remote_run_id,
+            log_ref=log_ref,
+            flow_version=flow_version,
         )
         return self.repo.create_run(run)
 
@@ -251,6 +266,10 @@ class FlowRunService:
         node_results_json: str | None = None,
         flow_snapshot: str | None = None,
         flow_uuid: str | None = None,
+        executed_on: str | None = None,
+        remote_run_id: str | None = None,
+        log_ref: str | None = None,
+        flow_version: int | None = None,
     ) -> FlowRun:
         """Record a fully completed run in one step (fallback when start_run was skipped)."""
         duration = None
@@ -273,6 +292,10 @@ class FlowRunService:
             number_of_nodes=number_of_nodes,
             duration_seconds=duration,
             run_type=run_type,
+            executed_on=executed_on,
+            remote_run_id=remote_run_id,
+            log_ref=log_ref,
+            flow_version=flow_version,
             node_results_json=node_results_json,
             flow_snapshot=flow_snapshot,
         )
@@ -283,9 +306,10 @@ class FlowRunService:
         run = self.repo.get_run(run_id)
         if run is None:
             raise RunNotFoundError(run_id=run_id)
-        if not run.flow_snapshot:
+        snapshot = run_records.snapshot_of(run)
+        if not snapshot:
             raise NoSnapshotError(run_id=run_id)
-        return run.flow_snapshot
+        return snapshot
 
     @staticmethod
     def _spawn_flow_subprocess(

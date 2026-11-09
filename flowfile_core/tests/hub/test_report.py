@@ -45,6 +45,9 @@ REPORT_KEYS = {
     "inputs",
     "outputs",
     "vend_ids",
+    "flow_name",
+    "executed_on",
+    "log_ref",
 }
 NODE_KEYS = {"node_id", "node_type", "success", "skipped", "duration_seconds", "rows_out", "error"}
 TABLE_KEYS = {"namespace_id", "table_id", "table_name"}

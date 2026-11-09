@@ -22,10 +22,13 @@ import uuid
 from datetime import datetime, timezone
 
 from flowfile_core.auth import issuer_accounts
+from flowfile_core.catalog import run_records
 from flowfile_core.configs import logger
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import session
+from flowfile_core.hub_client import vend as hub_vend
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import RunInformation
@@ -129,8 +132,13 @@ def hub_flow_uuid(flow, hub_url: str) -> str | None:
     return origin.flow_uuid
 
 
-def build_run_report(flow, run_info: RunInformation, flow_uuid: str) -> dict:
+def build_run_report(flow, run_info: RunInformation, flow_uuid: str, run_row_id: int | None = None) -> dict:
     """The report of a finished run of ``flow``, a run of the hub flow or local registration ``flow_uuid``.
+
+    The report is the one write of the hub's record of the run: ``executed_on`` names this machine as the hub knows
+    it (its server name on a server of the hub, ``None`` on a desktop), ``log_ref`` the run row ``run_row_id`` of
+    this core whose log route holds the log (``catalog/run_records.py``; ``None`` off a hub server or without a
+    row), ``flow_name`` the flow's name for a flow the hub has no registration for.
 
     ``inputs`` and ``outputs`` are the hub's tables that the catalog reader and writer nodes that ran and succeeded read
     and wrote, named by the hub's ids, resolved on the hub from the qualified names the steps carry
@@ -201,10 +209,14 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str) -> dict:
     vend = getattr(flow, "last_hub_vend", None)
     ended_at = run_info.end_time or datetime.now()
     started_at = run_info.start_time or ended_at
+    executed_on = hub_vend.node_name(registry.WORKER_BACKEND_ID)
     return {
         "run_id": vend[0] if vend is not None else getattr(flow, "hub_run_id", None) or str(uuid.uuid4()),
         "flow_uuid": flow_uuid,
         "flow_version": origin.version if origin is not None else None,
+        "flow_name": getattr(flow.flow_settings, "name", None) or None,
+        "executed_on": executed_on,
+        "log_ref": run_records.log_ref(executed_on, run_row_id) if executed_on and run_row_id is not None else None,
         "started_at": started_at.astimezone(timezone.utc).isoformat(),
         "ended_at": ended_at.astimezone(timezone.utc).isoformat(),
         "success": bool(run_info.success),

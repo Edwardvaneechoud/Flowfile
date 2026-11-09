@@ -190,10 +190,15 @@ class FlowRunOut(BaseModel):
     nodes_completed: int = 0
     number_of_nodes: int = 0
     duration_seconds: float | None = None
-    run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand", "hub"] = "in_designer_run"
+    run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand", "dispatched"] = "in_designer_run"
     schedule_id: int | None = None
     has_snapshot: bool = False
     has_log: bool = False
+    # A run executed elsewhere: where, under which run id, where its log is, and the published version that ran.
+    executed_on: str | None = None
+    remote_run_id: str | None = None
+    log_ref: str | None = None
+    flow_version: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -209,10 +214,15 @@ class PaginatedFlowRuns(BaseModel):
 
 
 class FlowRunDetail(FlowRunOut):
-    """Extended run detail that includes the YAML flow snapshot and node results."""
+    """Extended run detail that includes the YAML flow snapshot and node results.
+
+    ``flow_snapshot`` is the run's own snapshot, else the document of the published version it names; ``log_url``
+    is the executor's log route for a run whose log is kept elsewhere, when this core can name it.
+    """
 
     flow_snapshot: str | None = None
     node_results_json: str | None = None
+    log_url: str | None = None
 
 
 # ==================== Favorite / Follow Schemas ====================
@@ -1058,7 +1068,7 @@ class ActiveFlowRun(BaseModel):
     started_at: datetime
     nodes_completed: int = 0
     number_of_nodes: int = 0
-    run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand", "hub"] = "in_designer_run"
+    run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand", "dispatched"] = "in_designer_run"
     schedule_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
