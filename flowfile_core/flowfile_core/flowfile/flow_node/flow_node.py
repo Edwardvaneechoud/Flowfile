@@ -241,6 +241,8 @@ class FlowNode:
     _executor: NodeExecutor | None
     _execution_state: NodeExecutionState
     _execution_lock: threading.RLock  # guards concurrent get_resulting_data
+    _recompute_lock: threading.Lock
+    _recompute_count: int
     _state_needs_reset: bool
     # invoked by run_graph() once all downstream dependents finish; e.g. Kafka commits offsets on success
     _on_flow_complete: Callable[[bool], None] | None
@@ -353,6 +355,8 @@ class FlowNode:
         self._executor = None
         self._execution_state = NodeExecutionState()
         self._execution_lock = threading.RLock()
+        self._recompute_lock = threading.Lock()
+        self._recompute_count = 0
         self._state_needs_reset = False
         self._on_flow_complete = None
         self._skipped_input_ids_this_run = frozenset()

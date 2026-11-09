@@ -18,7 +18,7 @@ from flowfile_core.flowfile.execution.context import (
     current_context,
     use_context,
 )
-from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.execution.errors import ComputeError, ResultMissing
 from flowfile_core.flowfile.execution.protocol import SubmitHints, worker_stores
 from flowfile_core.flowfile.flow_node.models import (
     ExecutionDecision,
@@ -265,11 +265,12 @@ class NodeExecutor:
             self._handle_error(state, unreachable, performance_mode, False, node_logger, running)
             return
 
+        recomputes = _recompute_counts(self.node)
         try:
             decision = self._decide_execution(state, performance_mode, reset_cache)
         except ComputeError as e:
             self._prepare_for_execution(state)
-            self._handle_error(state, e, performance_mode, retry, node_logger, running)
+            self._handle_error(state, e, performance_mode, retry, node_logger, running, recomputes=recomputes)
             return
         if not decision.should_run:
             return
@@ -315,7 +316,9 @@ class NodeExecutor:
                 state.reset_results_only()
                 self._sync_state_to_legacy(state)
                 return
-            self._handle_error(state, e, effective_performance_mode, retry, node_logger, running, preview)
+            self._handle_error(
+                state, e, effective_performance_mode, retry, node_logger, running, preview, recomputes=recomputes
+            )
 
     def _raise_on_invalid_expression(self) -> None:
         """Fail a formula/advanced-filter node whose expression cannot run against its input.
@@ -513,14 +516,13 @@ class NodeExecutor:
         node_logger: NodeLogger,
         running: Collection[int | str] | None = None,
         preview: bool | None = None,
+        recomputes: dict[int | str, int] | None = None,
     ) -> None:
         """Handle execution errors with retry logic.
 
-        With ``retry`` set, a Polars missing-file error reruns the node's inputs, then the node once with *preview*.
-        With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone is enough, the results being core's own
-        files. With it on, an input must also hold a result that is gone (``NodeResults.artifact_is_missing``).
-        Otherwise the error is the node's own and the inputs' results are kept. An input reruns on the backend that
-        holds its result for its current setup (``FlowNode.held_result``), else where the node runs.
+        With ``retry`` set, inputs are rerun, then the node once. With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off a
+        Polars missing-file error reruns every input; with it on, that error or a ``ResultMissing`` reruns only the
+        inputs whose result is gone (``_recompute_missing_inputs``).
         """
         error_str = str(error)
         state.mark_failed(error_str)
@@ -530,37 +532,19 @@ class NodeExecutor:
         self.node._last_exception_class = getattr(error, "original_class", None) or type(error).__name__
         self.node._last_run_error = error
 
-        # Retry on missing file errors (upstream cache was cleared)
-        if (
-            "(os error 2)" in error_str
-            and retry
-            and (
-                not settings.FLOWFILE_COMPUTE_PROTOCOL
-                or any(
-                    node_input.results.artifact_is_missing() for node_input in self.node.node_inputs.get_all_inputs()
-                )
+        missing_file = "(os error 2)" in error_str
+        if retry and settings.FLOWFILE_COMPUTE_PROTOCOL:
+            retries = (missing_file or isinstance(error, ResultMissing)) and self._recompute_missing_inputs(
+                performance_mode, node_logger, running, recomputes or {}
             )
-        ):
+        elif retry and missing_file:
             node_logger.warning("Input file missing, retrying upstream nodes...")
             for node_input in self.node.node_inputs.get_all_inputs():
-                context = current_context()
-                ref = node_input.results.result_ref
-                held = node_input.held_result(ref.backend_id) if ref is not None else None
-                if settings.FLOWFILE_COMPUTE_PROTOCOL and held is not None and held.backend_id != context.backend_id:
-                    context = replace(context, backend_id=held.backend_id)
-                # The run loop substitutes only into the node it is about to run.
-                try:
-                    with use_context(context), node_parameters_resolved(node_input):
-                        node_input.execute_node(
-                            performance_mode=performance_mode,
-                            retry=True,
-                            reset_cache=True,
-                            node_logger=node_logger,
-                            running=running,
-                        )
-                except ValueError as e:
-                    node_logger.error(f"Could not retry upstream node {node_input.node_id}: {e}")
-            # Retry this node once (no further retries)
+                self._rerun_input(node_input, performance_mode, node_logger, running)
+            retries = True
+        else:
+            retries = False
+        if retries:
             self.execute(
                 performance_mode=performance_mode,
                 retry=False,
@@ -571,3 +555,59 @@ class NodeExecutor:
             return
 
         node_logger.error(f"Error running node: {error}")
+
+    def _recompute_missing_inputs(
+        self,
+        performance_mode: bool,
+        node_logger: NodeLogger,
+        running: Collection[int | str] | None,
+        recomputes: dict[int | str, int],
+    ) -> bool:
+        """Rerun each input whose result is gone, one thread per input; whether the node should retry.
+
+        An input another thread recomputed since this node's attempt began (*recomputes*) is not rerun but counts.
+        """
+        recovered = False
+        for node_input in self.node.node_inputs.get_all_inputs():
+            with node_input._recompute_lock:
+                if node_input.results.artifact_is_missing():
+                    node_logger.warning(f"Input result missing, recomputing node {node_input.node_id}")
+                    try:
+                        self._rerun_input(node_input, performance_mode, node_logger, running)
+                    finally:
+                        node_input._recompute_count += 1
+                    recovered = True
+                elif node_input._recompute_count != recomputes.get(node_input.node_id, node_input._recompute_count):
+                    recovered = True
+        return recovered
+
+    def _rerun_input(
+        self,
+        node_input: FlowNode,
+        performance_mode: bool,
+        node_logger: NodeLogger,
+        running: Collection[int | str] | None,
+    ) -> None:
+        """Run ``node_input`` again with its cache reset, on the backend that holds its result."""
+        context = current_context()
+        ref = node_input.results.result_ref
+        held = node_input.held_result(ref.backend_id) if ref is not None else None
+        if settings.FLOWFILE_COMPUTE_PROTOCOL and held is not None and held.backend_id != context.backend_id:
+            context = replace(context, backend_id=held.backend_id)
+        # The run loop substitutes only into the node it is about to run.
+        try:
+            with use_context(context), node_parameters_resolved(node_input):
+                node_input.execute_node(
+                    performance_mode=performance_mode,
+                    retry=True,
+                    reset_cache=True,
+                    node_logger=node_logger,
+                    running=running,
+                )
+        except ValueError as e:
+            node_logger.error(f"Could not retry upstream node {node_input.node_id}: {e}")
+
+
+def _recompute_counts(node: FlowNode) -> dict[int | str, int]:
+    """Each input of ``node`` by id with its ``_recompute_count``, taken before ``node`` submits."""
+    return {node_input.node_id: node_input._recompute_count for node_input in node.node_inputs.get_all_inputs()}
