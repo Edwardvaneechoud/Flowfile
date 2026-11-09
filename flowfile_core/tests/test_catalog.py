@@ -362,7 +362,7 @@ class TestFlowRegistration:
         client.delete(f"/catalog/flows/{b['id']}", params={"delete_file": True})
         assert not flow_file.exists()
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_delete_leaves_a_file_outside_the_flow_folders(self, tmp_path, monkeypatch, caplog, mode):
         """A registration stores any path, so a multi-user server never removes a file it points at elsewhere."""
         ns_id = self._make_namespace()
@@ -380,7 +380,7 @@ class TestFlowRegistration:
         assert "outside the server's flow folders and was left in place" in caplog.text
         assert "canary-7f3a" not in caplog.text
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_delete_removes_a_file_inside_the_flow_folders(self, monkeypatch, mode):
         ns_id = self._make_namespace()
         storage.flows_directory.mkdir(parents=True, exist_ok=True)
@@ -397,7 +397,7 @@ class TestFlowRegistration:
         finally:
             inside.unlink(missing_ok=True)
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_delete_leaves_a_link_whose_place_or_target_is_outside(self, tmp_path, monkeypatch, mode):
         """The path checked is the path removed: a link outside pointing in and a link inside pointing out both stay."""
         ns_id = self._make_namespace()
@@ -424,7 +424,7 @@ class TestFlowRegistration:
             link_in.unlink(missing_ok=True)
             inside.unlink(missing_ok=True)
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_refuses_to_register_a_flow_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
         """Registration is where an outside path would get in, so a server refuses it there first."""
         ns_id = self._make_namespace()
@@ -438,7 +438,7 @@ class TestFlowRegistration:
         assert resp.json()["detail"] == "the flow's file is outside the server's flow folders"
         assert client.get("/catalog/flows").json() == []
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_stores_a_registered_path_resolved(self, monkeypatch, mode):
         """One spelling per file, so a second registration cannot hide behind ``flows/sub/../a.yaml``."""
         ns_id = self._make_namespace()
@@ -451,7 +451,7 @@ class TestFlowRegistration:
         assert resp.status_code == 201, resp.text
         assert resp.json()["flow_path"] == str(storage.flows_directory.resolve() / spelled.name)
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_finds_a_registration_under_every_spelling_of_its_path(self, tmp_path, monkeypatch, mode):
         """A flows folder reached through a link: registered by the link's spelling, stored resolved, found by
         both, and two registrations spelling the one file two ways count as one for the delete."""
@@ -486,7 +486,7 @@ class TestFlowRegistration:
         finally:
             real_file.unlink(missing_ok=True)
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_finds_a_row_from_before_the_rule_under_the_links_spelling(self, tmp_path, monkeypatch, mode):
         """A row stored before the rule under a link's spelling is found by that spelling before anything resolves,
         so auto-registration adds no second row at the same file."""
@@ -521,7 +521,7 @@ class TestFlowRegistration:
         assert resp.status_code == 201, resp.text
         assert resp.json()["flow_path"] == "/tmp/sub/../given.yaml"
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_does_not_say_whether_a_file_outside_the_flow_folders_exists(self, tmp_path, monkeypatch, mode):
         """A registration from before the rule may point anywhere; its ``file_exists`` tells nobody what is there."""
         ns_id = self._make_namespace()
@@ -878,7 +878,7 @@ class TestRuns:
         assert created.status_code == 201, created.text
         return created.json()["id"]
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_refuses_to_run_a_file_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
         spawned: list[str] = []
         monkeypatch.setattr(
@@ -896,7 +896,7 @@ class TestRuns:
         with get_db_context() as db:
             assert db.query(FlowRun).filter_by(registration_id=reg_id).count() == 0
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_runs_a_flow_inside_the_flow_folders(self, monkeypatch, mode):
         spawned: list[str] = []
         monkeypatch.setattr(
@@ -2165,7 +2165,7 @@ class TestPushTableTrigger:
             runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
             assert len(runs) == 1
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_push_trigger_skips_a_refused_flow_and_goes_on(self, monkeypatch, mode):
         """On a server a schedule whose flow lies outside the flow folders is skipped; the next one still fires."""
         schema_id, outside_flow_id, table_id, _schedule_id, parquet_path = self._setup_table_and_schedule()
@@ -2296,7 +2296,7 @@ class TestSqlSaveAsFlowOnAServer:
         flow_path = Path(client.get(f"/catalog/flows/{saved.json()['flow_id']}").json()["flow_path"])
         assert flow_path.parent == tmp_path / "flows" and flow_path.exists()
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_saved_query_lands_in_the_flows_folder_and_runs(self, monkeypatch, mode):
         cat = client.post("/catalog/namespaces", json={"name": "SqlCat"}).json()
         ns_id = client.post("/catalog/namespaces", json={"name": "SqlSchema", "parent_id": cat["id"]}).json()["id"]
@@ -2328,7 +2328,7 @@ class TestSqlSaveAsFlowOnAServer:
 class TestOverwriteFlowInCatalogOnAServer:
     """``POST /overwrite_flow_in_catalog`` writes over a registration's file only inside the flow folders."""
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_leaves_a_registered_file_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
         cat = client.post("/catalog/namespaces", json={"name": "OwCat"}).json()
         ns_id = client.post("/catalog/namespaces", json={"name": "OwSchema", "parent_id": cat["id"]}).json()["id"]
@@ -2362,7 +2362,7 @@ class TestEditorOpensRegisteredFilesInsideTheFlowFolders:
         assert created.status_code == 201, created.text
         return created.json()["id"]
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_refuses_to_open_or_save_a_registered_file_outside_the_flow_folders(
         self, tmp_path, monkeypatch, mode
     ):
@@ -2385,7 +2385,7 @@ class TestEditorOpensRegisteredFilesInsideTheFlowFolders:
         finally:
             flow_file_handler.delete_flow(flow_id)
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_opens_and_saves_a_registered_file_inside_the_flow_folders(self, monkeypatch, mode):
         storage.flows_directory.mkdir(parents=True, exist_ok=True)
         inside = storage.flows_directory / f"editor_inside_{os.getpid()}.yaml"
@@ -3748,7 +3748,7 @@ class TestFlowInterfaceEndpoint:
         body = client.get(f"/catalog/flows/{reg_id}/interface").json()
         assert [p["name"] for p in body["inputs"]] == ["customers"]
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_refuses_a_file_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
         """A registration stores any path; the interface read must not parse a server file it points at."""
         _cleanup_catalog()
@@ -3761,7 +3761,7 @@ class TestFlowInterfaceEndpoint:
         assert response.json()["detail"] == "the flow's file is outside the server's flow folders"
         assert "canary-7f3a" not in response.text
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_reads_a_flow_inside_the_flow_folders(self, monkeypatch, mode):
         _cleanup_catalog()
         storage.flows_directory.mkdir(parents=True, exist_ok=True)
@@ -3900,7 +3900,7 @@ class TestFlowCode:
         finally:
             flow_file_handler.delete_flow(open_id)
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     @pytest.mark.parametrize("fmt", ["yaml", "notebook", "flowframe", "polars"])
     def test_server_refuses_a_registered_path_outside_the_flow_folders(self, tmp_path, monkeypatch, fmt, mode):
         """A registration stores any path, so the read must not echo a server file it points at."""
@@ -3915,7 +3915,7 @@ class TestFlowCode:
         assert body["error"] == "the flow's file is outside the server's flow folders"
         assert "canary-7f3a" not in resp.text
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_refuses_a_symlink_out_of_the_flow_folders(self, tmp_path, monkeypatch, mode):
         secret = tmp_path / "server_config.yaml"
         secret.write_text("token: canary-7f3a\n", encoding="utf-8")
@@ -3930,7 +3930,7 @@ class TestFlowCode:
         finally:
             link.unlink()
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_reads_a_flow_in_the_flows_folder(self, monkeypatch, mode):
         flow_path = storage.flows_directory / f"code_src_{os.getpid()}.yaml"
         self._save_flow(flow_path)

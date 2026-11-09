@@ -396,7 +396,7 @@ environment in local/desktop runs.
 
 | Variable | Purpose |
 |----------|---------|
-| `FLOWFILE_MODE` | Runtime: `electron` (default when unset, desktop), `package` (Python package), `docker` (container). Gates auth/secrets/JWT/storage behavior. Compose sets `docker`. |
+| `FLOWFILE_MODE` | Runtime: `electron` (default when unset, desktop), `package` (Python package), `docker` (container), `server` (a multi-user server run by hand, such as a node behind a hub: the same security gates as `docker`, none of its container plumbing). Gates auth/secrets/JWT/storage behavior. Compose sets `docker`. |
 | `FLOWFILE_ADMIN_USER` / `FLOWFILE_ADMIN_PASSWORD` | Initial admin account. |
 | `JWT_SECRET_KEY` | JWT signing secret. Required in docker mode (startup fails if unset). |
 | `FLOWFILE_MASTER_KEY` | Fernet key encrypting user secrets. Required in docker; in electron the UI setup prompts. May also be a `master_key.txt` Docker secret (env var wins). |

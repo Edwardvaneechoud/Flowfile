@@ -116,7 +116,7 @@ def served(monkeypatch) -> dict:
     return seen
 
 
-@pytest.mark.parametrize("mode", ["hub", "docker"])
+@pytest.mark.parametrize("mode", ["server", "docker"])
 def test_a_server_mode_serves_on_any_host_and_port_and_marks_the_editor_and_worker_it_mounts(
     mode, served, editor_files, monkeypatch
 ):

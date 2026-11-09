@@ -45,8 +45,8 @@ def create_default_local_user(db: Session):
 
 def create_docker_admin_user(db: Session):
     """
-    Create admin user for docker or hub mode from environment variables.
-    Only runs when FLOWFILE_MODE is docker or hub.
+    Create admin user for docker or server mode from environment variables.
+    Only runs when FLOWFILE_MODE is docker or server.
     Reads FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD from environment.
     """
     if not is_server_mode():

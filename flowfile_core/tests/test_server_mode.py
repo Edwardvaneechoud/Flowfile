@@ -21,7 +21,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.init_db import create_docker_admin_user
 from shared._version import __version__
 
-SERVER_MODES = ["docker", "hub"]
+SERVER_MODES = ["docker", "server"]
 LOCAL_MODES = ["electron", "package"]
 
 
@@ -66,7 +66,7 @@ class TestIsServerMode:
     def test_hub_is_not_docker(self, monkeypatch):
         from flowfile_core.configs import settings
 
-        monkeypatch.setattr(settings, "FLOWFILE_MODE", "hub")
+        monkeypatch.setattr(settings, "FLOWFILE_MODE", "server")
         assert is_docker_mode() is False
 
 

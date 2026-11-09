@@ -29,12 +29,12 @@ def _is_docker_mode() -> bool:
 
 
 def is_server_mode() -> bool:
-    """A multi-user server: the docker image or a node behind a hub (``FLOWFILE_MODE`` docker or hub).
+    """A multi-user server: the docker image or a server run by hand (``FLOWFILE_MODE`` docker or server).
 
     The same reading as flowfile_core's ``is_server_mode``, kept here so the scheduler, which runs without
     flowfile_core, applies the same flow-folder rule as core.
     """
-    return os.environ.get("FLOWFILE_MODE") in ("docker", "hub")
+    return os.environ.get("FLOWFILE_MODE") in ("docker", "server")
 
 
 class FlowfileStorage:

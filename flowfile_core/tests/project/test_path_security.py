@@ -426,7 +426,7 @@ class TestProjectReadsRegisteredFlowsInsideTheFlowFolders:
     """The project's sync and init read a registration's file through ``_load_flow_data``; on a multi-user server
     a path outside the server's flow folders reads as nothing, whatever is there."""
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_reads_nothing_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
         from flowfile_core.project.projection import _load_flow_data
         from shared.storage_config import storage
@@ -454,8 +454,8 @@ class TestEditorLimitsOnAHubServer:
     def _hub(monkeypatch) -> None:
         from flowfile_core.configs import settings
 
-        monkeypatch.setattr(settings, "FLOWFILE_MODE", "hub")
-        monkeypatch.setenv("FLOWFILE_MODE", "hub")
+        monkeypatch.setattr(settings, "FLOWFILE_MODE", "server")
+        monkeypatch.setenv("FLOWFILE_MODE", "server")
 
     def test_hub_server_refuses_the_home_folder(self, monkeypatch):
         from fastapi import HTTPException
@@ -482,7 +482,7 @@ class TestEditorLimitsOnAHubServer:
         monkeypatch.setenv("FLOWFILE_MODE", "docker")
         assert validate_path_under_cwd(str(storage.user_data_directory / "flow.yaml")) is not None
 
-    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    @pytest.mark.parametrize("mode", ["docker", "server"])
     def test_server_refuses_a_relative_flow_file_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
         from flowfile_core.flowfile.manage.io_flowfile import _validate_flow_path
 

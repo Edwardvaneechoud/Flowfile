@@ -273,7 +273,7 @@ def test_cron_spring_forward_fires_once(sched, monkeypatch):
     assert len(_runs(sched, reg_id)) == 1
 
 
-@pytest.mark.parametrize("mode", ["docker", "hub"])
+@pytest.mark.parametrize("mode", ["docker", "server"])
 def test_server_launches_a_due_flow_only_inside_the_flow_folders(sched, monkeypatch, tmp_path, mode):
     """On a multi-user server a scheduled flow outside the flow folders is not spawned; one inside is, by its
     resolved path. The scheduler reads ``FLOWFILE_MODE`` itself, so the mode is set for the tick."""

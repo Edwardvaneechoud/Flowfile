@@ -717,7 +717,7 @@ def _registered(db_session, flow_path, name="api_flow"):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["docker", "hub"])
+@pytest.mark.parametrize("mode", ["docker", "server"])
 async def test_server_opens_a_published_flow_only_inside_the_flow_folders(db_session, tmp_path, monkeypatch, mode):
     """Every flow API route that opens a registration's file refuses one outside the folders on a server."""
     _reg, ep, user = _publish_via_db(db_session, tmp_path)
@@ -743,7 +743,7 @@ async def test_server_opens_a_published_flow_only_inside_the_flow_folders(db_ses
     assert (exc.value.status_code, exc.value.detail) == (500, "Published flow is no longer available")
 
 
-@pytest.mark.parametrize("mode", ["docker", "hub"])
+@pytest.mark.parametrize("mode", ["docker", "server"])
 def test_server_publishes_and_reads_a_flow_inside_the_flow_folders(db_session, monkeypatch, mode):
     storage.flows_directory.mkdir(parents=True, exist_ok=True)
     flow_path = storage.flows_directory / f"api_inside_{uuid4().hex[:8]}.yaml"
@@ -761,7 +761,7 @@ def test_server_publishes_and_reads_a_flow_inside_the_flow_folders(db_session, m
         flow_path.unlink(missing_ok=True)
 
 
-@pytest.mark.parametrize("mode", ["docker", "hub"])
+@pytest.mark.parametrize("mode", ["docker", "server"])
 def test_server_picker_does_not_say_whether_a_file_outside_the_flow_folders_exists(
     db_session, tmp_path, monkeypatch, mode
 ):

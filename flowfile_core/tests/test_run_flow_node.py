@@ -970,7 +970,7 @@ def test_load_with_over_range_keyed_edge_keeps_valid_edges(two_port_subflow, tmp
     run_and_assert_ok(reloaded)
 
 
-@pytest.mark.parametrize("mode", ["docker", "hub"])
+@pytest.mark.parametrize("mode", ["docker", "server"])
 def test_server_resolves_a_run_flow_reference_only_inside_the_flow_folders(head_subflow, monkeypatch, mode):
     """A flow inside the folders must not reach an outside file through the registration its run_flow node names."""
     outside_id = register_flow_file(head_subflow["path"], f"outside_{uuid.uuid4().hex[:8]}")
