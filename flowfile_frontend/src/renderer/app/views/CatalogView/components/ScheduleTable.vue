@@ -45,6 +45,9 @@
             @blur="saveEditor(schedule)"
           />
         </template>
+        <template v-else-if="onHub">
+          <span class="description-text">{{ schedule.description }}</span>
+        </template>
         <template v-else>
           <span
             class="description-text"
@@ -147,6 +150,10 @@ import {
 } from "../catalog-formatters";
 import { useInlineDescriptionEdit } from "../../../composables/useInlineDescriptionEdit";
 import ScheduleStatusBadge from "./ScheduleStatusBadge.vue";
+import setupService from "../../../services/setup.service";
+
+// A hub schedule's description is the hub's own words, set when the schedule is made.
+const onHub = setupService.isOnHub();
 
 interface EnrichedFlowSchedule extends FlowSchedule {
   flowName: string;

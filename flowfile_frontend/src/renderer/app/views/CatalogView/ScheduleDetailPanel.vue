@@ -21,7 +21,7 @@
           </template>
           <template v-else>
             <h2>{{ displayName }}</h2>
-            <button class="btn-icon-inline" title="Rename" @click="startRename">
+            <button v-if="!onHub" class="btn-icon-inline" title="Rename" @click="startRename">
               <i class="fa-solid fa-pen"></i>
             </button>
           </template>
@@ -105,7 +105,12 @@
         <span class="meta-label">Schedule</span>
         <span class="meta-value">
           {{ formatScheduleType(schedule) }}
-          <button class="btn-icon-inline" title="Edit schedule" @click="showEdit = true">
+          <button
+            v-if="!onHub"
+            class="btn-icon-inline"
+            title="Edit schedule"
+            @click="showEdit = true"
+          >
             <i class="fa-solid fa-pen"></i>
           </button>
         </span>
@@ -145,6 +150,9 @@
             @blur="saveDescription"
           />
         </template>
+        <template v-else-if="onHub">
+          <span class="description-text">{{ schedule.description }}</span>
+        </template>
         <template v-else>
           <span
             class="description-text"
@@ -161,7 +169,7 @@
     </div>
 
     <!-- Notifications -->
-    <div class="section">
+    <div v-if="!onHub" class="section">
       <h3><i class="fa-solid fa-bell section-icon"></i> Notifications</h3>
       <NotificationRules
         :rules="scheduleRules"
@@ -218,7 +226,8 @@ import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
 import setupService from "../../services/setup.service";
 
-// Run Now and Cancel run core's own scheduler, which a hub has none of.
+// On a hub: Run Now and Cancel run core's own scheduler, which a hub has none of; a hub schedule's name, timing and
+// description are set when it is made; and alerts are not on the hub.
 const onHub = setupService.isOnHub();
 
 const router = useRouter();
@@ -280,6 +289,7 @@ const scheduleAlertsEmptyText = computed(() =>
 watch(
   () => props.schedule.id,
   () => {
+    if (onHub) return;
     if (notificationsStore.channels.length === 0) notificationsStore.loadChannels();
     notificationsStore.loadRules();
   },
