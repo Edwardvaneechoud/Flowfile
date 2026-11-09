@@ -17,7 +17,6 @@ from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.init_db import create_default_catalog_namespace
-from flowfile_core.flowfile.flow_graph.catalog_write import NO_HUB_CATALOG, refuse_without_hub_catalog
 from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.schemas import input_schema
 from tests import test_hub_sign_in
@@ -170,37 +169,3 @@ def test_the_hubs_catalogs_carry_the_access_the_hub_sent_and_nothing_stamped_her
         ("team", "team"): None,
         ("team", "raw"): None,
     }
-
-
-def test_a_writer_naming_no_catalog_on_a_joined_server_is_refused_and_writes_nothing_here(
-    hub, organisation, username, open_flow
-):
-    person, access_token = sign_in(hub, username)
-    flow = open_flow(person, "into_no_catalog")
-    add_test_manual_input(flow, CATALOG_SAMPLE_DATA, node_id=1)
-    add_promise(flow, 2, "catalog_writer")
-    flow.add_catalog_writer(
-        input_schema.NodeCatalogWriter(
-            flow_id=flow.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            user_id=person,
-            catalog_write_settings=input_schema.CatalogWriteSettings(table_name="memo", write_mode="overwrite"),
-        )
-    )
-    connect(flow, 1, 2)
-
-    ran = client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(access_token))
-
-    assert ran.status_code == 200, ran.text
-    run_info = flow.get_run_info()
-    assert run_info.success is False
-    errors = {result.node_id: result.error for result in run_info.node_step_result}
-    assert errors[2] == NO_HUB_CATALOG
-    with get_db_context() as db:
-        assert db.query(db_models.CatalogTable).filter(db_models.CatalogTable.name == "memo").count() == 0
-    assert hub.catalog.vend_calls == []
-
-
-def test_off_a_joined_server_a_writer_naming_no_catalog_is_not_refused(node_file):
-    assert refuse_without_hub_catalog(input_schema.CatalogWriteSettings(table_name="memo")) is None

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 
 from flowfile_core.catalog.exceptions import (
     FlowAlreadyRunningError,
@@ -19,7 +18,7 @@ from flowfile_core.catalog.validators import (
     validate_schedule_create,
     validate_schedule_update,
 )
-from flowfile_core.database.models import FlowRegistration, FlowSchedule
+from flowfile_core.database.models import FlowSchedule
 from flowfile_core.schemas.catalog_schema import FlowRunOut, FlowScheduleOut
 
 logger = logging.getLogger(__name__)
@@ -30,35 +29,6 @@ def _project_sync_schedule(registration_id: int, owner_id: int) -> None:
     from flowfile_core.project import project_sync
 
     project_sync.schedule_changed(registration_id, owner_id)
-
-
-def _refuse_hub_steps(flow: FlowRegistration, user_id: int) -> None:
-    """Refuse to save or enable a schedule of ``flow`` while a scheduled run of it would place a step on the hub's
-    other servers (``FlowGraph.scheduled_hub_steps``), naming those steps; on a server joined with keys of its own only.
-
-    A scheduled run has nobody behind it to mint those servers' tokens with, so it would be refused at every run. A
-    flow file that cannot be opened is left to the run, which fails on it.
-
-    Raises:
-        ValueError: ``placement.scheduled_refusal``'s sentence, which names the steps.
-    """
-    from flowfile_core.auth import issuer_accounts
-
-    if issuer_accounts.joined_with_keys() is None:
-        return
-    from flowfile_core.flowfile.execution.placement import scheduled_refusal
-    from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
-    from shared.storage_config import require_flow_in_storage
-
-    try:
-        with ephemeral_flow_graph(require_flow_in_storage(Path(flow.flow_path)), user_id) as graph:
-            steps = graph.scheduled_hub_steps()
-            refusal = scheduled_refusal(steps) if steps else None
-    except Exception as e:
-        logger.debug("Could not open flow %s to check its schedule's steps: %s", flow.id, e)
-        return
-    if refusal:
-        raise ValueError(refusal)
 
 
 class ScheduleService:
@@ -189,9 +159,6 @@ class ScheduleService:
             cron_timezone=cron_timezone,
         )
 
-        if enabled:
-            _refuse_hub_steps(flow, owner_id)
-
         schedule = FlowSchedule(
             registration_id=registration_id,
             owner_id=owner_id,
@@ -232,10 +199,6 @@ class ScheduleService:
         if (cron_expression is not None or cron_timezone is not None) and schedule.schedule_type != "cron":
             raise ValueError("cron_expression/cron_timezone can only be set on cron schedules")
         validate_schedule_update(interval_seconds, cron_expression, cron_timezone)
-        if enabled is not False and (enabled or schedule.enabled):
-            flow = self.repo.get_flow(schedule.registration_id)
-            if flow is not None:
-                _refuse_hub_steps(flow, schedule.owner_id)
         if enabled is not None:
             # Re-arm on re-enable: writes made while disabled must not fire on resume.
             if enabled and not schedule.enabled:

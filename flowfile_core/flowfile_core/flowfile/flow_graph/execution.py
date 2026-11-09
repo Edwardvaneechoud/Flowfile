@@ -2033,21 +2033,6 @@ class ExecutionMixin(GraphMixinBase):
         named = {backend_id: vend.node_name(backend_id) for backend_id in on_backend}
         return {name: on_backend[backend_id] for backend_id, name in named.items() if name is not None}
 
-    def scheduled_hub_steps(self) -> list[FlowNode]:
-        """The steps a scheduled run of this flow would place on the hub's other servers, on a server joined with keys
-        of its own; empty elsewhere.
-
-        A scheduled run is headless: it runs on ``registry.headless_backend_id`` of the flow's saved location, with no
-        hub-set exchange store and no explore-data node, and it has nobody behind it to mint those servers' tokens
-        with, so ``_signed_out_refusal`` refuses every such step before a node starts.
-        """
-        if issuer_accounts.joined_with_keys() is None:
-            return []
-        run_backend_id = registry.headless_backend_id(self.flow_settings.execution_location)
-        policy = self._run_policy(ExchangeRun(self.flow_id, "schedule"), run_backend_id)
-        nodes = [node for node in self.nodes if node.node_type != "explore_data"]
-        return [node for on in self._on_hub_servers(nodes, policy).values() for node in on]
-
     def _record_hub_refusal(self, refused: list[tuple[FlowNode, str]]) -> None:
         """Record each node the hub vends to or mints no token for as a failed result, its sentence its error, in a run
         that starts none."""

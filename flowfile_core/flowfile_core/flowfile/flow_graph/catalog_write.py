@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import polars as pl
 
-from flowfile_core.auth import issuer_accounts
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
@@ -625,28 +624,7 @@ def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
     return False
 
 
-NO_HUB_CATALOG = (
-    "No catalog on the hub is picked for this table; pick one you may write to, or ask an admin or your team's "
-    "manager for write access to one."
-)
-
-
-def refuse_without_hub_catalog(settings: input_schema.CatalogWriteSettings) -> None:
-    """Refuse a write that names no namespace, on a server that joined its hub with keys of its own.
-
-    Such a write would land in the server's own default catalog, whose tables only this server sees, while the people
-    there work in the hub's catalogs (``hub_client.catalog.merged`` offers them nothing else). The usual case is a new
-    writer the editor preselected nothing for, because the hub lets the person write into none of its catalogs.
-
-    Raises:
-        ValueError: ``NO_HUB_CATALOG``, before anything is written.
-    """
-    if settings.source == "hub" or issuer_accounts.joined_with_keys() is None:
-        return
-    with get_db_context() as db:
-        if _effective_namespace_id(CatalogService(SQLAlchemyCatalogRepository(db)), settings) is not None:
-            return
-    raise ValueError(NO_HUB_CATALOG)
+PICK_HUB_SCHEMA = "No schema on the hub is picked for this table; pick one you may write to."
 
 
 def _handle_virtual_table_write(
@@ -764,7 +742,7 @@ def _handle_hub_table_write(
     settings = node_catalog_writer.catalog_write_settings
     namespace = settings.namespace_full_name
     if not namespace:
-        raise ValueError(NO_HUB_CATALOG)
+        raise ValueError(PICK_HUB_SCHEMA)
     if graph.hub_vend is None:
         raise ValueError("Run the flow to write a table on the hub")
     credential = graph.hub_vend.for_namespace(namespace)

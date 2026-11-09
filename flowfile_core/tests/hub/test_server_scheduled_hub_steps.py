@@ -1,6 +1,6 @@
-"""On a server joined to its hub with keys of its own, a schedule whose flow places a step on one of the hub's servers
-is refused when it is saved or enabled, and a scheduled run that reaches such a step anyway stops before any node
-starts, with one sentence in its run log; a schedule whose steps all run on this server is unchanged.
+"""On a server joined to its hub with keys of its own, a scheduled run that reaches a step on one of the hub's servers
+stops before any node starts, with one sentence in its run log; a schedule whose steps all run on this server is
+unchanged, and so is saving a schedule: whether a flow may be scheduled is the hub's to decide, on its own schedules.
 
 A scheduled run has nobody behind it, and the hub mints a run's token for its servers only through a person's own
 sign-in, so such a run could never start. The server joins a ``FakeJoinHub`` with keys under ``tmp_path`` (docker
@@ -154,32 +154,6 @@ def headless(runner, flow: FlowRegistration, run_id: int) -> int:
         return runner(flow.flow_path, run_id)
     finally:
         registry.set_default_override(previous)
-
-
-def test_saving_a_schedule_whose_flow_runs_on_the_hubs_server_is_refused_with_one_sentence(person, registered):
-    owner, token = person
-    flow = registered(owner, BACKEND)
-
-    created = client.post("/catalog/schedules", json=interval_schedule(flow.id), headers=bearer(token))
-
-    assert created.status_code == 422, created.text
-    assert created.json()["detail"] == REFUSED
-    with get_db_context() as db:
-        assert db.query(FlowSchedule).filter(FlowSchedule.registration_id == flow.id).count() == 0
-
-
-def test_enabling_such_a_schedule_is_refused_and_it_stays_disabled(person, registered):
-    owner, token = person
-    flow = registered(owner, BACKEND)
-    created = client.post("/catalog/schedules", json=interval_schedule(flow.id, enabled=False), headers=bearer(token))
-    assert created.status_code == 201, created.text
-    schedule_id = created.json()["id"]
-
-    enabled = client.put(f"/catalog/schedules/{schedule_id}", json={"enabled": True}, headers=bearer(token))
-
-    assert enabled.status_code == 422, enabled.text
-    assert enabled.json()["detail"] == REFUSED
-    assert client.get(f"/catalog/schedules/{schedule_id}", headers=bearer(token)).json()["enabled"] is False
 
 
 def test_a_schedule_whose_steps_all_run_on_this_server_is_saved_and_enabled_as_before(person, registered):
