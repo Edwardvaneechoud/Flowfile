@@ -193,9 +193,9 @@ class FakeHubWithCatalog(FakeHub):
 
     ``namespaces`` and ``tables`` hold the hub's rows as core 0.24.0 dumps ``NamespaceOut`` and ``CatalogTableOut``;
     ``catalog_calls`` records each catalog request as ``(path, query string)``. ``GET /catalog/tables/{id}`` answers a
-    row of ``tables`` (404 for another id), ``GET /catalog/tables/resolve`` the row whose ``qualified_name`` is ``q`` (404 for
-    none) and ``POST /catalog/tables/from-data`` appends one (409 on a name taken in
-    the namespace), each body kept in ``registered``. ``GET /hub/flows`` answers ``flows``, the published flows as
+    row of ``tables`` (404 for another id), ``GET /catalog/tables/resolve`` the row whose ``qualified_name`` is ``q``
+    (404 for none) and ``POST /catalog/tables/from-data`` appends one (409 on a name taken in the namespace), each
+    body kept in ``registered``. ``GET /hub/flows`` answers ``flows``, the published flows as
     the hub lists them (``seed_flow``; ``flows_failure`` set answers that status instead). A vend checks ``grants``
     (``"use"`` or ``"manage"`` per namespace id) and answers one static credential per root ``storage_uri``, its options ``vend_options`` of that
     root; each body is kept in ``vend_calls``. ``vend_failure`` set answers that status instead. With ``says_sentences``

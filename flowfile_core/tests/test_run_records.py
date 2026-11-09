@@ -54,8 +54,12 @@ def record():
 @pytest.fixture
 def hooks(monkeypatch):
     """What a core that keeps other machines' records sets: the executor's address and the version's document."""
-    monkeypatch.setattr(run_records, "backend_core_url", lambda name: "http://bmax.example:63578" if name == "bmax" else None)
-    monkeypatch.setattr(run_records, "version_document", lambda uuid, v: '{"flowfile_name": "nightly v3"}' if v == 3 else None)
+    monkeypatch.setattr(
+        run_records, "backend_core_url", lambda name: "http://bmax.example:63578" if name == "bmax" else None
+    )
+    monkeypatch.setattr(
+        run_records, "version_document", lambda uuid, v: '{"flowfile_name": "nightly v3"}' if v == 3 else None
+    )
 
 
 def test_log_refs_round_trip():

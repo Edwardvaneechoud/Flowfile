@@ -32,7 +32,9 @@ def clean(monkeypatch):
 @pytest.fixture
 def hub_row(store):
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id="worker:team", url=TEAM["worker_url"], remote_id=TEAM["id"], account_user_id=USER_ID))
+        db.add(
+            ConfiguredBackend(id="worker:team", url=TEAM["worker_url"], remote_id=TEAM["id"], account_user_id=USER_ID)
+        )
         db.commit()
 
 

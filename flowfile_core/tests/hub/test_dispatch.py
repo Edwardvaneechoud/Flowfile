@@ -210,7 +210,12 @@ def test_a_good_token_signs_the_person_in_checks_the_version_out_as_them_runs_it
         account = signin.account(db, UID)
         assert account is not None and account.username == username and account.is_admin is False
         [row] = db.query(db_models.FlowRun).filter_by(flow_uuid=flow_uuid).all()
-        assert (row.run_type, row.registration_id, row.flow_name, row.user_id) == ("dispatched", None, "demo-flow", account.id)
+        assert (row.run_type, row.registration_id, row.flow_name, row.user_id) == (
+            "dispatched",
+            None,
+            "demo-flow",
+            account.id,
+        )
         assert (row.success, row.nodes_completed, row.number_of_nodes) == (True, 1, 1)
         assert row.ended_at is not None and run_log_path(row.id).exists()
     assert (get_flow_log_file(1).parent / f"hub_run_{run_id}.log").exists()

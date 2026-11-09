@@ -204,7 +204,9 @@ class TestBuildRunReport:
         _assert_contract_shape(built)
         assert built["flow_version"] == 4
 
-    @pytest.mark.parametrize("mode", ["server", "docker", None, "electron"], ids=["server", "docker", "no-mode", "electron"])
+    @pytest.mark.parametrize(
+        "mode", ["server", "docker", None, "electron"], ids=["server", "docker", "no-mode", "electron"]
+    )
     def test_a_report_names_no_table_of_its_own_catalog_in_any_mode(self, monkeypatch, mode):
         if mode is None:
             monkeypatch.delenv("FLOWFILE_MODE", raising=False)

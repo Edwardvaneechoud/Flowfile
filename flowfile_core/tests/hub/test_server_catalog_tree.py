@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 from flowfile_core import main
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.init_db import create_default_catalog_namespace
 from flowfile_core.hub_client import catalog as hub_catalog

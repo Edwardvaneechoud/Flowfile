@@ -44,9 +44,9 @@ from tests.hub.test_server_sealed_e2e import (  # noqa: F401
     SERVER,
     SealingHub,
     add_writer,
-    sales_schema,
     compute_server,
     on,
+    sales_schema,
     sent,
     written,
 )
