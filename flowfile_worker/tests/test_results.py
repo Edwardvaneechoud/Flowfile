@@ -1,6 +1,7 @@
 """The registry of what the ``/v1`` routes hold."""
 
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -65,3 +66,22 @@ def test_a_record_holds_what_its_state_says():
 def test_a_record_whose_fields_do_not_fit_its_state_is_refused(fields):
     with pytest.raises(ValueError, match="r$"):
         _record(**fields)
+
+
+def test_touch_restamps_a_held_result_and_leaves_an_id_without_one(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(results_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    registry = ResultRegistry()
+    registry.put(_record(result_id="held", state="deferred", plan=b"plan"))
+    registry.mark_ended("held")
+    registry.mark_ended("failed")
+
+    clock[0] = 2000.0
+    registry.touch("held")
+    registry.touch("failed")
+    registry.touch("never-submitted")
+    clock[0] = 2500.0
+
+    assert registry.expire(1000) == ["failed"]
+    assert registry.get("held") is not None
+    assert "never-submitted" not in registry._ended

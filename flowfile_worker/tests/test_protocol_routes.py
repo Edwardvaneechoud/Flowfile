@@ -1165,6 +1165,44 @@ def test_a_submit_sweeps_results_and_jobs_whose_submit_ended_too_long_ago(held, 
     assert client.get(f"/v1/jobs/{last}").json()["status"] == "Completed"
 
 
+def _past_the_age_limit(monkeypatch) -> None:
+    """The results registry's clock reads an hour past ``CACHE_EXPIRATION_TIME`` on from here."""
+    from flowfile_worker import results as results_module
+
+    later = service.CACHE_EXPIRATION_TIME + 3600
+    monkeypatch.setattr(results_module, "time", SimpleNamespace(monotonic=lambda: time.monotonic() + later))
+
+
+@pytest.mark.parametrize("use", ["head", "sample"])
+def test_a_head_or_a_sample_resets_a_results_age(held, monkeypatch, use):
+    used, unused, later = held(), held(), held()
+    _submit(used, _plan(), must_materialise=True)
+    _submit(unused, _plan(), must_materialise=True)
+    _past_the_age_limit(monkeypatch)
+
+    if use == "head":
+        assert client.head(f"/v1/results/{used}").status_code == 200
+    else:
+        assert client.get(f"/v1/results/{used}/sample", params={"n": 1}).status_code == 200
+    _submit(later, _plan(), must_materialise=True)
+
+    assert client.head(f"/v1/results/{used}").status_code == 200
+    assert client.head(f"/v1/results/{unused}").status_code == 404
+
+
+def test_a_submit_whose_input_is_past_the_age_limit_runs_and_the_input_stays_held(held, monkeypatch):
+    first_id = held()
+    first_path = ref_location(_submit(first_id, _plan(), must_materialise=True).ref).path
+    _past_the_age_limit(monkeypatch)
+    chained = pl.scan_ipc(first_path).filter(pl.col("id") > 2)
+
+    second = _submit(held(), chained, must_materialise=True, inputs=(first_id,))
+
+    assert second.ref.row_count == 3
+    assert client.head(f"/v1/results/{first_id}").status_code == 200
+    assert os.path.isfile(first_path)
+
+
 def _slow_plan() -> bytes:
     """A plan whose child sleeps 30 s as it loads, long enough to be replaced or released while it runs."""
     sleeper = _SleepWhenLoaded(30)

@@ -8,7 +8,7 @@ This page covers running `flowfile_worker` on a host other than core's: what eac
 - Results stay in the worker's own storage, except a result that crosses to another backend through an [exchange store](#nodes-on-several-backends).
 - The worker reads sources and writes destinations itself. A plan carries no credentials: the worker resolves a stored connection from the catalog database with the master key.
 
-This needs `FLOWFILE_COMPUTE_PROTOCOL` on, which is core's default. Results are released as described in [When results are released](where-flows-run.md#when-results-are-released); the worker's age sweep (`CACHE_EXPIRATION_TIME`, 24 hours) is only the backstop for a core that stopped without closing its flows.
+This needs `FLOWFILE_COMPUTE_PROTOCOL` on, which is core's default. Results are released as described in [When results are released](where-flows-run.md#when-results-are-released); the worker's age sweep (`CACHE_EXPIRATION_TIME`, 24 hours since a result was last used) is only the backstop for a core that stopped without closing its flows.
 
 !!! warning "A remote worker is inside your trust boundary"
     It holds the master key, reads the whole catalog database and signs with the internal token, so whoever controls its host controls every stored connection and secret. Run it where you would run core: on the same network, under the same administrators, with the same patching and backups. A [Polars cluster](#a-polars-cluster-as-a-backend) added as a backend holds none of these.

@@ -3,8 +3,8 @@
 A result is materialised (an Arrow IPC file under ``CACHE_DIR``) or deferred (the submitted plan, run again when rows
 or a count are asked for). A blob is a materialised record of a file of bytes, such as a fitted model, with no columns
 and no row count, which the routes copy and never read as rows. The registry lives in the FastAPI process only and
-does not survive a restart. It also stamps when the submit under an id ended, failed ones included, so ``expire`` can
-drop what has been held too long.
+does not survive a restart. It also stamps when the submit under an id ended or its result was last used, so
+``expire`` can drop what has gone unused too long.
 """
 
 import os
@@ -69,7 +69,7 @@ class ResultRecord:
 class ResultRegistry:
     """Held results by id, under a lock: request threads read and release while submits put.
 
-    Beside the records it keeps, per id, the monotonic time the last submit under it ended. A
+    Beside the records it keeps, per id, the monotonic time it was last submitted or used. A
     failed submit has a stamp and no record, so its job entry ages out with the rest.
     """
 
@@ -91,6 +91,12 @@ class ResultRegistry:
         with self._lock:
             self._ended[result_id] = time.monotonic()
 
+    def touch(self, result_id: str) -> None:
+        """Stamp that the result held under *result_id* was used now; an id with no record is left as it is."""
+        with self._lock:
+            if result_id in self._records:
+                self._ended[result_id] = time.monotonic()
+
     def pop(self, result_id: str) -> ResultRecord | None:
         """Forget the result, its end stamp and its file; ``None`` when no record was held.
 
@@ -104,7 +110,7 @@ class ResultRegistry:
         return record
 
     def expire(self, max_age: float) -> list[str]:
-        """Forget every id whose submit ended *max_age* seconds ago or more, with its record and file.
+        """Forget every id last stamped *max_age* seconds ago or more, with its record and file.
 
         The files are deleted after the registry's lock is released, each on its own: one that cannot be removed is
         logged and the sweep goes on. Returns the ids.

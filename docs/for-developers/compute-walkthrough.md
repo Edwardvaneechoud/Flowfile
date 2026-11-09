@@ -138,7 +138,7 @@ A plan names a stored connection and carries no secret:
 
 ## Who holds and releases results
 
-A node owns every reference it minted: `results.result_ref`, the outputs it stored beside it (`_stored_outputs`) and its operations' outputs (`_operation_refs`). `FlowNode.release_result` releases them together, on a rerun under another hash or on another backend, on `FlowGraph.delete_node`, on `close_flow`, and when the node fails after storing part of its outputs. A release that fails is logged and the reference dropped, so a close always completes. The worker's age sweep (`CACHE_EXPIRATION_TIME`, 24 hours) is the backstop for a core that died, not how results are meant to go.
+A node owns every reference it minted: `results.result_ref`, the outputs it stored beside it (`_stored_outputs`) and its operations' outputs (`_operation_refs`). `FlowNode.release_result` releases them together, on a rerun under another hash or on another backend, on `FlowGraph.delete_node`, on `close_flow`, and when the node fails after storing part of its outputs. A release that fails is logged and the reference dropped, so a close always completes. The worker's age sweep (`CACHE_EXPIRATION_TIME`, 24 hours since a result was last used) is the backstop for a core that died, not how results are meant to go.
 
 ## Changing the code
 

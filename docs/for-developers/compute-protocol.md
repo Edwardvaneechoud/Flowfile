@@ -142,7 +142,7 @@ The leaf from `plan_for` may name a path core cannot open. Core only composes th
 
 The `result_id` is the node hash, which folds in the input hashes, the settings, the graph's `parent_uuid` and the cache epoch. The reference is therefore the cache: `exists` says whether the backend still holds it, `release` lets it go, and no reference survives a graph reload.
 
-A node owns every reference it minted (its result, the outputs it stored beside it, its operation's outputs), and `FlowNode.release_result` releases them together: on a rerun under another hash or backend, on removal, when its graph closes, and when it fails after storing part of its outputs. A published API call and a headless run close their flow when they end. A release whose backend cannot be reached is logged and dropped. The worker's age sweep (`CACHE_EXPIRATION_TIME`, 24 hours) is the backstop for a core that died, not how results are meant to go.
+A node owns every reference it minted (its result, the outputs it stored beside it, its operation's outputs), and `FlowNode.release_result` releases them together: on a rerun under another hash or backend, on removal, when its graph closes, and when it fails after storing part of its outputs. A published API call and a headless run close their flow when they end. A release whose backend cannot be reached is logged and dropped. The worker's age sweep (`CACHE_EXPIRATION_TIME`, 24 hours since a result was last used) is the backstop for a core that died, not how results are meant to go.
 
 ### Who materialises
 
