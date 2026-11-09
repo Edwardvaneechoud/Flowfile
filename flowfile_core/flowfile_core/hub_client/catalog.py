@@ -19,8 +19,10 @@ server`` beside them. On a server that joined its hub with keys of its own, this
 the people there work in the hub's catalogs. A hub row's ``access`` is what the hub sent, ``owner`` on a row the person
 owns.
 
-A run that reads or writes the hub's tables finds their namespaces and tables here too (``locate``, ``table``), each
-lookup a fresh request through the user's hub session.
+A run that reads or writes the hub's tables finds their namespaces and tables here too (``locate``, ``table``,
+``table_named``), each lookup a fresh request through the user's hub session. A saved flow names a hub table by its
+qualified name (``catalog.schema.table``) and a hub schema by ``catalog.schema``, never by an id of the hub's database;
+the ids are resolved on the hub when the flow runs (``table_named``, ``namespaces``).
 """
 
 from dataclasses import dataclass
@@ -213,16 +215,37 @@ def table(user_id: int, hub_table_id: int) -> dict:
     Raises:
         LookupError: The hub has no such table for the account, does not answer, or the session is gone.
     """
+    return _answered_table(
+        user_id, hub_table_id, lambda hub_url, access_token: client.get_table(hub_url, access_token, hub_table_id)
+    )
+
+
+def table_named(user_id: int, qualified_name: str) -> dict:
+    """The hub's catalog table ``qualified_name`` (``catalog.schema.table``) as the hub answers it (core's
+    ``CatalogTableOut``), resolved on the hub by that name: a saved flow names a hub table by name, never by an id of
+    the hub's database.
+
+    Raises:
+        LookupError: The hub has no table of that name for the account, does not answer, or the session is gone.
+    """
+    return _answered_table(
+        user_id,
+        qualified_name,
+        lambda hub_url, access_token: client.resolve_table(hub_url, access_token, qualified_name),
+    )
+
+
+def _answered_table(user_id: int, named: int | str, read) -> dict:
     try:
-        return client.get_table(*signed_in(user_id), hub_table_id)
+        return read(*signed_in(user_id))
     except HubRefused as e:
         if e.status == 404:
-            raise LookupError(f"The hub has no catalog table {hub_table_id} for this account") from e
+            raise LookupError(f"The hub has no catalog table {named} for this account") from e
         if e.status == 401:
             raise LookupError(NOT_CONNECTED) from e
-        raise LookupError(f"The hub did not answer for its catalog table {hub_table_id}: {e.detail}") from e
+        raise LookupError(f"The hub did not answer for its catalog table {named}: {e.detail}") from e
     except (HubUnreachable, HubVersionRefused) as e:
-        raise LookupError(f"The hub did not answer for its catalog table {hub_table_id}: {e}") from e
+        raise LookupError(f"The hub did not answer for its catalog table {named}: {e}") from e
 
 
 def _namespace_rows(hub_url: str, access_token: str) -> tuple[list[dict], dict[int, list[dict]]]:

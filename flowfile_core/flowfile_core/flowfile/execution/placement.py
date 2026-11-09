@@ -718,14 +718,16 @@ def _artifact_scheme(node: FlowNode) -> str | None:
     return "https" if isinstance(store, S3Storage) else "file"
 
 
-def hub_table_namespace(settings: object) -> tuple[int, bool] | None:
-    """The hub namespace a catalog node's ``settings`` read or write and whether they write; ``None`` off the hub."""
-    if isinstance(settings, input_schema.NodeCatalogReader) and settings.hub_table_id is not None:
-        return settings.hub_namespace_id, False
+def hub_table_namespace(settings: object) -> tuple[str, bool] | None:
+    """The hub namespace (``catalog.schema``) a catalog node's ``settings`` read or write and whether they write;
+    ``None`` off the hub, and for a node on the hub that names no table or schema yet (its run fails at the node)."""
+    if isinstance(settings, input_schema.NodeCatalogReader) and settings.source == "hub":
+        namespace = settings.hub_namespace_name
+        return (namespace, False) if namespace else None
     if isinstance(settings, input_schema.NodeCatalogWriter):
-        namespace_id = settings.catalog_write_settings.hub_namespace_id
-        if namespace_id is not None:
-            return namespace_id, True
+        write_settings = settings.catalog_write_settings
+        if write_settings.source == "hub" and write_settings.namespace_full_name:
+            return write_settings.namespace_full_name, True
     return None
 
 
@@ -748,7 +750,7 @@ def _catalog_target(settings: object, flow: FlowGraph) -> tuple[CatalogStorageTa
             credential = run_vend.for_namespace(hub[0])
         except LookupError:
             return None, None, None
-        return CatalogStorageTarget(is_cloud=True, base=credential.base_uri), run_vend.names.get(hub[0]), None
+        return CatalogStorageTarget(is_cloud=True, base=credential.base_uri), hub[0], None
     if isinstance(settings, input_schema.NodeCatalogWriter):
         write_settings = settings.catalog_write_settings
         with get_db_context() as db:

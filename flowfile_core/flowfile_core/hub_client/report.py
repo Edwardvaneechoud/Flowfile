@@ -14,7 +14,8 @@ hub vended that run a credential, so the run is the organisation's business too,
 run id the vend was made for.
 
 Neither shares the hub's database or catalog, so a report names no run row of this core and no table of its own
-catalog, whose ids are not the hub's: only the hub's tables, by the hub's ids. The hub writes its run row itself.
+catalog, whose ids are not the hub's: only the hub's tables, by the hub's ids, which the report resolves on the hub
+from the names the run's steps carry (``_hub_table_ids``). The hub writes its run row itself.
 """
 
 import uuid
@@ -96,23 +97,24 @@ def _rows_out(flow, node) -> int | None:
     return engine.known_record_count() if engine is not None else None
 
 
-def _hub_output_ids(writers: list) -> dict[tuple[int, str], int]:
-    """The hub's id of each table in the namespaces ``writers`` wrote to, by ``(namespace id, name)``.
+def _hub_table_ids(user_id: int, names: set[str]) -> tuple[dict[str, int], dict[str, int]]:
+    """The hub's ids behind the names a run's catalog steps carry: of each namespace, by ``catalog.schema``, and of
+    each table, by ``catalog.schema.table``, among ``names``.
 
-    One request through the writers' hub session: that namespace's tables, or every table the account sees when the
-    writers wrote to several. A hub that does not answer costs one warning and answers ``{}``.
+    One walk of the hub's catalogs and one listing of the tables the account sees, through the steps' hub session. A
+    hub that does not answer costs one warning and answers nothing, so the report names no table.
     """
-    namespace_ids = {writer.catalog_write_settings.hub_namespace_id for writer in writers}
-    if not namespace_ids:
-        return {}
-    only = next(iter(namespace_ids)) if len(namespace_ids) == 1 else None
+    if not names:
+        return {}, {}
     try:
-        hub_url, access_token = hub_catalog.signed_in(writers[0].user_id or 1)
-        rows = hub_client.list_tables(hub_url, access_token, namespace_id=only)
+        hub_url, access_token = hub_catalog.signed_in(user_id)
+        namespaces = {ns.full_name: ns.id for ns in hub_catalog.namespaces(hub_url, access_token).values()}
+        rows = hub_client.list_tables(hub_url, access_token)
     except (LookupError, HubUnreachable, HubRefused, HubVersionRefused) as exc:
-        logger.warning(f"Could not read the hub's ids of the tables this run wrote: {exc}")
-        return {}
-    return {(row.get("namespace_id"), row["name"]): row["id"] for row in rows}
+        logger.warning(f"Could not read the hub's ids of the tables this run read and wrote: {exc}")
+        return {}, {}
+    tables = {row["qualified_name"]: row["id"] for row in rows if row.get("qualified_name") in names}
+    return namespaces, tables
 
 
 def hub_flow_uuid(flow, hub_url: str) -> str | None:
@@ -131,12 +133,13 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str) -> dict:
     """The report of a finished run of ``flow``, a run of the hub flow or local registration ``flow_uuid``.
 
     ``inputs`` and ``outputs`` are the hub's tables that the catalog reader and writer nodes that ran and succeeded read
-    and wrote, named by the hub's ids: a reader's ``hub_namespace_id`` and ``hub_table_id``, a writer's
-    ``hub_namespace_id`` and the id the hub lists for the written name (``None`` when it lists none or does not answer).
-    A table of this core's own catalog is never named. ``flow_version`` is the hub version of the flow's
-    ``hub_origin``, ``None`` for a flow that never met a hub. A run that vended from the hub (``flow.last_hub_vend``) is
-    reported under the vend's run id with its ``vend_ids``; a run the hub dispatched here under the id the hub gave it
-    (``flow.hub_run_id``); any other run gets a new run id and no vend.
+    and wrote, named by the hub's ids, resolved on the hub from the qualified names the steps carry
+    (``_hub_table_ids``): a reader's table and its schema, a writer's schema and the id the hub lists for the written
+    name (``None`` when it lists none). A table whose schema the hub does not name, or a hub that does not answer,
+    leaves the table out. A table of this core's own catalog is never named. ``flow_version`` is the hub version of
+    the flow's ``hub_origin``, ``None`` for a flow that never met a hub. A run that vended from the hub
+    (``flow.last_hub_vend``) is reported under the vend's run id with its ``vend_ids``; a run the hub dispatched here
+    under the id the hub gave it (``flow.hub_run_id``); any other run gets a new run id and no vend.
     """
     nodes, readers, writers = [], [], []
     for result in run_info.node_step_result or []:
@@ -158,29 +161,37 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str) -> dict:
             continue
         given = node.setting_input
         if isinstance(given, input_schema.NodeCatalogReader):
-            if given.hub_table_id is not None:
+            if given.hub_namespace_name is not None:
                 readers.append(given)
         elif isinstance(given, input_schema.NodeCatalogWriter):
-            if given.catalog_write_settings.hub_namespace_id is not None:
+            settings = given.catalog_write_settings
+            if settings.source == "hub" and settings.namespace_full_name and settings.table_name:
                 writers.append(given)
 
+    named = {reader.catalog_full_table_name for reader in readers}
+    named |= {f"{w.catalog_write_settings.namespace_full_name}.{w.catalog_write_settings.table_name}" for w in writers}
+    steps = readers + writers
+    namespace_ids, table_ids = _hub_table_ids(steps[0].user_id or 1, named) if steps else ({}, {})
     inputs, outputs = [], []
     for reader in readers:
+        namespace_id = namespace_ids.get(reader.hub_namespace_name)
+        if namespace_id is None:
+            continue
         ref = {
-            "namespace_id": reader.hub_namespace_id,
-            "table_id": reader.hub_table_id,
-            "table_name": reader.catalog_table_name,
+            "namespace_id": namespace_id,
+            "table_id": table_ids.get(reader.catalog_full_table_name),
+            "table_name": reader.catalog_table_name or reader.catalog_full_table_name.rpartition(".")[2],
         }
         if ref not in inputs:
             inputs.append(ref)
-    hub_ids = _hub_output_ids(writers)
     for writer in writers:
         settings = writer.catalog_write_settings
-        if not settings.table_name:
+        namespace_id = namespace_ids.get(settings.namespace_full_name)
+        if namespace_id is None:
             continue
         ref = {
-            "namespace_id": settings.hub_namespace_id,
-            "table_id": hub_ids.get((settings.hub_namespace_id, settings.table_name)),
+            "namespace_id": namespace_id,
+            "table_id": table_ids.get(f"{settings.namespace_full_name}.{settings.table_name}"),
             "table_name": settings.table_name,
         }
         if ref not in outputs:

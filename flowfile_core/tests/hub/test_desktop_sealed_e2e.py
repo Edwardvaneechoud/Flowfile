@@ -44,6 +44,7 @@ from tests.hub.test_server_sealed_e2e import (  # noqa: F401
     SERVER,
     SealingHub,
     add_writer,
+    sales_schema,
     compute_server,
     on,
     sent,
@@ -157,8 +158,8 @@ def add_reader(flow, node_id: int, hub) -> None:
             flow_id=flow.flow_id,
             node_id=node_id,
             user_id=DESKTOP_USER,
-            hub_table_id=hub.orders["id"],
-            hub_namespace_id=hub.sales["id"],
+            source="hub",
+            catalog_full_table_name=hub.orders["qualified_name"],
             catalog_table_name="orders",
         )
     )
@@ -169,7 +170,7 @@ def copy_flow(open_flow, hub, location: str, name: str):
     flow = open_flow(DESKTOP_USER, name)
     flow.flow_settings.execution_location = location
     add_reader(flow, 1, hub)
-    add_writer(flow, 2, 1, DESKTOP_USER, hub.sales, name)
+    add_writer(flow, 2, 1, DESKTOP_USER, sales_schema(hub), name)
     return flow
 
 

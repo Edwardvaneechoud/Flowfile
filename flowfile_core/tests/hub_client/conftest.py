@@ -193,7 +193,8 @@ class FakeHubWithCatalog(FakeHub):
 
     ``namespaces`` and ``tables`` hold the hub's rows as core 0.24.0 dumps ``NamespaceOut`` and ``CatalogTableOut``;
     ``catalog_calls`` records each catalog request as ``(path, query string)``. ``GET /catalog/tables/{id}`` answers a
-    row of ``tables`` (404 for another id) and ``POST /catalog/tables/from-data`` appends one (409 on a name taken in
+    row of ``tables`` (404 for another id), ``GET /catalog/tables/resolve`` the row whose ``qualified_name`` is ``q`` (404 for
+    none) and ``POST /catalog/tables/from-data`` appends one (409 on a name taken in
     the namespace), each body kept in ``registered``. ``GET /hub/flows`` answers ``flows``, the published flows as
     the hub lists them (``seed_flow``; ``flows_failure`` set answers that status instead). A vend checks ``grants``
     (``"use"`` or ``"manage"`` per namespace id) and answers one static credential per root ``storage_uri``, its options ``vend_options`` of that
@@ -228,12 +229,15 @@ class FakeHubWithCatalog(FakeHub):
         return self._add_namespace(name, catalog["id"], 1, fields)
 
     def seed_table(self, namespace: dict, name: str, **fields) -> dict:
-        """A table in ``namespace`` on the hub, with the fields the hub fills for a physical Delta table."""
+        """A table in ``namespace`` on the hub, with the fields the hub fills for a physical Delta table, its
+        ``full_table_name`` (``schema.table``) and ``qualified_name`` (``catalog.schema.table``) as core names them."""
         row = CatalogTableOut(
             id=len(self.tables) + 101,
             name=name,
             namespace_id=namespace["id"],
             namespace_name=namespace["name"],
+            full_table_name=f"{namespace['name']}.{name}",
+            qualified_name=f"{self._full_name(namespace['id'])}.{name}",
             owner_id=1,
             created_at=_STAMP,
             updated_at=_STAMP,
@@ -377,6 +381,12 @@ class FakeHubWithCatalog(FakeHub):
             return httpx.Response(201, json={"run_id": self.reports[-1].get("run_id")})
         if path == "/catalog/tables/from-data":
             return self._register(json.loads(request.content))
+        if path == "/catalog/tables/resolve":
+            reference = request.url.params.get("q")
+            table = next((t for t in self.tables if t["qualified_name"] == reference), None)
+            if table is None:
+                return httpx.Response(404, json={"detail": "Catalog table not found"})
+            return httpx.Response(200, json={"table": table, "warnings": []})
         if path.startswith("/catalog/tables/"):
             table_id = int(path.rsplit("/", 1)[1])
             table = next((t for t in self.tables if t["id"] == table_id), None)

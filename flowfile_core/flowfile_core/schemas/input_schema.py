@@ -1925,9 +1925,14 @@ class CatalogWriteSettings(BaseModel):
     The target namespace is referenced name-first: ``namespace_full_name`` (``"catalog.schema"``) is
     the portable reference that survives recreation on another machine; ``namespace_id`` is a numeric
     fallback for flows saved before names were stored.
+
+    ``source`` says which catalog the namespace is in: this Flowfile's own (``local``), or the hub this
+    Flowfile is connected to (``hub``), where it is named by ``namespace_full_name`` alone and resolved
+    on the hub when the flow runs; ``namespace_id`` is null then, an id of another database means nothing.
     """
 
     table_name: str = ""
+    source: Literal["local", "hub"] = "local"
     namespace_id: int | None = None
     namespace_full_name: str | None = None
     description: str | None = None
@@ -1938,13 +1943,13 @@ class CatalogWriteSettings(BaseModel):
     scd2: Scd2Settings | None = None
     # Enable-only: True turns the Delta change data feed on; False never turns it off.
     track_changes: bool = False
-    # A namespace on the hub, by the hub's own id; set instead of the local namespace fields.
-    hub_namespace_id: int | None = None
 
     @model_validator(mode="after")
     def _validate_hub_namespace(self) -> "CatalogWriteSettings":
-        if self.hub_namespace_id is None:
+        if self.source != "hub":
             return self
+        if self.namespace_id is not None:
+            raise ValueError("A schema on the hub is named by its qualified name (catalog.schema), not by a local id")
         if self.write_mode == "virtual":
             raise ValueError("A virtual table is kept in the local catalog, not on the hub")
         if self.write_mode == "scd2":
@@ -2007,10 +2012,17 @@ class NodeCatalogReader(ChangeFeedReadSettings, NodeBase):
     (``catalog_full_table_name`` = ``"schema.table"``) is the preferred human-facing
     identifier when an id isn't available.
 
+    ``source`` says which catalog the table is in: this Flowfile's own (``local``), or the hub this
+    Flowfile is connected to (``hub``). A table on the hub is named by ``catalog_full_table_name`` alone,
+    always its qualified ``catalog.schema.table``, and resolved on the hub when the flow runs; the local
+    ids are null then, since an id of another database means nothing here, and it is read as it is now:
+    no version, history view, SQL or change feed.
+
     The change feed ("Read" selector) comes from ``ChangeFeedReadSettings``; only valid when the
     resolved table is change-tracked. ``since_last_run`` is the only mode that keeps a cursor.
     """
 
+    source: Literal["local", "hub"] = "local"
     catalog_table_id: int | None = None
     catalog_full_table_name: str | None = None
     catalog_table_name: str | None = None
@@ -2023,16 +2035,23 @@ class NodeCatalogReader(ChangeFeedReadSettings, NodeBase):
     is_virtual_optimized: bool | None = None
     cdc_consumer_name: str | None = None  # names the cursor; without one it is keyed on flow + node
     cdc_start: Literal["now", "beginning"] = "now"
-    # A table on the hub, by the hub's own ids; set instead of the local table fields.
-    hub_table_id: int | None = None
-    hub_namespace_id: int | None = None
+
+    @property
+    def hub_namespace_name(self) -> str | None:
+        """The qualified ``catalog.schema`` of the hub table this reader names; ``None`` off the hub or unnamed."""
+        if self.source != "hub" or not self.catalog_full_table_name:
+            return None
+        namespace, _, _ = self.catalog_full_table_name.rpartition(".")
+        return namespace or None
 
     @model_validator(mode="after")
     def _validate_hub_table(self) -> "NodeCatalogReader":
-        if self.hub_table_id is None:
+        if self.source != "hub":
             return self
-        if self.hub_namespace_id is None:
-            raise ValueError("A table on the hub is named by its hub_table_id and hub_namespace_id together")
+        if self.catalog_table_id is not None or self.catalog_namespace_id is not None:
+            raise ValueError(
+                "A table on the hub is named by its qualified name (catalog.schema.table), not by a local id"
+            )
         if (
             self.delta_version is not None
             or self.scd2_view is not None

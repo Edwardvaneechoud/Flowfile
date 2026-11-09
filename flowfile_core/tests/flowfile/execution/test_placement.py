@@ -370,14 +370,10 @@ def test_a_fuzzy_match_is_refused_on_a_backend_without_its_plugin(protocol_on, d
 
     run_info = graph.run_graph()
 
-    assert_refused_before_any_node(
-        graph, run_info, backend, {3: ["it needs polars_simed (not installed)"]}
-    )
+    assert_refused_before_any_node(graph, run_info, backend, {3: ["it needs polars_simed (not installed)"]})
 
 
-def test_each_formula_node_is_refused_on_a_backend_without_the_formula_library_and_a_select_still_runs(
-    declare, flag
-):
+def test_each_formula_node_is_refused_on_a_backend_without_the_formula_library_and_a_select_still_runs(declare, flag):
     """Every formula-family node needs the formula library, whatever its formulas compile to, so a backend without it
     refuses each of them and places a select; with the flag off nothing is placed."""
     assert everything().plugins["polars_expr_transformer"] == importlib.metadata.version("polars_expr_transformer")
@@ -1259,10 +1255,11 @@ HUB_WRITE_REFUSAL = (
 
 
 def hub_flow(flow_id: int, *, vended: bool) -> FlowGraph:
-    """A hub catalog reader 1 over namespace 11 into a hub catalog writer 2 into namespace 12, built with no hub session.
+    """A hub catalog reader 1 over ``sales.raw`` into a hub catalog writer 2 into ``sales.curated``, built with no hub
+    session.
 
     ``vended`` gives the graph the credential a run's vend would hold: one for ``s3://acme/sales``, both namespaces'
-    root.
+    root, with the hub's ids 11 and 12 of the two schemas.
     """
     from flowfile_core.hub_client import vend
 
@@ -1271,7 +1268,9 @@ def hub_flow(flow_id: int, *, vended: bool) -> FlowGraph:
     try:
         add_promise(graph, 1, "catalog_reader")
         graph.add_catalog_reader(
-            input_schema.NodeCatalogReader(flow_id=flow_id, node_id=1, user_id=1, hub_table_id=101, hub_namespace_id=11)
+            input_schema.NodeCatalogReader(
+                flow_id=flow_id, node_id=1, user_id=1, source="hub", catalog_full_table_name="sales.raw.orders"
+            )
         )
         add_promise(graph, 2, "catalog_writer")
         graph.add_catalog_writer(
@@ -1280,7 +1279,9 @@ def hub_flow(flow_id: int, *, vended: bool) -> FlowGraph:
                 node_id=2,
                 depending_on_id=1,
                 user_id=1,
-                catalog_write_settings=input_schema.CatalogWriteSettings(table_name="out", hub_namespace_id=12),
+                catalog_write_settings=input_schema.CatalogWriteSettings(
+                    table_name="out", source="hub", namespace_full_name="sales.curated"
+                ),
             )
         )
         connect(graph, 1, 2)
@@ -1292,8 +1293,8 @@ def hub_flow(flow_id: int, *, vended: bool) -> FlowGraph:
             run_id="run",
             vend_id=1,
             credentials=(credential,),
-            bases={11: "s3://acme/sales", 12: "s3://acme/sales"},
-            names={11: "sales.raw", 12: "sales.curated"},
+            bases={"sales.raw": "s3://acme/sales", "sales.curated": "s3://acme/sales"},
+            ids={"sales.raw": 11, "sales.curated": 12},
         )
     return graph
 

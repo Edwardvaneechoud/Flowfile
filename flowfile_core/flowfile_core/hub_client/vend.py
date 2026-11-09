@@ -68,7 +68,8 @@ class HubCredential:
 class RunVend:
     """What the hub vended to the run ``run_id``: its ``vend_id``, the credentials, and where each namespace lives.
 
-    ``bases`` is the storage root of each hub namespace id the run names, ``names`` its ``catalog.schema`` name.
+    The run's steps name a hub namespace by its qualified ``catalog.schema``; ``bases`` is the storage root of each
+    such name the run asked for and ``ids`` the hub's own id of it, both resolved on the hub for this run.
     ``targets`` are the hub servers the vend was sealed to; empty for a vend the run's own worker opens with core's
     master key. ``secrets`` maps each secret name the run asked for to its map of node name to sealed token,
     ``connections`` each ``(kind, name)`` of a stored connection to its map, and ``connection_fields`` each to the
@@ -82,8 +83,8 @@ class RunVend:
     run_id: str
     vend_id: int
     credentials: tuple[HubCredential, ...]
-    bases: dict[int, str]
-    names: dict[int, str]
+    bases: dict[str, str]
+    ids: dict[str, int]
     targets: tuple[str, ...] = ()
     secrets: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
     connections: dict[tuple[str, str], dict[str, str]] = field(default_factory=dict, repr=False)
@@ -161,15 +162,25 @@ class RunVend:
             return hub_sealed.scan_delta_sealed(uri, here.sealed_credential(uri).sealed, schema)
         return pl.scan_delta(uri, **here.scan_kwargs(uri, user_id))
 
-    def for_namespace(self, hub_namespace_id: int) -> HubCredential:
-        """The credential for the tables of the hub namespace ``hub_namespace_id``.
+    def for_namespace(self, namespace: str) -> HubCredential:
+        """The credential for the tables of the hub namespace ``namespace`` (``catalog.schema``).
 
         Raises:
             LookupError: The run did not ask for that namespace, or the hub gave no credential for its root.
         """
-        if hub_namespace_id not in self.bases:
-            raise LookupError(f"This run did not ask the hub for namespace {hub_namespace_id}")
-        return self.for_uri(self.bases[hub_namespace_id])
+        if namespace not in self.bases:
+            raise LookupError(f"This run did not ask the hub for namespace {namespace}")
+        return self.for_uri(self.bases[namespace])
+
+    def namespace_id(self, namespace: str) -> int:
+        """The hub's own id of the namespace ``namespace`` (``catalog.schema``), as the hub answered it for this run.
+
+        Raises:
+            LookupError: The run did not ask for that namespace.
+        """
+        if namespace not in self.ids:
+            raise LookupError(f"This run did not ask the hub for namespace {namespace}")
+        return self.ids[namespace]
 
     def for_uri(self, uri: str) -> HubCredential:
         """The credential whose ``base_uri`` holds ``uri``.
@@ -237,8 +248,8 @@ def refusal_sentence(detail: str, status: int) -> str:
 def request(
     user_id: int,
     run_id: str,
-    readers: set[int],
-    writers: set[int],
+    readers: set[str],
+    writers: set[str],
     *,
     targets: Iterable[str] = (),
     exchange: bool = False,
@@ -247,8 +258,9 @@ def request(
 ) -> RunVend:
     """Ask the hub, through ``user_id``'s hub session, for the credentials of a run over its tables.
 
-    ``readers`` and ``writers`` are the hub namespace ids the run reads and writes. Every namespace is found in one
-    walk of the hub's catalogs; one on the hub's own disk, or on storage other than S3, is refused before the vend
+    ``readers`` and ``writers`` are the qualified names (``catalog.schema``) of the hub namespaces the run reads and
+    writes. Every namespace is found, and its hub id resolved, in one walk of the hub's catalogs; one the hub does not
+    list for the account is refused, and so is one on the hub's own disk, or on storage other than S3, before the vend
     with the sentence the catalog tree marks it with (``catalog.unreachable``), which says what to do. A run with no
     namespace walks nothing. ``exchange`` also asks for the organisation's exchange store; ``targets``, the hub names
     of the servers the run's steps use, has the hub seal every credential to each of them, and ``secrets``, the names
@@ -264,24 +276,25 @@ def request(
     try:
         hub_url, access_token = catalog.signed_in(user_id)
         found = catalog.namespaces(hub_url, access_token) if readers | writers else {}
-        names: dict[int, str] = {}
-        bases: dict[int, str] = {}
-        for namespace_id in sorted(readers | writers):
-            namespace = found.get(namespace_id)
+        by_name = {namespace.full_name: namespace for namespace in found.values()}
+        ids: dict[str, int] = {}
+        bases: dict[str, str] = {}
+        for name in sorted(readers | writers):
+            namespace = by_name.get(name)
             if namespace is None:
-                raise LookupError(f"{REFUSED}: the hub lists no catalog namespace {namespace_id} for this account")
+                raise LookupError(f"{REFUSED}: the hub lists no catalog schema {name} for this account")
             refusal = catalog.unreachable(namespace.storage_uri, namespace.full_name)
             if refusal is not None:
                 raise LookupError(refusal)
-            names[namespace_id] = namespace.full_name
-            bases[namespace_id] = namespace.storage_uri.rstrip("/")
+            ids[name] = namespace.id
+            bases[name] = namespace.storage_uri.rstrip("/")
         targets = tuple(dict.fromkeys(targets))
         answer = client.vend(
             hub_url,
             access_token,
             run_id,
-            sorted(readers),
-            sorted(writers),
+            sorted(ids[name] for name in readers),
+            sorted(ids[name] for name in writers),
             targets=targets,
             exchange=exchange,
             secrets=secrets,
@@ -308,7 +321,7 @@ def request(
         vend_id=answer["vend_id"],
         credentials=credentials,
         bases=bases,
-        names=names,
+        ids=ids,
         targets=targets,
         secrets={secret["name"]: dict(secret["sealed"]) for secret in answer.get("secrets", []) if secrets},
         connections={

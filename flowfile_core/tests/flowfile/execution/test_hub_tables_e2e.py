@@ -158,10 +158,9 @@ def build_flow(hub: HubCatalog, location: str, flow_path: Path):
             flow_id=flow_id,
             node_id=1,
             user_id=1,
-            hub_table_id=hub.orders["id"],
-            hub_namespace_id=hub.sales["id"],
+            source="hub",
+            catalog_full_table_name=hub.orders["qualified_name"],
             catalog_table_name="orders",
-            catalog_full_table_name="sales.orders",
         )
     )
     add_promise(graph, 2, "filter")
@@ -185,7 +184,10 @@ def build_flow(hub: HubCatalog, location: str, flow_path: Path):
             depending_on_id=2,
             user_id=1,
             catalog_write_settings=input_schema.CatalogWriteSettings(
-                table_name="orders_eu", hub_namespace_id=hub.sales["id"], write_mode="overwrite"
+                table_name="orders_eu",
+                source="hub",
+                namespace_full_name=hub.fake._full_name(hub.sales["id"]),
+                write_mode="overwrite",
             ),
         )
     )

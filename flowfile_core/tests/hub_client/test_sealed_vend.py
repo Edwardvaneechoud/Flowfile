@@ -55,7 +55,8 @@ def hub(signer, node_keys, monkeypatch, store) -> SealingHubCatalog:
     fake.vend_options["s3://acme/exchange"] = dict(OPTIONS)
     fake.exchange_store = {"uri": "s3://acme/exchange", "connection": "org-exchange", "max_rows": None}
     fake.grants[raw["id"]] = "manage"
-    fake.raw = raw["id"]
+    fake.raw = "sales.raw"
+    fake.raw_id = raw["id"]
     fake.enc_keys = {name: keys.public_jwks()["enc"] for name, (_, keys) in node_keys.items()}
     tokens = client.sign_in(HUB_URL, "ana", "s3cret")
     session.save(1, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"]})
@@ -125,7 +126,7 @@ def test_a_hub_that_answers_targets_without_sealing_to_them_is_refused(hub, monk
 
     with pytest.raises(HubRefused, match="did not answer /hub/vend as a Flowfile hub does"):
         client.vend(
-            HUB_URL, client.sign_in(HUB_URL, "ana", "s3cret")["access_token"], "r", [], [hub.raw], targets=["x"]
+            HUB_URL, client.sign_in(HUB_URL, "ana", "s3cret")["access_token"], "r", [], [hub.raw_id], targets=["x"]
         )
 
 

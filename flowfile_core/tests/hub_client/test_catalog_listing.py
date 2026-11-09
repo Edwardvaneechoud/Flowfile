@@ -382,16 +382,23 @@ class TestHubTableReader:
         reader = input_schema.NodeCatalogReader(
             flow_id=1, node_id=1, catalog_table_id=4, delta_version=2, sql_query=None, cdc_mode="off"
         )
-        assert reader.hub_table_id is None and reader.hub_namespace_id is None
+        assert reader.source == "local" and reader.hub_namespace_name is None
         input_schema.NodeCatalogReader(flow_id=1, node_id=1, catalog_table_id=4, cdc_mode="since_last_run")
 
-    def test_a_hub_table_read_as_it_is_now_validates(self):
-        reader = input_schema.NodeCatalogReader(flow_id=1, node_id=1, hub_table_id=101, hub_namespace_id=2)
-        assert (reader.hub_table_id, reader.hub_namespace_id) == (101, 2)
+    def test_a_hub_table_read_as_it_is_now_validates_and_names_its_schema(self):
+        reader = input_schema.NodeCatalogReader(
+            flow_id=1, node_id=1, source="hub", catalog_full_table_name="sales.raw.orders", catalog_table_name="orders"
+        )
+        assert (reader.source, reader.catalog_full_table_name) == ("hub", "sales.raw.orders")
+        assert reader.hub_namespace_name == "sales.raw"
+        assert input_schema.NodeCatalogReader(flow_id=1, node_id=1, source="hub").hub_namespace_name is None
 
-    def test_a_hub_table_needs_its_namespace(self):
-        with pytest.raises(ValidationError, match="hub_table_id and hub_namespace_id together"):
-            input_schema.NodeCatalogReader(flow_id=1, node_id=1, hub_table_id=101)
+    @pytest.mark.parametrize("ids", [{"catalog_table_id": 4}, {"catalog_namespace_id": 2}])
+    def test_a_hub_table_takes_no_local_id(self, ids):
+        with pytest.raises(ValidationError, match="named by its qualified name"):
+            input_schema.NodeCatalogReader(
+                flow_id=1, node_id=1, source="hub", catalog_full_table_name="sales.raw.orders", **ids
+            )
 
     @pytest.mark.parametrize(
         "extra",
@@ -406,20 +413,28 @@ class TestHubTableReader:
     )
     def test_a_hub_table_refuses_versions_views_sql_and_change_feeds(self, extra):
         with pytest.raises(ValidationError, match=READ_AS_IT_IS):
-            input_schema.NodeCatalogReader(flow_id=1, node_id=1, hub_table_id=101, hub_namespace_id=2, **extra)
+            input_schema.NodeCatalogReader(
+                flow_id=1, node_id=1, source="hub", catalog_full_table_name="sales.raw.orders", **extra
+            )
 
 
 class TestHubNamespaceWriter:
     def test_local_writes_validate_as_before(self):
         for mode in ("virtual", "overwrite"):
-            assert input_schema.CatalogWriteSettings(table_name="t", write_mode=mode).hub_namespace_id is None
+            assert input_schema.CatalogWriteSettings(table_name="t", write_mode=mode).source == "local"
         input_schema.CatalogWriteSettings(table_name="t", write_mode="scd2", merge_keys=["id"])
         input_schema.CatalogWriteSettings(table_name="t", write_mode="append", track_changes=True)
 
     @pytest.mark.parametrize("mode", ["overwrite", "append", "error"])
     def test_a_physical_write_to_a_hub_namespace_validates(self, mode):
-        settings = input_schema.CatalogWriteSettings(table_name="t", write_mode=mode, hub_namespace_id=2)
-        assert settings.hub_namespace_id == 2
+        settings = input_schema.CatalogWriteSettings(
+            table_name="t", write_mode=mode, source="hub", namespace_full_name="sales.curated"
+        )
+        assert (settings.source, settings.namespace_full_name, settings.namespace_id) == ("hub", "sales.curated", None)
+
+    def test_a_hub_namespace_takes_no_local_id(self):
+        with pytest.raises(ValidationError, match="named by its qualified name"):
+            input_schema.CatalogWriteSettings(table_name="t", source="hub", namespace_full_name="a.b", namespace_id=2)
 
     @pytest.mark.parametrize(
         "fields, message",
@@ -431,4 +446,4 @@ class TestHubNamespaceWriter:
     )
     def test_a_hub_namespace_refuses_virtual_scd2_and_tracked_writes(self, fields, message):
         with pytest.raises(ValidationError, match=message):
-            input_schema.CatalogWriteSettings(table_name="t", hub_namespace_id=2, **fields)
+            input_schema.CatalogWriteSettings(table_name="t", source="hub", namespace_full_name="a.b", **fields)

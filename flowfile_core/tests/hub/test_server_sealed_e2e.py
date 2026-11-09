@@ -262,7 +262,13 @@ def on(flow, node_id: int, backend: str) -> None:
     flow.get_node(node_id).setting_input.execution_location = backend
 
 
-def add_writer(flow, node_id: int, depending_on: int, person: int, sales: dict, name: str) -> None:
+def sales_schema(hub) -> str:
+    """The qualified name of the hub's ``sales`` schema, as a writer step names it (``<catalog>.sales``)."""
+    return hub.orders["qualified_name"].rpartition(".")[0]
+
+
+def add_writer(flow, node_id: int, depending_on: int, person: int, schema: str, name: str) -> None:
+    """A writer of ``name`` into the hub schema ``schema`` (its qualified name), set by ``person``."""
     add_promise(flow, node_id, "catalog_writer")
     flow.add_catalog_writer(
         input_schema.NodeCatalogWriter(
@@ -271,7 +277,10 @@ def add_writer(flow, node_id: int, depending_on: int, person: int, sales: dict, 
             depending_on_id=depending_on,
             user_id=person,
             catalog_write_settings=input_schema.CatalogWriteSettings(
-                table_name=name, hub_namespace_id=sales["id"], write_mode="overwrite"
+                table_name=name,
+                source="hub",
+                namespace_full_name=schema,
+                write_mode="overwrite",
             ),
         )
     )
@@ -303,7 +312,7 @@ def test_a_catalog_writer_on_the_compute_only_server_writes_its_table_through_th
     person_id, access_token = person
     flow = open_flow(person_id, "write_on_the_compute_server")
     add_test_manual_input(flow, [{"id": 1, "name": "ada"}, {"id": 2, "name": "grace"}], node_id=1)
-    add_writer(flow, 2, 1, person_id, hub.sales, "people")
+    add_writer(flow, 2, 1, person_id, sales_schema(hub), "people")
     on(flow, 2, BACKEND)
 
     run_info = run(flow, access_token)
@@ -330,8 +339,8 @@ def test_a_flow_whose_steps_cross_both_ways_between_the_servers_runs_through_the
             flow_id=flow.flow_id,
             node_id=1,
             user_id=person_id,
-            hub_table_id=hub.orders["id"],
-            hub_namespace_id=hub.sales["id"],
+            source="hub",
+            catalog_full_table_name=hub.orders["qualified_name"],
             catalog_table_name="orders",
         )
     )
@@ -348,7 +357,7 @@ def test_a_flow_whose_steps_cross_both_ways_between_the_servers_runs_through_the
         )
     )
     connect(flow, 1, 2)
-    add_writer(flow, 3, 2, person_id, hub.sales, "orders_eu")
+    add_writer(flow, 3, 2, person_id, sales_schema(hub), "orders_eu")
     on(flow, 1, BACKEND)
     on(flow, 3, BACKEND)
 
@@ -371,7 +380,7 @@ def test_a_crossing_to_a_backend_the_hub_has_no_server_for_is_refused_before_the
     try:
         flow = open_flow(person_id, "to_a_server_of_no_hub")
         add_test_manual_input(flow, [{"id": 1, "name": "ada"}], node_id=1)
-        add_writer(flow, 2, 1, person_id, hub.sales, "nowhere")
+        add_writer(flow, 2, 1, person_id, sales_schema(hub), "nowhere")
         on(flow, 2, "worker:by-hand")
 
         ran = client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(access_token))
@@ -391,7 +400,7 @@ def test_a_server_whose_hub_sets_no_store_still_refuses_the_crossing_with_t49s_s
     hub.catalog.exchange_store = None
     flow = open_flow(person_id, "no_store_on_the_hub")
     add_test_manual_input(flow, [{"id": 1, "name": "ada"}], node_id=1)
-    add_writer(flow, 2, 1, person_id, hub.sales, "nowhere")
+    add_writer(flow, 2, 1, person_id, sales_schema(hub), "nowhere")
     on(flow, 2, BACKEND)
 
     client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(access_token))

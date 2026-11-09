@@ -601,7 +601,7 @@ def hub_tables_flow(registered_flow, desktop):
     flow_id, flow_uuid = registered_flow
     flow = routes.flow_file_handler.get_flow(flow_id)
     _add_reader(
-        flow, 2, user_id=1, hub_table_id=orders["id"], hub_namespace_id=schema["id"], catalog_table_name="orders"
+        flow, 2, user_id=1, source="hub", catalog_full_table_name=orders["qualified_name"], catalog_table_name="orders"
     )
     flow.add_node_promise(input_schema.NodePromise(flow_id=flow.flow_id, node_id=3, node_type="catalog_writer"))
     flow.add_catalog_writer(
@@ -611,7 +611,7 @@ def hub_tables_flow(registered_flow, desktop):
             depending_on_id=2,
             user_id=1,
             catalog_write_settings=input_schema.CatalogWriteSettings(
-                table_name="orders_eu", hub_namespace_id=schema["id"]
+                table_name="orders_eu", source="hub", namespace_full_name="sales.eu"
             ),
         )
     )
@@ -649,7 +649,8 @@ def _ran(flow, monkeypatch, last_hub_vend: tuple[str, int] | None, success: bool
 
 
 class TestHubTables:
-    """A desktop reports a run that vended from its hub, naming the hub's tables by the hub's ids and the vend."""
+    """A desktop reports a run that vended from its hub, naming the hub's tables by the hub's ids, resolved on the hub
+    from the names the steps carry, and the vend."""
 
     @pytest.mark.parametrize("listed", [True, False], ids=["written-table-listed", "written-table-not-listed"])
     def test_a_run_that_vended_posts_one_report_with_the_vend_and_the_hubs_table_ids(
@@ -665,8 +666,17 @@ class TestHubTables:
 
         [run] = _runs_of(flow_uuid)
         assert run.success is True
-        assert desktop.calls == [("GET", "/catalog/tables")], "one hub call beside the post, on the cached token"
-        assert desktop.catalog_calls == [("/catalog/tables", f"namespace_id={schema['id']}")]
+        catalog_id = schema["parent_id"]
+        assert desktop.calls == [
+            ("GET", "/catalog/namespaces"),
+            ("GET", "/catalog/namespaces"),
+            ("GET", "/catalog/tables"),
+        ], "the hub's ids behind the steps' names, on the cached token, beside the post"
+        assert desktop.catalog_calls == [
+            ("/catalog/namespaces", ""),
+            ("/catalog/namespaces", f"parent_id={catalog_id}"),
+            ("/catalog/tables", ""),
+        ]
         [sent] = hub.requests
         assert str(sent.url) == f"{HUB_URL}/hub/runs"
         assert desktop._bearer_user(sent) == "ana"
@@ -685,7 +695,7 @@ class TestHubTables:
         ]
         assert warnings() == []
 
-    def test_a_hub_that_does_not_list_its_tables_leaves_the_written_id_out_with_one_warning(
+    def test_a_hub_that_does_not_list_its_tables_leaves_them_out_of_the_report_with_one_warning(
         self, hub, warnings, hub_tables_flow, desktop, monkeypatch
     ):
         flow, flow_uuid, schema = hub_tables_flow
@@ -703,7 +713,10 @@ class TestHubTables:
 
         [sent] = hub.requests
         body = json.loads(sent.content)
-        assert body["outputs"] == [{"namespace_id": schema["id"], "table_id": None, "table_name": "orders_eu"}]
+        assert (body["inputs"], body["outputs"]) == (
+            [],
+            [],
+        ), "the steps name tables the hub's ids could not be read for"
         assert body["vend_ids"] == [7]
         assert len(warnings()) == 1
         assert "catalog unavailable" in warnings()[0].getMessage()

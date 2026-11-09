@@ -244,7 +244,11 @@ def test_a_run_of_an_account_that_did_not_sign_in_through_the_hub_is_not_reporte
     assert not hub.asked_for_exchange_store()
 
 
-def test_a_report_names_only_the_hubs_tables_with_the_servers_keys_or_without(hub, hub_url):
+def test_a_report_names_only_the_hubs_tables_with_the_servers_keys_or_without(hub, hub_url, username):
+    person, _ = sign_in(hub, username)
+    catalog = hub.catalog.seed_catalog("sales", storage_uri="s3://acme/sales")
+    eu = hub.catalog.seed_schema(catalog, "eu")
+    orders = hub.catalog.seed_table(eu, "orders", file_path="s3://acme/sales/orders", is_remote_storage=True)
     namespace_id = create_test_namespace()
     graph = create_test_graph(flow_id=8131)
     add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
@@ -254,9 +258,9 @@ def test_a_report_names_only_the_hubs_tables_with_the_servers_keys_or_without(hu
         input_schema.NodeCatalogReader(
             flow_id=graph.flow_id,
             node_id=3,
-            user_id=1,
-            hub_table_id=301,
-            hub_namespace_id=31,
+            user_id=person,
+            source="hub",
+            catalog_full_table_name="sales.eu.orders",
             catalog_table_name="orders",
         )
     )
@@ -273,7 +277,7 @@ def test_a_report_names_only_the_hubs_tables_with_the_servers_keys_or_without(hu
         node_step_result=results,
         run_type="full_run",
     )
-    hub_table = {"namespace_id": 31, "table_id": 301, "table_name": "orders"}
+    hub_table = {"namespace_id": eu["id"], "table_id": orders["id"], "table_name": "orders"}
 
     joined = report.build_run_report(graph, finished, flow_uuid=str(uuid.uuid4()))
 
@@ -320,8 +324,8 @@ def add_hub_tables_flow(flow, person: int, sales: dict, orders: dict) -> None:
             flow_id=flow.flow_id,
             node_id=1,
             user_id=person,
-            hub_table_id=orders["id"],
-            hub_namespace_id=sales["id"],
+            source="hub",
+            catalog_full_table_name=orders["qualified_name"],
             catalog_table_name="orders",
         )
     )
@@ -346,7 +350,10 @@ def add_hub_tables_flow(flow, person: int, sales: dict, orders: dict) -> None:
             depending_on_id=2,
             user_id=person,
             catalog_write_settings=input_schema.CatalogWriteSettings(
-                table_name="orders_eu", hub_namespace_id=sales["id"], write_mode="overwrite"
+                table_name="orders_eu",
+                source="hub",
+                namespace_full_name=orders["qualified_name"].rpartition(".")[0],
+                write_mode="overwrite",
             ),
         )
     )

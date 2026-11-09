@@ -1,8 +1,9 @@
 """A table in the hub's catalog as this Flowfile reads it: the table itself, its first rows for the Catalog page, a
 query of the SQL editor over it, a visual on such a query and a notebook cell's read of it.
 
-A reader step, the Catalog page's preview, the SQL editor, a visual and a notebook cell find the table the same way
-(``readable``). Each of the last four asks the hub for one read of the tables' namespaces under a run id of its own
+A reader step names a table by its qualified name (``readable_named``); the Catalog page's preview, the SQL editor,
+a visual and a notebook cell name one by the hub's id on its row of the catalog tree (``readable``), and all take it
+the same way. Each of the last four asks the hub for one read of the tables' namespaces under a run id of its own
 (``preview-…``, ``sql-…``, ``visual-…`` or ``notebook-…``, which the hub's vend ledger keeps), scans each table with
 that credential as a run's reader does (``RunVend.scan_delta``) and reads the rows on this machine's own worker. The
 credential lives for the call; a visual's plan carries it, encrypted, for a few minutes (``visual_source``), and a
@@ -60,18 +61,34 @@ _WITH_NAME = re.compile(rf"({_NAME})\s+AS\s*\(", re.IGNORECASE)
 
 
 def readable(user_id: int | None, hub_table_id: int) -> dict:
-    """The hub's table ``hub_table_id`` as a reader takes it: a physical table on object storage.
+    """The hub's table ``hub_table_id`` (a row of the catalog tree) as a reader takes it: a physical table on object
+    storage.
 
     Raises:
         LookupError: The hub has no such table, does not answer, or this Flowfile is not connected to it.
         ValueError: The hub keeps the table on its own disk, or it is a virtual table.
     """
     table = catalog.table(user_id, hub_table_id)
+    return _physical(table, lambda: catalog.locate(user_id, table["namespace_id"]).full_name)
+
+
+def readable_named(user_id: int | None, qualified_name: str) -> dict:
+    """The hub's table ``qualified_name`` (``catalog.schema.table``, as a reader step names it) as a reader takes it:
+    a physical table on object storage.
+
+    Raises:
+        LookupError: The hub has no table of that name, does not answer, or this Flowfile is not connected to it.
+        ValueError: The hub keeps the table on its own disk, or it is a virtual table.
+    """
+    table = catalog.table_named(user_id, qualified_name)
+    return _physical(table, lambda: qualified_name.rpartition(".")[0])
+
+
+def _physical(table: dict, namespace_name) -> dict:
     if table.get("table_type", "physical") != "physical":
         raise ValueError("A virtual table on the hub cannot be read from this Flowfile")
     if not table.get("file_path") or not _is_cloud_uri(table["file_path"]):
-        namespace = catalog.locate(user_id, table["namespace_id"]).full_name
-        raise ValueError(catalog.on_own_disk(namespace))
+        raise ValueError(catalog.on_own_disk(namespace_name()))
     return table
 
 

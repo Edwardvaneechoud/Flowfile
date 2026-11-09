@@ -121,7 +121,7 @@ def test_a_run_writing_to_a_hub_catalog_on_its_own_disk_is_refused_with_the_tree
             depending_on_id=1,
             user_id=person,
             catalog_write_settings=input_schema.CatalogWriteSettings(
-                table_name="memo", hub_namespace_id=organisation["notes"]["id"], write_mode="overwrite"
+                table_name="memo", source="hub", namespace_full_name="scratch.notes", write_mode="overwrite"
             ),
         )
     )

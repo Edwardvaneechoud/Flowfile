@@ -370,7 +370,7 @@ const catalogNamespaces = ref<NamespaceOption[]>([]);
 // System-stripped but unpruned — for restoring a configured target the pruned list hides.
 const allCatalogNamespaces = ref<NamespaceOption[]>([]);
 const { pruneNonWritable } = useWritableNamespaces();
-// The select binds the tree id (negative for a hub schema); the settings hold a local or a hub id.
+// The select binds the tree id (negative for a hub schema); the settings hold a local id or a hub schema's name.
 const selectedNamespaceId = ref<number | null>(null);
 // The hub's tables, for the exists-or-new line of a hub target.
 const hubTables = ref<CatalogTable[]>([]);
@@ -391,7 +391,7 @@ const selectedUnavailableReason = computed(() => {
 });
 
 // Keep the portable name in sync with the numeric selection. ``namespace_full_name`` ("catalog.schema")
-// is what survives recreation on another machine; the id is install-local. A hub schema is its hub id only.
+// is what survives recreation on another machine; the id is install-local. A hub schema is its name only.
 async function onNamespaceChange(id: number | null) {
   const settings = nodeData.value?.catalog_write_settings;
   if (!settings) return;
@@ -432,13 +432,7 @@ function preselectDefault() {
   const node = nodeData.value;
   const settings = node?.catalog_write_settings;
   if (!node || !settings || node.is_setup || allCatalogNamespaces.value.length === 0) return;
-  if (
-    settings.namespace_id != null ||
-    settings.namespace_full_name ||
-    settings.hub_namespace_id != null
-  ) {
-    return;
-  }
+  if (settings.namespace_id != null || settings.namespace_full_name) return;
   const preset = writerDefault(allCatalogNamespaces.value);
   if (preset) Object.assign(settings, namespaceChoice(preset));
 }
@@ -639,18 +633,17 @@ async function lookupExistingTable() {
   const settings = nodeData.value!.catalog_write_settings;
   if (isHubTarget(settings)) {
     // The hub's own listing answers whether the table is there; no local lookup.
-    const listed = allCatalogNamespaces.value.some(
-      (ns) => ns.source === "hub" && ns.hubId === settings.hub_namespace_id,
-    );
+    const schema = settings.namespace_full_name;
+    const listed =
+      !!schema &&
+      allCatalogNamespaces.value.some((ns) => ns.source === "hub" && ns.full === schema);
     if (!listed) {
       existingTable.value = null;
       tableLookupDone.value = false;
       return;
     }
     existingTable.value =
-      hubTables.value.find(
-        (t) => t.hub_namespace_id === settings.hub_namespace_id && t.name === name,
-      ) ?? null;
+      hubTables.value.find((t) => t.qualified_name === `${schema}.${name}`) ?? null;
     tableLookupDone.value = true;
     return;
   }
@@ -679,7 +672,8 @@ watch(
   () => [
     nodeData.value?.catalog_write_settings.table_name,
     nodeData.value?.catalog_write_settings.namespace_id,
-    nodeData.value?.catalog_write_settings.hub_namespace_id,
+    nodeData.value?.catalog_write_settings.namespace_full_name,
+    nodeData.value?.catalog_write_settings.source,
   ],
   () => scheduleLookup(),
 );
@@ -787,8 +781,8 @@ async function loadNodeData(nodeId: number) {
     if (nodeData.value!.catalog_write_settings.track_changes === undefined) {
       nodeData.value!.catalog_write_settings.track_changes = false;
     }
-    if (nodeData.value!.catalog_write_settings.hub_namespace_id === undefined) {
-      nodeData.value!.catalog_write_settings.hub_namespace_id = null;
+    if (nodeData.value!.catalog_write_settings.source === undefined) {
+      nodeData.value!.catalog_write_settings.source = "local";
     }
     if (
       nodeData.value!.catalog_write_settings.scd2 &&
@@ -814,7 +808,7 @@ async function loadNodeData(nodeId: number) {
         partition_by: [],
         scd2: null,
         track_changes: false,
-        hub_namespace_id: null,
+        source: "local",
       },
       flow_id: nodeStore.flow_id,
       node_id: nodeId,

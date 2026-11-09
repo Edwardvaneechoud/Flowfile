@@ -58,6 +58,22 @@ from shared.delta_utils import (
     scan_delta_changes,
 )
 
+PICK_HUB_TABLE = "No table on the hub is picked for this reader; pick one."
+
+
+def unnamed_hub_table(settings: input_schema.NodeCatalogReader) -> str | None:
+    """Why a reader on the hub cannot be read: it names no table (``PICK_HUB_TABLE``), or only a bare name, which a
+    flow saved by an older Flowfile carries when its hub ids could not be converted at open; ``None`` when it names
+    its table by its qualified name."""
+    if settings.catalog_full_table_name:
+        return None
+    if settings.catalog_table_name:
+        return (
+            f"The table {settings.catalog_table_name} on the hub is named by an id from an older Flowfile; open this "
+            "flow while connected to the hub to convert it, or pick the table again."
+        )
+    return PICK_HUB_TABLE
+
 
 def _filtered_frame(lf: pl.LazyFrame, row_filter: pl.Expr | None, backend: ComputeBackend | None) -> FlowDataEngine:
     """``lf`` under ``row_filter``; with a ``backend``, its schema read there with the plan held deferred."""
@@ -78,7 +94,7 @@ class CatalogBuildersMixin(GraphMixinBase):
         the SQL against all catalog Delta tables instead.
         """
 
-        if node_catalog_reader.hub_table_id is not None:
+        if node_catalog_reader.source == "hub":
             is_virtual_optimized = self._add_hub_table_reader(node_catalog_reader)
         elif node_catalog_reader.sql_query:
             is_virtual_optimized = self._add_catalog_sql_reader(node_catalog_reader)
@@ -162,27 +178,33 @@ class CatalogBuildersMixin(GraphMixinBase):
         return is_virtual_optimized
 
     def _add_hub_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> None:
-        """Read a table on the hub, named by the hub's own ids, through the credential the hub vends to the run.
+        """Read a table on the hub, named by its qualified name, through the credential the hub vends to the run.
 
-        The table is looked up on the hub once here, and its columns are the node's predicted schema; a hub that does
-        not answer leaves its message on the node, and the table is looked up again when the run reads it. The scan
-        carries the run's credential encrypted, or a vend sealed to the servers the run uses (``RunVend.scan_delta``),
-        so outside a run it cannot read.
+        The table is looked up on the hub by name once here, and its columns are the node's predicted schema; a hub
+        that does not answer leaves its message on the node, and the table is looked up again when the run reads it. A
+        reader that names no table yet fails with ``unnamed_hub_table`` when it runs. The scan carries the run's
+        credential encrypted, or a vend sealed to the servers the run uses (``RunVend.scan_delta``), so outside a run
+        it cannot read.
         """
         user_id = node_catalog_reader.user_id
-        hub_table_id = node_catalog_reader.hub_table_id
+        qualified_name = node_catalog_reader.catalog_full_table_name
         node_logger = self.flow_logger.get_node_logger(node_catalog_reader.node_id)
-        try:
-            designed: dict | None = hub_tables.readable(user_id, hub_table_id)
-            unread = None
-        except LookupError as e:
-            designed, unread = None, str(e)
+        designed: dict | None = None
+        unread: str | None = unnamed_hub_table(node_catalog_reader)
+        if unread is None:
+            try:
+                designed = hub_tables.readable_named(user_id, qualified_name)
+            except LookupError as e:
+                unread = str(e)
         row_filter = _scd2_row_filter(None, node_catalog_reader.scd2_view, None, node_logger=node_logger)
 
         def _func() -> FlowDataEngine:
+            unnamed = unnamed_hub_table(node_catalog_reader)
+            if unnamed is not None:
+                raise ValueError(unnamed)
             if self.hub_vend is None:
                 raise ValueError("Run the flow to read a table on the hub")
-            table = designed or hub_tables.readable(user_id, hub_table_id)
+            table = designed or hub_tables.readable_named(user_id, qualified_name)
             columns = {
                 column["name"]: cast_str_to_polars_type(column["dtype"]) for column in table.get("schema_columns") or ()
             }

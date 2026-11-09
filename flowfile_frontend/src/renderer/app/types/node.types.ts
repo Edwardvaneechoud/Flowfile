@@ -1032,6 +1032,9 @@ export const DEFAULT_SCD2_SETTINGS: Scd2Settings = {
 
 export interface CatalogWriteSettings {
   table_name: string;
+  // Where the schema's catalog lives: this machine's own, or the hub. A hub schema is named by
+  // namespace_full_name (catalog.schema) alone; namespace_id is null then.
+  source?: "local" | "hub";
   namespace_id: number | null;
   namespace_full_name?: string | null;
   description: string | null;
@@ -1041,8 +1044,6 @@ export interface CatalogWriteSettings {
   scd2: Scd2Settings | null;
   // Enable-only: turns the Delta change data feed on, never off.
   track_changes: boolean;
-  // A schema on the hub, by the hub's own id; namespace_id and namespace_full_name are null then.
-  hub_namespace_id?: number | null;
 }
 
 export interface NodeCatalogWriter extends NodeBase {
@@ -1050,6 +1051,9 @@ export interface NodeCatalogWriter extends NodeBase {
 }
 
 export interface NodeCatalogReader extends NodeBase {
+  // Where the table's catalog lives: this machine's own, or the hub. A hub table is named by
+  // catalog_full_table_name (catalog.schema.table) alone; the local ids are null then.
+  source?: "local" | "hub";
   catalog_table_id: number | null;
   catalog_full_table_name: string | null;
   catalog_table_name: string | null;
@@ -1064,9 +1068,6 @@ export interface NodeCatalogReader extends NodeBase {
   cdc_consumer_name: string | null;
   cdc_start: CdcStart;
   cdc_include_preimage: boolean;
-  // A table on the hub, by the hub's own ids; catalog_table_id and catalog_namespace_id are null then.
-  hub_table_id: number | null;
-  hub_namespace_id: number | null;
 }
 
 /** Change-feed read settings; the cursor fields exist only on the catalog reader. */

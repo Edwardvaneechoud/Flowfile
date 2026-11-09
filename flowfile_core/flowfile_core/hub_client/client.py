@@ -189,6 +189,16 @@ def get_table(url: str, access_token: str, table_id: int, *, http: httpx.Client 
     return _require(body, ("id", "name"), url, "/catalog/tables/{table_id}")
 
 
+def resolve_table(url: str, access_token: str, reference: str, *, http: httpx.Client | None = None) -> dict:
+    """The hub's catalog table named ``reference`` (``catalog.schema.table``) as core's ``CatalogTableOut``, through
+    core's own ``GET /catalog/tables/resolve``; a name the hub has no table for is its 404."""
+    body = _request("GET", url, "/catalog/tables/resolve", http, params={"q": reference}, headers=_bearer(access_token))
+    table = _require(body, ("table",), url, "/catalog/tables/resolve")["table"]
+    if not isinstance(table, dict):
+        raise HubRefused(200, f"{url} did not answer /catalog/tables/resolve as a Flowfile hub does.")
+    return _require(table, ("id", "name"), url, "/catalog/tables/resolve")
+
+
 def register_table_from_data(url: str, access_token: str, body: dict, *, http: httpx.Client | None = None) -> dict:
     """Record a table whose data is already written under a namespace's storage root on the hub; its 201 answer.
 

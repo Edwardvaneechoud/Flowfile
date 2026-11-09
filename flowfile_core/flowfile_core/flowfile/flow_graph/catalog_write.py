@@ -532,7 +532,7 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
         if node.node_type != "catalog_reader":
             continue
         setting = node.setting_input
-        if getattr(setting, "hub_table_id", None) is not None:
+        if getattr(setting, "source", "local") == "hub":
             continue
         if getattr(setting, "sql_query", None):
             return None
@@ -594,7 +594,7 @@ def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
         if node.node_type != "catalog_reader":
             continue
         setting = node.setting_input
-        if getattr(setting, "hub_table_id", None) is not None:
+        if getattr(setting, "source", "local") == "hub":
             return True
         if getattr(setting, "sql_query", None):
             try:
@@ -641,7 +641,7 @@ def refuse_without_hub_catalog(settings: input_schema.CatalogWriteSettings) -> N
     Raises:
         ValueError: ``NO_HUB_CATALOG``, before anything is written.
     """
-    if settings.hub_namespace_id is not None or issuer_accounts.joined_with_keys() is None:
+    if settings.source == "hub" or issuer_accounts.joined_with_keys() is None:
         return
     with get_db_context() as db:
         if _effective_namespace_id(CatalogService(SQLAlchemyCatalogRepository(db)), settings) is not None:
@@ -754,6 +754,7 @@ def _handle_hub_table_write(
 ) -> FlowDataEngine:
     """Write a Delta table into a namespace on the hub with the credential the hub vended to the run.
 
+    The namespace is named by its qualified ``catalog.schema``; the run's vend resolved it on the hub and holds its id.
     The hub is the record: its table of that name in the namespace is the destination, a new one gets a directory
     under the namespace's storage root, and the compute writes it by identity with a connection whose secrets are
     encrypted for the worker. A new table is registered on the hub from the write's own report; an existing one's
@@ -761,10 +762,13 @@ def _handle_hub_table_write(
     vend's.
     """
     settings = node_catalog_writer.catalog_write_settings
-    namespace_id = settings.hub_namespace_id
+    namespace = settings.namespace_full_name
+    if not namespace:
+        raise ValueError(NO_HUB_CATALOG)
     if graph.hub_vend is None:
         raise ValueError("Run the flow to write a table on the hub")
-    credential = graph.hub_vend.for_namespace(namespace_id)
+    credential = graph.hub_vend.for_namespace(namespace)
+    namespace_id = graph.hub_vend.namespace_id(namespace)
     hub_url, access_token = hub_catalog.signed_in(user_id)
     existing = next(
         (
@@ -830,7 +834,7 @@ def _handle_physical_table_write(
     """Handle physical-mode catalog write: materialize data as a Delta table and register it."""
     settings = node_catalog_writer.catalog_write_settings
     user_id = node_catalog_writer.user_id or 1
-    if settings.hub_namespace_id is not None:
+    if settings.source == "hub":
         return _handle_hub_table_write(graph, node_catalog_writer, df, user_id)
 
     with get_db_context() as db:

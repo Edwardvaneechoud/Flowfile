@@ -45,23 +45,29 @@ const readOnlyBy = (access: AccessInfo | null | undefined): boolean =>
 
 export type ReaderTarget = Pick<
   NodeCatalogReader,
-  "catalog_table_id" | "catalog_namespace_id" | "hub_table_id" | "hub_namespace_id"
+  "source" | "catalog_table_id" | "catalog_namespace_id" | "catalog_full_table_name"
 >;
 
 export type WriterTarget = Pick<
   CatalogWriteSettings,
-  "namespace_id" | "namespace_full_name" | "hub_namespace_id"
+  "source" | "namespace_id" | "namespace_full_name"
 >;
 
 type TableWrites = Pick<
   NodeCatalogReader,
+  | "source"
   | "catalog_table_id"
   | "catalog_namespace_id"
   | "catalog_table_name"
   | "catalog_full_table_name"
-  | "hub_table_id"
-  | "hub_namespace_id"
 >;
+
+/** The qualified schema (``catalog.schema``) of a qualified table name; null for a bare name or none. */
+export function hubSchemaName(qualified: string | null | undefined): string | null {
+  if (!qualified) return null;
+  const at = qualified.lastIndexOf(".");
+  return at > 0 ? qualified.slice(0, at) : null;
+}
 
 const isWriter = (settings: ReaderTarget | WriterTarget): settings is WriterTarget =>
   "namespace_id" in settings;
@@ -182,66 +188,69 @@ export function writerDefault(options: NamespaceOption[]): NamespaceOption | nul
   return hubDefaultSchema(options);
 }
 
-/** The reader's fields for a picked table: a hub table by the hub's ids only, a local one as before. */
+/**
+ * The reader's fields for a picked table: a hub table by its qualified name (``catalog.schema.table``) only, never
+ * an id of the hub's database; a local one as before.
+ */
 export function tableChoice(table: CatalogTable | null): Partial<TableWrites> {
   if (!table) {
     return {
       catalog_table_id: null,
       catalog_table_name: null,
       catalog_full_table_name: null,
-      hub_table_id: null,
     };
   }
-  const names = {
-    catalog_table_name: table.name,
-    catalog_full_table_name: table.full_table_name ?? null,
-  };
   if (isHubRow(table)) {
     return {
-      ...names,
-      hub_table_id: table.hub_id ?? null,
-      hub_namespace_id: table.hub_namespace_id ?? null,
+      source: "hub",
+      catalog_table_name: table.name,
+      catalog_full_table_name: table.qualified_name ?? null,
       catalog_table_id: null,
       catalog_namespace_id: null,
     };
   }
   return {
-    ...names,
+    source: "local",
+    catalog_table_name: table.name,
+    catalog_full_table_name: table.full_table_name ?? null,
     catalog_table_id: table.id,
     catalog_namespace_id: table.namespace_id,
-    hub_table_id: null,
-    hub_namespace_id: null,
   };
 }
 
-/** The reader's namespace fields for a picked schema (the table list's filter). */
+/** The reader's namespace fields for a picked schema (the table list's filter): where it lives, and a local id. */
 export function readerNamespaceChoice(
   option: NamespaceOption | null,
-): Pick<ReaderTarget, "catalog_namespace_id" | "hub_namespace_id"> {
-  if (option?.source === "hub")
-    return { catalog_namespace_id: null, hub_namespace_id: option.hubId };
-  return { catalog_namespace_id: option?.id ?? null, hub_namespace_id: null };
+): Pick<ReaderTarget, "source" | "catalog_namespace_id"> {
+  if (option?.source === "hub") return { source: "hub", catalog_namespace_id: null };
+  return { source: "local", catalog_namespace_id: option?.id ?? null };
 }
 
-/** The writer's fields for a picked schema: a hub schema by the hub's id only, a local one as before. */
+/** The writer's fields for a picked schema: a hub schema by its qualified name only, a local one as before. */
 export function namespaceChoice(option: NamespaceOption | null): WriterTarget {
   if (option?.source === "hub") {
-    return { namespace_id: null, namespace_full_name: null, hub_namespace_id: option.hubId };
+    return { source: "hub", namespace_id: null, namespace_full_name: option.full };
   }
   return {
+    source: "local",
     namespace_id: option?.id ?? null,
     namespace_full_name: option?.full ?? null,
-    hub_namespace_id: null,
   };
 }
 
-/** The option a saved reader or writer points at: by the hub's id, else the local id, else the full name. */
+/**
+ * The option a saved reader or writer points at: a hub target by its qualified schema name (a reader's, the schema of
+ * its table's name), a local one by its id, else by its full name.
+ */
 export function selectedNamespaceRow(
   settings: ReaderTarget | WriterTarget,
   options: NamespaceOption[],
 ): NamespaceOption | null {
-  if (settings.hub_namespace_id != null) {
-    return options.find((o) => o.source === "hub" && o.hubId === settings.hub_namespace_id) ?? null;
+  if (settings.source === "hub") {
+    const full = isWriter(settings)
+      ? settings.namespace_full_name
+      : hubSchemaName(settings.catalog_full_table_name);
+    return full ? (options.find((o) => o.source === "hub" && o.full === full) ?? null) : null;
   }
   const localId = isWriter(settings) ? settings.namespace_id : settings.catalog_namespace_id;
   const local = options.filter((o) => o.source === "local");
@@ -254,13 +263,14 @@ export function selectedNamespaceRow(
   return null;
 }
 
-/** The table a saved reader points at: by the hub's id, else the local id. */
+/** The table a saved reader points at: a hub table by its qualified name, a local one by its id. */
 export function selectedTableRow(
   settings: ReaderTarget,
   tables: CatalogTable[],
 ): CatalogTable | null {
-  if (settings.hub_table_id != null) {
-    return tables.find((t) => isHubRow(t) && t.hub_id === settings.hub_table_id) ?? null;
+  if (settings.source === "hub") {
+    const name = settings.catalog_full_table_name;
+    return name ? (tables.find((t) => isHubRow(t) && t.qualified_name === name) ?? null) : null;
   }
   if (settings.catalog_table_id == null) return null;
   return tables.find((t) => !isHubRow(t) && t.id === settings.catalog_table_id) ?? null;
@@ -268,5 +278,5 @@ export function selectedTableRow(
 
 /** Whether a reader reads, or a writer writes, a table on the hub. */
 export function isHubTarget(settings: ReaderTarget | WriterTarget): boolean {
-  return isWriter(settings) ? settings.hub_namespace_id != null : settings.hub_table_id != null;
+  return settings.source === "hub";
 }

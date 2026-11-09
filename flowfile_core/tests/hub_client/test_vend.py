@@ -44,7 +44,8 @@ def catalog(hub) -> dict:
     landing = hub.seed_schema(lake, "landing")
     hub.vend_options["s3://acme/sales/"] = dict(OPTIONS)
     hub.grants.update({raw["id"]: "use", curated["id"]: "manage", notes["id"]: "manage", landing["id"]: "manage"})
-    return {"raw": raw["id"], "curated": curated["id"], "notes": notes["id"], "landing": landing["id"]}
+    hub.ids = {"raw": raw["id"], "curated": curated["id"], "notes": notes["id"], "landing": landing["id"]}
+    return {"raw": "sales.raw", "curated": "sales.curated", "notes": "scratch.notes", "landing": "lake.landing"}
 
 
 @pytest.fixture
@@ -59,12 +60,17 @@ def test_a_run_asks_the_hub_once_naming_the_run_and_its_namespaces(connected, ca
     run_vend = vend.request(USER, "run-abc", {catalog["raw"]}, {catalog["curated"]})
 
     assert connected.vend_calls == [
-        {"run_id": "run-abc", "read_namespace_ids": [catalog["raw"]], "write_namespace_ids": [catalog["curated"]]}
+        {
+            "run_id": "run-abc",
+            "read_namespace_ids": [connected.ids["raw"]],
+            "write_namespace_ids": [connected.ids["curated"]],
+        }
     ]
     assert [path for method, path in connected.calls if path == "/hub/vend"] == ["/hub/vend"]
     assert run_vend.run_id == "run-abc" and run_vend.vend_id == 1
-    assert run_vend.bases == {catalog["raw"]: "s3://acme/sales", catalog["curated"]: "s3://acme/sales"}
-    assert run_vend.names == {catalog["raw"]: "sales.raw", catalog["curated"]: "sales.curated"}
+    assert run_vend.bases == {"sales.raw": "s3://acme/sales", "sales.curated": "s3://acme/sales"}
+    assert run_vend.ids == {"sales.raw": connected.ids["raw"], "sales.curated": connected.ids["curated"]}
+    assert run_vend.namespace_id("sales.curated") == connected.ids["curated"]
     [credential] = run_vend.credentials
     assert credential.base_uri == "s3://acme/sales" and credential.sealed == {}
     assert run_vend.for_namespace(catalog["curated"]) is credential
@@ -90,13 +96,13 @@ def test_without_a_hub_session_the_run_is_told_to_connect_again_and_the_hub_vend
 
 
 def test_a_hub_refusal_is_a_sentence_carrying_the_hub_s_reason(connected, catalog):
-    connected.grants.pop(catalog["curated"])
+    connected.grants.pop(connected.ids["curated"])
 
     with pytest.raises(LookupError) as refused:
         vend.request(USER, "run-abc", {catalog["raw"]}, {catalog["curated"]})
 
     assert str(refused.value) == (
-        f"The hub did not give this run access to its tables: no manage grant on namespace {catalog['curated']}"
+        f"The hub did not give this run access to its tables: no manage grant on namespace {connected.ids['curated']}"
     )
 
 
@@ -113,7 +119,7 @@ def test_a_hub_that_says_what_to_do_is_heard_in_its_own_sentence_alone(connected
 
 def test_a_read_the_hub_refuses_in_a_sentence_is_that_sentence(connected, catalog):
     connected.says_sentences = True
-    connected.grants.pop(catalog["raw"])
+    connected.grants.pop(connected.ids["raw"])
 
     with pytest.raises(LookupError) as refused:
         vend.request(USER, "run-abc", {catalog["raw"]}, set())
@@ -215,8 +221,8 @@ def test_a_credential_for_other_storage_is_refused_by_scheme():
         run_id="run-abc",
         vend_id=7,
         credentials=(vend.HubCredential("az://lake/data", {"account_key": "k"}),),
-        bases={3: "az://lake/data"},
-        names={3: "lake.landing"},
+        bases={"lake.landing": "az://lake/data"},
+        ids={"lake.landing": 3},
     )
 
     with pytest.raises(ValueError, match=r"this catalog is on az:// storage"):

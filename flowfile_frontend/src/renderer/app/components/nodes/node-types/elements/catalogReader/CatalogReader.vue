@@ -280,12 +280,11 @@ const sqlCode = ref("");
 
 // Cached state for mode switching
 const cachedTableState = ref<{
+  source: "local" | "hub";
   catalog_table_id: number | null;
   catalog_table_name: string | null;
   catalog_full_table_name: string | null;
   catalog_namespace_id: number | null;
-  hub_table_id: number | null;
-  hub_namespace_id: number | null;
   selectedNamespaceId: number | null;
   selectedTableId: number | null;
   delta_version: number | null;
@@ -320,7 +319,7 @@ const catalogNamespaces = ref<NamespaceOption[]>([]);
 const allTables = ref<CatalogTable[]>([]);
 const selectedTableMeta = ref<CatalogTable | null>(null);
 const deltaVersions = ref<DeltaVersionCommit[]>([]);
-// The selects bind tree ids (negative for a hub row); the settings hold local or hub ids.
+// The selects bind tree ids (negative for a hub row); the settings hold a local id or a hub table's qualified name.
 const selectedNamespaceId = ref<number | null>(null);
 const selectedTableId = ref<number | null>(null);
 
@@ -552,12 +551,11 @@ function switchMode(newMode: "table" | "sql") {
 
   if (newMode === "sql") {
     cachedTableState.value = {
+      source: nodeData.value.source ?? "local",
       catalog_table_id: nodeData.value.catalog_table_id,
       catalog_table_name: nodeData.value.catalog_table_name,
       catalog_full_table_name: nodeData.value.catalog_full_table_name,
       catalog_namespace_id: nodeData.value.catalog_namespace_id,
-      hub_table_id: nodeData.value.hub_table_id,
-      hub_namespace_id: nodeData.value.hub_namespace_id,
       selectedNamespaceId: selectedNamespaceId.value,
       selectedTableId: selectedTableId.value,
       delta_version: nodeData.value.delta_version,
@@ -567,7 +565,7 @@ function switchMode(newMode: "table" | "sql") {
       selectedTableMeta: selectedTableMeta.value,
       deltaVersions: [...deltaVersions.value],
     };
-    Object.assign(nodeData.value, tableChoice(null));
+    Object.assign(nodeData.value, tableChoice(null), { source: "local" });
     selectedTableId.value = null;
     nodeData.value.delta_version = null;
     nodeData.value.scd2_view = null;
@@ -586,12 +584,11 @@ function switchMode(newMode: "table" | "sql") {
     sqlCode.value = "";
 
     if (cachedTableState.value) {
+      nodeData.value.source = cachedTableState.value.source;
       nodeData.value.catalog_table_id = cachedTableState.value.catalog_table_id;
       nodeData.value.catalog_table_name = cachedTableState.value.catalog_table_name;
       nodeData.value.catalog_full_table_name = cachedTableState.value.catalog_full_table_name;
       nodeData.value.catalog_namespace_id = cachedTableState.value.catalog_namespace_id;
-      nodeData.value.hub_table_id = cachedTableState.value.hub_table_id;
-      nodeData.value.hub_namespace_id = cachedTableState.value.hub_namespace_id;
       selectedNamespaceId.value = cachedTableState.value.selectedNamespaceId;
       selectedTableId.value = cachedTableState.value.selectedTableId;
       nodeData.value.delta_version = cachedTableState.value.delta_version;
@@ -721,11 +718,8 @@ async function loadNodeData(nodeId: number) {
     if (nodeData.value!.cdc_mode === undefined) {
       Object.assign(nodeData.value!, DEFAULT_CDC_SETTINGS);
     }
-    if (nodeData.value!.hub_table_id === undefined) {
-      nodeData.value!.hub_table_id = null;
-    }
-    if (nodeData.value!.hub_namespace_id === undefined) {
-      nodeData.value!.hub_namespace_id = null;
+    if (nodeData.value!.source === undefined) {
+      nodeData.value!.source = "local";
     }
   } else {
     nodeData.value = {
@@ -738,8 +732,7 @@ async function loadNodeData(nodeId: number) {
       scd2_as_of: null,
       sql_query: null,
       ...DEFAULT_CDC_SETTINGS,
-      hub_table_id: null,
-      hub_namespace_id: null,
+      source: "local",
       flow_id: nodeStore.flow_id,
       node_id: nodeId,
       cache_results: false,

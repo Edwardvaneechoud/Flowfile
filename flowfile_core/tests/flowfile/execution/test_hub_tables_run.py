@@ -130,21 +130,26 @@ def operations(monkeypatch) -> list[tuple[FlowNode, OperationKind, dict]]:
 
 
 def add_hub_reader(graph, node_id: int, hub: FakeHubWithCatalog, table: str = "orders", namespace: str = "raw"):
+    """A reader of the hub's table ``table`` in its schema ``namespace``, named as a saved flow names it: by its
+    qualified name (the fake's catalogs are ``sales`` and ``scratch``)."""
     add_promise(graph, node_id, "catalog_reader")
+    qualified = next(t["qualified_name"] for t in hub.tables if t["name"] == table)
     graph.add_catalog_reader(
         input_schema.NodeCatalogReader(
             flow_id=graph.flow_id,
             node_id=node_id,
             user_id=1,
-            hub_table_id=hub.ids[table],
-            hub_namespace_id=hub.ids[namespace],
+            source="hub",
+            catalog_full_table_name=qualified,
+            catalog_table_name=table,
         )
     )
 
 
 def add_hub_writer(
-    graph, node_id: int, depending_on_id: int, namespace_id: int, name: str, mode: str = "overwrite", **settings
+    graph, node_id: int, depending_on_id: int, namespace: str, name: str, mode: str = "overwrite", **settings
 ):
+    """A writer of ``name`` into the hub schema ``namespace`` (``catalog.schema``)."""
     add_promise(graph, node_id, "catalog_writer")
     graph.add_catalog_writer(
         input_schema.NodeCatalogWriter(
@@ -153,7 +158,7 @@ def add_hub_writer(
             depending_on_id=depending_on_id,
             user_id=1,
             catalog_write_settings=input_schema.CatalogWriteSettings(
-                table_name=name, hub_namespace_id=namespace_id, write_mode=mode, **settings
+                table_name=name, source="hub", namespace_full_name=namespace, write_mode=mode, **settings
             ),
         )
     )
@@ -209,7 +214,7 @@ def test_a_run_without_a_hub_session_ends_before_any_node_with_the_reconnect_sen
 def test_a_run_writing_to_a_namespace_on_the_hub_s_disk_ends_with_its_sentence(connected, operations):
     graph = make_graph(8704, execution_location="local")
     add_manual_input(graph, 1, [{"id": 1}])
-    add_hub_writer(graph, 2, 1, connected.ids["notes"], "memo_out")
+    add_hub_writer(graph, 2, 1, "scratch.notes", "memo_out")
 
     run_info = graph.run_graph()
 
@@ -224,7 +229,7 @@ def test_a_run_writing_to_a_namespace_on_the_hub_s_disk_ends_with_its_sentence(c
 def test_a_run_the_hub_refuses_ends_with_the_hub_s_reason(connected, operations):
     graph = make_graph(8705, execution_location="local")
     add_manual_input(graph, 1, [{"id": 1}])
-    add_hub_writer(graph, 2, 1, connected.ids["raw"], "orders_copy")
+    add_hub_writer(graph, 2, 1, "sales.raw", "orders_copy")
 
     run_info = graph.run_graph()
 
@@ -239,7 +244,7 @@ def test_a_run_the_hub_refuses_in_a_sentence_of_its_own_ends_with_that_sentence_
     connected.says_sentences = True
     graph = make_graph(8730, execution_location="local")
     add_manual_input(graph, 1, [{"id": 1}])
-    add_hub_writer(graph, 2, 1, connected.ids["raw"], "orders_copy")
+    add_hub_writer(graph, 2, 1, "sales.raw", "orders_copy")
 
     run_info = graph.run_graph()
 
@@ -253,7 +258,7 @@ def test_a_run_reading_and_writing_hub_tables_vends_once_and_keeps_nothing(
 ):
     graph = make_graph(8706 + 100 * flag, execution_location="local")
     add_hub_reader(graph, 1, connected)
-    add_hub_writer(graph, 2, 1, connected.ids["curated"], "orders_out")
+    add_hub_writer(graph, 2, 1, "sales.curated", "orders_out")
     held: list = []
     recording = FlowNode.run_op
 
@@ -316,7 +321,7 @@ def test_an_existing_hub_table_is_written_in_place_and_not_registered_again(conn
     )
     graph = make_graph(8707, execution_location="local")
     add_manual_input(graph, 1, [{"id": 1, "name": "ada"}])
-    add_hub_writer(graph, 2, 1, connected.ids["curated"], "orders_out")
+    add_hub_writer(graph, 2, 1, "sales.curated", "orders_out")
 
     run_info = graph.run_graph()
 
@@ -332,7 +337,7 @@ def test_an_error_write_onto_an_existing_hub_table_is_refused_before_the_write(c
     )
     graph = make_graph(8708, execution_location="local")
     add_manual_input(graph, 1, [{"id": 1}])
-    add_hub_writer(graph, 2, 1, connected.ids["curated"], "orders_out", mode="error")
+    add_hub_writer(graph, 2, 1, "sales.curated", "orders_out", mode="error")
 
     run_info = graph.run_graph()
 
@@ -348,7 +353,7 @@ def test_a_failed_registration_fails_the_writer_naming_where_the_table_was_writt
     monkeypatch.setattr(client, "register_table_from_data", refuse)
     graph = make_graph(8709, execution_location="local")
     add_manual_input(graph, 1, [{"id": 1}])
-    add_hub_writer(graph, 2, 1, connected.ids["curated"], "orders_out")
+    add_hub_writer(graph, 2, 1, "sales.curated", "orders_out")
 
     run_info = graph.run_graph()
 
@@ -379,7 +384,7 @@ def test_after_a_run_over_a_hub_table_no_node_result_holds_its_credential(
     flow_id = 8711 + 100 * flag + 10 * (mode == "Development")
     graph = make_graph(flow_id, execution_location="local", execution_mode=mode)
     add_hub_reader(graph, 1, connected)
-    add_hub_writer(graph, 2, 1, connected.ids["curated"], "orders_out")
+    add_hub_writer(graph, 2, 1, "sales.curated", "orders_out")
     add_filter_on(graph, 3, 1, "[id] > 1")
     during: list = []
     recording = FlowNode.run_op
@@ -463,7 +468,7 @@ def test_the_run_report_counts_the_rows_out_the_run_knew_after_its_vend_ends(
     )
     add_hub_reader(graph, 1, connected)
     add_sort_on(graph, 2, 1, "id")
-    add_hub_writer(graph, 3, 2, connected.ids["curated"], "orders_out")
+    add_hub_writer(graph, 3, 2, "sales.curated", "orders_out")
 
     # In a Performance run only the write counted; a sort keeps its rows, so its count holds back to the read.
     assert rows_out_of(graph, graph.run_graph()) == {1: 2, 2: 2, 3: 2}
@@ -480,7 +485,7 @@ def test_a_performance_run_s_write_counts_back_only_through_steps_that_keep_thei
     add_hub_reader(graph, 1, connected)
     add_filter_on(graph, 2, 1, "[id] > 0")
     add_sort_on(graph, 3, 2, "id")
-    add_hub_writer(graph, 4, 3, connected.ids["curated"], "orders_out")
+    add_hub_writer(graph, 4, 3, "sales.curated", "orders_out")
 
     # Nothing says how many rows the filter read, so the read stays unknown.
     assert rows_out_of(graph, graph.run_graph()) == {1: None, 2: 2, 3: 2, 4: 2}
@@ -504,7 +509,7 @@ def test_a_merge_write_s_count_of_the_whole_table_is_no_step_s_rows_out(connecte
     graph = make_graph(8725 + 100 * flag, execution_location="local", execution_mode="Performance")
     add_hub_reader(graph, 1, connected)
     add_sort_on(graph, 2, 1, "id")
-    add_hub_writer(graph, 3, 2, connected.ids["curated"], "orders_out", mode="upsert", merge_keys=["id"])
+    add_hub_writer(graph, 3, 2, "sales.curated", "orders_out", mode="upsert", merge_keys=["id"])
 
     assert rows_out_of(graph, graph.run_graph()) == {1: None, 2: None, 3: None}
 
@@ -521,7 +526,7 @@ def test_a_performance_run_s_report_runs_no_plan_in_core(
     add_hub_reader(graph, 1, connected)
     add_sort_on(graph, 2, 1, "id")
     if writes:
-        add_hub_writer(graph, 3, 2, connected.ids["curated"], "orders_out")
+        add_hub_writer(graph, 3, 2, "sales.curated", "orders_out")
 
     # With nothing to read them a Performance run computes neither step, so neither has a count to report.
     assert rows_out_of(graph, graph.run_graph()) == ({1: 2, 2: 2, 3: 2} if writes else {1: None, 2: None})

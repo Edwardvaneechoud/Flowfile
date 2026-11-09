@@ -32,7 +32,8 @@ const hubSales = table({
   id: -30,
   name: "sales",
   namespace_id: -20,
-  full_table_name: "Finance.raw.sales",
+  full_table_name: "raw.sales",
+  qualified_name: "Finance.raw.sales",
   source: "hub",
   hub_id: 30,
   hub_namespace_id: 20,
@@ -62,21 +63,20 @@ const tree: NamespaceTree[] = [
 
 const reader = (fields: Partial<NodeCatalogReader> = {}): NodeCatalogReader =>
   ({
+    source: "local",
     catalog_table_id: null,
     catalog_namespace_id: null,
     catalog_table_name: null,
     catalog_full_table_name: null,
-    hub_table_id: null,
-    hub_namespace_id: null,
     ...fields,
   }) as NodeCatalogReader;
 
 const writer = (fields: Partial<CatalogWriteSettings> = {}): CatalogWriteSettings =>
   ({
     table_name: "out",
+    source: "local",
     namespace_id: null,
     namespace_full_name: null,
-    hub_namespace_id: null,
     ...fields,
   }) as CatalogWriteSettings;
 
@@ -100,75 +100,63 @@ describe("namespace options", () => {
 });
 
 describe("a reader's table choice", () => {
-  it("writes a local table's fields as before and clears the hub's", () => {
+  it("writes a local table's fields as before, as this machine's", () => {
     expect(tableChoice(localOrders)).toEqual({
+      source: "local",
       catalog_table_id: 4,
       catalog_namespace_id: 2,
       catalog_table_name: "orders",
       catalog_full_table_name: "General.default.orders",
-      hub_table_id: null,
-      hub_namespace_id: null,
     });
   });
 
-  it("names a hub table by the hub's ids only, never a negative or a local id", () => {
+  it("names a hub table by its qualified name only, never an id of the hub's or a negative one", () => {
     const writes = tableChoice(hubSales);
     expect(writes).toEqual({
-      hub_table_id: 30,
-      hub_namespace_id: 20,
+      source: "hub",
       catalog_table_name: "sales",
       catalog_full_table_name: "Finance.raw.sales",
       catalog_table_id: null,
       catalog_namespace_id: null,
     });
     const saved = { ...reader({ catalog_table_id: 4, catalog_namespace_id: 2 }), ...writes };
-    expect(Object.values(saved).filter((v) => typeof v === "number" && v < 0)).toEqual([]);
+    expect(Object.values(saved).filter((v) => typeof v === "number")).toEqual([]);
   });
 
-  it("clears the table, local or hub, and keeps the namespace", () => {
+  it("clears the table, local or hub, and keeps where it lives and the namespace", () => {
     expect(tableChoice(null)).toEqual({
       catalog_table_id: null,
       catalog_table_name: null,
       catalog_full_table_name: null,
-      hub_table_id: null,
     });
   });
 
-  it("writes a picked schema as its local or its hub id", () => {
+  it("writes a picked schema as where it lives and, for this machine's, its id", () => {
     const [local, hub] = namespaceOptions(tree);
-    expect(readerNamespaceChoice(local)).toEqual({
-      catalog_namespace_id: 2,
-      hub_namespace_id: null,
-    });
-    expect(readerNamespaceChoice(hub)).toEqual({
-      catalog_namespace_id: null,
-      hub_namespace_id: 20,
-    });
-    expect(readerNamespaceChoice(null)).toEqual({
-      catalog_namespace_id: null,
-      hub_namespace_id: null,
-    });
+    expect(readerNamespaceChoice(local)).toEqual({ source: "local", catalog_namespace_id: 2 });
+    expect(readerNamespaceChoice(hub)).toEqual({ source: "hub", catalog_namespace_id: null });
+    expect(readerNamespaceChoice(null)).toEqual({ source: "local", catalog_namespace_id: null });
   });
 });
 
 describe("a writer's namespace choice", () => {
   const [local, hub] = namespaceOptions(tree);
 
-  it("writes a local schema's id and full name, a hub schema's id only, and clears all three", () => {
+  it("writes a local schema's id and full name, a hub schema's full name only, and clears both", () => {
     expect(namespaceChoice(local)).toEqual({
+      source: "local",
       namespace_id: 2,
       namespace_full_name: "General.default",
-      hub_namespace_id: null,
     });
     expect(namespaceChoice(hub)).toEqual({
+      source: "hub",
       namespace_id: null,
-      namespace_full_name: null,
-      hub_namespace_id: 20,
+      namespace_full_name: "Finance.raw",
     });
     expect(namespaceChoice(null)).toEqual({
+      source: "local",
       namespace_id: null,
       namespace_full_name: null,
-      hub_namespace_id: null,
     });
   });
 });
@@ -177,11 +165,18 @@ describe("restoring a saved choice", () => {
   const options = namespaceOptions(tree, true);
   const tables = [localOrders, hubSales];
 
-  it("finds a saved hub reader's schema and table, and a hub writer's schema, by the hub's ids", () => {
+  it("finds a saved hub reader's schema and table, and a hub writer's schema, by their names", () => {
     const saved = reader(tableChoice(hubSales));
     expect(selectedNamespaceRow(saved, options)?.id).toBe(-20);
     expect(selectedTableRow(saved, tables)).toBe(hubSales);
-    expect(selectedNamespaceRow(writer({ hub_namespace_id: 20 }), options)?.id).toBe(-20);
+    const hubWriter = writer({ source: "hub", namespace_full_name: "Finance.raw" });
+    expect(selectedNamespaceRow(hubWriter, options)?.id).toBe(-20);
+  });
+
+  it("finds nothing for a hub target that names no table or schema yet", () => {
+    expect(selectedNamespaceRow(reader({ source: "hub" }), options)).toBeNull();
+    expect(selectedTableRow(reader({ source: "hub" }), tables)).toBeNull();
+    expect(selectedNamespaceRow(writer({ source: "hub" }), options)).toBeNull();
   });
 
   it("finds a saved local reader by its local ids", () => {
@@ -190,9 +185,10 @@ describe("restoring a saved choice", () => {
     expect(selectedTableRow(saved, tables)).toBe(localOrders);
   });
 
-  it("never matches a local id against a hub row's negative id, or the reverse", () => {
+  it("never matches a local id against a hub row's negative id, or a hub name against a local row", () => {
     expect(selectedTableRow(reader({ catalog_table_id: -30 }), tables)).toBeNull();
-    expect(selectedTableRow(reader({ hub_table_id: 4, hub_namespace_id: 2 }), tables)).toBeNull();
+    const localName = reader({ source: "hub", catalog_full_table_name: "General.default.orders" });
+    expect(selectedTableRow(localName, tables)).toBeNull();
     expect(selectedNamespaceRow(writer({ namespace_id: -20 }), options)).toBeNull();
   });
 
@@ -208,10 +204,9 @@ describe("restoring a saved choice", () => {
 
   it("finds nothing for a hub target the tree no longer lists", () => {
     const local = namespaceOptions(tree.filter((c) => c.source !== "hub"));
-    expect(selectedNamespaceRow(writer({ hub_namespace_id: 20 }), local)).toBeNull();
-    expect(
-      selectedTableRow(reader({ hub_table_id: 30, hub_namespace_id: 20 }), [localOrders]),
-    ).toBeNull();
+    const hubWriter = writer({ source: "hub", namespace_full_name: "Finance.raw" });
+    expect(selectedNamespaceRow(hubWriter, local)).toBeNull();
+    expect(selectedTableRow(reader(tableChoice(hubSales)), [localOrders])).toBeNull();
   });
 });
 
@@ -220,7 +215,7 @@ describe("hub targets", () => {
     expect(isHubTarget(reader(tableChoice(hubSales)))).toBe(true);
     expect(isHubTarget(reader(tableChoice(localOrders)))).toBe(false);
     expect(isHubTarget(reader())).toBe(false);
-    expect(isHubTarget(writer({ hub_namespace_id: 20 }))).toBe(true);
+    expect(isHubTarget(writer({ source: "hub", namespace_full_name: "Finance.raw" }))).toBe(true);
     expect(isHubTarget(writer({ namespace_id: 2 }))).toBe(false);
     expect(isHubTarget(writer())).toBe(false);
   });
@@ -405,12 +400,12 @@ describe("pickers by place and reach", () => {
       expect(namespaceOptions(tree)[0]).toMatchObject({ source: "local", writable: true });
     });
 
-    it("writes the hub's id only when chosen", () => {
+    it("writes the hub schema's name only when chosen", () => {
       const preset = writerDefault(namespaceOptions(joined));
       expect(namespaceChoice(preset)).toEqual({
+        source: "hub",
         namespace_id: null,
-        namespace_full_name: null,
-        hub_namespace_id: 11,
+        namespace_full_name: "main.default",
       });
     });
   });

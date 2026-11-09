@@ -1544,7 +1544,7 @@ class ExecutionMixin(GraphMixinBase):
             if not cloud_change_read:
                 if node.node_type != "catalog_reader" or not isinstance(settings, input_schema.NodeCatalogReader):
                     continue
-                if settings.hub_table_id is not None:
+                if settings.source == "hub":
                     continue
                 if not settings.sql_query and settings.delta_version is not None:
                     continue
