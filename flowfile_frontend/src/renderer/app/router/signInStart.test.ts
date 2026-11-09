@@ -17,7 +17,8 @@ vi.mock("../stores/auth-store", () => ({ useAuthStore: () => ({ user: {} }) }));
 vi.mock("../services/setup.service", () => ({
   default: {
     getSetupStatus: async () => ({ mode: "docker", setup_required: false }),
-    isOnHub: () => false,
+    computes: () => true,
+    cookieSession: () => false,
   },
 }));
 vi.mock("../services/auth.service", () => ({

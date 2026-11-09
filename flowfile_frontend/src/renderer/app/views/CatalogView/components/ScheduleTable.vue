@@ -45,7 +45,7 @@
             @blur="saveEditor(schedule)"
           />
         </template>
-        <template v-else-if="onHub">
+        <template v-else-if="!computes">
           <span class="description-text">{{ schedule.description }}</span>
         </template>
         <template v-else>
@@ -152,8 +152,9 @@ import { useInlineDescriptionEdit } from "../../../composables/useInlineDescript
 import ScheduleStatusBadge from "./ScheduleStatusBadge.vue";
 import setupService from "../../../services/setup.service";
 
-// A hub schedule's description is the hub's own words, set when the schedule is made.
-const onHub = setupService.isOnHub();
+// Where this core computes nothing (a hub's own page) a schedule is another Flowfile's, its description set when it
+// was made and not edited here.
+const computes = setupService.computes();
 
 interface EnrichedFlowSchedule extends FlowSchedule {
   flowName: string;

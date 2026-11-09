@@ -27,11 +27,11 @@
             </button>
           </template>
           <div class="sidebar-more-menu">
-            <button v-if="!onHub" class="sidebar-more-item" @click="handleStartTutorial">
+            <button v-if="computes" class="sidebar-more-item" @click="handleStartTutorial">
               <span class="material-icons">school</span>
               <span>Interactive tutorial</span>
             </button>
-            <button v-if="!onHub" class="sidebar-more-item" @click="handleOpenTemplates">
+            <button v-if="computes" class="sidebar-more-item" @click="handleOpenTemplates">
               <i class="fa-solid fa-layer-group"></i>
               <span>Templates</span>
             </button>
@@ -39,16 +39,16 @@
               <i class="fa-solid fa-book"></i>
               <span>Documentation</span>
             </button>
-            <button v-if="!onHub" class="sidebar-more-item" @click="handleRequestNode">
+            <button v-if="computes" class="sidebar-more-item" @click="handleRequestNode">
               <i class="fa-solid fa-lightbulb"></i>
               <span>Request a node</span>
             </button>
-            <button v-if="!onHub" class="sidebar-more-item" @click="handleOpenPrivacy">
+            <button v-if="computes" class="sidebar-more-item" @click="handleOpenPrivacy">
               <i class="fa-solid fa-shield-halved"></i>
               <span>Privacy &amp; data collection</span>
             </button>
-            <!-- On a hub's own page the hub is the release; its version shows below -->
-            <template v-if="!onHub">
+            <!-- Where this core computes nothing (a hub's own page) the hub is the release; its version shows below -->
+            <template v-if="computes">
               <div class="sidebar-more-divider" aria-hidden="true"></div>
               <button class="sidebar-more-item" @click="openReleaseNotes">
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
@@ -106,7 +106,7 @@ import { gettingStartedTutorial } from "../../tutorial/tutorials";
 import { designerHelp } from "../../../views/DesignerView/designerHelp";
 import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
 import { lastCatalogQuery } from "../../../views/CatalogView/catalogLastLocation";
-import { catalogSectionOfTab, shownOnHub } from "../../../views/CatalogView/catalogTabs";
+import { catalogSectionOfTab, shownWithoutCompute } from "../../../views/CatalogView/catalogTabs";
 import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
 import { aiSettingsHelp } from "../../../views/AiSettingsView/aiSettingsHelp";
 import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
@@ -130,8 +130,10 @@ const projectStore = useProjectStore();
 const tutorialStore = useTutorialStore();
 const { isMultiUser } = useMultiUser();
 const { isDark, toggleTheme } = useTheme();
-// A hub serves this page itself: the rail is its catalog alone, and Help & more keeps what applies there.
-const onHub = setupService.isOnHub();
+// Where this core computes nothing (a hub's own page) the rail is the catalog alone and Help & more keeps what
+// applies there; where the page is signed in by a cookie, the sign-out goes to that origin's sign-in page.
+const computes = setupService.computes();
+const cookieSession = setupService.cookieSession();
 
 // Page help
 const showHelp = ref(false);
@@ -168,8 +170,8 @@ const items = computed(() => {
   const projectDot = projectStore.isActive ? projectStore.status : undefined;
 
   const visible = (entry: INavigationRoute) => {
-    if (onHub && entry.name !== "catalog") return false;
-    if (onHub && entry.query?.tab && !shownOnHub(entry.query.tab)) return false;
+    if (!computes && entry.name !== "catalog") return false;
+    if (!computes && entry.query?.tab && !shownWithoutCompute(entry.query.tab)) return false;
     if ((entry.hideInElectron || entry.dockerOnly) && isDesktopShell) return false;
     // Projects are admin-only in docker; admins keep it even when disabled (to reach the how-to page).
     if (entry.name === "project" && isMultiUser.value && !isAdmin) return false;
@@ -199,7 +201,7 @@ const items = computed(() => {
 const showLogout = computed(() => !authService.isInDesktopMode());
 
 const goHome = () =>
-  router.push(onHub ? { name: "catalog", query: { tab: "catalog" } } : { name: "home" });
+  router.push(computes ? { name: "home" } : { name: "catalog", query: { tab: "catalog" } });
 
 const handleStartTutorial = async () => {
   if (router.currentRoute.value.name !== "designer") {
@@ -251,8 +253,8 @@ onBeforeUnmount(() => stopHelpRequestNode?.());
 const handleLogout = async () => {
   // Store logout, not authService: per-user store state must be torn down too.
   await authStore.logout();
-  // On a hub's own page the sign-out already went to the hub's sign-in page.
-  if (!onHub) router.push({ name: "login" });
+  // A cookie session's sign-out already went to its origin's sign-in page.
+  if (!cookieSession) router.push({ name: "login" });
 };
 </script>
 

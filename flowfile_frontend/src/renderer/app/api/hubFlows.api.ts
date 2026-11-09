@@ -3,8 +3,9 @@
 import axios from "../services/axios.config";
 import setupService from "../services/setup.service";
 
-// On a server the hub is reached through core's own routes; on the hub's own page the hub answers directly.
-const base = () => (setupService.isOnHub() ? "/hub" : "/hub_client");
+// On a server the hub is reached through core's own routes; on a page the hub serves itself, signed in by its
+// cookie, the hub answers directly.
+const base = () => (setupService.cookieSession() ? "/hub" : "/hub_client");
 
 // Core answers more on each (ids of registrations, owners, the flow's uuid); the editor reads these.
 export interface HubFlow {

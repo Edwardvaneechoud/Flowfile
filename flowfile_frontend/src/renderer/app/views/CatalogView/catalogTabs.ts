@@ -152,9 +152,14 @@ export function catalogTabsInSection(section: CatalogSection): CatalogTabDef[] {
   return catalogTabs.filter((t) => CATALOG_SECTION_GROUPS[section].includes(t.group));
 }
 
-// What a hub shows of its own catalog: what the hub holds. SQL, the notebook, visuals, alerts and APIs need a
-// worker, which a hub has none of (flowfile_hub, plan/PLAN-one-catalog.md).
-export const HUB_TAB_KEYS: readonly CatalogTabKey[] = ["catalog", "favorites", "runs", "schedules"];
+// What the catalog page shows where this core computes nothing (a hub's own page): what the catalog holds. SQL,
+// the notebook, visuals, alerts and APIs need a worker.
+export const TAB_KEYS_WITHOUT_COMPUTE: readonly CatalogTabKey[] = [
+  "catalog",
+  "favorites",
+  "runs",
+  "schedules",
+];
 
-export const shownOnHub = (key: string): boolean =>
-  (HUB_TAB_KEYS as readonly string[]).includes(key);
+export const shownWithoutCompute = (key: string): boolean =>
+  (TAB_KEYS_WITHOUT_COMPUTE as readonly string[]).includes(key);

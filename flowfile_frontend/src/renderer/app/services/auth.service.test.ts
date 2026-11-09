@@ -403,18 +403,28 @@ describe("auth service: sign-out and expiry", () => {
   });
 });
 
-// On a page the hub serves itself (`/data`), the hub's session cookie is the sign-in: no token is held, and core,
-// asked who the person is, answers through that cookie.
-describe("auth service on a hub's own page", () => {
-  const status = (mode: string): Answer => ({
+// On a page served by the origin that set the session cookie (the hub's `/data`), that cookie is the sign-in: no
+// token is held, and core, asked who the person is, answers through it. The status says so in its capabilities.
+describe("auth service where the page is signed in by a cookie", () => {
+  const COOKIE = { computes: false, previews: false, cookie_session: true };
+  type Status = { capabilities?: object | null; mode?: string };
+  const status = ({ capabilities = COOKIE, mode = "server" }: Status): Answer => ({
     status: 200,
-    data: { setup_required: false, master_key_configured: true, mode },
+    data: {
+      setup_required: false,
+      master_key_configured: true,
+      mode,
+      ...(capabilities ? { capabilities } : {}),
+    },
   });
 
-  /** The app fetches the status once before its first route, which is where the mode is read from. */
-  const onHub = async (answer: (config: InternalAxiosRequestConfig) => Answer, mode = "hub") => {
+  /** The app fetches the status once before its first route, which is where the capabilities are read from. */
+  const withStatus = async (
+    answer: (config: InternalAxiosRequestConfig) => Answer,
+    served: Status = {},
+  ) => {
     const server = fakeServer((config) =>
-      config.url?.endsWith("/health/status") ? status(mode) : answer(config),
+      config.url?.endsWith("/health/status") ? status(served) : answer(config),
     );
     axios.defaults.adapter = server.adapter;
     const authService = await load();
@@ -424,13 +434,13 @@ describe("auth service on a hub's own page", () => {
   };
 
   it("is signed in when core answers who they are, holding no token", async () => {
-    const { authService, server, setupService } = await onHub((config) =>
+    const { authService, server, setupService } = await withStatus((config) =>
       config.url?.endsWith("/auth/users/me")
         ? { status: 200, data: { username: "ana", is_admin: false } }
         : { status: 404 },
     );
 
-    expect(setupService.isOnHub()).toBe(true);
+    expect(setupService.cookieSession()).toBe(true);
     expect(authService.isInDesktopMode()).toBe(false);
     expect(await authService.initialize()).toBe(true);
     expect(authService.isAuthenticated()).toBe(true);
@@ -442,8 +452,8 @@ describe("auth service on a hub's own page", () => {
     expect(asked.every(({ config }) => !config.headers?.Authorization)).toBe(true);
   });
 
-  it("is not signed in when the hub's session is gone", async () => {
-    const { authService } = await onHub(() => ({
+  it("is not signed in when the session is gone", async () => {
+    const { authService } = await withStatus(() => ({
       status: 401,
       data: { detail: "Not authenticated" },
     }));
@@ -453,8 +463,24 @@ describe("auth service on a hub's own page", () => {
     expect(authService.requiresLogin()).toBe(true);
   });
 
-  it("is on no hub on a server, where the status says docker", async () => {
-    const { setupService } = await onHub(() => ({ status: 404 }), "docker");
-    expect(setupService.isOnHub()).toBe(false);
+  it("has no cookie session on a server, whose status says what its core can do", async () => {
+    const { setupService } = await withStatus(() => ({ status: 404 }), {
+      capabilities: { computes: true, previews: true, cookie_session: false },
+      mode: "docker",
+    });
+    expect(setupService.cookieSession()).toBe(false);
+    expect(setupService.computes()).toBe(true);
+  });
+
+  it("reads an older core's status, which says nothing of it, as a core that computes and signs in by token", async () => {
+    const { setupService } = await withStatus(() => ({ status: 404 }), {
+      capabilities: null,
+      mode: "docker",
+    });
+    expect(setupService.capabilities()).toEqual({
+      computes: true,
+      previews: true,
+      cookie_session: false,
+    });
   });
 });

@@ -583,8 +583,8 @@ export const useCatalogStore = defineStore("catalog", {
       if (tableId !== null) {
         this.selectedTable = found;
         // A hub table's preview loads on demand, as an object-storage table's does; its history stays on the hub.
-        // On the hub itself nothing is read: the hub computes nothing and reads no storage.
-        if (hubRow || setupService.isOnHub()) return;
+        // Where this core previews nothing (a hub's own page) nothing is read: no table data, no history.
+        if (hubRow || !setupService.previews()) return;
         const isPhysical = this.selectedTable?.table_type !== "virtual";
         const isRemote = !!this.selectedTable?.is_remote_storage;
         // Data preview: local auto-loads; object storage loads on demand (a button).

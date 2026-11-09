@@ -21,7 +21,7 @@
           </template>
           <template v-else>
             <h2>{{ displayName }}</h2>
-            <button v-if="!onHub" class="btn-icon-inline" title="Rename" @click="startRename">
+            <button v-if="computes" class="btn-icon-inline" title="Rename" @click="startRename">
               <i class="fa-solid fa-pen"></i>
             </button>
           </template>
@@ -32,8 +32,8 @@
         </p>
       </div>
       <div class="header-actions">
-        <!-- Run Now and Cancel run core's own scheduler, which a hub has none of -->
-        <template v-if="!onHub">
+        <!-- Run Now and Cancel run this core's own scheduler, so only where it computes -->
+        <template v-if="computes">
           <button
             v-if="isScheduleRunning"
             class="btn btn-warning btn-sm"
@@ -106,7 +106,7 @@
         <span class="meta-value">
           {{ formatScheduleType(schedule) }}
           <button
-            v-if="!onHub"
+            v-if="computes"
             class="btn-icon-inline"
             title="Edit schedule"
             @click="showEdit = true"
@@ -150,7 +150,7 @@
             @blur="saveDescription"
           />
         </template>
-        <template v-else-if="onHub">
+        <template v-else-if="!computes">
           <span class="description-text">{{ schedule.description }}</span>
         </template>
         <template v-else>
@@ -169,7 +169,7 @@
     </div>
 
     <!-- Notifications -->
-    <div v-if="!onHub" class="section">
+    <div v-if="computes" class="section">
       <h3><i class="fa-solid fa-bell section-icon"></i> Notifications</h3>
       <NotificationRules
         :rules="scheduleRules"
@@ -226,9 +226,10 @@ import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
 import setupService from "../../services/setup.service";
 
-// On a hub: Run Now and Cancel run core's own scheduler, which a hub has none of; a hub schedule's name, timing and
-// description are set when it is made; and alerts are not on the hub.
-const onHub = setupService.isOnHub();
+// A schedule here fires on this core's own scheduler and its alerts go out from it. Where this core computes nothing
+// (a hub's own page) the schedule is another Flowfile's, read-only but for its switch and its delete: no Run Now or
+// Cancel, and its name, timing and description were set when it was made.
+const computes = setupService.computes();
 
 const router = useRouter();
 const catalogStore = useCatalogStore();
@@ -289,7 +290,7 @@ const scheduleAlertsEmptyText = computed(() =>
 watch(
   () => props.schedule.id,
   () => {
-    if (onHub) return;
+    if (!computes) return;
     if (notificationsStore.channels.length === 0) notificationsStore.loadChannels();
     notificationsStore.loadRules();
   },

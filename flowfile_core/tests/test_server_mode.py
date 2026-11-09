@@ -1,6 +1,6 @@
 """Server-mode security gates: ``docker`` and ``hub`` both require a configured master key and seed the admin
 user from the environment; ``electron`` and ``package`` keep generating a local key and seed no admin. Without a token,
-a server's ``GET /health/status`` names the Flowfile version it runs.
+a server's ``GET /health/status`` names the Flowfile version it runs and says what the core can do.
 
 ``FLOWFILE_MODE`` is set per test through ``monkeypatch.setenv``, since these gates read it per call.
 """
@@ -144,6 +144,18 @@ class TestHealthStatus:
         assert response.status_code == 200
         assert response.json()["version"] == __version__
         assert refused.status_code == 401
+
+    @pytest.mark.parametrize("mode", SERVER_MODES + LOCAL_MODES)
+    def test_the_status_says_what_this_core_can_do(self, monkeypatch, mode):
+        """A core computes, previews and signs in by token whatever its mode; the editor gates on these three, not on
+        the mode word, so a page served by something that computes nothing can say so in the same answer."""
+        monkeypatch.setenv("FLOWFILE_MODE", mode)
+
+        with TestClient(main.app) as client:
+            response = client.get("/health/status")
+
+        assert response.status_code == 200
+        assert response.json()["capabilities"] == {"computes": True, "previews": True, "cookie_session": False}
 
 
 class TestAdminSeeding:

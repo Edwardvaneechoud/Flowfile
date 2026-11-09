@@ -5,7 +5,7 @@ import {
   catalogSectionOfTab,
   catalogTabs,
   catalogTabsInSection,
-  shownOnHub,
+  shownWithoutCompute,
 } from "./catalogTabs";
 
 describe("catalog sections", () => {
@@ -53,9 +53,9 @@ describe("catalog sections", () => {
   });
 });
 
-describe("the catalog on a hub's own page", () => {
-  it("shows what the hub holds: the catalog, favorites, run history and schedules", () => {
-    expect(catalogTabs.filter((t) => shownOnHub(t.key)).map((t) => t.key)).toEqual([
+describe("the catalog where this core computes nothing (a hub's own page)", () => {
+  it("shows what the catalog holds: the catalog, favorites, run history and schedules", () => {
+    expect(catalogTabs.filter((t) => shownWithoutCompute(t.key)).map((t) => t.key)).toEqual([
       "catalog",
       "favorites",
       "runs",
@@ -73,7 +73,7 @@ describe("the catalog on a hub's own page", () => {
       "customNodes",
       "community",
     ]) {
-      expect(shownOnHub(key), key).toBe(false);
+      expect(shownWithoutCompute(key), key).toBe(false);
     }
   });
 });

@@ -35,6 +35,19 @@ describe("useMultiUser", () => {
     expect(gitAvailable.value).toBe(true);
   });
 
+  it("treats a server's page (a hub's own page answers `server`) as multi-user", async () => {
+    mocks.getSetupStatus.mockResolvedValue({
+      mode: "server",
+      projects_enabled: false,
+      projects_confined: true,
+    });
+    const { useMultiUser } = await import("./useMultiUser");
+    const { isMultiUser, projectsEnabled, refresh } = useMultiUser();
+    await refresh();
+    expect(isMultiUser.value).toBe(true);
+    expect(projectsEnabled.value).toBe(false);
+  });
+
   it("treats desktop mode as enabled but not confined", async () => {
     mocks.getSetupStatus.mockResolvedValue({
       mode: "tauri",

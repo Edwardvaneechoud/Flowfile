@@ -2,7 +2,7 @@
   <div class="schedules-panel">
     <div class="panel-header">
       <h3>Schedules</h3>
-      <el-button v-if="!onHub" size="small" type="primary" @click="$emit('createSchedule')">
+      <el-button v-if="computes" size="small" type="primary" @click="$emit('createSchedule')">
         <i class="fa-solid fa-plus" /> Add
       </el-button>
     </div>
@@ -39,8 +39,8 @@
           </div>
         </div>
         <div class="schedule-actions">
-          <!-- Run Now and Cancel run core's own scheduler, which a hub has none of -->
-          <template v-if="!onHub">
+          <!-- Run Now and Cancel run this core's own scheduler, so only where it computes -->
+          <template v-if="computes">
             <el-tooltip
               v-if="isRunning(schedule)"
               content="Cancel run"
@@ -82,8 +82,8 @@ import type { FlowSchedule } from "../../types";
 import { formatDate, formatScheduleType, scheduleIcon } from "./catalog-formatters";
 import setupService from "../../services/setup.service";
 
-// Run Now and Cancel run core's own scheduler, which a hub has none of.
-const onHub = setupService.isOnHub();
+// Add, Run Now and Cancel run this core's own scheduler, so only where this core computes.
+const computes = setupService.computes();
 
 defineProps<{
   schedules: FlowSchedule[];

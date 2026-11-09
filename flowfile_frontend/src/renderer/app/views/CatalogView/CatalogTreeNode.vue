@@ -47,7 +47,7 @@
           <i class="fa-solid fa-plus"></i>
         </button>
         <button
-          v-if="node.level === 1 && !onHub"
+          v-if="node.level === 1 && computes"
           class="action-btn"
           title="Register table"
           @click="$emit('registerTable', node.id)"
@@ -55,7 +55,7 @@
           <i class="fa-solid fa-table"></i>
         </button>
         <button
-          v-if="node.level === 1 && !onHub"
+          v-if="node.level === 1 && computes"
           class="action-btn"
           title="Register flow"
           @click="$emit('registerFlow', node.id)"
@@ -387,7 +387,9 @@ import { useResourceSharing } from "../../composables/useResourceSharing";
 import setupService from "../../services/setup.service";
 
 const { isMultiUser, isOwned, canManage } = useResourceSharing();
-const onHub = setupService.isOnHub();
+// Register table and Register flow name a file on this machine's disk, which a core that computes nothing has
+// none of.
+const computes = setupService.computes();
 
 const props = withDefaults(
   defineProps<{
