@@ -179,6 +179,54 @@ class TestReadDeltaVersionPreview:
 
 
 class TestWriteDelta:
+    @pytest.mark.parametrize("batch", [{"id": [2], "extra": ["new"]}, {"id": [2]}])
+    def test_append_reports_whole_table_schema(self, tmp_path, batch):
+        output_path = str(tmp_path / "schema_merge")
+        pl.DataFrame({"id": [1], "existing": ["old"]}).write_delta(output_path)
+        progress = mp_context.Value("i", 0)
+        error_message = mp_context.Array("c", 1024)
+        queue = Queue(maxsize=1)
+        write_delta(
+            polars_serializable_object=pl.LazyFrame(batch).serialize(),
+            progress=progress,
+            error_message=error_message,
+            queue=queue,
+            file_path="",
+            output_path=output_path,
+            mode="append",
+        )
+        assert progress.value == 100, error_message.value
+        result = queue.get(timeout=5)
+        stored = pl.read_delta(output_path).sort("id")
+        assert stored.height == result["row_count"] == 2
+        assert stored["existing"].to_list() == ["old", None]
+        assert {col["name"]: col["dtype"] for col in result["schema"]} == {
+            name: str(dtype) for name, dtype in stored.schema.items()
+        }
+        assert result["column_count"] == stored.width
+
+    def test_append_reports_whole_table_count(self, tmp_path):
+        output_path = str(tmp_path / "orders")
+        for mode, ids, total in [
+            ("overwrite", range(200), 200),
+            ("append", range(200, 210), 210),
+            ("append", range(200, 210), 220),
+        ]:
+            progress = mp_context.Value("i", 0)
+            error_message = mp_context.Array("c", 1024)
+            queue = Queue(maxsize=1)
+            write_delta(
+                polars_serializable_object=pl.LazyFrame({"id": ids}).serialize(),
+                progress=progress,
+                error_message=error_message,
+                queue=queue,
+                file_path="",
+                output_path=output_path,
+                mode=mode,
+            )
+            assert progress.value == 100, error_message.value
+            assert queue.get(timeout=5)["row_count"] == total
+
     def test_writes_delta_table(self, tmp_path):
         lf = pl.LazyFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
         serialized = lf.serialize()
