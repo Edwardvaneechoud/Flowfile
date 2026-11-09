@@ -42,8 +42,8 @@ def drop_row(db: Session, row: ConfiguredBackend) -> None:
 def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tuple[list[str], list[str]]:
     """Fill the backends table from the hub's enabled compute nodes for ``user_id``; ``(synced ids, skipped ids)``.
 
-    One ``worker:<name>`` row per enabled node, at the node's worker URL, with no token and no CA, ``hub_node_id`` the
-    node's id on the hub and ``hub_user_id`` the caller, whose hub session mints the tokens the backend signs with
+    One ``worker:<name>`` row per enabled node, at the node's worker URL, with no token and no CA, ``remote_id`` the
+    node's id on the hub and ``account_user_id`` the caller, whose hub session mints the tokens the backend signs with
     outside a run. A hub-filled row whose node is gone, disabled or renamed is removed; a row added by hand is never
     touched and its node is reported as skipped. A row written or changed is forgotten in the registry, so its next
     use reads it; one the hub lists as before keeps its backend and the verdict it has. The node this core is itself
@@ -65,13 +65,13 @@ def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tu
     }
 
     def follows(row: ConfiguredBackend) -> bool:
-        if not joined or row.hub_user_id in (None, user_id):
+        if not joined or row.account_user_id in (None, user_id):
             return True
-        return not node_tokens.signed_in_through_hub(row.hub_user_id)
+        return not node_tokens.signed_in_through_hub(row.account_user_id)
 
     rows = {row.id: row for row in db.query(ConfiguredBackend).all()}
     for backend_id, row in rows.items():
-        if row.hub_node_id is not None and backend_id not in wanted and follows(row):
+        if row.remote_id is not None and backend_id not in wanted and follows(row):
             drop_row(db, row)
     skipped: list[str] = []
     synced: list[str] = []
@@ -79,17 +79,23 @@ def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tu
         url = node["worker_url"].rstrip("/")
         row = rows.get(backend_id)
         if row is None:
-            db.add(ConfiguredBackend(id=backend_id, url=url, hub_node_id=node["id"], hub_user_id=user_id))
-        elif row.hub_node_id is None:
+            db.add(ConfiguredBackend(id=backend_id, url=url, remote_id=node["id"], account_user_id=user_id))
+        elif row.remote_id is None:
             skipped.append(backend_id)
             continue
         else:
-            person = user_id if follows(row) else row.hub_user_id
-            if (row.url, row.hub_node_id, row.hub_user_id) != (url, node["id"], person):
+            person = user_id if follows(row) else row.account_user_id
+            if (row.url, row.remote_id, row.account_user_id) != (url, node["id"], person):
                 if row.url != url:
                     logger.info('The hub moved server "%s" from %s to %s', node["name"], row.url, url)
                     handshake.reset_handshake(row.url)
-                row.url, row.hub_node_id, row.hub_user_id, row.token, row.ca_cert = url, node["id"], person, None, None
+                row.url, row.remote_id, row.account_user_id, row.token, row.ca_cert = (
+                    url,
+                    node["id"],
+                    person,
+                    None,
+                    None,
+                )
                 registry.forget(backend_id)
         synced.append(backend_id)
     db.commit()
@@ -178,12 +184,12 @@ def refresh(backend_ids: Iterable[str]) -> None:
     person = node_tokens.acting()
     with get_db_context() as db:
         rows = {row.id: row for row in db.query(ConfiguredBackend).filter(ConfiguredBackend.id.in_(ids)).all()}
-        hub_rows = [row for row in rows.values() if row.hub_node_id is not None]
+        hub_rows = [row for row in rows.values() if row.remote_id is not None]
         if not hub_rows and len(rows) == len(ids):
             return
         if person is not None:
             readers = [person]
         else:
-            readers = list(dict.fromkeys(row.hub_user_id for row in hub_rows if row.hub_user_id is not None))
+            readers = list(dict.fromkeys(row.account_user_id for row in hub_rows if row.account_user_id is not None))
         for user_id in readers:
             _sync_for(db, user_id, "before the run")

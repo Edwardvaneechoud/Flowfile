@@ -54,7 +54,7 @@ def joined_with_keys(tmp_path, monkeypatch, join_hub):
 def hub_server():
     """``ELSEWHERE`` as a sync from the hub fills it: a row with the hub's node id and no token, gone after the test."""
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=ELSEWHERE, url="http://elsewhere.example:63579", hub_node_id=7, hub_user_id=1))
+        db.add(ConfiguredBackend(id=ELSEWHERE, url="http://elsewhere.example:63579", remote_id=7, account_user_id=1))
         db.commit()
     yield
     registry.forget(ELSEWHERE)

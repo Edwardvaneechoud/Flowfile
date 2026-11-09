@@ -90,7 +90,7 @@ def hub_server(serve_fake, store, older_worker):  # noqa: F811
     stored = {"hub_url": fake.url, "refresh_token": tokens["refresh_token"], "device_name": "ana-laptop"}
     session.save(USER_ID, stored)
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=BACKEND_ID, url=older_worker.url, hub_node_id=NODE_ID, hub_user_id=USER_ID))
+        db.add(ConfiguredBackend(id=BACKEND_ID, url=older_worker.url, remote_id=NODE_ID, account_user_id=USER_ID))
         db.commit()
     return fake
 

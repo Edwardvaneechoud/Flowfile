@@ -220,7 +220,7 @@ def people(hub, server) -> dict[str, tuple[int, str]]:
     suffix = secrets.token_hex(4)
     signed_in = {"ada": sign_in(hub, ADA, f"ada-{suffix}"), "dee": sign_in(hub, DEE, f"dee-{suffix}")}
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=BACKEND, url=server, hub_node_id=NODE_ID, hub_user_id=signed_in["ada"][0]))
+        db.add(ConfiguredBackend(id=BACKEND, url=server, remote_id=NODE_ID, account_user_id=signed_in["ada"][0]))
         db.commit()
     return signed_in
 

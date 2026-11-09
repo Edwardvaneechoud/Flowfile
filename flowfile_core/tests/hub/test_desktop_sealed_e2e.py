@@ -137,7 +137,7 @@ def server_row(hub, compute_server, monkeypatch) -> Iterator[str]:
     registry.reset()
     handshake.reset_handshake()
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=BACKEND, url=compute_server, hub_node_id=node_id, hub_user_id=DESKTOP_USER))
+        db.add(ConfiguredBackend(id=BACKEND, url=compute_server, remote_id=node_id, account_user_id=DESKTOP_USER))
         db.commit()
     try:
         yield BACKEND

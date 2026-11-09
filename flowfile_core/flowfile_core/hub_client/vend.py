@@ -357,5 +357,5 @@ def node_name(backend_id: str) -> str | None:
         return None
     with get_db_context() as db:
         row = db.get(ConfiguredBackend, backend_id)
-        filled_from_hub = row is not None and row.hub_node_id is not None
+        filled_from_hub = row is not None and row.remote_id is not None
     return backend_id.removeprefix(registry.CONFIGURED_WORKER_PREFIX) if filled_from_hub else None

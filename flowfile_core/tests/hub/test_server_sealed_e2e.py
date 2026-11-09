@@ -208,7 +208,7 @@ def person(hub, store, compute_server, username, monkeypatch) -> Iterator[tuple[
     registry.reset()
     handshake.reset_handshake()
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=BACKEND, url=compute_server, hub_node_id=node_id, hub_user_id=person_id))
+        db.add(ConfiguredBackend(id=BACKEND, url=compute_server, remote_id=node_id, account_user_id=person_id))
         db.commit()
     try:
         yield person_id, access_token

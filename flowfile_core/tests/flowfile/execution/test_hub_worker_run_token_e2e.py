@@ -107,7 +107,7 @@ def node_row(node_worker: str, hub_signer: hub_jwks.HubSigner, monkeypatch) -> I
     token = hub_signer.token(uid=USER_ID, aud=NODE_NAME)
     monkeypatch.setattr(node_tokens, "_tokens", {(USER_ID, NODE_ID): (token, time.time() + 3600)})
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=NODE, url=node_worker, hub_node_id=NODE_ID, hub_user_id=USER_ID))
+        db.add(ConfiguredBackend(id=NODE, url=node_worker, remote_id=NODE_ID, account_user_id=USER_ID))
         db.commit()
     try:
         yield node_worker, token

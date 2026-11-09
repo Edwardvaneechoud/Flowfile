@@ -12,7 +12,7 @@ from:
 A configured worker, ``worker:<name>``, is a row of core's ``compute_backends`` table (``ConfiguredBackend``): its URL,
 its bearer token as secret-manager ciphertext, and an optional CA certificate. Its first lookup reads the row and makes
 a ``WorkerBackend`` from it. No row is a ``LookupError``. ``forget`` drops the cached instance, so the next lookup
-reads the row again. A row filled from a hub (``hub_node_id`` set) stores no token: its backend signs with the
+reads the row again. A row filled from a hub (``remote_id`` set) stores no token: its backend signs with the
 short-lived token the hub mints for that node through the row's user's hub session (``hub_client.node_tokens``),
 asked for on the first lookup and again when it nears expiry, when the backend is made anew with the new token. On a
 server joined to its hub with keys of its own the row's user is only whoever last synced the hub's servers, so there
@@ -123,7 +123,7 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
         if row is None:
             raise LookupError(f"Unknown compute backend {backend_id!r}; no compute_backends row has that id")
         url, ciphertext, ca_cert, shares_core_disk = row.url, row.token, row.ca_cert, bool(row.shares_core_disk)
-        hub_row = (row.hub_user_id, row.hub_node_id) if row.hub_node_id is not None else None
+        hub_row = (row.account_user_id, row.remote_id) if row.remote_id is not None else None
     token_source = None
     if hub_row is not None:
         through_hub = issuer_accounts.joined_with_keys() is not None
@@ -151,7 +151,7 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
     )
 
 
-def _hub_token(backend_id: str, hub_user_id: int, hub_node_id: int, *, through_hub: bool = False) -> str:
+def _hub_token(backend_id: str, account_user_id: int, remote_id: int, *, through_hub: bool = False) -> str:
     """The token the hub mints for the node ``backend_id`` is filled from, through the row's user's hub session.
 
     With ``through_hub`` (a server joined with keys of its own) it is the token of the person the call is made for
@@ -166,10 +166,10 @@ def _hub_token(backend_id: str, hub_user_id: int, hub_node_id: int, *, through_h
     person = node_tokens.acting() if through_hub else None
     try:
         if person is not None:
-            return node_tokens.token_for(person, hub_node_id, name, through_hub=True)
+            return node_tokens.token_for(person, remote_id, name, through_hub=True)
         if through_hub and context.entered():
             raise node_tokens.SignedOut(name)
-        return node_tokens.token_for(hub_user_id, hub_node_id, name)
+        return node_tokens.token_for(account_user_id, remote_id, name)
     except LookupError as e:
         raise LookupError(f"Compute backend {backend_id!r} cannot be used: {e}") from e
 
@@ -202,7 +202,7 @@ _lock = threading.RLock()
 _factories: dict[str, BackendFactory] = {}
 _instances: dict[str, ComputeBackend] = {}
 _hub_rows: dict[str, tuple[int, int]] = {}
-"""Backend id -> ``(hub_user_id, hub_node_id)`` of each hub-filled row an instance was made from."""
+"""Backend id -> ``(account_user_id, remote_id)`` of each hub-filled row an instance was made from."""
 _through_hub: set[str] = set()
 """Ids of the hub-filled backends made on a server joined with keys of its own, which sign each call for its person."""
 _entry_points_scanned = False

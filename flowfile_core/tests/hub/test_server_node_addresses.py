@@ -102,7 +102,7 @@ def hub(serve_fake, store):  # noqa: F811
     stored = {"hub_url": fake.url, "refresh_token": tokens["refresh_token"], "device_name": "core-1"}
     session.save(USER_ID, stored)
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=BACKEND_ID, url=old, hub_node_id=NODE_ID, hub_user_id=USER_ID))
+        db.add(ConfiguredBackend(id=BACKEND_ID, url=old, remote_id=NODE_ID, account_user_id=USER_ID))
         db.commit()
     fake.calls.clear()
     return fake
@@ -134,13 +134,13 @@ def signed_in(hub):
 
 def rows() -> dict[str, tuple[str, int | None, int | None]]:
     with get_db_context() as db:
-        return {row.id: (row.url, row.hub_node_id, row.hub_user_id) for row in db.query(ConfiguredBackend).all()}
+        return {row.id: (row.url, row.remote_id, row.account_user_id) for row in db.query(ConfiguredBackend).all()}
 
 
 def sales_row_of(user_id: int) -> None:
     """A ``worker:sales`` row an earlier sync wrote for ``user_id``."""
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=SALES, url=closed_url(), hub_node_id=SALES_ID, hub_user_id=user_id))
+        db.add(ConfiguredBackend(id=SALES, url=closed_url(), remote_id=SALES_ID, account_user_id=user_id))
         db.commit()
 
 
@@ -248,7 +248,7 @@ def test_another_persons_row_stays_theirs_while_they_are_signed_in_through_the_h
 def test_a_row_of_a_person_no_longer_signed_in_follows_the_next_persons_list(joined, hub, signed_in):
     sales_row_of(OTHER_ID)
     with get_db_context() as db:
-        db.get(ConfiguredBackend, BACKEND_ID).hub_user_id = OTHER_ID
+        db.get(ConfiguredBackend, BACKEND_ID).account_user_id = OTHER_ID
         db.commit()
 
     run(9918)

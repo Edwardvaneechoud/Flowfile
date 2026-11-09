@@ -106,7 +106,7 @@ def team_row(team_worker: str, monkeypatch) -> Iterator[str]:
     handshake.reset_handshake()
     monkeypatch.setattr(node_tokens, "_tokens", {})
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=TEAM, url=team_worker, hub_node_id=NODE_ID, hub_user_id=USER_ID))
+        db.add(ConfiguredBackend(id=TEAM, url=team_worker, remote_id=NODE_ID, account_user_id=USER_ID))
         db.commit()
     try:
         yield team_worker

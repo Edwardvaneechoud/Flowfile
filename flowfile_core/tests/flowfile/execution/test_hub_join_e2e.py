@@ -141,7 +141,7 @@ def joined_row(monkeypatch) -> Iterator[int]:
     handshake.reset_handshake()
     monkeypatch.setattr(node_tokens, "_tokens", {})
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=ROW_ID, url=url_of(port), hub_node_id=NODE_ID, hub_user_id=USER_ID))
+        db.add(ConfiguredBackend(id=ROW_ID, url=url_of(port), remote_id=NODE_ID, account_user_id=USER_ID))
         db.commit()
     try:
         yield port

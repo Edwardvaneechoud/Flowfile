@@ -124,7 +124,7 @@ def listed_backends(rows: list[ConfiguredBackend], current_user: User) -> list[C
                 if current_user.is_admin
                 else _without_addresses(handshake.last_verdict(row.id))
             ),
-            source="hub" if row.hub_node_id is not None else "local",
+            source="hub" if row.remote_id is not None else "local",
         )
         for row in rows
     ]
@@ -183,7 +183,7 @@ def remove_compute_backend(backend_id: str, db: Session = Depends(get_db)) -> Re
     """Remove a configured worker, forget the registry's instance of it and the verdicts of the backends on its URL;
     404 when no row has the id, 409 for a row the hub connection fills (disconnecting from the hub removes it)."""
     row = _configured(db, backend_id)
-    if row.hub_node_id is not None:
+    if row.remote_id is not None:
         raise HTTPException(status_code=409, detail=f"Compute backend {backend_id!r} is managed by the hub connection")
     url = row.url
     db.delete(row)

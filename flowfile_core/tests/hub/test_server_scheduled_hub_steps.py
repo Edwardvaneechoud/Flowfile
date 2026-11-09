@@ -58,7 +58,7 @@ def hub_row(monkeypatch):
     registry.reset()
     handshake.reset_handshake()
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id=BACKEND, url="http://127.0.0.1:9", hub_node_id=5))
+        db.add(ConfiguredBackend(id=BACKEND, url="http://127.0.0.1:9", remote_id=5))
         db.commit()
     yield BACKEND
     registry.reset()

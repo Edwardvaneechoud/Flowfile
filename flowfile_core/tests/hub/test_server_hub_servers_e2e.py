@@ -121,7 +121,7 @@ def backends(access_token: str) -> list[dict]:
 
 def owners() -> dict[str, int | None]:
     with get_db_context() as db:
-        return {row.id: row.hub_user_id for row in db.query(ConfiguredBackend).all()}
+        return {row.id: row.account_user_id for row in db.query(ConfiguredBackend).all()}
 
 
 def test_a_members_first_sign_in_lists_the_hubs_servers_and_a_run_on_one_works(protocol, hub, open_flow):

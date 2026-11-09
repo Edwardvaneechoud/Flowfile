@@ -256,8 +256,8 @@ def test_connecting_fills_the_backends_table_with_the_hubs_enabled_nodes(api, hu
     team = rows["worker:team"]
     assert team.url == TEAM["worker_url"]
     assert team.token is None and team.ca_cert is None
-    assert team.hub_node_id == TEAM["id"]
-    assert team.hub_user_id == _user_id(api)
+    assert team.remote_id == TEAM["id"]
+    assert team.account_user_id == _user_id(api)
     listed = api.get("/compute_backends").json()
     assert [(row["id"], row["source"], row["url"]) for row in listed] == [
         ("worker:gpu", "hub", GPU["worker_url"]),
@@ -354,7 +354,7 @@ def test_a_hand_added_row_with_a_hub_nodes_name_is_skipped_and_untouched(api, hu
     team = _rows()["worker:team"]
     assert team.url == "https://own-team.example.test:63579"
     assert team.token == stored
-    assert team.hub_node_id is None and team.hub_user_id is None
+    assert team.remote_id is None and team.account_user_id is None
     sources = {row["id"]: row["source"] for row in synced.json()["backends"]}
     assert sources == {"worker:team": "local", "worker:gpu": "hub"}
 

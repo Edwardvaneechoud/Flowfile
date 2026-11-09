@@ -226,7 +226,7 @@ def disconnect(current_user=Depends(get_current_admin_user), db: Session = Depen
 
     The hub keeps the device; nothing is sent to it. A row an administrator added by hand stays.
     """
-    rows = db.query(ConfiguredBackend).filter(ConfiguredBackend.hub_user_id == current_user.id).all()
+    rows = db.query(ConfiguredBackend).filter(ConfiguredBackend.account_user_id == current_user.id).all()
     for row in rows:
         node_addresses.drop_row(db, row)
     db.commit()
