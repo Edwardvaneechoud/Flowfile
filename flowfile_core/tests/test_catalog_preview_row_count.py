@@ -7,6 +7,7 @@ import pyarrow as pa
 import pytest
 from deltalake import DeltaTable, write_deltalake
 
+from flowfile_core.catalog import table_sources
 from flowfile_core.catalog.services import previews
 from flowfile_core.catalog.services.previews import TablePreviewService
 
@@ -42,7 +43,7 @@ def test_latest_delta_preview_counts_snapshot(tmp_path, monkeypatch, size, store
     if cloud_path:
         file_path = "s3://bucket/table"
         target = Mock(storage_options={})
-        monkeypatch.setattr(previews, "resolve_for_table", lambda *_: target)
+        monkeypatch.setattr(table_sources, "resolve_for_table", lambda *_: target)
         monkeypatch.setattr(previews, "uses_worker", lambda: False)
 
         def local_delta(table_path, storage_options=None):
