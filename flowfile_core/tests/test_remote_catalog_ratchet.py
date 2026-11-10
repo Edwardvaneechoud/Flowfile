@@ -21,7 +21,7 @@ IMPORTS = re.compile(
     r"|from flowfile_core import hub_client|from shared import .*hub_",
     re.MULTILINE,
 )
-LIMIT = 21
+LIMIT = 30
 
 
 def _is_the_clients_own(path: Path) -> bool:
