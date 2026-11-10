@@ -359,6 +359,9 @@ def test_a_hub_flows_run_history_is_asked_of_the_hub_by_the_hubs_own_id(connecte
              "success": True}
         ],
         "total": 1,
+        "total_success": 0,
+        "total_failed": 0,
+        "total_running": 1,
     }
     assert hub.catalog_calls[-1] == ("/catalog/runs", "registration_id=201&limit=10")
 
@@ -411,6 +414,61 @@ def test_a_hub_flows_schedules_are_listed_paused_resumed_and_removed_on_the_hub(
     assert connected.get("/catalog/schedules/-7").status_code == 404
 
 
+def test_the_list_of_every_schedule_holds_the_hubs_after_this_machines_marked_as_the_hubs(connected, hub, api):
+    flow = hub.seed_flow(_seed(hub)["raw"], "orders-clean")
+    schedule = hub.seed_schedule(flow, server="bmax")
+    hub.seed_schedule(hub.seed_flow(hub.namespaces[1], "other"))
+    listed = connected.get("/catalog/schedules")
+    assert listed.status_code == 200
+    theirs = [row for row in listed.json() if row["source"] == "hub"]
+    assert [(row["id"], row["hub_id"], row["registration_id"]) for row in theirs] == [(-7, 7, -201), (-8, 8, -202)]
+    assert theirs[0]["backend"] == "worker:bmax" and theirs[0]["interval_seconds"] == schedule["interval_seconds"]
+    assert all(row["source"] == "local" and row["id"] > 0 for row in listed.json() if row not in theirs)
+    assert hub.catalog_calls[-1] == ("/catalog/schedules", "")
+    of_the_flow = connected.get("/catalog/schedules", params={"registration_id": -201}).json()
+    assert [row["id"] for row in of_the_flow] == [-7] and of_the_flow[0]["backend"] == "worker:bmax"
+    assert connected.get("/catalog/overview").json()["schedules"] == listed.json()
+    paused = connected.put("/catalog/schedules/-7", json={"enabled": False})
+    assert paused.status_code == 200 and hub.schedules[0]["enabled"] is False
+
+
+def test_a_hub_that_does_not_answer_leaves_the_list_of_schedules_this_machines(connected, hub, api):
+    hub.seed_schedule(hub.seed_flow(_seed(hub)["raw"], "orders-clean"))
+    hub.down = True
+    listed = connected.get("/catalog/schedules")
+    assert listed.status_code == 200 and all(row["source"] == "local" for row in listed.json())
+
+
+def test_the_list_of_schedules_without_a_hub_connection_is_this_machines(api, hub):
+    hub.seed_schedule(hub.seed_flow(_seed(hub)["raw"], "orders-clean"))
+    listed = api.get("/catalog/schedules")
+    assert listed.status_code == 200 and all(row["source"] == "local" for row in listed.json())
+    assert hub.catalog_calls == []
+
+
+def test_run_history_and_the_runs_under_way_hold_the_hubs_runs_marked_as_the_hubs(connected, hub):
+    flow = hub.seed_flow(_seed(hub)["raw"], "orders-clean")
+    schedule = hub.seed_schedule(flow)
+    hub.seed_run(flow, schedule_id=schedule["id"], executed_on="bmax", remote_run_id="r-1")
+    hub.seed_run(flow, ended=False, schedule_id=schedule["id"], remote_run_id="r-2")
+    page = connected.get("/catalog/runs", params={"limit": 500}).json()
+    theirs = [run for run in page["items"] if run["source"] == "hub"]
+    assert sorted((run["id"], run["registration_id"], run["schedule_id"]) for run in theirs) == [
+        (-6, -201, -7),
+        (-5, -201, -7),
+    ]
+    assert hub.catalog_calls[-1] == ("/catalog/runs", "limit=500&offset=0")
+    assert page["total"] >= 2 and page["total_running"] >= 1
+    active = connected.get("/catalog/active-runs").json()
+    assert [(run["id"], run["schedule_id"], run["source"]) for run in active if run["id"] < 0] == [(-6, -7, "hub")]
+    of_the_schedule = connected.get("/catalog/runs", params={"schedule_id": -7}).json()
+    assert [run["id"] for run in of_the_schedule["items"]] == [-5, -6]
+    assert hub.catalog_calls[-1] == ("/catalog/runs", "schedule_id=7")
+    overview = connected.get("/catalog/overview").json()
+    assert [run["id"] for run in overview["active_runs"] if run["id"] < 0] == [-6]
+    assert {run["id"] for run in overview["runs"]["items"] if run["id"] < 0} == {-5, -6}
+
+
 def test_a_hub_flow_is_favourited_and_unfavourited_on_the_hub(connected, hub):
     row, _ = _flow_with_schedule(hub)
     favourite = connected.post(f"/catalog/flows/{row}/favorite")
@@ -435,7 +493,7 @@ def test_the_catalog_routes_that_name_no_hub_row_stay_local(connected, hub):
     assert connected.get("/catalog/tables").status_code == 200
     assert connected.get("/catalog/namespaces").status_code == 200
     assert connected.get("/catalog/tables/999999").status_code == 404
-    assert connected.get("/catalog/runs", params={"limit": 5}).status_code == 200
+    assert connected.get("/catalog/runs", params={"registration_id": 999999, "limit": 5}).status_code == 200
     assert hub.calls == []
 
 

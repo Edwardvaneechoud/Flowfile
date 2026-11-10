@@ -20,6 +20,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Res
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.routing import APIRoute
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -645,6 +646,51 @@ def list_flow_artifacts(
     return service.list_artifacts_for_flow(flow_id)
 
 
+_RUNS_WINDOW = 500
+"""The most runs one list request reads of each catalog, the route's own cap."""
+
+
+def _all_runs(
+    service: CatalogService, user_id: int | None, run_type, search: str | None, limit: int, offset: int
+) -> PaginatedFlowRuns:
+    """One page of the runs of every flow: this install's and a remote catalog's, newest first, the counts summed.
+
+    Each catalog is asked for its newest ``offset + limit`` runs and the page is cut from the two together. A run a
+    remote catalog records as executed here (``table_sources.has_its_record_here``), or under a run id a local
+    record carries, is this install's own record and listed once. With no remote catalog answering, the page is
+    this install's as it was.
+    """
+    window = min(offset + limit, _RUNS_WINDOW)
+    asked = {"limit": window, "offset": 0, "run_type": run_type, "search": search}
+    params = {key: value for key, value in asked.items() if value is not None}
+    pages = []
+    for answer in table_sources.remote_answers(user_id, "/catalog/runs", params):
+        try:
+            pages.append(PaginatedFlowRuns.model_validate(answer))
+        except ValidationError:
+            continue
+    if not pages:
+        return service.list_runs(run_type=run_type, limit=limit, offset=offset, search=search)
+    local = service.list_runs(run_type=run_type, limit=window, offset=0, search=search)
+    own_ids = {run.remote_run_id for run in local.items if run.remote_run_id}
+    items, merged = list(local.items), local.model_copy()
+    for page in pages:
+        theirs = [
+            run
+            for run in page.items
+            if not table_sources.has_its_record_here(run.executed_on) and run.remote_run_id not in own_ids
+        ]
+        items += theirs
+        twice = len(page.items) - len(theirs)
+        merged.total += page.total - twice
+        merged.total_success += page.total_success
+        merged.total_failed += page.total_failed
+        merged.total_running += page.total_running
+    items.sort(key=lambda run: run.started_at.replace(tzinfo=None), reverse=True)
+    merged.items = items[offset : offset + limit]
+    return merged
+
+
 @router.get("/runs", response_model=PaginatedFlowRuns)
 def list_runs(
     registration_id: int | None = None,
@@ -653,8 +699,12 @@ def list_runs(
     search: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
+    """Run history, newest first. The list of every flow's runs holds a remote catalog's too (``_all_runs``)."""
+    if registration_id is None and schedule_id is None:
+        return _all_runs(service, current_user.id, run_type, search, limit, offset)
     return service.list_runs(
         registration_id=registration_id,
         schedule_id=schedule_id,
@@ -1594,10 +1644,15 @@ def get_catalog_stats(
 @router.get("/schedules", response_model=list[FlowScheduleOut])
 def list_schedules(
     registration_id: int | None = None,
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """List schedules, optionally filtered by flow registration."""
-    return service.list_schedules(registration_id=registration_id)
+    """List schedules, optionally filtered by flow registration. The list of every flow's schedules holds a remote
+    catalog's too, after this install's (``table_sources.merged_rows``)."""
+    local = service.list_schedules(registration_id=registration_id)
+    if registration_id is not None:
+        return local
+    return table_sources.merged_rows(current_user.id, "/catalog/schedules", local, FlowScheduleOut)
 
 
 @router.post("/schedules", response_model=FlowScheduleOut, status_code=201)
@@ -1708,8 +1763,8 @@ def list_active_runs(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """List all currently running flows."""
-    return service.list_active_runs()
+    """List all currently running flows, a remote catalog's after this install's."""
+    return table_sources.merged_rows(current_user.id, "/catalog/active-runs", service.list_active_runs(), ActiveFlowRun)
 
 
 @router.post("/runs/{run_id}/cancel", status_code=204)
@@ -1806,7 +1861,8 @@ def get_catalog_overview(
     FastAPI caches ``get_db`` per request, so ``db`` is the session the service was
     built on: the whole screen costs one pooled connection instead of one per call.
     The individual endpoints stay for detail views, mutations and the poll loop. The tree is the one
-    ``/namespaces/tree`` answers, a remote catalog's rows after the local ones.
+    ``/namespaces/tree`` answers, a remote catalog's rows after the local ones, and so are the schedules, the active
+    runs and the runs.
     """
     user_id = current_user.id
     return CatalogOverview(
@@ -1815,9 +1871,11 @@ def get_catalog_overview(
         flows=service.list_flows(user_id=user_id),
         tables=service.list_tables(user_id=user_id),
         favorites=service.list_favorites(user_id=user_id),
-        schedules=service.list_schedules(),
-        active_runs=service.list_active_runs(),
-        runs=service.list_runs(limit=runs_limit, offset=0),
+        schedules=table_sources.merged_rows(user_id, "/catalog/schedules", service.list_schedules(), FlowScheduleOut),
+        active_runs=table_sources.merged_rows(
+            user_id, "/catalog/active-runs", service.list_active_runs(), ActiveFlowRun
+        ),
+        runs=_all_runs(service, user_id, None, None, runs_limit, 0),
         scheduler=_scheduler_status(db),
         default_namespace_id=service.get_default_namespace_id(),
     )

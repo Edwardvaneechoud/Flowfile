@@ -192,6 +192,9 @@ class FlowRunOut(BaseModel):
     duration_seconds: float | None = None
     run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand", "dispatched"] = "in_designer_run"
     schedule_id: int | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
+    source: Literal["local", "hub"] = "local"
+    hub_id: int | None = None
     has_snapshot: bool = False
     has_log: bool = False
     # A run executed elsewhere: where, under which run id, where its log is, and the published version that ran.
@@ -1053,6 +1056,9 @@ class FlowScheduleOut(BaseModel):
     last_trigger_table_updated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
+    source: Literal["local", "hub"] = "local"
+    hub_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1085,6 +1091,9 @@ class ActiveFlowRun(BaseModel):
     number_of_nodes: int = 0
     run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand", "dispatched"] = "in_designer_run"
     schedule_id: int | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
+    source: Literal["local", "hub"] = "local"
+    hub_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -27,7 +27,15 @@ import pytest
 from flowfile_core.auth import secrets as core_secrets
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client import secrets as hub_secrets
-from flowfile_core.schemas.catalog_schema import CatalogTableOut, FlowRegistrationOut, NamespaceOut, NamespaceTree
+from flowfile_core.schemas.catalog_schema import (
+    ActiveFlowRun,
+    CatalogTableOut,
+    FlowRegistrationOut,
+    FlowRunOut,
+    FlowScheduleOut,
+    NamespaceOut,
+    NamespaceTree,
+)
 
 _KEY = "a signing key only the fake hub knows"
 HUB_URL = "https://hub.example.test"
@@ -276,6 +284,74 @@ class FakeHubWithCatalog(FakeHub):
         self.flows.append(row)
         return row
 
+    def seed_schedule(self, flow: dict, server: str = "bmax", **fields) -> dict:
+        """A schedule of ``flow`` as the hub's mount of core's schedule routes dumps its ``flow_schedules`` row
+        (``FlowScheduleOut``): the flow by its registration id, the server as ``backend`` ``worker:<name>``."""
+        row = FlowScheduleOut(
+            **{
+                "id": len(self.schedules) + 7,
+                "registration_id": flow["registration_id"],
+                "owner_id": flow["owner_id"],
+                "enabled": True,
+                "schedule_type": "interval",
+                "interval_seconds": 3600,
+                "backend": f"worker:{server}",
+                "created_at": _STAMP,
+                "updated_at": _STAMP,
+                **fields,
+            }
+        ).model_dump(mode="json", exclude=_LOCAL_ONLY)
+        self.schedules.append(row)
+        return row
+
+    def seed_run(self, flow: dict, *, ended: bool = True, **fields) -> dict:
+        """A run of ``flow`` as the hub records one it sent or was reported (``FlowRunOut``); ``ended`` False is one
+        still running, which ``GET /catalog/active-runs`` lists."""
+        row = FlowRunOut(
+            **{
+                "id": len(self.runs) + 5,
+                "registration_id": flow["registration_id"],
+                "flow_uuid": flow["flow_uuid"],
+                "flow_name": flow["name"],
+                "flow_path": f"hub://flows/{flow['flow_uuid']}",
+                "user_id": flow["owner_id"],
+                "started_at": _STAMP,
+                "ended_at": _STAMP if ended else None,
+                "success": True if ended else None,
+                "run_type": "scheduled",
+                **fields,
+            }
+        ).model_dump(mode="json", exclude=_LOCAL_ONLY)
+        self.runs.append(row)
+        return row
+
+    def _runs_page(self, params) -> dict:
+        """``GET /catalog/runs`` as core's service pages it: filtered by ``registration_id`` and ``schedule_id``,
+        cut by ``offset`` and ``limit``, with the counts of the filtered runs."""
+        runs = [
+            run
+            for run in self.runs
+            if all(params.get(key) in (None, str(run.get(key))) for key in ("registration_id", "schedule_id"))
+        ]
+        offset, limit = int(params.get("offset", 0)), int(params.get("limit", 50))
+        ended = [run for run in runs if run.get("ended_at")]
+        return {
+            "items": runs[offset : offset + limit],
+            "total": len(runs),
+            "total_success": len([run for run in ended if run.get("success")]),
+            "total_failed": len([run for run in ended if not run.get("success")]),
+            "total_running": len(runs) - len(ended),
+        }
+
+    def _active_runs(self) -> list[dict]:
+        return [
+            ActiveFlowRun(**{key: run[key] for key in ActiveFlowRun.model_fields if key in run}).model_dump(
+                mode="json", exclude=_LOCAL_ONLY
+            )
+            for run in self.runs
+            if not run.get("ended_at")
+        ]
+
     def _add_namespace(self, name: str, parent_id: int | None, level: int, fields: dict) -> dict:
         row = NamespaceOut(
             id=len(self.namespaces) + 1,
@@ -318,14 +394,17 @@ class FakeHubWithCatalog(FakeHub):
 
         return [node(ns) for ns in self.namespaces if ns["parent_id"] is None]
 
-    def _catalog_row(self, method: str, path: str, body) -> httpx.Response:
+    def _catalog_row(self, method: str, path: str, body, params=None) -> httpx.Response:
         """Core's own routes over one row, as the hub's catalog answers them: a table read, renamed or deleted, a
-        table favourite, and the run history of a registration."""
+        table favourite, the run history of every flow or of one registration or schedule, and the runs under way."""
+        params = params or {}
         if path == "/catalog/runs":
-            return httpx.Response(200, json={"items": self.runs, "total": len(self.runs)})
+            return httpx.Response(200, json=self._runs_page(params))
+        if path == "/catalog/active-runs":
+            return httpx.Response(200, json=self._active_runs())
         parts = path.split("/")
         if parts[2] == "schedules":
-            return self._schedule_row(method, parts[3:], body)
+            return self._schedule_row(method, parts[3:], body, params.get("registration_id"))
         if parts[2] == "flows":
             flow = next((f for f in self.flows if str(f["registration_id"]) == parts[3]), None)
             if flow is None:
@@ -350,13 +429,15 @@ class FakeHubWithCatalog(FakeHub):
             table.update(body)
         return httpx.Response(200, json=table)
 
-    def _schedule_row(self, method: str, rest: list[str], body) -> httpx.Response:
-        """Core's schedule routes as the hub answers them from its own schedules: listed, paused or resumed by
-        ``enabled`` and removed; one is never made (``POST /catalog/schedules``) or run now here."""
+    def _schedule_row(self, method: str, rest: list[str], body, registration_id: str | None = None) -> httpx.Response:
+        """Core's schedule routes as the hub answers them from its own schedules: every flow's listed, or those of
+        ``registration_id``, paused or resumed by ``enabled`` and removed; one is never made
+        (``POST /catalog/schedules``) or run now here."""
         if method == "POST":
             return httpx.Response(403, json={"detail": NEVER_RUNS})
         if not rest:
-            return httpx.Response(200, json=self.schedules)
+            listed = [s for s in self.schedules if registration_id in (None, str(s["registration_id"]))]
+            return httpx.Response(200, json=listed)
         schedule = next((s for s in self.schedules if str(s["id"]) == rest[0]), None)
         if schedule is None:
             return httpx.Response(404, json={"detail": "Schedule not found"})
@@ -470,9 +551,10 @@ class FakeHubWithCatalog(FakeHub):
             return httpx.Response(200, json={"table": table, "warnings": []})
         if path == "/catalog/namespaces/tree":
             return httpx.Response(200, json=self.tree() if self.tree_answer is None else self.tree_answer)
-        if path.startswith(("/catalog/tables/", "/catalog/flows/", "/catalog/schedules")) or path == "/catalog/runs":
+        rows = ("/catalog/tables/", "/catalog/flows/", "/catalog/schedules")
+        if path.startswith(rows) or path in ("/catalog/runs", "/catalog/active-runs"):
             body = json.loads(request.content) if request.content else None
-            return self._catalog_row(request.method, path, body)
+            return self._catalog_row(request.method, path, body, request.url.params)
         if path == "/catalog/namespaces":
             parent = request.url.params.get("parent_id")
             parent_id = None if parent is None else int(parent)

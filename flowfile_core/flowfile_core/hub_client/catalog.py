@@ -35,7 +35,17 @@ from flowfile_core.hub_client.node_tokens import RECONNECT
 from flowfile_core.schemas.catalog_schema import NamespaceTree
 
 HUB = "hub"
-_ROW_REFERENCES = ("id", "namespace_id", "parent_id", "table_id", "registration_id", "source_registration_id")
+_ROW_REFERENCES = (
+    "id",
+    "namespace_id",
+    "parent_id",
+    "table_id",
+    "registration_id",
+    "source_registration_id",
+    "schedule_id",
+    "trigger_table_id",
+    "trigger_namespace_id",
+)
 _THEIR_ID = re.compile(r"(?<=/)-(\d+)(?=/|$)")
 _THEIR_VALUE = re.compile(r"-\d+")
 

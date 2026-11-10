@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 import polars as pl
+from pydantic import BaseModel, ValidationError
 
 from flowfile_core.auth import issuer_accounts
 from flowfile_core.catalog.exceptions import TableNotFoundError
@@ -175,6 +176,38 @@ def relayed(user_id: int | None, method: str, path: str, params: dict | None, bo
     if catalog is None or not any(_REMOTE_ID.fullmatch(str(value)) for value in named):
         return None
     return catalog.request(user_id, method, path, params, body)
+
+
+def remote_answers(user_id: int | None, path: str, params: dict | None = None) -> list[object]:
+    """Each remote catalog's answer to the list route ``path`` for ``user_id``, its rows marked as that catalog's.
+
+    A list that names no row is this install's own to answer (``relayed``), so a caller adds these to its own. What
+    a person reads of a remote catalog is what that catalog answers them. A catalog that does not answer 200, one the
+    person has no session with included, is left out, as it is left out of the tree.
+    """
+    if user_id is None:
+        return []
+    answers = [catalog.request(user_id, "GET", path, params, None) for catalog in _remotes.values()]
+    return [answer for status, answer in answers if status == 200]
+
+
+def merged_rows(user_id: int | None, path: str, local: list, row: type[BaseModel], params: dict | None = None) -> list:
+    """The rows of the list route ``path`` that ``user_id`` reads: this install's ``local`` first, then the remote
+    catalogs' rows of the same list (``remote_answers``), each as ``row``. An answer that is no list of ``row`` is
+    left out."""
+    merged = list(local)
+    for answer in remote_answers(user_id, path, params):
+        try:
+            merged += [row.model_validate(item) for item in answer]
+        except (ValidationError, TypeError):
+            continue
+    return merged
+
+
+def has_its_record_here(executed_on: str | None) -> bool:
+    """Whether a remote catalog's record of a run names this install as where it ran, by the name it joined with:
+    this install keeps its own record of that run."""
+    return executed_on is not None and executed_on == issuer_accounts.joined_name()
 
 
 def merged_tree(user_id: int, local: list[NamespaceTree]) -> list[NamespaceTree]:
