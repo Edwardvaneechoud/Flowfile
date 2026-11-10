@@ -12,7 +12,6 @@ The file is ``{"sig": <PEM, PKCS8>, "enc": <base64url of the 32 raw private byte
 keys. Nothing runs at import: ``load_or_create()``, which the join calls, makes the keys.
 """
 
-import base64
 import hashlib
 import json
 import os
@@ -27,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, x25519
 from jwt.algorithms import ECAlgorithm
 
 from shared import hub_node
+from shared.sealed import b64url, unb64url
 
 FILE_NAME = "hub_node_key.json"
 ASSERTION_SECONDS = 60
@@ -36,16 +36,6 @@ ASSERTION_SECONDS = 60
 def path() -> Path:
     """``hub_node_key.json`` in the storage dir, beside ``hub_node.json``."""
     return hub_node.path().with_name(FILE_NAME)
-
-
-def b64url(data: bytes) -> str:
-    """``data`` as JOSE writes bytes: base64url without padding."""
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
-def unb64url(text: str) -> bytes:
-    """The bytes of the unpadded base64url ``text``; ``ValueError`` when it is not one."""
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
 def _kid(public_key: ec.EllipticCurvePublicKey | x25519.X25519PublicKey) -> str:

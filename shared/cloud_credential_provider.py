@@ -3,8 +3,8 @@
 Polars inlines ``storage_options`` into a serialized plan, so a plan carries its credentials through a provider
 instead. ``EncryptedCredentialProvider`` holds a ``$ffsec$`` ciphertext and decrypts through whatever the executing
 process registered with :func:`register_secret_decryptor`. ``CredentialRefProvider`` holds only a stored
-connection's id and user, resolved against the executing process's own catalog; a credential a hub sealed to the
-nodes of a run is ``shared.hub_sealed``'s, imported at use. Stdlib-only at import and outside
+connection's id and user, resolved against the executing process's own catalog; a credential sealed to the
+servers of a run is ``shared.sealed``'s, imported at use. Stdlib-only at import and outside
 ``shared.cloud_storage`` (whose ``__init__`` loads ``shared.delta_utils``): every spawned worker child imports this
 module.
 """
@@ -134,7 +134,7 @@ def connection_credentials(settings: Mapping[str, Any]) -> tuple[dict[str, str],
     """The Polars credentials of a cloud connection given whole, its secrets in plain, and their expiry.
 
     ``settings`` are a stored connection's fields as core's ``FullCloudStorageConnection`` serialises them, as a hub
-    seals one to the node that runs a step (``shared.hub_sealed.SealedConnectionProvider``); they are resolved here as
+    seals one to the node that runs a step (``shared.sealed.SealedConnectionProvider``); they are resolved here as
     ``resolve_credential_ref`` resolves a stored one.
     """
     import inspect
@@ -199,7 +199,7 @@ def credential_body_kwargs(credential: Mapping[str, Any] | None) -> dict[str, An
 
     ``None`` takes nothing; ``{"connection_id", "user_id"}`` is a stored connection (``credential_ref_kwargs``);
     ``{"sealed": {<node>: <token>}}`` is what a hub vended and sealed to the nodes of a run, opened with this node's
-    key (``shared.hub_sealed.sealed_scan_kwargs``); ``{"options", "encrypted"}`` is what a hub vended to the core this
+    key (``shared.sealed.sealed_scan_kwargs``); ``{"options", "encrypted"}`` is what a hub vended to the core this
     process runs beside, its secrets a ciphertext opened where the sink or scan runs (``EncryptedCredentialProvider``).
 
     Raises:
@@ -208,7 +208,7 @@ def credential_body_kwargs(credential: Mapping[str, Any] | None) -> dict[str, An
     if credential is None:
         return {}
     if "sealed" in credential:
-        from shared.hub_sealed import sealed_scan_kwargs
+        from shared.sealed import sealed_scan_kwargs
 
         return sealed_scan_kwargs(credential["sealed"])
     if "encrypted" in credential:
