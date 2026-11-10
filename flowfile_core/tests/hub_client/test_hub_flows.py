@@ -202,7 +202,7 @@ def user_id(api) -> int:
 
 
 @pytest.fixture
-def shared_core(store, hub, monkeypatch):
+def shared_core(store, hub, monkeypatch, tmp_path):
     """A multi-user core with two regular users, each signed in and connected to the fake hub.
 
     Only an administrator connects a server to a hub, so each is one while connecting and a regular user after.
@@ -211,6 +211,8 @@ def shared_core(store, hub, monkeypatch):
     under them are removed afterwards.
     """
     monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    monkeypatch.setenv("FLOWFILE_USER_DATA_DIR", str(tmp_path / "user_data"))
+    monkeypatch.setattr(storage, "_user_data_dir", tmp_path / "user_data")
     monkeypatch.setenv("JWT_SECRET_KEY", "hub-flows-test-secret")
     password = "hub-flows-test-password"
     people: dict[str, tuple[int, str]] = {}

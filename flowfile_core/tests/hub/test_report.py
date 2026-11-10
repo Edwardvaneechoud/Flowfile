@@ -14,12 +14,12 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogTable, FlowRegistration, FlowRun
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.flowfile.flow_graph import add_connection
-from flowfile_core.hub_client import report
 from flowfile_core.hub_client import client as hub_client
-from flowfile_core.hub_client import session
+from flowfile_core.hub_client import report, session
 from flowfile_core.routes import routes
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import NodeResult, RunInformation
+from shared.storage_config import storage
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA,
     add_test_catalog_writer,
@@ -207,11 +207,13 @@ class TestBuildRunReport:
     @pytest.mark.parametrize(
         "mode", ["server", "docker", None, "electron"], ids=["server", "docker", "no-mode", "electron"]
     )
-    def test_a_report_names_no_table_of_its_own_catalog_in_any_mode(self, monkeypatch, mode):
+    def test_a_report_names_no_table_of_its_own_catalog_in_any_mode(self, monkeypatch, mode, tmp_path):
         if mode is None:
             monkeypatch.delenv("FLOWFILE_MODE", raising=False)
         else:
             monkeypatch.setenv("FLOWFILE_MODE", mode)
+        # docker keeps catalog tables under the user data folder, whose default /data/user a runner cannot write
+        monkeypatch.setattr(storage, "_user_data_dir", tmp_path / "user_data")
         ns_id = create_test_namespace()
         seed = create_test_graph(flow_id=8108)
         add_test_manual_input(seed, CATALOG_SAMPLE_DATA, node_id=1)

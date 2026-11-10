@@ -25,6 +25,7 @@ from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.hub_client import session
 from shared import hub_node, hub_node_key, hub_tokens, issuer_tokens
+from shared.storage_config import storage
 from shared.tests import hub_join
 from shared.tests.hub_join import REVOKE_PATH, TOKEN_EXCHANGE, TOKEN_PATH, FakeJoinHub
 from shared.tests.hub_jwks import HubSigner
@@ -43,9 +44,12 @@ def bearer(token: str) -> dict:
 
 @pytest.fixture
 def node_file(tmp_path, monkeypatch):
-    """A server's storage dir of the test's own: docker mode, its own secure store, no hub settings in the variables,
-    and no hub list kept from an earlier test."""
+    """A server's storage dir of the test's own: docker mode, its own secure store and user data folder (docker's
+    default ``/data/user`` is not writable on a runner), no hub settings in the variables, and no hub list kept from an
+    earlier test."""
     monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    monkeypatch.setenv("FLOWFILE_USER_DATA_DIR", str(tmp_path / "user_data"))
+    monkeypatch.setattr(storage, "_user_data_dir", tmp_path / "user_data")
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-for-hub-sign-in-tests")
     for name in VARIABLES:
         monkeypatch.delenv(name, raising=False)
