@@ -179,38 +179,35 @@ class _RemoteRoute(APIRoute):
         return handler
 
 
-async def _remote_rows(
-    request: Request,
-    current_user=Depends(get_user_or_internal_service),
-    kernel_owner: int | None = Depends(kernel_owner_id),
-) -> None:
-    """Hand a metadata request that names a row of a remote catalog to that catalog (``table_sources.relayed``).
-
-    Every route of this router goes through it, so a remote table, flow or namespace has the detail, lineage, run
-    history, favourites, rename, delete and schedules a local one has, answered where its catalog's database is,
-    as the signed-in person. Left to the handlers here: the routes that read a table's data (``_READ_HERE``) and a
-    kernel's lookups, which the handlers answer from the remote catalog's rows themselves.
-    """
-    path = request.url.path
-    if kernel_owner is not None or getattr(current_user, "disabled", False) or path.endswith(_READ_HERE):
-        return
+async def relay_remote(request: Request, user_id: int, prefix: str) -> None:
+    """Hand a request that names a row of a remote catalog to that catalog (``table_sources.relayed``), as
+    ``user_id`` and on core's own route from ``prefix`` on; its answer is the route's (``_RemoteAnswer``)."""
     body = None
     if request.headers.get("content-type", "").startswith("application/json"):
         try:
             body = await request.json()
         except ValueError:
             body = None
+    path = f"{prefix}{request.url.path.split(prefix, 1)[1]}"
     answered = await run_in_threadpool(
-        table_sources.relayed,
-        current_user.id,
-        request.method,
-        f"/catalog{path.split('/catalog', 1)[1]}",
-        dict(request.query_params),
-        body,
+        table_sources.relayed, user_id, request.method, path, dict(request.query_params), body
     )
     if answered is not None:
         status, answer = answered
         raise _RemoteAnswer(Response(status_code=status) if answer is None else JSONResponse(answer, status))
+
+
+async def _remote_rows(
+    request: Request,
+    current_user=Depends(get_user_or_internal_service),
+    kernel_owner: int | None = Depends(kernel_owner_id),
+) -> None:
+    """Every route of this router goes through ``relay_remote``, so a remote table, flow or namespace has the detail,
+    run history, rename, delete and schedules a local one has, answered by its catalog as the signed-in person. Left
+    to the handlers here: the routes that read a table's data (``_READ_HERE``) and a kernel's lookups."""
+    read_here = request.url.path.endswith(_READ_HERE)
+    if kernel_owner is None and not getattr(current_user, "disabled", False) and not read_here:
+        await relay_remote(request, current_user.id, "/catalog")
 
 
 router = APIRouter(
