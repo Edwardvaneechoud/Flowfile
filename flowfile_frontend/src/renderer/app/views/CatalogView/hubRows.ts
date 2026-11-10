@@ -20,7 +20,9 @@ interface ChartedTable {
 export function chartSource(table: ChartedTable): VizSourceDescriptor {
   if (!isHubRow(table)) return { source_type: "table", table_id: table.id };
   const reference = table.qualified_name ?? table.full_table_name ?? table.name;
-  const quoted = reference.split(".").map((part) => (/^[a-zA-Z_]\w*$/.test(part) ? part : `"${part}"`));
+  const quoted = reference
+    .split(".")
+    .map((part) => (/^[a-zA-Z_]\w*$/.test(part) ? part : `"${part}"`));
   return { source_type: "sql", sql_query: `SELECT * FROM ${quoted.join(".")}` };
 }
 

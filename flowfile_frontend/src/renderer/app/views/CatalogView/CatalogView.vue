@@ -264,20 +264,20 @@
           @edits-saved="catalogStore.handleTableEdited($event)"
           @create-viz="openCreateViz($event)"
         />
-        <!-- A flow published on the hub: its versions, and Open as Open Flow → Hub opens it -->
+        <!-- A flow published on the hub, where this core computes nothing: its versions alone -->
         <HubFlowDetailPanel
-          v-else-if="selectedHubFlow"
+          v-else-if="selectedHubFlow && !computes"
           :flow="selectedHubFlow"
           :place="selectedHubFlowRoot?.place ?? null"
           :schema-path="selectedHubFlowSchema"
           @close="handleCloseDetail"
           @open="selectedHubFlow && openHubFlowInDesigner(selectedHubFlow, $event)"
         />
-        <!-- Flow detail view -->
+        <!-- Flow detail view; a hub flow's is the same page with its versions and their Open on it -->
         <FlowDetailPanel
-          v-else-if="catalogStore.selectedFlow"
-          :flow="catalogStore.selectedFlow"
-          :artifacts="catalogStore.flowArtifacts"
+          v-else-if="shownFlow"
+          :flow="shownFlow"
+          :artifacts="selectedHubFlow ? [] : catalogStore.flowArtifacts"
           :focus-runs="flowDetailFocusRuns"
           @runs-focused="flowDetailFocusRuns = false"
           @close="handleCloseDetail"
@@ -300,7 +300,17 @@
           @select-schedule="selectSchedule"
           @recover-from-snapshot="openRunSnapshot($event)"
           @open-snapshot="openRunSnapshot($event)"
-        />
+        >
+          <template v-if="selectedHubFlow" #remote>
+            <HubFlowDetailPanel
+              embedded
+              :flow="selectedHubFlow"
+              :place="selectedHubFlowRoot?.place ?? null"
+              :schema-path="selectedHubFlowSchema"
+              @open="selectedHubFlow && openHubFlowInDesigner(selectedHubFlow, $event)"
+            />
+          </template>
+        </FlowDetailPanel>
         <!-- Run history overview -->
         <RunOverviewPanel
           v-else-if="catalogStore.activeTab === 'runs'"
@@ -953,7 +963,7 @@ const artifactMenuOptions = computed<ContextMenuOption[]>(() => [
   { label: "Delete model", action: "delete", danger: true },
 ]);
 
-// Right-click context menu for catalog flows; a hub flow has no run history here, the hub keeps its runs.
+// Right-click context menu for catalog flows; a hub flow's run history is on its page where this core computes.
 const flowMenu = ref<{ flow: FlowRegistration; x: number; y: number } | null>(null);
 const flowMenuOptions = computed<ContextMenuOption[]>(() => {
   const flow = flowMenu.value?.flow;
@@ -964,7 +974,12 @@ const flowMenuOptions = computed<ContextMenuOption[]>(() => {
       action: "open",
       disabled: flow.latest_version == null,
     };
-    return [...(computes ? [open] : []), { label: "Flow overview", action: "view" }];
+    const runs = { label: "Run history", action: "runs" };
+    return [
+      ...(computes ? [open] : []),
+      { label: "Flow overview", action: "view" },
+      ...(computes ? [runs] : []),
+    ];
   }
   return [
     { label: "Open flow in editor", action: "open", disabled: !flow?.file_exists },
@@ -981,6 +996,7 @@ const selectedHubFlowId = ref<number | null>(null);
 const selectedHubFlow = computed(() =>
   selectedHubFlowId.value === null ? null : flowInTree(catalogStore.tree, selectedHubFlowId.value),
 );
+const shownFlow = computed(() => selectedHubFlow.value ?? catalogStore.selectedFlow);
 const selectedHubFlowRoot = computed(() =>
   selectedHubFlow.value?.namespace_id != null
     ? rootOf(catalogStore.tree, selectedHubFlow.value.namespace_id)
@@ -1973,6 +1989,10 @@ function applyRouteToStore() {
         catalogStore.clearTableSelection();
         catalogStore.clearArtifactSelection();
         catalogStore.clearScheduleSelection();
+        if (computes) {
+          catalogStore.loadRuns(flowId);
+          catalogStore.loadFlowSchedules(flowId);
+        }
       }
     } else if (flowId !== null) {
       if (flowId !== catalogStore.selectedFlowId) {

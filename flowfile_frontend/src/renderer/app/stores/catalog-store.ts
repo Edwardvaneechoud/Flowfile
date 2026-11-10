@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import type { AxiosRequestConfig } from "axios";
 import { CatalogApi } from "../api/catalog.api";
 import { ARTIFACT_VERSIONS_PAGE_SIZE } from "../views/CatalogView/artifactVersions";
+import { flowInTree } from "../views/CatalogView/hubRows";
 import setupService from "../services/setup.service";
 import type {
   ActiveFlowRun,
@@ -348,7 +349,7 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     async toggleFavorite(flowId: number) {
-      const flow = this.allFlows.find((f) => f.id === flowId);
+      const flow = this.allFlows.find((f) => f.id === flowId) ?? flowInTree(this.tree, flowId);
       if (!flow) return;
       try {
         if (flow.is_favorite) {

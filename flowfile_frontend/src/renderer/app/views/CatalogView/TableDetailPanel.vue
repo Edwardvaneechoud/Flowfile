@@ -40,7 +40,11 @@
           <i class="fa-solid fa-code"></i>
           Query table
         </button>
-        <button class="action-btn-lg" data-testid="hub-create-viz" @click="emit('createViz', table)">
+        <button
+          class="action-btn-lg"
+          data-testid="hub-create-viz"
+          @click="emit('createViz', table)"
+        >
           <i class="fa-solid fa-chart-column"></i>
           New visualization
         </button>

@@ -24,7 +24,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client import client, session
 from flowfile_core.schemas import input_schema
-from tests.hub_client.conftest import HUB_URL, INFO, FakeHubWithCatalog
+from tests.hub_client.conftest import HUB_URL, INFO, NEVER_RUNS, FakeHubWithCatalog
 
 CONNECT = {"hub_url": HUB_URL, "username": "ana", "password": "s3cret", "device_name": "ana-laptop"}
 SHARED = {"is_owner": False, "access_level": "use", "shared_by": "bob"}
@@ -386,12 +386,48 @@ def test_a_hub_flows_detail_is_the_hubs_own_answer_through_cores_own_address(con
     assert connected.get("/catalog/flows/-999").json() == {"detail": "Flow not found"}
 
 
-def test_a_request_naming_a_hub_row_in_its_body_alone_is_asked_of_the_hub(connected, hub):
-    resp = connected.post("/catalog/schedules", json={"registration_id": -201, "schedule_type": "interval"})
-    assert resp.status_code == 201
-    assert resp.json() == {
-        "id": -7, "hub_id": 7, "source": "hub", "registration_id": -201, "schedule_type": "interval"
-    }
+def _flow_with_schedule(hub) -> tuple[int, dict]:
+    """A flow on the hub and a schedule of it; the flow's row id here and the schedule as the hub keeps it."""
+    flow = hub.seed_flow(_seed(hub)["raw"], "orders-clean")
+    schedule = {"id": 7, "registration_id": flow["registration_id"], "schedule_type": "interval", "enabled": True}
+    hub.schedules.append(schedule)
+    return -flow["registration_id"], schedule
+
+
+def test_a_hub_flows_schedules_are_listed_paused_resumed_and_removed_on_the_hub(connected, hub):
+    row, schedule = _flow_with_schedule(hub)
+    listed = connected.get("/catalog/schedules", params={"registration_id": row})
+    assert listed.status_code == 200
+    assert listed.json() == [
+        {"id": -7, "hub_id": 7, "source": "hub", "registration_id": row, "schedule_type": "interval", "enabled": True}
+    ]
+    assert hub.catalog_calls[-1] == ("/catalog/schedules", f"registration_id={-row}")
+    paused = connected.put("/catalog/schedules/-7", json={"enabled": False})
+    assert paused.status_code == 200 and paused.json()["enabled"] is False and schedule["enabled"] is False
+    resumed = connected.put("/catalog/schedules/-7", json={"enabled": True})
+    assert resumed.status_code == 200 and schedule["enabled"] is True
+    removed = connected.delete("/catalog/schedules/-7")
+    assert removed.status_code == 204 and hub.schedules == []
+    assert connected.get("/catalog/schedules/-7").status_code == 404
+
+
+def test_a_hub_flow_is_favourited_and_unfavourited_on_the_hub(connected, hub):
+    row, _ = _flow_with_schedule(hub)
+    favourite = connected.post(f"/catalog/flows/{row}/favorite")
+    assert favourite.status_code == 201 and favourite.json()["registration_id"] == row
+    assert connected.delete(f"/catalog/flows/{row}/favorite").status_code == 204
+    assert hub.calls[-1] == ("DELETE", f"/catalog/flows/{-row}/favorite")
+
+
+def test_running_a_hub_flow_now_and_a_new_schedule_of_it_are_refused_by_the_hub_not_here(connected, hub):
+    """The hub answers neither core route today, so the refusal a person reads is the hub's own sentence."""
+    row, _ = _flow_with_schedule(hub)
+    run = connected.post(f"/catalog/flows/{row}/run")
+    assert run.status_code == 403 and run.json() == {"detail": NEVER_RUNS}
+    assert hub.calls[-1] == ("POST", f"/catalog/flows/{-row}/run")
+    made = connected.post("/catalog/schedules", json={"registration_id": row, "schedule_type": "interval"})
+    assert made.status_code == 403 and made.json() == {"detail": NEVER_RUNS}
+    assert hub.calls[-1] == ("POST", "/catalog/schedules")
 
 
 def test_the_catalog_routes_that_name_no_hub_row_stay_local(connected, hub):

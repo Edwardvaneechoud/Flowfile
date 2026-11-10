@@ -186,6 +186,7 @@ class FakeHub:
 
 
 _STAMP = "2026-11-01T12:00:00Z"
+NEVER_RUNS = "The hub never runs, schedules or computes; run this on a compute node."
 _LOCAL_ONLY = {"source", "hub_id", "hub_namespace_id"}
 
 
@@ -222,6 +223,7 @@ class FakeHubWithCatalog(FakeHub):
         self._vends = 0
         self.tree_answer: list | None = None
         self.runs: list[dict] = []
+        self.schedules: list[dict] = []
 
     def seed_catalog(self, name: str, **fields) -> dict:
         """A root namespace (a catalog) on the hub."""
@@ -321,13 +323,20 @@ class FakeHubWithCatalog(FakeHub):
         table favourite, and the run history of a registration."""
         if path == "/catalog/runs":
             return httpx.Response(200, json={"items": self.runs, "total": len(self.runs)})
-        if path == "/catalog/schedules":
-            return httpx.Response(201, json={"id": 7, **body})
         parts = path.split("/")
+        if parts[2] == "schedules":
+            return self._schedule_row(method, parts[3:], body)
         if parts[2] == "flows":
             flow = next((f for f in self.flows if str(f["registration_id"]) == parts[3]), None)
             if flow is None:
                 return httpx.Response(404, json={"detail": "Flow not found"})
+            if parts[4:] == ["run"]:
+                return httpx.Response(403, json={"detail": NEVER_RUNS})
+            if parts[4:] == ["favorite"] and method == "DELETE":
+                return httpx.Response(204)
+            if parts[4:] == ["favorite"]:
+                row = {"id": 3, "user_id": 1, "registration_id": flow["registration_id"], "created_at": _STAMP}
+                return httpx.Response(201, json=row)
             return httpx.Response(200, json={"id": flow["registration_id"], **flow})
         table = next((t for t in self.tables if str(t["id"]) == parts[3]), None) if parts[2] == "tables" else None
         if table is None:
@@ -340,6 +349,23 @@ class FakeHubWithCatalog(FakeHub):
         if method == "PUT":
             table.update(body)
         return httpx.Response(200, json=table)
+
+    def _schedule_row(self, method: str, rest: list[str], body) -> httpx.Response:
+        """Core's schedule routes as the hub answers them from its own schedules: listed, paused or resumed by
+        ``enabled`` and removed; one is never made (``POST /catalog/schedules``) or run now here."""
+        if method == "POST":
+            return httpx.Response(403, json={"detail": NEVER_RUNS})
+        if not rest:
+            return httpx.Response(200, json=self.schedules)
+        schedule = next((s for s in self.schedules if str(s["id"]) == rest[0]), None)
+        if schedule is None:
+            return httpx.Response(404, json={"detail": "Schedule not found"})
+        if method == "DELETE":
+            self.schedules.remove(schedule)
+            return httpx.Response(204)
+        if method == "PUT":
+            schedule.update(body)
+        return httpx.Response(200, json=schedule)
 
     def _root(self, namespace_id: int) -> dict | None:
         namespace = next((ns for ns in self.namespaces if ns["id"] == namespace_id), None)
@@ -444,7 +470,7 @@ class FakeHubWithCatalog(FakeHub):
             return httpx.Response(200, json={"table": table, "warnings": []})
         if path == "/catalog/namespaces/tree":
             return httpx.Response(200, json=self.tree() if self.tree_answer is None else self.tree_answer)
-        if path.startswith(("/catalog/tables/", "/catalog/flows/")) or path in ("/catalog/runs", "/catalog/schedules"):
+        if path.startswith(("/catalog/tables/", "/catalog/flows/", "/catalog/schedules")) or path == "/catalog/runs":
             body = json.loads(request.content) if request.content else None
             return self._catalog_row(request.method, path, body)
         if path == "/catalog/namespaces":

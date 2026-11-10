@@ -19,7 +19,7 @@
           </template>
           <template v-else>
             <h2>{{ flow.name }}</h2>
-            <button class="btn-icon-inline" title="Rename" @click="startRename">
+            <button v-if="!remote" class="btn-icon-inline" title="Rename" @click="startRename">
               <i class="fa-solid fa-pen"></i>
             </button>
             <SharedBadge :access="flow.access" />
@@ -29,7 +29,7 @@
       </div>
       <div class="header-actions">
         <button
-          v-if="flow.file_exists && !isFlowRunning"
+          v-if="hasFile && !isFlowRunning"
           class="btn btn-success btn-sm"
           @click="$emit('runFlow', flow.id)"
         >
@@ -37,7 +37,7 @@
           Run Flow
         </button>
         <button
-          v-else-if="isFlowRunning"
+          v-else-if="!remote && isFlowRunning"
           class="btn btn-danger btn-sm"
           @click="$emit('cancelFlowRun', flow.id)"
         >
@@ -45,7 +45,7 @@
           Cancel Run
         </button>
         <button
-          v-if="flow.file_exists"
+          v-if="hasFile"
           class="btn btn-primary btn-sm"
           @click="$emit('openFlow', flow.flow_path)"
         >
@@ -53,7 +53,7 @@
           Open in Designer
         </button>
         <button
-          v-if="flow.file_exists"
+          v-if="hasFile"
           class="btn btn-secondary btn-sm"
           title="Open in the designer with the notebook, where edits sync back to the canvas"
           data-testid="flow-modify-in-notebook"
@@ -62,12 +62,7 @@
           <i class="fa-solid fa-book"></i>
           Modify in notebook
         </button>
-        <el-dropdown
-          v-if="flow.file_exists"
-          trigger="click"
-          placement="bottom-start"
-          @command="copyAs"
-        >
+        <el-dropdown v-if="hasFile" trigger="click" placement="bottom-start" @command="copyAs">
           <button
             class="btn btn-secondary btn-sm"
             :disabled="copying"
@@ -100,7 +95,7 @@
           {{ flow.is_favorite ? "Favorited" : "Favorite" }}
         </button>
         <button
-          v-if="canShare(flow)"
+          v-if="!remote && canShare(flow)"
           class="action-btn-lg"
           title="Share flow"
           @click="showShareDialog = true"
@@ -109,7 +104,7 @@
           Share
         </button>
         <button
-          v-if="canManage(flow)"
+          v-if="!remote && canManage(flow)"
           class="btn btn-danger btn-sm"
           title="Delete flow"
           @click="$emit('deleteFlow', flow.id)"
@@ -129,7 +124,7 @@
     />
 
     <!-- File missing banner -->
-    <div v-if="!flow.file_exists" class="missing-banner">
+    <div v-if="!remote && !flow.file_exists" class="missing-banner">
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div>
         <strong>Flow file not found</strong>
@@ -149,6 +144,8 @@
     </div>
 
     <!-- Metadata Grid -->
+    <slot name="remote" />
+
     <div class="meta-grid">
       <div class="meta-card">
         <span class="meta-label">Total Runs</span>
@@ -194,7 +191,7 @@
       persist-key="flow.schedules"
       :count="catalogStore.flowSchedules.length"
     >
-      <template v-if="flow.file_exists" #actions>
+      <template v-if="hasFile" #actions>
         <el-button size="small" type="primary" @click="$emit('addSchedule', flow.id)">
           <i class="fa-solid fa-plus" /> Add
         </el-button>
@@ -234,7 +231,7 @@
         v-else
         :schedules="catalogStore.flowSchedules"
         :show-flow-column="false"
-        :disable-run-now="isFlowRunning"
+        :disable-run-now="remote || isFlowRunning"
         :is-running-fn="isScheduleRunning"
         :save-description="onSaveDescription"
         @select-schedule="$emit('selectSchedule', $event)"
@@ -246,7 +243,7 @@
     </CollapsibleSection>
 
     <!-- Expose as API -->
-    <ApiEndpointPanel :flow="flow" />
+    <ApiEndpointPanel v-if="!remote" :flow="flow" />
 
     <!-- Data Lineage -->
     <CollapsibleSection
@@ -371,6 +368,7 @@ import ApiEndpointPanel from "./ApiEndpointPanel.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { isHubRow } from "./hubRows";
 
 const catalogStore = useCatalogStore();
 const showShareDialog = ref(false);
@@ -403,6 +401,11 @@ const emit = defineEmits([
 ]);
 
 const runHistorySection = ref<HTMLElement | null>(null);
+
+// A flow of a remote catalog has this page through the same catalog routes, which its catalog answers; what
+// needs the flow's file here, or a route its catalog does not answer (run now, a new schedule), is left out.
+const remote = computed(() => isHubRow(props.flow));
+const hasFile = computed(() => !remote.value && props.flow.file_exists);
 
 const COPY_OPTIONS: { format: FlowCodeFormat; label: string }[] = [
   { format: "yaml", label: "Flow file (YAML)" },

@@ -1,11 +1,11 @@
 <template>
   <div class="hub-flow-detail" data-testid="hub-flow-detail">
-    <button class="back-btn" @click="$emit('close')">
+    <button v-if="!embedded" class="back-btn" @click="$emit('close')">
       <i class="fa-solid fa-arrow-left"></i> Back
     </button>
     <div class="detail-header">
       <div class="header-main">
-        <div class="header-name">
+        <div v-if="!embedded" class="header-name">
           <h2>{{ flow.name }}</h2>
           <span class="resource-badge" title="This flow is published on the hub">
             <i class="fa-solid fa-building"></i>
@@ -71,6 +71,8 @@ const props = defineProps<{
   place: string | null;
   // The flow's `catalog.schema` on the hub.
   schemaPath: string;
+  // Inside the flow's own page, which has the name and Back: only where it lives, its versions and Open.
+  embedded?: boolean;
 }>();
 
 const emit = defineEmits<{
