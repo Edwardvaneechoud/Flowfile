@@ -10,6 +10,7 @@ wired. The dependency points from the remote catalog's client to this module, ne
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -17,7 +18,7 @@ import polars as pl
 
 from flowfile_core.catalog.exceptions import TableNotFoundError
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, resolve_for_namespace, resolve_for_table
-from flowfile_core.catalog.text_utils import reads_other
+from flowfile_core.catalog.text_utils import plain_reference, reads_other
 
 if TYPE_CHECKING:
     from flowfile_core.database.models import CatalogTable
@@ -139,25 +140,78 @@ def row_targets(
 def remote_sql_tables(query: str, user_id: int | None, own: set[str]) -> dict[str, CatalogTableOut]:
     """The tables of the remote catalogs by their SQL names, for a ``query`` that reads a name ``own`` does not hold.
 
-    ``own`` are the names this install's catalog answers, which win. A remote table is named as a local one is:
-    ``catalog.schema.table`` always, ``schema.table`` and the bare name where the remote catalogs have one table by
-    it. A query over this install's own tables asks no remote catalog and gets none.
+    ``own`` are the names this install's catalog answers, which win. A query over this install's own tables asks no
+    remote catalog and gets none.
     """
     if user_id is None or not _remotes or not reads_other(query, own):
         return {}
+    listed = [root for catalog in _remotes.values() for root in catalog.tree(user_id)]
+    return {name: table for name, table in _sql_names(listed).items() if name not in own}
+
+
+def _sql_names(listed: list[NamespaceTree]) -> dict[str, CatalogTableOut]:
+    """Each SQL name of the tables in ``listed`` with its row, named as a local table is: ``catalog.schema.table``
+    always, ``schema.table`` and the bare name where ``listed`` has one table by it."""
     full: dict[str, CatalogTableOut] = {}
     short: dict[str, dict[int, CatalogTableOut]] = {}
-    for catalog in _remotes.values():
-        for root in catalog.tree(user_id):
-            for holder in (root, *root.children):
-                for table in holder.tables:
-                    parts = [root.name, table.name] if holder is root else [root.name, holder.name, table.name]
-                    full[".".join(parts)] = table
-                    for name in (".".join(parts[1:]), table.name):
-                        short.setdefault(name, {})[table.id] = table
+    for root in listed:
+        for holder in (root, *root.children):
+            for table in holder.tables:
+                parts = [root.name, table.name] if holder is root else [root.name, holder.name, table.name]
+                full[".".join(parts)] = table
+                for name in (".".join(parts[1:]), table.name):
+                    short.setdefault(name, {})[table.id] = table
     names = {name: next(iter(found.values())) for name, found in short.items() if len(found) == 1}
     names.update(full)
-    return {name: table for name, table in names.items() if name not in own}
+    return names
+
+
+LISTED_SECONDS = 10
+_listed: dict[int, tuple[float, list[NamespaceTree]]] = {}
+
+
+def _kernel_tree(user_id: int) -> list[NamespaceTree]:
+    """The remote catalogs of ``user_id`` for a kernel's lookups, kept ``LISTED_SECONDS``: one notebook cell asks
+    for them several times in a row."""
+    held = _listed.get(user_id)
+    if held is None or time.monotonic() - held[0] >= LISTED_SECONDS:
+        listed = [root for catalog in _remotes.values() for root in catalog.tree(user_id)]
+        held = _listed[user_id] = (time.monotonic(), listed)
+    return held[1]
+
+
+def kernel_namespaces(user_id: int, parent_id: int | None) -> list[NamespaceTree]:
+    """The remote catalogs as a kernel of ``user_id`` lists them after this install's own (``parent_id`` ``None``),
+    or the schemas of the remote catalog whose row id is ``parent_id``."""
+    listed = _kernel_tree(user_id)
+    if parent_id is None:
+        return listed
+    return [schema for root in listed if root.id == parent_id for schema in root.children]
+
+
+def kernel_tables(user_id: int, namespace_id: int) -> list[CatalogTableOut]:
+    """The tables of the remote namespace whose row id is ``namespace_id`` as a kernel lists them: each a view.
+
+    A kernel holds no credential, and reads a view through a file core has the worker write
+    (``materialize_virtual_table``): that is how a table on a remote catalog's storage reaches a notebook cell.
+    """
+    holders = (holder for root in _kernel_tree(user_id) for holder in (root, *root.children))
+    return [
+        table.model_copy(update={"table_type": "virtual"})
+        for holder in holders
+        if holder.id == namespace_id
+        for table in holder.tables
+    ]
+
+
+def kernel_table(user_id: int, reference: str, namespace_id: int | None = None) -> CatalogTableOut | None:
+    """The remote table a notebook cell names by ``reference``, as ``kernel_tables`` lists it; ``None`` when the
+    remote catalogs hold none by that name. With the row id of a remote namespace, the table of that name in it."""
+    name = plain_reference(reference)
+    if namespace_id is not None:
+        return next((table for table in kernel_tables(user_id, namespace_id) if table.name == name), None)
+    found = _sql_names(_kernel_tree(user_id)).get(name)
+    return found.model_copy(update={"table_type": "virtual"}) if found is not None else None
 
 
 def table_target(
