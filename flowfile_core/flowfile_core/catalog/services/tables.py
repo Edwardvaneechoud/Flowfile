@@ -815,9 +815,12 @@ class TableService:
         partition_columns: list[str] | None = None,
         scd2_config: dict | None | object = _KEEP_SCD2,
         cdc_enabled_version: int | None = None,
+        data_changed: bool = True,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table **in-place**; with ``cdc_enabled_version`` the table is marked
-        change-tracked from that version, as ``enable_cdc`` marks it."""
+        change-tracked from that version, as ``enable_cdc`` marks it. ``data_changed`` false records what a
+        maintenance found (an optimize's or vacuum's new size): ``updated_at`` is kept and no table trigger fires, as
+        ``_update_table_size`` does for a local table."""
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
@@ -873,11 +876,14 @@ class TableService:
         if description is not None:
             table.description = description
 
+        if not data_changed:
+            flag_modified(table, "updated_at")
         table = self.repo.update_table(table)
         if cdc_enabled_version is not None:
             table = self.repo.set_cdc_enabled(table.id, cdc_enabled_version)
 
-        self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
+        if data_changed:
+            self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
         _project_sync_tables(table.owner_id)
 
         return self.table_to_out(table)
@@ -940,7 +946,7 @@ class TableService:
 
     def _update_table_size(self, table: CatalogTable, size_bytes: int | None, user_id: int | None = None) -> None:
         """Persist a recomputed size after a maintenance op, on the catalog that keeps the row."""
-        if size_bytes is None or table_sources.write_row(table, user_id, size_bytes=size_bytes):
+        if size_bytes is None or table_sources.write_row(table, user_id, size_bytes=size_bytes, data_changed=False):
             return
         table.size_bytes = size_bytes
         # Not a data change: table-trigger schedules fire on updated_at, so suppress its onupdate.

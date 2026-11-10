@@ -268,10 +268,10 @@ def row_targets(
 
 def write_row(table: CatalogTable | CatalogTableOut, user_id: int | None, **facts) -> bool:
     """Write what an operation on the storage of ``table`` found (``schema_columns``, ``row_count``, ``column_count``,
-    ``size_bytes``, one left out sent as the row has it, and ``cdc_enabled_version``, the version its change feed was
-    turned on at) back to its row in the remote catalog that keeps it, on that catalog's table refresh route;
-    ``False`` for a row of this install's own, which its caller writes. A refused row is a ``ValueError``: the
-    operation is already done on storage."""
+    ``size_bytes``, one left out sent as the row has it, ``cdc_enabled_version``, the version its change feed was
+    turned on at, and ``data_changed`` false for what a maintenance found) back to its row in the remote catalog that
+    keeps it, on that catalog's table refresh route; ``False`` for a row of this install's own, which its caller
+    writes. A refused row is a ``ValueError``: the operation is already done on storage."""
     if not is_remote(getattr(table, "source", None)):
         return False
     body = {

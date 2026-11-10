@@ -330,7 +330,9 @@ class CatalogTableRefreshRequest(BaseModel):
     that mutate an existing Delta directory: the kernel sends back the new
     row_count / size_bytes / schema so Core's record stays consistent. A core that
     turned on the table's change feed sends ``cdc_enabled_version``, the version it
-    was turned on at, which marks the table tracked.
+    was turned on at, which marks the table tracked. A core that optimized or vacuumed
+    the table sends ``data_changed`` false: its data did not change, so the table's
+    ``updated_at`` is kept and no table trigger fires, as for a local optimize.
     """
 
     table_path: str | None = None
@@ -341,6 +343,7 @@ class CatalogTableRefreshRequest(BaseModel):
     size_bytes: int | None = None
     description: str | None = None
     cdc_enabled_version: int | None = None
+    data_changed: bool = True
 
 
 class VirtualFlowTableCreate(BaseModel):

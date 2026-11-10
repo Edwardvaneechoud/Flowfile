@@ -58,6 +58,7 @@ def test_a_hub_table_is_optimized_on_this_cores_worker(api, hub, orders):
     assert table_id == orders["id"]
     assert facts["size_bytes"] == resp.json()["size_bytes"] == orders["size_bytes"]
     assert facts["row_count"] == 6 and "table_path" not in facts
+    assert facts["data_changed"] is False
     assert _hub_maintenance_calls(hub.fake) == []
 
 
@@ -76,6 +77,7 @@ def test_a_hub_table_is_vacuumed_on_this_cores_worker(api, hub, orders):
     assert len(_objects(orders)) == 1
     assert len(hub.fake.refreshed) == refreshes + 1
     assert hub.fake.refreshed[-1][1]["size_bytes"] == removed.json()["size_bytes"]
+    assert hub.fake.refreshed[-1][1]["data_changed"] is False
     assert _hub_maintenance_calls(hub.fake) == []
 
 

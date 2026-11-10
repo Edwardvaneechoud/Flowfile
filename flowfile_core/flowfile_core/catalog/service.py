@@ -973,6 +973,7 @@ class CatalogService:
         partition_columns: list[str] | None = None,
         scd2_config: dict | None | object = _KEEP_SCD2,
         cdc_enabled_version: int | None = None,
+        data_changed: bool = True,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table in-place, preserving its ID."""
         self._require_manage("catalog_table", table_id)
@@ -991,6 +992,7 @@ class CatalogService:
             partition_columns,
             scd2_config,
             cdc_enabled_version=cdc_enabled_version,
+            data_changed=data_changed,
         )
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:

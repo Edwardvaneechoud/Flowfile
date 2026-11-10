@@ -965,6 +965,7 @@ def refresh_table_metadata(
         column_count=body.column_count,
         size_bytes=body.size_bytes,
         cdc_enabled_version=body.cdc_enabled_version,
+        data_changed=body.data_changed,
     )
 
 
