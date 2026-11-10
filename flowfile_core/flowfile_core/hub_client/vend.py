@@ -21,6 +21,7 @@ for a server joined with keys and answers sealed the same way (``sealed_connecti
 """
 
 from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import polars as pl
@@ -29,6 +30,7 @@ from pydantic import SecretStr
 from flowfile_core.flowfile.execution.protocol import EncryptedCredential, SealedCredential
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.hub_client import catalog, client
+from flowfile_core.hub_client.catalog import HubNamespace
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnection,
@@ -245,6 +247,31 @@ def refusal_sentence(detail: str, status: int) -> str:
     return f"{REFUSED}: {detail}"
 
 
+@contextmanager
+def _hub_answers():
+    """The hub's refusals and silences as the one ``LookupError`` sentence a caller shows the person."""
+    try:
+        yield
+    except HubRefused as e:
+        if e.status == 401:
+            raise LookupError(catalog.NOT_CONNECTED) from e
+        raise LookupError(refusal_sentence(e.detail, e.status)) from e
+    except HubVersionRefused as e:
+        raise LookupError(refusal_sentence(e.detail, 426)) from e
+    except HubUnreachable as e:
+        raise LookupError(str(e)) from e
+
+
+def _usable(namespace: HubNamespace | None, missing: str) -> HubNamespace:
+    """``namespace`` when this Flowfile can use its tables, else the sentence why: ``missing`` when there is none."""
+    if namespace is None:
+        raise LookupError(f"{REFUSED}: {missing}")
+    refusal = catalog.unreachable(namespace.storage_uri, namespace.full_name)
+    if refusal is not None:
+        raise LookupError(refusal)
+    return namespace
+
+
 def request(
     user_id: int,
     run_id: str,
@@ -273,22 +300,17 @@ def request(
     """
     secrets = tuple(dict.fromkeys(secrets))
     connections = tuple(dict.fromkeys(connections))
-    try:
+    targets = tuple(dict.fromkeys(targets))
+    with _hub_answers():
         hub_url, access_token = catalog.signed_in(user_id)
         found = catalog.namespaces(hub_url, access_token) if readers | writers else {}
         by_name = {namespace.full_name: namespace for namespace in found.values()}
         ids: dict[str, int] = {}
         bases: dict[str, str] = {}
         for name in sorted(readers | writers):
-            namespace = by_name.get(name)
-            if namespace is None:
-                raise LookupError(f"{REFUSED}: the hub lists no catalog schema {name} for this account")
-            refusal = catalog.unreachable(namespace.storage_uri, namespace.full_name)
-            if refusal is not None:
-                raise LookupError(refusal)
+            namespace = _usable(by_name.get(name), f"the hub lists no catalog schema {name} for this account")
             ids[name] = namespace.id
             bases[name] = namespace.storage_uri.rstrip("/")
-        targets = tuple(dict.fromkeys(targets))
         answer = client.vend(
             hub_url,
             access_token,
@@ -300,14 +322,39 @@ def request(
             secrets=secrets,
             connections=connections,
         )
-    except HubRefused as e:
-        if e.status == 401:
-            raise LookupError(catalog.NOT_CONNECTED) from e
-        raise LookupError(refusal_sentence(e.detail, e.status)) from e
-    except HubVersionRefused as e:
-        raise LookupError(refusal_sentence(e.detail, 426)) from e
-    except HubUnreachable as e:
-        raise LookupError(str(e)) from e
+    return _run_vend(run_id, answer, bases, ids, targets, secrets, connections)
+
+
+def request_for_tables(user_id: int, run_id: str, tables: Iterable[dict]) -> RunVend:
+    """Ask the hub, through ``user_id``'s hub session, for one read of ``tables`` outside a run: the Catalog page's
+    preview, a notebook cell's read, the SQL editor and a visual.
+
+    ``tables`` are rows the hub answered (``tables.readable``), each carrying the hub's id of its namespace, so the
+    credential is for the schema each table lives in. A run names a namespace by its qualified name; this call does
+    not, since namespace names are free text and ``a.b`` + ``c`` names the same ``catalog.schema`` as ``a`` + ``b.c``.
+
+    Raises:
+        LookupError: As ``request`` does, the namespace named by the table it holds.
+    """
+    tables = list(tables)
+    with _hub_answers():
+        hub_url, access_token = catalog.signed_in(user_id)
+        found = catalog.namespaces(hub_url, access_token)
+        for table in tables:
+            _usable(found.get(table["namespace_id"]), f"the hub lists no catalog schema of {table['name']}")
+        answer = client.vend(hub_url, access_token, run_id, sorted({t["namespace_id"] for t in tables}), [])
+    return _run_vend(run_id, answer, {}, {}, (), (), ())
+
+
+def _run_vend(
+    run_id: str,
+    answer: dict,
+    bases: dict[str, str],
+    ids: dict[str, int],
+    targets: tuple[str, ...],
+    secrets: tuple[str, ...],
+    connections: tuple[tuple[str, str], ...],
+) -> RunVend:
     credentials = tuple(
         HubCredential(
             base_uri=credential["base_uri"].rstrip("/"),

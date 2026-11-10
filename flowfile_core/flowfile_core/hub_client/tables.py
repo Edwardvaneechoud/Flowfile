@@ -3,7 +3,8 @@ query of the SQL editor over it, a visual on such a query and a notebook cell's 
 
 A reader step names a table by its qualified name (``readable_named``); the Catalog page's preview, the SQL editor,
 a visual and a notebook cell name one by the hub's id on its row of the catalog tree (``readable``), and all take it
-the same way. Each of the last four asks the hub for one read of the tables' namespaces under a run id of its own
+the same way. Each of the last four asks the hub for one read of the tables it names (``vend.request_for_tables``,
+keyed by table, not by a namespace's name) under a run id of its own
 (``preview-…``, ``sql-…``, ``visual-…`` or ``notebook-…``, which the hub's vend ledger keeps), scans each table with
 that credential as a run's reader does (``RunVend.scan_delta``) and reads the rows on this machine's own worker. The
 credential lives for the call; a visual's plan carries it, encrypted, for a few minutes (``visual_source``), and a
@@ -104,7 +105,7 @@ def preview(user_id: int, hub_table_id: int, limit: int) -> CatalogTablePreview:
         ComputeError: The backend could not read the rows.
     """
     table = readable(user_id, hub_table_id)
-    vended = vend.request(user_id, f"{PREVIEW_RUN_PREFIX}{uuid.uuid4().hex}", {table["namespace_id"]}, set())
+    vended = vend.request_for_tables(user_id, f"{PREVIEW_RUN_PREFIX}{uuid.uuid4().hex}", [table])
     plan = vended.scan_delta(table["file_path"], user_id, _columns(table))
     backend = current_context().backend
     rows = head_rows(backend, plan, limit)
@@ -265,7 +266,7 @@ def snapshot(user_id: int, hub_table_id: int) -> CatalogTableMaterializeResult:
     try:
         table = readable(user_id, hub_table_id)
         run_id = f"{NOTEBOOK_RUN_PREFIX}{uuid.uuid4().hex}"
-        vended = vend.request(user_id, run_id, {table["namespace_id"]}, set())
+        vended = vend.request_for_tables(user_id, run_id, [table])
         plan = vended.scan_delta(table["file_path"], user_id, _columns(table))
     except LookupError as e:
         raise ValueError(str(e)) from e
@@ -297,7 +298,7 @@ def _plan(user_id: int, query: str, tables: dict[str, int], own: set[str], run_p
         raise ValueError(MIXED)
     found = {hub_id: readable(user_id, hub_id) for hub_id in set(tables.values())}
     run_id = f"{run_prefix}{uuid.uuid4().hex}"
-    vended = vend.request(user_id, run_id, {table["namespace_id"] for table in found.values()}, set())
+    vended = vend.request_for_tables(user_id, run_id, found.values())
     context = pl.SQLContext()
     for name, hub_id in tables.items():
         context.register(name, vended.scan_delta(found[hub_id]["file_path"], user_id, _columns(found[hub_id])))

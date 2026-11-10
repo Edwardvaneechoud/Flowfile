@@ -1214,3 +1214,77 @@ class TestKernelMountedFoldersDropped:
 
         command.downgrade(_get_alembic_config(), "034")
         assert "mounted_folders" in self._columns(db_path, "kernels")
+
+
+class TestFlowRunsRecordMigration:
+    """041 renames the run type ``hub`` to ``dispatched`` in stored rows, so old runs still read as ``FlowRunOut``."""
+
+    @staticmethod
+    def _run_types(db_path: Path) -> dict[str, str]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            rows = dict(conn.execute(text("SELECT flow_name, run_type FROM flow_runs")).all())
+        engine.dispose()
+        return rows
+
+    @staticmethod
+    def _overview_status(db_path: Path) -> int:
+        from types import SimpleNamespace
+
+        from fastapi.testclient import TestClient
+        from sqlalchemy.orm import sessionmaker
+
+        from flowfile_core import main
+        from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
+        from flowfile_core.database.connection import get_db
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        sessions = sessionmaker(bind=engine)
+
+        def _db():
+            db = sessions()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        user = SimpleNamespace(id=1, username="local_user", is_admin=True)
+        overrides = {get_db: _db, get_current_active_user: lambda: user, get_user_or_internal_service: lambda: user}
+        main.app.dependency_overrides.update(overrides)
+        try:
+            with TestClient(main.app) as client:
+                return client.get("/catalog/overview").status_code
+        finally:
+            for dependency in overrides:
+                main.app.dependency_overrides.pop(dependency, None)
+            engine.dispose()
+
+    def test_a_hub_run_at_040_reads_dispatched_and_the_overview_answers(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "040")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            for name, run_type in (("sent", "hub"), ("mine", "manual")):
+                conn.execute(
+                    text(
+                        "INSERT INTO flow_runs (flow_name, user_id, started_at, ended_at, success, nodes_completed, "
+                        "number_of_nodes, run_type) "
+                        "VALUES (:name, 1, '2026-11-01 00:00:00', '2026-11-01 00:01:00', 1, 1, 1, :run_type)"
+                    ),
+                    {"name": name, "run_type": run_type},
+                )
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        assert self._run_types(db_path) == {"sent": "dispatched", "mine": "manual"}
+        assert self._overview_status(db_path) == 200
+
+        command.downgrade(_get_alembic_config(), "040")
+        assert self._run_types(db_path) == {"sent": "hub", "mine": "manual"}
