@@ -23,7 +23,7 @@ for a server joined with keys and answers sealed the same way (``sealed_connecti
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import polars as pl
 from pydantic import SecretStr
@@ -154,6 +154,18 @@ class RunVend:
             options=dict(kwargs.get("storage_options") or {}),
             encrypted=provider.encrypted_credentials if provider is not None else "",
         )
+
+    def exchange_credentials(
+        self, uri: str, user_id: int | None
+    ) -> tuple[SealedCredential | None, EncryptedCredential | None]:
+        """The exchange store at ``uri`` as the run's backends open it: sealed to the run's servers when this vend is
+        sealed, and, on a machine that is no server of the hub, encrypted for the worker beside its core."""
+        from flowfile_core.flowfile.execution import registry
+
+        sealed = self.sealed_credential(uri) if self.targets else None
+        if node_name(registry.WORKER_BACKEND_ID) is not None:
+            return sealed, None
+        return sealed, (self.own or self).encrypted_credential(uri, user_id)
 
     def scan_delta(self, uri: str, user_id: int | None, schema: Mapping[str, pl.DataType]) -> pl.LazyFrame:
         """A lazy scan of the Delta table at ``uri`` with the run's credential, its plan holding no secret.
@@ -309,6 +321,40 @@ class _RunCatalog:
 
     def run_holds(self, run_id: str | None) -> bool:
         return held(run_id) is not None
+
+    def run_starts(self, start: table_sources.RunStart) -> RunVend:
+        """The run's one vend: its tables' credentials, the secrets and connections its steps use and the exchange
+        store, sealed to ``start.servers``. A machine that is no server of the hub also asks an unsealed vend for the
+        steps that run on the worker beside its core (``RunVend.own``). Held under the run's id."""
+        from flowfile_core.flowfile.execution import registry
+
+        def schemas(tables, writes: bool) -> set[str]:
+            return {name for name, written, _ in tables if written is writes}
+
+        run_vend = request(
+            start.user_id,
+            start.run_id,
+            schemas(start.tables, False),
+            schemas(start.tables, True),
+            targets=start.servers,
+            exchange=start.exchange,
+            secrets=sorted(start.secrets),
+            connections=sorted(start.connections),
+        )
+        beside = [table for table in start.tables if node_name(table[2]) is None]
+        if start.servers and node_name(registry.WORKER_BACKEND_ID) is None and (beside or start.exchange):
+            own = request(
+                start.user_id, start.run_id, schemas(beside, False), schemas(beside, True), exchange=start.exchange
+            )
+            run_vend = replace(run_vend, own=own)
+        hold(run_vend)
+        return run_vend
+
+    def run_grant(self, run_id: str | None) -> RunVend | None:
+        return held(run_id)
+
+    def run_ends(self, run_id: str) -> None:
+        release(run_id)
 
     def table_named(self, user_id: int | None, qualified_name: str) -> dict:
         """The hub's table ``qualified_name`` (``catalog.schema.table``, as a reader step names it), which must be a

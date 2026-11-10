@@ -18,6 +18,7 @@ from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
 from flowfile_core.auth import issuer_accounts
+from flowfile_core.catalog import table_sources
 from flowfile_core.configs import exchange_config, logger, settings
 from flowfile_core.configs.exchange_config import ExchangeConfig
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
@@ -322,10 +323,10 @@ def _release_boundary_inputs(node: FlowNode, edges: Sequence[BoundaryEdge]) -> N
 
 class ExecutionMixin(GraphMixinBase):
     @property
-    def hub_vend(self) -> vend.RunVend | None:
-        """What the hub vended to the running run, kept in ``hub_client`` under ``catalog_run_id``: read here for a
-        step's sealed secrets and by placement's sealing checks, never for a table's storage."""
-        return vend.held(self.catalog_run_id)
+    def hub_vend(self) -> Any | None:
+        """What the remote catalog gave the running run when it started (``table_sources.run_grant``): read here for
+        a step's sealed secrets and by placement's sealing checks, never for a table's storage."""
+        return table_sources.run_grant(self.catalog_run_id)
 
     # The running run's prefix in the exchange store; None between runs.
     exchange_run: ExchangeRun | None = None
@@ -1550,7 +1551,7 @@ class ExecutionMixin(GraphMixinBase):
             if not cloud_change_read:
                 if node.node_type != "catalog_reader" or not isinstance(settings, input_schema.NodeCatalogReader):
                     continue
-                if settings.source == "hub":
+                if table_sources.is_remote(settings.source):
                     continue
                 if not settings.sql_query and settings.delta_version is not None:
                     continue
@@ -1961,40 +1962,23 @@ class ExecutionMixin(GraphMixinBase):
         writers = {hub[node.node_id][0] for node in hub_nodes if hub[node.node_id][1]}
         names = {name for secret_names, _ in steps.values() for name in secret_names}
         refs = {ref for _, connection_refs in steps.values() for ref in connection_refs}
-        on_hub_server = vend.node_name(registry.WORKER_BACKEND_ID) is not None
-        beside = [node for node in hub_nodes if vend.node_name(policy.backend_for(node)) is None]
+        tables = tuple((*hub[node.node_id], policy.backend_for(node)) for node in hub_nodes)
+        start = table_sources.RunStart(
+            exchange_run.run_id, user_id, tables, tuple(sorted(names)), tuple(sorted(refs)), exchange, targets
+        )
         try:
-            run_vend = vend.request(
-                user_id,
-                exchange_run.run_id,
-                readers,
-                writers,
-                targets=targets,
-                exchange=exchange,
-                secrets=sorted(names),
-                connections=sorted(refs),
-            )
-            if exchange and targets:
-                exchange_run.sealed = run_vend.sealed_credential(exchange_run.hub_store.uri)
-            if targets and not on_hub_server and (beside or exchange):
-                own = vend.request(
-                    user_id,
-                    exchange_run.run_id,
-                    {hub[node.node_id][0] for node in beside if not hub[node.node_id][1]},
-                    {hub[node.node_id][0] for node in beside if hub[node.node_id][1]},
-                    exchange=exchange,
+            run_vend = table_sources.run_starts(start)
+            if exchange:
+                exchange_run.sealed, exchange_run.own = run_vend.exchange_credentials(
+                    exchange_run.hub_store.uri, user_id
                 )
-                run_vend = replace(run_vend, own=own)
-            if exchange and not on_hub_server:
-                unsealed = run_vend.own or run_vend
-                exchange_run.own = unsealed.encrypted_credential(exchange_run.hub_store.uri, user_id)
         except LookupError as e:
+            table_sources.run_ends(exchange_run.run_id)
             return [(node, str(e)) for node in sealed_nodes or hub_nodes or list(steps)]
         if targets:
             self.flow_logger.info(f"The hub sealed this run's credentials to {', '.join(targets)}")
         self.sealed_secret_steps = {node.node_id: tuple(step[0]) for node, step in steps.items() if step[0]} or None
         self.sealed_connection_steps = {node.node_id: tuple(step[1]) for node, step in steps.items() if step[1]} or None
-        vend.hold(run_vend)
         self.catalog_run_id = run_vend.run_id
         self.last_hub_vend = (run_vend.run_id, run_vend.vend_id)
         return None
@@ -2065,7 +2049,7 @@ class ExecutionMixin(GraphMixinBase):
         """
         if self.catalog_run_id != exchange_run.run_id:
             return
-        vend.release(exchange_run.run_id)
+        table_sources.run_ends(exchange_run.run_id)
         self.catalog_run_id = None
         self.sealed_secret_steps = None
         self.sealed_connection_steps = None

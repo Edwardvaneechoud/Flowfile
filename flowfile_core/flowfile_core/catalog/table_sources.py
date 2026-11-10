@@ -10,21 +10,48 @@ wired. The dependency points from the remote catalog's client to this module, ne
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 import polars as pl
 
+from flowfile_core.auth import issuer_accounts
 from flowfile_core.catalog.exceptions import TableNotFoundError
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, resolve_for_namespace, resolve_for_table
 from flowfile_core.catalog.text_utils import plain_reference, reads_other
+from flowfile_core.configs.settings import is_server_mode
 
 if TYPE_CHECKING:
     from flowfile_core.database.models import CatalogTable
     from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceTree
 
 LOCAL = "local"
+ON_THIS_COMPUTER = "On this computer"
+ON_THIS_SERVER = "On this server"
+_REMOTE_ID = re.compile(r"-\d+")
+
+
+@dataclass(frozen=True)
+class RunStart:
+    """What a run tells the remote catalog when it starts, so the catalog's client asks its side once for all of it.
+
+    ``tables`` are the schemas (``catalog.schema``) the run's steps read and write, each with whether the step writes
+    and the backend it runs on. ``secrets`` and ``connections`` (a kind and a name each) are the stored ones its steps
+    use that the catalog's side keeps, ``exchange`` whether the run needs the exchange store that side set, and
+    ``servers`` the names of the servers that open what the run is given themselves; empty when the run's own worker
+    opens it.
+    """
+
+    run_id: str
+    user_id: int | None
+    tables: tuple[tuple[str, bool, str], ...] = ()
+    secrets: tuple[str, ...] = ()
+    connections: tuple[tuple[str, str], ...] = ()
+    exchange: bool = False
+    servers: tuple[str, ...] = ()
 
 
 class RemoteCatalog(Protocol):
@@ -48,6 +75,15 @@ class RemoteCatalog(Protocol):
     def run_holds(self, run_id: str | None) -> bool:
         """Whether the run ``run_id`` was given credentials for this catalog's tables."""
 
+    def run_starts(self, start: RunStart) -> Any:
+        """Ask for what the run ``start`` describes uses, keep it under the run's id, and answer it."""
+
+    def run_grant(self, run_id: str | None) -> Any | None:
+        """What the run ``run_id`` was given when it started; ``None`` for a run that asked nothing, or ended."""
+
+    def run_ends(self, run_id: str) -> None:
+        """Forget what the run ``run_id`` was given."""
+
     def table(self, user_id: int | None, table_id: int) -> CatalogTableOut:
         """The row of the table a read outside a run names by ``table_id``, the id its row carries in this install."""
 
@@ -58,6 +94,11 @@ class RemoteCatalog(Protocol):
     def tree(self, user_id: int | None) -> list[NamespaceTree]:
         """The catalogs ``user_id`` sees there, each with its schemas and their tables; empty when it cannot be
         asked."""
+
+    def request(self, user_id: int | None, method: str, path: str, params: dict | None, body) -> tuple[int, object]:
+        """A metadata request on a row this catalog keeps, sent to its same route (``path`` is core's own catalog
+        route, ids as this install shows them) as ``user_id``: its status and its answer, ``None`` for an empty one.
+        Never raises: a catalog that cannot be asked answers a status and a ``detail`` of its client's own."""
 
 
 _remotes: dict[str, RemoteCatalog] = {}
@@ -91,6 +132,71 @@ def remote_of(table_id: int) -> RemoteCatalog | None:
     remote catalog.
     """
     return next(iter(_remotes.values()), None) if table_id < 0 else None
+
+
+def run_starts(start: RunStart) -> Any:
+    """Tell the remote catalog the run ``start`` describes begins: it asks its side for what the run uses, keeps the
+    answer under the run's id until ``run_ends``, and answers it (``run_grant``).
+
+    Raises:
+        LookupError: The catalog's sentence when it cannot be asked or refuses; no remote catalog in this process.
+    """
+    catalog = next(iter(_remotes.values()), None)
+    if catalog is None:
+        raise LookupError("This Flowfile has no remote catalog to ask for what this run uses")
+    return catalog.run_starts(start)
+
+
+def run_grant(run_id: str | None) -> Any | None:
+    """What the remote catalog gave the run ``run_id`` when it started: the secrets and connections sealed for its
+    steps and the servers they were sealed to. ``None`` between runs and for a run that asked nothing."""
+    grants = (catalog.run_grant(run_id) for catalog in _remotes.values()) if run_id else ()
+    return next((grant for grant in grants if grant is not None), None)
+
+
+def run_ends(run_id: str) -> None:
+    """Tell the remote catalogs the run ``run_id`` ended, so none keeps what it was given."""
+    for catalog in _remotes.values():
+        catalog.run_ends(run_id)
+
+
+def relayed(user_id: int | None, method: str, path: str, params: dict | None, body) -> tuple[int, object] | None:
+    """The remote catalog's answer to a metadata request that names one of its rows, ``None`` for a request that
+    names none: this install's own to answer.
+
+    A request names a remote row by a negative integer as a segment of ``path``, or as an ``id`` or ``*_id`` field
+    of its query or its JSON body. Nothing is decided here: what the catalog refuses, the catalog refuses.
+    """
+    named = [*path.split("/")]
+    for sent in (params, body):
+        if isinstance(sent, Mapping):
+            named += [value for key, value in sent.items() if key == "id" or key.endswith("_id")]
+    catalog = next(iter(_remotes.values()), None)
+    if catalog is None or not any(_REMOTE_ID.fullmatch(str(value)) for value in named):
+        return None
+    return catalog.request(user_id, method, path, params, body)
+
+
+def merged_tree(user_id: int, local: list[NamespaceTree]) -> list[NamespaceTree]:
+    """The catalog tree ``user_id`` reads: this install's catalogs ``local`` first, then the remote catalogs'.
+
+    With no remote catalog to show, ``local`` is answered as it is. Beside a remote catalog's rows each of this
+    install's says where it lives, ``On this computer``, or ``On this server`` in server mode. On a server that
+    joined with keys of its own (``issuer_accounts.joined_with_keys``) this install's rows are not ``offered``,
+    whatever the remote catalog answers: the people there work in the remote catalogs, so the Catalog panel and the
+    table pickers show only those, while the flow pickers still find the server's own.
+    """
+    listed = [root for catalog in _remotes.values() for root in catalog.tree(user_id)]
+    joined = issuer_accounts.joined_with_keys() is not None
+    if not listed and not joined:
+        return local
+    place = ON_THIS_SERVER if is_server_mode() else ON_THIS_COMPUTER
+    return [_marked(node, place=place, offered=not joined) for node in local] + listed
+
+
+def _marked(node: NamespaceTree, **fields) -> NamespaceTree:
+    """``node`` and every namespace under it with ``fields`` set."""
+    return node.model_copy(update={**fields, "children": [_marked(child, **fields) for child in node.children]})
 
 
 def table_row(repo, table_id: int, user_id: int | None = None) -> CatalogTable | CatalogTableOut:
