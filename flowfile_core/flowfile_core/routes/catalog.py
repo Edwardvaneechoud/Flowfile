@@ -91,6 +91,7 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTablePreview,
     CatalogTableRefreshRequest,
     CatalogTableUpdate,
+    CdcCursorCommitRequest,
     CdcCursorOut,
     CdcCursorResetRequest,
     CdcStatusOut,
@@ -160,6 +161,7 @@ _READ_HERE = (
     "/vacuum",
     "/cdc",
     "/cdc/enable",
+    "/cdc/cursors/reset",
     "/edits",
     "/key-column",
 )
@@ -1180,7 +1182,19 @@ def reset_table_cdc_cursor(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Move one consumer's cursor. Requires cursor ownership or manage on the table."""
-    return service.reset_table_cdc_cursor(table_id, body.consumer_key, body.to)
+    return service.reset_table_cdc_cursor(table_id, body.consumer_key, body.to, user_id=current_user.id)
+
+
+@router.post("/tables/{table_id}/cdc/cursors", response_model=CdcCursorOut)
+@handle_catalog_exceptions()
+def commit_table_cdc_cursor(
+    table_id: int,
+    body: CdcCursorCommitRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Advance one consumer's cursor after a run that read its changes, as that run's reader. Requires use."""
+    return service.commit_table_cdc_cursor(table_id, body, owner_id=current_user.id)
 
 
 @router.delete("/tables/{table_id}/cdc/cursors/{consumer_key}", status_code=204)

@@ -464,6 +464,15 @@ class CdcCursorResetRequest(BaseModel):
     to: int | Literal["now", "beginning"] = "now"
 
 
+class CdcCursorCommitRequest(BaseModel):
+    """Record ``last_version`` as fully read by one consumer, creating its cursor on the first read."""
+
+    consumer_key: str
+    last_version: int
+    consumer_label: str | None = None
+    table_path: str | None = None
+
+
 class CatalogTableOut(BaseModel):
     id: int
     name: str

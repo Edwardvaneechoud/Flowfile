@@ -18,7 +18,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 import httpx
 import jwt
@@ -236,6 +236,7 @@ class FakeHubWithCatalog(FakeHub):
         self.runs: list[dict] = []
         self.schedules: list[dict] = []
         self.scheduler_status: dict = {"active": True, "holder_id": "hub", "heartbeat_at": _STAMP}
+        self.cursors: dict[int, dict[str, dict]] = {}
 
     def seed_catalog(self, name: str, **fields) -> dict:
         """A root namespace (a catalog) on the hub."""
@@ -433,6 +434,8 @@ class FakeHubWithCatalog(FakeHub):
             return httpx.Response(404, json={"detail": "Catalog table not found"})
         if parts[4:] == ["favorite"]:
             return httpx.Response(201, json={"id": 9, "user_id": 1, "table_id": table["id"], "created_at": _STAMP})
+        if parts[4:5] == ["cdc"]:
+            return self._cursor_route(method, table, parts[5:], body)
         if method == "DELETE":
             self.tables.remove(table)
             return httpx.Response(204)
@@ -450,6 +453,29 @@ class FakeHubWithCatalog(FakeHub):
             if floor is not None:
                 table.update(cdc_enabled=True, cdc_enabled_version=table.get("cdc_enabled_version") or floor)
         return httpx.Response(200, json=table)
+
+    def _cursor_route(self, method: str, table: dict, rest: list[str], body) -> httpx.Response:
+        """Core's change-cursor routes over ``cursors`` as the hub serves them: the status lists the table's cursors
+        and reads no head (the hub reads no storage), a commit upserts one, a reset moves one to a version and a
+        delete forgets one; a missing cursor is core's 404."""
+        kept = self.cursors.setdefault(table["id"], {})
+        if not rest:
+            listed = [{**c, "pending_commits": None} for _, c in sorted(kept.items())]
+            status = {"cdc_enabled_version": table.get("cdc_enabled_version"), "current_version": None}
+            return httpx.Response(200, json={"cdc_enabled": bool(table.get("cdc_enabled")), **status, "cursors": listed})
+        key = unquote(rest[1]) if method == "DELETE" else body["consumer_key"]
+        if rest == ["cursors"]:
+            fields = {k: v for k, v in body.items() if v is not None}
+            kept[key] = {**kept.get(key, {"owner_id": 1, "last_commit_timestamp": None}), **fields}
+            kept[key]["updated_at"] = _STAMP
+            return httpx.Response(200, json=kept[key])
+        if key not in kept:
+            return httpx.Response(404, json={"detail": f"No change cursor '{key}' on table id={table['id']}"})
+        if method == "DELETE":
+            del kept[key]
+            return httpx.Response(204)
+        kept[key]["last_version"] = int(body["to"])
+        return httpx.Response(200, json=kept[key])
 
     def _cancel(self, run_id: str) -> httpx.Response:
         """``POST /catalog/runs/{id}/cancel`` as the hub answers a run it sent: 204 for one under way, the hub's

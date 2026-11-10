@@ -18,7 +18,7 @@ import polars as pl
 from pydantic import BaseModel, ValidationError
 
 from flowfile_core.auth import issuer_accounts
-from flowfile_core.catalog.exceptions import TableNotFoundError
+from flowfile_core.catalog.exceptions import CdcCursorNotFoundError, TableNotFoundError
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, resolve_for_table
 from flowfile_core.catalog.text_utils import plain_reference, reads_other
 from flowfile_core.configs.settings import is_server_mode
@@ -102,6 +102,10 @@ class RemoteCatalog(Protocol):
     def save_flow(self, user_id: int | None, flow) -> str | None:
         """Keep ``flow`` for ``user_id`` when it came from this catalog: the catalog's sentence on where the flow is
         kept now, ``None`` for a flow that is not its."""
+
+    def flow_uuid(self, flow) -> str | None:
+        """The uuid this catalog keeps ``flow`` under, the same on every install that opens it; ``None`` for a flow
+        that is not its."""
 
 
 _remotes: dict[str, RemoteCatalog] = {}
@@ -282,6 +286,56 @@ def write_row(table: CatalogTable | CatalogTableOut, user_id: int | None, **fact
         detail = answer.get("detail") if isinstance(answer, Mapping) else None
         raise ValueError(f"The table's storage was changed, but its catalog did not take the new facts: {detail}")
     return True
+
+
+def flow_uuid(flow) -> str | None:
+    """The uuid a remote catalog keeps ``flow`` under, ``None`` for a flow no remote catalog keeps."""
+    return next((uuid for catalog in _remotes.values() if (uuid := catalog.flow_uuid(flow))), None)
+
+
+def _cursor_answer(table_id: int, user_id: int | None, method: str, route: str, body=None):
+    """The answer of the remote catalog that keeps ``table_id`` to its change-tracking route ``route``: its refusal
+    of the person is ``Refused``, a missing cursor ``CdcCursorNotFoundError``, any other a ``ValueError``."""
+    status, answer = remote_of(table_id).request(user_id, method, f"/catalog/tables/{table_id}/cdc{route}", None, body)
+    detail = answer.get("detail") if isinstance(answer, Mapping) else answer
+    if status == 403:
+        raise Refused(str(detail))
+    if status == 404 and route:
+        raise CdcCursorNotFoundError(table_id, (body or {}).get("consumer_key", ""))
+    if status >= 400:
+        raise ValueError(f"The table's catalog did not answer for its change cursors: {detail}")
+    return answer
+
+
+def cursors(table_id: int, user_id: int | None) -> list[dict] | None:
+    """The change cursors the remote catalog keeps for its table ``table_id``, ``None`` for a table of this
+    install's own: a cursor is state of the catalog that owns the table, whichever install runs its reader."""
+    if remote_of(table_id) is None:
+        return None
+    return list(_cursor_answer(table_id, user_id, "GET", "").get("cursors") or ())
+
+
+def cursor_position(table_id: int, user_id: int | None, consumer_key: str, table_path: str) -> int | None:
+    """The version the consumer ``consumer_key`` read the remote table ``table_id`` up to; ``None`` before its first
+    read, or for a cursor minted against another path, which is absent as ``catalog_cdc.read_cursor`` reads it."""
+    found = (c for c in cursors(table_id, user_id) or () if c["consumer_key"] == consumer_key)
+    cursor = next(found, None)
+    if cursor is None or cursor.get("table_path") not in (None, table_path):
+        return None
+    return cursor["last_version"]
+
+
+def advance_cursor(table_id: int, user_id: int | None, consumer_key: str, version: int, **descriptive) -> None:
+    """Record ``version`` as read by ``consumer_key`` in the remote catalog that keeps ``table_id``
+    (``consumer_label``, ``table_path``)."""
+    _cursor_answer(
+        table_id, user_id, "POST", "/cursors", {"consumer_key": consumer_key, "last_version": version, **descriptive}
+    )
+
+
+def reset_cursor(table_id: int, user_id: int | None, consumer_key: str, version: int) -> dict:
+    """Move the cursor ``consumer_key`` of the remote table ``table_id`` to ``version``: its row as answered."""
+    return _cursor_answer(table_id, user_id, "POST", "/cursors/reset", {"consumer_key": consumer_key, "to": version})
 
 
 def remote_sql_tables(query: str, user_id: int | None, own: set[str]) -> dict[str, CatalogTableOut]:

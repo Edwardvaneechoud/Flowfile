@@ -108,6 +108,7 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableMaterializeResult,
     CatalogTableOut,
     CatalogTablePreview,
+    CdcCursorCommitRequest,
     CdcCursorOut,
     CdcStatusOut,
     ColumnStatsResponse,
@@ -251,8 +252,8 @@ class CatalogService:
         raise NotAuthorizedError(self.access.user_id or -1, "modify this schedule")
 
     def _require_manage_cdc_cursor(self, table_id: int, consumer_key: str) -> None:
-        """Editing a change cursor needs cursor ownership, manage on its table, or admin."""
-        if not self._restricted:
+        """Editing a change cursor needs cursor ownership, manage on its table, or admin; a remote catalog's is its."""
+        if not self._restricted or remote_of(table_id) is not None:
             return
         self._require_use("catalog_table", table_id)
         cursor = self.repo.get_cdc_cursor(table_id, consumer_key)
@@ -1251,10 +1252,23 @@ class CatalogService:
         self._require_manage("catalog_table", table_id)
         return self._tables.enable_cdc(table_id, user_id=user_id)
 
-    def reset_table_cdc_cursor(self, table_id: int, consumer_key: str, to: str | int = "now") -> CdcCursorOut:
+    def reset_table_cdc_cursor(
+        self, table_id: int, consumer_key: str, to: str | int = "now", user_id: int | None = None
+    ) -> CdcCursorOut:
         """Move one consumer's cursor to head, to the start of the tracked history, or a version."""
         self._require_manage_cdc_cursor(table_id, consumer_key)
-        return self._tables.reset_cdc_cursor(table_id, consumer_key, to)
+        return self._tables.reset_cdc_cursor(table_id, consumer_key, to, user_id=user_id)
+
+    def commit_table_cdc_cursor(
+        self, table_id: int, commit: CdcCursorCommitRequest, owner_id: int | None
+    ) -> CdcCursorOut:
+        """Record a consumer's read of the table's changes up to ``commit.last_version``, as a run's reader does."""
+        self.get_table(table_id)
+        fields = commit.model_dump(exclude={"consumer_key", "last_version"})
+        cursor = self.repo.upsert_cdc_cursor(
+            table_id, commit.consumer_key, commit.last_version, owner_id=owner_id, **fields
+        )
+        return CdcCursorOut.model_validate(cursor)
 
     def delete_table_cdc_cursor(self, table_id: int, consumer_key: str) -> None:
         """Forget one consumer's cursor."""

@@ -1089,19 +1089,21 @@ class TableService:
     def _cursor_out(self, cursor: CatalogCdcCursor, head: int | None) -> CdcCursorOut:
         out = CdcCursorOut.model_validate(cursor)
         if head is not None:
-            out.pending_commits = max(0, head - cursor.last_version)
+            out.pending_commits = max(0, head - out.last_version)
         return out
 
     def get_cdc_status(self, table_id: int, user_id: int | None = None) -> CdcStatusOut:
         """Change-tracking state plus every consumer's position in the table's feed, from the catalog that keeps the
-        row; the head is read here."""
+        row and its cursors; the head is read here."""
         table = table_sources.table_row(self.repo, table_id, user_id)
         head = self._live_delta_version(table, user_id)
+        kept = table_sources.cursors(table_id, user_id)
+        kept = self.repo.list_cdc_cursors(table_id) if kept is None else kept
         return CdcStatusOut(
             cdc_enabled=bool(table.cdc_enabled),
             cdc_enabled_version=table.cdc_enabled_version,
             current_version=head,
-            cursors=[self._cursor_out(c, head) for c in self.repo.list_cdc_cursors(table_id)],
+            cursors=[self._cursor_out(c, head) for c in kept],
         )
 
     def enable_cdc(self, table_id: int, user_id: int | None = None) -> CdcStatusOut:
@@ -1121,22 +1123,26 @@ class TableService:
             self.repo.set_cdc_enabled(table_id, enabled_version)
         return self.get_cdc_status(table_id, user_id)
 
-    def reset_cdc_cursor(self, table_id: int, consumer_key: str, to: str | int) -> CdcCursorOut:
-        """Move a cursor to the live head (``"now"``), below the floor (``"beginning"``) or a version."""
+    def reset_cdc_cursor(
+        self, table_id: int, consumer_key: str, to: str | int, user_id: int | None = None
+    ) -> CdcCursorOut:
+        """Move a cursor to the live head (``"now"``), below the floor (``"beginning"``) or a version; a remote
+        catalog's cursor to the version the head read here resolves it to, on that catalog's route."""
         from flowfile_core.flowfile.catalog_cdc import init_cursor_value
 
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-        if self.repo.get_cdc_cursor(table_id, consumer_key) is None:
+        table = table_sources.table_row(self.repo, table_id, user_id)
+        remote = table_sources.remote_of(table_id) is not None
+        if not remote and self.repo.get_cdc_cursor(table_id, consumer_key) is None:
             raise CdcCursorNotFoundError(table_id, consumer_key)
-        head = self._live_delta_version(table)
+        head = self._live_delta_version(table, user_id)
         if to in ("now", "beginning"):
             if head is None:
                 raise ValueError(f"Could not read the Delta version of table '{table.name}'")
             version = init_cursor_value(str(to), head, table.cdc_enabled_version)
         else:
             version = int(to)
+        if remote:
+            return self._cursor_out(table_sources.reset_cursor(table_id, user_id, consumer_key, version), head)
         cursor = self.repo.reset_cdc_cursor(table_id, consumer_key, version)
         return self._cursor_out(cursor, head)
 

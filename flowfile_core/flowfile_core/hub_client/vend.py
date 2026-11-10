@@ -416,6 +416,11 @@ class _RunCatalog:
                 raise
         return saved.get("note") or None
 
+    def flow_uuid(self, flow) -> str | None:
+        """The hub flow ``flow`` is a copy of, by its ``hub_origin``, which travels in the document to every server."""
+        origin = getattr(flow.flow_settings, "hub_origin", None)
+        return origin.flow_uuid if origin is not None else None
+
 
 table_sources.register_remote("hub", _RunCatalog())
 

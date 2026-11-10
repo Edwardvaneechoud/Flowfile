@@ -2015,8 +2015,8 @@ class NodeCatalogReader(ChangeFeedReadSettings, NodeBase):
     ``source`` says which catalog the table is in: this Flowfile's own (``local``), or the hub this
     Flowfile is connected to (``hub``). A table on the hub is named by ``catalog_full_table_name`` alone,
     always its qualified ``catalog.schema.table``, and resolved on the hub when the flow runs; the local
-    ids are null then, since an id of another database means nothing here, and it is read as it is now:
-    no version, history view, SQL or change feed.
+    ids are null then, since an id of another database means nothing here, and it is read as it is now,
+    or by its changes: no version, history view or SQL.
 
     The change feed ("Read" selector) comes from ``ChangeFeedReadSettings``; only valid when the
     resolved table is change-tracked. ``since_last_run`` is the only mode that keeps a cursor.
@@ -2057,9 +2057,8 @@ class NodeCatalogReader(ChangeFeedReadSettings, NodeBase):
             or self.scd2_view is not None
             or self.scd2_as_of
             or self.sql_query
-            or self.cdc_mode != "off"
         ):
-            raise ValueError("A table on the hub is read as it is now: no version, history view, SQL or change feed")
+            raise ValueError("A table on the hub is read whole or by its changes: no version, history view or SQL")
         return self
 
     @model_validator(mode="after")

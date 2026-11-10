@@ -80,7 +80,6 @@
           </div>
 
           <ChangeFeedReadSection
-            v-if="!hubTarget"
             :model-value="cdcSettings"
             :node-id="nodeData.node_id"
             :status="cdcSectionStatus"
@@ -473,8 +472,15 @@ function resetCdcSettings() {
   applyCdcSettings({ ...DEFAULT_CDC_SETTINGS });
 }
 
+// A hub table is named by its qualified name; its cursors are asked for by the tree's (negative) id.
+const cdcTableId = computed(() =>
+  hubTarget.value
+    ? (selectedTableMeta.value?.id ?? null)
+    : (nodeData.value?.catalog_table_id ?? null),
+);
+
 async function loadCdcStatus() {
-  const tableId = nodeData.value?.catalog_table_id;
+  const tableId = cdcTableId.value;
   if (tableId == null) {
     cdcStatus.value = null;
     return;
@@ -504,7 +510,7 @@ async function enableTracking() {
 }
 
 async function handleResetCursor(cursor: CdcCursor) {
-  const tableId = nodeData.value?.catalog_table_id;
+  const tableId = cdcTableId.value;
   if (tableId == null) return;
   const target = nodeData.value?.cdc_start ?? "now";
   const targetLabel = target === "beginning" ? "the beginning of tracked history" : "now";
@@ -763,10 +769,8 @@ async function loadNodeData(nodeId: number) {
 
   if (mode.value === "table" && table) {
     selectedTableMeta.value = table;
-    if (!isHubRow(table)) {
-      await loadTableHistory(table.id);
-      if (nodeData.value.cdc_mode === "since_last_run") await loadCdcStatus();
-    }
+    if (!isHubRow(table)) await loadTableHistory(table.id);
+    if (nodeData.value.cdc_mode === "since_last_run") await loadCdcStatus();
   }
 }
 

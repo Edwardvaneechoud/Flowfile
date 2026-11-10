@@ -29,7 +29,7 @@ from tests.hub_client.conftest import CANCEL_REFUSED, HUB_URL, INFO, NEVER_RUNS,
 
 CONNECT = {"hub_url": HUB_URL, "username": "ana", "password": "s3cret", "device_name": "ana-laptop"}
 SHARED = {"is_owner": False, "access_level": "use", "shared_by": "bob"}
-READ_AS_IT_IS = "A table on the hub is read as it is now: no version, history view, SQL or change feed"
+READ_AS_IT_IS = "A table on the hub is read whole or by its changes: no version, history view or SQL"
 ON_ITS_OWN_DISK = (
     "The hub keeps the tables of {} on its own disk; this Flowfile cannot read them. "
     "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there."
@@ -594,15 +594,20 @@ class TestHubTableReader:
             {"scd2_view": "active"},
             {"scd2_view": "active_at", "scd2_as_of": "2026-11-01T00:00:00Z"},
             {"sql_query": "SELECT * FROM orders"},
-            {"cdc_mode": "since_last_run"},
-            {"cdc_mode": "since_version", "cdc_from_version": 2},
         ],
     )
-    def test_a_hub_table_refuses_versions_views_sql_and_change_feeds(self, extra):
+    def test_a_hub_table_refuses_versions_views_and_sql(self, extra):
         with pytest.raises(ValidationError, match=READ_AS_IT_IS):
             input_schema.NodeCatalogReader(
                 flow_id=1, node_id=1, source="hub", catalog_full_table_name="sales.raw.orders", **extra
             )
+
+    @pytest.mark.parametrize("extra", [{"cdc_mode": "since_last_run"}, {"cdc_mode": "since_version", "cdc_from_version": 2}])
+    def test_a_hub_table_is_read_by_its_changes_as_a_local_one(self, extra):
+        reader = input_schema.NodeCatalogReader(
+            flow_id=1, node_id=1, source="hub", catalog_full_table_name="sales.raw.orders", **extra
+        )
+        assert reader.cdc_mode == extra["cdc_mode"]
 
 
 class TestHubNamespaceWriter:

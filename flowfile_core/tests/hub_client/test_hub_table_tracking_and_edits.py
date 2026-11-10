@@ -37,7 +37,10 @@ def _rows(orders: dict) -> pl.DataFrame:
 
 
 def _hub_storage_calls(fake) -> list[tuple[str, str]]:
-    return [call for call in fake.calls if call[1].endswith(("/cdc", "/cdc/enable", "/edits", "/key-column"))]
+    """The hub's routes that read or change a table's storage that this core called; the list of the cursors the hub
+    keeps (``GET .../cdc``) is not one, and reads no storage there."""
+    routes = ("/cdc", "/cdc/enable", "/edits", "/key-column")
+    return [call for call in fake.calls if call[1].endswith(routes) and call[0] != "GET"]
 
 
 def test_change_tracking_is_turned_on_for_a_hub_table_on_this_core(api, hub):
