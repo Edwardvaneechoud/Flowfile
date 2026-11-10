@@ -4,7 +4,6 @@ import type { AxiosRequestConfig } from "axios";
 import { CatalogApi } from "../api/catalog.api";
 import { ARTIFACT_VERSIONS_PAGE_SIZE } from "../views/CatalogView/artifactVersions";
 import { flowInTree } from "../views/CatalogView/hubRows";
-import setupService from "../services/setup.service";
 import type {
   ActiveFlowRun,
   ArtifactPruneResult,
@@ -601,8 +600,6 @@ export const useCatalogStore = defineStore("catalog", {
 
       if (tableId !== null) {
         this.selectedTable = found;
-        // Where this core previews nothing (a hub's own page) nothing is read: no table data, no history.
-        if (!setupService.previews()) return;
         const isPhysical = this.selectedTable?.table_type !== "virtual";
         const isRemote = !!this.selectedTable?.is_remote_storage;
         // Data preview: local auto-loads; object storage loads on demand (a button).

@@ -2,7 +2,7 @@
   <div class="schedules-panel">
     <div class="panel-header">
       <h3>Schedules</h3>
-      <el-button v-if="computes" size="small" type="primary" @click="$emit('createSchedule')">
+      <el-button size="small" type="primary" @click="$emit('createSchedule')">
         <i class="fa-solid fa-plus" /> Add
       </el-button>
     </div>
@@ -39,29 +39,26 @@
           </div>
         </div>
         <div class="schedule-actions">
-          <!-- Run Now and Cancel run this core's own scheduler, so only where it computes -->
-          <template v-if="computes">
-            <el-tooltip
-              v-if="isRunning(schedule)"
-              content="Cancel run"
-              placement="top"
-              :show-after="400"
+          <el-tooltip
+            v-if="isRunning(schedule)"
+            content="Cancel run"
+            placement="top"
+            :show-after="400"
+          >
+            <el-button
+              size="small"
+              type="warning"
+              text
+              @click="$emit('cancelScheduleRun', schedule)"
             >
-              <el-button
-                size="small"
-                type="warning"
-                text
-                @click="$emit('cancelScheduleRun', schedule)"
-              >
-                <i class="fa-solid fa-stop" />
-              </el-button>
-            </el-tooltip>
-            <el-tooltip v-else content="Run Now" placement="top" :show-after="400">
-              <el-button size="small" type="success" text @click="$emit('runNow', schedule.id)">
-                <i class="fa-solid fa-play" />
-              </el-button>
-            </el-tooltip>
-          </template>
+              <i class="fa-solid fa-stop" />
+            </el-button>
+          </el-tooltip>
+          <el-tooltip v-else content="Run Now" placement="top" :show-after="400">
+            <el-button size="small" type="success" text @click="$emit('runNow', schedule.id)">
+              <i class="fa-solid fa-play" />
+            </el-button>
+          </el-tooltip>
           <el-switch
             :model-value="schedule.enabled"
             size="small"
@@ -80,10 +77,7 @@
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowSchedule } from "../../types";
 import { formatDate, formatScheduleType, scheduleIcon } from "./catalog-formatters";
-import setupService from "../../services/setup.service";
 
-// Add, Run Now and Cancel run this core's own scheduler, so only where this core computes.
-const computes = setupService.computes();
 
 defineProps<{
   schedules: FlowSchedule[];

@@ -2,7 +2,6 @@
 import axios from "axios";
 import { ref } from "vue";
 import { isDesktop } from "../../lib/desktop";
-import setupService from "./setup.service";
 
 interface AuthResponse {
   access_token: string;
@@ -61,9 +60,6 @@ class AuthService {
   // Held in memory only, from the fragment until `initialize` posts it.
   private hubSignInToken: string | null = null;
   private hubSignInError: string | null = null;
-  // Signed in by a session cookie the page's origin set (a hub's own page), which rides on every request: no
-  // token is held here.
-  private cookieSession = false;
 
   constructor() {
     // Initial detection based on the Tauri runtime presence.
@@ -116,15 +112,6 @@ class AuthService {
     return this.isDesktopMode.value;
   }
 
-  /**
-   * The sign-in page of the origin that set the session cookie, coming back here once signed in: where an
-   * ended cookie session goes.
-   */
-  toCookieSignIn(): void {
-    const { pathname, search, hash } = window.location;
-    window.location.assign(`/login?next=${encodeURIComponent(pathname + search + hash)}`);
-  }
-
   private clearStoredTokens(): void {
     const savedExpiration = localStorage.getItem("auth_token_expiration");
     if (!savedExpiration || parseInt(savedExpiration, 10) <= Date.now()) {
@@ -136,11 +123,6 @@ class AuthService {
 
   async initialize(): Promise<boolean> {
     this.clearStoredTokens();
-
-    if (setupService.cookieSession()) {
-      this.cookieSession = await this.signedInByCookie();
-      return this.cookieSession;
-    }
 
     const signInToken = this.hubSignInToken;
     this.hubSignInToken = null;
@@ -159,22 +141,6 @@ class AuthService {
 
     // In Docker/web mode, require manual login.
     return false;
-  }
-
-  /**
-   * Where the page is signed in by a cookie (a hub's own page) that cookie is the sign-in: the person is
-   * signed in when core, asked without a token, answers who they are. Asked on a client without the
-   * interceptors, which would send the browser to the sign-in page on a refusal; `initialize` answering
-   * false does that.
-   */
-  private async signedInByCookie(): Promise<boolean> {
-    try {
-      const response = await axios.create().get<UserInfo>("/auth/users/me");
-      this.currentUsername.value = response.data?.username ?? null;
-      return Boolean(response.data?.username);
-    } catch {
-      return false;
-    }
   }
 
   /**
@@ -303,7 +269,7 @@ class AuthService {
   }
 
   async getCurrentUser(): Promise<UserInfo | null> {
-    if (!this.hasValidToken() && !this.cookieSession) {
+    if (!this.hasValidToken()) {
       return null;
     }
 
@@ -322,7 +288,7 @@ class AuthService {
   }
 
   requiresLogin(): boolean {
-    return !this.isDesktopMode.value && !this.hasValidToken() && !this.cookieSession;
+    return !this.isDesktopMode.value && !this.hasValidToken();
   }
 
   private async getDesktopToken(): Promise<boolean> {
@@ -452,7 +418,7 @@ class AuthService {
   }
 
   isAuthenticated(): boolean {
-    return this.hasValidToken() || this.cookieSession;
+    return this.hasValidToken();
   }
 
   /**
@@ -463,10 +429,6 @@ class AuthService {
    * the browser to the sign-in page on a refusal.
    */
   async signOut(): Promise<void> {
-    if (setupService.cookieSession()) {
-      await this.endCookieSession();
-      return;
-    }
     if (localStorage.getItem(HUB_SESSION) === null) {
       this.logout();
       return;
@@ -489,18 +451,6 @@ class AuthService {
     } finally {
       this.logout();
     }
-  }
-
-  /** A cookie session belongs to the origin that set it (the hub): end it there, then go to its sign-in page. */
-  private async endCookieSession(): Promise<void> {
-    try {
-      await axios.create().post("/app/api/session/end");
-    } catch (error) {
-      console.error("The hub was not told of the sign-out:", error);
-    }
-    this.cookieSession = false;
-    this.logout();
-    window.location.assign("/login");
   }
 
   logout(): void {
@@ -543,9 +493,6 @@ axios.interceptors.response.use(
           originalRequest.headers["Authorization"] = `Bearer ${newToken}`;
           return axios(originalRequest);
         }
-      } else if (setupService.cookieSession()) {
-        // The cookie session ended; the sign-in page of the origin that set it brings the person back here.
-        authService.toCookieSignIn();
       } else {
         // In Docker mode, try refresh token before redirecting to login.
         const newToken = await authService.refreshAccessToken();

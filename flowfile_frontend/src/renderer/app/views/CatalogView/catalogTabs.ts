@@ -151,15 +151,3 @@ export function catalogSectionOfTab(key: string | undefined): CatalogSection | n
 export function catalogTabsInSection(section: CatalogSection): CatalogTabDef[] {
   return catalogTabs.filter((t) => CATALOG_SECTION_GROUPS[section].includes(t.group));
 }
-
-// What the catalog page shows where this core computes nothing (a hub's own page): what the catalog holds. SQL,
-// the notebook, visuals, alerts and APIs need a worker.
-export const TAB_KEYS_WITHOUT_COMPUTE: readonly CatalogTabKey[] = [
-  "catalog",
-  "favorites",
-  "runs",
-  "schedules",
-];
-
-export const shownWithoutCompute = (key: string): boolean =>
-  (TAB_KEYS_WITHOUT_COMPUTE as readonly string[]).includes(key);

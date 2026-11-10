@@ -16,7 +16,7 @@
           ></i>
           <h2>{{ table.name }}</h2>
           <span
-            v-if="table.table_type === 'virtual' && table.sql_query && computes"
+            v-if="table.table_type === 'virtual' && table.sql_query"
             class="virtual-badge sql-virtual-badge"
             >SQL Virtual</span
           >
@@ -51,7 +51,6 @@
       </div>
       <div v-else class="header-actions">
         <button
-          v-if="computes"
           class="action-btn-lg"
           :disabled="!table.file_exists"
           @click="emit('queryTable', table.qualified_name ?? table.full_table_name ?? table.name)"
@@ -60,7 +59,7 @@
           Query table
         </button>
         <button
-          v-if="table.table_type === 'virtual' && table.sql_query && computes"
+          v-if="table.table_type === 'virtual' && table.sql_query"
           class="action-btn-lg"
           :title="
             canManage(table)
@@ -80,7 +79,7 @@
           <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
           {{ table.is_favorite ? "Favorited" : "Favorite" }}
         </button>
-        <TableMaintenance v-if="table.table_type !== 'virtual' && computes" :table="table" />
+        <TableMaintenance v-if="table.table_type !== 'virtual'" :table="table" />
         <button
           v-if="canShare(table)"
           class="action-btn-lg"
@@ -326,8 +325,8 @@
       <pre class="sql-definition">{{ table.polars_plan }}</pre>
     </div>
 
-    <!-- Version History (physical tables only; read from storage, so where this core previews) -->
-    <div v-if="showVersionHistory && previews" class="section">
+    <!-- Version History (physical tables only) -->
+    <div v-if="showVersionHistory" class="section">
       <div class="section-header">
         <h3>Version History</h3>
         <div class="section-header-actions">
@@ -450,8 +449,8 @@
       </div>
     </div>
 
-    <!-- Data Preview (where this core previews; a hub's own page reads no table data) -->
-    <div v-if="previews" class="section">
+    <!-- Data Preview -->
+    <div class="section">
       <div v-if="isViewingHistorical" class="version-banner">
         <i class="fa-solid fa-clock-rotate-left"></i>
         Viewing version {{ selectedVersion }}
@@ -465,7 +464,7 @@
           Showing {{ preview.rows.length }} of {{ preview.total_rows }} rows
         </span>
         <button
-          v-if="canEditData && !isHub && computes"
+          v-if="canEditData && !isHub"
           class="btn btn-sm btn-primary edit-data-btn"
           title="Edit table data (cells, rows, columns) in place"
           @click="showTableEditor = true"
@@ -519,7 +518,7 @@
     </div>
 
     <!-- Visualizations -->
-    <div v-if="!isHub && computes" class="section viz-section">
+    <div v-if="!isHub" class="section viz-section">
       <VisualizationsTab :table-id="table.id" />
     </div>
   </div>
@@ -547,15 +546,11 @@ import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { hubSharedTitle, isHubRow } from "./hubRows";
-import setupService from "../../services/setup.service";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
 const showTableEditor = ref(false);
 const { canShare, canManage, canManageGrants } = useResourceSharing();
-// SQL, Edit data, maintenance and visuals run on a worker; the preview and version history read table data.
-const computes = setupService.computes();
-const previews = setupService.previews();
 
 const props = defineProps<{
   table: CatalogTable;

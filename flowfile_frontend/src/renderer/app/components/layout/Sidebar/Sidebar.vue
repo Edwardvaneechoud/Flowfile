@@ -27,11 +27,11 @@
             </button>
           </template>
           <div class="sidebar-more-menu">
-            <button v-if="computes" class="sidebar-more-item" @click="handleStartTutorial">
+            <button class="sidebar-more-item" @click="handleStartTutorial">
               <span class="material-icons">school</span>
               <span>Interactive tutorial</span>
             </button>
-            <button v-if="computes" class="sidebar-more-item" @click="handleOpenTemplates">
+            <button class="sidebar-more-item" @click="handleOpenTemplates">
               <i class="fa-solid fa-layer-group"></i>
               <span>Templates</span>
             </button>
@@ -39,27 +39,24 @@
               <i class="fa-solid fa-book"></i>
               <span>Documentation</span>
             </button>
-            <button v-if="computes" class="sidebar-more-item" @click="handleRequestNode">
+            <button class="sidebar-more-item" @click="handleRequestNode">
               <i class="fa-solid fa-lightbulb"></i>
               <span>Request a node</span>
             </button>
-            <button v-if="computes" class="sidebar-more-item" @click="handleOpenPrivacy">
+            <button class="sidebar-more-item" @click="handleOpenPrivacy">
               <i class="fa-solid fa-shield-halved"></i>
               <span>Privacy &amp; data collection</span>
             </button>
-            <!-- Where this core computes nothing (a hub's own page) the hub is the release; its version shows below -->
-            <template v-if="computes">
-              <div class="sidebar-more-divider" aria-hidden="true"></div>
-              <button class="sidebar-more-item" @click="openReleaseNotes">
-                <i class="fa-solid fa-arrow-up-right-from-square"></i>
-                <span>Release notes</span>
-              </button>
-              <button class="sidebar-more-item" :disabled="checking" @click="handleCheckForUpdates">
-                <i class="fa-solid fa-rotate"></i>
-                <span>Check for updates</span>
-              </button>
-              <p v-if="updateStatus" class="sidebar-more-status">{{ updateStatus }}</p>
-            </template>
+            <div class="sidebar-more-divider" aria-hidden="true"></div>
+            <button class="sidebar-more-item" @click="openReleaseNotes">
+              <i class="fa-solid fa-arrow-up-right-from-square"></i>
+              <span>Release notes</span>
+            </button>
+            <button class="sidebar-more-item" :disabled="checking" @click="handleCheckForUpdates">
+              <i class="fa-solid fa-rotate"></i>
+              <span>Check for updates</span>
+            </button>
+            <p v-if="updateStatus" class="sidebar-more-status">{{ updateStatus }}</p>
             <div class="sidebar-more-divider" aria-hidden="true"></div>
             <button class="sidebar-more-item" @click="toggleTheme">
               <i :class="isDark ? 'fa-solid fa-sun' : 'fa-solid fa-moon'"></i>
@@ -93,7 +90,6 @@ import Logo from "../Logo/Logo.vue";
 import { NodeRequestDialog, PageHelpModal } from "../../common";
 import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
-import setupService from "../../../services/setup.service";
 import { desktop } from "../../../../lib/desktop";
 import { DOCS_BASE_URL } from "../../../lib/docsLinks";
 import { useAuthStore } from "../../../stores/auth-store";
@@ -106,7 +102,7 @@ import { gettingStartedTutorial } from "../../tutorial/tutorials";
 import { designerHelp } from "../../../views/DesignerView/designerHelp";
 import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
 import { lastCatalogQuery } from "../../../views/CatalogView/catalogLastLocation";
-import { catalogSectionOfTab, shownWithoutCompute } from "../../../views/CatalogView/catalogTabs";
+import { catalogSectionOfTab } from "../../../views/CatalogView/catalogTabs";
 import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
 import { aiSettingsHelp } from "../../../views/AiSettingsView/aiSettingsHelp";
 import { templatesHelp } from "../../../views/TemplatesView/templatesHelp";
@@ -130,10 +126,6 @@ const projectStore = useProjectStore();
 const tutorialStore = useTutorialStore();
 const { isMultiUser } = useMultiUser();
 const { isDark, toggleTheme } = useTheme();
-// Where this core computes nothing (a hub's own page) the rail is the catalog alone and Help & more keeps what
-// applies there; where the page is signed in by a cookie, the sign-out goes to that origin's sign-in page.
-const computes = setupService.computes();
-const cookieSession = setupService.cookieSession();
 
 // Page help
 const showHelp = ref(false);
@@ -170,8 +162,6 @@ const items = computed(() => {
   const projectDot = projectStore.isActive ? projectStore.status : undefined;
 
   const visible = (entry: INavigationRoute) => {
-    if (!computes && entry.name !== "catalog") return false;
-    if (!computes && entry.query?.tab && !shownWithoutCompute(entry.query.tab)) return false;
     if ((entry.hideInElectron || entry.dockerOnly) && isDesktopShell) return false;
     // Projects are admin-only in docker; admins keep it even when disabled (to reach the how-to page).
     if (entry.name === "project" && isMultiUser.value && !isAdmin) return false;
@@ -200,8 +190,7 @@ const items = computed(() => {
 
 const showLogout = computed(() => !authService.isInDesktopMode());
 
-const goHome = () =>
-  router.push(computes ? { name: "home" } : { name: "catalog", query: { tab: "catalog" } });
+const goHome = () => router.push({ name: "home" });
 
 const handleStartTutorial = async () => {
   if (router.currentRoute.value.name !== "designer") {
@@ -253,8 +242,7 @@ onBeforeUnmount(() => stopHelpRequestNode?.());
 const handleLogout = async () => {
   // Store logout, not authService: per-user store state must be torn down too.
   await authStore.logout();
-  // A cookie session's sign-out already went to its origin's sign-in page.
-  if (!cookieSession) router.push({ name: "login" });
+  router.push({ name: "login" });
 };
 </script>
 

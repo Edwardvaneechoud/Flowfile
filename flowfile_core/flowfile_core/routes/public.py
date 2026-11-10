@@ -13,31 +13,11 @@ from shared._version import get_version
 router = APIRouter()
 
 
-class Capabilities(BaseModel):
-    """What the core that answers can do for the page that asked; the editor gates on these, not on the mode word.
-
-    ``computes``: a worker executes flows here (Run Now, SQL, the notebook, visuals, schedules that fire here).
-    ``previews``: table data is read here (the data preview, version history).
-    ``cookie_session``: the page is signed in by a cookie this origin set, with no token flow.
-    A core answers all but ``cookie_session``; whatever else serves the editor's pages answers for itself.
-    """
-
-    computes: bool
-    previews: bool
-    cookie_session: bool
-
-
-def core_capabilities() -> Capabilities:
-    """What a core can do: everything but a cookie session, which only a page served by another origin has."""
-    return Capabilities(computes=True, previews=True, cookie_session=False)
-
-
 class SetupStatus(BaseModel):
     """Response model for the setup status endpoint, which answers without a token.
 
     ``version`` is the Flowfile release this core runs, so whatever watches the server can read it without signing in.
-    ``capabilities`` says what this core can do for the page, so the editor shows and hides by that rather than by
-    ``mode``. ``node`` is the name this storage dir joined a hub under, and left out of the answer when it joined none:
+    ``node`` is the name this storage dir joined a hub under, and left out of the answer when it joined none:
     the name is what the hub shows on its Compute page, and without it the hub could not tell this server from another
     machine at the same private address on another network when it looks for a server that moved.
     """
@@ -49,7 +29,6 @@ class SetupStatus(BaseModel):
     projects_confined: bool
     git_available: bool
     version: str
-    capabilities: Capabilities
     node: str | None = None
 
 
@@ -84,7 +63,6 @@ async def get_setup_status():
         projects_confined=not settings.is_electron_mode(),
         git_available=git_available(),
         version=get_version(),
-        capabilities=core_capabilities(),
         node=node.name if node is not None else None,
     )
 

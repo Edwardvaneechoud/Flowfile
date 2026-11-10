@@ -1,16 +1,14 @@
 // @vitest-environment happy-dom
 // The panel of a flow published on the hub: its versions as the hub lists them, the newest picked, Open emitting the
-// picked version, the hub's refusal shown when the versions cannot be read, and no Open where this core computes
-// nothing (a hub's own page), since there is no designer to open the flow in.
+// picked version, and the hub's refusal shown when the versions cannot be read.
 import { describe, expect, it, vi } from "vitest";
 import { flow } from "../../__fixtures__/catalogTree";
 import { mountIn, settle, text } from "../../__fixtures__/mount";
 
-const mocks = vi.hoisted(() => ({ listHubFlowVersions: vi.fn(), computes: vi.fn(() => true) }));
+const mocks = vi.hoisted(() => ({ listHubFlowVersions: vi.fn() }));
 
 vi.mock("../../services/axios.config", () => ({ default: {} }));
 vi.mock("../../api/hubFlows.api", () => ({ listHubFlowVersions: mocks.listHubFlowVersions }));
-vi.mock("../../services/setup.service", () => ({ default: { computes: mocks.computes } }));
 
 import HubFlowDetailPanel from "./HubFlowDetailPanel.vue";
 
@@ -87,17 +85,5 @@ describe("HubFlowDetailPanel", () => {
     expect(
       (host.querySelector("[data-testid='hub-flow-open']") as HTMLButtonElement).disabled,
     ).toBe(true);
-  });
-
-  it("offers no Open where this core computes nothing: the versions show, the designer is not here", async () => {
-    mocks.computes.mockReturnValueOnce(false);
-    mocks.listHubFlowVersions.mockResolvedValue(versions);
-    const host = await mountIn(HubFlowDetailPanel, {
-      props: { flow: hubFlow, place: "Acme Data", schemaPath: "main.default" },
-    });
-
-    expect(host.querySelectorAll("[data-testid='hub-flow-versions'] li")).toHaveLength(2);
-    expect(host.querySelector("[data-testid='hub-flow-open']")).toBeNull();
-    expect(host.querySelector(".note")).toBeNull();
   });
 });

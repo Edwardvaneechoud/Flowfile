@@ -52,13 +52,9 @@ const routes: Array<RouteRecordRaw> = [
     children: [
       {
         // App entry always lands in the designer; with no session active it
-        // shows an in-canvas empty state (Home stays on the sidebar). Where this core computes nothing
-        // (a hub's own page) there is no designer to land in, and the entry is the catalog.
+        // shows an in-canvas empty state (Home stays on the sidebar).
         path: "",
-        redirect: () =>
-          setupService.computes()
-            ? { name: "designer" }
-            : { name: "catalog", query: { tab: "catalog" } },
+        redirect: { name: "designer" },
       },
       {
         path: "home",
@@ -318,10 +314,6 @@ router.afterEach((to) => {
  * already there keeps its address, so `#/login?hub_signin=1` still starts the sign-in through the hub.
  */
 export async function redirectToLogin(): Promise<void> {
-  if (setupService.cookieSession()) {
-    authService.toCookieSignIn();
-    return;
-  }
   await router.isReady().catch(() => undefined);
   if (router.currentRoute.value.name !== "login") await router.push({ name: "login" });
 }

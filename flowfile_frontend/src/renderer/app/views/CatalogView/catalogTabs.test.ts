@@ -5,7 +5,6 @@ import {
   catalogSectionOfTab,
   catalogTabs,
   catalogTabsInSection,
-  shownWithoutCompute,
 } from "./catalogTabs";
 
 describe("catalog sections", () => {
@@ -50,30 +49,5 @@ describe("catalog sections", () => {
       (t) => t.key,
     );
     expect([...all].sort()).toEqual(catalogTabs.map((t) => t.key).sort());
-  });
-});
-
-describe("the catalog where this core computes nothing (a hub's own page)", () => {
-  it("shows what the catalog holds: the catalog, favorites, run history and schedules", () => {
-    expect(catalogTabs.filter((t) => shownWithoutCompute(t.key)).map((t) => t.key)).toEqual([
-      "catalog",
-      "favorites",
-      "runs",
-      "schedules",
-    ]);
-  });
-
-  it("hides what needs a worker", () => {
-    for (const key of [
-      "sql",
-      "notebook",
-      "visuals",
-      "alerts",
-      "apis",
-      "customNodes",
-      "community",
-    ]) {
-      expect(shownWithoutCompute(key), key).toBe(false);
-    }
   });
 });

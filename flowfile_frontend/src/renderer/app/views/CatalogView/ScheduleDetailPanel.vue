@@ -21,7 +21,7 @@
           </template>
           <template v-else>
             <h2>{{ displayName }}</h2>
-            <button v-if="computes" class="btn-icon-inline" title="Rename" @click="startRename">
+            <button class="btn-icon-inline" title="Rename" @click="startRename">
               <i class="fa-solid fa-pen"></i>
             </button>
           </template>
@@ -32,29 +32,26 @@
         </p>
       </div>
       <div class="header-actions">
-        <!-- Run Now and Cancel run this core's own scheduler, so only where it computes -->
-        <template v-if="computes">
-          <button
-            v-if="isScheduleRunning"
-            class="btn btn-warning btn-sm"
-            @click="$emit('cancelScheduleRun', schedule)"
-          >
-            <i class="fa-solid fa-stop"></i>
-            Cancel Run
-          </button>
-          <button
-            v-else-if="!isFlowRunning"
-            class="btn btn-success btn-sm"
-            @click="$emit('runNow', schedule.id)"
-          >
-            <i class="fa-solid fa-play"></i>
-            Run Now
-          </button>
-          <button v-else class="btn btn-success btn-sm" disabled title="Flow is already running">
-            <i class="fa-solid fa-play"></i>
-            Run Now
-          </button>
-        </template>
+        <button
+          v-if="isScheduleRunning"
+          class="btn btn-warning btn-sm"
+          @click="$emit('cancelScheduleRun', schedule)"
+        >
+          <i class="fa-solid fa-stop"></i>
+          Cancel Run
+        </button>
+        <button
+          v-else-if="!isFlowRunning"
+          class="btn btn-success btn-sm"
+          @click="$emit('runNow', schedule.id)"
+        >
+          <i class="fa-solid fa-play"></i>
+          Run Now
+        </button>
+        <button v-else class="btn btn-success btn-sm" disabled title="Flow is already running">
+          <i class="fa-solid fa-play"></i>
+          Run Now
+        </button>
         <el-switch
           :model-value="schedule.enabled"
           size="default"
@@ -97,7 +94,6 @@
       <div class="meta-card">
         <span class="meta-label">Runs on</span>
         <ScheduleBackendSelect
-          v-if="computes"
           :model-value="schedule.backend ?? ''"
           size="small"
           @update:model-value="saveBackend"
@@ -116,7 +112,6 @@
         <span class="meta-value">
           {{ formatScheduleType(schedule) }}
           <button
-            v-if="computes"
             class="btn-icon-inline"
             title="Edit schedule"
             @click="showEdit = true"
@@ -160,9 +155,6 @@
             @blur="saveDescription"
           />
         </template>
-        <template v-else-if="!computes">
-          <span class="description-text">{{ schedule.description }}</span>
-        </template>
         <template v-else>
           <span
             class="description-text"
@@ -179,7 +171,7 @@
     </div>
 
     <!-- Notifications -->
-    <div v-if="computes" class="section">
+    <div class="section">
       <h3><i class="fa-solid fa-bell section-icon"></i> Notifications</h3>
       <NotificationRules
         :rules="scheduleRules"
@@ -234,14 +226,9 @@ import {
 import RunHistoryTable from "./RunHistoryTable.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
-import setupService from "../../services/setup.service";
 import ScheduleBackendSelect from "./components/ScheduleBackendSelect.vue";
 import { scheduleBackendLabel } from "../../utils/executionLocation";
 
-// A schedule here fires on this core's own scheduler and its alerts go out from it. Where this core computes nothing
-// (a hub's own page) the schedule is another Flowfile's, read-only but for its switch and its delete: no Run Now or
-// Cancel, and its name, timing and description were set when it was made.
-const computes = setupService.computes();
 
 const router = useRouter();
 const catalogStore = useCatalogStore();
@@ -302,7 +289,6 @@ const scheduleAlertsEmptyText = computed(() =>
 watch(
   () => props.schedule.id,
   () => {
-    if (!computes) return;
     if (notificationsStore.channels.length === 0) notificationsStore.loadChannels();
     notificationsStore.loadRules();
   },
