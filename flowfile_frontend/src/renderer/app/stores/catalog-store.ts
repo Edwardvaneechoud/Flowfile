@@ -31,6 +31,14 @@ import type {
 // Monotonic token guarding the artifact-versions fetch against out-of-order responses.
 let artifactVersionsRequestToken = 0;
 
+// Monotonic token guarding table previews against superseded requests and selections.
+let tablePreviewRequestToken = 0;
+
+// Selected history follows the artifact-versions request ownership idiom.
+let tableHistoryRequestToken = 0;
+// Cache ownership is per table: background maintenance must not cancel the selected read.
+const tableHistoryCacheRequests: Record<number, symbol> = {};
+
 // Re-entering the catalog within this window reuses the last overview instead of refetching.
 export const OVERVIEW_TTL_MS = 30_000;
 
@@ -561,7 +569,19 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
+    cancelTablePreview() {
+      tablePreviewRequestToken++;
+      this.loadingTablePreview = false;
+    },
+
+    cancelTableHistory() {
+      tableHistoryRequestToken++;
+      this.loadingTableHistory = false;
+    },
+
     selectTable(tableId: number | null) {
+      this.cancelTablePreview();
+      this.cancelTableHistory();
       this.selectedTableId = tableId;
       this.selectedFlowId = null;
       this.selectedRunId = null;
@@ -601,6 +621,8 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     clearTableSelection() {
+      this.cancelTablePreview();
+      this.cancelTableHistory();
       this.selectedTableId = null;
       this.selectedTable = null;
       this.tablePreview = null;
@@ -611,6 +633,8 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     async loadTablePreview(tableId: number, limit = 100) {
+      const token = ++tablePreviewRequestToken;
+      const version = this.selectedVersion;
       this.loadingTablePreview = true;
       this.previewError = null;
       const table = this.findTableInTree(tableId);
@@ -619,29 +643,40 @@ export const useCatalogStore = defineStore("catalog", {
         const preview =
           hubId != null
             ? await CatalogApi.getHubTablePreview(hubId, limit)
-            : await CatalogApi.getTablePreview(tableId, limit, this.selectedVersion);
-        if (this.selectedTableId === tableId) this.tablePreview = preview;
+            : await CatalogApi.getTablePreview(tableId, limit, version);
+        if (token !== tablePreviewRequestToken) return;
+        this.tablePreview = preview;
       } catch (e: any) {
-        if (this.selectedTableId !== tableId) return;
+        if (token !== tablePreviewRequestToken) return;
         this.tablePreview = null;
         this.previewError = e?.response?.data?.detail ?? "Failed to load preview.";
       } finally {
-        this.loadingTablePreview = false;
+        if (token === tablePreviewRequestToken) this.loadingTablePreview = false;
       }
     },
 
     async loadTableHistory(tableId: number) {
-      this.loadingTableHistory = true;
+      // Maintenance refreshes that table's cache without superseding the selected table's request.
+      const token = this.selectedTableId === tableId ? ++tableHistoryRequestToken : null;
+      const cacheToken = Symbol();
+      tableHistoryCacheRequests[tableId] = cacheToken;
+      if (token !== null) this.loadingTableHistory = true;
       try {
-        this.tableHistory = await CatalogApi.getTableHistory(tableId);
-        this.tableHistoryStale = false;
-        if (this.tableHistory) {
-          writeCachedHistory(tableId, this.tableHistory);
+        const history = await CatalogApi.getTableHistory(tableId);
+        if (history && tableHistoryCacheRequests[tableId] === cacheToken) {
+          writeCachedHistory(tableId, history);
         }
+        if (token === null || token !== tableHistoryRequestToken) return;
+        this.tableHistory = history;
+        this.tableHistoryStale = false;
       } catch {
+        if (token === null || token !== tableHistoryRequestToken) return;
         this.tableHistory = null;
       } finally {
-        this.loadingTableHistory = false;
+        if (token !== null && token === tableHistoryRequestToken) this.loadingTableHistory = false;
+        if (tableHistoryCacheRequests[tableId] === cacheToken) {
+          delete tableHistoryCacheRequests[tableId];
+        }
       }
     },
 
@@ -662,10 +697,14 @@ export const useCatalogStore = defineStore("catalog", {
     /** Refresh state after the edit surface wrote to a table (data, schema and version moved). */
     async handleTableEdited(table: CatalogTable) {
       if (this.selectedTableId === table.id) {
+        this.cancelTablePreview();
         this.selectedTable = table;
         this.selectedVersion = null;
         if (!table.is_remote_storage) {
           this.loadTablePreview(table.id);
+        } else {
+          this.tablePreview = null;
+          this.previewError = null;
         }
         await this.loadTableHistory(table.id);
       }
@@ -708,6 +747,7 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     selectVersion(version: number | null) {
+      this.cancelTablePreview();
       // Viewing the current version is the same as viewing "latest". The plain latest
       // read stays valid after old versions are vacuumed, whereas a version-pinned read
       // can reference files that vacuum removed — so route current → latest (null).

@@ -968,13 +968,23 @@ def write_delta(
 
         size_bytes = _get_delta_size_bytes(output_path, storage_options=storage_options)
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
+        row_count = df.height
+        if mode == "append":
+            from deltalake import DeltaTable
+
+            from shared.delta_utils import delta_row_count
+
+            result_df = pl.scan_delta(output_path, storage_options=storage_options)
+            result_schema = result_df.collect_schema()
+            schema = [{"name": n, "dtype": str(d)} for n, d in result_schema.items()]
+            row_count = delta_row_count(DeltaTable(output_path, storage_options=storage_options), storage_options)
 
         queue.put(
             models.DeltaWriteReport(
                 table_path=output_path,
                 column_schema=schema,
-                row_count=df.height,
-                column_count=len(df.columns),
+                row_count=row_count,
+                column_count=len(schema),
                 size_bytes=size_bytes,
             ).model_dump(by_alias=True)
         )
@@ -1019,8 +1029,10 @@ def merge_delta(
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
+        from deltalake import DeltaTable
+
         from flowfile_worker import models
-        from shared.delta_utils import merge_into_delta
+        from shared.delta_utils import delta_row_count, merge_into_delta
 
         output_path = _delta_target(output_path, table_name, storage_payload)
         catalog_table = f" (catalog table {table_id})" if table_id is not None else ""
@@ -1048,7 +1060,7 @@ def merge_delta(
         result_df = pl.scan_delta(output_path, storage_options=storage_options)
         result_schema = result_df.collect_schema()
         schema = [{"name": n, "dtype": str(d)} for n, d in result_schema.items()]
-        row_count = result_df.select(pl.len()).collect().item()
+        row_count = delta_row_count(DeltaTable(output_path, storage_options=storage_options), storage_options)
         size_bytes = _get_delta_size_bytes(output_path, storage_options=storage_options)
 
         queue.put(
@@ -1510,23 +1522,17 @@ def get_delta_history(
     return models.DeltaHistoryResponse(current_version=current_version, history=entries)
 
 
-def _delta_preview_payload(dt: DeltaTable, n_rows: int) -> tuple[list[str], list[str], list[list], int]:
+def _delta_preview_payload(
+    dt: DeltaTable, n_rows: int, storage_options: dict | None = None
+) -> tuple[list[str], list[str], list[list], int]:
     """Bounded head read of an open Delta table -> (columns, dtypes, rows, total_rows)."""
     from shared.delta_utils import make_json_safe
+    from shared.delta_utils import read_delta_preview as _read_delta_preview
 
-    dataset = dt.to_pyarrow_dataset()
-    pa_table = dataset.head(n_rows)
+    pa_table, total_rows = _read_delta_preview(dt, n_rows, storage_options)
     columns = pa_table.column_names
     dtypes = [str(field.type) for field in pa_table.schema]
     row_list = [[make_json_safe(row.get(c)) for c in columns] for row in pa_table.to_pylist()]
-    try:
-        total_rows = sum(
-            v for v in dt.get_add_actions(flatten=True).to_pydict().get("num_records", []) if v is not None
-        )
-    except Exception:
-        total_rows = len(row_list)
-    if total_rows == 0:
-        total_rows = len(row_list)
     return columns, dtypes, row_list, total_rows
 
 
@@ -1537,7 +1543,7 @@ def read_delta_version_preview(
     base_uri: str | None = None,
     storage_options: dict | None = None,
 ) -> models.DeltaVersionPreviewResponse:
-    """Read a preview of a Delta table at a specific version using deltalake + PyArrow (no Polars).
+    """Read a preview of a Delta table at a specific version using a pinned Delta snapshot and Polars.
 
     *table_name* is the bare directory name inside the catalog tables directory,
     or a key under *base_uri* in object storage when set.
@@ -1548,7 +1554,7 @@ def read_delta_version_preview(
 
     target = _resolve_catalog_target(table_name, base_uri)
     dt = DeltaTable(target, version=version, storage_options=storage_options)
-    columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows)
+    columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows, storage_options)
     return models.DeltaVersionPreviewResponse(
         version=version, columns=columns, dtypes=dtypes, rows=rows, total_rows=total_rows
     )
@@ -1560,7 +1566,7 @@ def read_delta_preview(
     base_uri: str | None = None,
     storage_options: dict | None = None,
 ) -> models.DeltaPreviewResponse:
-    """Read a preview (latest version) of a Delta table using deltalake + PyArrow (no Polars).
+    """Read a preview (latest version) of a Delta table using a pinned Delta snapshot and Polars.
 
     *table_name* is the bare directory name inside the catalog tables directory,
     or a key under *base_uri* in object storage when set.
@@ -1571,7 +1577,7 @@ def read_delta_preview(
 
     target = _resolve_catalog_target(table_name, base_uri)
     dt = DeltaTable(target, storage_options=storage_options)
-    columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows)
+    columns, dtypes, rows, total_rows = _delta_preview_payload(dt, n_rows, storage_options)
     return models.DeltaPreviewResponse(columns=columns, dtypes=dtypes, rows=rows, total_rows=total_rows)
 
 
