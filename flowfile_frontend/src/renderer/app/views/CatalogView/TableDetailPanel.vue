@@ -75,7 +75,7 @@
         <!-- A remote table's optimize and vacuum compute, which its catalog refuses; its grants are not this machine's. -->
         <TableMaintenance v-if="!isHub && table.table_type !== 'virtual'" :table="table" />
         <button
-          v-if="!isHub && canShare(table)"
+          v-if="isHub ? canShareHubRow(table) : canShare(table)"
           class="action-btn-lg"
           title="Share table"
           @click="showShareDialog = true"
@@ -101,7 +101,8 @@
       resource-type="catalog_table"
       :resource-id="table.id"
       :resource-name="table.name"
-      :can-manage-grants="canManageGrants(table)"
+      :can-manage-grants="isHub ? ownsHubRow(table) : canManageGrants(table)"
+      :remote="isHub"
     />
 
     <TableEditorDialog
@@ -540,7 +541,7 @@ import TableEditorDialog from "./TableEditorDialog.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
-import { hubSharedTitle, isHubRow } from "./hubRows";
+import { canShareHubRow, hubSharedTitle, isHubRow, ownsHubRow } from "./hubRows";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);

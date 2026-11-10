@@ -29,6 +29,11 @@
         :connection-name="node.storage_connection_name"
       />
       <span v-if="totalFlows > 0 && (!quiet || !expanded)" class="ns-count">{{ totalFlows }}</span>
+      <div v-if="isHub && canShareHubRow(node)" class="tree-actions" @click.stop>
+        <button class="action-btn" title="Share namespace" @click="$emit('namespaceShare', node)">
+          <i class="fa-solid fa-share-nodes"></i>
+        </button>
+      </div>
       <div v-if="!isHub" class="tree-actions" @click.stop>
         <button
           v-if="isMultiUser && isOwned(node)"
@@ -376,6 +381,7 @@ import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
 import HubBadge from "./HubBadge.vue";
 import {
+  canShareHubRow,
   hubFlowVersionTitle,
   hubSharedTitle,
   isHubRow,

@@ -95,7 +95,7 @@
           {{ flow.is_favorite ? "Favorited" : "Favorite" }}
         </button>
         <button
-          v-if="!remote && canShare(flow)"
+          v-if="remote ? canShareHubRow(flow) : canShare(flow)"
           class="action-btn-lg"
           title="Share flow"
           @click="showShareDialog = true"
@@ -120,7 +120,8 @@
       resource-type="flow"
       :resource-id="flow.id"
       :resource-name="flow.name"
-      :can-manage-grants="canManageGrants(flow)"
+      :can-manage-grants="remote ? ownsHubRow(flow) : canManageGrants(flow)"
+      :remote="remote"
     />
 
     <!-- File missing banner -->
@@ -368,7 +369,7 @@ import ApiEndpointPanel from "./ApiEndpointPanel.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
-import { isHubRow } from "./hubRows";
+import { canShareHubRow, isHubRow, ownsHubRow } from "./hubRows";
 
 const catalogStore = useCatalogStore();
 const showShareDialog = ref(false);

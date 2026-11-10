@@ -89,6 +89,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { SharesApi } from "../../api/shares.api";
 import { UserGroupsApi } from "../../api/userGroups.api";
 import { useSharingStore } from "../../stores/sharing-store";
 import { useAuthStore } from "../../stores/auth-store";
@@ -103,8 +104,10 @@ const props = withDefaults(
     // True when the current user owns the resource or is an admin: only then can
     // they mint manage-level grants (the backend enforces this too).
     canManageGrants?: boolean;
+    // True for a resource kept in another catalog: the groups it is shared with are that catalog's.
+    remote?: boolean;
   }>(),
-  { canManageGrants: false },
+  { canManageGrants: false, remote: false },
 );
 
 const emit = defineEmits<{ (e: "update:modelValue", value: boolean): void }>();
@@ -148,6 +151,7 @@ const noGroupsText = computed(() => {
   if (groups.value.length > 0) {
     return "Already shared with all available groups";
   }
+  if (props.remote) return "No groups to share with yet";
   return authStore.isAdmin
     ? "No groups exist yet — create one in User Groups"
     : "You are not in any groups";
@@ -169,8 +173,10 @@ async function onOpen() {
     // Fetch groups and existing shares in parallel — they're independent.
     // Admins can share to ANY group, so list all; everyone else lists their own.
     // Always fresh — a group created after the page loaded must show up.
+    const ownGroups = () =>
+      authStore.isAdmin ? UserGroupsApi.list(true) : sharing.loadMyGroups(true);
     const [groupList, shareList] = await Promise.all([
-      authStore.isAdmin ? UserGroupsApi.list(true) : sharing.loadMyGroups(true),
+      props.remote ? SharesApi.groups(props.resourceType, props.resourceId) : ownGroups(),
       sharing.listShares(props.resourceType, props.resourceId),
     ]);
     groups.value = groupList;

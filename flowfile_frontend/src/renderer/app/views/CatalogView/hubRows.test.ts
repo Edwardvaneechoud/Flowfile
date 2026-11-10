@@ -6,7 +6,9 @@ import {
   flowInTree,
   hubFlowVersionTitle,
   hubPresence,
+  canShareHubRow,
   hubSharedTitle,
+  ownsHubRow,
   offersNew,
   offersOwnCatalog,
   rootOf,
@@ -98,6 +100,20 @@ describe("offersNew", () => {
     expect(offersNew("only", null)).toBe(false);
     expect(offersNew("only", { source: "hub" })).toBe(false);
     expect(offersNew("beside", { source: "hub" })).toBe(false);
+  });
+});
+
+describe("sharing a hub row", () => {
+  it("is offered to its owner and to who manages it, never to who only uses it", () => {
+    expect(canShareHubRow({ access: { is_owner: true, access_level: "owner" } })).toBe(true);
+    expect(canShareHubRow({ access: { is_owner: false, access_level: "manage" } })).toBe(true);
+    expect(canShareHubRow({ access: { is_owner: false, access_level: "use" } })).toBe(false);
+    expect(canShareHubRow({ access: null })).toBe(true);
+  });
+
+  it("lets only its owner on the hub hand out manage", () => {
+    expect(ownsHubRow({ access: { is_owner: true, access_level: "owner" } })).toBe(true);
+    expect(ownsHubRow({ access: { is_owner: false, access_level: "manage" } })).toBe(false);
   });
 });
 

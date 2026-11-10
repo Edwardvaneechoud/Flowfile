@@ -75,7 +75,7 @@ describe("TableDetailPanel", () => {
     expect(host.querySelector('[data-testid="hub-badge"]')).toBeNull();
   });
 
-  it("gives a hub table Favourite and Delete, and no Share or maintenance, which its catalog does not answer", async () => {
+  it("gives a hub table Favourite, Delete and Share, and no maintenance, which its catalog does not answer", async () => {
     const favourited = vi.fn();
     const deleted = vi.fn();
     host = await mountIn(TableDetailPanel, {
@@ -97,7 +97,7 @@ describe("TableDetailPanel", () => {
     expect(favourited).toHaveBeenCalledWith(-3);
     (host.querySelector('[data-testid="table-delete"]') as HTMLButtonElement).click();
     expect(deleted).toHaveBeenCalledWith(-3);
-    expect(host.querySelector('[title="Share table"]')).toBeNull();
+    expect(host.querySelector('[title="Share table"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="query-table"]')?.hasAttribute("disabled")).toBe(false);
     expect(host.querySelector('[data-testid="hub-create-viz"]')).not.toBeNull();
     expect(host.querySelector(".viz-section")).toBeNull();

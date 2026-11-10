@@ -129,6 +129,15 @@ export function rootOf<R extends { id: number; children: R[] }>(
   return rows.find(holds) ?? null;
 }
 
+type Shareable = { access?: { is_owner: boolean; access_level: string } | null };
+
+/** Whether Share is offered on a hub row: to its owner and to who manages it, as the hub says; the hub decides again. */
+export const canShareHubRow = (row: Shareable): boolean =>
+  !row.access || row.access.is_owner || row.access.access_level === "manage";
+
+/** Whether the person may hand out manage on a hub row: its owner on the hub, whatever they are on this machine. */
+export const ownsHubRow = (row: Shareable): boolean => row.access?.is_owner !== false;
+
 /** An older hub's granter written as a team's or the organisation's account id, such as `team:sales`. */
 const RAW_PRINCIPAL = /^(team|org):\S+$/;
 

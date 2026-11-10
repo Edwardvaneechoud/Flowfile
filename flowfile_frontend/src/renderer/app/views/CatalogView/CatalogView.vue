@@ -481,7 +481,10 @@
       resource-type="catalog_namespace"
       :resource-id="shareNamespace.id"
       :resource-name="shareNamespace.name"
-      :can-manage-grants="canManageGrants(shareNamespace)"
+      :can-manage-grants="
+        isHubRow(shareNamespace) ? ownsHubRow(shareNamespace) : canManageGrants(shareNamespace)
+      "
+      :remote="isHubRow(shareNamespace)"
     />
 
     <!-- Right-click context menus for catalog tables and flows -->
@@ -661,6 +664,7 @@ import {
   isHubRow,
   isOffered,
   offersNew,
+  ownsHubRow,
   rootOf,
   showsPlaces,
   withoutHubRows,
