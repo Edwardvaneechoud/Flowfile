@@ -94,6 +94,24 @@
         <span class="meta-label">Created</span>
         <span class="meta-value">{{ formatDate(schedule.created_at) }}</span>
       </div>
+      <div class="meta-card">
+        <span class="meta-label">Runs on</span>
+        <el-select
+          v-if="computes"
+          :model-value="schedule.backend ?? ''"
+          size="small"
+          style="width: 100%"
+          @change="saveBackend"
+        >
+          <el-option
+            v-for="option in backendOptions"
+            :key="option.key"
+            :label="option.label"
+            :value="option.key"
+          />
+        </el-select>
+        <span v-else class="meta-value">{{ scheduleBackendLabel(schedule.backend ?? "") }}</span>
+      </div>
       <div
         v-if="schedule.schedule_type === 'interval' && schedule.interval_seconds"
         class="meta-card"
@@ -208,7 +226,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
@@ -225,6 +243,12 @@ import RunHistoryTable from "./RunHistoryTable.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
 import setupService from "../../services/setup.service";
+import { listComputeBackends } from "../../api/computeBackends.api";
+import {
+  scheduleBackendLabel,
+  scheduleBackendOptions,
+  type BackendRow,
+} from "../../utils/executionLocation";
 
 // A schedule here fires on this core's own scheduler and its alerts go out from it. Where this core computes nothing
 // (a hub's own page) the schedule is another Flowfile's, read-only but for its switch and its delete: no Run Now or
@@ -367,6 +391,34 @@ async function saveDescription() {
     } catch (e: any) {
       ElMessage.error(e?.response?.data?.detail ?? "Failed to update description");
     }
+  }
+}
+
+// A listing that fails leaves the flow's own setting, the default worker and the schedule's own value.
+const backendRows = ref<BackendRow[]>([]);
+onMounted(async () => {
+  if (!computes) return;
+  try {
+    backendRows.value = await listComputeBackends();
+  } catch {
+    backendRows.value = [];
+  }
+});
+const backendOptions = computed(() =>
+  scheduleBackendOptions(props.schedule.backend ?? "", backendRows.value),
+);
+
+async function saveBackend(value: string) {
+  if (value === (props.schedule.backend ?? "")) return;
+  try {
+    // An empty string clears the backend; the update keeps a field it is not sent.
+    await CatalogApi.updateSchedule(props.schedule.id, { backend: value });
+    await Promise.all([
+      catalogStore.loadScheduleDetail(props.schedule.id),
+      catalogStore.loadSchedules(),
+    ]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to change where the schedule runs");
   }
 }
 

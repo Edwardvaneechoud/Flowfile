@@ -316,6 +316,20 @@
           />
         </el-form-item>
 
+        <el-form-item label="Runs on">
+          <el-select v-model="form.backend" style="width: 100%">
+            <el-option
+              v-for="option in backendOptions"
+              :key="option.key"
+              :label="option.label"
+              :value="option.key"
+            />
+          </el-select>
+          <div class="hint-text">
+            Where each run computes. The default worker must be reachable from this server.
+          </div>
+        </el-form-item>
+
         <!-- Optional alert. Never blocks creation: with no channels this is just a hint. -->
         <el-form-item class="notify-item">
           <el-checkbox v-model="notifyOnFailure">Notify on failure</el-checkbox>
@@ -383,6 +397,8 @@ import { useNotificationsStore } from "../../stores/notifications-store";
 import { channelTypeLabel } from "./catalog-formatters";
 import { AiDisabledError, generateCronExpression } from "../../api/ai.api";
 import { CatalogApi } from "../../api/catalog.api";
+import { listComputeBackends } from "../../api/computeBackends.api";
+import { scheduleBackendOptions, type BackendRow } from "../../utils/executionLocation";
 
 const props = defineProps<{
   visible: boolean;
@@ -446,6 +462,7 @@ const form = ref<{
   trigger_table_ids: number[];
   name: string;
   description: string;
+  backend: string;
 }>({
   registration_id: props.preselectedFlowId ?? null,
   schedule_type: "cron",
@@ -453,7 +470,22 @@ const form = ref<{
   trigger_table_ids: [],
   name: "",
   description: "",
+  backend: "",
 });
+
+// A listing that fails leaves the flow's own setting and the default worker.
+const backendRows = ref<BackendRow[]>([]);
+const backendOptions = computed(() =>
+  scheduleBackendOptions(form.value.backend, backendRows.value),
+);
+
+async function loadBackendRows() {
+  try {
+    backendRows.value = await listComputeBackends();
+  } catch {
+    backendRows.value = [];
+  }
+}
 
 const builtCron = computed(() => buildCron(cron.value));
 const cronPreview = computed(() => describeCron(builtCron.value, timezone.value));
@@ -584,6 +616,8 @@ watch(
       form.value.trigger_table_ids = [];
       form.value.name = "";
       form.value.description = "";
+      form.value.backend = "";
+      void loadBackendRows();
       cron.value = defaultCronState();
       notifyOnFailure.value = false;
       notifyChannelId.value = null;
@@ -668,6 +702,7 @@ function handleCreate() {
     schedule_type: form.value.schedule_type,
     name: form.value.name.trim() || null,
     description: form.value.description.trim() || null,
+    backend: form.value.backend || null,
   };
 
   if (form.value.schedule_type === "cron") {

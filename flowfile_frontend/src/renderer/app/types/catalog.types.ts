@@ -565,6 +565,7 @@ export interface FlowSchedule {
   trigger_table_ids: number[];
   trigger_table_names: string[];
   trigger_full_table_names: string[];
+  backend: string | null;
   last_triggered_at: string | null;
   last_trigger_table_updated_at: string | null;
   created_at: string;
@@ -582,6 +583,7 @@ export interface FlowScheduleCreate {
   enabled?: boolean;
   name?: string | null;
   description?: string | null;
+  backend?: string | null;
 }
 
 export interface FlowScheduleUpdate {
@@ -591,6 +593,7 @@ export interface FlowScheduleUpdate {
   cron_timezone?: string | null;
   name?: string | null;
   description?: string | null;
+  backend?: string | null;
 }
 
 export interface CronValidationRequest {
