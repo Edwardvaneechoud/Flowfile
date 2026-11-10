@@ -21,7 +21,7 @@
     <button
       v-if="canEnableTracking"
       class="action-btn-lg"
-      :disabled="!table.file_exists || enablingCdc"
+      :disabled="(!remote && !table.file_exists) || enablingCdc"
       title="Record inserts, updates and deletes so readers can read only what changed"
       @click="enableTracking"
     >
@@ -221,7 +221,6 @@ const enablingCdc = ref(false);
 
 const canEnableTracking = computed(
   () =>
-    !props.remote &&
     !props.table.cdc_enabled &&
     props.table.table_type !== "virtual" &&
     !props.table.scd2 &&

@@ -45,7 +45,14 @@ const localTable = table({
   created_at: "2026-01-01T00:00:00",
   read_by_flows: [{ id: 5, name: "Daily orders" }],
 } as Partial<CatalogTable>);
-const hubTable = table({ ...localTable, id: -3, source: "hub", hub_id: 3, hub_namespace_id: 2 });
+const hubTable = table({
+  ...localTable,
+  id: -3,
+  source: "hub",
+  hub_id: 3,
+  hub_namespace_id: 2,
+  file_exists: false,
+});
 
 let host: HTMLElement;
 
@@ -76,11 +83,11 @@ describe("TableDetailPanel", () => {
 
     await mount(hubTable);
     expect(metaLabels()).not.toContain("Read by");
-    expect(metaLabels()).not.toContain("Change tracking");
+    expect(metaLabels()).toContain("Change tracking");
     expect(host.querySelector('[data-testid="hub-badge"]')).toBeNull();
   });
 
-  it("gives a hub table Favourite, Delete, Share and the maintenance a local table has", async () => {
+  it("gives a hub table Favourite, Delete, Share, Edit data and the maintenance a local table has", async () => {
     const favourited = vi.fn();
     const deleted = vi.fn();
     host = await mountIn(TableDetailPanel, {
@@ -108,6 +115,7 @@ describe("TableDetailPanel", () => {
     expect(host.querySelector('[data-testid="maintenance"]')?.getAttribute("data-remote")).toBe(
       "true",
     );
+    expect(host.querySelector('[data-testid="edit-data"]')).not.toBeNull();
     expect(host.querySelector(".viz-section")).toBeNull();
   });
 });

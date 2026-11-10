@@ -72,7 +72,7 @@
           <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
           {{ table.is_favorite ? "Favorited" : "Favorite" }}
         </button>
-        <!-- A remote table is optimized and vacuumed by this machine's worker, as a local one is. -->
+        <!-- A remote table is optimized, vacuumed and tracked by this machine, as a local one is. -->
         <TableMaintenance v-if="table.table_type !== 'virtual'" :table="table" :remote="isHub" />
         <button
           v-if="isHub ? canShareHubRow(table) : canShare(table)"
@@ -186,7 +186,7 @@
           </div>
         </el-popover>
       </div>
-      <div v-if="!isHub && table.table_type !== 'virtual'" class="meta-card">
+      <div v-if="table.table_type !== 'virtual'" class="meta-card" data-testid="change-tracking">
         <span class="meta-label">Change tracking</span>
         <el-popover
           v-if="table.cdc_enabled"
@@ -460,8 +460,9 @@
           Showing {{ preview.rows.length }} of {{ preview.total_rows }} rows
         </span>
         <button
-          v-if="canEditData && !isHub"
+          v-if="canEditData"
           class="btn btn-sm btn-primary edit-data-btn"
+          data-testid="edit-data"
           title="Edit table data (cells, rows, columns) in place"
           @click="showTableEditor = true"
         >
@@ -596,13 +597,13 @@ const isViewingHistorical = computed(
     props.selectedVersion !== props.tableHistory.current_version,
 );
 
-// Edit surface: physical non-SCD2 tables with data on disk, manage access required.
-// Legacy Parquet tables pass this gate but are refused server-side with a clear message.
+// Edit surface: physical non-SCD2 tables with data on disk (a hub table's file is not probed here),
+// manage access required. Legacy Parquet tables pass this gate but are refused server-side.
 const canEditData = computed(
   () =>
     canManage(props.table) &&
     props.table.table_type !== "virtual" &&
-    props.table.file_exists &&
+    (isHub.value || props.table.file_exists) &&
     !props.table.scd2,
 );
 
