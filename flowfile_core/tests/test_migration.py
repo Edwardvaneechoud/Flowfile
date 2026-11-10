@@ -1288,3 +1288,81 @@ class TestFlowRunsRecordMigration:
 
         command.downgrade(_get_alembic_config(), "040")
         assert self._run_types(db_path) == {"sent": "hub", "mine": "manual"}
+
+
+class TestFlowSchedulesBackendMigration:
+    """042 adds ``flow_schedules.backend``: NULL on every existing row, so a schedule runs as before."""
+
+    @staticmethod
+    def _columns(db_path: Path) -> set[str]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        names = {c["name"] for c in inspect(engine).get_columns("flow_schedules")}
+        engine.dispose()
+        return names
+
+    def test_fresh_install_has_the_column(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        assert "backend" in self._columns(db_path)
+
+    def test_upgrade_from_041_leaves_existing_rows_null(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "041")
+        assert "backend" not in self._columns(db_path)
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO flow_schedules (registration_id, owner_id, enabled, schedule_type, interval_seconds, "
+                    "created_at, updated_at) VALUES (1, 1, 1, 'interval', 60, '2026-11-01 00:00:00', "
+                    "'2026-11-01 00:00:00')"
+                )
+            )
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT interval_seconds, backend FROM flow_schedules")).all()
+        engine.dispose()
+        assert [tuple(r) for r in rows] == [(60, None)]
+
+    def test_downgrade_then_upgrade_round_trips(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        cfg = _get_alembic_config()
+
+        command.downgrade(cfg, "041")
+        assert "backend" not in self._columns(db_path)
+
+        command.upgrade(cfg, "042")
+        assert "backend" in self._columns(db_path)
+
+    def test_upgrade_is_guarded_when_the_column_already_exists(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "041")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN backend VARCHAR"))
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        assert "backend" in self._columns(db_path)
