@@ -12,8 +12,8 @@ vi.mock("../../api/catalog.api", () => ({
 }));
 vi.mock("../../composables/useResourceSharing", () => ({
   useResourceSharing: () => ({
-    canShare: () => false,
-    canManage: () => false,
+    canShare: () => true,
+    canManage: () => true,
     canManageGrants: () => false,
     isShared: () => false,
     sharedLabel: () => "",
@@ -73,5 +73,33 @@ describe("TableDetailPanel", () => {
     expect(metaLabels()).not.toContain("Read by");
     expect(metaLabels()).not.toContain("Change tracking");
     expect(host.querySelector('[data-testid="hub-badge"]')).toBeNull();
+  });
+
+  it("gives a hub table Favourite and Delete, and no Share or maintenance, which its catalog does not answer", async () => {
+    const favourited = vi.fn();
+    const deleted = vi.fn();
+    host = await mountIn(TableDetailPanel, {
+      props: {
+        table: hubTable,
+        preview: null,
+        loadingPreview: false,
+        previewError: null,
+        tableHistory: null,
+        loadingTableHistory: false,
+        tableHistoryStale: false,
+        selectedVersion: null,
+        onToggleTableFavorite: favourited,
+        onDeleteTable: deleted,
+      },
+      stubs,
+    });
+    (host.querySelector('[data-testid="table-favorite"]') as HTMLButtonElement).click();
+    expect(favourited).toHaveBeenCalledWith(-3);
+    (host.querySelector('[data-testid="table-delete"]') as HTMLButtonElement).click();
+    expect(deleted).toHaveBeenCalledWith(-3);
+    expect(host.querySelector('[title="Share table"]')).toBeNull();
+    expect(host.querySelector('[data-testid="query-table"]')?.hasAttribute("disabled")).toBe(false);
+    expect(host.querySelector('[data-testid="hub-create-viz"]')).not.toBeNull();
+    expect(host.querySelector(".viz-section")).toBeNull();
   });
 });

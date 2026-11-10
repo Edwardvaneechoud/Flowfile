@@ -31,16 +31,18 @@
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
-      <div v-if="isHub" class="header-actions">
+      <div class="header-actions">
         <button
           class="action-btn-lg"
-          data-testid="hub-query-table"
+          data-testid="query-table"
+          :disabled="!isHub && !table.file_exists"
           @click="emit('queryTable', table.qualified_name ?? table.full_table_name ?? table.name)"
         >
           <i class="fa-solid fa-code"></i>
           Query table
         </button>
         <button
+          v-if="isHub"
           class="action-btn-lg"
           data-testid="hub-create-viz"
           @click="emit('createViz', table)"
@@ -48,18 +50,8 @@
           <i class="fa-solid fa-chart-column"></i>
           New visualization
         </button>
-      </div>
-      <div v-else class="header-actions">
         <button
-          class="action-btn-lg"
-          :disabled="!table.file_exists"
-          @click="emit('queryTable', table.qualified_name ?? table.full_table_name ?? table.name)"
-        >
-          <i class="fa-solid fa-code"></i>
-          Query table
-        </button>
-        <button
-          v-if="table.table_type === 'virtual' && table.sql_query"
+          v-if="!isHub && table.table_type === 'virtual' && table.sql_query"
           class="action-btn-lg"
           :title="
             canManage(table)
@@ -73,15 +65,17 @@
         </button>
         <button
           class="action-btn-lg"
+          data-testid="table-favorite"
           :class="{ active: table.is_favorite }"
           @click="emit('toggleTableFavorite', table.id)"
         >
           <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
           {{ table.is_favorite ? "Favorited" : "Favorite" }}
         </button>
-        <TableMaintenance v-if="table.table_type !== 'virtual'" :table="table" />
+        <!-- A remote table's optimize and vacuum compute, which its catalog refuses; its grants are not this machine's. -->
+        <TableMaintenance v-if="!isHub && table.table_type !== 'virtual'" :table="table" />
         <button
-          v-if="canShare(table)"
+          v-if="!isHub && canShare(table)"
           class="action-btn-lg"
           title="Share table"
           @click="showShareDialog = true"
@@ -92,6 +86,7 @@
         <button
           v-if="canManage(table)"
           class="btn btn-danger btn-sm"
+          data-testid="table-delete"
           title="Delete table"
           @click="emit('deleteTable', table.id)"
         >

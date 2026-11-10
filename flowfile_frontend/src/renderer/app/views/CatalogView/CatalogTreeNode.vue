@@ -153,8 +153,7 @@
           >
             <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
           </el-tooltip>
-          <!-- A hub flow's favourite, delete and run dot act on a local registration, which it has not. -->
-          <div v-if="!isHubRow(flow)" class="flow-actions" @click.stop>
+          <div class="flow-actions" @click.stop>
             <button
               class="action-btn star-btn"
               :class="{ active: flow.is_favorite }"
@@ -269,7 +268,7 @@
           >
             <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
           </el-tooltip>
-          <div v-if="!isHubRow(table)" class="flow-actions" @click.stop>
+          <div class="flow-actions" @click.stop>
             <button
               class="action-btn star-btn"
               :class="{ active: table.is_favorite }"

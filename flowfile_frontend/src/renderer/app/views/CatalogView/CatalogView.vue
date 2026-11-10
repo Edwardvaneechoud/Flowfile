@@ -1444,9 +1444,10 @@ function handleEditTableSql({ table, link }: { table: CatalogTable; link: boolea
 async function confirmDeleteWithFile(opts: {
   title: string;
   question: string;
-  fileLabel: string;
+  fileLabel?: string;
 }): Promise<{ deleteFile: boolean } | null> {
-  const deleteFile = ref(true);
+  // No file to offer (a remote row): its catalog removes the entry, never a file.
+  const deleteFile = ref(opts.fileLabel !== undefined);
   const checkbox = () =>
     h(
       ElCheckbox,
@@ -1458,7 +1459,11 @@ async function confirmDeleteWithFile(opts: {
     );
   try {
     await ElMessageBox.confirm(
-      () => h("div", [h("p", { style: "margin: 0 0 12px" }, opts.question), checkbox()]),
+      () =>
+        h("div", [
+          h("p", { style: "margin: 0 0 12px" }, opts.question),
+          opts.fileLabel === undefined ? null : checkbox(),
+        ]),
       opts.title,
       { confirmButtonText: "Delete", cancelButtonText: "Cancel", type: "warning" },
     );
@@ -1472,7 +1477,7 @@ async function handleDeleteTable(tableId: number) {
   const result = await confirmDeleteWithFile({
     title: "Delete Table",
     question: "Delete this table from the catalog?",
-    fileLabel: "Also delete the table data from disk",
+    fileLabel: tableId < 0 ? undefined : "Also delete the table data from disk",
   });
   if (!result) return;
   try {
@@ -1517,7 +1522,7 @@ async function handleDeleteFlow(flowId: number) {
   const result = await confirmDeleteWithFile({
     title: "Delete Flow",
     question: "Delete this flow from the catalog? Run history will also be removed.",
-    fileLabel: "Also delete the flow file from disk",
+    fileLabel: flowId < 0 ? undefined : "Also delete the flow file from disk",
   });
   if (!result) return;
   try {

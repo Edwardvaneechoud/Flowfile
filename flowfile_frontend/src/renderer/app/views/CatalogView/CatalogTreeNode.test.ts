@@ -183,7 +183,7 @@ describe("a hub flow's row", () => {
     ],
   });
 
-  it("shows the flow with its newest version and who published it, and none of a local flow's actions", async () => {
+  it("shows the flow with its newest version and who published it, and a local flow's favourite, delete and run dot", async () => {
     await mount(published, "only");
 
     const row = host.querySelector(".tree-flow");
@@ -191,8 +191,9 @@ describe("a hub flow's row", () => {
     const chip = row?.querySelector("[data-testid='hub-flow-version']");
     expect(chip?.textContent).toBe("v3");
     expect(chip?.getAttribute("title")).toBe("Version 3 on the hub, published by ana");
-    expect(row?.querySelector(".flow-actions")).toBeNull();
-    expect(row?.querySelector(".run-indicator")).toBeNull();
+    expect(row?.querySelector(".flow-actions .star-btn")).not.toBeNull();
+    expect(row?.querySelector(".flow-actions .delete-btn")).not.toBeNull();
+    expect(row?.querySelector(".run-indicator")).not.toBeNull();
   });
 
   it("keeps a local flow's favourite, delete and run dot", async () => {

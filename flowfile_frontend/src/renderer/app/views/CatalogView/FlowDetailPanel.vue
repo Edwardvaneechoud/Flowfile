@@ -19,7 +19,7 @@
           </template>
           <template v-else>
             <h2>{{ flow.name }}</h2>
-            <button v-if="!remote" class="btn-icon-inline" title="Rename" @click="startRename">
+            <button class="btn-icon-inline" title="Rename" @click="startRename">
               <i class="fa-solid fa-pen"></i>
             </button>
             <SharedBadge :access="flow.access" />
@@ -104,7 +104,7 @@
           Share
         </button>
         <button
-          v-if="!remote && canManage(flow)"
+          v-if="canManage(flow)"
           class="btn btn-danger btn-sm"
           title="Delete flow"
           @click="$emit('deleteFlow', flow.id)"

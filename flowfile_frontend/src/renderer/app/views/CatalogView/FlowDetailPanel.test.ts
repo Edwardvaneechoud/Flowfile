@@ -113,7 +113,7 @@ describe("FlowDetailPanel", () => {
       host.querySelector("[data-testid='run-history']")?.getAttribute("data-registration"),
     ).toBe("-201");
     expect(text(host.querySelector("[data-testid='schedules']"))).toBe("1");
-    expect(buttons(host)).toEqual(["Run Flow", "Favorite"]);
+    expect(buttons(host)).toEqual(["Run Flow", "Favorite", "Delete"]);
     (host.querySelectorAll(".header-actions button")[1] as HTMLButtonElement).click();
     expect(favourited).toHaveBeenCalledWith(-201);
   });
@@ -150,9 +150,25 @@ describe("FlowDetailPanel", () => {
     expect(schedules?.getAttribute("data-cancel-off")).toBe("true");
   });
 
-  it("leaves out for a hub flow what needs the file here", async () => {
+  it("gives a hub flow Rename and Delete through core's routes by its own id", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const deleted = vi.fn();
+    const renamed = vi.fn();
+    const host = await mountIn(FlowDetailPanel, {
+      props: { flow: hubFlow, artifacts: [], onDeleteFlow: deleted, onRenameFlow: renamed },
+      pinia,
+      stubs,
+    });
+    (host.querySelector("[title='Delete flow']") as HTMLButtonElement).click();
+    expect(deleted).toHaveBeenCalledWith(-201);
+    expect(host.querySelector("[title='Rename']")).not.toBeNull();
+  });
+
+  it("leaves out for a hub flow what needs the file here, Share and the API panel", async () => {
     const { host } = await mount(hubFlow);
 
+    expect(buttons(host)).not.toContain("Share");
     expect(host.querySelector("[data-testid='api-panel']")).toBeNull();
     expect(host.querySelector(".missing-banner")).toBeNull();
   });
