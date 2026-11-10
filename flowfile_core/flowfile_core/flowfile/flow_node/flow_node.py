@@ -1732,7 +1732,17 @@ class FlowNode:
         return ref
 
     def is_cached_on(self, backend_id: str) -> bool:
-        """Whether this node holds its current configured cache as materialised rows on ``backend_id``."""
+        """Whether a cache-eligible node holds current materialised rows on ``backend_id``.
+
+        Output nodes, subflow calls and formula gates always run, regardless of stored rows.
+        This advisory check does not perform source-freshness I/O or guarantee execution-time reuse.
+        """
+        if (
+            self.node_template.node_group == "output"
+            or self.node_type == "run_flow"
+            or (self.node_type == "gate" and self.executor._gate_routes_on_formula())
+        ):
+            return False
         ref = self.results.result_ref
         return bool(
             self.node_settings.cache_results and ref is not None and ref.state == "materialised"

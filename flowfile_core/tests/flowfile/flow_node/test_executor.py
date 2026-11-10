@@ -477,6 +477,29 @@ def test_is_cached_on_rejects_unusable_results():
     assert not node.is_cached_on("worker")
 
 
+@pytest.mark.parametrize("node_type,group,formula", [
+    ("output", "output", False), ("run_flow", "other", False), ("gate", "other", True),
+])
+def test_cache_indicator_excludes_nodes_that_always_run(node_type, group, formula, monkeypatch):
+    from types import SimpleNamespace
+
+    graph = create_graph()
+    add_manual_input(graph, [{"a": 1}], node_id=1)
+    node = graph.get_node(1)
+    node.node_settings.cache_results = True
+    node.results.result_ref = ResultRef(
+        backend_id="worker", result_id=node.hash, schema=[], row_count=1,
+        state="materialised", location=b"",
+    )
+    node.node_type = node_type
+    node.node_template = SimpleNamespace(node_group=group)
+    node._setting_input = SimpleNamespace(
+        gate_input=SimpleNamespace(condition_source="formula" if formula else "parameter")
+    )
+    monkeypatch.setattr(node, "held_result", lambda _: pytest.fail("must not hash an always-run node"))
+    assert not node.is_cached_on("worker")
+
+
 def create_graph_with_output(tmp_path: Path, flow_id: int,
                              execution_location: ExecutionLocationLit = "remote") -> FlowGraph:
     """manual_input(1) -> csv output(2)."""

@@ -29,17 +29,10 @@ const row = (overrides: Partial<NodeResult>): NodeResult => ({
 });
 
 describe("nodePlacementNote", () => {
-  it("labels an unchecked backend instead of silently implying its assignment was verified", () => {
-    const note = nodePlacementNote(
-      preview({
-        fallbacks: [],
-        unchecked_backend_ids: ["worker:polars"],
-      }),
-      2,
-    );
-    expect(note?.kind).toBe("unchecked");
-    expect(note?.label).toBe("not checked");
-    expect(note?.text).toContain("not been checked");
+  it("shows no badge while a backend's capabilities are unchecked", () => {
+    expect(
+      nodePlacementNote(preview({ fallbacks: [], unchecked_backend_ids: ["worker:polars"] }), 2),
+    ).toBeNull();
   });
 
   it("says in one sentence where a moved node runs, and adds what its backend lacks for the drawer", () => {

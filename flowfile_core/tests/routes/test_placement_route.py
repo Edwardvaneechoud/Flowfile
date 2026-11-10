@@ -170,7 +170,7 @@ def test_rejected_backend_preview_requests_recheck_and_recovers(client, http_rea
     preview = client.get("/flow/placement", params={**params, "probe": False})
     assert preview.status_code == 200
     assert preview.json()["refusals"]
-    assert preview.json()["unchecked_backend_ids"] == [BACKEND_ID]
+    assert preview.json()["unchecked_backend_ids"] == []
     assert backend.asked == asked  # The fast response itself must stay network-free.
 
     live = client.get("/flow/placement", params=params)
@@ -178,6 +178,20 @@ def test_rejected_backend_preview_requests_recheck_and_recovers(client, http_rea
     assert live.json()["refusals"] == []
     assert live.json()["unchecked_backend_ids"] == []
     assert backend.asked > asked
+
+
+def test_unreachable_backend_preview_matches_live_without_refusals(client, http_read_flow):
+    from flowfile_core.flowfile.execution.errors import ComputeUnavailable
+
+    _, backend = http_read_flow
+    backend.declared = ComputeUnavailable("worker down", backend_id=BACKEND_ID)
+    params = {"flow_id": FLOW_ID}
+    live = client.get("/flow/placement", params=params).json()
+    assert live["refusals"] == []
+    asked = backend.asked
+    preview = client.get("/flow/placement", params={**params, "probe": False}).json()
+    assert preview == live
+    assert backend.asked == asked
 
 
 def test_an_unknown_flow_is_not_found(client):

@@ -4,7 +4,7 @@ import type { NodeResult, PlacementFallback, PlacementPreview, PlacementRefusal 
 import { backendInSentence, backendName } from "./executionLocation";
 
 export interface NodePlacementNote {
-  kind: "fallback" | "refused" | "unchecked";
+  kind: "fallback" | "refused";
   // The canvas badge's text.
   label: string;
   // The badge's tooltip: where the node runs and why, in one sentence.
@@ -53,12 +53,7 @@ export function nodePlacementNote(
     return { kind: "refused", label: "can't run", text, detail: text };
   }
   const fallback = preview.fallbacks.find((item) => item.node_id === nodeId);
-  if (!fallback) {
-    const backend = preview.assignment[nodeId];
-    if (!preview.unchecked_backend_ids?.includes(backend)) return null;
-    const text = `Capabilities for ${backendInSentence(backend)} have not been checked. Placement may change after the check.`;
-    return { kind: "unchecked", label: "not checked", text, detail: text };
-  }
+  if (!fallback) return null;
   const text = fallbackSentence(fallback, ownBackend);
   return {
     kind: "fallback",

@@ -2730,7 +2730,7 @@ def _cached_node_ids(flow, placement) -> list[int]:
         default = current_context(flow).backend_id
         return [node.node_id for node in flow.nodes if node.is_cached_on(assignment.get(node.node_id, default))]
     except Exception:
-        logging.exception("Could not determine cached nodes for flow %s", flow.flow_id)
+        logger.exception("Could not determine cached nodes for flow %s", flow.flow_id)
         return []
 
 

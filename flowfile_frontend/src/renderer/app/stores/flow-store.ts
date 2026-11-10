@@ -63,10 +63,6 @@ export const useFlowStore = defineStore("flow", {
       // A run started or ended elsewhere; HeaderButtons re-reads the run state on it.
       pendingRunStateCounter: 0,
       placementRequestId: 0,
-      cachedResultState: null as {
-        graphVersion: number;
-        runStart: string | null | undefined;
-      } | null,
     };
   },
 
@@ -75,15 +71,9 @@ export const useFlowStore = defineStore("flow", {
     isNodeCached:
       (state) =>
       (nodeId: number): boolean => {
-        const cached = state.cachedResultState;
-        const editor = useEditorStore();
-        const results = useResultsStore();
-        return Boolean(
-          cached &&
-          cached.graphVersion === editor.graphVersion &&
-          !editor.isRunning &&
-          cached.runStart === results.getRunResult(state.flowId)?.start_time &&
-          (results.placements[state.flowId]?.cached_node_ids ?? []).includes(nodeId),
+        return (
+          !useEditorStore().isRunning &&
+          (useResultsStore().placements[state.flowId]?.cached_node_ids ?? []).includes(nodeId)
         );
       },
     canUndo: (state) => state.historyState.can_undo,
@@ -94,9 +84,8 @@ export const useFlowStore = defineStore("flow", {
 
   actions: {
     setFlowId(flowId: number) {
-      this.cachedResultState = null;
-      this.placementRequestId++;
       if (this.flowId === flowId) return;
+      this.placementRequestId++;
       this.flowId = flowId;
       try {
         sessionStorage.setItem(FLOW_ID_STORAGE_KEY, flowId.toString());
@@ -178,33 +167,26 @@ export const useFlowStore = defineStore("flow", {
       if (targetId < 0 || targetId !== this.flowId) return;
       const requestId = ++this.placementRequestId;
       const graphVersion = useEditorStore().graphVersion;
-      const runStart = useResultsStore().getRunResult(targetId)?.start_time;
-      this.cachedResultState = null;
       if (placementTimer) clearTimeout(placementTimer);
       placementTimer = setTimeout(async () => {
         placementTimer = null;
         if (this.flowId !== targetId || requestId !== this.placementRequestId) return;
-        const wasRunning = useEditorStore().isRunning;
         const apply = (data: PlacementPreview): boolean => {
           if (
             this.flowId !== targetId ||
             requestId !== this.placementRequestId ||
-            graphVersion !== useEditorStore().graphVersion ||
-            runStart !== useResultsStore().getRunResult(targetId)?.start_time
+            graphVersion !== useEditorStore().graphVersion
           )
             return false;
           useResultsStore().applyPlacement(targetId, data);
-          if (!wasRunning && !useEditorStore().isRunning) {
-            this.cachedResultState = { graphVersion, runStart };
-          }
           return true;
         };
         try {
-          const data = await FlowApi.getPlacement(targetId);
+          const probe = useResultsStore().placements[targetId] !== undefined;
+          const data = await FlowApi.getPlacement(targetId, probe);
           if (!apply(data)) return;
-          // Cold or cached negative verdicts need a live check. Keep the fast preview visible
-          // while it runs; both responses share the same staleness checks.
-          if (data.unchecked_backend_ids?.length) {
+          // Only cold previews need a live follow-up.
+          if (!probe && data.unchecked_backend_ids?.length) {
             apply(await FlowApi.getPlacement(targetId, true));
           }
         } catch {

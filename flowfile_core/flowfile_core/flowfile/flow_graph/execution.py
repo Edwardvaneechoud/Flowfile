@@ -1080,6 +1080,8 @@ class ExecutionMixin(GraphMixinBase):
         rows than ``FLOWFILE_EXCHANGE_MAX_ROWS`` (``BoundaryEdge.cost``). An edge of unknown size crosses. Every refusal
         carries its ``remedy_for``. ``log`` false (the placement preview) writes no warnings to core's log.
         ``probe=False`` reads only cached handshake verdicts, leaving unchecked backends unreachable.
+        Cached ``ComputeUnavailable`` verdicts stay unreachable, not refused, just as on the live path.
+        Known negative verdicts are not unchecked; subsequent live refreshes retry them through ``verdict_for``.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1122,12 +1124,10 @@ class ExecutionMixin(GraphMixinBase):
             if verdict.ok:
                 declared[backend_id] = verdict.offered
                 absent[backend_id] = verdict.absent
+            elif verdict.error_kind == "ComputeUnavailable":
+                unreachable[backend_id] = ComputeUnavailable(verdict.error, backend_id=backend_id)
             else:
                 refused[backend_id] = verdict.error
-                if not probe:
-                    # Negative verdicts are retried by verdict_for; let the canvas
-                    # request that live check without blocking this fast preview.
-                    unchecked_backend_ids.append(backend_id)
         placement = place(self, declared, policy, nodes=nodes, absent=absent, unreachable=unreachable, log=log)
         if unchecked_backend_ids:
             placement = replace(placement, unchecked_backend_ids=unchecked_backend_ids)
