@@ -671,17 +671,9 @@ class TestHubTables:
 
         [run] = _runs_of(flow_uuid)
         assert run.success is True
-        catalog_id = schema["parent_id"]
         assert desktop.calls == [
-            ("GET", "/catalog/namespaces"),
-            ("GET", "/catalog/namespaces"),
-            ("GET", "/catalog/tables"),
+            ("GET", "/catalog/namespaces/tree")
         ], "the hub's ids behind the steps' names, on the cached token, beside the post"
-        assert desktop.catalog_calls == [
-            ("/catalog/namespaces", ""),
-            ("/catalog/namespaces", f"parent_id={catalog_id}"),
-            ("/catalog/tables", ""),
-        ]
         [sent] = hub.requests
         assert str(sent.url) == f"{HUB_URL}/hub/runs"
         assert desktop._bearer_user(sent) == "ana"
@@ -707,7 +699,7 @@ class TestHubTables:
         _ran(flow, monkeypatch, (HUB_RUN_ID, 7))
 
         def handle(request):
-            if request.url.path == "/catalog/tables":
+            if request.url.path == "/catalog/namespaces/tree":
                 return httpx.Response(503, json={"detail": "catalog unavailable"})
             return desktop.handle(request)
 

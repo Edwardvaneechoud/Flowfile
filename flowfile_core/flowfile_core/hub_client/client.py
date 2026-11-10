@@ -183,33 +183,6 @@ def catalog_request(
     return resp.status_code, _json(resp)
 
 
-def list_namespaces(
-    url: str, access_token: str, parent_id: int | None = None, *, http: httpx.Client | None = None
-) -> list:
-    """The catalog namespaces the signed-in account can see on the hub, as the hub lists them.
-
-    The hub answers its root namespaces without ``parent_id`` and the children of that namespace with one.
-    """
-    params = {"parent_id": parent_id} if parent_id is not None else None
-    return _request_list("GET", url, "/catalog/namespaces", http, params=params, headers=_bearer(access_token))
-
-
-def list_tables(
-    url: str, access_token: str, namespace_id: int | None = None, *, http: httpx.Client | None = None
-) -> list:
-    """The catalog tables the signed-in account can see on the hub, as the hub lists them.
-
-    Without ``namespace_id`` the hub answers every table the account can see; with one, that namespace's tables.
-    """
-    params = {"namespace_id": namespace_id} if namespace_id is not None else None
-    tables = _request_list("GET", url, "/catalog/tables", http, params=params, headers=_bearer(access_token))
-    for table in tables:
-        if not isinstance(table, dict):
-            raise HubRefused(200, f"{url} did not answer /catalog/tables as a Flowfile hub does.")
-        _require(table, ("id", "name"), url, "/catalog/tables")
-    return tables
-
-
 def get_table(url: str, access_token: str, table_id: int, *, http: httpx.Client | None = None) -> dict:
     """The hub's catalog table ``table_id`` as core's ``CatalogTableOut``; an unknown table is the hub's 404."""
     body = _request("GET", url, f"/catalog/tables/{table_id}", http, headers=_bearer(access_token))

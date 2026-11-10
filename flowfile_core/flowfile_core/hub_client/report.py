@@ -28,7 +28,6 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import session
-from flowfile_core.hub_client import vend as hub_vend
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import RunInformation
@@ -104,20 +103,19 @@ def _hub_table_ids(user_id: int, names: set[str]) -> tuple[dict[str, int], dict[
     """The hub's ids behind the names a run's catalog steps carry: of each namespace, by ``catalog.schema``, and of
     each table, by ``catalog.schema.table``, among ``names``.
 
-    One walk of the hub's catalogs and one listing of the tables the account sees, through the steps' hub session. A
-    hub that does not answer costs one warning and answers nothing, so the report names no table.
+    One request for the hub's tree, through the steps' hub session. A hub that does not answer costs one warning and
+    answers nothing, so the report names no table.
     """
     if not names:
         return {}, {}
     try:
-        hub_url, access_token = hub_catalog.signed_in(user_id)
-        namespaces = {ns.full_name: ns.id for ns in hub_catalog.namespaces(hub_url, access_token).values()}
-        rows = hub_client.list_tables(hub_url, access_token)
+        listed = hub_catalog.schemas(*hub_catalog.signed_in(user_id))
     except (LookupError, HubUnreachable, HubRefused, HubVersionRefused) as exc:
         logger.warning(f"Could not read the hub's ids of the tables this run read and wrote: {exc}")
         return {}, {}
+    rows = [row for _, tables in listed for row in tables]
     tables = {row["qualified_name"]: row["id"] for row in rows if row.get("qualified_name") in names}
-    return namespaces, tables
+    return {namespace.full_name: namespace.id for namespace, _ in listed}, tables
 
 
 def hub_flow_uuid(flow, hub_url: str) -> str | None:
@@ -209,7 +207,7 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str, run_row_id:
     vend = getattr(flow, "last_run_grant", None)
     ended_at = run_info.end_time or datetime.now()
     started_at = run_info.start_time or ended_at
-    executed_on = hub_vend.node_name(registry.WORKER_BACKEND_ID)
+    executed_on = registry.server_name(registry.WORKER_BACKEND_ID)
     return {
         "run_id": vend[0] if vend is not None else getattr(flow, "hub_run_id", None) or str(uuid.uuid4()),
         "flow_uuid": flow_uuid,

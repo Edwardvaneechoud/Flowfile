@@ -282,7 +282,7 @@ def test_a_run_given_its_hubs_store_crosses_through_it_held_to_the_hubs_limit(
     vending = everything().model_copy(update={"credential_resolution": "vended"})
     declare(vending)
     declare(vending, registry.LOCAL_BACKEND_ID)
-    monkeypatch.setattr("flowfile_core.hub_client.vend.node_name", lambda backend_id: backend_id)
+    monkeypatch.setattr("flowfile_core.flowfile.execution.registry.server_name", lambda backend_id: backend_id)
     graph = chain(make_graph(8541), filter_on=LOCAL, user_id=1)
     flow_starts = graph._flow_starts + graph.get_implicit_starter_nodes()
     plan = compute_execution_plan(nodes=graph.nodes, flow_starts=flow_starts)

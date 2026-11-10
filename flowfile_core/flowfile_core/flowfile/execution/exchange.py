@@ -130,11 +130,11 @@ class ExchangeRun:
         """The store's credential as ``backend_id`` takes it for its side of a crossing: what the hub sealed to its
         server when it is one of the vend's targets, else what this machine's own worker opens; ``None`` before
         ``prefix`` found a store."""
-        from flowfile_core.hub_client import vend
+        from flowfile_core.flowfile.execution import registry
 
         if self._store is None:
             return None
-        if self.sealed is not None and vend.node_name(backend_id) in self.sealed.sealed:
+        if self.sealed is not None and registry.server_name(backend_id) in self.sealed.sealed:
             return self.sealed
         return self.own or self._store.credential
 

@@ -7,17 +7,17 @@ and the graph holds the answer for that run only. A read's plan carries the opti
 encrypted for the worker. Both travel as a local cloud connection's credentials do, and the worker decrypts them with
 the master key it shares with core. Nothing here is cached, stored or logged beyond the hub's URL and the status.
 
-A server that joined its hub with keys of its own has its own master key, so what it sends a server of the hub's
-must be opened there instead: a run that places such a step on a server of the hub asks with ``targets``, the hub
-names of the servers its steps run on (``node_name``), and the hub answers each credential with no options and a map
-of node name to a token sealed to that node (``shared.hub_sealed``). A desktop connected to the hub shares its master
-key with no server of the hub either, so a run that places a hub-table step on one asks the same way. Core hands the
-map on unopened: a read's plan scans through a Python source that opens it where the plan runs, a write's connection
-carries it, and the exchange store's crossings send it (``SealedCredential``). Such a vend also names the secrets the
-run's steps on those servers use (``secrets``), and the hub answers each sealed the same way: a step carries
-``sealed_secrets``' strings in place of its ``$ffsec$`` ciphertext, and the server that runs it opens them. It
-names the stored connections those steps use as well (``connections``, a kind and a name each), which the hub keeps
-for a server joined with keys and answers sealed the same way (``sealed_connections``).
+A server that joined its hub with keys of its own has its own master key, so what it sends a server of the hub's must be
+opened there instead: a run that places such a step on a server of the hub asks with ``targets``, the hub names of the
+servers its steps run on (``registry.server_name``), and the hub answers each credential with no options and a map of
+node name to a token sealed to that node (``shared.hub_sealed``). A desktop connected to the hub shares its master key
+with no server of the hub either, so a run that places a hub-table step on one asks the same way. Core hands the map on
+unopened: a read's plan scans through a Python source that opens it where the plan runs, a write's connection carries
+it, and the exchange store's crossings send it (``SealedCredential``). Such a vend also names the secrets the run's
+steps on those servers use (``secrets``), and the hub answers each sealed the same way: a step carries
+``sealed_secrets``' strings in place of its ``$ffsec$`` ciphertext, and the server that runs it opens them. It names the
+stored connections those steps use as well (``connections``, a kind and a name each), which the hub keeps for a server
+joined with keys and answers sealed the same way (``sealed_connections``).
 """
 
 import uuid
@@ -30,6 +30,7 @@ from pydantic import SecretStr
 
 from flowfile_core.catalog import table_sources
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.protocol import EncryptedCredential, SealedCredential
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.hub_client import catalog, client
@@ -117,7 +118,7 @@ class RunVend:
     def sealed_for(self, backend_id: str) -> bool:
         """Whether a step on ``backend_id`` opens this run's credentials sealed: the vend is sealed, and the backend
         is not this machine's own worker with an unsealed vend of its own (``own``)."""
-        return self.sealed and (self.own is None or node_name(backend_id) is not None)
+        return self.sealed and (self.own is None or registry.server_name(backend_id) is not None)
 
     def here(self) -> "RunVend":
         """The vend the step running now opens: this one, or ``own`` when the step runs on this machine's own worker
@@ -160,10 +161,8 @@ class RunVend:
     ) -> tuple[SealedCredential | None, EncryptedCredential | None]:
         """The exchange store at ``uri`` as the run's backends open it: sealed to the run's servers when this vend is
         sealed, and, on a machine that is no server of the hub, encrypted for the worker beside its core."""
-        from flowfile_core.flowfile.execution import registry
-
         sealed = self.sealed_credential(uri) if self.targets else None
-        if node_name(registry.WORKER_BACKEND_ID) is not None:
+        if registry.server_name(registry.WORKER_BACKEND_ID) is not None:
             return sealed, None
         return sealed, (self.own or self).encrypted_credential(uri, user_id)
 
@@ -326,8 +325,6 @@ class _RunCatalog:
         """The run's one vend: its tables' credentials, the secrets and connections its steps use and the exchange
         store, sealed to ``start.servers``. A machine that is no server of the hub also asks an unsealed vend for the
         steps that run on the worker beside its core (``RunVend.own``). Held under the run's id."""
-        from flowfile_core.flowfile.execution import registry
-
         def schemas(tables, writes: bool) -> set[str]:
             return {name for name, written, _ in tables if written is writes}
 
@@ -341,8 +338,8 @@ class _RunCatalog:
             secrets=sorted(start.secrets),
             connections=sorted(start.connections),
         )
-        beside = [table for table in start.tables if node_name(table[2]) is None]
-        if start.servers and node_name(registry.WORKER_BACKEND_ID) is None and (beside or start.exchange):
+        beside = [table for table in start.tables if registry.server_name(table[2]) is None]
+        if start.servers and registry.server_name(registry.WORKER_BACKEND_ID) is None and (beside or start.exchange):
             own = request(
                 start.user_id, start.run_id, schemas(beside, False), schemas(beside, True), exchange=start.exchange
             )
@@ -364,7 +361,7 @@ class _RunCatalog:
     def table(self, user_id: int | None, table_id: int) -> CatalogTableOut:
         """The hub's table whose row in the catalog tree is ``table_id``, as that row, for a read outside a run."""
         found = catalog.table(user_id, -table_id)
-        _physical(found, lambda: catalog.locate(user_id, found["namespace_id"]).full_name)
+        _physical(found, lambda: (found.get("qualified_name") or found["name"]).rpartition(".")[0])
         return CatalogTableOut.model_validate(catalog.marked(found))
 
     def read_targets(self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str) -> list[VendedTarget]:
@@ -398,8 +395,8 @@ class _RunCatalog:
 
     def schema_table(self, run_id: str | None, user_id: int | None, schema: str, name: str) -> dict | None:
         namespace_id = self.schema_target(run_id, user_id, schema).run_vend.namespace_id(schema)
-        hub_url, access_token = catalog.signed_in(user_id)
-        tables = client.list_tables(hub_url, access_token, namespace_id=namespace_id)
+        listed = catalog.schemas(*catalog.signed_in(user_id))
+        tables = (table for namespace, tables in listed if namespace.id == namespace_id for table in tables)
         return next(({"namespace_id": namespace_id, **table} for table in tables if table["name"] == name), None)
 
     def register_table(self, run_id: str | None, user_id: int | None, schema: str, table: dict) -> None:
@@ -567,27 +564,3 @@ def _run_vend(
             if connections
         },
     )
-
-
-def node_name(backend_id: str) -> str | None:
-    """The hub's name of the server ``backend_id`` runs on, which a vend seals to; ``None`` when it is not one of the
-    hub's servers.
-
-    On a server joined to its hub with keys of its own, the embedded ``local`` and the built-in ``worker`` are this
-    server, named in its ``hub_node.json``; a ``worker:<name>`` row filled from the hub is the hub's server ``<name>``.
-    Elsewhere only such rows are named.
-    """
-    from flowfile_core.auth import issuer_accounts
-    from flowfile_core.database.connection import get_db_context
-    from flowfile_core.database.models import ConfiguredBackend
-    from flowfile_core.flowfile.execution import registry
-    from shared import hub_node
-
-    if backend_id in (registry.LOCAL_BACKEND_ID, registry.WORKER_BACKEND_ID):
-        return hub_node.resolved().name if issuer_accounts.joined_with_keys() is not None else None
-    if not backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX):
-        return None
-    with get_db_context() as db:
-        row = db.get(ConfiguredBackend, backend_id)
-        filled_from_hub = row is not None and row.remote_id is not None
-    return backend_id.removeprefix(registry.CONFIGURED_WORKER_PREFIX) if filled_from_hub else None

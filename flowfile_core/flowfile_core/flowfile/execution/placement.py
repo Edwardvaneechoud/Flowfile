@@ -196,25 +196,6 @@ def run_here(steps: str, count: int = 1, where: str = "this server") -> str:
     return f"run {steps} on {where} (set {setting})"
 
 
-def scheduled_refusal(nodes: list[FlowNode]) -> str:
-    """Why a schedule may not run ``nodes`` on the hub's other servers, naming them, and what to do instead."""
-    from flowfile_core.hub_client import node_tokens
-
-    return f"{node_tokens.SCHEDULED}, so {run_here(steps_in_words(nodes), len(nodes))}."
-
-
-def signed_out_refusal(server: str, nodes: list[FlowNode]) -> str:
-    """Why the hub's server ``server`` cannot run ``nodes`` for a person with no sign-in through the hub, naming
-    them, and the two things they can do."""
-    from flowfile_core.hub_client import node_tokens
-
-    pronoun = "it" if len(nodes) == 1 else "them"
-    return (
-        f"You are not signed in through the hub, so its server {server!r} cannot run {steps_in_words(nodes)} for "
-        f"you; {node_tokens.SIGN_IN_AGAIN}, or {run_here(pronoun, len(nodes))}."
-    )
-
-
 def unmoved_without_store(nodes: list[FlowNode], policy: SingleBackendPolicy) -> list[Refusal]:
     """The nodes whose own Compute backend names one other than the run's, as refusals: no store carries their data.
 
@@ -244,15 +225,12 @@ def unsealed_for(backend_id: str, capabilities: Capabilities, targets: tuple[str
     A backend opens a sealed credential only when it declares ``credential_resolution: vended`` and its server is among
     the targets the vend was sealed to; core never opens one for another server.
     """
-    from flowfile_core.hub_client import vend
-
     if capabilities.credential_resolution != "vended":
         return (
             "the hub seals that credential to the server that runs it, and this backend cannot open one: update "
             "Flowfile on it and join it to the hub with keys of its own"
         )
-    name = vend.node_name(backend_id)
-    if name not in targets:
+    if registry.server_name(backend_id) not in targets:
         return f"the hub sealed this run's credentials to {', '.join(targets)}, not to this backend's server"
     return None
 

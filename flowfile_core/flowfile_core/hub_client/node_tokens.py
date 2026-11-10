@@ -94,6 +94,25 @@ def signed_out(node_name: str) -> str:
     )
 
 
+def scheduled_refusal(nodes: list) -> str:
+    """Why a schedule may not run ``nodes`` on the hub's other servers, naming them, and what to do instead."""
+    from flowfile_core.flowfile.execution.placement import run_here, steps_in_words
+
+    return f"{SCHEDULED}, so {run_here(steps_in_words(nodes), len(nodes))}."
+
+
+def signed_out_refusal(server: str, nodes: list) -> str:
+    """Why the hub's server ``server`` cannot run ``nodes`` for a person with no sign-in through the hub, naming
+    them, and the two things they can do."""
+    from flowfile_core.flowfile.execution.placement import run_here, steps_in_words
+
+    pronoun = "it" if len(nodes) == 1 else "them"
+    return (
+        f"You are not signed in through the hub, so its server {server!r} cannot run {steps_in_words(nodes)} for "
+        f"you; {SIGN_IN_AGAIN}, or {run_here(pronoun, len(nodes))}."
+    )
+
+
 def refused(node_name: str) -> str:
     """``signed_out``'s sentence as a refused node or editor call shows it: a capital first letter, a full stop."""
     sentence = signed_out(node_name)

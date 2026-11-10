@@ -270,6 +270,28 @@ def hub_server(backend_id: str | None) -> str | None:
     return backend_id.removeprefix(CONFIGURED_WORKER_PREFIX)
 
 
+def server_name(backend_id: str) -> str | None:
+    """The name the remote gives the server ``backend_id`` runs on, which it seals a run's credentials to; ``None``
+    when the backend is not one of the remote's servers.
+
+    On a server joined with keys of its own, the embedded ``local`` and the built-in ``worker`` are this server, by
+    the name it joined with; a ``worker:<name>`` row filled from the remote is its server ``<name>``.
+    """
+    from flowfile_core.auth import issuer_accounts
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import ConfiguredBackend
+
+    if backend_id in (LOCAL_BACKEND_ID, WORKER_BACKEND_ID):
+        joined = issuer_accounts.joined_with_keys()
+        return joined.name if joined is not None else None
+    if not backend_id.startswith(CONFIGURED_WORKER_PREFIX):
+        return None
+    with get_db_context() as db:
+        row = db.get(ConfiguredBackend, backend_id)
+        filled = row is not None and row.remote_id is not None
+    return backend_id.removeprefix(CONFIGURED_WORKER_PREFIX) if filled else None
+
+
 def default_backend_id() -> str:
     """The id of the default backend, the one a ``"remote"`` flow and a call without a graph use.
 

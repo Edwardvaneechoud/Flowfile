@@ -41,8 +41,6 @@ from flowfile_core.flowfile.execution.placement import (
     remote_table_schema,
     place,
     remedy_for,
-    scheduled_refusal,
-    signed_out_refusal,
     steps_in_words,
     unmoved_without_store,
     unsealed_for,
@@ -82,7 +80,7 @@ from flowfile_core.flowfile.util.skip_rules import (
     parameter_gate_is_open,
     uses_any_rule,
 )
-from flowfile_core.hub_client import node_addresses, node_tokens, vend
+from flowfile_core.hub_client import node_addresses, node_tokens
 from flowfile_core.kernel.execution import (
     KernelHold,
 )
@@ -1203,8 +1201,8 @@ class ExecutionMixin(GraphMixinBase):
 
         With an exchange store (``FLOWFILE_EXCHANGE_URI``) the policy is ``MixedPlacementPolicy``, falling back to
         ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend, and a node
-        whose own Compute backend names one of the hub's servers (``vend.node_name``: a row filled from the hub, or this
-        server once joined with keys of its own) is refused (``unmoved_without_store``) rather than run on the run's
+        whose own Compute backend names one of the hub's servers (``registry.server_name``: a row filled from the hub, or
+        this server once joined with keys of its own) is refused (``unmoved_without_store``) rather than run on the run's
         backend, on a joined server and a desktop connected to the hub alike; a node refused already keeps its first
         refusal. Each backend named is read through its handshake verdict (``handshake.verdict_for``), except ``local``
         in a process that serves, which runs no node and is never asked. On a joined server the hub's servers named are
@@ -1328,7 +1326,7 @@ class ExecutionMixin(GraphMixinBase):
             )
         late = []
         if isinstance(policy, SingleBackendPolicy):
-            late += [r for r in unmoved_without_store(nodes, policy) if vend.node_name(r.backend_id) is not None]
+            late += [r for r in unmoved_without_store(nodes, policy) if registry.server_name(r.backend_id) is not None]
         refused_ids = {refusal.node_id for refusal in placement.refusals}
         added = []
         for refusal in late:
@@ -1361,7 +1359,7 @@ class ExecutionMixin(GraphMixinBase):
                 targets, exchange, unsealable = (), True, str(e)
             if exchange and targets:
                 exchange_run.sealed = SealedCredential(hub_store.uri, dict.fromkeys(targets, ""))
-            if exchange and vend.node_name(registry.WORKER_BACKEND_ID) is None:
+            if exchange and registry.server_name(registry.WORKER_BACKEND_ID) is None:
                 exchange_run.own = EncryptedCredential(hub_store.uri, {}, "")
         stage = ExecutionStage(nodes=nodes)
         placement, _ = self._place_run(ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run, log=False)
@@ -1854,10 +1852,10 @@ class ExecutionMixin(GraphMixinBase):
         return exchange_run.moved
 
     def _on_hub_server(self, node: FlowNode, policy: MixedPlacementPolicy | SingleBackendPolicy) -> bool:
-        """Whether the policy places ``node`` on a hub server's worker (``vend.node_name``), a joined server's own
-        ``worker`` included, never core's own ``local``."""
+        """Whether the policy places ``node`` on a hub server's worker (``registry.server_name``), a joined server's
+        own ``worker`` included, never core's own ``local``."""
         backend_id = policy.backend_for(node)
-        return backend_id != registry.LOCAL_BACKEND_ID and vend.node_name(backend_id) is not None
+        return backend_id != registry.LOCAL_BACKEND_ID and registry.server_name(backend_id) is not None
 
     def _seal_targets(
         self,
@@ -1892,7 +1890,7 @@ class ExecutionMixin(GraphMixinBase):
             policy.backend_for(node).startswith(registry.CONFIGURED_WORKER_PREFIX) and self._on_hub_server(node, policy)
             for node in hub_nodes
         )
-        crosses_hub = exchange and any(vend.node_name(backend_id) is not None for backend_id in run_backends)
+        crosses_hub = exchange and any(registry.server_name(backend_id) is not None for backend_id in run_backends)
         if not steps and not on_other_server and not crosses_hub:
             return (), exchange, []
         backends = dict.fromkeys(policy.backend_for(node) for node in [*hub_nodes, *steps])
@@ -1901,10 +1899,10 @@ class ExecutionMixin(GraphMixinBase):
             backends.update(run_backends)
             backends.update(dict.fromkeys(b for b in (policy.fallback_id, registry.WORKER_BACKEND_ID) if b))
             sealed_nodes = list(nodes)
-        here_is_hub_server = vend.node_name(registry.WORKER_BACKEND_ID) is not None
+        here_is_hub_server = registry.server_name(registry.WORKER_BACKEND_ID) is not None
         targets = []
         for backend_id in backends:
-            name = vend.node_name(backend_id)
+            name = registry.server_name(backend_id)
             if name is not None:
                 targets.append(name)
             elif here_is_hub_server:
@@ -1958,8 +1956,6 @@ class ExecutionMixin(GraphMixinBase):
                 f"the hub is asked as user {user_ids[0]}"
             )
         user_id = user_ids[0] if user_ids else exchange_run.hub_store.vended_for
-        readers = {hub[node.node_id][0] for node in hub_nodes if not hub[node.node_id][1]}
-        writers = {hub[node.node_id][0] for node in hub_nodes if hub[node.node_id][1]}
         names = {name for secret_names, _ in steps.values() for name in secret_names}
         refs = {ref for _, connection_refs in steps.values() for ref in connection_refs}
         tables = tuple((*hub[node.node_id], policy.backend_for(node)) for node in hub_nodes)
@@ -1987,12 +1983,12 @@ class ExecutionMixin(GraphMixinBase):
         self, nodes: list[FlowNode], exchange_run: ExchangeRun
     ) -> list[tuple[FlowNode, str]] | None:
         """On a server joined with keys of its own, the run's nodes on the hub's servers, each with the sentence of
-        ``placement.signed_out_refusal`` naming them, when the person the run is for (``node_tokens.acting``) has no
+        ``node_tokens.signed_out_refusal`` naming them, when the person the run is for (``node_tokens.acting``) has no
         sign-in through the hub here, else ``None``.
 
         The hub mints a run's token for those servers with that person's own sign-in, never another's, so a run for
         nobody or for a person whose sign-in ended is refused before a node starts. A schedule's run
-        (``node_tokens.scheduled``) has nobody behind it and is refused with ``placement.scheduled_refusal``, every
+        (``node_tokens.scheduled``) has nobody behind it and is refused with ``node_tokens.scheduled_refusal``, every
         such node of it. A sign-in the hub no longer takes is found when the token is minted, and refused there.
         """
         if not nodes or issuer_accounts.joined_with_keys() is None:
@@ -2005,10 +2001,10 @@ class ExecutionMixin(GraphMixinBase):
             return None
         if person is None and node_tokens.scheduled():
             steps = [node for on in on_hub.values() for node in on]
-            sentence = scheduled_refusal(steps)
+            sentence = node_tokens.scheduled_refusal(steps)
             return [(node, sentence) for node in steps]
         name, on = next(iter(on_hub.items()))
-        sentence = signed_out_refusal(name, on)
+        sentence = node_tokens.signed_out_refusal(name, on)
         return [(node, sentence) for node in on]
 
     @staticmethod
@@ -2022,7 +2018,7 @@ class ExecutionMixin(GraphMixinBase):
             backend_id = policy.backend_for(node)
             if backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX):
                 on_backend.setdefault(backend_id, []).append(node)
-        named = {backend_id: vend.node_name(backend_id) for backend_id in on_backend}
+        named = {backend_id: registry.server_name(backend_id) for backend_id in on_backend}
         return {name: on_backend[backend_id] for backend_id, name in named.items() if name is not None}
 
     def _record_run_refusal(self, refused: list[tuple[FlowNode, str]]) -> None:
