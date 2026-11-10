@@ -1847,6 +1847,17 @@ def _scheduler_status(db: Session) -> SchedulerStatusOut:
     )
 
 
+def _remote_scheduler_status(user_id: int) -> SchedulerStatusOut | None:
+    """The status a remote catalog answers for its own scheduler, the one that fires its listed schedules; ``None``
+    when no remote catalog answers it."""
+    for answer in table_sources.remote_answers(user_id, "/catalog/scheduler/status"):
+        try:
+            return SchedulerStatusOut.model_validate(answer)
+        except (ValidationError, TypeError):
+            continue
+    return None
+
+
 @router.get("/scheduler/status", response_model=SchedulerStatusOut)
 def scheduler_status(
     db: Session = Depends(get_db),
@@ -1869,7 +1880,7 @@ def get_catalog_overview(
     built on: the whole screen costs one pooled connection instead of one per call.
     The individual endpoints stay for detail views, mutations and the poll loop. The tree is the one
     ``/namespaces/tree`` answers, a remote catalog's rows after the local ones, and so are the schedules, the active
-    runs and the runs.
+    runs and the runs; ``remote_scheduler`` is that catalog's own scheduler status, the one its schedules run by.
     """
     user_id = current_user.id
     return CatalogOverview(
@@ -1884,6 +1895,7 @@ def get_catalog_overview(
         ),
         runs=_all_runs(service, user_id, None, None, runs_limit, 0),
         scheduler=_scheduler_status(db),
+        remote_scheduler=_remote_scheduler_status(user_id),
         default_namespace_id=service.get_default_namespace_id(),
     )
 

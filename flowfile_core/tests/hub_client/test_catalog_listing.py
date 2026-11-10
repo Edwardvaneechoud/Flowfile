@@ -610,3 +610,23 @@ class TestHubNamespaceWriter:
     def test_a_hub_namespace_refuses_virtual_scd2_and_tracked_writes(self, fields, message):
         with pytest.raises(ValidationError, match=message):
             input_schema.CatalogWriteSettings(table_name="t", source="hub", namespace_full_name="a.b", **fields)
+
+
+def test_the_overview_carries_the_hubs_scheduler_beside_this_machines(connected, hub, api):
+    hub.seed_schedule(hub.seed_flow(_seed(hub)["raw"], "orders-clean"))
+    overview = connected.get("/catalog/overview").json()
+    assert overview["remote_scheduler"]["active"] is True and overview["remote_scheduler"]["holder_id"] == "hub"
+    assert ("/catalog/scheduler/status", "") in hub.catalog_calls
+    assert overview["scheduler"] == api.get("/catalog/scheduler/status").json()
+    hub.scheduler_status = {"active": False}
+    assert connected.get("/catalog/overview").json()["remote_scheduler"]["active"] is False
+
+
+def test_the_overview_has_no_remote_scheduler_without_a_hub_connection(api, hub):
+    assert api.get("/catalog/overview").json()["remote_scheduler"] is None
+    assert hub.catalog_calls == []
+
+
+def test_the_overview_has_no_remote_scheduler_from_a_hub_that_does_not_answer(connected, hub):
+    hub.down = True
+    assert connected.get("/catalog/overview").json()["remote_scheduler"] is None

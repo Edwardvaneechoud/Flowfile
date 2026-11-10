@@ -671,6 +671,7 @@ export interface CatalogOverview {
   active_runs: ActiveFlowRun[];
   runs: PaginatedFlowRuns;
   scheduler: SchedulerStatus;
+  remote_scheduler?: SchedulerStatus | null;
   default_namespace_id: number | null;
 }
 

@@ -1140,6 +1140,8 @@ class CatalogOverview(BaseModel):
     active_runs: list[ActiveFlowRun] = Field(default_factory=list)
     runs: PaginatedFlowRuns
     scheduler: SchedulerStatusOut
+    # The scheduler of the remote catalog whose schedules are listed beside this machine's; None without one.
+    remote_scheduler: SchedulerStatusOut | None = None
     default_namespace_id: int | None = None
 
 

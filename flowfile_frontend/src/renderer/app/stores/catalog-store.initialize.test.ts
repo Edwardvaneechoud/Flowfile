@@ -63,6 +63,7 @@ describe("catalog-store initialize", () => {
     expect(store.activeRuns.map((r) => r.id)).toEqual([40]);
     expect(store.stats?.total_flows).toBe(1);
     expect(store.schedulerStatus?.active).toBe(true);
+    expect(store.remoteSchedulerStatus).toBeNull();
     expect(store.defaultNamespaceId).toBe(2);
     expect(store.runs.map((r) => r.id)).toEqual([100, 101]);
     expect(store.runsTotal).toBe(2);

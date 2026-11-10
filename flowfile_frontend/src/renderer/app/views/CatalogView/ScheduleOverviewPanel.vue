@@ -7,9 +7,33 @@
       </el-button>
     </div>
 
+    <div
+      v-if="banners.remote"
+      class="scheduler-status-bar"
+      data-testid="remote-scheduler-status"
+      :class="remoteStatus?.active ? 'scheduler-active' : 'scheduler-inactive'"
+    >
+      <div class="scheduler-status-info">
+        <span
+          class="scheduler-dot"
+          :class="remoteStatus?.active ? 'dot-green' : 'dot-orange'"
+        ></span>
+        <span class="scheduler-status-text">
+          {{
+            remoteStatus?.active ? "The hub's scheduler running" : "The hub's scheduler not running"
+          }}
+        </span>
+        <span v-if="remoteStatus?.active && remoteStatus?.heartbeat_at" class="scheduler-heartbeat">
+          Last heartbeat: {{ formatDate(remoteStatus.heartbeat_at) }}
+        </span>
+      </div>
+    </div>
+
     <!-- Scheduler status bar -->
     <div
+      v-if="banners.local"
       class="scheduler-status-bar"
+      data-testid="local-scheduler-status"
       :class="catalogStore.schedulerStatus?.active ? 'scheduler-active' : 'scheduler-inactive'"
     >
       <div class="scheduler-status-info">
@@ -18,7 +42,7 @@
           :class="catalogStore.schedulerStatus?.active ? 'dot-green' : 'dot-orange'"
         ></span>
         <span class="scheduler-status-text">
-          {{ catalogStore.schedulerStatus?.active ? "Scheduler running" : "Scheduler not running" }}
+          {{ localStatusText }}
         </span>
         <span
           v-if="catalogStore.schedulerStatus?.active && catalogStore.schedulerStatus?.heartbeat_at"
@@ -47,7 +71,7 @@
     </div>
 
     <!-- Lifecycle warning (hidden in Docker mode where the scheduler is always running) -->
-    <div v-if="!isDockerMode" class="scheduler-warning">
+    <div v-if="banners.local && !isDockerMode" class="scheduler-warning">
       <i class="fa-solid fa-circle-info"></i>
       <span v-if="isStandalone">
         The scheduler is running as a standalone service. Manage it from the process where it was
@@ -146,6 +170,7 @@ import { authService } from "../../services/auth.service";
 import { formatDate } from "./catalog-formatters";
 import { EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
+import { offersOwnCatalog, schedulerBanners } from "./hubRows";
 
 const catalogStore = useCatalogStore();
 const isDockerMode = computed(() => !authService.isInDesktopMode());
@@ -165,6 +190,24 @@ const isStandalone = computed(
 );
 
 const enrichedSchedules = computed(() => catalogStore.enrichedSchedules);
+
+const remoteStatus = computed(() => catalogStore.remoteSchedulerStatus);
+const banners = computed(() =>
+  schedulerBanners(
+    catalogStore.schedules,
+    offersOwnCatalog(catalogStore.tree),
+    remoteStatus.value !== null,
+  ),
+);
+const localStatusText = computed(() => {
+  const active = catalogStore.schedulerStatus?.active;
+  if (banners.value.localScoped) {
+    return active
+      ? "This machine's scheduler running, for this machine's schedules"
+      : "This machine's scheduler not running: this machine's schedules wait for it";
+  }
+  return active ? "Scheduler running" : "Scheduler not running";
+});
 
 // Client-side filter over the fully-loaded schedule list (flow + schedule name).
 const scheduleSearch = ref("");

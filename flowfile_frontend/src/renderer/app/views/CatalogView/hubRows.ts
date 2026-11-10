@@ -146,3 +146,25 @@ export function hubSharedTitle(access: { shared_by?: string | null } | null | un
   const by = access?.shared_by;
   return by && !RAW_PRINCIPAL.test(by) ? `Shared by ${by}` : "Shared with you";
 }
+
+export interface SchedulerBanners {
+  local: boolean;
+  localScoped: boolean;
+  remote: boolean;
+}
+
+/**
+ * Which scheduler statuses the Schedules page shows: this machine's only where it lists schedules of its own (or
+ * none of the hub's) and its own catalog is offered, worded for this machine's schedules beside the hub's; the hub's
+ * where its schedules are listed and the hub said how its scheduler is.
+ */
+export function schedulerBanners(
+  schedules: { source?: string | null }[],
+  ownOffered: boolean,
+  remoteKnown: boolean,
+): SchedulerBanners {
+  const remoteListed = schedules.some(isHubRow);
+  const ownListed = schedules.some((s) => !isHubRow(s));
+  const local = ownOffered && (ownListed || !remoteListed);
+  return { local, localScoped: local && remoteListed, remote: remoteListed && remoteKnown };
+}

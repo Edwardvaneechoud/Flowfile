@@ -212,7 +212,8 @@ class FakeHubWithCatalog(FakeHub):
     root; each body is kept in ``vend_calls``. ``vend_failure`` set answers that status instead. With ``says_sentences``
     a refused grant is answered as a hub that says what to do does (team-spaces TS10), naming the schema; otherwise
     as core's bare reason. ``POST /hub/runs``
-    keeps each run report in ``reports`` and answers 201.
+    keeps each run report in ``reports`` and answers 201; ``GET /catalog/scheduler/status`` answers
+    ``scheduler_status``, the hub's own scheduler.
     """
 
     def __init__(self):
@@ -234,6 +235,7 @@ class FakeHubWithCatalog(FakeHub):
         self.tree_answer: list | None = None
         self.runs: list[dict] = []
         self.schedules: list[dict] = []
+        self.scheduler_status: dict = {"active": True, "holder_id": "hub", "heartbeat_at": _STAMP}
 
     def seed_catalog(self, name: str, **fields) -> dict:
         """A root namespace (a catalog) on the hub."""
@@ -575,6 +577,8 @@ class FakeHubWithCatalog(FakeHub):
             if table is None:
                 return httpx.Response(404, json={"detail": "Catalog table not found"})
             return httpx.Response(200, json={"table": table, "warnings": []})
+        if path == "/catalog/scheduler/status":
+            return httpx.Response(200, json=self.scheduler_status)
         if path == "/catalog/namespaces/tree":
             return httpx.Response(200, json=self.tree() if self.tree_answer is None else self.tree_answer)
         rows = ("/catalog/tables/", "/catalog/flows/", "/catalog/schedules")

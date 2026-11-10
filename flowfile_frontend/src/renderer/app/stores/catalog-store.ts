@@ -94,6 +94,7 @@ interface CatalogState {
   scheduleRunsTriggerFilter: string | null;
   activeRuns: ActiveFlowRun[];
   schedulerStatus: SchedulerStatus | null;
+  remoteSchedulerStatus: SchedulerStatus | null;
   defaultNamespaceId: number | null;
   overviewLoadedAt: number | null;
   activeTab: CatalogTab;
@@ -192,6 +193,7 @@ export const useCatalogStore = defineStore("catalog", {
     scheduleRunsTriggerFilter: null,
     activeRuns: [],
     schedulerStatus: null,
+    remoteSchedulerStatus: null,
     defaultNamespaceId: null,
     overviewLoadedAt: null,
     activeTab: "runs",
@@ -1004,6 +1006,7 @@ export const useCatalogStore = defineStore("catalog", {
         this.schedules = overview.schedules;
         this.activeRuns = overview.active_runs;
         this.schedulerStatus = overview.scheduler;
+        this.remoteSchedulerStatus = overview.remote_scheduler ?? null;
         this.defaultNamespaceId = overview.default_namespace_id;
         this.overviewLoadedAt = Date.now();
         // The overview carries page 1 unfiltered; a persisted page/filter needs its own query.
