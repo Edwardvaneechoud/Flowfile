@@ -37,3 +37,18 @@ export function tabMenuOptions(flowIds: number[], targetId: number): ContextMenu
     { label: "Close Tabs to the Right", action: "close-right", disabled: index >= count - 1 },
   ];
 }
+
+interface TabState {
+  has_unsaved_changes?: boolean;
+  save_note?: string | null;
+}
+
+/** A tab's flow with what core now says of it: unsaved changes, and the note of the catalog it came from, which
+ * marks the tab while the catalog sends one and leaves it when the catalog stops (a publish). */
+export function withSettings<T extends TabState>(flow: T, settings: TabState): T {
+  return {
+    ...flow,
+    has_unsaved_changes: settings.has_unsaved_changes,
+    save_note: settings.save_note ?? null,
+  };
+}

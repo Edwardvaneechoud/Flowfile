@@ -143,14 +143,6 @@
         </template>
       </el-dropdown>
     </div>
-    <span
-      v-if="hasOpenFlow && flowSettings?.save_note"
-      class="catalog-note"
-      data-testid="catalog-note"
-      :title="flowSettings.save_note"
-    >
-      {{ flowSettings.save_note }}
-    </span>
   </div>
 
   <!-- Hidden run-button instance kept solely to back loadFlowSettings()'s
@@ -310,6 +302,7 @@ import { ref, onMounted, watch, computed } from "vue";
 import { ElMessage } from "element-plus";
 
 import { saveFlowSilent } from "./utils";
+import { noteAtOpen } from "./catalogNote";
 import { detailMessage } from "../../../composables/saveError";
 import RunButton from "./run.vue";
 import ParameterSettings from "./ParameterSettings.vue";
@@ -469,6 +462,8 @@ const loadFlowSettings = async (): Promise<void> => {
     }
     flowSettings.value = settings;
     if (!flowSettings.value) return;
+    const note = noteAtOpen(flowSettings.value);
+    if (note) ElMessage.info({ message: note, duration: 6000 });
 
     flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
     flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? false;
@@ -599,6 +594,7 @@ const openSaveModal = async () => {
       if (flowSettings.value && saved?.flow_id === flowSettings.value.flow_id) {
         flowSettings.value.save_note = saved.save_note ?? null;
       }
+      if (saved) noteAtOpen(saved);
       if (saved?.save_note) ElMessage.success({ message: saved.save_note, duration: 6000 });
       else ElMessage.success("Flow saved");
       tutorialStore.notify({ type: "flow-saved", flowId: nodeStore.flow_id });
@@ -689,15 +685,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.catalog-note {
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
 .action-buttons {
   padding-left: var(--spacing-5);
   display: flex;
