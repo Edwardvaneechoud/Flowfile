@@ -2,9 +2,9 @@
 joined server's delegation, both ``session.load``.
 
 A connection is settings plus secrets, and the hub's are never copied here. Each connection page lists them after the
-machine's own, read-only and marked ``from_hub`` (``listed``, ``hub_rows``); a step that names one gets its list row,
-its settings with no secret (``found``), and its secrets only as the run's vend sealed them to the hub server that runs
-the step (``run_secrets.hub_value``). Core never opens them.
+machine's own, read-only and marked ``source="hub"`` (``listed``, ``hub_rows``); a step that names one gets its list
+row, its settings with no secret (``found``), and its secrets only as the run's vend sealed them to the hub server that
+runs the step (``run_secrets.hub_value``). Core never opens them.
 
 Requests log method, path and status only, never a body, a value or a token.
 """
@@ -28,7 +28,7 @@ LABELS = {"cloud": "cloud storage connection", "kafka": "Kafka connection", "dat
 
 def listed(user_id: int, kind: Kind) -> list[dict]:
     """The person's connections of ``kind`` as the hub lists them: their own and those shared with them, no secret,
-    each marked ``from_hub`` (``secrets.marked``)."""
+    each marked ``source="hub"`` (``secrets.marked``)."""
     hub_url, token = _signed_in(user_id)
     rows = client._request_list("GET", hub_url, LIST_PATHS[kind], None, headers=_bearer(token))
     return [marked(row) for row in rows]

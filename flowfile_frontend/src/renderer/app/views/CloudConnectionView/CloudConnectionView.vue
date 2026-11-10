@@ -75,7 +75,7 @@
                 <span class="badge auth-badge">{{
                   getAuthMethodLabel(connection.authMethod)
                 }}</span>
-                <span v-if="connection.fromHub" class="badge">From your hub</span>
+                <span v-if="connection.source === 'hub'" class="badge">From your hub</span>
               </div>
               <div class="connection-details">
                 <span v-if="connection.storageType === 's3' && connection.awsRegion">
@@ -98,7 +98,7 @@
                 </span>
               </div>
             </div>
-            <div v-if="!connection.fromHub" class="connection-actions">
+            <div v-if="connection.source !== 'hub'" class="connection-actions">
               <button type="button" class="btn btn-secondary" @click="showEditModal(connection)">
                 <i class="fa-solid fa-edit"></i>
                 <span>Modify</span>

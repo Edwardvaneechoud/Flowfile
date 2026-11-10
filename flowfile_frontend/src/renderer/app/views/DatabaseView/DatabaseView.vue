@@ -58,7 +58,7 @@
                 <i class="fa-solid fa-database"></i>
                 <span>{{ connection.connectionName }}</span>
                 <span class="badge">{{ connection.databaseType }}</span>
-                <span v-if="connection.fromHub" class="badge">From your hub</span>
+                <span v-if="connection.source === 'hub'" class="badge">From your hub</span>
                 <SharedBadge v-else :access="connection.access" />
               </div>
               <div class="connection-details">
@@ -69,7 +69,7 @@
                 <span>{{ connection.host ? connection.host : "Using connection URL" }}</span>
               </div>
             </div>
-            <div class="connection-actions">
+            <div v-if="connection.source !== 'hub'" class="connection-actions">
               <button
                 v-if="isMultiUser && isOwned(connection) && connection.id != null"
                 type="button"

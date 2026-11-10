@@ -963,7 +963,7 @@ def get_db_connections(
     db: Session = Depends(get_db), current_user=Depends(get_current_active_user)
 ) -> list[input_schema.FullDatabaseConnectionInterface]:
     """Retrieves the current user's database connections (without passwords): their own and granted ones, then the
-    ones the person's hub lists, marked ``from_hub`` (own wins a name)."""
+    ones the person's hub lists, marked ``source="hub"`` (own wins a name)."""
     own = get_all_database_connections_interface(db, current_user.id)
     names = {connection.connection_name for connection in own}
     hub = [

@@ -23,7 +23,7 @@
               <option :value="null">Select a connection...</option>
               <option v-for="conn in kafkaConnections" :key="conn.id" :value="conn.id">
                 {{ conn.connection_name }} ({{ conn.bootstrap_servers }}){{
-                  conn.from_hub ? " · from your hub" : ""
+                  conn.source === "hub" ? " · from your hub" : ""
                 }}
               </option>
             </select>

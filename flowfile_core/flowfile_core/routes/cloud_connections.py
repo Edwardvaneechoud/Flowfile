@@ -1,5 +1,5 @@
 """The editor's cloud storage connections: this machine's own, which these routes add, change and delete, listed with
-the ones the person's hub lists, read-only and marked ``from_hub`` (``hub_client.connections``)."""
+the ones the person's hub lists, read-only and marked ``source="hub"`` (``hub_client.connections``)."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session

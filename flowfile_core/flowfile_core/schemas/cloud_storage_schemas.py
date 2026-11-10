@@ -180,7 +180,7 @@ class FullCloudStorageConnectionInterface(AuthSettingsInput):
     verify_ssl: bool = True
     id: int | None = None
     access: AccessInfo | None = None
-    from_hub: bool = False
+    source: Literal["local", "hub"] = "local"
 
 
 class CloudStorageSettings(BaseModel):

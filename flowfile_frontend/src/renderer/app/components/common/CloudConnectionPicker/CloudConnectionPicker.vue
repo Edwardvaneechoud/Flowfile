@@ -20,7 +20,9 @@
         </option>
         <option v-for="conn in connections" :key="conn.connectionName" :value="conn.connectionName">
           {{ conn.connectionName }} ({{ getStorageTypeLabel(conn.storageType) }} -
-          {{ getAuthMethodLabel(conn.authMethod) }}){{ conn.fromHub ? " · from your hub" : "" }}
+          {{ getAuthMethodLabel(conn.authMethod) }}){{
+            conn.source === "hub" ? " · from your hub" : ""
+          }}
         </option>
       </select>
       <div v-if="unavailableConnection" class="warning-text">

@@ -13,11 +13,14 @@ import polars as pl
 import pytest
 from pydantic import SecretStr
 
-from flowfile_core.auth.models import SecretInput
+from flowfile_core.auth.models import Secret, SecretInput
 from flowfile_core.configs.node_store import add_to_custom_node_store
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.database_connection_manager.db_connections import store_database_connection
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    get_all_database_connections_interface,
+    store_database_connection,
+)
 from flowfile_core.flowfile.execution import run_secrets
 from flowfile_core.flowfile.execution.backends import worker as worker_backend
 from flowfile_core.flowfile.execution.payloads import DatabaseReadPayload, KafkaReadPayload, RestApiReadPayload
@@ -26,10 +29,13 @@ from flowfile_core.flowfile.node_designer import CustomNodeBase, NodeSettings, S
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import resolve_auth_secret_encrypted
 from flowfile_core.flowfile.user_defined.dispatch import resolve_secret_payload
 from flowfile_core.hub_client import client, vend
+from flowfile_core.hub_client import connections as hub_connections
+from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.hub_client.client import HubRefused
-from flowfile_core.kafka.connection_manager import store_kafka_connection
+from flowfile_core.kafka.connection_manager import list_kafka_connections, store_kafka_connection
 from flowfile_core.schemas import input_schema
-from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate
+from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionInterface
+from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate, KafkaConnectionOut
 from flowfile_core.secret_manager.secret_manager import store_secret
 from shared import hub_node, hub_sealed, hub_tokens
 from shared.kafka.models import KafkaReadSettings
@@ -353,3 +359,31 @@ def test_a_custom_step_carries_its_selected_secrets_sealed_and_needs_none_here(
     assert open_secret_as("worker", node_keys, signer, monkeypatch, carried["hub_api_key"]) == "hub-key"
     mine = SecretNode.from_settings({"config": {"api_key": local_secret}})
     assert resolve_secret_payload(mine, user_id)[local_secret].startswith("$ffsec$")
+
+
+def test_rows_the_hub_lists_are_marked_hub_and_the_machines_own_local(hub, user_id, local_secret, stored_connections):
+    database, kafka, _ = stored_connections
+    hub.secret_values["hub_token"] = "v"
+    now = "2026-01-01T00:00:00"
+    hub.stored_connections[("cloud", "lake")] = ({"storage_type": "s3", "auth_method": "access_key"}, ())
+    hub.stored_connections[("kafka", "stream")] = (
+        {"bootstrap_servers": "b:9092", "security_protocol": "PLAINTEXT", "created_at": now, "updated_at": now},
+        (),
+    )
+    hub.stored_connections[("database", "dwh")] = ({"username": "u"}, ())
+    listed = [Secret.model_validate({"user_id": "hub", **row}) for row in hub_secrets.hub_rows(1)]
+    models = {
+        "cloud": FullCloudStorageConnectionInterface,
+        "kafka": KafkaConnectionOut,
+        "database": input_schema.FullDatabaseConnectionInterface,
+    }
+    for kind, model in models.items():
+        listed += [model.model_validate(row) for row in hub_connections.hub_rows(1, kind)]
+    with get_db_context() as db:
+        row = db.query(db_models.Secret).filter(db_models.Secret.name == local_secret).one()
+        own = [Secret(name=row.name, user_id=str(row.user_id), id=row.id)]
+        own += [c for c in get_all_database_connections_interface(db, user_id) if c.connection_name == database]
+        own += [c for c in list_kafka_connections(db, user_id) if c.connection_name == kafka]
+
+    assert len(listed) == 4 and all(row.source == "hub" and row.id < 0 for row in listed)
+    assert len(own) == 3 and all(row.source == "local" for row in own)

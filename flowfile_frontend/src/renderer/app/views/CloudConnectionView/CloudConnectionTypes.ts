@@ -116,7 +116,7 @@ export interface PythonFullCloudStorageConnectionInterface extends PythonAuthSet
   gcs_project_id?: string;
   endpoint_url?: string;
   verify_ssl: boolean;
-  from_hub?: boolean;
+  source?: "local" | "hub";
 }
 
 export interface FullCloudStorageConnectionInterface extends AuthSettingsInput {
@@ -132,6 +132,6 @@ export interface FullCloudStorageConnectionInterface extends AuthSettingsInput {
   gcsProjectId?: string;
   endpointUrl?: string;
   verifySsl: boolean;
-  // Listed by the person's hub: read-only here.
-  fromHub?: boolean;
+  // "hub" when listed by the person's hub: read-only here.
+  source?: "local" | "hub";
 }

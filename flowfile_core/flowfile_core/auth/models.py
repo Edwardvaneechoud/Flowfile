@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, SecretStr
 
 from flowfile_core.schemas.sharing_schema import AccessInfo
@@ -70,7 +72,7 @@ class Secret(BaseModel):
     user_id: str
     id: int | None = None
     access: AccessInfo | None = None
-    from_hub: bool = False
+    source: Literal["local", "hub"] = "local"
 
 
 class SecretInDB(BaseModel):

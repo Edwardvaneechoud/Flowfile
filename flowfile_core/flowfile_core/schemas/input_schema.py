@@ -1145,7 +1145,7 @@ class FullDatabaseConnectionInterface(BaseModel):
     url: str | None = None
     id: int | None = None
     access: AccessInfo | None = None
-    from_hub: bool = False
+    source: Literal["local", "hub"] = "local"
 
 
 class DatabaseSettings(BaseModel):

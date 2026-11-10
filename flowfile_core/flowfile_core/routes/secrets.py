@@ -6,7 +6,7 @@ sensitive credentials for the authenticated user. Secrets are encrypted before
 being stored and are associated with the user's ID.
 
 Every route acts on this machine's own secrets. The list adds the secrets the person's
-hub lists, names only and marked ``from_hub`` (``hub_client.secrets``); they have no
+hub lists, names only and marked ``source="hub"`` (``hub_client.secrets``); they have no
 value here.
 """
 

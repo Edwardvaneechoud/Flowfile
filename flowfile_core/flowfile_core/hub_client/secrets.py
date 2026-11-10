@@ -2,8 +2,8 @@
 delegation, both ``session.load``.
 
 The hub's secrets are never copied here and have no value on any machine. The Secrets page lists them after the
-machine's own, read-only and marked ``from_hub`` (``listed``, ``hub_rows``); a step that names one carries it only as
-the run's vend sealed it to the hub server that runs the step (``run_secrets.hub_value``).
+machine's own, read-only and marked ``source="hub"`` (``listed``, ``hub_rows``); a step that names one carries it only
+as the run's vend sealed it to the hub server that runs the step (``run_secrets.hub_value``).
 
 Requests log method, path and status only, never a body, a value or a token.
 """
@@ -15,6 +15,7 @@ from collections.abc import Callable
 
 from flowfile_core.configs import logger
 from flowfile_core.hub_client import client, session
+from flowfile_core.hub_client.catalog import HUB
 from flowfile_core.hub_client.client import HubRefused
 
 SECRETS_PATH = "/secrets/secrets"
@@ -59,13 +60,13 @@ def _bearer(token: str) -> dict:
 
 
 def marked(row: dict) -> dict:
-    """A row the hub lists, marked ``from_hub``; its id is the hub's, negated so it is never one of this machine's."""
+    """A row the hub lists, marked ``source="hub"``; the hub's id, negated so it is never one of this machine's."""
     row_id = row.get("id")
-    return {**row, "from_hub": True, "id": -row_id if isinstance(row_id, int) else row_id}
+    return {**row, "source": HUB, "id": -row_id if isinstance(row_id, int) else row_id}
 
 
 def listed(user_id: int) -> list[dict]:
-    """The person's secrets as the hub lists them: names and metadata, never a value, each marked ``from_hub``."""
+    """The person's secrets as the hub lists them: names and metadata, never a value, each marked ``source="hub"``."""
     hub_url, token = _signed_in(user_id)
     rows = client._request_list("GET", hub_url, SECRETS_PATH, None, headers=_bearer(token))
     return [{**marked(row), "value": None} for row in rows]
