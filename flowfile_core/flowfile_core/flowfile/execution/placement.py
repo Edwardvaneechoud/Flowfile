@@ -503,20 +503,20 @@ def _own_reasons(
     capabilities = backends[backend_id]
     absent_here = (absent or {}).get(backend_id, {})
     reasons = _unmet(needs.requirements, capabilities, needs.namespace, needs.artifact_scheme, absent_here)
-    hub = hub_table_namespace(node.setting_input)
+    hub = remote_table_schema(node.setting_input)
     if capabilities.credential_resolution == "ambient":
         reasons += _unresolvable_connections(node, needs.requirements.credentials, needs.namespace_id)
-        if hub is not None and flow.hub_vend is not None:
+        if hub is not None and flow.run_grant is not None:
             reasons.append(
                 f"it {'writes' if hub[1] else 'reads'} a table on the hub with a credential the hub vends to this run, "
                 "which this backend cannot take"
             )
-    elif hub is not None and flow.hub_vend is not None and flow.hub_vend.sealed_for(backend_id):
-        unsealed = unsealed_for(backend_id, capabilities, flow.hub_vend.targets)
+    elif hub is not None and flow.run_grant is not None and flow.run_grant.sealed_for(backend_id):
+        unsealed = unsealed_for(backend_id, capabilities, flow.run_grant.targets)
         if unsealed is not None:
             reasons.append(f"it {'writes' if hub[1] else 'reads'} a table on the hub, but {unsealed}")
-    if node.node_id in (getattr(flow, "sealed_secret_steps", None) or {}) and flow.hub_vend is not None:
-        unsealed = unsealed_for(backend_id, capabilities, flow.hub_vend.targets)
+    if node.node_id in (getattr(flow, "sealed_secret_steps", None) or {}) and flow.run_grant is not None:
+        unsealed = unsealed_for(backend_id, capabilities, flow.run_grant.targets)
         if unsealed is not None:
             reasons.append(f"it uses secrets the hub sealed to the server that runs it, but {unsealed}")
     if isinstance(node.setting_input, input_schema.NodeRunFlow):
@@ -718,7 +718,7 @@ def _artifact_scheme(node: FlowNode) -> str | None:
     return "https" if isinstance(store, S3Storage) else "file"
 
 
-def hub_table_namespace(settings: object) -> tuple[str, bool] | None:
+def remote_table_schema(settings: object) -> tuple[str, bool] | None:
     """The hub namespace (``catalog.schema``) a catalog node's ``settings`` read or write and whether they write;
     ``None`` off the hub, and for a node on the hub that names no table or schema yet (its run fails at the node)."""
     if isinstance(settings, input_schema.NodeCatalogReader) and table_sources.is_remote(settings.source):
@@ -741,7 +741,7 @@ def _catalog_target(settings: object, flow: FlowGraph) -> tuple[CatalogStorageTa
     base of the credential the hub vended to ``flow``'s run, naming no stored connection; outside a run it claims
     nothing.
     """
-    hub = hub_table_namespace(settings)
+    hub = remote_table_schema(settings)
     if hub is not None:
         source = getattr(settings, "source", None) or settings.catalog_write_settings.source
         try:

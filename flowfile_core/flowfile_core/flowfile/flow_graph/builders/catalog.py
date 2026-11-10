@@ -56,11 +56,11 @@ from shared.delta_utils import (
     scan_delta_changes,
 )
 
-PICK_HUB_TABLE = "No table on the hub is picked for this reader; pick one."
+PICK_REMOTE_TABLE = "No table on the hub is picked for this reader; pick one."
 
 
-def unnamed_hub_table(settings: input_schema.NodeCatalogReader) -> str | None:
-    """Why a reader on the hub cannot be read: it names no table (``PICK_HUB_TABLE``), or only a bare name, which a
+def unnamed_remote_table(settings: input_schema.NodeCatalogReader) -> str | None:
+    """Why a reader on the hub cannot be read: it names no table (``PICK_REMOTE_TABLE``), or only a bare name, which a
     flow saved by an older Flowfile carries when its hub ids could not be converted at open; ``None`` when it names
     its table by its qualified name."""
     if settings.catalog_full_table_name:
@@ -70,7 +70,7 @@ def unnamed_hub_table(settings: input_schema.NodeCatalogReader) -> str | None:
             f"The table {settings.catalog_table_name} on the hub is named by an id from an older Flowfile; open this "
             "flow while connected to the hub to convert it, or pick the table again."
         )
-    return PICK_HUB_TABLE
+    return PICK_REMOTE_TABLE
 
 
 def _filtered_frame(lf: pl.LazyFrame, row_filter: pl.Expr | None, backend: ComputeBackend | None) -> FlowDataEngine:
@@ -192,7 +192,7 @@ class CatalogBuildersMixin(GraphMixinBase):
 
         The table is looked up in its catalog by name once here, and its columns are the node's predicted schema; a
         catalog that does not answer leaves its message on the node, and the table is looked up again when the run
-        reads it. A reader that names no table yet fails with ``unnamed_hub_table`` when it runs. The target is asked
+        reads it. A reader that names no table yet fails with ``unnamed_remote_table`` when it runs. The target is asked
         for when the node runs (``table_sources.table_target``), since its credential is the run's and short-lived, so
         outside a run the node cannot read.
         """
@@ -201,7 +201,7 @@ class CatalogBuildersMixin(GraphMixinBase):
         qualified_name = node_catalog_reader.catalog_full_table_name
         node_logger = self.flow_logger.get_node_logger(node_catalog_reader.node_id)
         designed: dict | None = None
-        unread: str | None = unnamed_hub_table(node_catalog_reader)
+        unread: str | None = unnamed_remote_table(node_catalog_reader)
         if unread is None:
             try:
                 designed = table_sources.remote(source).table_named(user_id, qualified_name)
@@ -210,9 +210,12 @@ class CatalogBuildersMixin(GraphMixinBase):
         row_filter = _scd2_row_filter(None, node_catalog_reader.scd2_view, None, node_logger=node_logger)
 
         def _func() -> FlowDataEngine:
-            unnamed = unnamed_hub_table(node_catalog_reader)
+            unnamed = unnamed_remote_table(node_catalog_reader)
             if unnamed is not None:
                 raise ValueError(unnamed)
+            if designed is None and not table_sources.remote(source).run_holds(self.catalog_run_id):
+                # Outside a run the catalog's own sentence, before a lookup it may refuse for another reason.
+                table_sources.table_target(source, "", run_id=None, user_id=user_id)
             table = designed or table_sources.remote(source).table_named(user_id, qualified_name)
             columns = {
                 column["name"]: cast_str_to_polars_type(column["dtype"]) for column in table.get("schema_columns") or ()

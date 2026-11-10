@@ -626,14 +626,14 @@ def hub_tables_flow(registered_flow, desktop):
     return flow, flow_uuid, schema
 
 
-def _ran(flow, monkeypatch, last_hub_vend: tuple[str, int] | None, success: bool = True) -> None:
-    """Replace ``flow``'s run with one whose three nodes ended as ``success`` says and that leaves ``last_hub_vend``.
+def _ran(flow, monkeypatch, last_run_grant: tuple[str, int] | None, success: bool = True) -> None:
+    """Replace ``flow``'s run with one whose three nodes ended as ``success`` says and that leaves ``last_run_grant``.
 
     The vend and the storage a real run reaches are the end-to-end test's; here only what the report reads is set.
     """
 
     def run_graph(**kwargs) -> RunInformation:
-        flow.last_hub_vend = last_hub_vend
+        flow.last_run_grant = last_run_grant
         results = []
         for node_id in (1, 2, 3):
             result = NodeResult(node_id=node_id)

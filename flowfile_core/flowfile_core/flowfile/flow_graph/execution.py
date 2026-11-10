@@ -38,7 +38,7 @@ from flowfile_core.flowfile.execution.placement import (
     Placement,
     Refusal,
     SingleBackendPolicy,
-    hub_table_namespace,
+    remote_table_schema,
     place,
     remedy_for,
     scheduled_refusal,
@@ -323,7 +323,7 @@ def _release_boundary_inputs(node: FlowNode, edges: Sequence[BoundaryEdge]) -> N
 
 class ExecutionMixin(GraphMixinBase):
     @property
-    def hub_vend(self) -> Any | None:
+    def run_grant(self) -> Any | None:
         """What the remote catalog gave the running run when it started (``table_sources.run_grant``): read here for
         a step's sealed secrets and by placement's sealing checks, never for a table's storage."""
         return table_sources.run_grant(self.catalog_run_id)
@@ -337,13 +337,13 @@ class ExecutionMixin(GraphMixinBase):
     # The run id the hub keeps a run it dispatched here as: the run's vends and report carry it; None for any other.
     hub_run_id: str | None = None
     # (run id, vend id) of the last run's vend, for its report; holds no credential.
-    last_hub_vend: tuple[str, int] | None = None
+    last_run_grant: tuple[str, int] | None = None
     # Node id -> the secret names the running run's vend sealed for that step; None between runs.
     sealed_secret_steps: dict[int | str, tuple[str, ...]] | None = None
     # Node id -> the (kind, name) of the stored connections the running run's vend sealed for that step.
     sealed_connection_steps: dict[int | str, tuple[tuple[str, str], ...]] | None = None
     # Node id -> the rows out the last run knew that no result holds: a table write's, a released result's.
-    hub_rows_out: dict[int | str, int]
+    known_rows_out: dict[int | str, int]
 
     @property
     def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
@@ -549,11 +549,11 @@ class ExecutionMixin(GraphMixinBase):
             inputs = dict.fromkeys(source for source, _ in flow_node._slot_input_pairs() if source is not None)
             stage = ExecutionStage(nodes=[*inputs, flow_node])
             try:
-                hub_refusal = self._signed_out_refusal(stage.nodes, exchange_run) or self._vend_for_fetch(
+                run_refusal = self._signed_out_refusal(stage.nodes, exchange_run) or self._vend_for_fetch(
                     flow_node, exchange_run
                 )
-                if hub_refusal:
-                    self._record_hub_refusal(hub_refusal)
+                if run_refusal:
+                    self._record_run_refusal(run_refusal)
                     self.latest_run_info.end_time = datetime.datetime.now()
                     self.release_run()
                     self._end_exchange_run(exchange_run)
@@ -624,18 +624,18 @@ class ExecutionMixin(GraphMixinBase):
             node_logger.error(f"Error in node {flow_node.node_id}: {e}")
             node_result.finish(success=False, error=str(e))
         finally:
-            self._end_hub_vend(exchange_run, keep_preview=flow_node)
+            self._end_remote_run(exchange_run, keep_preview=flow_node)
             self.release_run()
             self._end_exchange_run(exchange_run)
 
     def _vend_for_fetch(self, flow_node: FlowNode, exchange_run: ExchangeRun) -> list[tuple[FlowNode, str]] | None:
         """Ask the hub for the credentials of the hub tables a fetch of ``flow_node`` reads, as a run does.
 
-        A run keeps no hub reader's plan once it ends (``_end_hub_vend``), so a fetch after a Performance run builds
+        A run keeps no hub reader's plan once it ends (``_end_remote_run``), so a fetch after a Performance run builds
         its node's plan over the hub table again: the node, every upstream node that has not run with its current
-        setup and the node's own inputs are vended for (``_vend_hub_tables``) under the fetch's own run id, so a step on
+        setup and the node's own inputs are vended for (``_start_remote_run``) under the fetch's own run id, so a step on
         a hub connection or secret and an input crossing through the hub's store are served as in a run. A fetch that
-        uses nothing of the hub asks nothing, and the run's ``last_hub_vend``, which its report names, is kept. Answers
+        uses nothing of the hub asks nothing, and the run's ``last_run_grant``, which its report names, is kept. Answers
         the nodes and the sentence when the hub cannot be asked or refuses, else ``None``.
         """
         upstream = [self.get_node(node_id) for node_id in self._get_upstream_node_ids(flow_node.node_id)]
@@ -643,14 +643,14 @@ class ExecutionMixin(GraphMixinBase):
         inputs = [source for source, _ in flow_node._slot_input_pairs() if source is not None]
         nodes = list(dict.fromkeys([*building, *inputs]))
         crosses = exchange_run.vended() and _may_cross(self._run_policy(exchange_run), nodes)
-        on_hub_table = any(hub_table_namespace(node.setting_input) for node in building)
-        if not on_hub_table and not crosses and not self._hub_steps(building, exchange_run):
+        on_hub_table = any(remote_table_schema(node.setting_input) for node in building)
+        if not on_hub_table and not crosses and not self._remote_steps(building, exchange_run):
             return None
-        run_vend = self.last_hub_vend
+        run_vend = self.last_run_grant
         try:
-            return self._vend_hub_tables(nodes, exchange_run)
+            return self._start_remote_run(nodes, exchange_run)
         finally:
-            self.last_hub_vend = run_vend
+            self.last_run_grant = run_vend
 
     @staticmethod
     def _resolve_input_names(node: FlowNode | None, table_count: int) -> list[str] | None:
@@ -803,12 +803,12 @@ class ExecutionMixin(GraphMixinBase):
                 params_scope.enter_context(use_context(replace(run_context, backend_id=backend_id)))
             sealed_names = (self.sealed_secret_steps or {}).get(node.node_id) or ()
             sealed_refs = (self.sealed_connection_steps or {}).get(node.node_id) or ()
-            if (sealed_names or sealed_refs) and self.hub_vend is not None:
+            if (sealed_names or sealed_refs) and self.run_grant is not None:
                 params_scope.enter_context(
                     run_secrets.use_sealed(
-                        self.hub_vend.sealed_secrets(sealed_names),
-                        self.hub_vend.sealed_connections(sealed_refs),
-                        self.hub_vend.secret_fields(sealed_refs),
+                        self.run_grant.sealed_secrets(sealed_names),
+                        self.run_grant.sealed_connections(sealed_refs),
+                        self.run_grant.secret_fields(sealed_refs),
                     )
                 )
             node._boundary_inputs = {(edge.source.node_id, edge.handle): edge for edge in edges}
@@ -1366,7 +1366,7 @@ class ExecutionMixin(GraphMixinBase):
         stage = ExecutionStage(nodes=nodes)
         placement, _ = self._place_run(ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run, log=False)
         if placement is not None and unsealable is not None:
-            refused = [node for node in nodes if hub_table_namespace(node.setting_input)] or nodes
+            refused = [node for node in nodes if remote_table_schema(node.setting_input)] or nodes
             placement = replace(
                 placement,
                 refusals=[Refusal(node.node_id, placement.assignment[node.node_id], unsealable) for node in refused],
@@ -1655,10 +1655,10 @@ class ExecutionMixin(GraphMixinBase):
         input from another backend crossing through the exchange store. ``RunInformation.boundaries`` lists those
         edges, a refused run's included.
 
-        A run with nodes on tables on the hub first asks the hub for their credentials, once (``_vend_hub_tables``),
+        A run with nodes on tables on the hub first asks the hub for their credentials, once (``_start_remote_run``),
         before placement; a hub that cannot be asked or refuses ends the run before a node starts, each of those nodes a
-        failed result with the reason. ``hub_vend`` holds the answer for the run only, and once the run ends neither it
-        nor any node's result holds the credential (``_end_hub_vend``).
+        failed result with the reason. ``run_grant`` holds the answer for the run only, and once the run ends neither it
+        nor any node's result holds the credential (``_end_remote_run``).
 
         The run holds ``exchange_run`` from before ``flow_run_started`` is published. However the run ends, its prefix
         is removed and ``exchange_run`` is ``None`` again (``_end_exchange_run``).
@@ -1724,14 +1724,14 @@ class ExecutionMixin(GraphMixinBase):
                     closed_gate_handles=closed_gate_handles,
                 )
 
-                self.hub_rows_out = {}
-                hub_refusal = self._signed_out_refusal(run_nodes, exchange_run) or self._vend_hub_tables(
+                self.known_rows_out = {}
+                run_refusal = self._signed_out_refusal(run_nodes, exchange_run) or self._start_remote_run(
                     run_nodes, exchange_run
                 )
-                placement, edges = (None, []) if hub_refusal else self._place_run(execution_plan, exchange_run)
-                if hub_refusal:
+                placement, edges = (None, []) if run_refusal else self._place_run(execution_plan, exchange_run)
+                if run_refusal:
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
-                    self._record_hub_refusal(hub_refusal)
+                    self._record_run_refusal(run_refusal)
                 elif placement is not None and placement.refusals:
                     # Refused before any node starts: nothing is prepared, executed, skipped or committed.
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
@@ -1771,7 +1771,7 @@ class ExecutionMixin(GraphMixinBase):
 
                 self.latest_run_info.end_time = datetime.datetime.now()
                 self.end_datetime = datetime.datetime.now()
-                self._end_hub_vend(exchange_run)
+                self._end_remote_run(exchange_run)
                 self.release_run()
                 released = True
                 if self.flow_settings.is_canceled:
@@ -1787,7 +1787,7 @@ class ExecutionMixin(GraphMixinBase):
             ambient_kernel_hold.reset(ambient)
             # Released once: a second release would end a run another caller claimed meanwhile.
             if not released:
-                self._end_hub_vend(exchange_run)
+                self._end_remote_run(exchange_run)
                 self.release_run()
             self._end_exchange_run(exchange_run)
 
@@ -1805,7 +1805,7 @@ class ExecutionMixin(GraphMixinBase):
         policy = MixedPlacementPolicy(run_backend_id, fallback_id=registry.fallback_backend_id())
         return replace(policy, moved=self._moved(exchange_run, policy))
 
-    def _hub_steps(
+    def _remote_steps(
         self, nodes: list[FlowNode], exchange_run: ExchangeRun
     ) -> dict[FlowNode, tuple[list[str], list[tuple[str, str]]]]:
         """The steps among ``nodes`` that use a secret or a connection the person's hub keeps, each with the secret
@@ -1813,7 +1813,7 @@ class ExecutionMixin(GraphMixinBase):
 
         The flow's steps are read once per run. A step whose names cannot be read names none and fails as it runs.
         """
-        if exchange_run.hub_steps is None:
+        if exchange_run.remote_steps is None:
             found: dict[int | str, tuple[list[str], list[tuple[str, str]]]] = {}
             for node in self.nodes:
                 try:
@@ -1823,12 +1823,12 @@ class ExecutionMixin(GraphMixinBase):
                     continue
                 if names or refs:
                     found[node.node_id] = (names, refs)
-            exchange_run.hub_steps = found
-        return {node: exchange_run.hub_steps[node.node_id] for node in nodes if node.node_id in exchange_run.hub_steps}
+            exchange_run.remote_steps = found
+        return {node: exchange_run.remote_steps[node.node_id] for node in nodes if node.node_id in exchange_run.remote_steps}
 
     def uses_hub_secrets(self) -> bool:
         """Whether a step of this flow uses a secret or a connection the person's hub keeps."""
-        return bool(self._hub_steps(self.nodes, ExchangeRun(self.flow_id, "check")))
+        return bool(self._remote_steps(self.nodes, ExchangeRun(self.flow_id, "check")))
 
     def _moved(self, exchange_run: ExchangeRun, policy: MixedPlacementPolicy) -> dict[int | str, str]:
         """The hub server each step that uses a hub connection or secret is moved to, read once per run.
@@ -1840,7 +1840,7 @@ class ExecutionMixin(GraphMixinBase):
         if exchange_run.moved is None:
             moved: dict[int | str, str] = {}
             servers: dict[int, str | None] = {}
-            for node in self._hub_steps(self.nodes, exchange_run):
+            for node in self._remote_steps(self.nodes, exchange_run):
                 if self._on_hub_server(node, policy):
                     continue
                 user_id = node.setting_input.user_id
@@ -1914,12 +1914,12 @@ class ExecutionMixin(GraphMixinBase):
                 )
         return tuple(dict.fromkeys(targets)), exchange, sealed_nodes
 
-    def _vend_hub_tables(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> list[tuple[FlowNode, str]] | None:
-        """Ask the hub once for what the run's nodes use of it, held as ``hub_vend`` for the run: the credentials of
+    def _start_remote_run(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> list[tuple[FlowNode, str]] | None:
+        """Ask the hub once for what the run's nodes use of it, held as ``run_grant`` for the run: the credentials of
         its nodes on hub tables, the secrets and connections its steps use, and the exchange store. One path on every
         machine, a desktop connected to the hub and a server joined to it alike.
 
-        ``last_hub_vend`` is the run's ``(run_id, vend_id)``, ``None`` when nothing was vended. A run that uses nothing
+        ``last_run_grant`` is the run's ``(run_id, vend_id)``, ``None`` when nothing was vended. A run that uses nothing
         of the hub asks nothing. The user is the nodes' own; nodes of two users ask as the first, which the flow log
         says; a run with only crossings asks as the user whose hub session found the store.
 
@@ -1933,13 +1933,13 @@ class ExecutionMixin(GraphMixinBase):
         hub is read on whichever machine its step runs.
         Answers each refused node with its sentence when the hub cannot be asked or refuses, else ``None``.
         """
-        self.last_hub_vend = None
+        self.last_run_grant = None
         self.sealed_secret_steps = None
         self.sealed_connection_steps = None
-        hub = {node.node_id: hub_table_namespace(node.setting_input) for node in nodes}
+        hub = {node.node_id: remote_table_schema(node.setting_input) for node in nodes}
         hub_nodes = [node for node in nodes if hub[node.node_id] is not None]
         policy = self._run_policy(exchange_run)
-        steps = self._hub_steps(nodes, exchange_run)
+        steps = self._remote_steps(nodes, exchange_run)
         stranded = [node for node in steps if not self._on_hub_server(node, policy)]
         if stranded:
             why = run_secrets.NO_STORE if isinstance(policy, SingleBackendPolicy) else exchange_run.unmoved
@@ -1980,7 +1980,7 @@ class ExecutionMixin(GraphMixinBase):
         self.sealed_secret_steps = {node.node_id: tuple(step[0]) for node, step in steps.items() if step[0]} or None
         self.sealed_connection_steps = {node.node_id: tuple(step[1]) for node, step in steps.items() if step[1]} or None
         self.catalog_run_id = run_vend.run_id
-        self.last_hub_vend = (run_vend.run_id, run_vend.vend_id)
+        self.last_run_grant = (run_vend.run_id, run_vend.vend_id)
         return None
 
     def _signed_out_refusal(
@@ -2025,7 +2025,7 @@ class ExecutionMixin(GraphMixinBase):
         named = {backend_id: vend.node_name(backend_id) for backend_id in on_backend}
         return {name: on_backend[backend_id] for backend_id, name in named.items() if name is not None}
 
-    def _record_hub_refusal(self, refused: list[tuple[FlowNode, str]]) -> None:
+    def _record_run_refusal(self, refused: list[tuple[FlowNode, str]]) -> None:
         """Record each node the hub vends to or mints no token for as a failed result, its sentence its error, in a run
         that starts none."""
         for node, sentence in refused:
@@ -2034,8 +2034,8 @@ class ExecutionMixin(GraphMixinBase):
         reason = f": {next(iter(sentences)).rstrip('.')}" if len(sentences) == 1 else ""
         self.flow_logger.error(f"{len(refused)} node(s) cannot run{reason}; no node was started")
 
-    def _end_hub_vend(self, exchange_run: ExchangeRun, keep_preview: FlowNode | None = None) -> None:
-        """Forget what the hub vended to the run: ``hub_vend``, and every node result that embeds its credential.
+    def _end_remote_run(self, exchange_run: ExchangeRun, keep_preview: FlowNode | None = None) -> None:
+        """Forget what the hub vended to the run: ``run_grant``, and every node result that embeds its credential.
 
         A hub reader's scan carries the credential, so a hub reader's result, and each result downstream of one, that
         is still a plan (deferred, not handed to a backend, or with named outputs) is released and its node counts as
@@ -2045,7 +2045,7 @@ class ExecutionMixin(GraphMixinBase):
 
         ``keep_preview``, the node a fetch was for, keeps the preview rows it already read, which hold no credential,
         and still reads as completed, so its grid shows them; its plan is released like any other. At a run's end the
-        row count each released node knew is kept in ``hub_rows_out`` for the run's report.
+        row count each released node knew is kept in ``known_rows_out`` for the run's report.
         """
         if self.catalog_run_id != exchange_run.run_id:
             return
@@ -2055,7 +2055,7 @@ class ExecutionMixin(GraphMixinBase):
         self.sealed_connection_steps = None
         seen: set[int] = set()
         rows_out: dict[int | str, int] = {}
-        stack = [node for node in self.nodes if (hub := hub_table_namespace(node.setting_input)) and not hub[1]]
+        stack = [node for node in self.nodes if (hub := remote_table_schema(node.setting_input)) and not hub[1]]
         while stack:
             node = stack.pop()
             if id(node) in seen:
@@ -2081,7 +2081,7 @@ class ExecutionMixin(GraphMixinBase):
             node._execution_state.has_run_with_current_setup = False
             node._execution_state.has_completed_last_run = rows is not None
         if keep_preview is None:
-            self.hub_rows_out.update(rows_out)
+            self.known_rows_out.update(rows_out)
 
     def _end_exchange_run(self, exchange_run: ExchangeRun) -> None:
         """Remove what the run wrote to the exchange store; a failure is a warning on the flow log, never the run's.

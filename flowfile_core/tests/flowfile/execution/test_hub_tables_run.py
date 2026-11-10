@@ -176,7 +176,7 @@ def assert_ended_before_any_node(run_info, graph, refused: dict[int, str]) -> No
     assert errors == refused
     assert all(result.compute_error == "Refusal" for result in run_info.node_step_result)
     assert run_info.success is False and run_info.nodes_completed == 0
-    assert graph.hub_vend is None and graph.last_hub_vend is None
+    assert graph.run_grant is None and graph.last_run_grant is None
     assert graph.flow_settings.is_running is False
 
 
@@ -187,6 +187,24 @@ def test_a_hub_reader_predicts_the_hub_s_schema_and_reads_only_in_a_run(connecte
     node = graph.get_node(1)
     assert [(c.column_name, c.data_type) for c in node.schema] == [("id", "Int64"), ("name", "String")]
     assert connected.vend_calls == []
+    with pytest.raises(ValueError, match="^Run the flow to read a table on the hub$"):
+        node.function()
+
+
+def test_a_hub_reader_wired_while_the_hub_did_not_answer_says_to_run_the_flow(connected, monkeypatch):
+    from flowfile_core.hub_client import catalog
+
+    def unanswered(user_id, qualified_name):
+        raise LookupError("The hub did not answer")
+
+    graph = make_graph(8703, execution_location="local")
+    with monkeypatch.context() as wiring:
+        wiring.setattr(catalog, "table_named", unanswered)
+        add_hub_reader(graph, 1, connected)
+    monkeypatch.setattr(catalog, "table_named", unanswered)
+
+    node = graph.get_node(1)
+    assert node.results.errors == "The hub did not answer"
     with pytest.raises(ValueError, match="^Run the flow to read a table on the hub$"):
         node.function()
 
@@ -263,7 +281,7 @@ def test_a_run_reading_and_writing_hub_tables_vends_once_and_keeps_nothing(
     recording = FlowNode.run_op
 
     def holding(self, backend, op, payload, *, job_id):
-        held.append(graph.hub_vend)
+        held.append(graph.run_grant)
         return recording(self, backend, op, payload, job_id=job_id)
 
     monkeypatch.setattr(FlowNode, "run_op", holding)
@@ -309,8 +327,8 @@ def test_a_run_reading_and_writing_hub_tables_vends_once_and_keeps_nothing(
     }
     with get_db_context() as db:
         assert db.query(CatalogTable).filter_by(name="orders_out").count() == 0
-    assert graph.hub_vend is None
-    assert graph.last_hub_vend == (vend_call["run_id"], 1)
+    assert graph.run_grant is None
+    assert graph.last_run_grant == (vend_call["run_id"], 1)
 
 
 def test_an_existing_hub_table_is_written_in_place_and_not_registered_again(connected, operations):
@@ -368,13 +386,13 @@ def test_a_failed_registration_fails_the_writer_naming_where_the_table_was_writt
 def test_a_flow_with_no_hub_table_asks_the_hub_nothing(connected):
     graph = make_graph(8710, execution_location="local")
     add_manual_input(graph, 1, [{"id": 1}])
-    graph.last_hub_vend = ("an earlier run", 3)
+    graph.last_run_grant = ("an earlier run", 3)
 
     run_info = graph.run_graph()
 
     assert run_info.success is True
     assert connected.calls == []
-    assert graph.hub_vend is None and graph.last_hub_vend is None
+    assert graph.run_grant is None and graph.last_run_grant is None
 
 
 @pytest.mark.parametrize("mode", ["Performance", "Development"])
@@ -413,7 +431,7 @@ def test_after_a_run_over_a_hub_table_no_node_result_holds_its_credential(
     else:
         assert reader.results.result_ref == reader_ref and reader.node_stats.has_run_with_current_setup
     assert mode == "Development" or reader_ref.state == "deferred"
-    assert graph.hub_vend is None
+    assert graph.run_grant is None
 
 
 def test_fetch_data_after_a_performance_run_reads_the_hub_table_under_a_vend_of_its_own(
@@ -426,7 +444,7 @@ def test_fetch_data_after_a_performance_run_reads_the_hub_table_under_a_vend_of_
     run_info = graph.run_graph()
     assert run_info.success is True, [result.error for result in run_info.node_step_result]
     [run_vend] = connected.vend_calls
-    reported = graph.last_hub_vend
+    reported = graph.last_run_grant
 
     fetch_info = graph.trigger_fetch_node(2)
 
@@ -437,8 +455,8 @@ def test_fetch_data_after_a_performance_run_reads_the_hub_table_under_a_vend_of_
     sort = graph.get_node(2)
     example = sort.get_table_example(include_data=True)
     assert example.data == [{"id": 1, "name": "ada"}, {"id": 2, "name": "bob"}]
-    assert graph.hub_vend is None
-    assert graph.last_hub_vend == reported, "the run's report keeps naming the run's vend"
+    assert graph.run_grant is None
+    assert graph.last_run_grant == reported, "the run's report keeps naming the run's vend"
     ciphertext = carrying_scans[-1][1]["credential_provider"].encrypted_credentials.encode()
     for node in graph.nodes:
         plans = [node.results.resulting_data, *node._named_outputs.values()]
@@ -472,10 +490,10 @@ def test_the_run_report_counts_the_rows_out_the_run_knew_after_its_vend_ends(
 
     # In a Performance run only the write counted; a sort keeps its rows, so its count holds back to the read.
     assert rows_out_of(graph, graph.run_graph()) == {1: 2, 2: 2, 3: 2}
-    assert graph.hub_vend is None
+    assert graph.run_grant is None
 
     graph.run_graph(node_ids={1})
-    assert graph.hub_rows_out.get(3) is None, "a later run reports only its own counts"
+    assert graph.known_rows_out.get(3) is None, "a later run reports only its own counts"
 
 
 def test_a_performance_run_s_write_counts_back_only_through_steps_that_keep_their_rows(

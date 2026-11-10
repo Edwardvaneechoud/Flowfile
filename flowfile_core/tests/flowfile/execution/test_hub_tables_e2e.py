@@ -225,8 +225,8 @@ def test_a_desktop_reads_and_writes_hub_tables_with_one_vend_and_one_report(hub,
         assert vend["read_namespace_ids"] == [hub.sales["id"]]
         assert vend["write_namespace_ids"] == [hub.sales["id"]]
         vend_id = hub.fake._vends
-        assert graph.last_hub_vend == (vend["run_id"], vend_id)
-        assert graph.hub_vend is None
+        assert graph.last_run_grant == (vend["run_id"], vend_id)
+        assert graph.run_grant is None
 
         [registered] = hub.fake.registered
         assert (registered["name"], registered["namespace_id"]) == ("orders_eu", hub.sales["id"])
@@ -300,7 +300,7 @@ def test_without_a_hub_session_the_flow_ends_before_anything_runs_and_nothing_is
         assert hub.fake.vend_calls == [] and hub.fake.registered == [] and hub.fake.reports == []
         assert backend_calls == [], "nothing reached a worker"
         assert hub.fake.calls == []
-        assert graph.hub_vend is None and graph.last_hub_vend is None
+        assert graph.run_grant is None and graph.last_run_grant is None
         assert run_row(flow_path).success is False
     finally:
         graph.close_flow()

@@ -86,9 +86,9 @@ class ExchangeRun:
 
     The run looks the store up once, on the first ``prefix`` that finds one, and answers that store after; ``collect``
     removes the run's prefix from it. ``hub_store`` is the store this machine's hub set for this run, if any, which
-    applies, with its row limit, while neither the environment nor the saved store names one. ``hub_steps`` and
+    applies, with its row limit, while neither the environment nor the saved store names one. ``remote_steps`` and
     ``moved`` are the run's own notes on its steps that use a hub connection or secret and the hub server each moved to
-    (``ExecutionMixin._hub_steps``, ``_moved``), read once per run.
+    (``ExecutionMixin._remote_steps``, ``_moved``), read once per run.
     """
 
     def __init__(self, flow_id: int, run_id: str, hub_store: ExchangeConfig | None = None):
@@ -97,7 +97,7 @@ class ExchangeRun:
         self.hub_store = hub_store
         self.sealed: SealedCredential | None = None
         self.own: EncryptedCredential | None = None
-        self.hub_steps: dict | None = None
+        self.remote_steps: dict | None = None
         self.moved: dict | None = None
         self.unmoved: str | None = None
         self._store: ExchangeStore | None = None

@@ -6,7 +6,7 @@ import re
 import pytest
 import yaml
 
-from flowfile_core.flowfile.flow_graph.builders.catalog import unnamed_hub_table
+from flowfile_core.flowfile.flow_graph.builders.catalog import unnamed_remote_table
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.hub_client import client, session
 from flowfile_core.schemas import input_schema
@@ -118,7 +118,7 @@ def test_a_flow_opened_without_the_hub_keeps_the_step_on_the_hub_and_says_so_at_
 
     reader = graph.get_node(1).setting_input
     assert (reader.source, reader.catalog_full_table_name, reader.catalog_table_name) == ("hub", None, "orders")
-    assert graph.get_node(1).results.errors == unnamed_hub_table(reader)
+    assert graph.get_node(1).results.errors == unnamed_remote_table(reader)
     assert "an id from an older Flowfile" in graph.get_node(1).results.errors
     writer = graph.get_node(2).setting_input.catalog_write_settings
     assert (writer.source, writer.namespace_full_name) == ("hub", None)

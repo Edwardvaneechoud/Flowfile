@@ -388,7 +388,7 @@ def test_a_person_reads_and_writes_the_hubs_tables_on_its_storage_and_the_run_is
     [vend] = hub.catalog.vend_calls
     assert (vend["read_namespace_ids"], vend["write_namespace_ids"]) == ([sales["id"]], [sales["id"]])
     assert hub.sent_with("POST", "/hub/vend") == [delegated]
-    assert flow.last_hub_vend == (vend["run_id"], hub.catalog._vends) and flow.hub_vend is None
+    assert flow.last_run_grant == (vend["run_id"], hub.catalog._vends) and flow.run_grant is None
 
     [registered] = hub.catalog.registered
     assert (registered["name"], registered["namespace_id"]) == ("orders_eu", sales["id"])

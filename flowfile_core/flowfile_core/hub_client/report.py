@@ -41,7 +41,7 @@ def hub_target(flow, user_id: int | None) -> tuple[str, str] | None:
     a person signed in through the hub (``user_id`` has a session of ``kind: "delegation"``) goes to that session's hub
     with the person's delegated access token. A person with no such session (an account from before the join) is not
     reported. Anywhere else the run is reported only when ``user_id`` has a hub session and either ``flow`` carries a
-    ``hub_origin`` on that same hub or the run vended a credential from it (``flow.last_hub_vend``), with an access
+    ``hub_origin`` on that same hub or the run vended a credential from it (``flow.last_run_grant``), with an access
     token minted from the session. The token of the request that started the run is this core's own and never sent. A
     refresh the hub does not grant is one warning; every other reason not to report is said at debug level.
     """
@@ -53,7 +53,7 @@ def hub_target(flow, user_id: int | None) -> tuple[str, str] | None:
         return None
     origin = getattr(flow.flow_settings, "hub_origin", None)
     hub_url = stored["hub_url"]
-    if getattr(flow, "last_hub_vend", None) is None:
+    if getattr(flow, "last_run_grant", None) is None:
         if origin is None:
             logger.debug("Run not reported to the hub: the flow did not come from a hub and used none of its tables")
             return None
@@ -87,10 +87,10 @@ def _session_target(user_id: int, hub_url: str) -> tuple[str, str] | None:
 def _rows_out(flow, node) -> int | None:
     """The row count the run already knows for ``node``'s output, else ``None``; nothing is counted.
 
-    ``flow.hub_rows_out`` holds what no result does: what a table write's report says about its steps, and the count a
+    ``flow.known_rows_out`` holds what no result does: what a table write's report says about its steps, and the count a
     step knew when the end of the run's vend released its result.
     """
-    released = getattr(flow, "hub_rows_out", {}).get(node.node_id)
+    released = getattr(flow, "known_rows_out", {}).get(node.node_id)
     if released is not None:
         return released
     ref = node.results.result_ref
@@ -146,7 +146,7 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str, run_row_id:
     name (``None`` when it lists none). A table whose schema the hub does not name, or a hub that does not answer,
     leaves the table out. A table of this core's own catalog is never named. ``flow_version`` is the hub version of
     the flow's ``hub_origin``, ``None`` for a flow that never met a hub. A run that vended from the hub
-    (``flow.last_hub_vend``) is reported under the vend's run id with its ``vend_ids``; a run the hub dispatched here
+    (``flow.last_run_grant``) is reported under the vend's run id with its ``vend_ids``; a run the hub dispatched here
     under the id the hub gave it (``flow.hub_run_id``); any other run gets a new run id and no vend.
     """
     nodes, readers, writers = [], [], []
@@ -206,7 +206,7 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str, run_row_id:
             outputs.append(ref)
 
     origin = getattr(flow.flow_settings, "hub_origin", None)
-    vend = getattr(flow, "last_hub_vend", None)
+    vend = getattr(flow, "last_run_grant", None)
     ended_at = run_info.end_time or datetime.now()
     started_at = run_info.start_time or ended_at
     executed_on = hub_vend.node_name(registry.WORKER_BACKEND_ID)

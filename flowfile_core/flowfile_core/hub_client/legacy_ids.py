@@ -6,7 +6,7 @@ a row is renumbered. A step now names a hub table by ``source: "hub"`` and its q
 when the flow runs. A document that still carries the ids is converted here while it loads, by asking the hub what
 the ids name through the opening user's hub session; the next save writes the names. A hub that cannot be asked (no
 user, no hub session, the hub down, the row gone) leaves the step on the hub with its bare table name and no qualified
-name, after one warning, which the reader says at the node (``builders.catalog.unnamed_hub_table``) and a writer as a
+name, after one warning, which the reader says at the node (``builders.catalog.unnamed_remote_table``) and a writer as a
 write with no schema picked. This module goes after one public release.
 """
 

@@ -271,14 +271,14 @@ def _keep_rows_written(
     rows = None if meta is None or delta_mode in MERGE_MODES or delta_mode == "scd2" else meta.get("row_count")
     if rows is None or graph.flow_settings.execution_mode != "Performance":
         return
-    graph.hub_rows_out[writer.node_id] = rows
+    graph.known_rows_out[writer.node_id] = rows
     step = writer
     while step is writer or step.node_type in _KEEPS_ROWS:
         inputs = step.main_input
         if len(inputs) != 1 or step.input_edge_handle(inputs[0].node_id, "input-0") != DEFAULT_OUTPUT_HANDLE:
             return
         step = inputs[0]
-        graph.hub_rows_out[step.node_id] = rows
+        graph.known_rows_out[step.node_id] = rows
 
 
 def _same_location(left: str, right: str) -> bool:
@@ -621,7 +621,7 @@ def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
     return False
 
 
-PICK_HUB_SCHEMA = "No schema on the hub is picked for this table; pick one you may write to."
+PICK_REMOTE_SCHEMA = "No schema on the hub is picked for this table; pick one you may write to."
 
 
 def _handle_virtual_table_write(
@@ -738,7 +738,7 @@ def _handle_remote_table_write(
     settings = node_catalog_writer.catalog_write_settings
     schema = settings.namespace_full_name
     if not schema:
-        raise ValueError(PICK_HUB_SCHEMA)
+        raise ValueError(PICK_REMOTE_SCHEMA)
     run_id = graph.catalog_run_id
     catalog = table_sources.remote(settings.source)
     target = table_sources.schema_target(settings.source, schema, run_id=run_id, user_id=user_id)
