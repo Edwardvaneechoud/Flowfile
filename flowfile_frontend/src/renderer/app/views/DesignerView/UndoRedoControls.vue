@@ -73,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { onUnmounted } from "vue";
 import { ElMessage } from "element-plus";
 import { FlowApi } from "../../api";
 import { useFlowStore } from "../../stores/flow-store";
@@ -84,8 +84,7 @@ import { useDrawerStore } from "../../stores/drawer-store";
 import { whenMutationsIdle } from "../../services/axios.config";
 import { flushPendingEdits } from "../../services/mutationChannel";
 import { recoverFromFailedMutation } from "../../services/mutationFailure";
-import { historyShortcutFor } from "../../composables/useFlowHotkeys";
-import { IS_MAC, MODIFIER_LABEL, SHIFT_LABEL } from "../../utils/shortcuts";
+import { MODIFIER_LABEL, SHIFT_LABEL } from "../../utils/shortcuts";
 import type { UndoRedoResult } from "../../types";
 import { prepareHistoryAction, type HistoryAction } from "./historyAction";
 
@@ -97,15 +96,23 @@ const drawerStore = useDrawerStore();
 
 // Presses run one after another, so each sees the history its predecessor left.
 let pressChain: Promise<void> = Promise.resolve();
+let disposed = false;
+onUnmounted(() => {
+  disposed = true;
+});
+const isCurrentFlow = (flowId: number) =>
+  !disposed && flowId > 0 && flowStore.flowId === flowId && nodeStore.flow_id === flowId;
 
 /**
  * Close the drawer, saving only the user's edits there (they become the step undone); a
  * refused save reports itself and keeps the drawer open.
  */
 const closeSettingsDrawer = async (): Promise<boolean> => {
+  const flowId = flowStore.flowId;
   if ((await editorStore.executeDrawCloseFunctionOnce({ userEditsOnly: true }, true)) === false) {
     return false;
   }
+  if (!isCurrentFlow(flowId)) return false;
   nodeStore.nodeId = -1;
   editorStore.activeDrawerComponent = null;
   return true;
@@ -114,9 +121,10 @@ const closeSettingsDrawer = async (): Promise<boolean> => {
 const isNothingToDo = (result: UndoRedoResult) =>
   /^nothing to (undo|redo)/i.test(result.error_message ?? "");
 
-const runHistoryAction = async (action: HistoryAction) => {
+const runHistoryAction = async (action: HistoryAction, pressedFlowId: number) => {
+  if (!isCurrentFlow(pressedFlowId)) return;
   const flowId = await prepareHistoryAction(action, {
-    flowId: () => flowStore.flowId,
+    flowId: () => (isCurrentFlow(pressedFlowId) ? pressedFlowId : -1),
     canRun: (candidate) => (candidate === "undo" ? flowStore.canUndo : flowStore.canRedo),
     drawerHasPendingEdits: () => editorStore.hasPendingDrawerEdits(),
     closeDrawer: closeSettingsDrawer,
@@ -128,9 +136,10 @@ const runHistoryAction = async (action: HistoryAction) => {
   try {
     result = action === "undo" ? await FlowApi.undo(flowId) : await FlowApi.redo(flowId);
   } catch (error) {
-    recoverFromFailedMutation(error, `Could not ${action}`);
+    if (isCurrentFlow(flowId)) recoverFromFailedMutation(error, `Could not ${action}`);
     return;
   }
+  if (!isCurrentFlow(flowId)) return;
   if (!result.success) {
     if (isNothingToDo(result)) return;
     // A restore that failed part-way may still have changed the graph.
@@ -139,15 +148,16 @@ const runHistoryAction = async (action: HistoryAction) => {
     return;
   }
   // Restore rebuilds the nodes, so the flow's run results no longer describe them.
-  if (flowStore.flowId !== flowId) return;
   resultsStore.clearFlowResults(flowId);
   drawerStore.clearPreview();
   flowStore.requestReload();
 };
 
 const enqueue = (action: HistoryAction) => {
+  // Bind a press now, not when earlier presses finish: it must never target another tab.
+  const flowId = flowStore.flowId;
   pressChain = pressChain
-    .then(() => runHistoryAction(action))
+    .then(() => runHistoryAction(action, flowId))
     .catch((error) => {
       console.error(`Failed to ${action}:`, error);
     });
@@ -156,15 +166,7 @@ const enqueue = (action: HistoryAction) => {
 const handleUndo = () => enqueue("undo");
 const handleRedo = () => enqueue("redo");
 
-const handleKeyDown = (event: KeyboardEvent) => {
-  const action = historyShortcutFor(event, IS_MAC);
-  if (!action) return;
-  event.preventDefault();
-  enqueue(action);
-};
-
-onMounted(() => window.addEventListener("keydown", handleKeyDown));
-onUnmounted(() => window.removeEventListener("keydown", handleKeyDown));
+defineExpose({ handleUndo, handleRedo });
 </script>
 
 <style scoped>

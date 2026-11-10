@@ -9,7 +9,7 @@
             @refresh-flow="refreshFlow"
             @flow-saved="handleFlowSaved"
           />
-          <undo-redo-controls v-if="hasOpenFlow" />
+          <undo-redo-controls v-if="hasOpenFlow" ref="undoRedoControls" />
         </div>
       </div>
       <div class="header-bottom">
@@ -43,6 +43,8 @@
       <canvas-flow
         ref="canvasFlow"
         class="canvas"
+        @undo="undoRedoControls?.handleUndo()"
+        @redo="undoRedoControls?.handleRedo()"
         @save="headerButtons?.openSaveModal()"
         @run="rightCluster?.runFlow()"
         @new="headerButtons?.handleQuickCreate()"
@@ -123,6 +125,7 @@ const isSwitching = ref(false);
 const canvasFlow = ref<InstanceType<typeof CanvasFlow>>();
 const headerButtons = ref<InstanceType<typeof HeaderButtons>>();
 const rightCluster = ref<InstanceType<typeof RightActionCluster>>();
+const undoRedoControls = ref<InstanceType<typeof UndoRedoControls>>();
 const flowSelector = ref<InstanceType<typeof FlowSelector>>();
 const nodeOptions = ref<NodeTemplate[]>([]);
 const initialLoadComplete = ref(false);

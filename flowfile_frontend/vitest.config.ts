@@ -7,11 +7,13 @@
 
 import Path from "path";
 import { fileURLToPath } from "url";
+import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vitest/config";
 
 const __dirname = Path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  plugins: [vue()],
   test: {
     include: ["src/**/*.test.ts"],
     environment: "node",
