@@ -167,18 +167,18 @@ class RunVend:
             return sealed, None
         return sealed, (self.own or self).encrypted_credential(uri, user_id)
 
-    def scan_delta(self, uri: str, user_id: int | None, schema: Mapping[str, pl.DataType]) -> pl.LazyFrame:
-        """A lazy scan of the Delta table at ``uri`` with the run's credential, its plan holding no secret.
+    def scan_delta(self, uri: str, user_id: int | None, schema: Mapping[str, pl.DataType], **kwargs) -> pl.LazyFrame:
+        """A lazy scan of the Delta table at ``uri`` with the credential of the step running now (``here``), its plan
+        holding no secret.
 
         Unsealed, the plan carries the options without their secrets and the secrets encrypted for ``user_id``
-        (``scan_kwargs``). Sealed, core knows no option of the store, not even its endpoint, so the plan reads the table
-        through a Python source that opens the map where the plan runs, with ``schema`` as its columns. Which of the
-        two is the vend of the step running now (``here``).
+        (``scan_kwargs``). Sealed, core knows no option of the store, so the plan reads the table through a Python
+        source that opens the map where the plan runs, with ``schema`` as its columns.
         """
         here = self.here()
         if here.sealed:
             return hub_sealed.scan_delta_sealed(uri, here.sealed_credential(uri).sealed, schema)
-        return pl.scan_delta(uri, **here.scan_kwargs(uri, user_id))
+        return pl.scan_delta(uri, **kwargs, **here.scan_kwargs(uri, user_id))
 
     def for_namespace(self, namespace: str) -> HubCredential:
         """The credential for the tables of the hub namespace ``namespace`` (``catalog.schema``).
@@ -267,11 +267,7 @@ def held(run_id: str | None) -> RunVend | None:
 @dataclass(frozen=True)
 class VendedTarget:
     """A run's vend as the storage target of the tables under ``base``, as ``CatalogStorageTarget`` is for a local
-    catalog's: what the engine's readers and writers take, whichever catalog keeps the table.
-
-    Nothing is resolved until it is used, and then for the step running now (``RunVend.here``). A sealed vend has no
-    options core can open, so its scan is the sealed source and its worker connection carries the map.
-    """
+    catalog's. Nothing is resolved until it is used, and then for the step running now (``RunVend.here``)."""
 
     run_vend: RunVend = field(repr=False)
     base: str
@@ -295,10 +291,7 @@ class VendedTarget:
         return self.run_vend.here().scan_kwargs(self.base, user_id)
 
     def scan_delta(self, path: str, user_id: int | None, columns: Mapping[str, pl.DataType], **kwargs) -> pl.LazyFrame:
-        here = self.run_vend.here()
-        if here.sealed:
-            return hub_sealed.scan_delta_sealed(path, here.sealed_credential(path).sealed, columns)
-        return pl.scan_delta(path, **kwargs, **here.scan_kwargs(path, user_id))
+        return self.run_vend.scan_delta(path, user_id, columns, **kwargs)
 
 
 def _physical(table: dict, namespace_name) -> dict:
@@ -311,8 +304,8 @@ def _physical(table: dict, namespace_name) -> dict:
 
 
 class _RunCatalog:
-    """The hub's catalog as ``table_sources.RemoteCatalog``: a run's targets, answered from the vend held for the
-    run, and the reads outside a run, each answered from a vend of its own."""
+    """The hub's catalog as ``table_sources.RemoteCatalog``: a run's targets from the vend held for the run, a read
+    outside a run from a vend of its own."""
 
     def run_starts(self, start: table_sources.RunStart) -> RunVend:
         """The run's one vend: its tables' credentials, the secrets and connections its steps use and the exchange
@@ -346,8 +339,7 @@ class _RunCatalog:
         _held.pop(run_id, None)
 
     def table_named(self, user_id: int | None, qualified_name: str) -> dict:
-        """The hub's table ``qualified_name`` (``catalog.schema.table``, as a reader step names it), which must be a
-        physical table on object storage (``_physical``)."""
+        """The hub's table ``qualified_name``, which must be a physical table on object storage (``_physical``)."""
         return _physical(catalog.table_named(user_id, qualified_name), lambda: qualified_name.rpartition(".")[0])
 
     def table(self, user_id: int | None, table_id: int) -> CatalogTableOut:
@@ -359,12 +351,8 @@ class _RunCatalog:
     def row_targets(
         self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str, writes: bool
     ) -> list[VendedTarget]:
-        """The storage target of each of ``tables``, rows of the catalog tree, for one operation outside a run.
-
-        The hub vends the tables' schemas to ``user_id`` now, to write too with ``writes``, under a run id of its own
-        that starts with ``purpose`` (``preview-…``, ``sql-…``), which the hub's vend ledger keeps. The credential
-        lives for the call, or as long as the plan built from the target carries it, encrypted.
-        """
+        """The hub vends the schemas of ``tables`` to ``user_id`` now, to write too with ``writes``, under a run id
+        of its own that starts with ``purpose`` (``preview-…``, ``sql-…``), which the hub's vend ledger keeps."""
         vended = request_for_tables(user_id, f"{purpose}-{uuid.uuid4().hex}", tables, writes=writes)
         return [VendedTarget(vended, row.file_path.rstrip("/").rpartition("/")[0], user_id) for row in tables]
 
@@ -408,9 +396,8 @@ class _RunCatalog:
         return issuer_accounts.joined_with_keys() is not None
 
     def save_flow(self, user_id: int | None, flow) -> str | None:
-        """The hub keeps the content of a flow that came from it for a person signed in to it, and words where; a
-        flow from elsewhere, a person with no hub session, and a hub without the route or the flow, are not its to
-        keep."""
+        """The hub keeps a flow that came from it for a person signed in to it, and words where; a flow from
+        elsewhere, a person with no hub session, and a hub without the route or the flow, are not its to keep."""
         origin = getattr(flow.flow_settings, "hub_origin", None)
         stored = session.load(user_id) if user_id is not None else None
         if origin is None or stored is None or origin.hub_url.rstrip("/") != stored["hub_url"].rstrip("/"):
@@ -484,13 +471,10 @@ def request(
     """Ask the hub, through ``user_id``'s hub session, for the credentials of a run over its tables.
 
     ``readers`` and ``writers`` are the qualified names (``catalog.schema``) of the hub namespaces the run reads and
-    writes. Every namespace is found, and its hub id resolved, in one walk of the hub's catalogs; one the hub does not
-    list for the account is refused, and so is one on the hub's own disk, or on storage other than S3, before the vend
-    with the sentence the catalog tree marks it with (``catalog.unreachable``), which says what to do. A run with no
-    namespace walks nothing. ``exchange`` also asks for the organisation's exchange store; ``targets``, the hub names
-    of the servers the run's steps use, has the hub seal every credential to each of them, and ``secrets``, the names
-    of the secrets the run's steps on those servers use, each such secret too, and ``connections``, the ``(kind,
-    name)`` of the stored connections they use, each such connection.
+    writes, each found and its hub id resolved in one walk of the hub's catalogs; one the hub does not list, keeps on
+    its own disk or on storage other than S3 is refused before the vend (``catalog.unreachable``). ``exchange`` also
+    asks for the organisation's exchange store; ``targets``, the hub names of the servers the run's steps use, has
+    the hub seal every credential to each of them, and each of ``secrets`` and ``connections`` (``(kind, name)``) too.
 
     Raises:
         LookupError: A sentence for the user: not connected to the hub, a namespace the hub keeps on its own disk or
@@ -526,16 +510,11 @@ def request(
 def request_for_tables(
     user_id: int, run_id: str, tables: Iterable[CatalogTableOut], *, writes: bool = False
 ) -> RunVend:
-    """Ask the hub, through ``user_id``'s hub session, for one read of ``tables`` outside a run: the Catalog page's
-    preview, a notebook cell's read, the SQL editor and a visual.
+    """Ask the hub, through ``user_id``'s hub session, for one read of ``tables`` outside a run; with ``writes`` the
+    credential may also write their schemas.
 
-    ``tables`` are rows of the catalog tree, each carrying the hub's id of its namespace, so the
-    credential is for the schema each table lives in. A run names a namespace by its qualified name; this call does
-    not, since namespace names are free text and ``a.b`` + ``c`` names the same ``catalog.schema`` as ``a`` + ``b.c``.
-    With ``writes`` the credential may also write those schemas: an optimize, a vacuum, an edit of the table.
-
-    Raises:
-        LookupError: As ``request`` does, the namespace named by the table it holds.
+    ``tables`` are rows of the catalog tree, each carrying the hub's id of its namespace: names are free text, and
+    ``a.b`` + ``c`` names the same ``catalog.schema`` as ``a`` + ``b.c``. A refusal is ``request``'s ``LookupError``.
     """
     tables = list(tables)
     with _hub_answers():

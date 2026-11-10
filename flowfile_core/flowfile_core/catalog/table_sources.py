@@ -28,8 +28,6 @@ if TYPE_CHECKING:
     from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceTree
 
 LOCAL = "local"
-ON_THIS_COMPUTER = "On this computer"
-ON_THIS_SERVER = "On this server"
 _REMOTE_ID = re.compile(r"-\d+")
 
 
@@ -210,7 +208,7 @@ def merged_tree(user_id: int, local: list[NamespaceTree]) -> list[NamespaceTree]
     joined = issuer_accounts.joined_with_keys() is not None
     if not listed and not joined:
         return local
-    place = ON_THIS_SERVER if is_server_mode() else ON_THIS_COMPUTER
+    place = "On this server" if is_server_mode() else "On this computer"
     return [_marked(node, place=place, offered=not joined) for node in local] + listed
 
 
@@ -220,12 +218,8 @@ def _marked(node: NamespaceTree, **fields) -> NamespaceTree:
 
 
 def table_row(repo, table_id: int, user_id: int | None = None) -> CatalogTable | CatalogTableOut:
-    """The row of the table ``table_id`` from the catalog that keeps it, for a read by ``user_id`` outside a run.
-
-    Raises:
-        TableNotFoundError: This install's catalog has no such table.
-        ValueError: The remote catalog's sentence: no such table there, or one it does not let this person read.
-    """
+    """The row of the table ``table_id`` from the catalog that keeps it, for a read by ``user_id`` outside a run:
+    ``TableNotFoundError`` when this install has none, a ``ValueError`` with a remote catalog's sentence."""
     catalog = remote_of(table_id)
     if catalog is None:
         table = repo.get_table(table_id)

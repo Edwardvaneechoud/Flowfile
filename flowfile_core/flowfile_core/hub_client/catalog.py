@@ -1,25 +1,15 @@
 """The hub's catalogs, tables and flows as rows of the local catalog tree.
 
-A connected desktop lists the hub's namespaces, tables and published flows beside its own, in the one tree the Catalog
-tab reads. Each hub row carries ``source = "hub"``, the negative of the hub's id as its ``id`` (local ids are positive
-autoincrements, so the two never meet) and the hub's own id as ``hub_id``. The hub is read on every listing and
-nothing is kept; a hub that does not answer, or no longer accepts the session, leaves its catalogs out of the tree
-with one warning in the log.
+Each hub row carries ``source = "hub"``, the negative of the hub's id as its ``id`` (local ids are positive, so the two
+never meet) and the hub's own id as ``hub_id``. The hub is read on every listing and nothing is kept; a hub that does
+not answer leaves its catalogs out of the tree with one warning in the log.
 
-The tree is the hub's own ``GET /catalog/namespaces/tree``, and any other metadata route of a catalog on the hub is
-the hub's same route (``relay``): core asks as the signed-in person and hands the answer back as the hub gave it,
-marking only what makes a row of the hub recognisable here (``marked``). A hub flow's row carries ``flow_uuid``,
-``latest_version`` and ``author_name`` as the hub lists them, so the Catalog tab can open the version a person picks
-as Open Flow → Hub does; a flow with no published version has nothing to open and is left out.
+Every metadata route of a catalog on the hub is the hub's same route (``relay``): core asks as the signed-in person and
+hands the answer back as the hub gave it, marking only what makes a row of the hub recognisable here (``marked``). A
+row of the tree also says where it lives (``place``) and, for a catalog on the hub's own disk or on storage other than
+S3, the sentence a run over it would be refused with (``unavailable_reason``).
 
-Each hub row also says where it lives and whether this Flowfile can use it: the hub's name as its ``place`` and, for
-a catalog on the hub's own disk or on storage other than S3, the sentence a run over it would be refused with as its
-``unavailable_reason``; ``table_sources.merged_tree`` puts them after this machine's. A hub row's ``access`` is what
-the hub sent, ``owner`` on a row the person owns.
-
-A run that reads or writes the hub's tables finds their namespaces and tables here too (``schemas``, ``table``,
-``table_named``), each lookup a fresh request through the user's hub session. A saved flow names a hub table by its
-qualified name (``catalog.schema.table``) and a hub schema by ``catalog.schema``, never by an id of the hub's database;
+A saved flow names a hub table by its qualified name (``catalog.schema.table``), never by an id of the hub's database;
 the ids are resolved on the hub when the flow runs (``table_named``, ``namespaces``).
 """
 
@@ -90,9 +80,7 @@ def other_scheme(found: str) -> str:
 
 def unreachable(storage_uri: str | None, full_name: str) -> str | None:
     """Why this Flowfile cannot use the tables of the hub namespace ``full_name`` under ``storage_uri``; ``None`` if
-    it can. No storage, or a path on the hub's filesystem, is the hub's own disk; any scheme but S3 is storage this
-    Flowfile does not write. The tree marks such a catalog with it and a run over it is refused with it, before
-    anything is vended."""
+    it can. The tree marks such a catalog with it and a run over it is refused with it, before anything is vended."""
     found = None if storage_uri is None else scheme(storage_uri)
     if found in (None, "file"):
         return on_own_disk(full_name)
@@ -102,17 +90,11 @@ def unreachable(storage_uri: str | None, full_name: str) -> str | None:
 
 
 def tree(user_id: int) -> list[NamespaceTree]:
-    """The hub's catalogs, their schemas, their tables and their flows, for ``user_id``'s hub connection; ``[]``
-    without one.
+    """The hub's catalogs, their schemas, tables and flows for ``user_id``'s hub connection, in one request: the
+    hub's own ``GET /catalog/namespaces/tree``, relayed (``marked``, ``_placed``).
 
-    One request per call: the hub's own ``GET /catalog/namespaces/tree``, relayed (``marked``). The hub's order is
-    kept. A hub that cannot be reached, refuses (an expired session included), refuses this client's version or
-    answers what is not core's tree answers ``[]`` after one warning naming the hub and the reason.
-
-    Every namespace row carries the hub's name as its ``place`` (its organisation as the stored connection names it,
-    else its URL) and, when this Flowfile cannot use the catalog's tables, the reason as its
-    ``unavailable_reason``: with the catalog's name on the catalog's row and ``catalog.schema`` on each schema's. A
-    flow with no published version has nothing to open and is left out.
+    ``[]`` without a connection, and, after one warning naming the hub and the reason, for a hub that cannot be
+    reached, refuses, or answers what is not core's tree.
     """
     stored = session.load(user_id)
     if stored is None:
@@ -136,7 +118,8 @@ def tree(user_id: int) -> list[NamespaceTree]:
 
 
 def _placed(node: NamespaceTree, place: str, storage_uri: str | None, parents: str = "") -> NamespaceTree:
-    """``node`` and the namespaces under it saying where they live and whether this Flowfile can use their tables."""
+    """``node`` and the namespaces under it saying where they live and whether this Flowfile can use their tables;
+    a flow with no published version has nothing to open and is left out."""
     full_name = f"{parents}{node.name}"
     return node.model_copy(
         update={
@@ -152,11 +135,9 @@ def relay(user_id: int | None, method: str, path: str, params: dict | None = Non
     """A metadata request on a catalog that lives on ``user_id``'s hub, answered by the hub's same route
     (``table_sources.RemoteCatalog.request``).
 
-    ``path`` is core's own catalog route (``/catalog/tables/-12``). An id this machine shows negative, in the path,
-    the query or the body, goes to the hub as the hub's own; the answer comes back as the hub gave it, with its
-    status, changed only by ``marked``. Core adds no logic: what the hub refuses, the hub refuses, with its status
-    and detail (a 401 answers 400, as does a person with no hub session). A hub that does not answer is a 502, one
-    that refuses this client's version a 426.
+    An id this machine shows negative, in the path, the query or the body, goes to the hub as the hub's own, and the
+    answer comes back with its status, changed only by ``marked``. What the hub refuses, the hub refuses (a 401
+    answers 400, as does a person with no hub session); a hub that does not answer is a 502.
     """
     try:
         return _relayed(*signed_in(user_id), method, path, params, body)
