@@ -78,7 +78,7 @@ def _detail(resp: httpx.Response) -> str:
     return answered(resp.status_code)
 
 
-def _send(method: str, url: str, path: str, http: httpx.Client | None, **kwargs):
+def _answered(method: str, url: str, path: str, http: httpx.Client | None, **kwargs) -> httpx.Response:
     try:
         resp = _http(http).request(method, f"{url.rstrip('/')}{path}", **kwargs)
     except httpx.RequestError as e:
@@ -89,10 +89,18 @@ def _send(method: str, url: str, path: str, http: httpx.Client | None, **kwargs)
     if resp.status_code >= 400:
         detail = _raw_detail(resp)
         raise HubRefused(resp.status_code, _detail(resp), detail if isinstance(detail, dict) else None)
+    return resp
+
+
+def _json(resp: httpx.Response):
     try:
         return resp.json()
     except ValueError:
         return None
+
+
+def _send(method: str, url: str, path: str, http: httpx.Client | None, **kwargs):
+    return _json(_answered(method, url, path, http, **kwargs))
 
 
 def _request(method: str, url: str, path: str, http: httpx.Client | None, **kwargs) -> dict:
@@ -154,6 +162,25 @@ def register_device(
         headers=_bearer(access_token),
     )
     return _require(body, ("id", "name"), url, "/hub/devices")
+
+
+def catalog_request(
+    url: str,
+    access_token: str,
+    method: str,
+    path: str,
+    *,
+    params: dict | None = None,
+    body=None,
+    http: httpx.Client | None = None,
+) -> tuple[int, object]:
+    """One request to a catalog route the hub mounts from core, as the signed-in account: the hub's status and its
+    answer as it sent it, ``None`` for an empty one. A refusal is the hub's own (``HubRefused``)."""
+    kwargs = {"params": params or None, "headers": _bearer(access_token)}
+    if body is not None:
+        kwargs["json"] = body
+    resp = _answered(method, url, path, http, **kwargs)
+    return resp.status_code, _json(resp)
 
 
 def list_namespaces(

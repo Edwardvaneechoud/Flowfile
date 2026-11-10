@@ -175,13 +175,7 @@ def test_connected_lists_the_hub_catalogs_after_the_local_ones(connected, hub, u
     assert [ns["unavailable_reason"] for ns in (sales, raw, curated)] == [None, None, None]
     assert finance["unavailable_reason"] == ON_ITS_OWN_DISK.format("finance")
 
-    assert hub.catalog_calls == [
-        ("/catalog/namespaces", ""),
-        ("/catalog/namespaces", f"parent_id={seeded['sales']['id']}"),
-        ("/catalog/namespaces", f"parent_id={seeded['finance']['id']}"),
-        ("/catalog/tables", ""),
-        ("/hub/flows", ""),
-    ]
+    assert hub.catalog_calls == [("/catalog/namespaces/tree", "")]
 
 
 def test_a_hub_schemas_published_flows_are_listed_under_it_with_the_newest_version(connected, hub):
@@ -207,33 +201,7 @@ def test_a_hub_schemas_published_flows_are_listed_under_it_with_the_newest_versi
     assert [(f["name"], f["latest_version"], f["author_name"]) for f in finance["flows"]] == [
         ("close-the-books", 1, None)
     ]
-    assert hub.catalog_calls[-1] == ("/hub/flows", "")
-
-
-def test_a_hub_that_refuses_its_flows_keeps_its_tables_in_the_tree_with_one_warning(connected, hub, warnings):
-    seeded = _seed(hub)
-    hub.seed_flow(seeded["raw"], "orders-clean")
-    hub.flows_failure = 404
-
-    tree = connected.get("/catalog/namespaces/tree").json()
-
-    [sales] = [root for root in tree if root["name"] == "sales"]
-    raw = sales["children"][0]
-    assert [t["name"] for t in raw["tables"]] == ["orders", "customers"] and raw["flows"] == []
-    assert len(warnings) == 1 and "flows of the hub" in warnings[0] and HUB_URL in warnings[0]
-
-
-def test_a_hub_answering_flow_rows_core_cannot_read_keeps_its_tables_with_one_warning(connected, hub, warnings):
-    seeded = _seed(hub)
-    hub.seed_flow(seeded["raw"], "orders-clean")
-    hub.flows[0]["published_at"] = None
-
-    tree = connected.get("/catalog/namespaces/tree").json()
-
-    [sales] = [root for root in tree if root["name"] == "sales"]
-    assert [t["name"] for t in sales["children"][0]["tables"]] == ["orders", "customers"]
-    assert sales["children"][0]["flows"] == []
-    assert len(warnings) == 1 and "did not answer /hub/flows as a Flowfile hub does" in warnings[0]
+    assert hub.catalog_calls == [("/catalog/namespaces/tree", "")]
 
 
 def test_a_hub_catalog_this_flowfile_cannot_use_says_why_on_each_of_its_rows(connected, hub):
@@ -327,7 +295,7 @@ def test_a_hub_answering_401_leaves_its_catalogs_out_with_one_warning(
     if refusal == "expired session":
         assert ("POST", "/auth/refresh") in hub.calls and hub.catalog_calls == []
     else:
-        assert hub.catalog_calls == [("/catalog/namespaces", "")]
+        assert hub.catalog_calls == [("/catalog/namespaces/tree", "")]
 
 
 @pytest.mark.parametrize(
@@ -336,17 +304,76 @@ def test_a_hub_answering_401_leaves_its_catalogs_out_with_one_warning(
 def test_a_hub_answering_rows_core_cannot_read_leaves_its_catalogs_out_with_one_warning(
     connected, hub, user_id, warnings, malformed
 ):
-    seeded = _seed(hub)
+    _seed(hub)
+    sales, finance = hub.tree_answer = hub.tree()
     if malformed == "a root without an id":
-        del next(ns for ns in hub.namespaces if ns["id"] == seeded["finance"]["id"])["id"]
+        del finance["id"]
     elif malformed == "a schema with a text id":
-        next(ns for ns in hub.namespaces if ns["id"] == seeded["raw"]["id"])["id"] = "raw"
+        sales["children"][0]["id"] = "raw"
     else:
-        next(t for t in hub.tables if t["id"] == seeded["ledger"]["id"])["namespace_id"] = "finance"
+        finance["tables"][0]["namespace_id"] = "finance"
     resp = connected.get("/catalog/namespaces/tree")
     assert resp.status_code == 200
     assert resp.json() == _local_tree(user_id)
     assert len(warnings) == 1 and HUB_URL in warnings[0]
+
+
+def test_a_hub_tables_detail_is_the_hubs_own_answer_marked_as_the_tree_marks_it(connected, hub):
+    seeded = _seed(hub)
+    [sales] = [root for root in connected.get("/catalog/namespaces/tree").json() if root["name"] == "sales"]
+    in_tree = sales["children"][0]["tables"][0]
+    resp = connected.get(f"/hub_client/catalog/tables/{in_tree['id']}")
+    assert resp.status_code == 200
+    assert resp.json() == in_tree
+    assert resp.json() == {
+        **seeded["orders"],
+        "id": -seeded["orders"]["id"],
+        "namespace_id": -seeded["raw"]["id"],
+        "source": "hub",
+        "hub_id": seeded["orders"]["id"],
+        "hub_namespace_id": seeded["raw"]["id"],
+    }
+    assert hub.catalog_calls[-1] == (f"/catalog/tables/{seeded['orders']['id']}", "")
+
+
+def test_a_hub_table_is_renamed_favourited_and_deleted_on_the_hub(connected, hub):
+    seeded = _seed(hub)
+    row = -seeded["orders"]["id"]
+    renamed = connected.put(f"/hub_client/catalog/tables/{row}", json={"name": "orders_v2", "namespace_id": -2})
+    assert renamed.status_code == 200 and renamed.json()["name"] == "orders_v2" and renamed.json()["id"] == row
+    assert hub.tables[0]["name"] == "orders_v2" and hub.tables[0]["namespace_id"] == 2
+    favourite = connected.post(f"/hub_client/catalog/tables/{row}/favorite")
+    assert favourite.status_code == 201 and favourite.json()["table_id"] == row
+    deleted = connected.delete(f"/hub_client/catalog/tables/{row}")
+    assert deleted.status_code == 204 and deleted.content == b""
+    assert seeded["orders"]["id"] not in [t["id"] for t in hub.tables]
+
+
+def test_a_hub_flows_run_history_is_asked_of_the_hub_by_the_hubs_own_id(connected, hub):
+    hub.runs = [{"id": 5, "registration_id": 201, "flow_name": "orders-clean", "success": True}]
+    resp = connected.get("/hub_client/catalog/runs", params={"registration_id": -201, "limit": 10})
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "items": [
+            {"id": -5, "hub_id": 5, "source": "hub", "registration_id": -201, "flow_name": "orders-clean",
+             "success": True}
+        ],
+        "total": 1,
+    }
+    assert hub.catalog_calls[-1] == ("/catalog/runs", "registration_id=201&limit=10")
+
+
+def test_the_hubs_refusal_of_a_catalog_route_is_answered_as_the_hub_gave_it(connected, hub, api):
+    _seed(hub)
+    missing = connected.get("/hub_client/catalog/tables/-999")
+    assert missing.status_code == 404 and missing.json() == {"detail": "Catalog table not found"}
+    hub.down = True
+    assert connected.get("/hub_client/catalog/tables/-101").status_code == 502
+
+
+def test_a_catalog_route_of_the_hub_without_a_hub_connection_answers_400(api):
+    resp = api.get("/hub_client/catalog/tables/-101")
+    assert resp.status_code == 400 and "not connected" in resp.json()["detail"]
 
 
 def test_the_other_catalog_routes_stay_local(connected, hub):

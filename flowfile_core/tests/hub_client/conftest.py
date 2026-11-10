@@ -27,7 +27,7 @@ import pytest
 from flowfile_core.auth import secrets as core_secrets
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client import secrets as hub_secrets
-from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceOut
+from flowfile_core.schemas.catalog_schema import CatalogTableOut, FlowRegistrationOut, NamespaceOut, NamespaceTree
 
 _KEY = "a signing key only the fake hub knows"
 HUB_URL = "https://hub.example.test"
@@ -220,6 +220,8 @@ class FakeHubWithCatalog(FakeHub):
         self.vend_failure: int | None = None
         self.says_sentences = False
         self._vends = 0
+        self.tree_answer: list | None = None
+        self.runs: list[dict] = []
 
     def seed_catalog(self, name: str, **fields) -> dict:
         """A root namespace (a catalog) on the hub."""
@@ -284,6 +286,53 @@ class FakeHubWithCatalog(FakeHub):
         ).model_dump(mode="json", exclude=_LOCAL_ONLY)
         self.namespaces.append(row)
         return row
+
+    def tree(self) -> list[dict]:
+        """What ``GET /catalog/namespaces/tree`` answers: core's ``NamespaceTree`` of ``namespaces``, each with its
+        ``tables`` and its ``flows`` as the hub's catalog service lists them (uuid, newest version and its author)."""
+
+        def node(namespace: dict) -> dict:
+            flows = [
+                FlowRegistrationOut(
+                    id=f["registration_id"],
+                    name=f["name"],
+                    flow_path=f"hub://flows/{f['flow_uuid']}",
+                    namespace_id=f["namespace_id"],
+                    owner_id=f["owner_id"],
+                    created_at=_STAMP,
+                    updated_at=_STAMP,
+                    flow_uuid=f["flow_uuid"],
+                    latest_version=f["latest_version"],
+                    author_name=f["author_name"],
+                ).model_dump(mode="json", exclude=_LOCAL_ONLY)
+                for f in self.flows
+                if f["namespace_id"] == namespace["id"]
+            ]
+            row = NamespaceTree(**namespace).model_dump(mode="json", exclude=_LOCAL_ONLY)
+            row["children"] = [node(ns) for ns in self.namespaces if ns["parent_id"] == namespace["id"]]
+            row["tables"] = [t for t in self.tables if t["namespace_id"] == namespace["id"]]
+            row["flows"] = flows
+            return row
+
+        return [node(ns) for ns in self.namespaces if ns["parent_id"] is None]
+
+    def _catalog_row(self, method: str, path: str, body) -> httpx.Response:
+        """Core's own routes over one row, as the hub's catalog answers them: a table read, renamed or deleted, a
+        table favourite, and the run history of a registration."""
+        if path == "/catalog/runs":
+            return httpx.Response(200, json={"items": self.runs, "total": len(self.runs)})
+        parts = path.split("/")
+        table = next((t for t in self.tables if str(t["id"]) == parts[3]), None) if parts[2] == "tables" else None
+        if table is None:
+            return httpx.Response(404, json={"detail": "Catalog table not found"})
+        if parts[4:] == ["favorite"]:
+            return httpx.Response(201, json={"id": 9, "user_id": 1, "table_id": table["id"], "created_at": _STAMP})
+        if method == "DELETE":
+            self.tables.remove(table)
+            return httpx.Response(204)
+        if method == "PUT":
+            table.update(body)
+        return httpx.Response(200, json=table)
 
     def _root(self, namespace_id: int) -> dict | None:
         namespace = next((ns for ns in self.namespaces if ns["id"] == namespace_id), None)
@@ -363,9 +412,7 @@ class FakeHubWithCatalog(FakeHub):
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        catalog_read = request.method == "GET" and (
-            path in ("/catalog/namespaces", "/catalog/tables", "/hub/flows") or path.startswith("/catalog/tables/")
-        )
+        catalog_read = path.startswith("/catalog/") or (request.method == "GET" and path == "/hub/flows")
         catalog_write = request.method == "POST" and path in ("/hub/vend", "/catalog/tables/from-data", "/hub/runs")
         if not (catalog_read or catalog_write):
             return super().handle(request)
@@ -388,12 +435,11 @@ class FakeHubWithCatalog(FakeHub):
             if table is None:
                 return httpx.Response(404, json={"detail": "Catalog table not found"})
             return httpx.Response(200, json={"table": table, "warnings": []})
-        if path.startswith("/catalog/tables/"):
-            table_id = int(path.rsplit("/", 1)[1])
-            table = next((t for t in self.tables if t["id"] == table_id), None)
-            if table is None:
-                return httpx.Response(404, json={"detail": "Catalog table not found"})
-            return httpx.Response(200, json=table)
+        if path == "/catalog/namespaces/tree":
+            return httpx.Response(200, json=self.tree() if self.tree_answer is None else self.tree_answer)
+        if path.startswith("/catalog/tables/") or path == "/catalog/runs":
+            body = json.loads(request.content) if request.content else None
+            return self._catalog_row(request.method, path, body)
         if path == "/catalog/namespaces":
             parent = request.url.params.get("parent_id")
             parent_id = None if parent is None else int(parent)

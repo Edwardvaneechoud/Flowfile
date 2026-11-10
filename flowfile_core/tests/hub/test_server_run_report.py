@@ -54,6 +54,7 @@ client = TestClient(main.app)
 UID = 7
 CATALOG_PATHS = (
     "/catalog/namespaces",
+    "/catalog/namespaces/tree",
     "/catalog/tables",
     "/catalog/tables/from-data",
     "/hub/flows",
