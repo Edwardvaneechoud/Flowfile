@@ -170,7 +170,7 @@ def remove_prefix(store: ExchangeStore, prefix: str) -> None:
         CredentialResolutionError: A sealed credential this server cannot open.
     """
     if isinstance(store.credential, SealedCredential):
-        from shared.hub_sealed import sealed_storage_options
+        from shared.sealed import sealed_storage_options
 
         client = build_s3_client(sealed_storage_options(store.credential.sealed), path_style=True)
     elif isinstance(store.credential, EncryptedCredential):
