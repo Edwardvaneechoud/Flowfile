@@ -92,6 +92,10 @@ class RemoteCatalog(Protocol):
         """The target of each of ``tables``, in order, for one read outside a run that ``purpose`` names (a preview,
         a query): asked now, for a credential that does not last. Each ``base`` is its table's parent."""
 
+    def write_targets(self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str) -> list[Any]:
+        """As ``read_targets``, each target one that may also write its table's storage, for one operation outside
+        a run that ``purpose`` names (an optimize, a vacuum, an edit)."""
+
     def tree(self, user_id: int | None) -> list[NamespaceTree]:
         """The catalogs ``user_id`` sees there, each with its schemas and their tables; empty when it cannot be
         asked."""
@@ -282,21 +286,28 @@ def table_row(repo, table_id: int, user_id: int | None = None) -> CatalogTable |
 
 
 def row_targets(
-    tables: Sequence[CatalogTable | CatalogTableOut], user_id: int | None = None, purpose: str = "read"
+    tables: Sequence[CatalogTable | CatalogTableOut],
+    user_id: int | None = None,
+    purpose: str = "read",
+    *,
+    writes: bool = False,
 ) -> list[CatalogStorageTarget]:
-    """The storage target of each of ``tables``, in order, for one read by ``user_id`` outside a run.
+    """The storage target of each of ``tables``, in order, for one read by ``user_id`` outside a run, or with
+    ``writes`` for one operation that also writes the tables' storage (an optimize, a vacuum, an edit).
 
     A local row's is ``resolve_for_table``'s. The remote rows are asked of their catalog in one call, when the read
     is made: what it answers is short-lived.
 
     Raises:
-        ValueError: The remote catalog's sentence when it refuses the read.
+        ValueError: The remote catalog's sentence when it refuses the read, or the write.
     """
     remote_rows = [table for table in tables if is_remote(getattr(table, "source", None))]
     found: dict[int, CatalogStorageTarget] = {}
     if remote_rows:
         try:
-            answered = remote(remote_rows[0].source).read_targets(user_id, remote_rows, purpose)
+            catalog = remote(remote_rows[0].source)
+            ask = catalog.write_targets if writes else catalog.read_targets
+            answered = ask(user_id, remote_rows, purpose)
         except LookupError as e:
             raise ValueError(str(e)) from e
         found = {table.id: target for table, target in zip(remote_rows, answered, strict=True)}
@@ -304,6 +315,33 @@ def row_targets(
         found[table.id] if table.id in found else resolve_for_table(table.file_path, table.namespace_id)
         for table in tables
     ]
+
+
+def write_row(table: CatalogTable | CatalogTableOut, user_id: int | None, **facts) -> bool:
+    """Write what an operation on the storage of ``table`` found back to its row in the remote catalog that keeps
+    it; ``False`` for a row of this install's own, which its caller writes as it always did.
+
+    ``facts`` are ``schema_columns``, ``row_count``, ``column_count`` and ``size_bytes``; one left out, or ``None``,
+    is sent as the row has it. The catalog takes them on its own route that refreshes a table's record
+    (``POST /catalog/tables/{id}/refresh``), sent as ``user_id`` with nothing for it to read from storage.
+
+    Raises:
+        ValueError: The operation is done on storage and the catalog refused the row, with its sentence.
+    """
+    if not is_remote(getattr(table, "source", None)):
+        return False
+    body = {
+        "schema_columns": [{"name": column.name, "dtype": column.dtype} for column in table.schema_columns],
+        "row_count": table.row_count,
+        "column_count": table.column_count,
+        "size_bytes": table.size_bytes,
+        **{name: value for name, value in facts.items() if value is not None},
+    }
+    status, answer = remote(table.source).request(user_id, "POST", f"/catalog/tables/{table.id}/refresh", None, body)
+    if status >= 400:
+        detail = answer.get("detail") if isinstance(answer, Mapping) else None
+        raise ValueError(f"The table's storage was changed, but its catalog did not take the new facts: {detail}")
+    return True
 
 
 def remote_sql_tables(query: str, user_id: int | None, own: set[str]) -> dict[str, CatalogTableOut]:

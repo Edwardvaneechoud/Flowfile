@@ -377,6 +377,12 @@ class _RunCatalog:
         vended = request_for_tables(user_id, f"{purpose}-{uuid.uuid4().hex}", tables)
         return [VendedTarget(vended, row.file_path.rstrip("/").rpartition("/")[0], user_id) for row in tables]
 
+    def write_targets(self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str) -> list[VendedTarget]:
+        """As ``read_targets``, the hub vending the tables' schemas to read and to write: the Catalog page's
+        optimize, vacuum and edits. A person who may not write a schema is refused by the hub's vend."""
+        vended = request_for_tables(user_id, f"{purpose}-{uuid.uuid4().hex}", tables, writes=True)
+        return [VendedTarget(vended, row.file_path.rstrip("/").rpartition("/")[0], user_id) for row in tables]
+
     def tree(self, user_id: int | None) -> list[NamespaceTree]:
         """The person's hub catalogs with their schemas and tables, read now; empty without a hub session, or when
         the hub does not answer."""
@@ -535,13 +541,16 @@ def request(
     return _run_vend(run_id, answer, bases, ids, targets, secrets, connections)
 
 
-def request_for_tables(user_id: int, run_id: str, tables: Iterable[CatalogTableOut]) -> RunVend:
+def request_for_tables(
+    user_id: int, run_id: str, tables: Iterable[CatalogTableOut], *, writes: bool = False
+) -> RunVend:
     """Ask the hub, through ``user_id``'s hub session, for one read of ``tables`` outside a run: the Catalog page's
     preview, a notebook cell's read, the SQL editor and a visual.
 
     ``tables`` are rows of the catalog tree, each carrying the hub's id of its namespace, so the
     credential is for the schema each table lives in. A run names a namespace by its qualified name; this call does
     not, since namespace names are free text and ``a.b`` + ``c`` names the same ``catalog.schema`` as ``a`` + ``b.c``.
+    With ``writes`` the credential may also write those schemas: an optimize, a vacuum, an edit of the table.
 
     Raises:
         LookupError: As ``request`` does, the namespace named by the table it holds.
@@ -552,7 +561,8 @@ def request_for_tables(user_id: int, run_id: str, tables: Iterable[CatalogTableO
         found = catalog.namespaces(hub_url, access_token)
         for table in tables:
             _usable(found.get(table.hub_namespace_id), f"the hub lists no catalog schema of {table.name}")
-        answer = client.vend(hub_url, access_token, run_id, sorted({t.hub_namespace_id for t in tables}), [])
+        namespace_ids = sorted({t.hub_namespace_id for t in tables})
+        answer = client.vend(hub_url, access_token, run_id, namespace_ids, namespace_ids if writes else [])
     return _run_vend(run_id, answer, {}, {}, (), (), ())
 
 

@@ -152,8 +152,9 @@ from flowfile_core.schemas.catalog_schema import (
 from flowfile_scheduler.engine import STALE_THRESHOLD
 from shared.storage_config import require_flow_in_storage, storage
 
-_READ_HERE = ("/preview", "/history", "/materialize")
-"""The table routes that read data: this install's worker reads a remote table through its storage target."""
+_READ_HERE = ("/preview", "/history", "/materialize", "/optimize", "/vacuum")
+"""The table routes that read or maintain data: this install's worker reaches a remote table through its storage
+target."""
 
 
 class _RemoteAnswer(Exception):
@@ -1114,7 +1115,7 @@ def optimize_table(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Compact (and optionally Z-order) a Delta catalog table."""
-    return service.optimize_table(table_id, z_order_columns=body.z_order_columns)
+    return service.optimize_table(table_id, z_order_columns=body.z_order_columns, user_id=current_user.id)
 
 
 @router.post("/tables/{table_id}/vacuum", response_model=VacuumTableResponse)
@@ -1130,7 +1131,13 @@ def vacuum_table(
     Refused with 409 ``CDC_CURSORS_AT_RISK`` when change-feed cursors still point into the
     history this retention window would drop, unless ``force`` is set.
     """
-    return service.vacuum_table(table_id, retention_hours=body.retention_hours, dry_run=body.dry_run, force=body.force)
+    return service.vacuum_table(
+        table_id,
+        retention_hours=body.retention_hours,
+        dry_run=body.dry_run,
+        force=body.force,
+        user_id=current_user.id,
+    )
 
 
 @router.get("/tables/{table_id}/cdc", response_model=CdcStatusOut)

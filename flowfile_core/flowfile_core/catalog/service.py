@@ -210,7 +210,8 @@ class CatalogService:
             self.access.require_use(resource_type, resource_id)
 
     def _require_manage(self, resource_type: str, resource_id: int) -> None:
-        if self._restricted:
+        """As ``_require_use``: a remote catalog refuses the write of its own table."""
+        if self._restricted and not (resource_type == "catalog_table" and remote_of(resource_id) is not None):
             self.access.require_manage(resource_type, resource_id)
 
     def _require_namespace_writable(self, namespace_id: int | None) -> None:
@@ -1217,10 +1218,12 @@ class CatalogService:
         self._require_use("catalog_table", table_id)
         return self._previews.get_table_history(table_id, limit, user_id)
 
-    def optimize_table(self, table_id: int, z_order_columns: list[str] | None = None) -> OptimizeTableResponse:
+    def optimize_table(
+        self, table_id: int, z_order_columns: list[str] | None = None, user_id: int | None = None
+    ) -> OptimizeTableResponse:
         """Compact (and optionally Z-order) a Delta catalog table."""
         self._require_manage("catalog_table", table_id)
-        return self._tables.optimize_table(table_id, z_order_columns)
+        return self._tables.optimize_table(table_id, z_order_columns, user_id=user_id)
 
     def vacuum_table(
         self,
@@ -1228,10 +1231,13 @@ class CatalogService:
         retention_hours: int = 168,
         dry_run: bool = True,
         force: bool = False,
+        user_id: int | None = None,
     ) -> VacuumTableResponse:
         """Vacuum tombstoned files from a Delta catalog table."""
         self._require_manage("catalog_table", table_id)
-        return self._tables.vacuum_table(table_id, retention_hours=retention_hours, dry_run=dry_run, force=force)
+        return self._tables.vacuum_table(
+            table_id, retention_hours=retention_hours, dry_run=dry_run, force=force, user_id=user_id
+        )
 
     def get_table_cdc_status(self, table_id: int) -> CdcStatusOut:
         """Change-tracking state and cursor positions for a catalog table."""

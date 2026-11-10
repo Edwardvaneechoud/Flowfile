@@ -18,6 +18,7 @@ from pyarrow import dataset as ds
 from requests.exceptions import RequestException
 from sqlalchemy.orm.attributes import flag_modified
 
+from flowfile_core.catalog import table_sources
 from flowfile_core.catalog.compute import uses_worker
 from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
@@ -356,7 +357,9 @@ class TableService:
 
     @staticmethod
     def _parse_schema_columns(table: CatalogTable) -> list[ColumnSchema]:
-        """Parse the JSON-encoded column schema from a catalog table."""
+        """The columns of a catalog table: parsed from its row here, as given on a remote catalog's row."""
+        if table_sources.is_remote(getattr(table, "source", None)):
+            return list(table.schema_columns)
         if not table.schema_json:
             return []
         try:
@@ -818,7 +821,7 @@ class TableService:
         if table is None:
             raise TableNotFoundError(table_id=table_id)
 
-        resolved_path_str = table_path or parquet_path
+        resolved_path_str = table_path or parquet_path or table.file_path
         if resolved_path_str is None:
             raise ValueError("overwrite_table_data requires either table_path or parquet_path")
         is_cloud = _is_cloud_uri(resolved_path_str)
@@ -924,7 +927,7 @@ class TableService:
         if getattr(table, "table_type", "physical") == "virtual" or not table.file_path:
             raise ValueError(f"Table '{table.name}' is virtual and has no Delta storage to maintain")
         if _is_cloud_uri(table.file_path):
-            if table.storage_format != "delta":
+            if getattr(table, "storage_format", "delta") != "delta":
                 raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be optimized or vacuumed")
             return table.file_path
         path = Path(table.file_path)
@@ -932,20 +935,20 @@ class TableService:
             raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be optimized or vacuumed")
         return str(path)
 
-    def _update_table_size(self, table: CatalogTable, size_bytes: int | None) -> None:
-        """Persist a recomputed size after a maintenance op."""
-        if size_bytes is None:
+    def _update_table_size(self, table: CatalogTable, size_bytes: int | None, user_id: int | None = None) -> None:
+        """Persist a recomputed size after a maintenance op, on the catalog that keeps the row."""
+        if size_bytes is None or table_sources.write_row(table, user_id, size_bytes=size_bytes):
             return
         table.size_bytes = size_bytes
         # Not a data change: table-trigger schedules fire on updated_at, so suppress its onupdate.
         flag_modified(table, "updated_at")
         self.repo.update_table(table)
 
-    def optimize_table(self, table_id: int, z_order_columns: list[str] | None = None) -> OptimizeTableResponse:
+    def optimize_table(
+        self, table_id: int, z_order_columns: list[str] | None = None, user_id: int | None = None
+    ) -> OptimizeTableResponse:
         """Compact (and optionally Z-order) a Delta catalog table, refreshing its size."""
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
+        table = table_sources.table_row(self.repo, table_id, user_id)
         data_path = self._require_delta_table_path(table)
         is_cloud = _is_cloud_uri(data_path)
 
@@ -955,7 +958,7 @@ class TableService:
             if missing:
                 raise ValueError(f"z_order_columns not in table schema: {missing}")
 
-        target = resolve_for_table(data_path, table.namespace_id)
+        [target] = table_sources.row_targets([table], user_id, "optimize", writes=True)
         storage_options = target.storage_options if is_cloud else None
 
         if uses_worker():
@@ -978,7 +981,7 @@ class TableService:
                 else get_delta_table_size_bytes(Path(data_path))
             )
 
-        self._update_table_size(table, size_bytes)
+        self._update_table_size(table, size_bytes, user_id)
         return OptimizeTableResponse(metrics=metrics, size_bytes=size_bytes)
 
     def vacuum_table(
@@ -987,11 +990,10 @@ class TableService:
         retention_hours: int = 168,
         dry_run: bool = True,
         force: bool = False,
+        user_id: int | None = None,
     ) -> VacuumTableResponse:
         """Vacuum tombstoned files from a Delta catalog table; refresh size on a real run."""
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
+        table = table_sources.table_row(self.repo, table_id, user_id)
         data_path = self._require_delta_table_path(table)
         is_cloud = _is_cloud_uri(data_path)
         if not force:
@@ -999,7 +1001,7 @@ class TableService:
             if at_risk:
                 raise CdcCursorsAtRiskError(at_risk)
 
-        target = resolve_for_table(data_path, table.namespace_id)
+        [target] = table_sources.row_targets([table], user_id, "vacuum", writes=True)
         storage_options = target.storage_options if is_cloud else None
 
         if uses_worker():
@@ -1024,7 +1026,7 @@ class TableService:
             )
 
         if not dry_run:
-            self._update_table_size(table, size_bytes)
+            self._update_table_size(table, size_bytes, user_id)
         return VacuumTableResponse(
             dry_run=dry_run,
             files_removed=list(files),
