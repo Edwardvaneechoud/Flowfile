@@ -13,6 +13,11 @@ the hub's (``run_type`` ``hub``, the person's, no registration), and its log is 
 
 A run id is taken once per process (``taken``): a second dispatch with it is refused while its token could still be
 alive. A restart forgets them; the hub's row still says the run was dispatched.
+
+The hub cancels a run it sent with a ``dispatch`` token for the same run id (``cancel``, ``POST /hub/dispatch/cancel``):
+the graph in flight is cancelled as the editor's Cancel cancels one, a run that has not reached its graph yet never
+runs it, and this server's run history row is closed by core's own cancel of a run record. The run's thread still ends
+with its report to the hub, failed.
 """
 
 import json
@@ -30,6 +35,7 @@ from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import get_flow_log_file
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import FlowRun
 from flowfile_core.hub_client import client, node_tokens, signin
 from flowfile_core.hub_client import session as hub_session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
@@ -40,21 +46,75 @@ from shared.hub_tokens import DispatchClaims
 from shared.run_logs import HUB_RUN_LOG_PREFIX, run_log_path
 from shared.storage_config import storage
 
+CANCELLED, FINISHED, UNKNOWN = "cancelled", "finished", "unknown"
+
 _taken: dict[str, int] = {}
+_flows: dict[str, object] = {}
+_cancelled: set[str] = set()
 _lock = threading.Lock()
+
+
+def _forget_expired() -> None:
+    now = int(time.time())
+    for run_id in [run_id for run_id, until in _taken.items() if until < now]:
+        del _taken[run_id]
+        _cancelled.discard(run_id)
 
 
 def taken(claims: DispatchClaims) -> bool:
     """Whether this process took a run with ``claims.run_id`` already; takes it otherwise. Run ids whose tokens have
     expired are forgotten first."""
-    now = int(time.time())
     with _lock:
-        for run_id in [run_id for run_id, until in _taken.items() if until < now]:
-            del _taken[run_id]
+        _forget_expired()
         if claims.run_id in _taken:
             return True
         _taken[claims.run_id] = claims.expires_at
         return False
+
+
+def cancel(claims: DispatchClaims) -> str:
+    """Stop the run the hub sent here as ``claims.run_id``: ``cancelled``, ``finished`` when it had ended already
+    (nothing is changed), or ``unknown`` when this server neither runs it nor has a record of it.
+
+    The graph in flight is cancelled as the editor cancels one (``FlowGraph.cancel``); a run still signing in or
+    checking out never starts its graph. The run history row is closed by core's own cancel of a run record. The run
+    id is taken, so the cancel's token is never a dispatch here afterwards.
+    """
+    with _lock:
+        _forget_expired()
+        known = claims.run_id in _taken
+        _taken.setdefault(claims.run_id, claims.expires_at)
+        _cancelled.add(claims.run_id)
+        flow = _flows.get(claims.run_id)
+    if flow is not None:
+        flow.cancel()
+    with get_db_context() as db:
+        row = (
+            db.query(FlowRun)
+            .filter(FlowRun.remote_run_id == claims.run_id, FlowRun.run_type == "dispatched")
+            .order_by(FlowRun.id.desc())
+            .first()
+        )
+        if row is not None and row.ended_at is not None:
+            return FINISHED
+        if row is not None:
+            FlowRunService(SQLAlchemyCatalogRepository(db)).cancel_run(row.id)
+            return CANCELLED
+    return CANCELLED if known or flow is not None else UNKNOWN
+
+
+def _run_graph(run_id: str, flow):
+    """The graph's run, reachable by ``cancel`` under its run id while it lasts; ``None`` when the hub cancelled the
+    run before it got here."""
+    with _lock:
+        if run_id in _cancelled:
+            return None
+        _flows[run_id] = flow
+    try:
+        return flow.run_graph()
+    finally:
+        with _lock:
+            _flows.pop(run_id, None)
 
 
 def start(claims: DispatchClaims, token: str) -> None:
@@ -126,13 +186,14 @@ def _run(user_id: int, claims: DispatchClaims, document: schemas.FlowfileData, l
             try:
                 flow.hub_exchange_store = _hub_store_for(flow, user_id)
                 with node_tokens.acting_for(user_id):
-                    run_info = flow.run_graph()
+                    run_info = _run_graph(claims.run_id, flow)
             finally:
                 flow.hub_exchange_store = None
                 _close_record(core_run_id, run_info)
                 _keep_log(flow.flow_id, claims.run_id, core_run_id)
             if run_info is None:
-                raise RuntimeError("the run gave no result")
+                cancelled = claims.run_id in _cancelled
+                raise RuntimeError("the hub cancelled the run" if cancelled else "the run gave no result")
             target = hub_target(flow, user_id)
             if target is None:
                 raise LookupError("the person's sign-in through the hub is gone")

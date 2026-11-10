@@ -316,3 +316,99 @@ def test_off_a_server_not_joined_with_keys_the_route_is_not_there(node_file):
     answered = client.post("/hub/dispatch", json={"token": "a.b.c"})
     assert answered.status_code == 404, answered.text
     assert "not joined to a hub with keys" in answered.json()["detail"]
+
+
+def cancel(token: str):
+    return client.post("/hub/dispatch/cancel", json={"token": token})
+
+
+def held_before_its_graph(monkeypatch) -> tuple[threading.Event, threading.Event]:
+    """Hold every dispatched run where it reads its exchange store, after its record is open and before its graph
+    runs: ``(reached, release)``."""
+    from flowfile_core.routes import routes
+
+    reached, release = threading.Event(), threading.Event()
+    real = routes._hub_store_for
+
+    def held(flow, user_id):
+        reached.set()
+        release.wait(30)
+        return real(flow, user_id)
+
+    monkeypatch.setattr(routes, "_hub_store_for", held)
+    return reached, release
+
+
+def test_a_signed_cancel_stops_a_dispatched_run_closes_its_record_and_the_hub_hears_it_failed(
+    hub, username, monkeypatch
+):
+    reached, release = held_before_its_graph(monkeypatch)
+    flow_uuid, run_id, token = seeded(hub, username)
+    assert client.post("/hub/dispatch", json={"token": token}).status_code == 202
+    assert reached.wait(60)
+    cancel_token = dispatch_token(hub, username, run_id=run_id, flow_uuid=flow_uuid)
+
+    try:
+        answered = cancel(cancel_token)
+        with get_db_context() as db:
+            [row] = db.query(db_models.FlowRun).filter_by(flow_uuid=flow_uuid).all()
+            assert (row.remote_run_id, row.success, row.ended_at is not None) == (run_id, False, True)
+            assert row.notification_processed_at is not None
+    finally:
+        release.set()
+    wait_for_runs()
+
+    assert (answered.status_code, answered.json()) == (200, {"run_id": run_id, "state": "cancelled"})
+    [posted] = hub.catalog.reports
+    assert (posted["run_id"], posted["success"], posted["nodes"]) == (run_id, False, [])
+    with get_db_context() as db:
+        [row] = db.query(db_models.FlowRun).filter_by(flow_uuid=flow_uuid).all()
+        assert (row.success, row.nodes_completed, row.ended_at is not None) == (False, 0, True)
+    assert cancel(cancel_token).json() == {"run_id": run_id, "state": "finished"}
+    assert client.post("/hub/dispatch", json={"token": cancel_token}).status_code == 409
+
+
+def test_a_cancel_of_a_run_that_finished_changes_nothing_and_one_of_a_run_never_sent_here_is_unknown(hub, username):
+    flow_uuid, run_id, token = seeded(hub, username)
+    assert dispatch(token).status_code == 202
+
+    answered = cancel(dispatch_token(hub, username, run_id=run_id, flow_uuid=flow_uuid))
+
+    assert (answered.status_code, answered.json()) == (200, {"run_id": run_id, "state": "finished"})
+    with get_db_context() as db:
+        [row] = db.query(db_models.FlowRun).filter_by(flow_uuid=flow_uuid).all()
+        assert row.success is True
+    never = uuid.uuid4().hex
+    assert cancel(dispatch_token(hub, username, run_id=never)).json() == {"run_id": never, "state": "unknown"}
+
+
+def test_a_cancel_that_is_unsigned_wrongly_scoped_or_for_another_server_is_401_and_the_run_goes_on(
+    hub, username, monkeypatch
+):
+    reached, release = held_before_its_graph(monkeypatch)
+    flow_uuid, run_id, token = seeded(hub, username)
+    assert client.post("/hub/dispatch", json={"token": token}).status_code == 202
+    assert reached.wait(60)
+    other = HubSigner()
+    named = {"run_id": run_id, "flow_uuid": flow_uuid}
+
+    try:
+        forged = cancel(dispatch_token(hub, username, key=other.key, **named))
+        unsigned = cancel("nope")
+        run_scope = cancel(dispatch_token(hub, username, scope="run", **named))
+        elsewhere = cancel(dispatch_token(hub, username, aud="chuwi", may_act={"sub": "node:chuwi"}, **named))
+    finally:
+        other.close()
+        release.set()
+    wait_for_runs()
+
+    assert forged.status_code == 401 and "unknown key" in forged.json()["detail"]
+    assert (unsigned.status_code, unsigned.json()["detail"]) == (401, "This is not a dispatch token from the hub.")
+    assert run_scope.status_code == 401 and "a run token is not accepted here" in run_scope.json()["detail"]
+    assert elsewhere.status_code == 401 and "wrong audience" in elsewhere.json()["detail"]
+    [posted] = hub.catalog.reports
+    assert (posted["run_id"], posted["success"]) == (run_id, True)
+
+
+def test_off_a_server_not_joined_with_keys_the_cancel_route_is_not_there(node_file):
+    assert cancel("a.b.c").status_code == 404
