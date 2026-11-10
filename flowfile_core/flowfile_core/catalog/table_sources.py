@@ -1,11 +1,9 @@
 """The storage target of a catalog table for a run, whichever catalog keeps the table.
 
 A table's ``source`` names the catalog that keeps its row: ``"local"`` is this install's own, any other a remote
-catalog whose client registered itself here (``register_remote``). The engine asks one question, the target of a
-table, or of the schema a new table goes into, for this run and person, and gets what a ``CatalogStorageTarget``
-offers either way: a ``base`` (the table's parent), ``scan_kwargs`` and ``to_worker_payload``. A remote catalog answers
-from the short-lived credential it was given for the run, so the question is asked when a node runs, never when it is
-wired. The dependency points from the remote catalog's client to this module, never the other way.
+catalog whose client registered itself here (``register_remote``). A remote catalog answers from the short-lived
+credential it was given for the run, so a target is asked for when a node runs, never when it is wired. The dependency
+points from the remote catalog's client to this module, never the other way.
 """
 
 from __future__ import annotations
@@ -21,7 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from flowfile_core.auth import issuer_accounts
 from flowfile_core.catalog.exceptions import TableNotFoundError
-from flowfile_core.catalog.storage_backend import CatalogStorageTarget, resolve_for_namespace, resolve_for_table
+from flowfile_core.catalog.storage_backend import CatalogStorageTarget, resolve_for_table
 from flowfile_core.catalog.text_utils import plain_reference, reads_other
 from flowfile_core.configs.settings import is_server_mode
 
@@ -39,11 +37,9 @@ _REMOTE_ID = re.compile(r"-\d+")
 class RunStart:
     """What a run tells the remote catalog when it starts, so the catalog's client asks its side once for all of it.
 
-    ``tables`` are the schemas (``catalog.schema``) the run's steps read and write, each with whether the step writes
-    and the backend it runs on. ``secrets`` and ``connections`` (a kind and a name each) are the stored ones its steps
-    use that the catalog's side keeps, ``exchange`` whether the run needs the exchange store that side set, and
-    ``servers`` the names of the servers that open what the run is given themselves; empty when the run's own worker
-    opens it.
+    ``tables`` are ``(catalog.schema, writes, backend id)`` per step; ``secrets`` and ``connections`` (a kind and a
+    name each) the stored ones its steps use that the catalog's side keeps; ``servers`` the servers that open what the
+    run is given themselves, empty when the run's own worker opens it.
     """
 
     run_id: str
@@ -56,25 +52,29 @@ class RunStart:
 
 
 class RemoteCatalog(Protocol):
-    """What a remote catalog's client answers for a run; every refusal is a ``LookupError`` with a sentence."""
+    """What a remote catalog's client answers; every refusal is a ``LookupError`` with a sentence."""
 
     def table_named(self, user_id: int | None, qualified_name: str) -> dict:
         """The row of the table ``qualified_name`` as ``user_id`` may read it."""
 
+    def table(self, user_id: int | None, table_id: int) -> CatalogTableOut:
+        """The row of the table whose id in this install is ``table_id``, for a read outside a run."""
+
     def table_target(self, run_id: str | None, user_id: int | None, file_path: str) -> Any:
-        """The target of the table stored at ``file_path``, its ``base`` the table's parent."""
+        """The run's target of the table stored at ``file_path``, its ``base`` the table's parent."""
 
     def schema_target(self, run_id: str | None, user_id: int | None, schema: str) -> Any:
-        """The target of the schema ``schema`` (``catalog.schema``), where a new table of it goes."""
+        """The run's target of the schema ``schema`` (``catalog.schema``), where a new table of it goes."""
+
+    def row_targets(self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str, writes: bool) -> list:
+        """The target of each of ``tables``, in order, for one operation outside a run that ``purpose`` names, asked
+        now for a credential that does not last; with ``writes`` each may also write its table's storage."""
 
     def schema_table(self, run_id: str | None, user_id: int | None, schema: str, name: str) -> dict | None:
         """The row of the table ``name`` in ``schema``, ``None`` when it has none."""
 
     def register_table(self, run_id: str | None, user_id: int | None, schema: str, table: dict) -> None:
         """Record the newly written ``table`` in ``schema``."""
-
-    def run_holds(self, run_id: str | None) -> bool:
-        """Whether the run ``run_id`` was given credentials for this catalog's tables."""
 
     def run_starts(self, start: RunStart) -> Any:
         """Ask for what the run ``start`` describes uses, keep it under the run's id, and answer it."""
@@ -85,32 +85,19 @@ class RemoteCatalog(Protocol):
     def run_ends(self, run_id: str) -> None:
         """Forget what the run ``run_id`` was given."""
 
-    def table(self, user_id: int | None, table_id: int) -> CatalogTableOut:
-        """The row of the table a read outside a run names by ``table_id``, the id its row carries in this install."""
-
-    def read_targets(self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str) -> list[Any]:
-        """The target of each of ``tables``, in order, for one read outside a run that ``purpose`` names (a preview,
-        a query): asked now, for a credential that does not last. Each ``base`` is its table's parent."""
-
-    def write_targets(self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str) -> list[Any]:
-        """As ``read_targets``, each target one that may also write its table's storage, for one operation outside
-        a run that ``purpose`` names (an optimize, a vacuum, an edit)."""
-
     def tree(self, user_id: int | None) -> list[NamespaceTree]:
-        """The catalogs ``user_id`` sees there, each with its schemas and their tables; empty when it cannot be
-        asked."""
+        """The catalogs ``user_id`` sees there with their schemas and tables; empty when it cannot be asked."""
 
     def request(self, user_id: int | None, method: str, path: str, params: dict | None, body) -> tuple[int, object]:
-        """A metadata request on a row this catalog keeps, sent to its same route (``path`` is core's own catalog
-        route, ids as this install shows them) as ``user_id``: its status and its answer, ``None`` for an empty one.
-        Never raises: a catalog that cannot be asked answers a status and a ``detail`` of its client's own."""
+        """A metadata request sent to this catalog's same route as ``user_id`` (``path`` is core's own catalog route,
+        ids as this install shows them): its status and its answer. Never raises."""
 
     def of_record(self) -> bool:
         """Whether this catalog is the one people's work on this install is kept in, in place of the install's own."""
 
     def save_flow(self, user_id: int | None, flow) -> str | None:
-        """Keep the content of ``flow`` for ``user_id`` in this catalog when the flow came from it: the catalog's own
-        sentence on where the flow is kept now, to show the person as given; ``None`` for a flow that is not its."""
+        """Keep ``flow`` for ``user_id`` when it came from this catalog: the catalog's sentence on where the flow is
+        kept now, ``None`` for a flow that is not its."""
 
 
 _remotes: dict[str, RemoteCatalog] = {}
@@ -127,32 +114,21 @@ def is_remote(source: str | None) -> bool:
 
 
 def remote(source: str) -> RemoteCatalog:
-    """The remote catalog registered for ``source``.
-
-    Raises:
-        LookupError: No client registered for that source in this process.
-    """
+    """The remote catalog registered for ``source``; a ``LookupError`` when this process has none."""
     if source not in _remotes:
         raise LookupError(f"This Flowfile has no catalog named {source!r} to read or write tables of")
     return _remotes[source]
 
 
 def remote_of(table_id: int) -> RemoteCatalog | None:
-    """The remote catalog that keeps the table ``table_id``, ``None`` for one of this install's own.
-
-    A remote table's row carries a negative id in this install, where its own are positive, and a core has one
-    remote catalog.
-    """
+    """The remote catalog that keeps the table ``table_id``, ``None`` for one of this install's own: a remote row's
+    id is negative here, and a core has one remote catalog."""
     return next(iter(_remotes.values()), None) if table_id < 0 else None
 
 
 def run_starts(start: RunStart) -> Any:
-    """Tell the remote catalog the run ``start`` describes begins: it asks its side for what the run uses, keeps the
-    answer under the run's id until ``run_ends``, and answers it (``run_grant``).
-
-    Raises:
-        LookupError: The catalog's sentence when it cannot be asked or refuses; no remote catalog in this process.
-    """
+    """Tell the remote catalog the run ``start`` describes begins and answer what it gives the run, which it keeps
+    until ``run_ends``. Its refusal, or no remote catalog in this process, is a ``LookupError`` with a sentence."""
     catalog = next(iter(_remotes.values()), None)
     if catalog is None:
         raise LookupError("This Flowfile has no remote catalog to ask for what this run uses")
@@ -160,8 +136,7 @@ def run_starts(start: RunStart) -> Any:
 
 
 def run_grant(run_id: str | None) -> Any | None:
-    """What the remote catalog gave the run ``run_id`` when it started: the secrets and connections sealed for its
-    steps and the servers they were sealed to. ``None`` between runs and for a run that asked nothing."""
+    """What the remote catalog gave the run ``run_id`` when it started; ``None`` between runs."""
     grants = (catalog.run_grant(run_id) for catalog in _remotes.values()) if run_id else ()
     return next((grant for grant in grants if grant is not None), None)
 
@@ -173,12 +148,9 @@ def run_ends(run_id: str) -> None:
 
 
 def relayed(user_id: int | None, method: str, path: str, params: dict | None, body) -> tuple[int, object] | None:
-    """The remote catalog's answer to a metadata request that names one of its rows, ``None`` for a request that
-    names none: this install's own to answer.
-
-    A request names a remote row by a negative integer as a segment of ``path``, or as an ``id`` or ``*_id`` field
-    of its query or its JSON body. Nothing is decided here: what the catalog refuses, the catalog refuses.
-    """
+    """The remote catalog's answer to a metadata request that names one of its rows, ``None`` for one that names
+    none. A row is named by a negative integer as a segment of ``path``, or as an ``id`` or ``*_id`` field of the
+    query or the JSON body; what the catalog refuses, the catalog refuses."""
     named = [*path.split("/")]
     for sent in (params, body):
         if isinstance(sent, Mapping):
@@ -190,12 +162,8 @@ def relayed(user_id: int | None, method: str, path: str, params: dict | None, bo
 
 
 def remote_answers(user_id: int | None, path: str, params: dict | None = None) -> list[object]:
-    """Each remote catalog's answer to the list route ``path`` for ``user_id``, its rows marked as that catalog's.
-
-    A list that names no row is this install's own to answer (``relayed``), so a caller adds these to its own. What
-    a person reads of a remote catalog is what that catalog answers them. A catalog that does not answer 200, one the
-    person has no session with included, is left out, as it is left out of the tree.
-    """
+    """Each remote catalog's answer to the list route ``path`` for ``user_id``. A catalog that does not answer 200,
+    one the person has no session with included, is left out, as it is left out of the tree."""
     if user_id is None:
         return []
     answers = [catalog.request(user_id, "GET", path, params, None) for catalog in _remotes.values()]
@@ -204,8 +172,7 @@ def remote_answers(user_id: int | None, path: str, params: dict | None = None) -
 
 def merged_rows(user_id: int | None, path: str, local: list, row: type[BaseModel], params: dict | None = None) -> list:
     """The rows of the list route ``path`` that ``user_id`` reads: this install's ``local`` first, then the remote
-    catalogs' rows of the same list (``remote_answers``), each as ``row``. An answer that is no list of ``row`` is
-    left out."""
+    catalogs' rows of the same list, each as ``row``. An answer that is no list of ``row`` is left out."""
     merged = list(local)
     for answer in remote_answers(user_id, path, params):
         try:
@@ -216,42 +183,28 @@ def merged_rows(user_id: int | None, path: str, local: list, row: type[BaseModel
 
 
 def local_catalog_offered() -> bool:
-    """Whether this install's own catalog is a place a person's work is saved or registered in.
-
-    It is unless a remote catalog says it is the catalog of record here (``RemoteCatalog.of_record``): then nothing
-    a person saves, opens from that catalog or publishes is registered in this install's own, whose existing rows
-    stay as they are, and the destinations a person is offered are the remote catalog's.
-    """
+    """Whether this install's own catalog is a place a person's work is saved or registered in: it is unless a remote
+    catalog is the catalog of record here, and then the destinations a person is offered are that catalog's."""
     return not any(catalog.of_record() for catalog in _remotes.values())
 
 
 def save_flow(user_id: int | None, flow) -> str | None:
-    """Save the content of ``flow`` for ``user_id`` to the remote catalog it came from.
-
-    Answers that catalog's own sentence on where the flow is kept now, shown to the person as given, or ``None``
-    for a flow no remote catalog keeps for this person: then the file this install wrote is the flow's home.
-
-    Raises:
-        LookupError: The catalog's sentence when it refuses the save or cannot be asked.
-    """
+    """Save ``flow`` for ``user_id`` to the remote catalog it came from: that catalog's sentence on where the flow is
+    kept now, ``None`` for a flow no remote catalog keeps. Its refusal is a ``LookupError`` with a sentence."""
     notes = (catalog.save_flow(user_id, flow) for catalog in _remotes.values())
     return next((note for note in notes if note is not None), None)
 
 
 def has_its_record_here(executed_on: str | None) -> bool:
-    """Whether a remote catalog's record of a run names this install as where it ran, by the name it joined with:
-    this install keeps its own record of that run."""
+    """Whether a remote catalog's record of a run names this install, by the name it joined with, as where it ran."""
     return executed_on is not None and executed_on == issuer_accounts.joined_name()
 
 
 def merged_tree(user_id: int, local: list[NamespaceTree]) -> list[NamespaceTree]:
     """The catalog tree ``user_id`` reads: this install's catalogs ``local`` first, then the remote catalogs'.
 
-    With no remote catalog to show, ``local`` is answered as it is. Beside a remote catalog's rows each of this
-    install's says where it lives, ``On this computer``, or ``On this server`` in server mode. On a server that
-    joined with keys of its own (``issuer_accounts.joined_with_keys``) this install's rows are not ``offered``,
-    whatever the remote catalog answers: the people there work in the remote catalogs, so the Catalog panel and the
-    table pickers show only those, while the flow pickers still find the server's own.
+    Beside a remote catalog's rows each of this install's says where it lives. On a server that joined with keys of
+    its own this install's rows are not ``offered``: the people there work in the remote catalogs.
     """
     listed = [root for catalog in _remotes.values() for root in catalog.tree(user_id)]
     joined = issuer_accounts.joined_with_keys() is not None
@@ -292,22 +245,14 @@ def row_targets(
     *,
     writes: bool = False,
 ) -> list[CatalogStorageTarget]:
-    """The storage target of each of ``tables``, in order, for one read by ``user_id`` outside a run, or with
-    ``writes`` for one operation that also writes the tables' storage (an optimize, a vacuum, an edit).
-
-    A local row's is ``resolve_for_table``'s. The remote rows are asked of their catalog in one call, when the read
-    is made: what it answers is short-lived.
-
-    Raises:
-        ValueError: The remote catalog's sentence when it refuses the read, or the write.
-    """
+    """The storage target of each of ``tables``, in order, for one operation by ``user_id`` outside a run; with
+    ``writes`` one that also writes the tables' storage. A local row's is ``resolve_for_table``'s; the remote rows are
+    asked of their catalog in one call, now, and its refusal is a ``ValueError`` with its sentence."""
     remote_rows = [table for table in tables if is_remote(getattr(table, "source", None))]
     found: dict[int, CatalogStorageTarget] = {}
     if remote_rows:
         try:
-            catalog = remote(remote_rows[0].source)
-            ask = catalog.write_targets if writes else catalog.read_targets
-            answered = ask(user_id, remote_rows, purpose)
+            answered = remote(remote_rows[0].source).row_targets(user_id, remote_rows, purpose, writes)
         except LookupError as e:
             raise ValueError(str(e)) from e
         found = {id(table): target for table, target in zip(remote_rows, answered, strict=True)}
@@ -315,16 +260,10 @@ def row_targets(
 
 
 def write_row(table: CatalogTable | CatalogTableOut, user_id: int | None, **facts) -> bool:
-    """Write what an operation on the storage of ``table`` found back to its row in the remote catalog that keeps
-    it; ``False`` for a row of this install's own, which its caller writes as it always did.
-
-    ``facts`` are ``schema_columns``, ``row_count``, ``column_count`` and ``size_bytes``; one left out, or ``None``,
-    is sent as the row has it. The catalog takes them on its own route that refreshes a table's record
-    (``POST /catalog/tables/{id}/refresh``), sent as ``user_id`` with nothing for it to read from storage.
-
-    Raises:
-        ValueError: The operation is done on storage and the catalog refused the row, with its sentence.
-    """
+    """Write what an operation on the storage of ``table`` found (``schema_columns``, ``row_count``, ``column_count``,
+    ``size_bytes``; one left out is sent as the row has it) back to its row in the remote catalog that keeps it, on
+    that catalog's table refresh route; ``False`` for a row of this install's own, which its caller writes. A
+    refused row is a ``ValueError``: the operation is already done on storage."""
     if not is_remote(getattr(table, "source", None)):
         return False
     body = {
@@ -343,10 +282,7 @@ def write_row(table: CatalogTable | CatalogTableOut, user_id: int | None, **fact
 
 def remote_sql_tables(query: str, user_id: int | None, own: set[str]) -> dict[str, CatalogTableOut]:
     """The tables of the remote catalogs by their SQL names, for a ``query`` that reads a name ``own`` does not hold.
-
-    ``own`` are the names this install's catalog answers, which win. A query over this install's own tables asks no
-    remote catalog and gets none.
-    """
+    ``own`` are this install's names, which win; a query over those alone asks no remote catalog."""
     if user_id is None or not _remotes or not reads_other(query, own):
         return {}
     listed = [root for catalog in _remotes.values() for root in catalog.tree(user_id)]
@@ -394,11 +330,8 @@ def kernel_namespaces(user_id: int, parent_id: int | None) -> list[NamespaceTree
 
 
 def kernel_tables(user_id: int, namespace_id: int) -> list[CatalogTableOut]:
-    """The tables of the remote namespace whose row id is ``namespace_id`` as a kernel lists them: each a view.
-
-    A kernel holds no credential, and reads a view through a file core has the worker write
-    (``materialize_virtual_table``): that is how a table on a remote catalog's storage reaches a notebook cell.
-    """
+    """The tables of the remote namespace whose row id is ``namespace_id`` as a kernel lists them: each a view, since
+    a kernel holds no credential and reads a view through a file core has the worker write."""
     holders = (holder for root in _kernel_tree(user_id) for holder in (root, *root.children))
     return [
         table.model_copy(update={"table_type": "virtual"})
@@ -418,37 +351,6 @@ def kernel_table(user_id: int, reference: str, namespace_id: int | None = None) 
     return found.model_copy(update={"table_type": "virtual"}) if found is not None else None
 
 
-def table_target(
-    source: str | None,
-    file_path: str | None,
-    namespace_id: int | None = None,
-    *,
-    run_id: str | None = None,
-    user_id: int | None = None,
-) -> CatalogStorageTarget:
-    """The storage target of an existing table for the run ``run_id`` and ``user_id``.
-
-    A local table's is its namespace's (``resolve_for_table``); a remote one's is its catalog's answer for the run.
-    """
-    if not is_remote(source):
-        return resolve_for_table(file_path, namespace_id)
-    return remote(source).table_target(run_id, user_id, file_path)
-
-
-def schema_target(
-    source: str | None,
-    schema: int | str | None,
-    *,
-    run_id: str | None = None,
-    user_id: int | None = None,
-    db=None,
-) -> CatalogStorageTarget:
-    """The storage target of the schema a new table goes into: a local namespace id, or a remote schema's name."""
-    if not is_remote(source):
-        return resolve_for_namespace(schema, db=db)
-    return remote(source).schema_target(run_id, user_id, schema)
-
-
 def scan_delta(
     target: CatalogStorageTarget,
     path: str,
@@ -456,11 +358,8 @@ def scan_delta(
     columns: Mapping[str, pl.DataType] | None = None,
     **kwargs,
 ) -> pl.LazyFrame:
-    """A lazy scan of the Delta table at ``path`` on ``target``, its plan holding no secret.
-
-    A target whose credential core cannot open scans by its own ``scan_delta`` with ``columns`` as the schema; any
-    other through ``scan_kwargs``.
-    """
+    """A lazy scan of the Delta table at ``path`` on ``target``, its plan holding no secret: by the target's own
+    ``scan_delta`` with ``columns`` as the schema when it has one, else through its ``scan_kwargs``."""
     own_scan = getattr(target, "scan_delta", None)
     if own_scan is not None:
         return own_scan(path, user_id, columns or {}, **kwargs)

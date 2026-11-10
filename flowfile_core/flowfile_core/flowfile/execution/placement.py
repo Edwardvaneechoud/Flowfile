@@ -723,7 +723,7 @@ def _catalog_target(settings: object, flow: FlowGraph) -> tuple[CatalogStorageTa
     if hub is not None:
         source = getattr(settings, "source", None) or settings.catalog_write_settings.source
         try:
-            target = table_sources.schema_target(source, hub[0], run_id=flow.catalog_run_id)
+            target = table_sources.remote(source).schema_target(flow.catalog_run_id, None, hub[0])
         except (LookupError, ValueError):
             return None, None, None
         return CatalogStorageTarget(is_cloud=True, base=target.base), hub[0], None

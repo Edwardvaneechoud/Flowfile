@@ -741,7 +741,7 @@ def _handle_remote_table_write(
         raise ValueError(PICK_REMOTE_SCHEMA)
     run_id = graph.catalog_run_id
     catalog = table_sources.remote(settings.source)
-    target = table_sources.schema_target(settings.source, schema, run_id=run_id, user_id=user_id)
+    target = catalog.schema_target(run_id, user_id, schema)
     existing = catalog.schema_table(run_id, user_id, schema, settings.table_name)
     if existing is not None and settings.write_mode == "error":
         raise TableExistsError(name=settings.table_name, namespace_id=existing.get("namespace_id"))

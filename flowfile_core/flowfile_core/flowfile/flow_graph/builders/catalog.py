@@ -193,7 +193,7 @@ class CatalogBuildersMixin(GraphMixinBase):
         The table is looked up in its catalog by name once here, and its columns are the node's predicted schema; a
         catalog that does not answer leaves its message on the node, and the table is looked up again when the run
         reads it. A reader that names no table yet fails with ``unnamed_remote_table`` when it runs. The target is asked
-        for when the node runs (``table_sources.table_target``), since its credential is the run's and short-lived, so
+        for when the node runs (``RemoteCatalog.table_target``), since its credential is the run's and short-lived, so
         outside a run the node cannot read.
         """
         source = node_catalog_reader.source
@@ -213,15 +213,16 @@ class CatalogBuildersMixin(GraphMixinBase):
             unnamed = unnamed_remote_table(node_catalog_reader)
             if unnamed is not None:
                 raise ValueError(unnamed)
-            if designed is None and not table_sources.remote(source).run_holds(self.catalog_run_id):
+            catalog = table_sources.remote(source)
+            if designed is None and catalog.run_grant(self.catalog_run_id) is None:
                 # Outside a run the catalog's own sentence, before a lookup it may refuse for another reason.
-                table_sources.table_target(source, "", run_id=None, user_id=user_id)
-            table = designed or table_sources.remote(source).table_named(user_id, qualified_name)
+                catalog.table_target(None, user_id, "")
+            table = designed or catalog.table_named(user_id, qualified_name)
             columns = {
                 column["name"]: cast_str_to_polars_type(column["dtype"]) for column in table.get("schema_columns") or ()
             }
             path = table["file_path"]
-            target = table_sources.table_target(source, path, run_id=self.catalog_run_id, user_id=user_id)
+            target = catalog.table_target(self.catalog_run_id, user_id, path)
             return self._scan_stored_table(target, path, user_id, row_filter, columns)
 
         def _schema_callback() -> list[FlowfileColumn]:

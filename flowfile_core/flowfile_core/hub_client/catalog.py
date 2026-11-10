@@ -70,11 +70,6 @@ class HubNamespace:
     storage_uri: str | None
 
 
-def row_id(hub_id: int) -> int:
-    """The id a hub row carries in the local tree: the negative of the hub's own id."""
-    return -hub_id
-
-
 def scheme(uri: str) -> str:
     """The scheme of a storage URI, ``file`` for a path without one."""
     return uri.split("://", 1)[0] if "://" in uri else "file"
@@ -265,35 +260,16 @@ def namespaces(hub_url: str, access_token: str) -> dict[int, HubNamespace]:
     return {namespace.id: namespace for namespace, _ in schemas(hub_url, access_token)}
 
 
-def table(user_id: int, hub_table_id: int) -> dict:
-    """The hub's catalog table ``hub_table_id`` as the hub answers it (core's ``CatalogTableOut``).
+def table_named(user_id: int, named: int | str) -> dict:
+    """The hub's catalog table ``named`` as the hub answers it (core's ``CatalogTableOut``): by the hub's id, or by
+    its qualified name (``catalog.schema.table``), as a saved flow names a hub table.
 
     Raises:
         LookupError: The hub has no such table for the account, does not answer, or the session is gone.
     """
-    return _answered_table(
-        user_id, hub_table_id, lambda hub_url, access_token: client.get_table(hub_url, access_token, hub_table_id)
-    )
-
-
-def table_named(user_id: int, qualified_name: str) -> dict:
-    """The hub's catalog table ``qualified_name`` (``catalog.schema.table``) as the hub answers it (core's
-    ``CatalogTableOut``), resolved on the hub by that name: a saved flow names a hub table by name, never by an id of
-    the hub's database.
-
-    Raises:
-        LookupError: The hub has no table of that name for the account, does not answer, or the session is gone.
-    """
-    return _answered_table(
-        user_id,
-        qualified_name,
-        lambda hub_url, access_token: client.resolve_table(hub_url, access_token, qualified_name),
-    )
-
-
-def _answered_table(user_id: int, named: int | str, read) -> dict:
+    read = client.get_table if isinstance(named, int) else client.resolve_table
     try:
-        return read(*signed_in(user_id))
+        return read(*signed_in(user_id), named)
     except HubRefused as e:
         if e.status == 404:
             raise LookupError(f"The hub has no catalog table {named} for this account") from e

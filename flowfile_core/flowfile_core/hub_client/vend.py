@@ -255,18 +255,13 @@ _held: dict[str, RunVend] = {}
 
 
 def hold(run_vend: RunVend) -> None:
-    """Keep ``run_vend`` for its run, under the run's id; ``release`` forgets it when the run ends."""
+    """Keep ``run_vend`` for its run, under the run's id, until the run ends."""
     _held[run_vend.run_id] = run_vend
 
 
 def held(run_id: str | None) -> RunVend | None:
     """What the hub vended to the run ``run_id``; ``None`` for a run that asked nothing, and once it ended."""
     return _held.get(run_id) if run_id else None
-
-
-def release(run_id: str) -> None:
-    """Forget what the hub vended to the run ``run_id``."""
-    _held.pop(run_id, None)
 
 
 @dataclass(frozen=True)
@@ -319,9 +314,6 @@ class _RunCatalog:
     """The hub's catalog as ``table_sources.RemoteCatalog``: a run's targets, answered from the vend held for the
     run, and the reads outside a run, each answered from a vend of its own."""
 
-    def run_holds(self, run_id: str | None) -> bool:
-        return held(run_id) is not None
-
     def run_starts(self, start: table_sources.RunStart) -> RunVend:
         """The run's one vend: its tables' credentials, the secrets and connections its steps use and the exchange
         store, sealed to ``start.servers``. A machine that is no server of the hub also asks an unsealed vend for the
@@ -348,11 +340,10 @@ class _RunCatalog:
         hold(run_vend)
         return run_vend
 
-    def run_grant(self, run_id: str | None) -> RunVend | None:
-        return held(run_id)
+    run_grant = staticmethod(held)
 
     def run_ends(self, run_id: str) -> None:
-        release(run_id)
+        _held.pop(run_id, None)
 
     def table_named(self, user_id: int | None, qualified_name: str) -> dict:
         """The hub's table ``qualified_name`` (``catalog.schema.table``, as a reader step names it), which must be a
@@ -361,31 +352,24 @@ class _RunCatalog:
 
     def table(self, user_id: int | None, table_id: int) -> CatalogTableOut:
         """The hub's table whose row in the catalog tree is ``table_id``, as that row, for a read outside a run."""
-        found = catalog.table(user_id, -table_id)
+        found = catalog.table_named(user_id, -table_id)
         _physical(found, lambda: (found.get("qualified_name") or found["name"]).rpartition(".")[0])
         return CatalogTableOut.model_validate(catalog.marked(found))
 
-    def read_targets(self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str) -> list[VendedTarget]:
-        """The storage target of each of ``tables``, rows of the catalog tree, for one read outside a run: the
-        Catalog page's preview and history, the SQL editor, a visual, a notebook cell.
+    def row_targets(
+        self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str, writes: bool
+    ) -> list[VendedTarget]:
+        """The storage target of each of ``tables``, rows of the catalog tree, for one operation outside a run.
 
-        The hub vends one read of the tables' schemas to ``user_id`` now (``request_for_tables``) under a run id of
-        its own that starts with ``purpose`` (``preview-…``, ``sql-…``, ``visual-…``, ``notebook-…``, which the hub's
-        vend ledger keeps). The credential lives for the call, or as long as the plan built from the target carries
-        it, encrypted.
+        The hub vends the tables' schemas to ``user_id`` now, to write too with ``writes``, under a run id of its own
+        that starts with ``purpose`` (``preview-…``, ``sql-…``), which the hub's vend ledger keeps. The credential
+        lives for the call, or as long as the plan built from the target carries it, encrypted.
         """
-        vended = request_for_tables(user_id, f"{purpose}-{uuid.uuid4().hex}", tables)
-        return [VendedTarget(vended, row.file_path.rstrip("/").rpartition("/")[0], user_id) for row in tables]
-
-    def write_targets(self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str) -> list[VendedTarget]:
-        """As ``read_targets``, the hub vending the tables' schemas to read and to write: the Catalog page's
-        optimize, vacuum and edits. A person who may not write a schema is refused by the hub's vend."""
-        vended = request_for_tables(user_id, f"{purpose}-{uuid.uuid4().hex}", tables, writes=True)
+        vended = request_for_tables(user_id, f"{purpose}-{uuid.uuid4().hex}", tables, writes=writes)
         return [VendedTarget(vended, row.file_path.rstrip("/").rpartition("/")[0], user_id) for row in tables]
 
     def tree(self, user_id: int | None) -> list[NamespaceTree]:
-        """The person's hub catalogs with their schemas and tables, read now; empty without a hub session, or when
-        the hub does not answer."""
+        """The person's hub catalogs, read now; empty without a hub session, or when the hub does not answer."""
         return catalog.tree(user_id) if user_id is not None else []
 
     def table_target(self, run_id: str | None, user_id: int | None, file_path: str) -> VendedTarget:
@@ -416,9 +400,7 @@ class _RunCatalog:
                 f"The table was written to {table['table_path']} but could not be registered on the hub: {e}"
             ) from e
 
-    def request(self, user_id: int | None, method: str, path: str, params: dict | None, body) -> tuple[int, object]:
-        """A metadata request on a row of the hub's catalog, answered by the hub's same route (``catalog.relay``)."""
-        return catalog.relay(user_id, method, path, params, body)
+    request = staticmethod(catalog.relay)
 
     def of_record(self) -> bool:
         """On a server that joined the hub with keys of its own the organisation's catalog is the hub's; a desktop
