@@ -119,7 +119,7 @@ The flow detail panel includes:
 
 ### Where a schedule runs
 
-**Runs on**, in the create-schedule dialog and on the schedule's detail page, names the compute backend every run of the schedule goes to, **Run Now** included:
+**Runs on**, in the create-schedule dialog and on the schedule's detail page, sets the default compute backend of every run of the schedule, **Run Now** included; a node whose own **Compute backend** names one still runs there ([with an exchange store](../../deployment/where-flows-run.md#nodes-on-different-workers)), as does a node type tied to a backend, such as the Google Analytics reader on the default worker:
 
 | Choice | Runs on |
 |--------|---------|
