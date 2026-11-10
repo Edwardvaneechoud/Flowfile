@@ -40,6 +40,10 @@
           <i class="fa-solid fa-code"></i>
           Query table
         </button>
+        <button class="action-btn-lg" data-testid="hub-create-viz" @click="emit('createViz', table)">
+          <i class="fa-solid fa-chart-column"></i>
+          New visualization
+        </button>
       </div>
       <div v-else class="header-actions">
         <button
@@ -572,6 +576,7 @@ const emit = defineEmits([
   "loadPreview",
   "refreshHistory",
   "editsSaved",
+  "createViz",
 ]);
 
 const isHub = computed(() => isHubRow(props.table));

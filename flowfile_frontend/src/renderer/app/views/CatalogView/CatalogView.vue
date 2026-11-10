@@ -262,6 +262,7 @@
           @load-preview="catalogStore.loadSelectedPreview()"
           @refresh-history="catalogStore.refreshTableHistory()"
           @edits-saved="catalogStore.handleTableEdited($event)"
+          @create-viz="openCreateViz($event)"
         />
         <!-- A flow published on the hub: its versions, and Open as Open Flow → Hub opens it -->
         <HubFlowDetailPanel
@@ -658,6 +659,7 @@ import { useResourceSharing } from "../../composables/useResourceSharing";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import {
   byPlace,
+  chartSource,
   flowInTree,
   hubPresence as hubPresenceOf,
   isHubRow,
@@ -1280,9 +1282,7 @@ async function createReadInFlowFromArtifact(artifact: GlobalArtifact) {
 
 // A hub table is charted through a query over it: a saved visual keeps a query, never a hub table's id.
 function openCreateViz(table: CatalogTable) {
-  vizEditorSource.value = isHubRow(table)
-    ? { source_type: "sql", sql_query: `SELECT * FROM ${buildTableRef(tableReference(table))}` }
-    : { source_type: "table", table_id: table.id };
+  vizEditorSource.value = chartSource(table);
   vizEditorOpen.value = true;
 }
 

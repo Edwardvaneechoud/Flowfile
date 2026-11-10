@@ -71,11 +71,10 @@ describe("catalog-store with hub rows in the tree", () => {
     expect(getTableHistoryMock).toHaveBeenCalledWith(5);
   });
 
-  it("does not favourite a hub table, and favourites a local one", async () => {
+  it("favourites a hub table through the same route as a local one, by the id its row carries", async () => {
     const store = seed();
     await store.toggleTableFavorite(-5);
-    expect(addTableFavoriteMock).not.toHaveBeenCalled();
-    expect(hubTable.is_favorite).toBe(false);
+    expect(addTableFavoriteMock).toHaveBeenCalledWith(-5);
 
     await store.toggleTableFavorite(5);
     expect(addTableFavoriteMock).toHaveBeenCalledWith(5);

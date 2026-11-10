@@ -3,7 +3,6 @@ import { defineStore } from "pinia";
 import type { AxiosRequestConfig } from "axios";
 import { CatalogApi } from "../api/catalog.api";
 import { ARTIFACT_VERSIONS_PAGE_SIZE } from "../views/CatalogView/artifactVersions";
-import { isHubRow } from "../views/CatalogView/hubRows";
 import setupService from "../services/setup.service";
 import type {
   ActiveFlowRun,
@@ -381,7 +380,7 @@ export const useCatalogStore = defineStore("catalog", {
 
     async toggleTableFavorite(tableId: number) {
       const table = this.findTableInTree(tableId);
-      if (!table || isHubRow(table)) return;
+      if (!table) return;
       try {
         if (table.is_favorite) {
           await CatalogApi.removeTableFavorite(tableId);

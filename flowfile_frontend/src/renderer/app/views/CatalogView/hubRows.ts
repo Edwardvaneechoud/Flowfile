@@ -1,10 +1,28 @@
 // A connected hub's rows in the catalog tree: browsed here, managed on the hub.
+import type { VizSourceDescriptor } from "../../types";
 
 export const HUB_NAMESPACE_TITLE =
   "This catalog lives on the hub. Create, rename and delete it there.";
 export const HUB_MANAGED_NOTE = "This catalog is managed on the hub.";
 
 export const isHubRow = (row: { source?: string | null }): boolean => row.source === "hub";
+
+interface ChartedTable {
+  id: number;
+  name: string;
+  source?: string | null;
+  qualified_name?: string | null;
+  full_table_name?: string | null;
+}
+
+/** What a chart of `table` reads: the table, or for a hub table a query over it, since a saved visual keeps a
+ * query and never a hub table's id. */
+export function chartSource(table: ChartedTable): VizSourceDescriptor {
+  if (!isHubRow(table)) return { source_type: "table", table_id: table.id };
+  const reference = table.qualified_name ?? table.full_table_name ?? table.name;
+  const quoted = reference.split(".").map((part) => (/^[a-zA-Z_]\w*$/.test(part) ? part : `"${part}"`));
+  return { source_type: "sql", sql_query: `SELECT * FROM ${quoted.join(".")}` };
+}
 
 interface PlacedRow {
   place?: string | null;
