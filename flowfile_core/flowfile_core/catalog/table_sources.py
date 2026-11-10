@@ -310,11 +310,8 @@ def row_targets(
             answered = ask(user_id, remote_rows, purpose)
         except LookupError as e:
             raise ValueError(str(e)) from e
-        found = {table.id: target for table, target in zip(remote_rows, answered, strict=True)}
-    return [
-        found[table.id] if table.id in found else resolve_for_table(table.file_path, table.namespace_id)
-        for table in tables
-    ]
+        found = {id(table): target for table, target in zip(remote_rows, answered, strict=True)}
+    return [found.get(id(table)) or resolve_for_table(table.file_path, table.namespace_id) for table in tables]
 
 
 def write_row(table: CatalogTable | CatalogTableOut, user_id: int | None, **facts) -> bool:
