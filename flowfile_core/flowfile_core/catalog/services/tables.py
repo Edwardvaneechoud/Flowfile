@@ -1055,8 +1055,9 @@ class TableService:
         return str(path)
 
     def _cdc_storage_options(self, table: CatalogTable) -> dict[str, str] | None:
-        target = resolve_for_table(table.file_path, table.namespace_id)
-        return target.storage_options if target.is_cloud else None
+        if not table.file_path or not _is_cloud_uri(table.file_path):
+            return None
+        return resolve_for_table(table.file_path, table.namespace_id).storage_options
 
     def _live_delta_version(self, table: CatalogTable) -> int | None:
         """Live Delta head, or ``None`` when the table has no readable Delta log."""

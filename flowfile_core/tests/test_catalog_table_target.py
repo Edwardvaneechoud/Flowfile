@@ -144,7 +144,7 @@ def _by_id_and_by_row(table_id: int):
 def test_a_tables_own_path_decides_its_target():
     _ensure_connection()
     uri = f"s3://{_BUCKET}/target_{uuid.uuid4().hex[:8]}"
-    on_object_storage = _schema(uri)
+    on_object_storage, on_disk = _schema(uri), _schema()
 
     stayed_local = resolve_for_table(str(storage.catalog_tables_directory / "t_ab12"), on_object_storage)
     assert stayed_local.is_cloud is False
@@ -161,6 +161,10 @@ def test_a_tables_own_path_decides_its_target():
     assert cloud.storage_options == of_namespace.storage_options
     assert cloud.credential_ref == of_namespace.credential_ref
     assert cloud.to_worker_payload()["base_uri"] == uri
+    assert cloud.storage_options["endpoint_url"] == MINIO_ENDPOINT_URL
+
+    in_a_local_catalog = resolve_for_table(f"{uri}/t_ab12", on_disk)
+    assert in_a_local_catalog.is_cloud is False and in_a_local_catalog.storage_options == {}
 
 
 def test_a_local_table_is_previewed_from_its_row_and_target_without_the_database(tmp_path):
