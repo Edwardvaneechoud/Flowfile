@@ -1,5 +1,5 @@
-"""A server joined with keys of its own takes the exchange store its hub sets: when it asks, what wins over it, and how
-a run opens it.
+"""A machine signed in to a hub takes the exchange store the hub sets, a server joined with keys of its own and a
+desktop connected to it alike: when it asks, what wins over it, and how a run opens it.
 
 The hub is the fake of ``tests/hub_client`` behind the client's http seam, and no bucket is opened.
 """
@@ -132,7 +132,7 @@ def test_a_run_that_raises_leaves_no_hub_store_on_the_flow(run_rows, monkeypatch
     graph = create_test_graph(flow_id=8544)
     held: list = []
     vended = ExchangeConfig(uri=HUB_STORE["uri"], connection="org exchange", vended_for=1)
-    monkeypatch.setattr(routes, "_joined_server_store", lambda flow, user_id: vended)
+    monkeypatch.setattr(routes, "_hub_store_for", lambda flow, user_id: vended)
 
     def run_graph(**_):
         held.append(graph.hub_exchange_store)
@@ -167,15 +167,15 @@ def signed_in(store, hub):
 def test_a_server_joined_with_its_keys_takes_its_hubs_store_through_the_persons_hub_session(
     signed_in, joined_with_keys
 ):
-    taken = hub_exchange_store.joined_server_store(1)
+    taken = hub_exchange_store.hub_store(1)
 
     assert taken == ExchangeConfig(uri=HUB_STORE["uri"], connection="org exchange", max_rows=50000, vended_for=1)
     assert ("GET", "/hub/exchange-store") in signed_in.calls
 
 
 def test_a_joined_server_asks_nothing_for_no_user_or_a_person_without_a_hub_session(signed_in, joined_with_keys):
-    assert hub_exchange_store.joined_server_store(None) is None
-    assert hub_exchange_store.joined_server_store(2) is None
+    assert hub_exchange_store.hub_store(None) is None
+    assert hub_exchange_store.hub_store(2) is None
     assert ("GET", "/hub/exchange-store") not in signed_in.calls
 
 
@@ -192,8 +192,8 @@ def test_a_hub_that_refuses_is_no_store_with_one_warning_naming_its_status_and_n
 
     monkeypatch.setattr(hub_exchange_store.hub_client, "get_exchange_store", refuse)
 
-    assert hub_exchange_store.joined_server_store(1) is None
-    assert hub_exchange_store.joined_server_store(1) is None
+    assert hub_exchange_store.hub_store(1) is None
+    assert hub_exchange_store.hub_store(1) is None
 
     [message] = {r.getMessage() for r in caplog.records if r.name == logger.name and r.levelno == logging.WARNING}
     assert len(sent) == 2
@@ -201,9 +201,14 @@ def test_a_hub_that_refuses_is_no_store_with_one_warning_naming_its_status_and_n
     assert sent[0] not in message
 
 
-def test_a_server_not_joined_with_keys_takes_no_store_this_way(signed_in):
-    assert hub_exchange_store.joined_server_store(1) is None
-    assert signed_in.calls == []
+def test_a_desktop_connected_to_the_hub_takes_its_store_as_a_joined_server_does(signed_in, tmp_path, monkeypatch):
+    monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
+    assert hub_node.joined() is None
+
+    taken = hub_exchange_store.hub_store(1)
+
+    assert taken == ExchangeConfig(uri=HUB_STORE["uri"], connection="org exchange", max_rows=50000, vended_for=1)
+    assert ("GET", "/hub/exchange-store") in signed_in.calls
 
 
 def test_the_hubs_store_on_a_joined_server_is_opened_by_what_the_hub_vends_the_run():
@@ -233,11 +238,11 @@ def test_a_joined_servers_run_asks_for_the_store_only_for_a_flow_with_a_node_set
     graph = create_test_graph(flow_id=8401, execution_location="local")
     add_test_manual_input(graph, [{"id": 1}], node_id=1)
 
-    assert routes._joined_server_store(graph, 1) is None
+    assert routes._hub_store_for(graph, 1) is None
     assert signed_in.calls == []
 
     graph.get_node(1).setting_input.execution_location = "worker:elsewhere"
-    assert routes._joined_server_store(graph, 1).vended_for == 1
+    assert routes._hub_store_for(graph, 1).vended_for == 1
 
 
 def test_the_exchange_card_shows_a_joined_servers_hub_store_as_the_hubs(signed_in, joined_with_keys):

@@ -22,6 +22,7 @@ from flowfile_core.auth.password import get_password_hash, verify_password
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.hub_client import client as hub_client
+from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.hub_client import session
 from shared import hub_node, hub_node_key, hub_tokens
 from shared.tests import hub_join
@@ -42,7 +43,8 @@ def bearer(token: str) -> dict:
 
 @pytest.fixture
 def node_file(tmp_path, monkeypatch):
-    """A server's storage dir of the test's own: docker mode, its own secure store, no hub settings in the variables."""
+    """A server's storage dir of the test's own: docker mode, its own secure store, no hub settings in the variables,
+    and no hub list kept from an earlier test."""
     monkeypatch.setenv("FLOWFILE_MODE", "docker")
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-for-hub-sign-in-tests")
     for name in VARIABLES:
@@ -56,6 +58,7 @@ def node_file(tmp_path, monkeypatch):
     monkeypatch.setenv("SECURE_STORAGE_PATH", str(secure))
     monkeypatch.setattr(core_secrets, "_storage", core_secrets.SecureStorage())
     monkeypatch.setattr(session, "_access_tokens", {})
+    monkeypatch.setattr(hub_secrets, "_listed", {})
     invalidate_user_cache()
     yield target
     invalidate_user_cache()

@@ -57,7 +57,10 @@ SECRET = MINIO_OPTIONS["aws_secret_access_key"].encode()
 
 class SealingHub(OrganisationHub):
     """``OrganisationHub`` whose catalog seals what it vends to the servers a run names, with the ``enc`` key each sent
-    in its join, and that answers ``GET /hub/exchange-store``."""
+    in its join, and that answers ``GET /hub/exchange-store`` and the lists of the secrets and connections the catalog
+    holds, as the hub mounts core's list routes."""
+
+    LISTS = ("/hub/exchange-store", "/secrets/secrets", *SealingHubCatalog.LIST_PATHS)
 
     def __init__(self, signer: HubSigner):
         super().__init__(signer)
@@ -66,7 +69,7 @@ class SealingHub(OrganisationHub):
 
     @staticmethod
     def holds(path: str) -> bool:
-        return OrganisationHub.holds(path) or path.split("?", 1)[0] == "/hub/exchange-store"
+        return OrganisationHub.holds(path) or path.split("?", 1)[0] in SealingHub.LISTS
 
 
 class SealingCatalog(SealingHubCatalog):

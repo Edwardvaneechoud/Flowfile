@@ -9,9 +9,8 @@ and seals one a run names to every server the run uses. The data is on the suite
 module skips without MinIO, a test without its broker or database.
 
 Done when a cloud storage read and a Kafka read placed on the compute-only server open the connection the hub sealed
-to it, a database connection made in this editor lands on the hub and a team member it is shared with, who never sees
-its password, reads with it on the compute-only server although this server's database still holds a connection of
-that name from before the join, and no request or socket frame core sent that server carries a secret or a ``$ffsec$``.
+to it, a database connection the hub keeps is used on the compute-only server by a team member it is shared with, who
+never sees its password, and no request or socket frame core sent that server carries a secret or a ``$ffsec$``.
 """
 
 import time
@@ -22,11 +21,6 @@ import polars as pl
 import pytest
 from cryptography.fernet import Fernet
 
-from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.database_connection_manager.db_connections import (
-    delete_database_connection,
-    store_database_connection,
-)
 from flowfile_core.hub_client import node_tokens
 from flowfile_core.schemas import input_schema, transform_schema
 from shared.tests.hub_jwks import HubSigner
@@ -106,7 +100,7 @@ def postgres():
 
 
 def run_vend(hub: ConnectionsHub) -> dict:
-    [asked] = [body for body in hub.catalog.vend_calls if not body["run_id"].startswith("core-lookup-")]
+    [asked] = hub.catalog.vend_calls
     return asked
 
 
@@ -220,13 +214,13 @@ def test_a_kafka_read_on_the_compute_only_server_opens_the_connection_the_hub_se
     assert any("/v1/ops/kafka_read" in route and b"$ffseal$" in body for route, body in sent)
 
 
-def test_a_database_connection_made_in_this_editor_is_used_by_a_member_it_is_shared_with_on_the_compute_only_server(
+def test_a_database_connection_the_hub_keeps_is_used_by_a_member_it_is_shared_with_on_the_compute_only_server(
     hub, store, person, sent, open_flow, name, postgres
 ):
-    _, owner_token = person
-    added = client.post(
-        "/db_connection_lib",
-        json={
+    hub.add(
+        "database",
+        UID,
+        {
             "connection_name": name,
             "database_type": "postgresql",
             "username": pg_fixtures.POSTGRES_USER,
@@ -235,9 +229,7 @@ def test_a_database_connection_made_in_this_editor_is_used_by_a_member_it_is_sha
             "port": pg_fixtures.POSTGRES_PORT,
             "database": pg_fixtures.POSTGRES_DB,
         },
-        headers=bearer(owner_token),
     )
-    assert added.status_code == 200, added.text
     hub.people[MEMBER] = {"uid": MEMBER, "username": "dee", "full_name": None, "node_admin": False}
     hub.share("database", name, UID, MEMBER)
     signed_in = client.post("/auth/hub/signin", json={"token": hub.sign_in_token(NODE, uid=MEMBER, username="dee")})
@@ -247,51 +239,35 @@ def test_a_database_connection_made_in_this_editor_is_used_by_a_member_it_is_sha
     run_token = hub.signer.token(uid=member_id, aud=sealed_e2e.SERVER, iss=hub.issuer)
     node_tokens._tokens[(member_id, hub._node_ids[sealed_e2e.SERVER])] = (run_token, time.time() + 3600)
     listed = client.get("/db_connection_lib", headers=bearer(member_token))
-    assert [(row["connection_name"], row["access"]["access_level"]) for row in listed.json()] == [(name, "use")]
+    assert [(row["connection_name"], row["source"], row["access"]["access_level"]) for row in listed.json()] == [
+        (name, "hub", "use")
+    ]
     assert pg_fixtures.POSTGRES_PASSWORD not in listed.text
-    with get_db_context() as db:
-        store_database_connection(
-            db,
-            input_schema.FullDatabaseConnection(
-                connection_name=name,
-                database_type="postgresql",
-                username=pg_fixtures.POSTGRES_USER,
-                password="not-the-password",
-                host=pg_fixtures.POSTGRES_HOST,
-                port=pg_fixtures.POSTGRES_PORT,
-                database=pg_fixtures.POSTGRES_DB,
+    flow = open_flow(member_id, "a_members_database_read_on_the_compute_server")
+    add_promise(flow, 1, "database_reader")
+    flow.add_database_reader(
+        input_schema.NodeDatabaseReader(
+            flow_id=flow.flow_id,
+            node_id=1,
+            user_id=member_id,
+            database_settings=input_schema.DatabaseSettings(
+                connection_mode="reference",
+                database_connection_name=name,
+                schema_name="public",
+                table_name="movies",
             ),
-            member_id,
         )
-    try:
-        flow = open_flow(member_id, "a_members_database_read_on_the_compute_server")
-        add_promise(flow, 1, "database_reader")
-        flow.add_database_reader(
-            input_schema.NodeDatabaseReader(
-                flow_id=flow.flow_id,
-                node_id=1,
-                user_id=member_id,
-                database_settings=input_schema.DatabaseSettings(
-                    connection_mode="reference",
-                    database_connection_name=name,
-                    schema_name="public",
-                    table_name="movies",
-                ),
-            )
-        )
-        sealed_e2e.on(flow, 1, sealed_e2e.BACKEND)
-        add_select(flow, 2, 1, "title")
+    )
+    sealed_e2e.on(flow, 1, sealed_e2e.BACKEND)
+    add_select(flow, 2, 1, "title")
 
-        run_info = sealed_e2e.run(flow, member_token)
+    run_info = sealed_e2e.run(flow, member_token)
 
-        assert (1, 2) in [tuple(boundary) for boundary in run_info.boundaries]
-        assert flow.get_node(2).get_resulting_data().count() > 0
-        asked = run_vend(hub)
-        assert asked["connections"] == [{"kind": "database", "name": name}] and not asked.get("secrets")
-        assert set(asked["targets"]) == {sealed_e2e.SERVER, NODE}
-        assert {uid for uid, _ in hub.connection_vends} == {MEMBER}
-        assert sent and nothing_secret(sent, pg_fixtures.POSTGRES_PASSWORD.encode(), b"not-the-password")
-        assert any("/v1/ops/database_read" in route and b"$ffseal$" in body for route, body in sent)
-    finally:
-        with get_db_context() as db:
-            delete_database_connection(db, name, member_id)
+    assert (1, 2) in [tuple(boundary) for boundary in run_info.boundaries]
+    assert flow.get_node(2).get_resulting_data().count() > 0
+    asked = run_vend(hub)
+    assert asked["connections"] == [{"kind": "database", "name": name}] and not asked.get("secrets")
+    assert set(asked["targets"]) == {sealed_e2e.SERVER, NODE}
+    assert {uid for uid, _ in hub.connection_vends} == {MEMBER}
+    assert sent and nothing_secret(sent, pg_fixtures.POSTGRES_PASSWORD.encode())
+    assert any("/v1/ops/database_read" in route and b"$ffseal$" in body for route, body in sent)
