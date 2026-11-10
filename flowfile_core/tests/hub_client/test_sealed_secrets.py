@@ -37,7 +37,7 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionInterface
 from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate, KafkaConnectionOut
 from flowfile_core.secret_manager.secret_manager import store_secret
-from shared import hub_node, hub_sealed, hub_tokens
+from shared import hub_node, hub_sealed, issuer_tokens
 from shared.kafka.models import KafkaReadSettings
 from tests.hub_client import test_sealed_vend
 from tests.hub_client.conftest import HUB_URL, SealingHubCatalog
@@ -55,7 +55,7 @@ def open_secret_as(name: str, node_keys, signer, monkeypatch, value: str) -> str
     monkeypatch.setattr(hub_node, "path", lambda: target)
     monkeypatch.setenv("FLOWFILE_HUB_URL", signer.url)
     monkeypatch.setenv("FLOWFILE_NODE_NAME", name)
-    monkeypatch.setattr(hub_tokens, "_client", None)
+    monkeypatch.setattr(issuer_tokens, "_client", None)
     return hub_sealed.open_secret(value)
 
 

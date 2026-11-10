@@ -2,14 +2,19 @@
 
 import json
 import logging
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import pytest
 
-from shared import hub_node, hub_tokens
+from shared import hub_node, hub_tokens, issuer_tokens
 from shared.hub_tokens import HubClaims, HubTokenRefused, verify
 from shared.tests import hub_jwks
 from shared.tests.hub_jwks import NODE_NAME, SigningKey
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 hub_signer = hub_jwks.hub_signer
 
@@ -139,15 +144,15 @@ def test_a_hub_url_without_a_node_name_accepts_nothing_and_warns_once(hub_signer
 
 def test_the_key_client_follows_the_hub_url(hub_signer, monkeypatch):
     assert verify(hub_signer.token()).scope == "run"
-    first_client = hub_tokens._client
+    first_client = issuer_tokens._client
 
     monkeypatch.setenv("FLOWFILE_HUB_URL", hub_signer.url + "/")
     assert verify(hub_signer.token()).scope == "run"
-    assert hub_tokens._client is first_client, "a trailing slash is the same hub"
+    assert issuer_tokens._client is first_client, "a trailing slash is the same hub"
 
     monkeypatch.setenv("FLOWFILE_HUB_URL", "http://127.0.0.1:9/elsewhere")
     assert refusal(hub_signer.token(iss="http://127.0.0.1:9/elsewhere")) == "keys unavailable"
-    assert hub_tokens._client is not first_client
+    assert issuer_tokens._client is not first_client
 
 
 def test_a_joined_node_takes_tokens_for_its_name(hub_signer, monkeypatch, tmp_path):
@@ -185,3 +190,13 @@ def test_an_unknown_scope_is_refused_whatever_scopes_the_caller_names(hub_signer
     with pytest.raises(HubTokenRefused) as refused:
         verify(hub_signer.token(scope="admin"), scopes=("admin",))
     assert refused.value.reason == "unknown scope"
+
+
+def test_the_verifier_does_not_load_the_join():
+    """``shared.issuer_tokens`` knows no issuer: importing it in a fresh interpreter loads neither the join's file
+    reader nor the hub's token rules."""
+    code = (
+        "import sys, shared.issuer_tokens; "
+        "sys.exit(any(name in sys.modules for name in ('shared.hub_node', 'shared.hub_tokens')))"
+    )
+    assert subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT).returncode == 0

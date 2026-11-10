@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, x25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from shared import hub_node, hub_node_key, hub_sealed, hub_tokens
+from shared import hub_node, hub_node_key, hub_sealed, issuer_tokens
 
 NODE_NAME = "team"
 JWKS_PATH = "/.well-known/jwks.json"
@@ -253,7 +253,7 @@ def hub_signer(monkeypatch, tmp_path):
     # No hub_node.json from this machine's storage dir: the tests set the node up through the variables alone.
     monkeypatch.setattr(hub_node, "path", lambda: tmp_path / hub_node.FILE_NAME)
     # A fresh key client per test: a reused port would otherwise serve the previous test's cached keys.
-    monkeypatch.setattr(hub_tokens, "_client", None)
+    monkeypatch.setattr(issuer_tokens, "_client", None)
     try:
         yield signer
     finally:

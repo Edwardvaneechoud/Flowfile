@@ -10,7 +10,7 @@ header as the AAD; RFC 7518 §4.6), whose plaintext is a JWS the hub signed with
 credential this node reads the ``storage_options`` and the ``exp``; the vend and the root are the hub's own record.
 
 A run carries the vend's whole map of node name to token, ``sealed``; whichever process opens it takes this node's
-entry, decrypts it with ``hub_node_key``'s ``enc`` key and verifies the JWS as ``shared.hub_tokens.decode`` verifies
+entry, decrypts it with ``hub_node_key``'s ``enc`` key and verifies the JWS as ``shared.issuer_tokens.decode`` verifies
 any token the hub signs: against the hub's JWKS, its audience, issuer and expiry. Core hands the map on and opens only
 its own node's entry. ``SealedCredentialProvider`` is a Polars ``credential_provider`` holding only the map, so a plan
 carries no secret; ``sealed_scan_kwargs`` gives a scan built here its plain options beside it,
@@ -38,8 +38,9 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.concatkdf import ConcatKDFHash
 
-from shared import hub_node, hub_node_key, hub_tokens
+from shared import hub_node, hub_node_key
 from shared.cloud_credential_provider import CredentialResolutionError, split_credentials
+from shared.issuer_tokens import JWKS_PATH, TokenRefused, decode
 
 if TYPE_CHECKING:
     import polars as pl
@@ -114,10 +115,8 @@ def _claims(token: str, required: list[str]) -> dict[str, Any]:
         raise SealedCredentialRefused("this server has not joined a hub with keys of its own")
     signed = _decrypt(token, keys)
     try:
-        claims = hub_tokens.decode(
-            signed, node.hub_url + hub_tokens.JWKS_PATH, f"node:{node.name}", node.issuer, required
-        )
-    except hub_tokens.HubTokenRefused as refused:
+        claims = decode(signed, node.hub_url + JWKS_PATH, f"node:{node.name}", node.issuer, required)
+    except TokenRefused as refused:
         raise SealedCredentialRefused(refused.reason) from None
     return claims
 

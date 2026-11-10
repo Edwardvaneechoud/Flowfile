@@ -34,7 +34,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handsh
 from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import node_tokens, session
 from flowfile_core.schemas import input_schema
-from shared import hub_node, hub_tokens
+from shared import hub_node, issuer_tokens
 from shared.tests import plan_stamps
 from shared.tests.hub_jwks import HubSigner
 from tests.flowfile.conftest import catalog_cleanup
@@ -82,7 +82,7 @@ def desktop(tmp_path, monkeypatch) -> str:
     monkeypatch.setenv("FLOWFILE_MODE", "electron")
     monkeypatch.delenv("FLOWFILE_EXCHANGE_URI", raising=False)
     monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
-    monkeypatch.setattr(hub_tokens, "_client", None)
+    monkeypatch.setattr(issuer_tokens, "_client", None)
     monkeypatch.setattr(hub_client, "_module_http", None)
     secure = tmp_path / "secure_storage"
     monkeypatch.setenv("FLOWFILE_SECURE_STORAGE_PATH", str(secure))

@@ -9,7 +9,7 @@ import pytest
 
 from flowfile_core.hub_client import client, session, vend
 from flowfile_core.hub_client.client import HubRefused
-from shared import hub_node, hub_node_key, hub_sealed, hub_tokens
+from shared import hub_node, hub_node_key, hub_sealed, issuer_tokens
 from shared.tests.hub_jwks import HubSigner
 from tests.hub_client import conftest as hub_conftest
 from tests.hub_client.conftest import HUB_URL, SealingHubCatalog
@@ -69,7 +69,7 @@ def open_as(name: str, node_keys, signer, monkeypatch, sealed: dict[str, str]) -
     monkeypatch.setattr(hub_node, "path", lambda: target)
     monkeypatch.setenv("FLOWFILE_HUB_URL", signer.url)
     monkeypatch.setenv("FLOWFILE_NODE_NAME", name)
-    monkeypatch.setattr(hub_tokens, "_client", None)
+    monkeypatch.setattr(issuer_tokens, "_client", None)
     return hub_sealed.sealed_storage_options(sealed)
 
 

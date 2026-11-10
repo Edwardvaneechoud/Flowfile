@@ -1,10 +1,9 @@
 """Tokens from a configured issuer, verified offline by core and the worker.
 
 A node on a hub has a caller beside its own core: the hub signs short-lived tokens with a private key and publishes
-the public half at ``<FLOWFILE_HUB_URL>/.well-known/jwks.json``. This module is the one verifier of such tokens, shared
-by core and the worker so one set of rules applies, and it holds no secret: the keys are public and come from the hub.
-``decode`` is the one check of anything the hub signs with that key, the JWS inside a sealed credential included
-(``shared.hub_sealed``); ``verify`` is the check of a hub token proper.
+the public half at ``<FLOWFILE_HUB_URL>/.well-known/jwks.json``. This module says who that issuer is on this machine and
+what a hub token must carry; the check of the signature is ``shared.issuer_tokens.decode``, the one verifier core, the
+worker and a sealed credential (``shared.hub_sealed``) share. ``verify`` is the check of a hub token proper.
 
 The settings are read at call time, from the environment first and then from ``hub_node.json`` in the storage dir, the
 file a node writes when it joins a hub (``shared.hub_node``), field by field and the file only for the hub it names.
@@ -15,12 +14,10 @@ once. Nothing runs at import.
 """
 
 import logging
-import threading
 from dataclasses import dataclass
 
-import jwt
-
 from shared import hub_node
+from shared.issuer_tokens import JWKS_PATH, REQUIRED_CLAIMS, TokenRefused, decode
 
 logger = logging.getLogger("flowfile.hub_tokens")
 
@@ -29,18 +26,9 @@ SCOPES = ("run", "signin", "dispatch")
 node's core once, and is taken only by the route that does that; ``dispatch`` has this node's core run one version of a
 hub flow as a person, and is taken only by ``POST /hub/dispatch``."""
 DISPATCH_CLAIMS = ["run_id", "flow_uuid", "flow_version", "uid"]
-ALGORITHMS = ["ES256", "RS256"]
-LEEWAY_SECONDS = 30
-REQUIRED_CLAIMS = ["exp", "iat", "sub", "aud", "scope", "jti"]
-JWKS_PATH = "/.well-known/jwks.json"
 
-
-class HubTokenRefused(Exception):
-    """A hub token that does not verify. ``reason`` is fit to answer to the caller and never names the token."""
-
-    def __init__(self, reason: str):
-        super().__init__(reason)
-        self.reason = reason
+HubTokenRefused = TokenRefused
+"""A hub token that does not verify: the verifier's own refusal under the name the hub's callers catch."""
 
 
 @dataclass(frozen=True)
@@ -70,9 +58,6 @@ class DispatchClaims:
     expires_at: int
 
 
-_client: jwt.PyJWKClient | None = None
-_client_url: str | None = None
-_client_lock = threading.Lock()
 _warned_no_node_name = False
 
 
@@ -91,58 +76,6 @@ def _settings() -> tuple[str, str, str] | None:
             _warned_no_node_name = True
         return None
     return node.hub_url + JWKS_PATH, node.name, node.issuer
-
-
-def _jwks_client(jwks_url: str) -> jwt.PyJWKClient:
-    """The process's one key client, built on first use and again when the URL changes.
-
-    PyJWT caches the key set and the keys it matched; an unknown ``kid`` makes it fetch the set again, which is how a
-    rotated key reaches a running node.
-    """
-    global _client, _client_url
-    with _client_lock:
-        if _client is None or _client_url != jwks_url:
-            _client = jwt.PyJWKClient(jwks_url, cache_keys=True)
-            _client_url = jwks_url
-        return _client
-
-
-def decode(token: str, jwks_url: str, audience: str, issuer: str, required: list[str] = REQUIRED_CLAIMS) -> dict:
-    """The claims of the JWS ``token``, signed with a key the hub publishes at ``jwks_url`` for ``audience`` by
-    ``issuer``, with every claim in ``required`` present and ``exp`` not past the leeway.
-
-    Raises:
-        HubTokenRefused: The token does not verify; ``reason`` says why in words fit for the caller.
-    """
-    try:
-        key = _jwks_client(jwks_url).get_signing_key_from_jwt(token)
-        return jwt.decode(
-            token,
-            key,
-            algorithms=ALGORITHMS,
-            audience=audience,
-            issuer=issuer,
-            leeway=LEEWAY_SECONDS,
-            options={"require": required},
-        )
-    except jwt.ExpiredSignatureError:
-        raise HubTokenRefused("expired") from None
-    except jwt.InvalidAudienceError:
-        raise HubTokenRefused("wrong audience") from None
-    except jwt.InvalidIssuerError:
-        raise HubTokenRefused("wrong issuer") from None
-    except jwt.MissingRequiredClaimError as exc:
-        raise HubTokenRefused(f"missing claim {exc.claim}") from None
-    except jwt.InvalidAlgorithmError:
-        raise HubTokenRefused("algorithm not allowed") from None
-    except jwt.InvalidSignatureError:
-        raise HubTokenRefused("bad signature") from None
-    except jwt.PyJWKClientConnectionError:
-        raise HubTokenRefused("keys unavailable") from None
-    except jwt.PyJWKClientError:
-        raise HubTokenRefused("unknown key") from None
-    except jwt.PyJWTError as exc:
-        raise HubTokenRefused(f"invalid: {exc}") from None
 
 
 def verify(token: str, scopes: tuple[str, ...] = ("run",)) -> HubClaims | None:

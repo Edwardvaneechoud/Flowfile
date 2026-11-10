@@ -24,7 +24,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.hub_client import session
-from shared import hub_node, hub_node_key, hub_tokens
+from shared import hub_node, hub_node_key, hub_tokens, issuer_tokens
 from shared.tests import hub_join
 from shared.tests.hub_join import REVOKE_PATH, TOKEN_EXCHANGE, TOKEN_PATH, FakeJoinHub
 from shared.tests.hub_jwks import HubSigner
@@ -51,7 +51,7 @@ def node_file(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     target = tmp_path / "storage" / hub_node.FILE_NAME
     monkeypatch.setattr(hub_node, "path", lambda: target)
-    monkeypatch.setattr(hub_tokens, "_client", None)
+    monkeypatch.setattr(issuer_tokens, "_client", None)
     monkeypatch.setattr(hub_client, "_module_http", None)
     secure = tmp_path / "secure_storage"
     monkeypatch.setenv("FLOWFILE_SECURE_STORAGE_PATH", str(secure))
