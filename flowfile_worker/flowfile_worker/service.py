@@ -575,16 +575,16 @@ def worker_capabilities() -> Capabilities:
 
     It reads and writes object storage and ``https``, plus ``file`` while ``FLOWFILE_WORKER_LOCAL_FILES`` is ``1`` (a
     worker on core's host). It also reads ``http``, since a Read node's child fetches its URL itself; nothing writes to
-    one. A node that joined a hub with keys of its own declares ``credential_resolution: vended``: besides its own
-    master key it opens what the hub seals to it (``hub_sealed.can_open``).
+    one. A node that joined an issuer with keys of its own declares ``credential_resolution: vended``: besides its
+    own master key it opens what the issuer seals to it (``sealed.can_open``).
     """
     schemes = CLOUD_SCHEMES | {"https"}
     if os.environ.get("FLOWFILE_WORKER_LOCAL_FILES") == "1":
         schemes |= {"file"}
     update: dict[str, Any] = {"operations": OPERATIONS, "read_schemes": schemes | {"http"}, "write_schemes": schemes}
-    from shared import hub_sealed
+    from shared import sealed
 
-    if hub_sealed.can_open():
+    if sealed.can_open():
         update["credential_resolution"] = "vended"
     return local_capabilities().model_copy(update=update)
 

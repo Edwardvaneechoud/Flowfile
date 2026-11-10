@@ -55,7 +55,7 @@ class FullCloudStorageConnection(WireModel):
     endpoint_url: str | None = None
     verify_ssl: bool = True
 
-    # What a hub vended to the run, sealed to its nodes (node name -> token); set, it is the whole connection
+    # What an issuer vended to the run, sealed to its servers (server name -> token); set, it is the whole connection
     sealed: dict[str, str] | None = None
 
     def _extract_secret(self, field: SecretStr | None) -> str | None:
@@ -67,11 +67,11 @@ class FullCloudStorageConnection(WireModel):
     def get_storage_options(self) -> dict[str, Any]:
         """Build storage options dict, decrypting secrets as needed.
 
-        A ``sealed`` connection is opened with this node's key instead (``shared.hub_sealed``), and its options are the
-        ones the hub vended, whatever the other fields say.
+        A ``sealed`` connection is opened with this node's key instead (``shared.sealed``), and its options are the
+        ones its issuer vended, whatever the other fields say.
         """
         if self.sealed:
-            from shared.hub_sealed import sealed_storage_options
+            from shared.sealed import sealed_storage_options
 
             return sealed_storage_options(self.sealed)
         return build_storage_options(

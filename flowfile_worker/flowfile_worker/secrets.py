@@ -179,11 +179,11 @@ def decrypt_secret(encrypted_value: str) -> SecretStr:
     """
     Decrypt an encrypted value.
 
-    Supports both new format (with embedded user_id) and legacy format, and a secret a hub sealed to this server.
+    Supports both new format (with embedded user_id) and legacy format, and a secret sealed to this server.
     - New format: $ffsec$1${user_id}${fernet_token} - user_id extracted automatically
     - Legacy format: raw Fernet token - uses master key directly
-    - Sealed: $ffseal$..., ``shared.hub_sealed.sealed_secret``'s string, opened with this server's own key; that module
-      (and the hub modules it loads) is imported only for one
+    - Sealed: $ffseal$..., ``shared.sealed.sealed_secret``'s string, opened with this server's own key; what says who
+      sealed it is loaded only for one
 
     Args:
         encrypted_value: The encrypted value as a string
@@ -195,9 +195,9 @@ def decrypt_secret(encrypted_value: str) -> SecretStr:
         CredentialResolutionError: A sealed secret this server cannot open.
     """
     if encrypted_value.startswith("$ffseal$"):
-        from shared import hub_sealed
+        from shared import sealed
 
-        return SecretStr(hub_sealed.open_secret(encrypted_value))
+        return SecretStr(sealed.open_secret(encrypted_value))
     if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
         # Parse: $ffsec$1${user_id}${fernet_token}
         remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]

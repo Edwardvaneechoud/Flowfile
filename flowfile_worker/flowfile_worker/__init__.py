@@ -31,8 +31,19 @@ if _launched_as_worker():
 
     _hub_node.require_own_storage_dir(_configs.JOIN_TOKEN)
 
+from shared import sealed as _sealed
 from shared._version import get_version
 from shared.storage_config import storage
+
+
+def _server_on_its_hub() -> tuple:
+    """Who this server is to the issuer that seals credentials to it, asked when one is opened: a node on its hub."""
+    from shared import hub_sealed
+
+    return hub_sealed.this_server()
+
+
+_sealed.server, _sealed.sealer = _server_on_its_hub, "hub"
 
 if TYPE_CHECKING:
     from flowfile_worker.models import Status

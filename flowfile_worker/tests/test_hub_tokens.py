@@ -89,7 +89,7 @@ def test_the_submit_socket_takes_a_hub_token_and_closes_on_a_refused_one(hub_sig
 @pytest.mark.parametrize("path,headers", [("/ws/submit", {}), ("/v1/ws/submit", V1_HEADERS)], ids=["ws", "v1"])
 def test_a_submit_socket_verifies_a_hub_token_off_the_event_loop(hub_signer, monkeypatch, path, headers):
     on_loop = []
-    real = auth.hub_tokens.verify
+    real = auth.verify_issuer_token
 
     def verify(token, *args, **kwargs):
         try:
@@ -99,7 +99,7 @@ def test_a_submit_socket_verifies_a_hub_token_off_the_event_loop(hub_signer, mon
             on_loop.append(False)
         return real(token, *args, **kwargs)
 
-    monkeypatch.setattr(auth.hub_tokens, "verify", verify)
+    monkeypatch.setattr(auth, "verify_issuer_token", verify)
     with client.websocket_connect(path, headers={**headers, "X-Flowfile-Internal": hub_signer.token()}):
         pass
 
