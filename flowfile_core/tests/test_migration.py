@@ -1381,3 +1381,64 @@ class TestFlowSchedulesBackendMigration:
 
         _run_migration(db_path, monkeypatch)
         assert "backend" in self._columns(db_path)
+
+
+class TestFlowSchedulesDisabledReasonMigration:
+    """043 adds ``flow_schedules.disabled_reason``: NULL on every existing row."""
+
+    @staticmethod
+    def _columns(db_path: Path) -> set[str]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        names = {c["name"] for c in inspect(engine).get_columns("flow_schedules")}
+        engine.dispose()
+        return names
+
+    def test_upgrade_from_042_adds_it_null_and_the_downgrade_drops_it(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        cfg = _get_alembic_config()
+        command.upgrade(cfg, "042")
+        assert "disabled_reason" not in self._columns(db_path)
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO flow_schedules (registration_id, owner_id, enabled, schedule_type, interval_seconds, "
+                    "created_at, updated_at) VALUES (1, 1, 1, 'interval', 60, '2026-11-01 00:00:00', "
+                    "'2026-11-01 00:00:00')"
+                )
+            )
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT interval_seconds, disabled_reason FROM flow_schedules")).all()
+        engine.dispose()
+        assert [tuple(r) for r in rows] == [(60, None)]
+
+        command.downgrade(cfg, "042")
+        assert "disabled_reason" not in self._columns(db_path)
+
+    def test_upgrade_is_guarded_when_the_column_already_exists(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "042")
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE flow_schedules ADD COLUMN disabled_reason TEXT"))
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        assert "disabled_reason" in self._columns(db_path)

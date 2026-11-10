@@ -1048,6 +1048,7 @@ class FlowScheduleOut(BaseModel):
     trigger_table_names: list[str] = Field(default_factory=list)
     trigger_full_table_names: list[str] = Field(default_factory=list)
     backend: str | None = None
+    disabled_reason: str | None = None
     last_triggered_at: datetime | None = None
     last_trigger_table_updated_at: datetime | None = None
     created_at: datetime

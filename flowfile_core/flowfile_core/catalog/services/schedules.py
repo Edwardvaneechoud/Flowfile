@@ -88,6 +88,7 @@ class ScheduleService:
             name=schedule.name,
             description=schedule.description,
             backend=schedule.backend,
+            disabled_reason=schedule.disabled_reason,
             schedule_type=schedule.schedule_type,
             interval_seconds=schedule.interval_seconds,
             cron_expression=schedule.cron_expression,
@@ -212,6 +213,8 @@ class ScheduleService:
             if enabled and not schedule.enabled:
                 self._arm_trigger(schedule)
             schedule.enabled = enabled
+            if enabled:
+                schedule.disabled_reason = None
         if interval_seconds is not None:
             schedule.interval_seconds = interval_seconds
         if cron_expression is not None:

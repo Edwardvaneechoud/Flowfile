@@ -166,7 +166,8 @@ def reap_orphaned_runs(max_age_seconds: int | None = None) -> int:
 
             reason: str | None = None
             if run.pid is None:
-                if age is not None and age > PID_GRACE_SECONDS:
+                # A run sent elsewhere has no process here; only the age backstop closes it.
+                if run.remote_run_id is None and age is not None and age > PID_GRACE_SECONDS:
                     reason = f"no pid recorded after {age:.0f}s"
             elif not pid_alive:
                 reason = "process no longer alive"

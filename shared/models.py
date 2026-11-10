@@ -34,6 +34,7 @@ class FlowSchedule(Base):
     cron_timezone = Column(String, nullable=True)  # IANA tz name the cron runs in
     trigger_table_id = Column(Integer, nullable=True)
     backend = Column(String, nullable=True)  # compute backend id passed as --backend; NULL leaves it to the flow
+    disabled_reason = Column(Text, nullable=True)  # why the scheduler disabled it; NULL when a person did
     last_triggered_at = Column(DateTime, nullable=True)
     last_cron_slot = Column(DateTime, nullable=True)  # naive LOCAL wall-clock cron cursor (NOT UTC); DST-safe
     last_trigger_table_updated_at = Column(DateTime, nullable=True)
@@ -70,6 +71,7 @@ class FlowRun(Base):
     run_type: RunType = Column(String, nullable=False, default="in_designer_run")
     pid = Column(Integer, nullable=True)
     schedule_id = Column(Integer, nullable=True)
+    remote_run_id = Column(String(64), nullable=True)  # the run's id where it executes, when not on this machine
     flow_snapshot = Column(Text, nullable=True)
     node_results_json = Column(Text, nullable=True)
     # Stamped once the run has been evaluated for notifications (NULL = pending evaluation);

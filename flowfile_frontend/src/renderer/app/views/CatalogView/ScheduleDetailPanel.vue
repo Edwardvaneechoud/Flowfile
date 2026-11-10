@@ -59,7 +59,7 @@
           :model-value="schedule.enabled"
           size="default"
           active-text="Enabled"
-          inactive-text="Disabled"
+          :inactive-text="schedule.disabled_reason ? `Disabled: ${schedule.disabled_reason}` : 'Disabled'"
           @change="(val: boolean) => $emit('toggleSchedule', schedule.id, val)"
         />
         <button class="btn btn-danger btn-sm" @click="$emit('deleteSchedule', schedule.id)">

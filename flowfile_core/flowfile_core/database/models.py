@@ -434,6 +434,7 @@ class FlowSchedule(Base):
     cron_timezone = Column(String, nullable=True)  # IANA tz name (e.g. "Europe/Amsterdam") the cron runs in
     trigger_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True)
     backend = Column(String, nullable=True)  # compute backend id passed as --backend; NULL leaves it to the flow
+    disabled_reason = Column(Text, nullable=True)  # why the scheduler disabled it; NULL when a person did
     last_triggered_at = Column(DateTime, nullable=True)
     last_cron_slot = Column(DateTime, nullable=True)  # naive LOCAL wall-clock cron cursor (NOT UTC); DST-safe
     last_trigger_table_updated_at = Column(DateTime, nullable=True)

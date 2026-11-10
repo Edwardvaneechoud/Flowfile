@@ -566,6 +566,7 @@ export interface FlowSchedule {
   trigger_table_names: string[];
   trigger_full_table_names: string[];
   backend: string | null;
+  disabled_reason?: string | null;
   last_triggered_at: string | null;
   last_trigger_table_updated_at: string | null;
   created_at: string;
