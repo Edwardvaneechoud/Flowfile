@@ -416,6 +416,11 @@ class FakeHubWithCatalog(FakeHub):
             if parts[4:] == ["favorite"]:
                 row = {"id": 3, "user_id": 1, "registration_id": flow["registration_id"], "created_at": _STAMP}
                 return httpx.Response(201, json=row)
+            if not parts[4:] and method == "DELETE":
+                self.flows.remove(flow)
+                return httpx.Response(204)
+            if not parts[4:] and method == "PUT":
+                flow.update({k: v for k, v in body.items() if v is not None})
             return httpx.Response(200, json={"id": flow["registration_id"], **flow})
         table = next((t for t in self.tables if str(t["id"]) == parts[3]), None) if parts[2] == "tables" else None
         if table is None:

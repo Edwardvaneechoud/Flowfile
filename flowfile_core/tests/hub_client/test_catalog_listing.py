@@ -477,6 +477,17 @@ def test_a_hub_flow_is_favourited_and_unfavourited_on_the_hub(connected, hub):
     assert hub.calls[-1] == ("DELETE", f"/catalog/flows/{-row}/favorite")
 
 
+def test_a_hub_flow_is_renamed_and_deleted_on_the_hub_through_cores_own_address(connected, hub):
+    row, _ = _flow_with_schedule(hub)
+    renamed = connected.put(f"/catalog/flows/{row}", json={"name": "orders-v2"})
+    assert renamed.status_code == 200 and renamed.json()["name"] == "orders-v2" and renamed.json()["id"] == row
+    assert hub.calls[-1] == ("PUT", f"/catalog/flows/{-row}")
+    deleted = connected.delete(f"/catalog/flows/{row}", params={"delete_file": False})
+    assert deleted.status_code == 204 and deleted.content == b""
+    assert -row not in [f["registration_id"] for f in hub.flows]
+    assert connected.get(f"/catalog/flows/{row}").status_code == 404
+
+
 def test_running_a_hub_flow_now_and_a_new_schedule_of_it_are_refused_by_the_hub_not_here(connected, hub):
     """The hub answers neither core route today, so the refusal a person reads is the hub's own sentence."""
     row, _ = _flow_with_schedule(hub)
