@@ -1094,6 +1094,7 @@ class ActiveFlowRun(BaseModel):
     number_of_nodes: int = 0
     run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand", "dispatched"] = "in_designer_run"
     schedule_id: int | None = None
+    remote_run_id: str | None = None
     # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
     source: Literal["local", "hub"] = "local"
     hub_id: int | None = None

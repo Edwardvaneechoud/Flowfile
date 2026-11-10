@@ -1774,13 +1774,26 @@ def trigger_schedule_now(
 # Active Runs
 
 
+def _active_runs(service: CatalogService, user_id: int | None) -> list[ActiveFlowRun]:
+    """The runs under way, this install's first, then a remote catalog's (``table_sources.merged_rows``).
+
+    A run a remote catalog sent here is listed once, as the remote's row: this install's record of it carries the
+    remote's run id as ``remote_run_id``, and only the remote's row names the flow and schedule it is a run of and
+    has a Cancel that stops it (the catalog that sent it tells this install to stop). Run History keeps this install's
+    record instead, whose log is here (``_all_runs``).
+    """
+    merged = table_sources.merged_rows(user_id, "/catalog/active-runs", service.list_active_runs(), ActiveFlowRun)
+    theirs = {run.remote_run_id for run in merged if run.id < 0 and run.remote_run_id}
+    return [run for run in merged if run.id < 0 or run.remote_run_id not in theirs]
+
+
 @router.get("/active-runs", response_model=list[ActiveFlowRun])
 def list_active_runs(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """List all currently running flows, a remote catalog's after this install's."""
-    return table_sources.merged_rows(current_user.id, "/catalog/active-runs", service.list_active_runs(), ActiveFlowRun)
+    """List all currently running flows, a remote catalog's after this install's (``_active_runs``)."""
+    return _active_runs(service, current_user.id)
 
 
 @router.post("/runs/{run_id}/cancel", status_code=204)
@@ -1899,9 +1912,7 @@ def get_catalog_overview(
         tables=service.list_tables(user_id=user_id),
         favorites=service.list_favorites(user_id=user_id),
         schedules=table_sources.merged_rows(user_id, "/catalog/schedules", service.list_schedules(), FlowScheduleOut),
-        active_runs=table_sources.merged_rows(
-            user_id, "/catalog/active-runs", service.list_active_runs(), ActiveFlowRun
-        ),
+        active_runs=_active_runs(service, user_id),
         runs=_all_runs(service, user_id, None, None, runs_limit, 0),
         scheduler=_scheduler_status(db),
         remote_scheduler=_remote_scheduler_status(user_id),

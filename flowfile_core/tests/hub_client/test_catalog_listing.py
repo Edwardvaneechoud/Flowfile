@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from flowfile_core import main
 from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.configs import logger as core_logger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.hub_client import catalog as hub_catalog
@@ -467,6 +468,29 @@ def test_run_history_and_the_runs_under_way_hold_the_hubs_runs_marked_as_the_hub
     overview = connected.get("/catalog/overview").json()
     assert [run["id"] for run in overview["active_runs"] if run["id"] < 0] == [-6]
     assert {run["id"] for run in overview["runs"]["items"] if run["id"] < 0} == {-5, -6}
+
+
+def test_a_run_the_hub_sent_here_is_under_way_once_as_the_hubs_row_and_in_run_history_as_this_servers(connected, hub):
+    """The server that executes a run the hub sent keeps its own record of it, under the hub's run id: the runs under
+    way list the hub's row, whose Cancel stops the run, and Run History this server's record, whose log is here."""
+    flow = hub.seed_flow(_seed(hub)["raw"], "orders-clean")
+    sent = hub.seed_run(flow, ended=False, remote_run_id="r-sent")
+    with get_db_context() as db:
+        here = FlowRunService(SQLAlchemyCatalogRepository(db)).start_run(
+            registration_id=None,
+            flow_name="orders-clean",
+            flow_path=f"hub://flows/{flow['flow_uuid']}",
+            user_id=1,
+            number_of_nodes=1,
+            run_type="dispatched",
+            flow_uuid=flow["flow_uuid"],
+            remote_run_id="r-sent",
+        ).id
+    for active in (connected.get("/catalog/active-runs").json(), connected.get("/catalog/overview").json()["active_runs"]):
+        of_the_run = [run["id"] for run in active if run.get("remote_run_id") == "r-sent"]
+        assert of_the_run == [-sent["id"]] and here not in [run["id"] for run in active]
+    history = connected.get("/catalog/runs", params={"limit": 500}).json()["items"]
+    assert [run["id"] for run in history if run["remote_run_id"] == "r-sent"] == [here]
 
 
 def test_a_hub_flow_is_favourited_and_unfavourited_on_the_hub(connected, hub):
