@@ -44,7 +44,7 @@ Click the **Schedules** tab in the Catalog to see the schedule overview. The tab
 
 1. Click **Create Schedule** from the Schedules tab, or click **Add** in a flow's Schedules section
 2. Select a **flow** from the dropdown (only flows with existing files are shown)
-3. Optionally add a **description** (e.g., "Nightly sales data refresh")
+3. Optionally add a **description** (e.g., "Nightly sales data refresh") and choose where it **Runs on** ([below](#where-a-schedule-runs))
 4. Choose a **schedule type**:
 
 ![Create schedule modal](../../../assets/images/guides/schedules/create-schedule.png)
@@ -117,9 +117,21 @@ The flow detail panel includes:
 
 ---
 
+### Where a schedule runs
+
+**Runs on**, in the create-schedule dialog and on the schedule's detail page, names the compute backend every run of the schedule goes to, **Run Now** included:
+
+| Choice | Runs on |
+|--------|---------|
+| **The flow's own setting** (the default) | What the run would use without a schedule: the flow's **Execution location** when it names a backend, else `FLOWFILE_COMPUTE_BACKEND`, else the run's own process ([below](#how-a-run-computes)) |
+| **Default worker** | The worker at `FLOWFILE_WORKER_URL` (else `WORKER_HOST` and `FLOWFILE_WORKER_PORT`) in the run's environment. Each run is a process of its own, so this needs a worker that process can reach: the worker beside core in Docker or the desktop app |
+| A configured backend (`worker:<name>`) | That worker, as added under **Settings → Execution → Backends**; its last check is shown beside it |
+
+The choice beats the flow's **Execution location** and `FLOWFILE_COMPUTE_BACKEND` ([Where flows run](../../deployment/where-flows-run.md)). It is not checked when you save it: a backend that has been removed, or cannot be reached, fails each run with its reason in the run's log, alerts fire as for any failed run, and the schedule stays enabled. A project's schedule file carries the choice when one is made.
+
 ### How a run computes
 
-Each run is a process of its own. Unless the flow's **Execution location** or `FLOWFILE_COMPUTE_BACKEND` names a worker, it computes on a worker embedded in that process, which runs each job in a child process as the app's worker does ([Where flows run](../../deployment/where-flows-run.md)). A node whose job runs out of memory fails without ending the run, and **Cancel Run** stops the run's child processes with it. On Windows a cancel ends the run's process at once: its warm child process exits within seconds, and any other child runs on until its job ends.
+Each run is a process of its own. Unless the schedule's **Runs on**, the flow's **Execution location** or `FLOWFILE_COMPUTE_BACKEND` names a worker, it computes on a worker embedded in that process, which runs each job in a child process as the app's worker does ([Where flows run](../../deployment/where-flows-run.md)). A node whose job runs out of memory fails without ending the run, and **Cancel Run** stops the run's child processes with it. On Windows a cancel ends the run's process at once: its warm child process exits within seconds, and any other child runs on until its job ends.
 
 Every job has the worker's task time limit: a job that runs longer than `FLOWFILE_WORKER_TASK_TIMEOUT` seconds (3600 by default) is stopped and its node fails. Set the variable higher, or to `0` for no limit, in the environment the scheduler runs in (core's, in Docker); each run inherits it.
 
