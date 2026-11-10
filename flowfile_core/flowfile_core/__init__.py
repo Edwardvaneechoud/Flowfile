@@ -70,3 +70,5 @@ class ServerRun:
 __version__ = get_version()
 
 flow_file_handler = FlowfileHandler()
+
+from flowfile_core import hub_client as _hub_client  # noqa: E402, F401  registers with core's seams

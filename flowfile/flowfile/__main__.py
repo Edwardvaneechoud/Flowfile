@@ -122,9 +122,7 @@ def _run_flow(flow_path: str, param_overrides: list[str] | None, run_id: int | N
         pass
 
     try:
-        from flowfile_core.hub_client import node_tokens
-
-        with node_tokens.for_run_record(run_id):
+        with registry.for_run_record(run_id):
             result = flow.run_graph()
     except Exception as e:
         print(f"Error running flow: {e}", file=sys.stderr)

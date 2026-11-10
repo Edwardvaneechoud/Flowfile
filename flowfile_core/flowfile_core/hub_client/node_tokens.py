@@ -15,10 +15,9 @@ calls (a schema prediction, a preview, a node fetch) are made for the person sig
 
 import threading
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar
 
+from flowfile_core.flowfile.execution import context, registry
+from flowfile_core.flowfile.execution.registry import acting, acting_for, scheduled  # noqa: F401
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 
@@ -29,53 +28,17 @@ _MARGIN_SECONDS = 60
 
 _tokens: dict[tuple[int, int], tuple[str, float | None]] = {}
 _lock = threading.RLock()  # a refresh inside token_for that ends the session clears these tokens
-_acting: ContextVar[int | None] = ContextVar("hub_acting_user", default=None)
-_scheduled: ContextVar[bool] = ContextVar("hub_scheduled_run", default=False)
 
 
-@contextmanager
-def acting_for(user_id: int | None) -> Iterator[None]:
-    """Make ``user_id`` the person the calls inside the block are made for, as a run route does around its run.
-
-    A run's stage threads run under a copy of the context, so they see it too.
-    """
-    token = _acting.set(user_id)
-    try:
-        yield
-    finally:
-        _acting.reset(token)
-
-
-def acting() -> int | None:
-    """The person ``acting_for`` set for the calls made now; ``None`` outside such a block."""
-    return _acting.get()
-
-
-@contextmanager
-def for_run_record(run_id: int | None) -> Iterator[None]:
-    """The block a headless runner runs the run record ``run_id`` in: a schedule's run (its record names a schedule)
-    is marked so (``scheduled``), since no person is behind it to mint the hub's tokens with."""
-    from shared.run_completion import get_run_schedule_id
-
-    token = _scheduled.set(run_id is not None and get_run_schedule_id(run_id) is not None)
-    try:
-        yield
-    finally:
-        _scheduled.reset(token)
-
-
-def scheduled() -> bool:
-    """Whether the calls made now are a schedule's run (``for_run_record``)."""
-    return _scheduled.get()
-
-
-class SignedOut(LookupError):
+class SignedOut(registry.Refused):
     """No token for the hub's server ``node_name``: the person the call is made for has no sign-in through the hub here,
-    or there is no person behind a run. Its message is ``signed_out``'s sentence."""
+    or there is no person behind a run. Its message is ``signed_out``'s sentence, which a refused node or editor call
+    shows with a capital first letter and a full stop."""
 
     def __init__(self, node_name: str) -> None:
-        super().__init__(signed_out(node_name))
-        self.node_name = node_name
+        sentence = signed_out(node_name)
+        super().__init__(sentence)
+        self.shown = f"{sentence[0].upper()}{sentence[1:]}."
 
 
 def signed_in_through_hub(user_id: int) -> bool:
@@ -92,44 +55,6 @@ def signed_out(node_name: str) -> str:
         f"you are not signed in through the hub, so its server {node_name!r} cannot run this flow for you; "
         f"{SIGN_IN_AGAIN}"
     )
-
-
-def scheduled_refusal(nodes: list) -> str:
-    """Why a schedule may not run ``nodes`` on the hub's other servers, naming them, and what to do instead."""
-    from flowfile_core.flowfile.execution.placement import run_here, steps_in_words
-
-    return f"{SCHEDULED}, so {run_here(steps_in_words(nodes), len(nodes))}."
-
-
-def signed_out_refusal(server: str, nodes: list) -> str:
-    """Why the hub's server ``server`` cannot run ``nodes`` for a person with no sign-in through the hub, naming
-    them, and the two things they can do."""
-    from flowfile_core.flowfile.execution.placement import run_here, steps_in_words
-
-    pronoun = "it" if len(nodes) == 1 else "them"
-    return (
-        f"You are not signed in through the hub, so its server {server!r} cannot run {steps_in_words(nodes)} for "
-        f"you; {SIGN_IN_AGAIN}, or {run_here(pronoun, len(nodes))}."
-    )
-
-
-def refused(node_name: str) -> str:
-    """``signed_out``'s sentence as a refused node or editor call shows it: a capital first letter, a full stop."""
-    sentence = signed_out(node_name)
-    return f"{sentence[0].upper()}{sentence[1:]}."
-
-
-def refusal(error: BaseException) -> str | None:
-    """``refused``'s sentence when ``error`` is a ``SignedOut`` or was raised from one, however it was wrapped on the
-    way (a backend's ``TaskFailed``, a route's ``HTTPException``); else ``None``."""
-    seen: set[int] = set()
-    current: BaseException | None = error
-    while current is not None and id(current) not in seen:
-        if isinstance(current, SignedOut):
-            return refused(current.node_name)
-        seen.add(id(current))
-        current = current.__cause__ or current.__context__
-    return None
 
 
 def token_for(user_id: int, node_id: int, node_name: str, *, through_hub: bool = False) -> str:
@@ -154,6 +79,47 @@ def token_for(user_id: int, node_id: int, node_name: str, *, through_hub: bool =
         token = mint(user_id, node_id, node_name)
         _tokens[(user_id, node_id)] = (token, session._expiry(token))
         return token
+
+
+def server_token(name: str, account_user_id: int, remote_id: int, through_hub: bool) -> str:
+    """The token of a call to the hub's server ``name``, through the hub session of the row's user ``account_user_id``.
+
+    With ``through_hub`` (a server joined with keys of its own) it is the token of the person the call is made for
+    (``acting``), minted through their sign-in through the hub. With no such person, a call inside a run or a fetch
+    (``context.entered``) is refused with a ``SignedOut``, and any other call takes the row's user's token.
+    """
+    person = acting() if through_hub else None
+    if person is not None:
+        return token_for(person, remote_id, name, through_hub=True)
+    if through_hub and context.entered():
+        raise SignedOut(name)
+    return token_for(account_user_id, remote_id, name)
+
+
+def run_refused(on_servers) -> list | None:
+    """The run's nodes on the hub's other servers (``on_servers()``, by server name), each with the sentence that names
+    them and what to do, when the person the run is for has no sign-in through the hub here, else ``None``: the nodes
+    on the first such server, or every such node of a schedule's run, which has nobody behind it."""
+    from flowfile_core.flowfile.execution.placement import run_here, steps_in_words
+
+    person = acting()
+    if person is not None and signed_in_through_hub(person):
+        return None
+    on_hub = on_servers()
+    if not on_hub:
+        return None
+    if person is None and scheduled():
+        steps = [node for on in on_hub.values() for node in on]
+        return [(node, f"{SCHEDULED}, so {run_here(steps_in_words(steps), len(steps))}.") for node in steps]
+    name, on = next(iter(on_hub.items()))
+    sentence = (
+        f"You are not signed in through the hub, so its server {name!r} cannot run {steps_in_words(on)} for "
+        f"you; {SIGN_IN_AGAIN}, or {run_here('it' if len(on) == 1 else 'them', len(on))}."
+    )
+    return [(node, sentence) for node in on]
+
+
+registry.remote_servers.token, registry.remote_servers.run_refused = server_token, run_refused
 
 
 def clear(user_id: int) -> None:

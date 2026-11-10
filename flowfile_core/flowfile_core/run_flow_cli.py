@@ -97,9 +97,7 @@ def _run_flow(flow_path: str, run_id: int, backend: str | None) -> int:
 
     core_telemetry.install_headless()
     try:
-        from flowfile_core.hub_client import node_tokens
-
-        with node_tokens.for_run_record(run_id):
+        with registry.for_run_record(run_id):
             result = flow.run_graph()
     except Exception as e:
         _cli_logger.exception("Error running flow: %s", e)

@@ -193,3 +193,6 @@ def refresh(backend_ids: Iterable[str]) -> None:
             readers = list(dict.fromkeys(row.account_user_id for row in hub_rows if row.account_user_id is not None))
         for user_id in readers:
             _sync_for(db, user_id, "before the run")
+
+
+registry.remote_servers.refresh, registry.remote_servers.server_for = refresh, server_for

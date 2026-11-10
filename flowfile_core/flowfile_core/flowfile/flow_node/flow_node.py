@@ -1220,13 +1220,11 @@ class FlowNode:
 
     def _note_prediction_refusal(self, error: BaseException) -> None:
         """Show the sentence a server of the hub refused this node's prediction with as its prediction warning, when
-        ``error`` is such a refusal (``node_tokens.refusal``): the person asking has no sign-in through the hub here.
+        ``error`` is such a refusal (``registry.refusal``): the person asking has no sign-in through the hub here.
 
         Without it the refusal reads as a node with no columns. Other errors are left as they are.
         """
-        from flowfile_core.hub_client import node_tokens
-
-        sentence = node_tokens.refusal(error)
+        sentence = registry.refusal(error)
         if sentence is None:
             return
         self._prediction_refused = self._schema_prediction_blocked = self.results.warnings = sentence

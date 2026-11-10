@@ -12,4 +12,5 @@ core, a run's own process, a library.
 """
 
 from flowfile_core.hub_client import connections as connections
+from flowfile_core.hub_client import node_addresses as node_addresses
 from flowfile_core.hub_client import vend as vend

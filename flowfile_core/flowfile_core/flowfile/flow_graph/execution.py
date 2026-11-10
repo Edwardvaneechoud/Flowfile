@@ -80,7 +80,6 @@ from flowfile_core.flowfile.util.skip_rules import (
     parameter_gate_is_open,
     uses_any_rule,
 )
-from flowfile_core.hub_client import node_addresses, node_tokens
 from flowfile_core.kernel.execution import (
     KernelHold,
 )
@@ -1206,7 +1205,7 @@ class ExecutionMixin(GraphMixinBase):
         backend, on a joined server and a desktop connected to the hub alike; a node refused already keeps its first
         refusal. Each backend named is read through its handshake verdict (``handshake.verdict_for``), except ``local``
         in a process that serves, which runs no node and is never asked. On a joined server the hub's servers named are
-        first moved to the addresses the hub lists now (``node_addresses.refresh``). A backend refused whole, a
+        first moved to the addresses the hub lists now (``registry.remote_servers``). A backend refused whole, a
         ``VersionMismatch`` or an id the registry does not know refuses every node assigned to it. Any other
         ``ComputeError`` keeps the backend's nodes on it unchecked, and each fails with that error when it runs
         (``Placement.unreachable``).
@@ -1229,7 +1228,7 @@ class ExecutionMixin(GraphMixinBase):
         named = dict.fromkeys(policy.backend_for(node) for node in nodes)
         if isinstance(policy, MixedPlacementPolicy) and nodes:
             named.setdefault(fallback_id)
-        node_addresses.refresh(named)
+        registry.remote_servers.refresh(named)
         for backend_id in named:
             if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
                 continue
@@ -1832,7 +1831,7 @@ class ExecutionMixin(GraphMixinBase):
         """The hub server each step that uses a hub connection or secret is moved to, read once per run.
 
         Only a hub server's worker opens what the hub seals. A step ``policy`` already places on one, its own backend or
-        the flow's, stays. Any other goes to ``node_addresses.server_for`` its person: the hub's default server, else
+        the flow's, stays. Any other goes to ``remote_servers.server_for`` its person: the hub's default server, else
         the first the person may run on. With none, the step stays where it is and ``exchange_run.unmoved`` says why.
         """
         if exchange_run.moved is None:
@@ -1843,7 +1842,7 @@ class ExecutionMixin(GraphMixinBase):
                     continue
                 user_id = node.setting_input.user_id
                 if user_id not in servers:
-                    servers[user_id] = node_addresses.server_for(user_id)
+                    servers[user_id] = registry.remote_servers.server_for(user_id)
                 if servers[user_id] is None:
                     exchange_run.unmoved = run_secrets.NO_SERVER
                 else:
@@ -1982,30 +1981,11 @@ class ExecutionMixin(GraphMixinBase):
     def _signed_out_refusal(
         self, nodes: list[FlowNode], exchange_run: ExchangeRun
     ) -> list[tuple[FlowNode, str]] | None:
-        """On a server joined with keys of its own, the run's nodes on the hub's servers, each with the sentence of
-        ``node_tokens.signed_out_refusal`` naming them, when the person the run is for (``node_tokens.acting``) has no
-        sign-in through the hub here, else ``None``.
-
-        The hub mints a run's token for those servers with that person's own sign-in, never another's, so a run for
-        nobody or for a person whose sign-in ended is refused before a node starts. A schedule's run
-        (``node_tokens.scheduled``) has nobody behind it and is refused with ``node_tokens.scheduled_refusal``, every
-        such node of it. A sign-in the hub no longer takes is found when the token is minted, and refused there.
-        """
+        """On a server joined with keys of its own, the run's nodes on the remote's other servers that it mints the
+        person the run is for no token for, each with its sentence (``registry.remote_servers.run_refused``)."""
         if not nodes or issuer_accounts.joined_with_keys() is None:
             return None
-        person = node_tokens.acting()
-        if person is not None and node_tokens.signed_in_through_hub(person):
-            return None
-        on_hub = self._on_hub_servers(nodes, self._run_policy(exchange_run))
-        if not on_hub:
-            return None
-        if person is None and node_tokens.scheduled():
-            steps = [node for on in on_hub.values() for node in on]
-            sentence = node_tokens.scheduled_refusal(steps)
-            return [(node, sentence) for node in steps]
-        name, on = next(iter(on_hub.items()))
-        sentence = node_tokens.signed_out_refusal(name, on)
-        return [(node, sentence) for node in on]
+        return registry.remote_servers.run_refused(lambda: self._on_hub_servers(nodes, self._run_policy(exchange_run)))
 
     @staticmethod
     def _on_hub_servers(

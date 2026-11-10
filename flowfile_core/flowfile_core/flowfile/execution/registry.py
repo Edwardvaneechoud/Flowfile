@@ -13,10 +13,10 @@ A configured worker, ``worker:<name>``, is a row of core's ``compute_backends`` 
 its bearer token as secret-manager ciphertext, and an optional CA certificate. Its first lookup reads the row and makes
 a ``WorkerBackend`` from it. No row is a ``LookupError``. ``forget`` drops the cached instance, so the next lookup
 reads the row again. A row filled from a hub (``remote_id`` set) stores no token: its backend signs with the
-short-lived token the hub mints for that node through the row's user's hub session (``hub_client.node_tokens``),
+short-lived token the hub mints for that node through the row's user's hub session (``remote_servers.token``),
 asked for on the first lookup and again when it nears expiry, when the backend is made anew with the new token. On a
 server joined to its hub with keys of its own the row's user is only whoever last synced the hub's servers, so there
-each call is signed for the person it is made for (``node_tokens.acting``): a run's calls carry that person's token,
+each call is signed for the person it is made for (``acting``): a run's calls carry that person's token,
 minted through their own sign-in through the hub, and a run with no such person is refused. Only a call outside any
 run with no person behind it, such as the check of the Compute page, signs with the row's user's.
 
@@ -39,7 +39,9 @@ import sys
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import partial
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 from flowfile_core.configs import settings
@@ -152,24 +154,11 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
 
 
 def _hub_token(backend_id: str, account_user_id: int, remote_id: int, *, through_hub: bool = False) -> str:
-    """The token the hub mints for the node ``backend_id`` is filled from, through the row's user's hub session.
-
-    With ``through_hub`` (a server joined with keys of its own) it is the token of the person the call is made for
-    (``node_tokens.acting``), minted through their sign-in through the hub. With no such person, a call inside a run
-    or a fetch (``context.entered``) is refused with a ``node_tokens.SignedOut``, the cause of the ``LookupError``
-    raised here, and any other call takes the row's user's token.
-    """
-    from flowfile_core.flowfile.execution import context
-    from flowfile_core.hub_client import node_tokens
-
+    """The token the remote mints for the server ``backend_id`` is filled from (``remote_servers.token``): the row's
+    user's, or with ``through_hub`` (a server joined with keys of its own) that of the person the call is made for."""
     name = backend_id.removeprefix(CONFIGURED_WORKER_PREFIX)
-    person = node_tokens.acting() if through_hub else None
     try:
-        if person is not None:
-            return node_tokens.token_for(person, remote_id, name, through_hub=True)
-        if through_hub and context.entered():
-            raise node_tokens.SignedOut(name)
-        return node_tokens.token_for(account_user_id, remote_id, name)
+        return remote_servers.token(name, account_user_id, remote_id, through_hub)
     except LookupError as e:
         raise LookupError(f"Compute backend {backend_id!r} cannot be used: {e}") from e
 
@@ -177,7 +166,7 @@ def _hub_token(backend_id: str, account_user_id: int, remote_id: int, *, through
 def _replacement_token(backend_id: str, instance: ComputeBackend) -> str | None:
     """The hub's current token for a hub-filled backend when it is not the one ``instance`` signs with, else ``None``.
 
-    A hub token lasts an hour; ``node_tokens.token_for`` answers the cached one until a minute before it expires
+    A hub token lasts an hour; ``remote_servers.token`` answers the cached one until a minute before it expires
     and mints a new one then. A backend signs with the token it was made with, so a new token means a new backend.
     A backend that signs each call for the person it is made for (``_through_hub``) is never made anew: the token is
     only asked for here, so a lookup for a person who can mint none raises.
@@ -205,10 +194,72 @@ _hub_rows: dict[str, tuple[int, int]] = {}
 """Backend id -> ``(account_user_id, remote_id)`` of each hub-filled row an instance was made from."""
 _through_hub: set[str] = set()
 """Ids of the hub-filled backends made on a server joined with keys of its own, which sign each call for its person."""
+_acting: ContextVar[int | None] = ContextVar("acting_user", default=None)
+_scheduled: ContextVar[bool] = ContextVar("scheduled_run", default=False)
+remote_servers = SimpleNamespace(
+    refresh=lambda backend_ids: None, server_for=lambda user_id: None, run_refused=lambda on_servers: None
+)
+"""What the remote that fills ``compute_backends`` rows answers, each set by its client at import: ``token(name,
+account_user_id, remote_id, through)`` a call's token for its server ``name``; ``refresh(backend_ids)`` makes the rows
+follow its list before a run is placed; ``server_for(user_id)`` the backend id of the server a moved step goes to;
+``run_refused(on_servers)`` the run's nodes on its servers that it mints no token for, each with its sentence."""
 _entry_points_scanned = False
 _default_override: str | None = None
 _serving = False
 _headless = False
+
+
+@contextmanager
+def acting_for(user_id: int | None) -> Iterator[None]:
+    """Make ``user_id`` the person the calls inside the block are made for, as a run route does around its run.
+
+    A run's stage threads run under a copy of the context, so they see it too.
+    """
+    token = _acting.set(user_id)
+    try:
+        yield
+    finally:
+        _acting.reset(token)
+
+
+def acting() -> int | None:
+    """The person ``acting_for`` set for the calls made now; ``None`` outside such a block."""
+    return _acting.get()
+
+
+@contextmanager
+def for_run_record(run_id: int | None) -> Iterator[None]:
+    """The block a headless runner runs the run record ``run_id`` in: a schedule's run (its record names a schedule)
+    is marked so (``scheduled``), since no person is behind it to mint a remote's tokens with."""
+    from shared.run_completion import get_run_schedule_id
+
+    token = _scheduled.set(run_id is not None and get_run_schedule_id(run_id) is not None)
+    try:
+        yield
+    finally:
+        _scheduled.reset(token)
+
+
+def scheduled() -> bool:
+    """Whether the calls made now are a schedule's run (``for_run_record``)."""
+    return _scheduled.get()
+
+
+class Refused(LookupError):
+    """No token for a call to one of the remote's servers; ``shown`` is the sentence a refused call shows."""
+
+
+def refusal(error: BaseException) -> str | None:
+    """The sentence of the ``Refused`` that ``error`` is or was raised from, however it was wrapped on the way (a
+    backend's ``TaskFailed``, a route's ``HTTPException``); else ``None``."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, Refused):
+            return current.shown
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def register_backend(backend_id: str, factory: BackendFactory) -> None:

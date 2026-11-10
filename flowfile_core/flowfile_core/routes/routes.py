@@ -120,7 +120,6 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
-from flowfile_core.hub_client import node_tokens
 from flowfile_core.hub_client.exchange_store import hub_store
 from flowfile_core.hub_client.report import build_run_report, hub_flow_uuid, hub_target, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
@@ -366,16 +365,16 @@ def _editor_call_for(user_id: int) -> Iterator[None]:
     """The block of an editor call made for ``user_id``: a schema prediction, a preview, its statistics or export.
 
     On a server joined with keys of its own, each call to a server of the hub inside it carries the token minted with
-    that person's own sign-in through the hub (``node_tokens.acting_for``), as their runs do. A call refused because
+    that person's own sign-in through the hub (``acting_for``), as their runs do. A call refused because
     they have no such sign-in answers 403 with the sentence that says to sign in through the hub again, never a 500;
     a prediction the server refused shows that sentence as the node's ``prediction_warning``. Elsewhere nothing reads
     the person, and the block changes nothing.
     """
-    with node_tokens.acting_for(user_id):
+    with compute_registry.acting_for(user_id):
         try:
             yield
         except Exception as e:
-            sentence = node_tokens.refusal(e)
+            sentence = compute_registry.refusal(e)
             if sentence is None:
                 raise
             raise HTTPException(403, sentence) from None
@@ -383,7 +382,7 @@ def _editor_call_for(user_id: int) -> Iterator[None]:
 
 def _fetch_for(user_id: int, flow, node_id: int, **kwargs) -> None:
     """``flow.trigger_fetch_node`` for ``user_id``: on a server joined with keys of its own, a server of the hub takes
-    that person's run token (``node_tokens.acting_for``). The fetch takes the hub's exchange store as a run does
+    that person's run token (``acting_for``). The fetch takes the hub's exchange store as a run does
     (``_hub_store_for``)."""
     try:
         flow.hub_exchange_store = _hub_store_for(flow, user_id)
@@ -392,7 +391,7 @@ def _fetch_for(user_id: int, flow, node_id: int, **kwargs) -> None:
         flow.release_run()
         raise
     try:
-        with node_tokens.acting_for(user_id):
+        with compute_registry.acting_for(user_id):
             flow.trigger_fetch_node(node_id, **kwargs)
     finally:
         flow.hub_exchange_store = None
@@ -564,7 +563,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
     On a machine signed in to a hub the run takes the exchange store the hub sets, asked once before the run with the
     user's hub session and only for a flow with a node set to another backend than the run's or a step on a hub
     connection or secret, the cases a store changes (``_hub_store_for``), and holds it until the run ends. The run is
-    the user's (``node_tokens.acting_for``), so each call to a server of the hub carries the run token minted with
+    the user's (``acting_for``), so each call to a server of the hub carries the run token minted with
     that user's own sign-in through the hub.
     """
     try:
@@ -578,7 +577,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
         raise
 
     try:
-        with node_tokens.acting_for(user_id):
+        with compute_registry.acting_for(user_id):
             run_info = flow.run_graph(node_ids=node_ids, commit_sources=commit_sources, claimed=True)
     finally:
         flow.hub_exchange_store = None
