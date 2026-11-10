@@ -1733,8 +1733,11 @@ class FlowNode:
 
     def is_cached_on(self, backend_id: str) -> bool:
         """Whether this node holds its current configured cache as materialised rows on ``backend_id``."""
-        held = self.held_result(backend_id)
-        return bool(self.node_settings.cache_results and held is not None and held.state == "materialised")
+        ref = self.results.result_ref
+        return bool(
+            self.node_settings.cache_results and ref is not None and ref.state == "materialised"
+            and self.held_result(backend_id) is not None
+        )
 
     def result_backend(self, handle: str = DEFAULT_OUTPUT_HANDLE) -> ComputeBackend | None:
         """The backend that holds the result of output ``handle``, else ``None``; a plan over it runs there."""

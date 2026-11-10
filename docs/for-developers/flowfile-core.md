@@ -439,7 +439,7 @@ In Performance mode every node runs on every run unless it is a cached node whos
 |---|---|
 | `must_materialise` | `cache_results` is on and the node is not one of the `IN_CORE_NODE_TYPES` (`output`, `api_response`, `flow_output`, `run_flow`); or the node reads an input that crossed from another backend, whatever its type, so no result refers to the exchange store once the run removes its prefix |
 | `wide` | the node is not a narrow transform (`is_narrow_transform`) and not one of the `IN_CORE_NODE_TYPES` |
-| `fanout` | how many distinct downstream nodes among those the run executes read the result (`execute_node(running=)`: the execution plan's nodes less those already skipped; every consumer when no run is named; none for the node a single-node fetch runs); the worker stores a wide result with `fanout > 1` in either mode |
+| `fanout` | how many distinct plans among the nodes the run executes execute the result (`execute_node(running=)`: the execution plan's nodes less those already skipped; every consumer when no run is named; none for the node a single-node fetch runs): a consumer that collects (a writer, an operation, a stored result) counts once, a deferred one passes on its own fan-out; the worker stores a wide result with `fanout > 1` in either mode |
 | `preview_rows` | the context's `preview_rows`: 100 in Development mode, `None` in Performance mode, except for a `cache_results` node, which keeps a 100-row preview in every mode; always `None` for the `IN_CORE_NODE_TYPES` |
 
 `is_narrow_transform` reads the node's entry in `node_defaults`, which `configs/node_store/nodes.py` builds from the standard node templates and their `transform_type` (`narrow`, `wide` or `other`). Only `narrow` counts as narrow (select, filter, formula, sample, union and the like); `wide` and `other` nodes (join, group by, sort, record count, the readers, manual input) are submitted `wide`. A custom node has no entry there, so it is submitted `wide` whatever `transform_type` its manifest declares.
@@ -453,7 +453,7 @@ In Performance mode every node runs on every run unless it is a cached node whos
 | `WorkerBackend` (`backends/worker.py`) | `must_materialise`, or `wide` with `preview_rows` set or `fanout` above one | deferred: core holds the plan object in its own process, unserialised | inline when `preview_rows` is set: read from the Arrow IPC file the worker stored, or, for a deferred plan, from a worker sampler task over it |
 | `EmbeddedWorkerBackend` (`backends/embedded.py`) | the worker's rule (`service._materialise`): it calls the worker's own submit (`service.run_submit`) | deferred: the worker in this process holds the plan | inline when `preview_rows` is set, as the worker answers it |
 
-Nothing computes a deferred result's rows before a consumer, a write or a preview reads them. A wide plan is stored in Development mode so its preview and its consumers read rows computed once; in Performance mode nothing reads it before the run's writers do, so it stays a plan, unless more than one consumer reads it (`fanout > 1`), when it is stored so that each consumer scans the file instead of computing it again inside its own plan. A stored result's `plan_for` is a scan of the file the worker wrote (`pl.scan_ipc`), which a consumer's plan composes on.
+Nothing computes a deferred result's rows before a consumer, a write or a preview reads them. A wide plan is stored in Development mode so its preview and its consumers read rows computed once; in Performance mode nothing reads it before the run's writers do, so it stays a plan, unless more than one plan of the run executes it (`fanout > 1`), when it is stored so that each scans the file instead of computing it again. A stored result's `plan_for` is a scan of the file the worker wrote (`pl.scan_ipc`), which a consumer's plan composes on.
 
 ### Node Classification
 
@@ -463,7 +463,7 @@ What each kind of node becomes on a worker, the embedded one included:
 |---|---|---|---|
 | narrow transform (select, filter, formula, sample, union) | not `wide` | deferred; sampled inline by a worker sampler task | deferred; no sample |
 | wide or other (join, group_by, sort, record_count, readers, manual_input) | `wide` | stored; sampled inline from its file | deferred; no sample |
-| a wide node read by more than one node of the run | `wide`, `fanout > 1` | stored; sampled inline from its file | stored; no sample |
+| a wide node executed by more than one plan of the run | `wide`, `fanout > 1` | stored; sampled inline from its file | stored; no sample |
 | any node with `cache_results` | `must_materialise` | stored; sampled inline | stored; sampled inline |
 | `output`, `api_response`, `flow_output`, `run_flow` | none; `preview_rows` is `None` | deferred; no inline sample, sampled when its preview is opened | deferred; no sample |
 

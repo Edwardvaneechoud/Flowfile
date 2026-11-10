@@ -2,7 +2,7 @@
 import { defineStore } from "pinia";
 import type { VueFlowStore } from "@vue-flow/core";
 import type { HistoryState, FlowArtifactData, NodeArtifactSummary } from "../types";
-import type { FlowParameter } from "../types/flow.types";
+import type { FlowParameter, PlacementPreview } from "../types/flow.types";
 import { FlowApi } from "../api/flow.api";
 import { useEditorStore } from "./editor-store";
 import { useResultsStore } from "./results-store";
@@ -62,12 +62,10 @@ export const useFlowStore = defineStore("flow", {
       pendingLayoutResetCounter: 0,
       // A run started or ended elsewhere; HeaderButtons re-reads the run state on it.
       pendingRunStateCounter: 0,
-      cacheRequestId: 0,
+      placementRequestId: 0,
       cachedResultState: null as {
-        flowId: number;
         graphVersion: number;
         runStart: string | null | undefined;
-        nodeIds: number[];
       } | null,
     };
   },
@@ -79,13 +77,13 @@ export const useFlowStore = defineStore("flow", {
       (nodeId: number): boolean => {
         const cached = state.cachedResultState;
         const editor = useEditorStore();
+        const results = useResultsStore();
         return Boolean(
           cached &&
-          cached.flowId === state.flowId &&
           cached.graphVersion === editor.graphVersion &&
           !editor.isRunning &&
-          cached.runStart === useResultsStore().getRunResult(state.flowId)?.start_time &&
-          cached.nodeIds.includes(nodeId),
+          cached.runStart === results.getRunResult(state.flowId)?.start_time &&
+          (results.placements[state.flowId]?.cached_node_ids ?? []).includes(nodeId),
         );
       },
     canUndo: (state) => state.historyState.can_undo,
@@ -97,7 +95,7 @@ export const useFlowStore = defineStore("flow", {
   actions: {
     setFlowId(flowId: number) {
       this.cachedResultState = null;
-      this.cacheRequestId++;
+      this.placementRequestId++;
       if (this.flowId === flowId) return;
       this.flowId = flowId;
       try {
@@ -165,25 +163,10 @@ export const useFlowStore = defineStore("flow", {
     async fetchSettingsValidation(flowId?: number) {
       const targetId = flowId ?? this.flowId;
       if (targetId < 0) return;
-      const requestId = ++this.cacheRequestId;
-      const graphVersion = useEditorStore().graphVersion;
-      const runStart = useResultsStore().getRunResult(targetId)?.start_time;
       try {
         const data = await FlowApi.getSettingsValidation(targetId);
         if (this.flowId !== targetId) return;
         useResultsStore().applySettingsValidation(targetId, data);
-        if (
-          requestId === this.cacheRequestId &&
-          graphVersion === useEditorStore().graphVersion &&
-          runStart === useResultsStore().getRunResult(targetId)?.start_time
-        ) {
-          this.cachedResultState = {
-            flowId: targetId,
-            graphVersion,
-            runStart,
-            nodeIds: data.cached_node_ids ?? [],
-          };
-        }
       } catch {
         // Validation is advisory; don't break the UI
       }
@@ -192,14 +175,38 @@ export const useFlowStore = defineStore("flow", {
     // Placement is advisory and every edit asks for it, so the request waits for edits to settle.
     fetchPlacement(flowId?: number) {
       const targetId = flowId ?? this.flowId;
-      if (targetId < 0) return;
+      if (targetId < 0 || targetId !== this.flowId) return;
+      const requestId = ++this.placementRequestId;
+      const graphVersion = useEditorStore().graphVersion;
+      const runStart = useResultsStore().getRunResult(targetId)?.start_time;
+      this.cachedResultState = null;
       if (placementTimer) clearTimeout(placementTimer);
       placementTimer = setTimeout(async () => {
         placementTimer = null;
+        if (this.flowId !== targetId || requestId !== this.placementRequestId) return;
+        const wasRunning = useEditorStore().isRunning;
+        const apply = (data: PlacementPreview): boolean => {
+          if (
+            this.flowId !== targetId ||
+            requestId !== this.placementRequestId ||
+            graphVersion !== useEditorStore().graphVersion ||
+            runStart !== useResultsStore().getRunResult(targetId)?.start_time
+          )
+            return false;
+          useResultsStore().applyPlacement(targetId, data);
+          if (!wasRunning && !useEditorStore().isRunning) {
+            this.cachedResultState = { graphVersion, runStart };
+          }
+          return true;
+        };
         try {
           const data = await FlowApi.getPlacement(targetId);
-          if (this.flowId !== targetId) return;
-          useResultsStore().applyPlacement(targetId, data);
+          if (!apply(data)) return;
+          // Cold or cached negative verdicts need a live check. Keep the fast preview visible
+          // while it runs; both responses share the same staleness checks.
+          if (data.unchecked_backend_ids?.length) {
+            apply(await FlowApi.getPlacement(targetId, true));
+          }
         } catch {
           // A failed preview keeps the last one shown
         }

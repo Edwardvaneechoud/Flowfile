@@ -19,7 +19,7 @@ from flowfile_core.flowfile.execution.context import (
     use_context,
 )
 from flowfile_core.flowfile.execution.errors import ComputeError
-from flowfile_core.flowfile.execution.protocol import SubmitHints
+from flowfile_core.flowfile.execution.protocol import SubmitHints, worker_stores
 from flowfile_core.flowfile.flow_node.models import (
     ExecutionDecision,
     InvalidationReason,
@@ -27,6 +27,7 @@ from flowfile_core.flowfile.flow_node.models import (
 )
 from flowfile_core.flowfile.flow_node.state import NodeExecutionState, SourceFileInfo
 from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
+from flowfile_core.schemas import input_schema
 from shared.path_utils import is_url
 
 if TYPE_CHECKING:
@@ -38,6 +39,24 @@ IN_CORE_NODE_TYPES = frozenset({"output", "api_response", "flow_output", "run_fl
 node's the child flow's output. They are never wide, ask no preview, and are materialised only for a boundary input,
 so otherwise no backend computes or samples their rows during the run."""
 
+OPERATION_NODE_TYPES = frozenset(
+    {
+        "database_writer",
+        "cloud_storage_writer",
+        "catalog_writer",
+        "fuzzy_match",
+        "random_split",
+        "train_model",
+        "apply_model",
+        "polars_code",
+        "sql_query",
+        "python_script",
+    }
+)
+"""Built-in node types whose function hands its inputs' plans to an operation (``FlowNode.run_op``) or a kernel, which
+runs them itself: the writers, the fuzzy join, the random split, the ML nodes, Polars Code and SQL Query, and the
+Python Script node, whose inputs are written for its kernel. Custom nodes (``UserDefinedNode`` settings) do too."""
+
 
 def is_narrow_transform(node: FlowNode) -> bool:
     """Whether ``node`` maps rows without reshaping data across them, by its template's ``transform_type``.
@@ -46,6 +65,15 @@ def is_narrow_transform(node: FlowNode) -> bool:
     is not narrow.
     """
     return node.node_default is not None and node.node_default.transform_type == "narrow"
+
+
+def _runs_its_inputs(node: FlowNode) -> bool:
+    """Whether executing ``node`` runs its inputs' plans itself rather than composing its plan on them."""
+    return (
+        node.node_type in IN_CORE_NODE_TYPES
+        or node.node_type in OPERATION_NODE_TYPES
+        or isinstance(node.setting_input, input_schema.UserDefinedNode)
+    )
 
 
 def hints_for(
@@ -60,26 +88,53 @@ def hints_for(
       that crossed from another backend (``_boundary_inputs``), so no result refers to the exchange prefix once the
       run removes it.
     - ``wide``: neither ``is_narrow_transform`` nor in ``IN_CORE_NODE_TYPES``.
-    - ``fanout``: the number of distinct downstream nodes among *running*, the ids of the nodes this run executes,
-      or of every downstream node when *running* is ``None``. The worker stores a wide result read by more than one,
-      which would otherwise be computed again inside each consumer's plan.
+    - ``fanout``: how many distinct plans this run executes the result in, so the worker stores a wide result only
+      when more than one would otherwise compute it again. Counted over the consumers among *running*, the ids of the
+      nodes this run executes (every consumer when *running* is ``None``): a consumer that collects counts as one, a
+      deferred one passes on its own fan-out, since every plan that executes it inlines this node's plan. A consumer
+      collects when it runs its inputs itself (``IN_CORE_NODE_TYPES``, ``OPERATION_NODE_TYPES``, a custom node) or
+      its own hints make the worker store it (``worker_stores``). A node no sink, operation or stored result reads
+      has fan-out 0, as in a Performance run of a read into group-bys with no writer, which stays deferred. A
+      consumer reading the node on two inputs (a self-join) is one plan and counts once. The consumers are walked
+      depth first with an explicit stack, so a long chain never reaches the recursion limit.
     - ``preview_rows``: the context's, else ``DEFAULT_PREVIEW_ROWS``. ``None`` for ``IN_CORE_NODE_TYPES`` and in
       *performance_mode*, except for a ``cache_results`` node.
     """
-    in_core = node.node_type in IN_CORE_NODE_TYPES
-    caches = node.node_settings.cache_results
-    preview_rows = None
-    if not in_core and (caches or not performance_mode):
-        preview_rows = context.preview_rows if context.preview_rows is not None else DEFAULT_PREVIEW_ROWS
-    consumers = {consumer.node_id for consumer in node.leads_to_nodes}
-    if running is not None:
-        consumers = {consumer for consumer in consumers if consumer in running}
-    return SubmitHints(
-        must_materialise=(caches and not in_core) or bool(node._boundary_inputs),
-        wide=not in_core and not is_narrow_transform(node),
-        fanout=len(consumers),
-        preview_rows=preview_rows,
-    )
+    known: dict[int | str, SubmitHints] = {}
+    pending = [node]
+    while pending:
+        current = pending[-1]
+        if current.node_id in known:
+            pending.pop()
+            continue
+        consumers = [
+            consumer
+            for consumer_id, consumer in {c.node_id: c for c in current.leads_to_nodes}.items()
+            if running is None or consumer_id in running
+        ]
+        unknown = [consumer for consumer in consumers if consumer.node_id not in known]
+        if unknown:
+            pending.extend(unknown)
+            continue
+        pending.pop()
+        in_core = current.node_type in IN_CORE_NODE_TYPES
+        caches = current.node_settings.cache_results
+        preview_rows = None
+        if not in_core and (caches or not performance_mode):
+            preview_rows = context.preview_rows if context.preview_rows is not None else DEFAULT_PREVIEW_ROWS
+        fanout = sum(
+            1
+            if _runs_its_inputs(consumer) or worker_stores(known[consumer.node_id])
+            else known[consumer.node_id].fanout
+            for consumer in consumers
+        )
+        known[current.node_id] = SubmitHints(
+            must_materialise=(caches and not in_core) or bool(current._boundary_inputs),
+            wide=not in_core and not is_narrow_transform(current),
+            fanout=fanout,
+            preview_rows=preview_rows,
+        )
+    return known[node.node_id]
 
 
 class StateProvider(Protocol):

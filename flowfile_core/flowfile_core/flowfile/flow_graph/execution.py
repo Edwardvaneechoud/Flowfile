@@ -26,7 +26,7 @@ from flowfile_core.flowfile.catalog_cdc import (
 )
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
-from flowfile_core.flowfile.execution.errors import ComputeError, VersionMismatch
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.flowfile.execution.placement import (
     Fallback,
@@ -1063,7 +1063,7 @@ class ExecutionMixin(GraphMixinBase):
         return closed
 
     def _place_run(
-        self, execution_plan: ExecutionPlan, exchange_run: ExchangeRun, *, log: bool = True
+        self, execution_plan: ExecutionPlan, exchange_run: ExchangeRun, *, log: bool = True, probe: bool = True
     ) -> tuple[Placement | None, list[BoundaryEdge]]:
         """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
@@ -1079,6 +1079,7 @@ class ExecutionMixin(GraphMixinBase):
         when the store cannot be used, when the limit is not a whole number, or when core knows the output holds more
         rows than ``FLOWFILE_EXCHANGE_MAX_ROWS`` (``BoundaryEdge.cost``). An edge of unknown size crosses. Every refusal
         carries its ``remedy_for``. ``log`` false (the placement preview) writes no warnings to core's log.
+        ``probe=False`` reads only cached handshake verdicts, leaving unchecked backends unreachable.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1093,6 +1094,7 @@ class ExecutionMixin(GraphMixinBase):
         absent: dict[str, dict[str, str]] = {}
         refused: dict[str, str] = {}
         unreachable: dict[str, ComputeError] = {}
+        unchecked_backend_ids: list[str] = []
         named = dict.fromkeys(policy.backend_for(node) for node in nodes)
         if isinstance(policy, MixedPlacementPolicy) and nodes:
             named.setdefault(fallback_id)
@@ -1100,7 +1102,14 @@ class ExecutionMixin(GraphMixinBase):
             if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
                 continue
             try:
-                verdict = handshake.verdict_for(registry.backend(backend_id))
+                backend = registry.backend(backend_id)
+                verdict = handshake.verdict_for(backend) if probe else handshake.cached_verdict(backend)
+                if verdict is None:
+                    unchecked_backend_ids.append(backend_id)
+                    unreachable[backend_id] = ComputeUnavailable(
+                        "No cached handshake verdict; preview did not check this backend", backend_id=backend_id
+                    )
+                    continue
             except VersionMismatch as e:
                 refused[backend_id] = str(e)
                 continue
@@ -1115,7 +1124,13 @@ class ExecutionMixin(GraphMixinBase):
                 absent[backend_id] = verdict.absent
             else:
                 refused[backend_id] = verdict.error
+                if not probe:
+                    # Negative verdicts are retried by verdict_for; let the canvas
+                    # request that live check without blocking this fast preview.
+                    unchecked_backend_ids.append(backend_id)
         placement = place(self, declared, policy, nodes=nodes, absent=absent, unreachable=unreachable, log=log)
+        if unchecked_backend_ids:
+            placement = replace(placement, unchecked_backend_ids=unchecked_backend_ids)
         if refused:
             refusals = [
                 Refusal(node.node_id, policy.backend_for(node), refused[policy.backend_for(node)])
@@ -1184,16 +1199,17 @@ class ExecutionMixin(GraphMixinBase):
             )
         return placement, edges
 
-    def preview_placement(self) -> Placement | None:
+    def preview_placement(self, *, probe: bool = True) -> Placement | None:
         """Where a run would place each of the flow's nodes now, without running, logging or changing anything.
 
         ``None`` with the protocol flag off. Every node is placed as if every gate were open, under an exchange run that
         is never collected, and the boundary edges are dropped. Placement reads a resolved copy of each node's settings,
-        so a preview beside an edit or a run leaves both as they are.
+        so a preview beside an edit or a run leaves both as they are. With ``probe=False`` no worker is contacted;
+        unknown backends retain their assigned nodes until a live check establishes capabilities or refusals.
         """
         stage = ExecutionStage(nodes=list(self.nodes))
         placement, _ = self._place_run(
-            ExecutionPlan(skip_nodes=[], stages=[stage]), ExchangeRun(self.flow_id, "preview"), log=False
+            ExecutionPlan(skip_nodes=[], stages=[stage]), ExchangeRun(self.flow_id, "preview"), log=False, probe=probe
         )
         return placement
 

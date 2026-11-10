@@ -110,6 +110,8 @@ class PlacementPreview(BaseModel):
     """
 
     available: bool
+    cached_node_ids: list[int] = Field(default_factory=list)
+    unchecked_backend_ids: list[str] = Field(default_factory=list)
     assignment: dict[int, str] = Field(default_factory=dict, description="Node id -> the backend that would run it.")
     fallbacks: list[PlacementFallback] = Field(default_factory=list)
     refusals: list[PlacementRefusal] = Field(default_factory=list)

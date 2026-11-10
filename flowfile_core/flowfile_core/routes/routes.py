@@ -2718,28 +2718,39 @@ def get_flow_artifacts(flow_id: int, current_user=Depends(get_current_active_use
 
 @router.get("/flow/settings_validation", tags=["editor"], response_model=FlowSettingsValidation)
 def get_flow_settings_validation(flow_id: int, current_user=Depends(get_current_active_user)) -> FlowSettingsValidation:
-    """Report missing input columns and nodes cached on the backend of their next run."""
+    """Conservative static check: node settings that reference missing input columns."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
-    placement = flow.preview_placement()
-    assignment = placement.assignment if placement is not None else {}
-    flow_backend = current_context(flow).backend_id
-    return validate_flow_settings(flow).model_copy(
-        update={"cached_node_ids": [
-            node.node_id for node in flow.nodes if node.is_cached_on(assignment.get(node.node_id, flow_backend))
-        ]}
-    )
+    return validate_flow_settings(flow)
+
+
+def _cached_node_ids(flow, placement) -> list[int]:
+    """Known materialised caches on the next run's backends; advisory and safe to omit."""
+    try:
+        assignment = placement.assignment if placement is not None else {}
+        default = current_context(flow).backend_id
+        return [node.node_id for node in flow.nodes if node.is_cached_on(assignment.get(node.node_id, default))]
+    except Exception:
+        logging.exception("Could not determine cached nodes for flow %s", flow.flow_id)
+        return []
 
 
 @router.get("/flow/placement", tags=["editor"], response_model=output_model.PlacementPreview)
-def get_flow_placement(flow_id: int, current_user=Depends(get_current_active_user)) -> output_model.PlacementPreview:
+def get_flow_placement(
+    flow_id: int, current_user=Depends(get_current_active_user), probe: bool = True
+) -> output_model.PlacementPreview:
     """Where a run would place each node now: the backend it would run on, the nodes moved to the default backend
-    because theirs cannot run them, and the nodes no backend can run. Runs nothing and changes nothing."""
+    because theirs cannot run them, and the nodes no backend can run. Runs nothing and changes nothing.
+    Also reports materialised cached nodes on their assigned backends.
+    With probe=false, use cached capabilities only; fallback warnings may wait for a live check."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
-    placement = flow.preview_placement()
+    placement = flow.preview_placement(probe=probe)
+    cached = _cached_node_ids(flow, placement)
     if placement is None:
-        return output_model.PlacementPreview(available=False)
+        return output_model.PlacementPreview(available=False, cached_node_ids=cached)
     return output_model.PlacementPreview(
         available=True,
+        cached_node_ids=cached,
+        unchecked_backend_ids=placement.unchecked_backend_ids,
         assignment=placement.assignment,
         fallbacks=[output_model.PlacementFallback(**dataclasses.asdict(f)) for f in placement.fallbacks],
         refusals=[output_model.PlacementRefusal(**dataclasses.asdict(r)) for r in placement.refusals],

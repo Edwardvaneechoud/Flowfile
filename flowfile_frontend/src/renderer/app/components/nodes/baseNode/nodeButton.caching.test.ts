@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createApp, nextTick, reactive } from "vue";
 import NodeButton from "./nodeButton.vue";
 import type { PlacementPreview } from "../../../types";
@@ -34,16 +34,19 @@ vi.mock("../../../stores/column-store", () => ({
 }));
 vi.mock("../../../composables/useCustomNodeIcon", () => ({ useNodeIconUrl: () => "icon.svg" }));
 
+let app: ReturnType<typeof createApp>;
+afterEach(() => app?.unmount());
+
 function mountNode() {
   const host = document.createElement("div");
-  const app = createApp(NodeButton, {
+  app = createApp(NodeButton, {
     nodeId: 1,
     imageSrc: "icon.svg",
     title: "Input",
     nodeTitleInfo: { nodeId: 1, title: "Input" } as any,
   });
   app.mount(host);
-  return { host, app };
+  return host;
 }
 
 beforeEach(() => {
@@ -56,16 +59,10 @@ it.each(["success", "running", "failure", "warning", "skipped"])(
   (status) => {
     state.cached = true;
     state.status = status;
-    const { host, app } = mountNode();
-    try {
-      expect(host.querySelector('[aria-label="Cached result"]') !== null).toBe(
-        status === "success",
-      );
-      expect(host.querySelector(`.status-indicator.${status}`)).not.toBeNull();
-      expect(host.querySelector("button.cached-node") !== null).toBe(status === "success");
-    } finally {
-      app.unmount();
-    }
+    const host = mountNode();
+    expect(host.querySelector('[aria-label="Cached result"]') !== null).toBe(status === "success");
+    expect(host.querySelector(`.status-indicator.${status}`)).not.toBeNull();
+    expect(host.querySelector("button.cached-node") !== null).toBe(status === "success");
   },
 );
 it("uses the cache border, icon and status tooltip alongside the placement badge", () => {
@@ -79,49 +76,35 @@ it("uses the cache border, icon and status tooltip alongside the placement badge
       { node_id: 1, backend_id: "custom", fallback_id: "worker", reason: "not supported" },
     ],
   };
-  const { host, app } = mountNode();
-  try {
-    const button = host.querySelector("button.node-button");
-    expect(button).not.toBeNull();
-    expect(button?.classList.contains("cached-node")).toBe(true);
-    expect(host.querySelector(".cache-indicator.material-icons")?.textContent?.trim()).toBe(
-      "cached",
-    );
-    expect(button?.hasAttribute("title")).toBe(false);
-    expect(host.querySelector(".cache-indicator")?.hasAttribute("title")).toBe(false);
-    expect(
-      host.querySelector(`#${button?.getAttribute("aria-describedby")}`)?.textContent,
-    ).toContain("Cache validity");
-    expect(host.querySelector('[data-testid="placement-badge"]')?.textContent).toContain(
-      "default worker",
-    );
-    expect(host.querySelector('[data-testid="placement-badge-tooltip"]')?.textContent).toContain(
-      "doesn't support",
-    );
-  } finally {
-    app.unmount();
-  }
+  const host = mountNode();
+  const button = host.querySelector("button.node-button");
+  expect(button).not.toBeNull();
+  expect(button?.classList.contains("cached-node")).toBe(true);
+  expect(host.querySelector(".cache-indicator.material-icons")?.textContent?.trim()).toBe("cached");
+  expect(button?.hasAttribute("title")).toBe(false);
+  expect(host.querySelector(".cache-indicator")?.hasAttribute("title")).toBe(false);
+  expect(host.querySelector(`#${button?.getAttribute("aria-describedby")}`)?.textContent).toContain(
+    "Cache validity",
+  );
+  expect(host.querySelector('[data-testid="placement-badge"]')?.textContent).toContain(
+    "default worker",
+  );
+  expect(host.querySelector('[data-testid="placement-badge-tooltip"]')?.textContent).toContain(
+    "doesn't support",
+  );
 });
 it("does not mark an uncached result", () => {
-  const { host, app } = mountNode();
-  try {
-    expect(host.querySelector('[aria-label="Cached result"]')).toBeNull();
-    expect(host.querySelector("button.cached-node")).toBeNull();
-  } finally {
-    app.unmount();
-  }
+  const host = mountNode();
+  expect(host.querySelector('[aria-label="Cached result"]')).toBeNull();
+  expect(host.querySelector("button.cached-node")).toBeNull();
 });
 it("reactively clears the badge when cache knowledge is invalidated", async () => {
   state.cached = true;
-  const { host, app } = mountNode();
-  try {
-    expect(host.querySelector('[aria-label="Cached result"]')).not.toBeNull();
-    state.cached = false;
-    await nextTick();
-    expect(host.querySelector('[aria-label="Cached result"]')).toBeNull();
-    expect(host.querySelector("button.cached-node")).toBeNull();
-    expect(host.querySelector(".status-indicator.success")).not.toBeNull();
-  } finally {
-    app.unmount();
-  }
+  const host = mountNode();
+  expect(host.querySelector('[aria-label="Cached result"]')).not.toBeNull();
+  state.cached = false;
+  await nextTick();
+  expect(host.querySelector('[aria-label="Cached result"]')).toBeNull();
+  expect(host.querySelector("button.cached-node")).toBeNull();
+  expect(host.querySelector(".status-indicator.success")).not.toBeNull();
 });

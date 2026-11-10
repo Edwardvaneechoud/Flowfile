@@ -621,9 +621,8 @@ def test_endpoint_reports_a_cached_node_after_a_real_run(validation_enabled):
         graph.get_node(1).node_settings.cache_results = True
 
         def cached_nodes():
-            response = client.get("/flow/settings_validation", params={"flow_id": flow_id})
+            response = client.get("/flow/placement", params={"flow_id": flow_id})
             assert response.status_code == 200
-            assert response.json()["enabled"] is validation_enabled
             return response.json()["cached_node_ids"]
 
         assert cached_nodes() == []
@@ -642,7 +641,7 @@ def test_endpoint_unknown_flow_returns_404():
     assert response.status_code == 404
 
 
-def test_endpoint_response_shape():
+def test_endpoint_response_shape(monkeypatch):
     from flowfile_core import flow_file_handler
 
     client = _get_test_client()
@@ -655,6 +654,11 @@ def test_endpoint_response_shape():
     add_promise(graph, "group_by", 2)
     connect(graph, 1, 2)
     add_group_by(graph, 2, [("gone", "groupby")])
+
+    def placement_must_not_run():
+        raise AssertionError("Static validation must not compute placement")
+
+    monkeypatch.setattr(graph, "preview_placement", placement_must_not_run)
     try:
         response = client.get("/flow/settings_validation", params={"flow_id": flow_id})
         assert response.status_code == 200
@@ -672,7 +676,7 @@ def test_endpoint_response_shape():
 
         graph.flow_settings.validate_settings = False
         response = client.get("/flow/settings_validation", params={"flow_id": flow_id})
-        assert response.json() == {"enabled": False, "nodes": [], "cached_node_ids": []}
+        assert response.json() == {"enabled": False, "nodes": []}
     finally:
         flow_file_handler.delete_flow(flow_id)
 
@@ -908,13 +912,22 @@ def cloud_writer_graph(graph: FlowGraph | None = None, **overrides) -> FlowGraph
 
 
 def cloud_reader_graph(resource_path: str) -> FlowGraph:
-    graph = create_graph()
-    add_promise(graph, "cloud_storage_reader", 1)
-    graph.add_cloud_storage_reader(input_schema.NodeCloudStorageReader.model_validate({
-        "flow_id": graph.flow_id, "node_id": 1, "user_id": 1,
-        "cloud_storage_settings": {"resource_path": resource_path, "file_format": "parquet", "auth_mode": "aws-cli"},
-    }))
-    return graph
+    from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
+
+    # These are static path-validation fixtures, not reads of a real S3 object.
+    token = schema_prefetch_blocked.set(True)
+    try:
+        graph = create_graph()
+        add_promise(graph, "cloud_storage_reader", 1)
+        graph.add_cloud_storage_reader(input_schema.NodeCloudStorageReader.model_validate({
+            "flow_id": graph.flow_id, "node_id": 1, "user_id": 1,
+            "cloud_storage_settings": {
+                "resource_path": resource_path, "file_format": "parquet", "auth_mode": "aws-cli",
+            },
+        }))
+        return graph
+    finally:
+        schema_prefetch_blocked.reset(token)
 
 
 def test_user_cloud_writer_without_a_path_warns():
