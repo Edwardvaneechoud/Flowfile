@@ -26,6 +26,7 @@ import pytest
 
 from flowfile_core.auth import secrets as core_secrets
 from flowfile_core.hub_client import client, session
+from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceOut
 
 _KEY = "a signing key only the fake hub knows"
@@ -418,8 +419,17 @@ class SealingHubCatalog(FakeHubWithCatalog):
     one in ``refused_nodes`` its 403), with ``issuer`` as ``iss``; without targets ``sealed`` is empty. Storage tokens
     carry ``kind: "storage"``. ``secrets`` names (TS18) are answered from ``secret_values``, each sealed to every target
     with ``kind: "secret"`` (``[]`` when none is asked); names without targets are the hub's 422 and a name it does not
-    hold its 403 sentence, worded as TS18's hub words them.
+    hold its 403 sentence, worded as TS18's hub words them. ``connections`` (``kind`` and ``name``) are answered from
+    ``stored_connections``, each ``(kind, name)`` to its settings and the names of its secret fields, sealed to every
+    target as the hub's vend seals them. The hub lists ``secret_values`` at ``GET /secrets/secrets`` and
+    ``stored_connections`` at each kind's list route, no value and no secret, as the hub mounts core's routes.
     """
+
+    LIST_PATHS = {
+        "/cloud_connections/cloud_connections": "cloud",
+        "/kafka/connections": "kafka",
+        "/db_connection_lib": "database",
+    }
 
     def __init__(self, signer, issuer: str):
         super().__init__()
@@ -428,10 +438,36 @@ class SealingHubCatalog(FakeHubWithCatalog):
         self.enc_keys: dict[str, dict] = {}
         self.refused_nodes: set[str] = set()
         self.secret_values: dict[str, str] = {}
+        self.stored_connections: dict[tuple[str, str], tuple[dict, tuple[str, ...]]] = {}
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method != "GET" or (path != "/secrets/secrets" and path not in self.LIST_PATHS):
+            return super().handle(request)
+        self.calls.append((request.method, path))
+        if self._bearer_user(request) is None:
+            return httpx.Response(401, json={"detail": "Could not validate credentials"})
+        if path == "/secrets/secrets":
+            rows = [{"id": i, "name": name, "value": "**********"} for i, name in enumerate(self.secret_values, 1)]
+            return httpx.Response(200, json=rows)
+        kind = self.LIST_PATHS[path]
+        rows = [
+            {"id": i, "connection_name": name, **{k: v for k, v in settings.items() if k not in secret}}
+            for i, ((stored_kind, name), (settings, secret)) in enumerate(self.stored_connections.items(), 1)
+            if stored_kind == kind
+        ]
+        return httpx.Response(200, json=rows)
 
     def _vend(self, body: dict) -> httpx.Response:
         targets = body.get("targets") or []
         names = body.get("secrets") or []
+        refs = [(ref["kind"], ref["name"]) for ref in body.get("connections") or []]
+        if refs and not targets:
+            unsealed = "Connections are vended only sealed to the servers that run them"
+            return httpx.Response(422, json={"detail": unsealed})
+        for ref in refs:
+            if ref not in self.stored_connections:
+                return httpx.Response(403, json={"detail": f"You have no connection named {ref[1]} on the hub"})
         if names and not targets:
             return httpx.Response(
                 422,
@@ -512,6 +548,27 @@ class SealingHubCatalog(FakeHubWithCatalog):
                 }
                 for name in names
             ]
+        answer["connections"] = [
+            {
+                "kind": kind,
+                "name": name,
+                "secret_fields": list(self.stored_connections[(kind, name)][1]),
+                "sealed": {
+                    node: self.signer.sealed_connection(
+                        self.enc_keys[node],
+                        node=node,
+                        iss=self.issuer,
+                        connection_kind=kind,
+                        name=name,
+                        settings=self.stored_connections[(kind, name)][0],
+                        run_id=body["run_id"],
+                        vend_id=answer["vend_id"],
+                    )
+                    for node in targets
+                },
+            }
+            for kind, name in dict.fromkeys(refs)
+        ]
         return httpx.Response(200, json=answer)
 
 
@@ -596,11 +653,12 @@ def sign_in_through_hub(fake: FakeHub, user_id: int, username: str = "ana", pass
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    """A secure store in the test's tmp dir, and no access token cached from an earlier test."""
+    """A secure store in the test's tmp dir, and no access token or hub list cached from an earlier test."""
     path = tmp_path / "secure_storage"
     monkeypatch.setenv("FLOWFILE_SECURE_STORAGE_PATH", str(path))
     monkeypatch.setenv("SECURE_STORAGE_PATH", str(path))
     # SecureStorage resolves its path once, at import — rebuild the module singleton.
     monkeypatch.setattr(core_secrets, "_storage", core_secrets.SecureStorage())
     monkeypatch.setattr(session, "_access_tokens", {})
+    monkeypatch.setattr(hub_secrets, "_listed", {})
     return path

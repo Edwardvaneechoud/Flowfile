@@ -259,6 +259,8 @@ def test_a_database_step_carries_the_sealed_password_which_opens_where_it_runs(
     def resolved():
         raise AssertionError("a password the hub sealed is not looked up here")
 
+    with pytest.raises(ValueError, match="on_the_hub is a hub secret, which only a hub server opens"):
+        _step_database_credentials(settings.database_settings, user_id, resolved)
     with run_secrets.use_sealed(sealed):
         connection, password = _step_database_credentials(settings.database_settings, user_id, resolved)
     read = DatabaseReadPayload(
@@ -272,18 +274,38 @@ def test_a_database_step_carries_the_sealed_password_which_opens_where_it_runs(
 
 
 def test_a_kafka_step_carries_its_connections_secrets_sealed_and_core_keeps_its_own_to_commit(
-    user_id, stored_connections, sealed_for_worker, node_keys, signer, monkeypatch
+    hub, user_id, stored_connections, sealed_for_worker, node_keys, signer, monkeypatch
 ):
     _, kafka, kafka_id = stored_connections
     sasl, ssl_key = kafka_names(kafka)
-    sealed = sealed_for_worker(**{sasl: "hub-sasl", ssl_key: "hub-key"})
-    source = input_schema.KafkaSourceSettings(kafka_connection_id=kafka_id)
+    on_hub = f"hub_{kafka}"
+    ref = ("kafka", on_hub)
+    hub.stored_connections[ref] = (
+        {
+            "bootstrap_servers": "broker:9092",
+            "security_protocol": "SASL_SSL",
+            "sasl_mechanism": "PLAIN",
+            "sasl_username": "svc",
+            "sasl_password": "hub-sasl",
+            "ssl_key_pem": "hub-key",
+        },
+        ("sasl_password", "ssl_key_pem"),
+    )
+    run_vend = vend.request(1, "run-k", set(), set(), targets=["worker"], connections=[ref])
+    own = input_schema.KafkaSourceSettings(kafka_connection_id=kafka_id, kafka_connection_name=kafka)
+    source = input_schema.KafkaSourceSettings(kafka_connection_name=on_hub)
     stored = KafkaReadSettings(
         bootstrap_servers="broker:9092", topic="t", sasl_password="$ffsec$1$1$core", ssl_key_pem="$ffsec$1$1$key"
     )
 
-    assert _step_kafka_settings(stored, source, user_id) is stored
-    with run_secrets.use_sealed(sealed):
+    with pytest.raises(ValueError, match=f"{on_hub} is a hub connection, which only a hub server opens"):
+        _step_kafka_settings(stored, source, user_id)
+    with run_secrets.use_sealed(
+        sealed_for_worker(**{sasl: "own-sasl", ssl_key: "own-key"}),
+        run_vend.sealed_connections([ref]),
+        run_vend.secret_fields([ref]),
+    ):
+        assert _step_kafka_settings(stored, own, user_id) is stored
         carried = _step_kafka_settings(stored, source, user_id)
     read = KafkaReadPayload(flow_id=1, node_id=4, settings=carried, read_kafka_source=lambda *a, **k: None)
     wire = worker_backend._kafka_read_settings(read).model_dump(mode="json")
@@ -321,6 +343,8 @@ def test_a_custom_step_carries_its_selected_secrets_sealed_and_needs_none_here(
     sealed = sealed_for_worker(hub_api_key="hub-key")
 
     with pytest.raises(ValueError, match="not found for this user"):
+        resolve_secret_payload(SecretNode.from_settings({"config": {"api_key": "nowhere"}}), user_id)
+    with pytest.raises(ValueError, match="hub_api_key is a hub secret, which only a hub server opens"):
         resolve_secret_payload(node, user_id)
     with run_secrets.use_sealed(sealed):
         carried = resolve_secret_payload(node, user_id)

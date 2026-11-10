@@ -9,8 +9,10 @@ vend's contract with targets; it seals each credential to every target's ``enc``
 suite's MinIO; the module skips without it, or when the second worker cannot start.
 
 Done when a hub table read on the compute-only server is written back to the hub by a step there with the credential
-the hub sealed to it, core never sending it a secret; when a hub that seals nothing refuses the run before it starts
-with a sentence saying to run the step on this computer; and when a step on the desktop's own worker keeps today's vend.
+the hub sealed to it, core never sending it a secret; when a hub that seals nothing refuses the run before it starts,
+each sealed step failing with the hub's own sentence (the rule's item 4: the hub's refusal is the hub's to word); when a
+run with one hub-table step on that server and one on this computer runs both, the second with an unsealed vend of its
+own (``RunVend.own``); and when a step on the desktop's own worker keeps today's vend.
 """
 
 # ruff: noqa: F811
@@ -235,13 +237,20 @@ def test_a_desktops_hub_table_read_runs_on_a_server_on_another_python_patch_vers
     assert "does not match the Python version used to serialize" in probe
 
 
-def older_hub(hub) -> None:
-    """The hub answers the vend as one from before targets: plain options, no sealed token."""
+def older_hub(hub) -> str:
+    """The hub answers the vend as one from before targets: plain options, no sealed token. Answers the sentence core
+    gives for an answer that is no Flowfile hub's."""
     hub.catalog._vend = lambda body: FakeHubWithCatalog._vend(hub.catalog, body)
+    return (
+        f"The hub did not give this run access to its tables: {hub.url} did not answer /hub/vend as a Flowfile hub "
+        "does."
+    )
 
 
-def refuses_the_server(hub) -> None:
+def refuses_the_server(hub) -> str:
+    """The hub refuses the server for this person; answers the hub's sentence."""
     hub.catalog.refused_nodes.add(SERVER)
+    return f"You may not run on the server {SERVER}"
 
 
 @pytest.mark.parametrize("hub_answer", [older_hub, refuses_the_server], ids=["older hub", "hub refuses the server"])
@@ -253,26 +262,19 @@ def test_a_desktops_step_the_hub_seals_nothing_for_is_refused_before_the_run_wit
     open_flow,
     hub_answer,
 ):
-    hub_answer(hub)
+    sentence = hub_answer(hub)
     flow = copy_flow(open_flow, hub, server_row, "orders_nowhere")
 
     ran = client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(desktop))
 
     assert ran.status_code == 200, ran.text
     errors = errors_of(flow)
-    assert errors == {
-        1: 'The step "Read from Catalog 1" runs on the hub\'s server "worker" and reads a table on the hub, but the '
-        "hub sealed no credential to that server for it, so run it on this computer (set its Compute backend under "
-        "General Settings)",
-        2: 'The step "Write to Catalog 2" runs on the hub\'s server "worker" and writes a table on the hub, but the '
-        "hub sealed no credential to that server for it, so run it on this computer (set its Compute backend under "
-        "General Settings)",
-    }
+    assert errors == {1: sentence, 2: sentence}
     assert not [error for error in errors.values() if "InvalidToken" in error]
     assert sent == [] and hub.catalog.registered == []
 
 
-def test_a_desktops_hub_table_step_beside_one_on_this_computer_is_refused_before_the_vend(
+def test_a_desktops_hub_table_step_on_a_server_beside_one_on_this_computer_runs_each_with_a_vend_of_its_own(
     hub,
     server_row,
     sent,
@@ -286,14 +288,17 @@ def test_a_desktops_hub_table_step_beside_one_on_this_computer_is_refused_before
     add_reader(flow, 2, hub)
     on(flow, 1, server_row)
 
-    client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(desktop))
+    ran = client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(desktop))
 
-    assert errors_of(flow) == {
-        1: 'The step "Read from Catalog 1" runs on the hub\'s server "worker" and reads a table on the hub, but the '
-        "hub cannot seal the run's credential to that server while the run's other steps on the hub's tables run on "
-        "this computer, so run it on this computer (set its Compute backend under General Settings)"
-    }
-    assert hub.catalog.vend_calls == [] and sent == []
+    assert ran.status_code == 200, ran.text
+    run_info = flow.get_run_info()
+    assert run_info.success is True, errors_of(flow)
+    assert {result.node_id: result.backend_id for result in run_info.node_step_result} == {1: server_row, 2: "local"}
+    sealed, own = hub.catalog.vend_calls
+    assert sealed["targets"] == [SERVER] and "targets" not in own
+    assert sealed["run_id"] == own["run_id"]
+    assert sealed["read_namespace_ids"] == own["read_namespace_ids"] == [hub.sales["id"]]
+    assert sent and not [route for route, body in sent if SECRET in body or b"$ffsec$" in body]
 
 
 def test_a_desktops_hub_table_steps_on_its_own_worker_keep_the_vend_without_targets(
