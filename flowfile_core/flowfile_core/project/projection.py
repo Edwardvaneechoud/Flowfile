@@ -245,7 +245,8 @@ def remove_connection(root: Path, kind: str, name: str) -> None:
 
 
 def _schedule_dict(s: FlowSchedule) -> dict:
-    return {
+    """A schedule as its project file holds it; ``backend`` only when one is set, so older files stay unchanged."""
+    out = {
         "name": s.name,
         "enabled": s.enabled,
         "schedule_type": s.schedule_type,
@@ -254,6 +255,9 @@ def _schedule_dict(s: FlowSchedule) -> dict:
         "cron_timezone": s.cron_timezone,
         "description": s.description,
     }
+    if s.backend:
+        out["backend"] = s.backend
+    return out
 
 
 def project_schedules_for_registration(

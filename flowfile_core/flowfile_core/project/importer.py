@@ -856,6 +856,7 @@ def _import_schedules(data: dict, owner_id: int) -> int:
                 sd.get("cron_expression"),
                 sd.get("cron_timezone"),
                 sd.get("name"),
+                sd.get("backend"),
             )
             if sig in seen:  # collapse already-duplicated entries so existing dupes self-heal
                 continue
@@ -870,6 +871,7 @@ def _import_schedules(data: dict, owner_id: int) -> int:
                 enabled=sd.get("enabled", True),
                 name=sd.get("name"),
                 description=sd.get("description"),
+                backend=sd.get("backend"),
             )
             count += 1
     return count
