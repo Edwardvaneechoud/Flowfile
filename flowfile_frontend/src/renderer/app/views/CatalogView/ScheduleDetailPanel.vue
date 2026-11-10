@@ -56,7 +56,9 @@
           :model-value="schedule.enabled"
           size="default"
           active-text="Enabled"
-          :inactive-text="schedule.disabled_reason ? `Disabled: ${schedule.disabled_reason}` : 'Disabled'"
+          :inactive-text="
+            schedule.disabled_reason ? `Disabled: ${schedule.disabled_reason}` : 'Disabled'
+          "
           @change="(val: boolean) => $emit('toggleSchedule', schedule.id, val)"
         />
         <button class="btn btn-danger btn-sm" @click="$emit('deleteSchedule', schedule.id)">
@@ -98,7 +100,6 @@
           size="small"
           @update:model-value="saveBackend"
         />
-        <span v-else class="meta-value">{{ scheduleBackendLabel(schedule.backend ?? "") }}</span>
       </div>
       <div
         v-if="schedule.schedule_type === 'interval' && schedule.interval_seconds"
@@ -111,11 +112,7 @@
         <span class="meta-label">Schedule</span>
         <span class="meta-value">
           {{ formatScheduleType(schedule) }}
-          <button
-            class="btn-icon-inline"
-            title="Edit schedule"
-            @click="showEdit = true"
-          >
+          <button class="btn-icon-inline" title="Edit schedule" @click="showEdit = true">
             <i class="fa-solid fa-pen"></i>
           </button>
         </span>
@@ -227,8 +224,6 @@ import RunHistoryTable from "./RunHistoryTable.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
 import ScheduleBackendSelect from "./components/ScheduleBackendSelect.vue";
-import { scheduleBackendLabel } from "../../utils/executionLocation";
-
 
 const router = useRouter();
 const catalogStore = useCatalogStore();

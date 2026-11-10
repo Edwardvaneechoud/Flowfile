@@ -78,7 +78,6 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowSchedule } from "../../types";
 import { formatDate, formatScheduleType, scheduleIcon } from "./catalog-formatters";
 
-
 defineProps<{
   schedules: FlowSchedule[];
 }>();

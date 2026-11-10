@@ -120,10 +120,7 @@
           <div v-if="catalogStore.loading" class="loading-state">Loading...</div>
           <div v-else-if="catalogStore.tree.length === 0" class="empty-state">
             <p>No catalogs yet.</p>
-            <button
-              class="btn btn-primary btn-sm"
-              @click="showCreateNamespace = true"
-            >
+            <button class="btn btn-primary btn-sm" @click="showCreateNamespace = true">
               <i class="fa-solid fa-plus"></i> Create your first catalog
             </button>
             <button
@@ -681,11 +678,7 @@ import { countMatches, normalizeQuery, shownNamespaces } from "./catalogTreeFilt
 import { apiErrorMessage, artifactRef, pageAfterDelete } from "./artifactVersions";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { findNamespacePath } from "../../types";
-import {
-  CATALOG_TAB_GROUP_LABELS,
-  catalogSectionOfTab,
-  catalogTabsInSection,
-} from "./catalogTabs";
+import { CATALOG_TAB_GROUP_LABELS, catalogSectionOfTab, catalogTabsInSection } from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   ArtifactVersionInfo,
@@ -711,7 +704,6 @@ const flowStore = useFlowStore();
 const notificationsStore = useNotificationsStore();
 const { openFlow } = useFlowOpener();
 const { renameFlow: renameRecentFlow, reconcileWithCatalog } = useRecentFlows();
-
 
 // Namespace sharing (one dialog for the whole tree).
 const { canManageGrants } = useResourceSharing();
@@ -1466,11 +1458,7 @@ async function confirmDeleteWithFile(opts: {
     );
   try {
     await ElMessageBox.confirm(
-      () =>
-        h("div", [
-          h("p", { style: "margin: 0 0 12px" }, opts.question),
-          checkbox(),
-        ]),
+      () => h("div", [h("p", { style: "margin: 0 0 12px" }, opts.question), checkbox()]),
       opts.title,
       { confirmButtonText: "Delete", cancelButtonText: "Cancel", type: "warning" },
     );

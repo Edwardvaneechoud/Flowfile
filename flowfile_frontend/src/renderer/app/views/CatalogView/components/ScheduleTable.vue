@@ -152,7 +152,6 @@ import {
 import { useInlineDescriptionEdit } from "../../../composables/useInlineDescriptionEdit";
 import ScheduleStatusBadge from "./ScheduleStatusBadge.vue";
 
-
 interface EnrichedFlowSchedule extends FlowSchedule {
   flowName: string;
   isRunning: boolean;
