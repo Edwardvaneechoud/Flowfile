@@ -48,7 +48,7 @@ def ephemeral_flow_graph(flow_path: Path, user_id: int) -> Iterator[FlowGraph]:
     what the caller asks of the graph afterwards, such as a code export, runs as it would on an open flow.
     """
     path = _validate_flow_path(flow_path)
-    info = _load_flow_storage(path, user_id)
+    info = _load_flow_storage(path)
     info.flow_settings.path = str(path)
     name = _resolve_flow_name(path, info.flow_name)
     info.flow_settings.name = name
