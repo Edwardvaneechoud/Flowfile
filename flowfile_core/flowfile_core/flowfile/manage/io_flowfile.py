@@ -6,6 +6,7 @@ from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, node_dict, regis
 from flowfile_core.flowfile.flow_graph import FlowGraph, restore_dynamic_input_connections
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
+from flowfile_core.hub_client import legacy_ids
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
 from shared.storage_config import flow_storage_directories, is_server_mode, storage
@@ -100,12 +101,13 @@ def determine_insertion_order(node_storage: schemas.FlowInformation):
     return ingest_order
 
 
-def _load_flowfile_yaml(flow_path: Path) -> schemas.FlowInformation:
+def _load_flowfile_yaml(flow_path: Path, user_id: int | None = None) -> schemas.FlowInformation:
     """
     Load a flowfile from YAML format and convert to FlowInformation.
 
     Args:
         flow_path: Path to the YAML file
+        user_id: The user opening the flow, whose hub session converts a document that names hub tables by ids
 
     Returns:
         FlowInformation object
@@ -117,15 +119,16 @@ def _load_flowfile_yaml(flow_path: Path) -> schemas.FlowInformation:
         data = yaml.safe_load(f)
     # Load as FlowfileData first (handles setting_input validation via node type)
     flowfile_data = schemas.FlowfileData.model_validate(data)
-    return _flowfile_data_to_flow_information(flowfile_data)
+    return _flowfile_data_to_flow_information(flowfile_data, user_id)
 
 
-def _load_flowfile_json(flow_path: Path) -> schemas.FlowInformation:
+def _load_flowfile_json(flow_path: Path, user_id: int | None = None) -> schemas.FlowInformation:
     """
     Load a flowfile from JSON format and convert to FlowInformation.
 
     Args:
         flow_path: Path to the JSON file
+        user_id: The user opening the flow, whose hub session converts a document that names hub tables by ids
 
     Returns:
         FlowInformation object
@@ -137,7 +140,7 @@ def _load_flowfile_json(flow_path: Path) -> schemas.FlowInformation:
     # Load as FlowfileData first (handles setting_input validation via node type)
     flowfile_data = schemas.FlowfileData.model_validate(data)
 
-    return _flowfile_data_to_flow_information(flowfile_data)
+    return _flowfile_data_to_flow_information(flowfile_data, user_id)
 
 
 def _keep_auto_description_auto(setting_input) -> None:
@@ -154,8 +157,14 @@ def _keep_auto_description_auto(setting_input) -> None:
         pass
 
 
-def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> schemas.FlowInformation:
-    """``flowfile_data`` as the graph builder takes it, each node's settings validated for its type."""
+def _flowfile_data_to_flow_information(
+    flowfile_data: schemas.FlowfileData, user_id: int | None = None
+) -> schemas.FlowInformation:
+    """``flowfile_data`` as the graph builder takes it, each node's settings validated for its type.
+
+    A catalog step saved by an older Flowfile naming a hub table by the hub's ids is converted to its names through
+    ``user_id``'s hub session (``legacy_ids``) before its settings are read.
+    """
     nodes_dict = {}
     node_starts = []
     for node in flowfile_data.nodes:
@@ -181,6 +190,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             setting_data["description"] = "" if node.description_is_auto_generated else node.description or ""
             setting_data["node_reference"] = node.node_reference
             setting_data["is_setup"] = True
+            legacy_ids.convert_node_settings(node.type, setting_data, user_id)
 
             if is_user_defined:
                 setting_data["is_user_defined"] = True
@@ -263,7 +273,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
     )
 
 
-def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
+def _load_flow_storage(flow_path: Path, user_id: int | None = None) -> schemas.FlowInformation:
     """
     Load flow storage from any supported format.
 
@@ -276,6 +286,7 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
 
     Args:
         flow_path: Path to the flowfile
+        user_id: The user opening the flow, whose hub session converts a document that names hub tables by ids
 
     Returns:
         FlowInformation object
@@ -293,10 +304,10 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
             ) from e
 
     elif suffix in (".yaml", ".yml"):
-        flow_storage_obj = _load_flowfile_yaml(flow_path)
+        flow_storage_obj = _load_flowfile_yaml(flow_path, user_id)
 
     elif suffix == ".json":
-        flow_storage_obj = _load_flowfile_json(flow_path)
+        flow_storage_obj = _load_flowfile_json(flow_path, user_id)
     else:
         raise ValueError(f"Unsupported file format: {suffix}")
     flow_settings = flow_storage_obj.flow_settings
@@ -457,7 +468,7 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
         FlowGraph: The flowfile object
     """
     flow_path = _validate_flow_path(flow_path)
-    flow_storage_obj = _load_flow_storage(flow_path)
+    flow_storage_obj = _load_flow_storage(flow_path, user_id)
     flow_storage_obj.flow_settings.path = str(flow_path)
     resolved_name = _resolve_flow_name(flow_path, flow_storage_obj.flow_name)
     flow_storage_obj.flow_settings.name = resolved_name
