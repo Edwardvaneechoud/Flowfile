@@ -1,10 +1,4 @@
-"""Worker/shared tests for the REST API reader engine against a real HTTP server.
-
-``fetch_rest_api`` talks to ``test_utils.rest_api_server`` over real sockets with a real ``httpx.Client``; a test
-that needs a particular answer registers a route for it. They cover each auth scheme, each pagination strategy
-(including keyset cursors sent in the JSON body), ``record_path`` extraction, retry/429 handling, JSON->Polars typing,
-sampling, the stop rules, and the worker-side credential decryption path.
-"""
+"""REST API reader engine tests, against a real HTTP server (``test_utils.rest_api_server``)."""
 
 from __future__ import annotations
 
@@ -44,7 +38,6 @@ def _answer(payload=None, status: int = 200, headers: dict | None = None, text: 
 
 
 def _keyset(path: str = "/keyset", **pagination) -> RestApiReadSettings:
-    """The issue's configuration: POST, keyset cursor ``data_id`` in the body, read from ``data.-1._id``."""
     return RestApiReadSettings(
         url=path,
         method="POST",
@@ -68,9 +61,6 @@ def _at(api, settings: RestApiReadSettings) -> RestApiReadSettings:
     return _with(settings, url=api.url(settings.url))
 
 
-# --- path walker --------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("path", "expected"),
     [
@@ -88,9 +78,6 @@ def _at(api, settings: RestApiReadSettings) -> RestApiReadSettings:
 def test_extract_by_path_walks_keys_and_list_indices(path, expected):
     body = {"data": [{"_id": "a"}, {"_id": "b"}, {"_id": "c"}], "keyed": {"0": "dict key wins"}}
     assert _extract_by_path(body, path) == expected
-
-
-# --- record_path extraction + typing -----------------------------------------
 
 
 def test_record_path_list_of_objects(api):
@@ -140,9 +127,6 @@ def test_scalar_list_wrapped_as_value_column(api):
     assert df["value"].to_list() == [1, 2, 3]
 
 
-# --- authentication -----------------------------------------------------------
-
-
 def test_api_key_in_header(api):
     settings = RestApiReadSettings(
         url=api.url("/items"),
@@ -172,9 +156,6 @@ def test_basic_auth_header(api):
     scheme, token = api.requests[0].headers["Authorization"].split(" ", 1)
     assert scheme == "Basic"
     assert base64.b64decode(token).decode() == "user:pw"
-
-
-# --- pagination ---------------------------------------------------------------
 
 
 def test_offset_pagination_walks_pages_and_sends_params(api):
@@ -256,9 +237,6 @@ def test_max_records_cap(api):
 def test_sample_size_caps_records(api):
     url = api.route("/r", _answer([{"id": i} for i in range(100)]))
     assert fetch_rest_api(RestApiReadSettings(url=url, sample_size=5)).height == 5
-
-
-# --- keyset cursor in the JSON body (issue #858) ------------------------------
 
 
 def test_keyset_cursor_in_body_walks_every_page(api):
@@ -362,9 +340,6 @@ def test_first_list_item_as_cursor(api):
     assert api.requests[1].body["data_id"] == "first"
 
 
-# --- stop rules ---------------------------------------------------------------
-
-
 def test_cursor_stops_on_an_empty_page_even_with_a_next_cursor(api):
     def handler(req, _srv):
         if "cursor" not in req.query:
@@ -404,9 +379,6 @@ def test_a_cursor_that_cycles_back_stops(api):
     assert api.request_count == 3
 
 
-# --- retries / 429 ------------------------------------------------------------
-
-
 def test_retry_on_429_then_success(api, no_sleep):
     df = fetch_rest_api(RestApiReadSettings(url=api.url("/flaky"), max_retries=2))
     assert api.request_count == 2
@@ -433,9 +405,6 @@ def test_network_error_is_retried_then_raised(monkeypatch):
     assert len(sleeps) == 2
 
 
-# --- request body -------------------------------------------------------------
-
-
 def test_post_sends_json_body(api):
     fetch_rest_api(RestApiReadSettings(url=api.url("/items"), method="POST", json_body={"q": "search"}))
     assert api.requests[0].method == "POST"
@@ -447,11 +416,7 @@ def test_get_ignores_json_body(api):
     assert api.requests[0].raw_body == b""
 
 
-# --- worker decrypt path ------------------------------------------------------
-
-
 def test_read_rest_api_decrypts_bearer_token(api):
-    """The worker wrapper decrypts the stored ciphertext before the request."""
     settings = WorkerRestApiReadSettings(
         url=api.url("/items"), auth=AuthConfig(auth_type="bearer", bearer_token_encrypted=encrypt_secret("s3cret"))
     )
@@ -482,9 +447,6 @@ def test_read_rest_api_decrypts_basic_password(api):
     read_rest_api(settings)
     token = api.requests[0].headers["Authorization"].split(" ", 1)[1]
     assert base64.b64decode(token).decode() == "user:pw123"
-
-
-# --- retry-after parsing ------------------------------------------------------
 
 
 def test_parse_retry_after_numeric_and_invalid():

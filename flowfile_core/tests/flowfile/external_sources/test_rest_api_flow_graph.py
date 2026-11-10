@@ -45,7 +45,6 @@ WORKER_PORT = int(os.environ.get("FLOWFILE_WORKER_PORT", 63579))
 
 @pytest.fixture(scope="module")
 def api_server():
-    """The in-process HTTP server; ``request_count`` is how many requests the worker actually made."""
     with start_api_server() as server:
         yield server
 
@@ -193,7 +192,6 @@ def test_e2e_cursor_pagination(local_api_server):
 
 
 def test_e2e_keyset_cursor_in_json_body(api_server):
-    """Issue #858's configuration through core -> worker -> real HTTP: ``data_id`` merged into the POST body."""
     api_server.reset()
     graph = _graph()
     _add_reader(

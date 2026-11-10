@@ -4705,7 +4705,6 @@ def test_rest_api_reader_cursor_pagination():
 
 
 def test_rest_api_reader_body_cursor_round_trips():
-    """A cursor sent in the JSON body is emitted, and only when it is not the query default."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     pagination = input_schema.RestApiPaginationSettings(

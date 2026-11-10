@@ -1,9 +1,4 @@
-"""A real HTTP server for the REST API reader tests, served in the test process on an ephemeral port.
-
-The worker and core suites point ``fetch_rest_api`` (directly, or through a spawned worker) at it over real sockets,
-so nothing in the HTTP stack is mocked. Every request is recorded (method, path, query, headers, parsed JSON body)
-and a test may register a route of its own with :meth:`ApiServer.route`.
-"""
+"""A real HTTP server for the REST API reader tests that records every request it receives."""
 
 from __future__ import annotations
 
@@ -17,10 +12,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 SECURE_TOKEN = "e2e-secret-token"
-"""The bearer token ``/secure`` requires."""
 
 KEYSET_RECORDS = [{"_id": f"id{i:02d}", "value": i} for i in range(1, 8)]
-"""The records ``/keyset`` and ``/keyset-echo`` page through by ``data_id``."""
 
 
 @dataclass
@@ -45,11 +38,7 @@ Route = Callable[[RecordedRequest, "ApiServer"], Reply]
 
 
 def _keyset_page(request: RecordedRequest, *, echo_last: bool) -> Reply:
-    """Keyset paging on ``data_id`` in the JSON body: the records after it, ``limit`` at a time.
-
-    ``echo_last`` answers a request past the end with the last record again instead of an empty page, as an API
-    whose keyset is inclusive at its end does.
-    """
+    """The records after ``data_id`` in the JSON body; ``echo_last`` repeats the last record past the end."""
     body = request.body or {}
     limit = int(body.get("limit", 3))
     after = body.get("data_id")
@@ -117,8 +106,6 @@ DEFAULT_ROUTES: dict[str, Route] = {
 
 
 class ApiServer:
-    """The running server: its ``base_url``, the requests it received and the routes it answers."""
-
     def __init__(self, httpd: ThreadingHTTPServer):
         host, port = httpd.server_address[:2]
         self.base_url = f"http://{host}:{port}"
@@ -136,7 +123,6 @@ class ApiServer:
         return f"{self.base_url}{path}"
 
     def route(self, path: str, handler: Route) -> str:
-        """Answer ``path`` with ``handler`` and return its URL."""
         self.routes[path] = handler
         return self.url(path)
 
@@ -144,7 +130,6 @@ class ApiServer:
         return [r for r in self.requests if r.path == path]
 
     def reset(self) -> None:
-        """Forget the requests and per-route state, keep the routes."""
         with self._lock:
             self.requests.clear()
             self.calls.clear()
@@ -199,7 +184,6 @@ def _handler_for(server: ApiServer) -> type[BaseHTTPRequestHandler]:
 
 @contextlib.contextmanager
 def start_api_server() -> Iterator[ApiServer]:
-    """Serve on an ephemeral 127.0.0.1 port for the block."""
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
     server = ApiServer(httpd)
     httpd.RequestHandlerClass = _handler_for(server)
@@ -214,7 +198,6 @@ def start_api_server() -> Iterator[ApiServer]:
 
 
 def closed_port_url() -> str:
-    """A URL on a 127.0.0.1 port nothing listens on, for a connect that fails."""
     import socket
 
     with socket.socket() as sock:

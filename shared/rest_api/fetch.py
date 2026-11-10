@@ -61,12 +61,7 @@ def _parse_retry_after(value: str | None) -> float | None:
 
 
 def _extract_by_path(obj: Any, path: str) -> Any:
-    """Walk a dot-separated path into nested JSON. Empty path returns ``obj``.
-
-    A segment is a key of a mapping (a key ``"0"`` is still a key) or, on a list, an integer index; a negative index
-    counts from the end, so ``data.-1._id`` is the ``_id`` of the last item of ``data``. A segment that matches nothing
-    gives ``None``.
-    """
+    """Walk a dot-path into nested JSON; on a list a segment is an index, so ``data.-1._id`` reads the last item."""
     if not path:
         return obj
     current = obj
@@ -86,7 +81,6 @@ def _extract_by_path(obj: Any, path: str) -> Any:
 
 
 def _set_by_path(obj: dict, path: str, value: Any) -> None:
-    """Set ``value`` at a dot-separated path in ``obj``, creating the mappings on the way."""
     *parents, leaf = path.split(".")
     current = obj
     for key in parents:
@@ -167,40 +161,16 @@ def _request_with_retries(
 
 
 def _read_next_cursor(body: Any, response: httpx.Response, pagination) -> Any:
-    """Read the next-page cursor from the response body or a header; ``None`` when there is none.
-
-    A body cursor keeps its JSON type, so a numeric id travels back into a JSON request body as a number.
-    """
+    """Read the next-page cursor from the response body or a header; ``None`` when there is none."""
     if pagination.cursor_location == CursorLocation.HEADER:
         return response.headers.get(pagination.cursor_response_path) or None
     value = _extract_by_path(body, pagination.cursor_response_path)
-    if value is None or value == "":
-        return None
-    return value
-
-
-def _cursor_key(cursor: Any) -> str:
-    """A hashable identity for a cursor value, to tell a cursor already sent."""
-    return cursor if isinstance(cursor, str) else json.dumps(cursor, sort_keys=True, default=str)
+    return None if value == "" else value
 
 
 def _repeats_page(page: list[dict], previous: list[dict]) -> bool:
-    """Whether every record of ``page`` was already on ``previous``."""
-    if not page:
-        return True
     seen = {json.dumps(r, sort_keys=True, default=str) for r in previous}
     return all(json.dumps(r, sort_keys=True, default=str) in seen for r in page)
-
-
-def _cursor_body(json_body: Any, cursor_param: str) -> dict:
-    """The request body a body-located cursor is merged into, copied so each page starts from the configured body."""
-    if json_body is None:
-        return {}
-    if not isinstance(json_body, dict):
-        raise ValueError("Sending the cursor in the JSON body needs the body to be a JSON object ({...}).")
-    if not cursor_param:
-        raise ValueError("Name the JSON body field that carries the cursor.")
-    return copy.deepcopy(json_body)
 
 
 def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) -> pl.DataFrame:
@@ -238,7 +208,9 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
     if cursor_in_body:
         if method != "POST":
             raise ValueError("A cursor sent in the JSON body needs the POST method.")
-        json_body = _cursor_body(json_body, pagination.cursor_param)
+        if json_body is not None and not isinstance(json_body, dict):
+            raise ValueError("A cursor sent in the JSON body needs the body to be a JSON object.")
+        json_body = json_body or {}
 
     all_records: list[dict] = []
     cursor: Any = pagination.initial_cursor or None
@@ -258,7 +230,7 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
             elif ptype == PaginationType.PAGE:
                 params[pagination.page_param] = str(page_number)
             elif ptype == PaginationType.CURSOR and cursor is not None:
-                sent_cursors.add(_cursor_key(cursor))
+                sent_cursors.add(str(cursor))
                 if cursor_in_body:
                     request_body = copy.deepcopy(json_body)
                     _set_by_path(request_body, pagination.cursor_param, cursor)
@@ -284,8 +256,7 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
             next_cursor = None
             if ptype == PaginationType.CURSOR:
                 next_cursor = _read_next_cursor(body, response, pagination)
-                cursor_repeated = next_cursor is not None and _cursor_key(next_cursor) in sent_cursors
-                if cursor_repeated and _repeats_page(page_records, previous_page):
+                if str(next_cursor) in sent_cursors and _repeats_page(page_records, previous_page):
                     page_records = []
             all_records.extend(page_records)
             page_index += 1
@@ -305,8 +276,7 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
                     break
                 page_number += 1
             elif ptype == PaginationType.CURSOR:
-                # Stop on an empty page, at the last page, or when the API hands back a cursor already sent.
-                if not page_records or next_cursor is None or _cursor_key(next_cursor) in sent_cursors:
+                if not page_records or next_cursor is None or str(next_cursor) in sent_cursors:
                     break
                 cursor = next_cursor
                 previous_page = page_records

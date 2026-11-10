@@ -423,7 +423,6 @@ const cursorInBody = computed(
   () => settings.value.method === "POST" && settings.value.pagination.cursor_request_location === "body",
 );
 
-// A GET request has no body, so a body cursor falls back to the query string.
 watch(
   () => nodeRestApi.value?.rest_api_settings.method,
   (method) => {
