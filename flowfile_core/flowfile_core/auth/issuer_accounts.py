@@ -24,6 +24,12 @@ def joined_with_keys() -> hub_node.HubNode | None:
     return hub_node.joined()
 
 
+def joined_name() -> str | None:
+    """This server's name as its issuer knows it, its variable before its joined file; ``None`` when it joined with no
+    keys of its own."""
+    return hub_node.resolved().name if joined_with_keys() is not None else None
+
+
 def hub_host(url: str) -> str:
     return urlparse(url).hostname or url
 

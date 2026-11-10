@@ -282,8 +282,7 @@ def server_name(backend_id: str) -> str | None:
     from flowfile_core.database.models import ConfiguredBackend
 
     if backend_id in (LOCAL_BACKEND_ID, WORKER_BACKEND_ID):
-        joined = issuer_accounts.joined_with_keys()
-        return joined.name if joined is not None else None
+        return issuer_accounts.joined_name()
     if not backend_id.startswith(CONFIGURED_WORKER_PREFIX):
         return None
     with get_db_context() as db:
