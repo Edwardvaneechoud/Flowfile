@@ -107,10 +107,10 @@
                 Status:
                 <span
                   :class="{
-                    running: !node.skipped && node.success === null,
+                    running: !node.skipped && node.success === null && !nodeStopped(node),
                     success: !node.skipped && node.success === true,
                     failure: !node.skipped && node.success === false,
-                    skipped: node.skipped,
+                    skipped: node.skipped || nodeStopped(node),
                   }"
                 >
                   {{ statusLabel(node) }}
@@ -190,7 +190,8 @@ const runStatusText = computed(() => {
   if (!info) return "";
   if (info.is_running) return "Running";
   if (!hasRun.value) return "No results yet";
-  return info.success ? "Succeeded" : "Failed";
+  if (info.success) return "Succeeded";
+  return info.cancelled ? "Cancelled" : "Failed";
 });
 
 // Per-state node counts; nodes blocked by an upstream failure have no result row.
@@ -214,11 +215,21 @@ const nodeBreakdown = computed(() => {
   ].filter((part) => part.count > 0);
 });
 
+const runEnded = computed(() => !runInformation.value?.is_running);
+const runCancelled = computed(
+  () =>
+    runEnded.value && runInformation.value?.success === false && !!runInformation.value.cancelled,
+);
+
 const runStatusClass = computed(() => ({
-  running: !!runInformation.value?.is_running,
-  success: !runInformation.value?.is_running && runInformation.value?.success === true,
-  failure: !runInformation.value?.is_running && runInformation.value?.success === false,
+  running: !runEnded.value,
+  success: runEnded.value && runInformation.value?.success === true,
+  failure: runEnded.value && runInformation.value?.success === false && !runCancelled.value,
+  skipped: runCancelled.value,
 }));
+
+// A node row without an outcome in an ended run is one a cancel stopped.
+const nodeStopped = (node: RunNode) => !node.skipped && node.success === null && runEnded.value;
 
 // Performance mode skips per-step example data, so after a successful run we
 // nudge the user toward Development mode to inspect step-by-step data.
@@ -264,12 +275,12 @@ const formatTimestamp = (timestamp: number) => {
 
 const statusLabel = (node: RunNode) => {
   if (node.skipped) return "Skipped";
-  if (node.success === null) return "Running";
+  if (node.success === null) return nodeStopped(node) ? "Cancelled" : "Running";
   return node.success ? "Success" : "Failure";
 };
 
 const calculateColor = (node: RunNode) => {
-  if (node.skipped) return "var(--color-text-tertiary)";
+  if (node.skipped || nodeStopped(node)) return "var(--color-text-tertiary)";
   if (node.success === null) return "var(--color-info)";
   return node.success ? "var(--color-success)" : "var(--color-danger)";
 };

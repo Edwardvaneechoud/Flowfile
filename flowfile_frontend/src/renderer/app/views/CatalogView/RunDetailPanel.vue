@@ -169,6 +169,14 @@ import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowRunDetail } from "../../types";
 import {
+  NODE_OUTCOME_BADGE,
+  NODE_OUTCOME_LABEL,
+  RUN_OUTCOME_LABEL,
+  RUN_OUTCOME_TEXT,
+  nodeOutcome,
+  runOutcome,
+} from "./runStatus";
+import {
   formatDate,
   formatDuration,
   formatRunType,
@@ -231,27 +239,19 @@ interface NodeResultData {
   skipped?: boolean;
 }
 
+const runEnded = computed(() => props.run.success !== null);
+
 function nodeStatusText(nr: NodeResultData): string {
-  if (nr.skipped) return "Skipped";
-  if (nr.success) return "OK";
-  return nr.success === false ? "Failed" : "Running";
+  return NODE_OUTCOME_LABEL[nodeOutcome(nr, runEnded.value)];
 }
 
 function nodeStatusClass(nr: NodeResultData): string {
-  if (nr.skipped) return "skipped";
-  if (nr.success) return "success";
-  return nr.success === false ? "failure" : "pending";
+  return NODE_OUTCOME_BADGE[nodeOutcome(nr, runEnded.value)];
 }
 
-const statusClass = computed(() => {
-  if (props.run.success === null) return "text-pending";
-  return props.run.success ? "text-success" : "text-danger";
-});
-
-const statusText = computed(() => {
-  if (props.run.success === null) return "Running";
-  return props.run.success ? "Success" : "Failed";
-});
+const outcome = computed(() => runOutcome(props.run.success, props.run.cancelled));
+const statusClass = computed(() => RUN_OUTCOME_TEXT[outcome.value]);
+const statusText = computed(() => RUN_OUTCOME_LABEL[outcome.value]);
 
 const nodeResults = computed<NodeResultData[]>(() => {
   if (!props.run.node_results_json) return [];

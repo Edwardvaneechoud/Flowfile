@@ -2,16 +2,19 @@
 //
 // Frontend integration coverage lives in Playwright (`tests/`). This config
 // only picks up `src/**/*.test.ts` so adding a unit test alongside a module
-// is the easy path; full DOM-bound testing (jsdom / happy-dom) is out of
-// scope until something needs it.
+// is the easy path. The Vue plugin lets a test import a `.vue` file and mount
+// it under happy-dom (`__fixtures__/mount.ts`); a test opts into the DOM with
+// `// @vitest-environment happy-dom`.
 
 import Path from "path";
 import { fileURLToPath } from "url";
+import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vitest/config";
 
 const __dirname = Path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  plugins: [vue()],
   test: {
     include: ["src/**/*.test.ts"],
     environment: "node",

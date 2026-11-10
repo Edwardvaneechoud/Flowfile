@@ -219,6 +219,8 @@ def complete_run(
             return
 
         _close_run(run, success=success, now=datetime.now(timezone.utc))
+        # A child that reports its own end was not stopped by a cancel recorded meanwhile.
+        run.cancelled = False
         run.nodes_completed = nodes_completed
         if number_of_nodes > 0:
             run.number_of_nodes = number_of_nodes

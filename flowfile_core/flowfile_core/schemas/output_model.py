@@ -70,6 +70,13 @@ class RunInformation(BaseModel):
     start_time: datetime | None = Field(default_factory=datetime.now)
     end_time: datetime | None = None
     success: bool | None = None
+    cancelled: bool = Field(
+        default=False,
+        description=(
+            "A cancel stopped the run and no node failed on its own; read with success False. A node the cancel "
+            "stopped has success None, and one that failed before the cancel reached it keeps the run failed."
+        ),
+    )
     is_running: bool = False
     execution_mode: str | None = None
     nodes_completed: int = 0

@@ -1576,6 +1576,10 @@ class ExecutionMixin(GraphMixinBase):
 
                 self.latest_run_info.end_time = datetime.datetime.now()
                 self.end_datetime = datetime.datetime.now()
+                # Read before the slot is released: the next run's claim clears the flag.
+                self.latest_run_info.cancelled = self.flow_settings.is_canceled and not any(
+                    result.success is False for result in self.latest_run_info.node_step_result
+                )
                 self.release_run()
                 released = True
                 if self.flow_settings.is_canceled:
