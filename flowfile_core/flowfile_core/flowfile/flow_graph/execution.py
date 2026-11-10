@@ -321,10 +321,16 @@ def _release_boundary_inputs(node: FlowNode, edges: Sequence[BoundaryEdge]) -> N
 
 
 class ExecutionMixin(GraphMixinBase):
+    @property
+    def hub_vend(self) -> vend.RunVend | None:
+        """What the hub vended to the running run, kept in ``hub_client`` under ``catalog_run_id``: read here for a
+        step's sealed secrets and by placement's sealing checks, never for a table's storage."""
+        return vend.held(self.catalog_run_id)
+
     # The running run's prefix in the exchange store; None between runs.
     exchange_run: ExchangeRun | None = None
-    # What the hub vended to the running run over its tables; None between runs and in a run with no hub table.
-    hub_vend: vend.RunVend | None = None
+    # The id a remote catalog's client keeps the running run's credentials under; None between runs.
+    catalog_run_id: str | None = None
     # The exchange store a joined server's hub set for the run about to start; None between runs and elsewhere.
     hub_exchange_store: ExchangeConfig | None = None
     # The run id the hub keeps a run it dispatched here as: the run's vends and report carry it; None for any other.
@@ -1958,7 +1964,7 @@ class ExecutionMixin(GraphMixinBase):
         on_hub_server = vend.node_name(registry.WORKER_BACKEND_ID) is not None
         beside = [node for node in hub_nodes if vend.node_name(policy.backend_for(node)) is None]
         try:
-            self.hub_vend = vend.request(
+            run_vend = vend.request(
                 user_id,
                 exchange_run.run_id,
                 readers,
@@ -1969,7 +1975,7 @@ class ExecutionMixin(GraphMixinBase):
                 connections=sorted(refs),
             )
             if exchange and targets:
-                exchange_run.sealed = self.hub_vend.sealed_credential(exchange_run.hub_store.uri)
+                exchange_run.sealed = run_vend.sealed_credential(exchange_run.hub_store.uri)
             if targets and not on_hub_server and (beside or exchange):
                 own = vend.request(
                     user_id,
@@ -1978,9 +1984,9 @@ class ExecutionMixin(GraphMixinBase):
                     {hub[node.node_id][0] for node in beside if hub[node.node_id][1]},
                     exchange=exchange,
                 )
-                self.hub_vend = replace(self.hub_vend, own=own)
+                run_vend = replace(run_vend, own=own)
             if exchange and not on_hub_server:
-                unsealed = self.hub_vend.own or self.hub_vend
+                unsealed = run_vend.own or run_vend
                 exchange_run.own = unsealed.encrypted_credential(exchange_run.hub_store.uri, user_id)
         except LookupError as e:
             return [(node, str(e)) for node in sealed_nodes or hub_nodes or list(steps)]
@@ -1988,7 +1994,9 @@ class ExecutionMixin(GraphMixinBase):
             self.flow_logger.info(f"The hub sealed this run's credentials to {', '.join(targets)}")
         self.sealed_secret_steps = {node.node_id: tuple(step[0]) for node, step in steps.items() if step[0]} or None
         self.sealed_connection_steps = {node.node_id: tuple(step[1]) for node, step in steps.items() if step[1]} or None
-        self.last_hub_vend = (exchange_run.run_id, self.hub_vend.vend_id)
+        vend.hold(run_vend)
+        self.catalog_run_id = run_vend.run_id
+        self.last_hub_vend = (run_vend.run_id, run_vend.vend_id)
         return None
 
     def _signed_out_refusal(
@@ -2055,10 +2063,10 @@ class ExecutionMixin(GraphMixinBase):
         and still reads as completed, so its grid shows them; its plan is released like any other. At a run's end the
         row count each released node knew is kept in ``hub_rows_out`` for the run's report.
         """
-        run_vend = self.hub_vend
-        if run_vend is None or run_vend.run_id != exchange_run.run_id:
+        if self.catalog_run_id != exchange_run.run_id:
             return
-        self.hub_vend = None
+        vend.release(exchange_run.run_id)
+        self.catalog_run_id = None
         self.sealed_secret_steps = None
         self.sealed_connection_steps = None
         seen: set[int] = set()

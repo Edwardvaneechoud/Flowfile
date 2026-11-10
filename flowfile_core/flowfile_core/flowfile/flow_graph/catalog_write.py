@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import polars as pl
 
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
     is_delta_table,
@@ -44,9 +44,6 @@ from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _resolve_catalog_sql_tables,
 )
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
-from flowfile_core.hub_client import catalog as hub_catalog
-from flowfile_core.hub_client import client as hub_client
-from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
@@ -531,7 +528,7 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
         if node.node_type != "catalog_reader":
             continue
         setting = node.setting_input
-        if getattr(setting, "source", "local") == "hub":
+        if table_sources.is_remote(getattr(setting, "source", None)):
             continue
         if getattr(setting, "sql_query", None):
             return None
@@ -593,7 +590,7 @@ def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
         if node.node_type != "catalog_reader":
             continue
         setting = node.setting_input
-        if getattr(setting, "source", "local") == "hub":
+        if table_sources.is_remote(getattr(setting, "source", None)):
             return True
         if getattr(setting, "sql_query", None):
             try:
@@ -724,45 +721,34 @@ def _handle_virtual_table_write(
     return df
 
 
-def _handle_hub_table_write(
+def _handle_remote_table_write(
     graph: "FlowGraph",
     node_catalog_writer: input_schema.NodeCatalogWriter,
     df: FlowDataEngine,
     user_id: int,
 ) -> FlowDataEngine:
-    """Write a Delta table into a namespace on the hub with the credential the hub vended to the run.
+    """Write a Delta table into a schema a remote catalog keeps, on the storage target that catalog answers for the run.
 
-    The namespace is named by its qualified ``catalog.schema``; the run's vend resolved it on the hub and holds its id.
-    The hub is the record: its table of that name in the namespace is the destination, a new one gets a directory
-    under the namespace's storage root, and the compute writes it by identity with a connection whose secrets are
-    encrypted for the worker. A new table is registered on the hub from the write's own report; an existing one's
-    record on the hub is left as it is. Nothing is recorded in the local catalog, and the hub's grant check is the
-    vend's.
+    The schema is named by its qualified ``catalog.schema``. Its catalog is the record: its table of that name in the
+    schema is the destination, a new one gets a directory under the target's root, and the compute writes it by
+    identity with the target's connection for the worker. A new table is registered in its catalog from the write's
+    own report; an existing one's record there is left as it is. Nothing is recorded in the local catalog, and whether
+    the person may write is that catalog's answer when it gives the run its target.
     """
     settings = node_catalog_writer.catalog_write_settings
-    namespace = settings.namespace_full_name
-    if not namespace:
+    schema = settings.namespace_full_name
+    if not schema:
         raise ValueError(PICK_HUB_SCHEMA)
-    if graph.hub_vend is None:
-        raise ValueError("Run the flow to write a table on the hub")
-    credential = graph.hub_vend.for_namespace(namespace)
-    namespace_id = graph.hub_vend.namespace_id(namespace)
-    hub_url, access_token = hub_catalog.signed_in(user_id)
-    existing = next(
-        (
-            table
-            for table in hub_client.list_tables(hub_url, access_token, namespace_id=namespace_id)
-            if table["name"] == settings.table_name
-        ),
-        None,
-    )
+    run_id = graph.catalog_run_id
+    catalog = table_sources.remote(settings.source)
+    target = table_sources.schema_target(settings.source, schema, run_id=run_id, user_id=user_id)
+    existing = catalog.schema_table(run_id, user_id, schema, settings.table_name)
     if existing is not None and settings.write_mode == "error":
-        raise TableExistsError(name=settings.table_name, namespace_id=namespace_id)
+        raise TableExistsError(name=settings.table_name, namespace_id=existing.get("namespace_id"))
     dest_path = (existing or {}).get("file_path") or join_catalog_uri(
-        credential.base_uri, f"{settings.table_name}_{uuid4().hex[:8]}"
+        target.base, f"{settings.table_name}_{uuid4().hex[:8]}"
     )
-    connection = graph.hub_vend.worker_connection(dest_path, user_id)
-    table = _catalog_table_identity(settings.table_name, None, dest_path, credential.base_uri)
+    table = _catalog_table_identity(settings.table_name, None, dest_path, target.base)
 
     writer_node = graph.get_node(node_catalog_writer.node_id)
     operation, write = _catalog_delta_op(
@@ -771,7 +757,7 @@ def _handle_hub_table_write(
         plan=df.data_frame,
         path=None,
         table=table,
-        connection=connection,
+        connection=target.worker_interface,
         scd2_config=None,
         run_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         flow_id=graph.flow_id,
@@ -782,25 +768,21 @@ def _handle_hub_table_write(
     _keep_rows_written(graph, writer_node, settings.write_mode, meta)
     if existing is not None or meta is None:
         return df
-    table_path = report.metadata.get("table_path") or dest_path
-    try:
-        hub_client.register_table_from_data(
-            hub_url,
-            access_token,
-            {
-                "name": settings.table_name,
-                "table_path": table_path,
-                "namespace_id": namespace_id,
-                "description": settings.description,
-                "storage_format": "delta",
-                "schema_columns": meta.get("schema"),
-                "row_count": meta.get("row_count"),
-                "column_count": meta.get("column_count"),
-                "size_bytes": meta.get("size_bytes"),
-            },
-        )
-    except (HubRefused, HubUnreachable, HubVersionRefused) as e:
-        raise ValueError(f"The table was written to {table_path} but could not be registered on the hub: {e}") from e
+    catalog.register_table(
+        run_id,
+        user_id,
+        schema,
+        {
+            "name": settings.table_name,
+            "table_path": report.metadata.get("table_path") or dest_path,
+            "description": settings.description,
+            "storage_format": "delta",
+            "schema_columns": meta.get("schema"),
+            "row_count": meta.get("row_count"),
+            "column_count": meta.get("column_count"),
+            "size_bytes": meta.get("size_bytes"),
+        },
+    )
     return df
 
 
@@ -812,8 +794,8 @@ def _handle_physical_table_write(
     """Handle physical-mode catalog write: materialize data as a Delta table and register it."""
     settings = node_catalog_writer.catalog_write_settings
     user_id = node_catalog_writer.user_id or 1
-    if settings.source == "hub":
-        return _handle_hub_table_write(graph, node_catalog_writer, df, user_id)
+    if table_sources.is_remote(settings.source):
+        return _handle_remote_table_write(graph, node_catalog_writer, df, user_id)
 
     with get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)

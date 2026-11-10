@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 import polars as pl
 from pydantic import SecretStr
 
+from flowfile_core.catalog import table_sources
 from flowfile_core.flowfile.execution.protocol import EncryptedCredential, SealedCredential
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.hub_client import catalog, client
@@ -233,6 +234,119 @@ class RunVend:
             storage_type="s3", auth_method="access_key", connection_name=None, **fields
         )
         return connection.get_worker_interface(user_id)
+
+
+_held: dict[str, RunVend] = {}
+
+
+def hold(run_vend: RunVend) -> None:
+    """Keep ``run_vend`` for its run, under the run's id; ``release`` forgets it when the run ends."""
+    _held[run_vend.run_id] = run_vend
+
+
+def held(run_id: str | None) -> RunVend | None:
+    """What the hub vended to the run ``run_id``; ``None`` for a run that asked nothing, and once it ended."""
+    return _held.get(run_id) if run_id else None
+
+
+def release(run_id: str) -> None:
+    """Forget what the hub vended to the run ``run_id``."""
+    _held.pop(run_id, None)
+
+
+@dataclass(frozen=True)
+class VendedTarget:
+    """A run's vend as the storage target of the tables under ``base``, as ``CatalogStorageTarget`` is for a local
+    catalog's: what the engine's readers and writers take, whichever catalog keeps the table.
+
+    Nothing is resolved until it is used, and then for the step running now (``RunVend.here``). A sealed vend has no
+    options core can open, so its scan is the sealed source and its worker connection carries the map.
+    """
+
+    run_vend: RunVend = field(repr=False)
+    base: str
+    user_id: int | None = None
+    is_cloud: bool = True
+    connection_name: str | None = None
+
+    @property
+    def storage_options(self) -> dict[str, str]:
+        here = self.run_vend.here()
+        return {} if here.sealed else dict(here.for_uri(self.base).storage_options)
+
+    @property
+    def worker_interface(self) -> FullCloudStorageConnectionWorkerInterface:
+        return self.run_vend.worker_connection(self.base, self.user_id)
+
+    def to_worker_payload(self) -> dict:
+        return {"base_uri": self.base, "connection": self.worker_interface.model_dump()}
+
+    def scan_kwargs(self, user_id: int | None) -> dict:
+        return self.run_vend.here().scan_kwargs(self.base, user_id)
+
+    def scan_delta(self, path: str, user_id: int | None, columns: Mapping[str, pl.DataType], **kwargs) -> pl.LazyFrame:
+        here = self.run_vend.here()
+        if here.sealed:
+            return hub_sealed.scan_delta_sealed(path, here.sealed_credential(path).sealed, columns)
+        return pl.scan_delta(path, **kwargs, **here.scan_kwargs(path, user_id))
+
+
+class _RunCatalog:
+    """The hub's catalog as the engine's ``table_sources.RemoteCatalog``, answered from the vend held for the run."""
+
+    def run_holds(self, run_id: str | None) -> bool:
+        return held(run_id) is not None
+
+    def table_named(self, user_id: int | None, qualified_name: str) -> dict:
+        from flowfile_core.hub_client import tables
+
+        return tables.readable_named(user_id, qualified_name)
+
+    def table(self, user_id: int | None, table_id: int) -> dict:
+        from flowfile_core.hub_client import tables
+
+        return tables.table(user_id, table_id)
+
+    def read_targets(self, user_id: int | None, tables: list, purpose: str):
+        from flowfile_core.hub_client import tables as hub_tables
+
+        return hub_tables.read_targets(user_id, tables, purpose)
+
+    def tree(self, user_id: int | None):
+        from flowfile_core.hub_client import tables
+
+        return tables.tree(user_id)
+
+    def table_target(self, run_id: str | None, user_id: int | None, file_path: str) -> VendedTarget:
+        run_vend = held(run_id)
+        if run_vend is None:
+            raise ValueError("Run the flow to read a table on the hub")
+        return VendedTarget(run_vend, file_path.rstrip("/").rpartition("/")[0], user_id)
+
+    def schema_target(self, run_id: str | None, user_id: int | None, schema: str) -> VendedTarget:
+        run_vend = held(run_id)
+        if run_vend is None:
+            raise ValueError("Run the flow to write a table on the hub")
+        return VendedTarget(run_vend, run_vend.for_namespace(schema).base_uri, user_id)
+
+    def schema_table(self, run_id: str | None, user_id: int | None, schema: str, name: str) -> dict | None:
+        namespace_id = self.schema_target(run_id, user_id, schema).run_vend.namespace_id(schema)
+        hub_url, access_token = catalog.signed_in(user_id)
+        tables = client.list_tables(hub_url, access_token, namespace_id=namespace_id)
+        return next(({"namespace_id": namespace_id, **table} for table in tables if table["name"] == name), None)
+
+    def register_table(self, run_id: str | None, user_id: int | None, schema: str, table: dict) -> None:
+        namespace_id = self.schema_target(run_id, user_id, schema).run_vend.namespace_id(schema)
+        try:
+            hub_url, access_token = catalog.signed_in(user_id)
+            client.register_table_from_data(hub_url, access_token, {**table, "namespace_id": namespace_id})
+        except (HubRefused, HubUnreachable, HubVersionRefused) as e:
+            raise ValueError(
+                f"The table was written to {table['table_path']} but could not be registered on the hub: {e}"
+            ) from e
+
+
+table_sources.register_remote("hub", _RunCatalog())
 
 
 def refusal_sentence(detail: str, status: int) -> str:

@@ -24,7 +24,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, locate_for_namespace
 from flowfile_core.configs import logger
@@ -721,12 +721,12 @@ def _artifact_scheme(node: FlowNode) -> str | None:
 def hub_table_namespace(settings: object) -> tuple[str, bool] | None:
     """The hub namespace (``catalog.schema``) a catalog node's ``settings`` read or write and whether they write;
     ``None`` off the hub, and for a node on the hub that names no table or schema yet (its run fails at the node)."""
-    if isinstance(settings, input_schema.NodeCatalogReader) and settings.source == "hub":
+    if isinstance(settings, input_schema.NodeCatalogReader) and table_sources.is_remote(settings.source):
         namespace = settings.hub_namespace_name
         return (namespace, False) if namespace else None
     if isinstance(settings, input_schema.NodeCatalogWriter):
         write_settings = settings.catalog_write_settings
-        if write_settings.source == "hub" and write_settings.namespace_full_name:
+        if table_sources.is_remote(write_settings.source) and write_settings.namespace_full_name:
             return write_settings.namespace_full_name, True
     return None
 
@@ -743,14 +743,12 @@ def _catalog_target(settings: object, flow: FlowGraph) -> tuple[CatalogStorageTa
     """
     hub = hub_table_namespace(settings)
     if hub is not None:
-        run_vend = flow.hub_vend
-        if run_vend is None:
-            return None, None, None
+        source = getattr(settings, "source", None) or settings.catalog_write_settings.source
         try:
-            credential = run_vend.for_namespace(hub[0])
-        except LookupError:
+            target = table_sources.schema_target(source, hub[0], run_id=flow.catalog_run_id)
+        except (LookupError, ValueError):
             return None, None, None
-        return CatalogStorageTarget(is_cloud=True, base=credential.base_uri), hub[0], None
+        return CatalogStorageTarget(is_cloud=True, base=target.base), hub[0], None
     if isinstance(settings, input_schema.NodeCatalogWriter):
         write_settings = settings.catalog_write_settings
         with get_db_context() as db:

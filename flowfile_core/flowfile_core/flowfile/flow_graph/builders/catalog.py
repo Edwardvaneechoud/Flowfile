@@ -4,7 +4,7 @@ import json
 
 import polars as pl
 
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.delta_utils import (
     is_delta_table,
     is_legacy_parquet,
@@ -47,7 +47,6 @@ from flowfile_core.flowfile.flow_node.flow_node import (
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     validate_sql_query,
 )
-from flowfile_core.hub_client import tables as hub_tables
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import (
     HistoryActionType,
@@ -93,8 +92,8 @@ class CatalogBuildersMixin(GraphMixinBase):
         the SQL against all catalog Delta tables instead.
         """
 
-        if node_catalog_reader.source == "hub":
-            is_virtual_optimized = self._add_hub_table_reader(node_catalog_reader)
+        if table_sources.is_remote(node_catalog_reader.source):
+            is_virtual_optimized = self._add_remote_table_reader(node_catalog_reader)
         elif node_catalog_reader.sql_query:
             is_virtual_optimized = self._add_catalog_sql_reader(node_catalog_reader)
         else:
@@ -172,15 +171,32 @@ class CatalogBuildersMixin(GraphMixinBase):
 
         return is_virtual_optimized
 
-    def _add_hub_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> None:
-        """Read a table on the hub, named by its qualified name, through the credential the hub vends to the run.
+    def _scan_stored_table(
+        self,
+        target: CatalogStorageTarget,
+        path: str,
+        user_id: int | None,
+        row_filter: pl.Expr | None,
+        columns: dict[str, pl.DataType] | None = None,
+        **scan_kwargs,
+    ) -> FlowDataEngine:
+        """The read every reader of a table on object storage ends in, whichever catalog keeps the table: a lazy scan
+        of ``path`` on ``target`` under ``row_filter``, its schema read on the reader's backend with the protocol on."""
+        lf = table_sources.scan_delta(target, path, user_id, columns, **scan_kwargs)
+        backend = current_context(self).backend if FLOWFILE_COMPUTE_PROTOCOL else None
+        return _filtered_frame(lf, row_filter, backend)
 
-        The table is looked up on the hub by name once here, and its columns are the node's predicted schema; a hub
-        that does not answer leaves its message on the node, and the table is looked up again when the run reads it. A
-        reader that names no table yet fails with ``unnamed_hub_table`` when it runs. The scan carries the run's
-        credential encrypted, or a vend sealed to the servers the run uses (``RunVend.scan_delta``), so outside a run
-        it cannot read.
+    def _add_remote_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> None:
+        """Read a table a remote catalog keeps, named by its qualified name, on the storage target that catalog
+        answers for the run.
+
+        The table is looked up in its catalog by name once here, and its columns are the node's predicted schema; a
+        catalog that does not answer leaves its message on the node, and the table is looked up again when the run
+        reads it. A reader that names no table yet fails with ``unnamed_hub_table`` when it runs. The target is asked
+        for when the node runs (``table_sources.table_target``), since its credential is the run's and short-lived, so
+        outside a run the node cannot read.
         """
+        source = node_catalog_reader.source
         user_id = node_catalog_reader.user_id
         qualified_name = node_catalog_reader.catalog_full_table_name
         node_logger = self.flow_logger.get_node_logger(node_catalog_reader.node_id)
@@ -188,7 +204,7 @@ class CatalogBuildersMixin(GraphMixinBase):
         unread: str | None = unnamed_hub_table(node_catalog_reader)
         if unread is None:
             try:
-                designed = hub_tables.readable_named(user_id, qualified_name)
+                designed = table_sources.remote(source).table_named(user_id, qualified_name)
             except LookupError as e:
                 unread = str(e)
         row_filter = _scd2_row_filter(None, node_catalog_reader.scd2_view, None, node_logger=node_logger)
@@ -197,15 +213,13 @@ class CatalogBuildersMixin(GraphMixinBase):
             unnamed = unnamed_hub_table(node_catalog_reader)
             if unnamed is not None:
                 raise ValueError(unnamed)
-            if self.hub_vend is None:
-                raise ValueError("Run the flow to read a table on the hub")
-            table = designed or hub_tables.readable_named(user_id, qualified_name)
+            table = designed or table_sources.remote(source).table_named(user_id, qualified_name)
             columns = {
                 column["name"]: cast_str_to_polars_type(column["dtype"]) for column in table.get("schema_columns") or ()
             }
-            lf = self.hub_vend.scan_delta(table["file_path"], user_id, columns)
-            backend = current_context(self).backend if FLOWFILE_COMPUTE_PROTOCOL else None
-            return _filtered_frame(lf, row_filter, backend)
+            path = table["file_path"]
+            target = table_sources.table_target(source, path, run_id=self.catalog_run_id, user_id=user_id)
+            return self._scan_stored_table(target, path, user_id, row_filter, columns)
 
         def _schema_callback() -> list[FlowfileColumn]:
             return [
@@ -402,9 +416,7 @@ class CatalogBuildersMixin(GraphMixinBase):
                 scan_kwargs["version"] = delta_version
             if _is_cloud_uri(resolved_path):
                 # Cloud catalog table: scan directly (stays lazy ⇒ no collect in core).
-                scan_kwargs.update(_reader_target.scan_kwargs(_user_id))
-                backend = current_context(self).backend if FLOWFILE_COMPUTE_PROTOCOL else None
-                return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs), backend)
+                return self._scan_stored_table(_reader_target, resolved_path, _user_id, _scd2_filter, **scan_kwargs)
             if is_delta_table(resolved_path):
                 return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs))
             return _apply_scd2_filter(pl.scan_parquet(resolved_path))

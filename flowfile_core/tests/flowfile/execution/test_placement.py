@@ -1289,13 +1289,16 @@ def hub_flow(flow_id: int, *, vended: bool) -> FlowGraph:
         schema_prefetch_blocked.reset(token)
     if vended:
         credential = vend.HubCredential("s3://acme/sales", {"aws_access_key_id": "k"})
-        graph.hub_vend = vend.RunVend(
-            run_id="run",
-            vend_id=1,
-            credentials=(credential,),
-            bases={"sales.raw": "s3://acme/sales", "sales.curated": "s3://acme/sales"},
-            ids={"sales.raw": 11, "sales.curated": 12},
+        vend.hold(
+            vend.RunVend(
+                run_id="run",
+                vend_id=1,
+                credentials=(credential,),
+                bases={"sales.raw": "s3://acme/sales", "sales.curated": "s3://acme/sales"},
+                ids={"sales.raw": 11, "sales.curated": 12},
+            )
         )
+        graph.catalog_run_id = "run"
     return graph
 
 
