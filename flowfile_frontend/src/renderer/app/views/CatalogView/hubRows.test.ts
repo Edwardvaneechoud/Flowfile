@@ -8,6 +8,7 @@ import {
   hubPresence,
   hubSharedTitle,
   offersNew,
+  offersOwnCatalog,
   rootOf,
   showsPlaces,
   withoutHubRows,
@@ -41,6 +42,19 @@ describe("hubPresence", () => {
 
   it("is beside where the hub's rows show next to this machine's", () => {
     expect(hubPresence([local, hub])).toBe("beside");
+  });
+});
+
+describe("offersOwnCatalog", () => {
+  it("is true on a desktop, with or without a hub's rows beside its own", () => {
+    expect(offersOwnCatalog([{ source: "local" }, {}])).toBe(true);
+    expect(offersOwnCatalog([{ source: "local", offered: true }, { source: "hub" }])).toBe(true);
+    expect(offersOwnCatalog([])).toBe(true);
+  });
+
+  it("is false where core marks this machine's rows not offered, a server that joined a hub", () => {
+    expect(offersOwnCatalog([{ source: "local", offered: false }, { source: "hub" }])).toBe(false);
+    expect(offersOwnCatalog([{ source: "local", offered: false }])).toBe(false);
   });
 });
 

@@ -164,6 +164,7 @@
     v-model:visible="modalVisibleForSave"
     :flow-id="nodeStore.flow_id"
     @save-complete="handleSaveDialogComplete"
+    @publish="openHubPublishDialog"
   />
 
   <create-dialog

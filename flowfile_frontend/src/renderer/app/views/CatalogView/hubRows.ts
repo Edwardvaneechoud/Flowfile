@@ -72,6 +72,17 @@ export function hubPresence(rows: { source?: string | null; offered?: boolean }[
   return shown.every(isHubRow) ? "only" : "beside";
 }
 
+/**
+ * Whether this machine's own catalog takes a person's flows. Core marks its rows not offered on a server that
+ * joined a hub: there a flow is a file on the server until it is published to the hub's catalog.
+ */
+export const offersOwnCatalog = (rows: { source?: string | null; offered?: boolean }[]): boolean =>
+  !rows.some((row) => !isHubRow(row) && !isOffered(row));
+
+export const OWN_CATALOG_NOT_OFFERED =
+  "Flows on this server are kept in your organisation's catalog on the hub. This saves a file on the server; " +
+  "Publish to hub puts the flow in the catalog.";
+
 /** The rows that live in this Flowfile; a hub catalog drops out with everything under it. */
 export function withoutHubRows<T extends { source?: string | null }>(rows: T[]): T[] {
   return rows.filter((row) => !isHubRow(row));
