@@ -49,8 +49,14 @@ class RunStart:
     servers: tuple[str, ...] = ()
 
 
+class Refused(LookupError):
+    """A remote catalog's refusal of what the person may not do there, with its sentence: core's 403, as for a row of
+    this install's own the person may not change."""
+
+
 class RemoteCatalog(Protocol):
-    """What a remote catalog's client answers; every refusal is a ``LookupError`` with a sentence."""
+    """What a remote catalog's client answers; every refusal is a ``LookupError`` with a sentence, ``Refused`` when it
+    is the person's."""
 
     def table_named(self, user_id: int | None, qualified_name: str) -> dict:
         """The row of the table ``qualified_name`` as ``user_id`` may read it."""
@@ -241,13 +247,16 @@ def row_targets(
 ) -> list[CatalogStorageTarget]:
     """The storage target of each of ``tables``, in order, for one operation by ``user_id`` outside a run; with
     ``writes`` one that also writes the tables' storage. A local row's is ``resolve_for_table``'s; the remote rows are
-    asked of their catalog in one call, now, and its refusal is a ``ValueError`` with its sentence."""
+    asked of their catalog in one call, now, and its refusal is a ``ValueError`` with its sentence, a write the person
+    may not make its ``Refused``."""
     remote_rows = [table for table in tables if is_remote(getattr(table, "source", None))]
     found: dict[int, CatalogStorageTarget] = {}
     if remote_rows:
         try:
             answered = remote(remote_rows[0].source).row_targets(user_id, remote_rows, purpose, writes)
         except LookupError as e:
+            if writes and isinstance(e, Refused):
+                raise
             raise ValueError(str(e)) from e
         found = {id(table): target for table, target in zip(remote_rows, answered, strict=True)}
     return [found.get(id(table)) or resolve_for_table(table.file_path, table.namespace_id) for table in tables]
@@ -255,9 +264,10 @@ def row_targets(
 
 def write_row(table: CatalogTable | CatalogTableOut, user_id: int | None, **facts) -> bool:
     """Write what an operation on the storage of ``table`` found (``schema_columns``, ``row_count``, ``column_count``,
-    ``size_bytes``; one left out is sent as the row has it) back to its row in the remote catalog that keeps it, on
-    that catalog's table refresh route; ``False`` for a row of this install's own, which its caller writes. A
-    refused row is a ``ValueError``: the operation is already done on storage."""
+    ``size_bytes``, one left out sent as the row has it, and ``cdc_enabled_version``, the version its change feed was
+    turned on at) back to its row in the remote catalog that keeps it, on that catalog's table refresh route;
+    ``False`` for a row of this install's own, which its caller writes. A refused row is a ``ValueError``: the
+    operation is already done on storage."""
     if not is_remote(getattr(table, "source", None)):
         return False
     body = {

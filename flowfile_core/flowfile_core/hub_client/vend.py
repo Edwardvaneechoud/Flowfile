@@ -434,13 +434,15 @@ def refusal_sentence(detail: str, status: int) -> str:
 
 @contextmanager
 def _hub_answers():
-    """The hub's refusals and silences as the one ``LookupError`` sentence a caller shows the person."""
+    """The hub's refusals and silences as the one ``LookupError`` sentence a caller shows the person; the hub's 403,
+    what the person may not do, as ``table_sources.Refused``."""
     try:
         yield
     except HubRefused as e:
         if e.status == 401:
             raise LookupError(catalog.NOT_CONNECTED) from e
-        raise LookupError(refusal_sentence(e.detail, e.status)) from e
+        refused = table_sources.Refused if e.status == 403 else LookupError
+        raise refused(refusal_sentence(e.detail, e.status)) from e
     except HubVersionRefused as e:
         raise LookupError(refusal_sentence(e.detail, 426)) from e
     except HubUnreachable as e:

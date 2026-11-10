@@ -84,7 +84,7 @@ def test_a_person_the_hub_gives_no_write_cannot_optimize_its_table(api, hub, ord
 
     resp = api.post(f"/catalog/tables/{-orders['id']}/optimize", json={})
 
-    assert resp.status_code == 422, resp.text
+    assert resp.status_code == 403, resp.text
     assert "manage" in resp.json()["detail"]
     assert _files(orders) == 2
     assert hub.fake.refreshed == []

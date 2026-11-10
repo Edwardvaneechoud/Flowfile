@@ -152,9 +152,19 @@ from flowfile_core.schemas.catalog_schema import (
 from flowfile_scheduler.engine import STALE_THRESHOLD
 from shared.storage_config import require_flow_in_storage, storage
 
-_READ_HERE = ("/preview", "/history", "/materialize", "/optimize", "/vacuum")
-"""The table routes that read or maintain data: this install's worker reaches a remote table through its storage
-target."""
+_READ_HERE = (
+    "/preview",
+    "/history",
+    "/materialize",
+    "/optimize",
+    "/vacuum",
+    "/cdc",
+    "/cdc/enable",
+    "/edits",
+    "/key-column",
+)
+"""The table routes that read, maintain or edit data: this install reaches a remote table through its storage target,
+and its row's new facts go back on the catalog's refresh route."""
 
 
 class _RemoteAnswer(Exception):
@@ -273,6 +283,7 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     CdcNotSupportedError: (409, None),
     CdcCursorNotFoundError: (404, None),
     CdcCursorsAtRiskError: (409, None),
+    table_sources.Refused: (403, None),
     ValueError: (422, None),
 }
 
@@ -951,6 +962,7 @@ def refresh_table_metadata(
         row_count=body.row_count,
         column_count=body.column_count,
         size_bytes=body.size_bytes,
+        cdc_enabled_version=body.cdc_enabled_version,
     )
 
 
@@ -1145,7 +1157,7 @@ def get_table_cdc(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Change-tracking state for a catalog table, with every consumer's cursor position."""
-    return service.get_table_cdc_status(table_id)
+    return service.get_table_cdc_status(table_id, user_id=current_user.id)
 
 
 @router.post("/tables/{table_id}/cdc/enable", response_model=CdcStatusOut)
@@ -1156,7 +1168,7 @@ def enable_table_cdc(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Turn change tracking on for a Delta catalog table (idempotent). Requires manage."""
-    return service.enable_table_cdc(table_id)
+    return service.enable_table_cdc(table_id, user_id=current_user.id)
 
 
 @router.post("/tables/{table_id}/cdc/cursors/reset", response_model=CdcCursorOut)

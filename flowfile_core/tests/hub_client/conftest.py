@@ -443,7 +443,12 @@ class FakeHubWithCatalog(FakeHub):
             facts = [body.get(name) for name in ("schema_columns", "row_count", "size_bytes")]
             if body.get("table_path") is not None or None in facts:
                 return httpx.Response(403, json={"detail": "The hub opens, writes and removes no file on its disk"})
-            table.update({name: value for name, value in body.items() if value is not None})
+            floor = body.get("cdc_enabled_version")
+            table.update(
+                {name: value for name, value in body.items() if value is not None and name != "cdc_enabled_version"}
+            )
+            if floor is not None:
+                table.update(cdc_enabled=True, cdc_enabled_version=table.get("cdc_enabled_version") or floor)
         return httpx.Response(200, json=table)
 
     def _cancel(self, run_id: str) -> httpx.Response:

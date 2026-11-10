@@ -328,7 +328,9 @@ class CatalogTableRefreshRequest(BaseModel):
 
     Used by the kernel runtime after append / upsert / update / delete writes
     that mutate an existing Delta directory: the kernel sends back the new
-    row_count / size_bytes / schema so Core's record stays consistent.
+    row_count / size_bytes / schema so Core's record stays consistent. A core that
+    turned on the table's change feed sends ``cdc_enabled_version``, the version it
+    was turned on at, which marks the table tracked.
     """
 
     table_path: str | None = None
@@ -338,6 +340,7 @@ class CatalogTableRefreshRequest(BaseModel):
     column_count: int | None = None
     size_bytes: int | None = None
     description: str | None = None
+    cdc_enabled_version: int | None = None
 
 
 class VirtualFlowTableCreate(BaseModel):

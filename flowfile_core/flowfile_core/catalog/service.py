@@ -62,7 +62,7 @@ from flowfile_core.catalog.services.tables import (
 from flowfile_core.catalog.services.virtual_tables import _UNSET as _VERSIONS_UNSET
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
-from flowfile_core.catalog.table_sources import remote_of
+from flowfile_core.catalog.table_sources import remote_of, table_row
 
 # Re-exported under the underscore names external callers and tests still use.
 from flowfile_core.catalog.text_utils import hash_source_versions as _hash_source_versions  # noqa: F401
@@ -971,6 +971,7 @@ class CatalogService:
         size_bytes: int | None = None,
         partition_columns: list[str] | None = None,
         scd2_config: dict | None | object = _KEEP_SCD2,
+        cdc_enabled_version: int | None = None,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table in-place, preserving its ID."""
         self._require_manage("catalog_table", table_id)
@@ -988,6 +989,7 @@ class CatalogService:
             size_bytes,
             partition_columns,
             scd2_config,
+            cdc_enabled_version=cdc_enabled_version,
         )
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:
@@ -1239,15 +1241,15 @@ class CatalogService:
             table_id, retention_hours=retention_hours, dry_run=dry_run, force=force, user_id=user_id
         )
 
-    def get_table_cdc_status(self, table_id: int) -> CdcStatusOut:
+    def get_table_cdc_status(self, table_id: int, user_id: int | None = None) -> CdcStatusOut:
         """Change-tracking state and cursor positions for a catalog table."""
         self._require_use("catalog_table", table_id)
-        return self._tables.get_cdc_status(table_id)
+        return self._tables.get_cdc_status(table_id, user_id=user_id)
 
-    def enable_table_cdc(self, table_id: int) -> CdcStatusOut:
+    def enable_table_cdc(self, table_id: int, user_id: int | None = None) -> CdcStatusOut:
         """Turn change tracking on for a catalog table (idempotent)."""
         self._require_manage("catalog_table", table_id)
-        return self._tables.enable_cdc(table_id)
+        return self._tables.enable_cdc(table_id, user_id=user_id)
 
     def reset_table_cdc_cursor(self, table_id: int, consumer_key: str, to: str | int = "now") -> CdcCursorOut:
         """Move one consumer's cursor to head, to the start of the tracked history, or a version."""
@@ -1263,8 +1265,10 @@ class CatalogService:
         """Re-read a table as a fully enriched, access-stamped DTO after a write.
 
         ``overwrite_table_data`` knows neither the caller nor the sharing filter, so its
-        DTO carries ``is_favorite=False`` and no ``access``.
+        DTO carries ``is_favorite=False`` and no ``access``. A remote catalog's row is read again from it.
         """
+        if remote_of(table_id) is not None:
+            return table_row(self.repo, table_id, user_id)
         return self._stamp_access([self._tables.get_table(table_id, user_id)], "catalog_table")[0]
 
     def apply_table_edits(
@@ -1285,6 +1289,7 @@ class CatalogService:
             new_columns=[c.model_dump() for c in edits.new_columns],
             delete_keys=edits.delete_keys,
             edited_by=edited_by,
+            user_id=user_id,
         )
         return CatalogTableEditsResponse(
             table=self._reloaded_table_out(table_id, user_id),
@@ -1303,7 +1308,7 @@ class CatalogService:
         """Mint a sequential row-id column so a keyless table becomes editable."""
         self._require_manage("catalog_table", table_id)
         _, result = self._tables.add_table_key_column(
-            table_id, column_name=column_name, expected_version=expected_version
+            table_id, column_name=column_name, expected_version=expected_version, user_id=user_id
         )
         return CatalogTableKeyColumnResponse(
             table=self._reloaded_table_out(table_id, user_id),
