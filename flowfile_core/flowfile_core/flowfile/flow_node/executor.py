@@ -205,6 +205,7 @@ class NodeExecutor:
         unreachable: Exception | None = None,
         running: Collection[int | str] | None = None,
         preview: bool | None = None,
+        recompute: bool = False,
     ) -> None:
         """
         Main execution entry point.
@@ -235,18 +236,19 @@ class NodeExecutor:
                 it.
 
         A ``reset_cache`` that released a stored result the node does not store again (a Performance-mode fetch of
-        a node an earlier run stored) drops the results of the nodes below, whose plans scanned its file.
+        a node an earlier run stored) drops the results of the nodes below, whose plans scanned its file. Not with
+        ``recompute``: the node runs again under its hash, so its ids do not change and the nodes below keep theirs.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
 
         state = self.state_provider.get_state(self.node.node_id, self.node.parent_uuid)
 
-        released_stored = reset_cache and self._clear_cache(state)
+        released_stored = reset_cache and self._clear_cache(state, keep_downstream=recompute)
         try:
             self._run(state, reset_cache, performance_mode, retry, node_logger, unreachable, running, preview)
         finally:
-            if released_stored and not self._holds_stored_result():
+            if released_stored and not recompute and not self._holds_stored_result():
                 self.node.drop_downstream_results()
 
     def _run(
@@ -260,12 +262,12 @@ class NodeExecutor:
         running: Collection[int | str] | None,
         preview: bool | None,
     ) -> None:
+        recomputes = _recompute_counts(self.node)
         if unreachable is not None:
             self._prepare_for_execution(state)
-            self._handle_error(state, unreachable, performance_mode, False, node_logger, running)
+            self._handle_error(state, unreachable, performance_mode, False, node_logger, running, recomputes=recomputes)
             return
 
-        recomputes = _recompute_counts(self.node)
         try:
             decision = self._decide_execution(state, performance_mode, reset_cache)
         except ComputeError as e:
@@ -383,7 +385,7 @@ class NodeExecutor:
             return ExecutionDecision(True, InvalidationReason.SOURCE_FILE_CHANGED)
 
         # A vanished result outranks the "already ran" skip: skipping would hand downstream a dangling plan.
-        if state.has_run_with_current_setup and self.node.results.artifact_is_missing():
+        if state.has_run_with_current_setup and self.node.result_is_missing():
             return ExecutionDecision(True, InvalidationReason.CACHE_MISSING)
 
         # Before performance_mode, so a cached result is kept even when upstream produces no new data.
@@ -482,15 +484,16 @@ class NodeExecutor:
             # the seed's per-handle schemas would outlive the run: multi-output refills skip them
             self.node._named_schemas = {}
 
-    def _clear_cache(self, state: NodeExecutionState) -> bool:
-        """Clear cached results; when that released operation outputs, the nodes downstream drop theirs too.
+    def _clear_cache(self, state: NodeExecutionState, keep_downstream: bool = False) -> bool:
+        """Clear cached results; when that released operation outputs, the nodes downstream drop theirs too, unless
+        ``keep_downstream`` (a recompute under the same ids).
 
         Answers whether a stored result was released: its file is gone until the node stores again under its hash.
         """
         minted_outputs = bool(self.node._operation_refs)
         released_stored = self._holds_stored_result()
         self.node.remove_cache()
-        if minted_outputs:
+        if minted_outputs and not keep_downstream:
             self.node.drop_downstream_results()
         state.has_run_with_current_setup = False
         state.has_completed_last_run = False
@@ -516,13 +519,15 @@ class NodeExecutor:
         node_logger: NodeLogger,
         running: Collection[int | str] | None = None,
         preview: bool | None = None,
-        recomputes: dict[int | str, int] | None = None,
+        *,
+        recomputes: dict[int | str, int],
     ) -> None:
         """Handle execution errors with retry logic.
 
         With ``retry`` set, inputs are rerun, then the node once. With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off a
         Polars missing-file error reruns every input; with it on, that error or a ``ResultMissing`` reruns only the
-        inputs whose result is gone (``_recompute_missing_inputs``).
+        inputs whose result is gone (``_recompute_missing_inputs``). ``recomputes`` is the inputs' recompute counts
+        taken before this attempt (``_recompute_counts``).
         """
         error_str = str(error)
         state.mark_failed(error_str)
@@ -535,7 +540,7 @@ class NodeExecutor:
         missing_file = "(os error 2)" in error_str
         if retry and settings.FLOWFILE_COMPUTE_PROTOCOL:
             retries = (missing_file or isinstance(error, ResultMissing)) and self._recompute_missing_inputs(
-                performance_mode, node_logger, running, recomputes or {}
+                performance_mode, node_logger, running, recomputes
             )
         elif retry and missing_file:
             node_logger.warning("Input file missing, retrying upstream nodes...")
@@ -563,21 +568,21 @@ class NodeExecutor:
         running: Collection[int | str] | None,
         recomputes: dict[int | str, int],
     ) -> bool:
-        """Rerun each input whose result is gone, one thread per input; whether the node should retry.
+        """Rerun each input any of whose results is gone, one thread per input; whether the node should retry.
 
         An input another thread recomputed since this node's attempt began (*recomputes*) is not rerun but counts.
         """
         recovered = False
         for node_input in self.node.node_inputs.get_all_inputs():
             with node_input._recompute_lock:
-                if node_input.results.artifact_is_missing():
+                if node_input.result_is_missing():
                     node_logger.warning(f"Input result missing, recomputing node {node_input.node_id}")
                     try:
                         self._rerun_input(node_input, performance_mode, node_logger, running)
                     finally:
                         node_input._recompute_count += 1
                     recovered = True
-                elif node_input._recompute_count != recomputes.get(node_input.node_id, node_input._recompute_count):
+                elif node_input._recompute_count != recomputes[node_input.node_id]:
                     recovered = True
         return recovered
 
@@ -588,7 +593,10 @@ class NodeExecutor:
         node_logger: NodeLogger,
         running: Collection[int | str] | None,
     ) -> None:
-        """Run ``node_input`` again with its cache reset, on the backend that holds its result."""
+        """Run ``node_input`` again with its cache reset, on the backend that holds its result.
+
+        A failure to run it is logged, never raised: the node then retries and fails on its input's error.
+        """
         context = current_context()
         ref = node_input.results.result_ref
         held = node_input.held_result(ref.backend_id) if ref is not None else None
@@ -601,10 +609,11 @@ class NodeExecutor:
                     performance_mode=performance_mode,
                     retry=True,
                     reset_cache=True,
+                    recompute=True,
                     node_logger=node_logger,
                     running=running,
                 )
-        except ValueError as e:
+        except (ValueError, ComputeError) as e:
             node_logger.error(f"Could not retry upstream node {node_input.node_id}: {e}")
 
 

@@ -1428,3 +1428,25 @@ def test_the_short_routes_answer_while_every_pool_thread_waits_on_a_child(held, 
             if prober.is_alive():
                 prober.join(60)
     assert answers == {"status": 200, "head": 404, "delete": 404, "cancel": 404}
+
+
+def test_an_operation_does_not_sweep_the_input_its_plan_scans(held, monkeypatch):
+    import base64
+
+    first_id = held()
+    first_path = ref_location(_submit(first_id, _plan(), must_materialise=True).ref).path
+    _past_the_age_limit(monkeypatch)
+    body = {
+        "code": "output_df = input_df",
+        "inputs": [base64.b64encode(pl.scan_ipc(first_path).serialize()).decode("ascii")],
+        "flowfile_flow_id": 1,
+        "flowfile_node_id": 1,
+    }
+
+    response = client.post("/v1/ops/polars_code", params={"job_id": held()}, json=body)
+
+    assert response.status_code == 200, response.text
+    assert os.path.isfile(first_path)
+    _submit(held(), _plan(), must_materialise=True)
+    assert not os.path.isfile(first_path)
+    assert client.head(f"/v1/results/{first_id}").status_code == 404

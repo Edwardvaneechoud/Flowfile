@@ -7,7 +7,8 @@ carrying a child's ``status``, ``error_message`` and ``error_kind`` (``_failure`
 
 A submit's job id is its result id; an operation holds its outputs as ``<job_id>_<i>``. One job runs under an id at a
 time (``_claim``): a later job under the id, or a release of it, replaces the running one, which is stopped and holds
-nothing. Every submit, import and operation first drops what has gone unused for ``CACHE_EXPIRATION_TIME``.
+nothing. A submit (after its inputs are checked) and an import drop what has gone unused for ``CACHE_EXPIRATION_TIME``;
+an operation does not, since it cannot name the held results its plans scan.
 
 A credential crosses as a stored connection's id and user, resolved where the plan runs. A blob takes none: the
 presigned URL it is copied to or from carries its own authorisation. With ``spawner.in_process`` set, every job runs in
@@ -457,11 +458,9 @@ def _run_child(record: ResultRecord, plan: bytes, operation: str, kwargs: dict |
 def _op_outputs(job_id: str, count: int) -> list[str]:
     """The ids the *count* outputs of operation *job_id* are held under, ``<job_id>_<i>``, none of them held yet.
 
-    Expired results are swept first. What an earlier run under the job id held is released and its end stamp dropped,
-    so a rerun replaces its outputs and is not swept while it runs. The ids are recorded on the job's claim, so
-    releasing one while the job runs stops it.
+    What an earlier run under the job id held is released. No sweep: it could take a result the operation's plans
+    scan. The ids are recorded on the job's claim, so releasing one while the job runs stops it.
     """
-    sweep_expired()
     output_ids = [f"{job_id}_{i}" for i in range(count)]
     with status_dict_lock:
         claim = _claims.get(job_id)
@@ -980,11 +979,11 @@ def ml_apply(body: MlApplyInput, job_id: str) -> OpOutputs:
     """
     flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
     model = _held(body.model)
+    (result_id,) = _op_outputs(job_id, 1)
     if model is None:
         raise _not_held(body.model)
     if model.kind != "blob":
         raise HTTPException(status_code=422, detail=f"Result {body.model} holds rows, not a model")
-    (result_id,) = _op_outputs(job_id, 1)
     path = _output_file(flow_id, result_id)
     _run_op(
         job_id,

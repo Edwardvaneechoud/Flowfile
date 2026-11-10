@@ -8,9 +8,10 @@ import pytest
 
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
-from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.schemas import input_schema
+from flowfile_core.schemas import input_schema, transform_schema
 from tests.flowfile.execution.graph_helpers import add_manual_input, add_promise, add_sort_on, connect, make_graph, ranks
 
 BACKEND_ID = "recompute"
@@ -154,5 +155,95 @@ def test_an_input_that_still_holds_its_result_is_not_run_again(backend, recomput
         [(failed, error)] = [(node_id, error) for node_id, error in backend.submits if error is not None]
         assert failed == 4 and error.startswith("ResultMissing"), error
         assert backend.count(graph.get_node(4).results.result_ref) == 5
+    finally:
+        graph.close_flow()
+
+
+def add_split_with_two_readers(graph: FlowGraph) -> None:
+    """manual_input(1) -> random_split(2), seeded 80/20 -> select(3) on output-0 and select(4) on output-1."""
+    add_manual_input(graph, 1, [{"id": i} for i in range(100)])
+    add_promise(graph, 2, "random_split")
+    graph.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            splits=[
+                input_schema.RandomSplitGroup(name="big", percentage=80.0),
+                input_schema.RandomSplitGroup(name="small", percentage=20.0),
+            ],
+            seed=42,
+        )
+    )
+    connect(graph, 1, 2)
+    for node_id, handle in ((3, "output-0"), (4, "output-1")):
+        add_promise(graph, node_id, "select")
+        add_connection(
+            graph,
+            input_schema.NodeConnection(
+                input_connection=input_schema.NodeInputConnection(node_id=node_id, connection_class="input-0"),
+                output_connection=input_schema.NodeOutputConnection(node_id=2, connection_class=handle),
+            ),
+        )
+        graph.add_select(
+            input_schema.NodeSelect(
+                flow_id=graph.flow_id,
+                node_id=node_id,
+                depending_on_id=2,
+                select_input=[transform_schema.SelectInput(old_name="id")],
+            )
+        )
+
+
+def test_an_expired_secondary_output_is_recomputed_and_the_other_outputs_reader_keeps_its_result(backend, recomputes):
+    graph = make_graph(9303, "remote", max_parallel_workers=1)
+    add_split_with_two_readers(graph)
+    lost: list[str] = []
+
+    def lose_the_small_split_once(node_id):
+        if node_id == 4 and not lost:
+            ref = graph.get_node(2).held_output("output-1")
+            lost.append(ref.result_id)
+            backend.release(ref)
+
+    backend.before_submit = lose_the_small_split_once
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, errors(run_info)
+        assert lost
+        assert recomputes == [2]
+        assert [backend.succeeded(node_id) for node_id in (1, 3, 4)] == [1, 1, 1]
+        for node_id in (2, 3, 4):
+            node = graph.get_node(node_id)
+            assert node.node_stats.has_run_with_current_setup, node_id
+            assert all(backend.exists(ref) for ref in node.held_refs()), node_id
+        assert backend.count(graph.get_node(4).results.result_ref) == 20
+    finally:
+        graph.close_flow()
+
+
+def test_a_rerun_that_cannot_reach_its_backend_fails_the_node_and_the_run_goes_on(backend, monkeypatch):
+    graph = make_graph(9304, "remote", max_parallel_workers=4)
+    add_manual_input(graph, 1, ranks(3))
+    add_sort_on(graph, 2, 1, "rank")
+    add_manual_input(graph, 3, ranks(2))
+    add_union(graph, 4, [2, 3])
+    real_execute_node = FlowNode.execute_node
+
+    def unreachable_on_rerun(node, *args, **kwargs):
+        if kwargs.get("reset_cache"):
+            raise ComputeUnavailable("the backend went away", backend_id=BACKEND_ID)
+        return real_execute_node(node, *args, **kwargs)
+
+    monkeypatch.setattr(FlowNode, "execute_node", unreachable_on_rerun)
+    backend.before_submit = lambda node_id: node_id == 4 and backend.release(graph.get_node(2).results.result_ref)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success is False
+        [(failed, error)] = errors(run_info)
+        assert failed == 4
+        assert "is not held" in error
     finally:
         graph.close_flow()

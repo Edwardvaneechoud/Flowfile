@@ -21,7 +21,7 @@ from flowfile_core.flowfile.execution.context import (
     current_context,
     use_context,
 )
-from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, TaskFailed
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, ResultMissing, TaskFailed
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
     JobHandle,
@@ -1728,6 +1728,22 @@ class FlowNode:
         self.results.job_handle = None
         self._release_or_drop(ref)
 
+    def held_refs(self) -> list[ResultRef]:
+        """Every result this node holds: its own, the outputs stored beside it and its operation's outputs."""
+        refs = [self.results.result_ref, *self._stored_outputs.values(), *self._operation_refs.values()]
+        return [ref for ref in refs if ref is not None]
+
+    def result_is_missing(self) -> bool:
+        """True when any result this node holds is gone from where it was kept (``NodeResults.artifact_is_missing``)."""
+        if self.results.artifact_is_missing():
+            return True
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            return False
+        return any(
+            not registry.backend(ref.backend_id).exists(ref)
+            for ref in [*self._stored_outputs.values(), *self._operation_refs.values()]
+        )
+
     def held_result(self, backend_id: str) -> ResultRef | None:
         """The result this node holds on backend ``backend_id`` under its current hash, else ``None``."""
         ref = self.results.result_ref
@@ -1970,7 +1986,14 @@ class FlowNode:
         (``_operation_refs``, by output name), released with its result. A deferred one stays the caller's to
         release, since the engine built over it holds its plan. A stored output replaced under the same name by
         another id (a random split or database read rerun) is released first. Failures follow ``run_operation``.
+
+        With the protocol on, an input this node holds on ``backend`` is checked first (``exists``, which also resets
+        its age), as a submit's inputs are; one that is gone is ``ResultMissing`` before anything runs.
         """
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            for ref in self._input_refs(backend.id):
+                if not backend.exists(ref):
+                    raise ResultMissing(f"Backend {backend.id!r} no longer holds input result {ref.result_id!r}")
         self._submit_in_flight = JobHandle(backend.id, job_id)
         try:
             result = run_operation(backend, op, payload)
@@ -1987,14 +2010,14 @@ class FlowNode:
         return result
 
     def _input_refs(self, backend_id: str) -> list[ResultRef]:
-        """The results this node's upstream nodes hold on backend ``backend_id``; one holding none is left out.
-
-        An input that crossed to this node from another backend (``_boundary_inputs``) counts by its import.
+        """Every table result this node's upstream nodes hold on backend ``backend_id`` (``held_refs``), so one use of
+        a node keeps all of its outputs from the age sweep; a blob is no input to a plan (an apply names its model).
+        An input that crossed from another backend (``_boundary_inputs``) counts by its import.
         """
         refs: dict[str, ResultRef] = {}
-        held = [node.results.result_ref for node in self.all_inputs]
+        held = [ref for node in self.all_inputs for ref in node.held_refs()]
         for ref in [*held, *(edge.ref for edge in self._boundary_inputs.values())]:
-            if ref is not None and ref.backend_id == backend_id:
+            if ref is not None and ref.backend_id == backend_id and ref.kind != "blob":
                 refs[ref.result_id] = ref
         return list(refs.values())
 
@@ -2105,6 +2128,7 @@ class FlowNode:
         unreachable: Exception | None = None,
         running: Collection[int | str] | None = None,
         preview: bool | None = None,
+        recompute: bool = False,
     ) -> None:
         """Execute the node based on its current state and settings.
 
@@ -2124,6 +2148,8 @@ class FlowNode:
             running: The ids of the nodes the run executes, among which the hints count this node's consumers
                 (``executor.hints_for``); ``None`` counts every consumer.
             preview: Fill the 100-row grid; ``None`` means ``not performance_mode``.
+            recompute: The node is run again under its current hash because its result went missing; the
+                nodes below keep theirs, which come back under the same ids.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -2139,6 +2165,7 @@ class FlowNode:
             unreachable=unreachable,
             running=running,
             preview=preview,
+            recompute=recompute,
         )
 
     def needs_reset(self) -> bool:
