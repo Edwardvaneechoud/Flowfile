@@ -31,7 +31,13 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.tables import TableService
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_table, serialized_frame_uses_cloud
+from flowfile_core.catalog.storage_backend import (
+    CatalogStorageTarget,
+    _is_cloud_uri,
+    resolve_for_table,
+    serialized_frame_uses_cloud,
+)
+from flowfile_core.catalog.table_sources import remote_sql_tables, row_targets, scan_delta
 from flowfile_core.catalog.text_utils import (
     hash_source_versions,
     is_table_reference,
@@ -61,6 +67,10 @@ logger = logging.getLogger(__name__)
 _UNSET: str = "\x00unset\x00"
 
 _ABS_PATH_RE = re.compile(r"(?:/[\w.\-]+){2,}")
+MIXED_STORAGE = (
+    "This query names tables on object storage and tables or views this Flowfile reads from its own disk; "
+    "the SQL editor reads one or the other. Combine them in a flow."
+)
 
 
 def _scrub_abs_paths(text: str) -> str:
@@ -73,6 +83,20 @@ def _project_sync_tables(owner_id: int) -> None:
     from flowfile_core.project import project_sync
 
     project_sync.tables_changed(owner_id)
+
+
+def scan_object_storage_table(
+    table: CatalogTable | CatalogTableOut, target: CatalogStorageTarget, user_id: int | None, display: str
+) -> pl.LazyFrame:
+    """A lazy scan of a physical table on object storage from its row and its storage target, its plan holding no
+    secret. A table whose catalog names no storage has nothing to be read with and is refused, never read with
+    whatever credentials this process has."""
+    if not target.is_cloud:
+        raise ValueError(
+            f"Table '{display}' is stored in cloud/object storage, but its catalog has no storage connection to "
+            "read it with."
+        )
+    return scan_delta(target, table.file_path, user_id)
 
 
 class VirtualTableService:
@@ -599,9 +623,16 @@ class VirtualTableService:
         self, accessible_table_ids: set[int] | None = None, exclude: set[str] | frozenset = frozenset()
     ) -> dict[str, str]:
         """Map each SQL name of an object-storage-backed physical table to its fully-qualified
-        display name. These tables are excluded from the worker-offloaded SQL path (known
-        limitation), so the SQL editor uses this to return a clear error instead of a raw
-        'relation not found'. ``exclude`` drops names also served by a queryable table."""
+        display name. ``exclude`` drops names also served by a queryable table."""
+        found = self._object_storage_tables(accessible_table_ids, exclude)
+        return {name: display for name, (_, display) in found.items()}
+
+    def _object_storage_tables(
+        self, accessible_table_ids: set[int] | None, exclude: set[str] | frozenset
+    ) -> dict[str, tuple[CatalogTable, str]]:
+        """Each SQL name of an object-storage-backed physical table with its row and display name. The worker's SQL
+        route reads tables by directory name under the local root, so these are read as a plan
+        (``object_storage_plan``)."""
         tables = self.repo.list_tables()
         if accessible_table_ids is not None:
             tables = [t for t in tables if t.id in accessible_table_ids]
@@ -610,7 +641,7 @@ class VirtualTableService:
             if t.table_type != "virtual" and t.file_path and _is_cloud_uri(t.file_path):
                 bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
         path_cache: dict[int | None, str | None] = {}
-        aliases: dict[str, str] = {}
+        aliases: dict[str, tuple[CatalogTable, str]] = {}
         for table in tables:
             if table.table_type == "virtual" or not table.file_path or not _is_cloud_uri(table.file_path):
                 continue
@@ -618,5 +649,43 @@ class VirtualTableService:
             display = format_full_name(path_cache.get(table.namespace_id), table.name)
             for name in names:
                 if name not in exclude:
-                    aliases[name] = display
+                    aliases[name] = (table, display)
         return aliases
+
+    def object_storage_plan(
+        self,
+        query: str,
+        user_id: int | None,
+        own: set[str],
+        accessible_table_ids: set[int] | None = None,
+        purpose: str = "sql",
+    ) -> tuple[pl.LazyFrame, list[str]] | None:
+        """``query`` as a lazy plan over the physical tables on object storage it names, and those names; ``None``
+        when it names none.
+
+        The tables are this catalog's and, under the names this catalog does not use, a remote catalog's
+        (``remote_sql_tables``). Each is scanned with its storage target's ``scan_kwargs``, so the plan holds no
+        secret, and a remote catalog is asked for its targets once, now. ``own`` are the names of this catalog's
+        tables on disk and its views, which the worker's SQL route reads: a query that names both kinds is refused.
+
+        Raises:
+            ValueError: A sentence for the person: both kinds named, a table whose catalog has no storage
+                connection, or a remote catalog's refusal.
+            pl.exceptions.PolarsError: The SQL does not hold over the tables' columns.
+        """
+        local = self._object_storage_tables(accessible_table_ids, own)
+        tables: dict[str, CatalogTable | CatalogTableOut] = {name: table for name, (table, _) in local.items()}
+        tables.update(remote_sql_tables(query, user_id, own | set(tables)))
+        collapsed = rewrite_qualified_references(query, set(tables) | own)
+        tables = {name: table for name, table in tables.items() if is_table_reference(name, collapsed)}
+        if not tables:
+            return None
+        if any(is_table_reference(name, collapsed) for name in own):
+            raise ValueError(MIXED_STORAGE)
+        rows = list({table.id: table for table in tables.values()}.values())
+        targets = dict(zip((row.id for row in rows), row_targets(rows, user_id, purpose), strict=True))
+        context = pl.SQLContext()
+        for name, table in tables.items():
+            display = local[name][1] if name in local else name
+            context.register(name, scan_object_storage_table(table, targets[table.id], user_id, display))
+        return context.execute(collapsed), sorted(tables)

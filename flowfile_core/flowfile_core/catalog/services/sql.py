@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
+
+import polars as pl
 
 from flowfile_core.catalog.constants import (
     DEFAULT_SQL_MAX_ROWS,
@@ -23,19 +26,25 @@ from flowfile_core.catalog.text_utils import (
     rewrite_qualified_references,
 )
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.flow_data_engine.bounded import count_rows, head_rows
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_resolve_virtual_table,
 )
-from flowfile_core.hub_client import tables as hub_tables
 from flowfile_core.schemas.catalog_schema import SqlQueryResult
 from shared import storage_config
 from shared._version import get_version
+from shared.delta_utils import make_json_safe
 from shared.storage_config import storage
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 
 logger = logging.getLogger(__name__)
+
+SAMPLE_ROWS = 10_000
+"""The most rows a backend hands back in one bounded read (the worker's ``SAMPLE_ROWS_CAP``)."""
 
 
 class SqlService:
@@ -81,8 +90,8 @@ class SqlService:
         """Execute a SQL query against catalog tables (physical + virtual) via the worker.
 
         ``accessible_table_ids`` (multi-user mode) restricts the registered tables
-        to those the user may read. A query that names tables of the person's hub is
-        run over those instead (``hub_tables.sql``).
+        to those the user may read. A query that names tables on object storage, this catalog's or a
+        remote catalog's, is read as a plan on the default backend instead (``_read_plan``).
         """
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
@@ -98,25 +107,13 @@ class SqlService:
         delta_map, virtual_map = virtual_tables.resolve_all_queryable_tables(accessible_table_ids)
         queryable = {*delta_map, *virtual_map}
 
-        cloud_aliases = virtual_tables.resolve_cloud_only_table_aliases(accessible_table_ids, exclude=queryable)
-        own = queryable | set(cloud_aliases)
-        on_hub = hub_tables.named(user_id, query, own)
-        if on_hub:
-            return hub_tables.sql(user_id, query, on_hub, own, max_rows)
-        if cloud_aliases:
-            # Collapse dotted references (any quoting) so detection matches regardless of form.
-            detect_query = rewrite_qualified_references(query, queryable | set(cloud_aliases))
-            referenced = sorted(
-                {display for alias, display in cloud_aliases.items() if is_table_reference(alias, detect_query)}
-            )
-            if referenced:
-                names = ", ".join(f"'{d}'" for d in referenced)
-                return SqlQueryResult(
-                    error=(
-                        f"Table {names} is stored in cloud/object storage, which the SQL editor "
-                        f"does not support yet. Read it from a flow (Cloud storage or Catalog reader node) instead."
-                    )
-                )
+        started = time.perf_counter()
+        try:
+            planned = virtual_tables.object_storage_plan(query, user_id, queryable, accessible_table_ids)
+            if planned is not None:
+                return self._read_plan(*planned, max_rows, started)
+        except (ValueError, ComputeError, pl.exceptions.PolarsError) as e:
+            return SqlQueryResult(error=friendly_relation_error(str(e), query))
 
         if not delta_map and not virtual_map:
             return SqlQueryResult(error="No catalog tables available")
@@ -157,6 +154,25 @@ class SqlService:
         if result.get("error"):
             result["error"] = friendly_relation_error(result["error"], query)
         return SqlQueryResult(**result)
+
+    @staticmethod
+    def _read_plan(plan: pl.LazyFrame, used_tables: list[str], max_rows: int, started: float) -> SqlQueryResult:
+        """The rows of ``plan`` as the worker's SQL route answers them, read on the current context's backend: at
+        most ``max_rows`` rows and never more than one bounded read gives (``SAMPLE_ROWS``), and the count of all of
+        them only when the read came back full."""
+        backend = current_context().backend
+        limit = min(max_rows, SAMPLE_ROWS)
+        frame = pl.from_arrow(head_rows(backend, plan, limit))
+        total_rows = frame.height if frame.height < limit else count_rows(backend, plan)
+        return SqlQueryResult(
+            columns=frame.columns,
+            dtypes=[str(dtype) for dtype in frame.dtypes],
+            rows=[[make_json_safe(value) for value in row] for row in frame.rows()],
+            total_rows=total_rows,
+            truncated=total_rows > frame.height,
+            execution_time_ms=(time.perf_counter() - started) * 1000,
+            used_tables=used_tables,
+        )
 
     def _materialise_virtual_for_sql(self, virtual_id: int, user_id: int | None) -> str:
         """Resolve a virtual table to an IPC path for the SQL worker call."""

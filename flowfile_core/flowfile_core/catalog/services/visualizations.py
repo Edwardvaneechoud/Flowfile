@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
+import time
+import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
+import polars as pl
 from sqlalchemy.exc import IntegrityError
 
 from flowfile_core.catalog.constants import (
@@ -31,9 +36,11 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.sql import SqlService
 from flowfile_core.catalog.services.tables import TableService
-from flowfile_core.catalog.services.virtual_tables import VirtualTableService
+from flowfile_core.catalog.services.virtual_tables import VirtualTableService, scan_object_storage_table
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
+from flowfile_core.catalog.table_sources import row_targets, table_row
 from flowfile_core.catalog.text_utils import (
+    friendly_relation_error,
     is_table_reference,
     rewrite_qualified_references,
 )
@@ -44,7 +51,6 @@ from flowfile_core.catalog.validators import (
 )
 from flowfile_core.database.models import CatalogDashboard, CatalogTable, CatalogVisualization
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.hub_client import tables as hub_tables
 from flowfile_core.schemas.catalog_schema import (
     ColumnStatsResponse,
     DashboardCreate,
@@ -62,6 +68,38 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
+
+
+PLAN_SOURCE_KEPT_SECONDS = 240
+"""How long a plan source over object storage is reused: well inside the 15 minutes a credential a remote catalog
+gives lives by default."""
+_plan_sources: dict[tuple[int | None, str], tuple[float, dict]] = {}
+
+
+def _kept_plan_source(user_id: int | None, key: str, build: Callable[[], pl.LazyFrame | None]) -> dict | None:
+    """The worker's plan source for what ``key`` names (a query, a table) over object storage, which the worker holds
+    lazily and reads for each request of a chart; ``None`` when ``build`` answers no plan.
+
+    A source is reused for ``PLAN_SOURCE_KEPT_SECONDS`` per person and key, so a chart's requests share one session
+    on the worker and one credential, and the tables are read as they were when it was built; after that it is built
+    again. The plan carries no secret (``scan_object_storage_table``).
+    """
+    now = time.monotonic()
+    for stale in [held for held, (built, _) in _plan_sources.items() if now - built >= PLAN_SOURCE_KEPT_SECONDS]:
+        del _plan_sources[stale]
+    held = _plan_sources.get((user_id, key))
+    if held is not None:
+        return held[1]
+    plan = build()
+    if plan is None:
+        return None
+    source = {
+        "kind": "plan",
+        "session_key": f"plan:{uuid.uuid4().hex}",
+        "plan_bytes": base64.b64encode(plan.serialize()).decode("ascii"),
+    }
+    _plan_sources[(user_id, key)] = (now, source)
+    return source
 
 
 def _project_sync_visualizations(user_id: int) -> None:
@@ -473,19 +511,13 @@ class VisualizationService:
         if source.source_type == "table":
             if source.table_id is None:
                 raise ValueError("table_id is required when source_type='table'")
-            table = self.repo.get_table(source.table_id)
-            if table is None:
-                raise TableNotFoundError(table_id=source.table_id)
+            table = table_row(self.repo, source.table_id, user_id)
 
             if table.table_type != "virtual":
                 if not table.file_path:
                     raise ValueError(f"Table {table.id} has no file_path")
                 if _is_cloud_uri(table.file_path):
-                    raise ValueError(
-                        "Visualizing object-storage (cloud) catalog tables is not yet supported; the "
-                        "visualization worker has no per-table storage credentials. Copy the table into a "
-                        "local catalog to visualize it."
-                    )
+                    return _kept_plan_source(user_id, f"table:{table.id}", lambda: self._table_plan(table, user_id))
                 return {
                     "kind": "physical",
                     "session_key": self._session_key_for_table(table.id),
@@ -515,9 +547,21 @@ class VisualizationService:
             raise ValueError("sql_query is required when source_type='sql'")
         return self._build_sql_worker_source(source.sql_query, user_id=user_id)
 
+    @staticmethod
+    def _table_plan(table: CatalogTable, user_id: int | None) -> pl.LazyFrame:
+        [target] = row_targets([table], user_id, "visual")
+        return scan_object_storage_table(table, target, user_id, table.name)
+
+    def _sql_plan(self, sql_query: str, user_id: int | None, own: set[str]) -> pl.LazyFrame | None:
+        try:
+            planned = self._virtual_tables.object_storage_plan(sql_query, user_id, own, purpose="visual")
+        except pl.exceptions.PolarsError as e:
+            raise ValueError(friendly_relation_error(str(e), sql_query)) from e
+        return planned[0] if planned is not None else None
+
     def _build_sql_worker_source(self, sql_query: str, user_id: int | None) -> dict:
-        """Build a worker SQL source spec mirroring ``execute_sql_query``'s setup; a query that names tables of the
-        person's hub becomes a plan over those instead (``hub_tables.visual_source``)."""
+        """Build a worker SQL source spec mirroring ``execute_sql_query``'s setup; a query that names tables on
+        object storage, this catalog's or a remote catalog's, becomes a plan source instead (``_kept_plan_source``)."""
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
             validate_sql_query,
@@ -530,9 +574,9 @@ class VisualizationService:
 
         delta_map, virtual_map = self._virtual_tables.resolve_all_queryable_tables()
         own = {*delta_map, *virtual_map}
-        on_hub = hub_tables.named(user_id, sql_query, own)
-        if on_hub:
-            return hub_tables.visual_source(user_id, sql_query, on_hub, own)
+        on_storage = _kept_plan_source(user_id, sql_query, lambda: self._sql_plan(sql_query, user_id, own))
+        if on_storage is not None:
+            return on_storage
         rewritten = rewrite_qualified_references(sql_query, own)
         referenced_virtuals = {n for n in virtual_map if is_table_reference(n, rewritten)}
 
@@ -683,8 +727,6 @@ class VisualizationService:
         """Distinct values + min/max for a single column on a catalog table."""
         from flowfile_core.catalog import service as _service_module
 
-        if self.repo.get_table(table_id) is None:
-            raise TableNotFoundError(table_id=table_id)
         clamped_limit = max(1, min(limit, MAX_PREVIEW_LIMIT))
         source = VizSourceDescriptor(source_type="table", table_id=table_id)
         worker_source = self._resolve_source_for_worker(source, user_id=user_id)
