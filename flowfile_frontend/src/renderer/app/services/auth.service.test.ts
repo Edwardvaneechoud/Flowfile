@@ -203,8 +203,8 @@ describe("auth service: sign-in through the hub", () => {
 
   it("goes to the hub's Open page by replacing the history entry", async () => {
     const authService = await load();
-    const replace = vi.spyOn(window.location, "replace").mockImplementation(() => {});
-    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+    const replace = vi.spyOn(window.location, "replace").mockImplementation(() => undefined);
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => undefined);
 
     authService.startHubSignIn(OPEN);
 
