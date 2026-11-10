@@ -430,7 +430,7 @@
 
     <CreateScheduleModal
       :visible="showCreateSchedule"
-      :flows="catalogStore.allFlows"
+      :flows="selectedHubFlow ? [selectedHubFlow, ...catalogStore.allFlows] : catalogStore.allFlows"
       :tables="catalogStore.allTables"
       :preselected-flow-id="preselectedFlowId"
       @close="
@@ -1746,8 +1746,9 @@ async function handleCreateSchedule(body: FlowScheduleCreate, notifyChannelId?: 
       }
     }
     const loads: Promise<void>[] = [catalogStore.loadSchedules(), catalogStore.loadStats()];
-    if (catalogStore.selectedFlowId) {
-      loads.push(catalogStore.loadFlowSchedules(catalogStore.selectedFlowId));
+    const shownFlowId = selectedHubFlowId.value ?? catalogStore.selectedFlowId;
+    if (shownFlowId) {
+      loads.push(catalogStore.loadFlowSchedules(shownFlowId));
     }
     await Promise.all(loads);
   } catch (e: any) {

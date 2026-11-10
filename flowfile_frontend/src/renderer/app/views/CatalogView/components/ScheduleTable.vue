@@ -19,7 +19,11 @@
       @click="emit('selectSchedule', schedule.id)"
     >
       <div class="col-status">
-        <ScheduleStatusBadge :running="isRunning(schedule)" :enabled="schedule.enabled" />
+        <ScheduleStatusBadge
+          :running="isRunning(schedule)"
+          :enabled="schedule.enabled"
+          :reason="schedule.disabled_reason"
+        />
       </div>
       <div v-if="showFlowColumn" class="col-flow">
         <span
@@ -67,7 +71,7 @@
       </div>
       <div class="col-actions" @click.stop>
         <el-tooltip
-          v-if="isRunning(schedule)"
+          v-if="isRunning(schedule) && !hideCancel"
           content="Cancel run"
           placement="top"
           :show-after="400"
@@ -164,6 +168,7 @@ const props = withDefaults(
     paginated?: boolean;
     pageSize?: number;
     disableRunNow?: boolean;
+    hideCancel?: boolean;
     isRunningFn?: (schedule: ScheduleLike) => boolean;
     saveDescription: (id: number, description: string | null) => Promise<void>;
   }>(),
@@ -172,6 +177,7 @@ const props = withDefaults(
     paginated: false,
     pageSize: 25,
     disableRunNow: false,
+    hideCancel: false,
     isRunningFn: undefined,
   },
 );

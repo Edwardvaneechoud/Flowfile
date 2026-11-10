@@ -29,7 +29,7 @@
       </div>
       <div class="header-actions">
         <button
-          v-if="hasFile && !isFlowRunning"
+          v-if="runnable && !isFlowRunning"
           class="btn btn-success btn-sm"
           @click="$emit('runFlow', flow.id)"
         >
@@ -191,7 +191,7 @@
       persist-key="flow.schedules"
       :count="catalogStore.flowSchedules.length"
     >
-      <template v-if="hasFile" #actions>
+      <template v-if="runnable" #actions>
         <el-button size="small" type="primary" @click="$emit('addSchedule', flow.id)">
           <i class="fa-solid fa-plus" /> Add
         </el-button>
@@ -231,7 +231,8 @@
         v-else
         :schedules="catalogStore.flowSchedules"
         :show-flow-column="false"
-        :disable-run-now="remote || isFlowRunning"
+        :disable-run-now="isFlowRunning"
+        :hide-cancel="remote"
         :is-running-fn="isScheduleRunning"
         :save-description="onSaveDescription"
         @select-schedule="$emit('selectSchedule', $event)"
@@ -403,9 +404,10 @@ const emit = defineEmits([
 const runHistorySection = ref<HTMLElement | null>(null);
 
 // A flow of a remote catalog has this page through the same catalog routes, which its catalog answers; what
-// needs the flow's file here, or a route its catalog does not answer (run now, a new schedule), is left out.
+// needs the flow's file here, or a route its catalog does not answer (cancelling a run), is left out.
 const remote = computed(() => isHubRow(props.flow));
 const hasFile = computed(() => !remote.value && props.flow.file_exists);
+const runnable = computed(() => remote.value || hasFile.value);
 
 const COPY_OPTIONS: { format: FlowCodeFormat; label: string }[] = [
   { format: "yaml", label: "Flow file (YAML)" },
