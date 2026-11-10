@@ -642,7 +642,7 @@ def _run_now(flow_path: Path, backend: str | None, monkeypatch) -> tuple[bool | 
     with get_db_context() as db:
         finished = db.get(db_models.FlowRun, run.id)
         enabled = db.get(db_models.FlowSchedule, schedule_id).enabled
-        return finished.success, finished.nodes_completed, enabled, run_log_path(run.id).read_text()
+        return finished.success, finished.nodes_completed, enabled, run_log_path(run.id).read_text(encoding="utf-8")
 
 
 def test_a_schedule_naming_a_backend_with_no_row_fails_its_run_and_stays_enabled(tmp_path, monkeypatch):

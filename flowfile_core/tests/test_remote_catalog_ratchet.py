@@ -34,6 +34,6 @@ def test_no_more_generic_modules_import_the_hub_client_than_before():
         path.relative_to(REPO).as_posix()
         for package in PACKAGES
         for path in (REPO / package).rglob("*.py")
-        if not _is_the_clients_own(path) and IMPORTS.search(path.read_text())
+        if not _is_the_clients_own(path) and IMPORTS.search(path.read_text(encoding="utf-8"))
     )
     assert len(importing) <= LIMIT, "\n".join(importing)
