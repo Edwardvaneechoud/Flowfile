@@ -199,6 +199,18 @@ def resolve_for_namespace(namespace_id: int | None, *, db: Session | None = None
         return _resolve_in_session(own_db, namespace_id)
 
 
+def resolve_for_table(file_path: str | None, namespace_id: int | None) -> CatalogStorageTarget:
+    """Resolve the storage of an existing table: where its data lives and how a plan or the worker gets in.
+
+    A table stays where it was written, so its own path decides. One on local disk answers the local target
+    whatever its catalog stores new tables in; one on object storage answers its namespace's storage
+    (:func:`resolve_for_namespace`, which the schema of a new table asks directly).
+    """
+    if not file_path or not _is_cloud_uri(file_path):
+        return _local_target()
+    return resolve_for_namespace(namespace_id)
+
+
 def resolve_catalog_storage(_user_id: int, *, namespace_id: int | None = None) -> CatalogStorageTarget:
     """Shim around :func:`resolve_for_namespace`; *_user_id* is ignored (credentials resolve as the owner)."""
     return resolve_for_namespace(namespace_id)

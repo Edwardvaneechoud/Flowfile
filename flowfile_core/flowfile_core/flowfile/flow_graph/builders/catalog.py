@@ -10,7 +10,7 @@ from flowfile_core.catalog.delta_utils import (
     is_legacy_parquet,
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.catalog.storage_backend import CatalogStorageTarget, _is_cloud_uri, resolve_for_namespace
+from flowfile_core.catalog.storage_backend import CatalogStorageTarget, _is_cloud_uri, resolve_for_table
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.catalog_cdc import (
@@ -117,27 +117,23 @@ class CatalogBuildersMixin(GraphMixinBase):
         virtual_tables = resolved.virtual_tables
         table_namespaces = resolved.table_namespaces
 
-        # Memoized per namespace: one SQL query can join tables from catalogs with different storage.
+        # Memoized per storage: one SQL query can join tables from catalogs with different storage.
         targets_by_name: dict[str, CatalogStorageTarget] = {}
-        _targets_by_namespace: dict[int | None, CatalogStorageTarget] = {}
+        _targets: dict[tuple[bool, int | None], CatalogStorageTarget] = {}
         for _name, _path in table_paths.items():
-            if not _is_cloud_uri(_path):
-                continue
             _ns = table_namespaces.get(_name)
-            if _ns not in _targets_by_namespace:
-                _targets_by_namespace[_ns] = resolve_for_namespace(_ns)
-            targets_by_name[_name] = _targets_by_namespace[_ns]
+            _key = (_is_cloud_uri(_path), _ns)
+            if _key not in _targets:
+                _targets[_key] = resolve_for_table(_path, _ns)
+            targets_by_name[_name] = _targets[_key]
 
         def _func() -> FlowDataEngine:
             if not table_paths and not virtual_tables:
                 raise ValueError("No catalog tables available to query")
             ctx = pl.SQLContext()
             for name, path in table_paths.items():
-                if _is_cloud_uri(path):
-                    scan_kwargs = targets_by_name[name].scan_kwargs(node_catalog_reader.user_id)
-                    ctx.register(name, pl.scan_delta(path, **scan_kwargs))
-                else:
-                    ctx.register(name, pl.scan_delta(path))
+                scan_kwargs = targets_by_name[name].scan_kwargs(node_catalog_reader.user_id)
+                ctx.register(name, pl.scan_delta(path, **scan_kwargs))
             run_location = current_context(self).backend_id if FLOWFILE_COMPUTE_PROTOCOL else self.execution_location
             for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
                 ctx.register(
@@ -265,13 +261,9 @@ class CatalogBuildersMixin(GraphMixinBase):
         _authorized = info.authorized
         _user_id = node_catalog_reader.user_id
 
-        # Resolve cloud storage once at wiring time; local tables don't touch the DB.
-        _reader_target = None
-        _reader_storage_options = None
-        if resolved_path and _is_cloud_uri(resolved_path):
-            _reader_namespace_id = info.namespace_id or node_catalog_reader.catalog_namespace_id
-            _reader_target = resolve_for_namespace(_reader_namespace_id)
-            _reader_storage_options = _reader_target.storage_options or None
+        # Resolve storage once at wiring time; local tables don't touch the DB.
+        _reader_target = resolve_for_table(resolved_path, info.namespace_id or node_catalog_reader.catalog_namespace_id)
+        _reader_storage_options = _reader_target.storage_options or None
 
         _scd2_filter = _scd2_row_filter(
             info.scd2_config,
@@ -350,7 +342,7 @@ class CatalogBuildersMixin(GraphMixinBase):
                 table_path,
                 starting_version,
                 head,
-                **(_reader_target.scan_kwargs(_user_id) if _reader_target is not None else {}),
+                **_reader_target.scan_kwargs(_user_id),
                 include_preimage=node_catalog_reader.cdc_include_preimage,
             )
             if cursor_consumer is not None:
