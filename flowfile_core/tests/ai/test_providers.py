@@ -188,6 +188,7 @@ def test_unknown_surface_falls_back_to_default() -> None:
         ("anthropic", "claude-haiku-4-5", "anthropic/"),
         ("google", "gemini-2.5-flash", "gemini/"),
         ("groq", "llama-3.3-70b-versatile", "groq/"),
+        ("openai", "gpt-4.1", "openai/"),
         ("ollama", "llama3.1:8b", "ollama_chat/"),
         ("openrouter", "anthropic/claude-haiku-4.5", "openrouter/"),
     ],
@@ -201,12 +202,6 @@ def test_prefix_not_double_applied() -> None:
     p = provider_factory("anthropic", model="anthropic/claude-haiku-4-5")
     assert p.model == "anthropic/claude-haiku-4-5"
     assert p.model.count("anthropic/") == 1
-
-
-def test_openai_no_prefix() -> None:
-    # OpenAI models in litellm are routed by bare name (no "openai/" prefix).
-    p = provider_factory("openai", model="gpt-4.1")
-    assert p.model == "gpt-4.1"
 
 
 # -------- api_base + api_key --------
@@ -260,6 +255,17 @@ def test_lazy_litellm_import() -> None:
     assert "litellm" not in sys.modules, (
         "Importing flowfile_core.ai.providers must not eagerly import litellm"
     )
+
+
+def test_openai_model_unknown_to_litellm_still_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model newer than litellm's bundled list resolves through the prefix."""
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    import litellm
+
+    p = provider_factory("openai", model="gpt-6.1-sol")
+    assert p.model == "openai/gpt-6.1-sol"
+    _, provider, _, _ = litellm.get_llm_provider(p.model)
+    assert provider == "openai"
 
 
 # -------- chat() translation --------

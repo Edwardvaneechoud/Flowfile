@@ -14,7 +14,7 @@ from flowfile_core.ai.providers._litellm_base import LiteLLMProvider
 class OpenAIProvider(LiteLLMProvider):
     name: ClassVar[str] = "openai"
     default_model: ClassVar[str] = "gpt-4.1-mini"
-    model_prefix: ClassVar[str] = ""  # litellm routes GPT-* models without a prefix
+    model_prefix: ClassVar[str] = "openai/"
     supports_tools: ClassVar[bool] = True
     supports_streaming: ClassVar[bool] = True
     surface_models: ClassVar[dict[str, str]] = {
