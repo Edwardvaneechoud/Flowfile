@@ -20,7 +20,8 @@ names the stored connections those steps use as well (``connections``, a kind an
 for a server joined with keys and answers sealed the same way (``sealed_connections``).
 """
 
-from collections.abc import Iterable, Mapping
+import uuid
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -28,11 +29,13 @@ import polars as pl
 from pydantic import SecretStr
 
 from flowfile_core.catalog import table_sources
+from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.flowfile.execution.protocol import EncryptedCredential, SealedCredential
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.hub_client import catalog, client
 from flowfile_core.hub_client.catalog import HubNamespace
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
+from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceTree
 from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnection,
     FullCloudStorageConnectionWorkerInterface,
@@ -291,31 +294,49 @@ class VendedTarget:
         return pl.scan_delta(path, **kwargs, **here.scan_kwargs(path, user_id))
 
 
+def _physical(table: dict, namespace_name) -> dict:
+    """``table``, a row the hub answered, when this Flowfile can read it: a physical table on object storage."""
+    if table.get("table_type", "physical") != "physical":
+        raise ValueError("A virtual table on the hub cannot be read from this Flowfile")
+    if not table.get("file_path") or not _is_cloud_uri(table["file_path"]):
+        raise ValueError(catalog.on_own_disk(namespace_name()))
+    return table
+
+
 class _RunCatalog:
-    """The hub's catalog as the engine's ``table_sources.RemoteCatalog``, answered from the vend held for the run."""
+    """The hub's catalog as ``table_sources.RemoteCatalog``: a run's targets, answered from the vend held for the
+    run, and the reads outside a run, each answered from a vend of its own."""
 
     def run_holds(self, run_id: str | None) -> bool:
         return held(run_id) is not None
 
     def table_named(self, user_id: int | None, qualified_name: str) -> dict:
-        from flowfile_core.hub_client import tables
+        """The hub's table ``qualified_name`` (``catalog.schema.table``, as a reader step names it), which must be a
+        physical table on object storage (``_physical``)."""
+        return _physical(catalog.table_named(user_id, qualified_name), lambda: qualified_name.rpartition(".")[0])
 
-        return tables.readable_named(user_id, qualified_name)
+    def table(self, user_id: int | None, table_id: int) -> CatalogTableOut:
+        """The hub's table whose row in the catalog tree is ``table_id``, as that row, for a read outside a run."""
+        found = catalog.table(user_id, -table_id)
+        _physical(found, lambda: catalog.locate(user_id, found["namespace_id"]).full_name)
+        return CatalogTableOut.model_validate(catalog.marked(found))
 
-    def table(self, user_id: int | None, table_id: int) -> dict:
-        from flowfile_core.hub_client import tables
+    def read_targets(self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str) -> list[VendedTarget]:
+        """The storage target of each of ``tables``, rows of the catalog tree, for one read outside a run: the
+        Catalog page's preview and history, the SQL editor, a visual, a notebook cell.
 
-        return tables.table(user_id, table_id)
+        The hub vends one read of the tables' schemas to ``user_id`` now (``request_for_tables``) under a run id of
+        its own that starts with ``purpose`` (``preview-…``, ``sql-…``, ``visual-…``, ``notebook-…``, which the hub's
+        vend ledger keeps). The credential lives for the call, or as long as the plan built from the target carries
+        it, encrypted.
+        """
+        vended = request_for_tables(user_id, f"{purpose}-{uuid.uuid4().hex}", tables)
+        return [VendedTarget(vended, row.file_path.rstrip("/").rpartition("/")[0], user_id) for row in tables]
 
-    def read_targets(self, user_id: int | None, tables: list, purpose: str):
-        from flowfile_core.hub_client import tables as hub_tables
-
-        return hub_tables.read_targets(user_id, tables, purpose)
-
-    def tree(self, user_id: int | None):
-        from flowfile_core.hub_client import tables
-
-        return tables.tree(user_id)
+    def tree(self, user_id: int | None) -> list[NamespaceTree]:
+        """The person's hub catalogs with their schemas and tables, read now; empty without a hub session, or when
+        the hub does not answer."""
+        return catalog.tree(user_id) if user_id is not None else []
 
     def table_target(self, run_id: str | None, user_id: int | None, file_path: str) -> VendedTarget:
         run_vend = held(run_id)
@@ -439,11 +460,11 @@ def request(
     return _run_vend(run_id, answer, bases, ids, targets, secrets, connections)
 
 
-def request_for_tables(user_id: int, run_id: str, tables: Iterable[dict]) -> RunVend:
+def request_for_tables(user_id: int, run_id: str, tables: Iterable[CatalogTableOut]) -> RunVend:
     """Ask the hub, through ``user_id``'s hub session, for one read of ``tables`` outside a run: the Catalog page's
     preview, a notebook cell's read, the SQL editor and a visual.
 
-    ``tables`` are rows the hub answered (``tables.readable``), each carrying the hub's id of its namespace, so the
+    ``tables`` are rows of the catalog tree, each carrying the hub's id of its namespace, so the
     credential is for the schema each table lives in. A run names a namespace by its qualified name; this call does
     not, since namespace names are free text and ``a.b`` + ``c`` names the same ``catalog.schema`` as ``a`` + ``b.c``.
 
@@ -455,8 +476,8 @@ def request_for_tables(user_id: int, run_id: str, tables: Iterable[dict]) -> Run
         hub_url, access_token = catalog.signed_in(user_id)
         found = catalog.namespaces(hub_url, access_token)
         for table in tables:
-            _usable(found.get(table["namespace_id"]), f"the hub lists no catalog schema of {table['name']}")
-        answer = client.vend(hub_url, access_token, run_id, sorted({t["namespace_id"] for t in tables}), [])
+            _usable(found.get(table.hub_namespace_id), f"the hub lists no catalog schema of {table.name}")
+        answer = client.vend(hub_url, access_token, run_id, sorted({t.hub_namespace_id for t in tables}), [])
     return _run_vend(run_id, answer, {}, {}, (), (), ())
 
 
