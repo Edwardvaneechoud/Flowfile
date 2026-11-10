@@ -315,8 +315,9 @@ def fetch_rest_api(
 
     headers = dict(settings.headers)
     base_params: dict[str, str] = {k: str(v) for k, v in settings.query_params.items()}
+    # The shown copies are built beside the real ones and never from them, so they cannot hold the secret.
     shown_headers = dict(headers)
-    masked_param: str | None = None
+    shown_base_params = dict(base_params)
     httpx_auth: httpx.Auth | None = None
 
     auth = settings.auth
@@ -326,7 +327,7 @@ def fetch_rest_api(
             shown_headers[auth.api_key_name] = SECRET_MASK
         else:
             base_params[auth.api_key_name] = secret
-            masked_param = auth.api_key_name
+            shown_base_params[auth.api_key_name] = SECRET_MASK
     elif auth.auth_type == AuthType.BEARER and secret is not None:
         headers["Authorization"] = f"Bearer {secret}"
         shown_headers["Authorization"] = f"Bearer {SECRET_MASK}"
@@ -360,23 +361,23 @@ def fetch_rest_api(
 
     with httpx.Client(timeout=settings.timeout_seconds, auth=httpx_auth, follow_redirects=True) as client:
         while True:
-            params = dict(base_params)
+            page_params: dict[str, str] = {}
             request_body = json_body
             if ptype == PaginationType.OFFSET:
-                params[pagination.offset_param] = str(offset)
-                params[pagination.limit_param] = str(pagination.page_size)
+                page_params[pagination.offset_param] = str(offset)
+                page_params[pagination.limit_param] = str(pagination.page_size)
             elif ptype == PaginationType.PAGE:
-                params[pagination.page_param] = str(page_number)
+                page_params[pagination.page_param] = str(page_number)
             elif ptype == PaginationType.CURSOR and cursor is not None:
                 sent_cursors.add(str(cursor))
                 if cursor_in_body:
                     request_body = copy.deepcopy(json_body)
                     _set_by_path(request_body, pagination.cursor_param, cursor)
                 else:
-                    params[pagination.cursor_param] = str(cursor)
+                    page_params[pagination.cursor_param] = str(cursor)
 
-            shown_params = {k: SECRET_MASK if k == masked_param else v for k, v in params.items()}
-            shown_url = scrub(_url_with(settings.url, shown_params))
+            params = {**base_params, **page_params}
+            shown_url = _url_with(settings.url, {**shown_base_params, **page_params})
             response = _request_with_retries(
                 client,
                 method=method,

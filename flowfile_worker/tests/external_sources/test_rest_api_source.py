@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 
+import httpx
 import polars as pl
 import pytest
 
@@ -587,6 +588,23 @@ def test_the_secret_never_reaches_the_trace(api, auth):
     entries = _trace(RestApiReadSettings(url=api.url("/items"), auth=auth), secret="s3cr3t-value")
     assert "s3cr3t-value" not in str(entries)
     assert SECRET_MASK in str(entries)
+
+
+def test_the_shown_url_is_the_one_sent_with_only_the_secret_replaced(api):
+    settings = RestApiReadSettings(
+        url=api.url("/page"),
+        query_params={"team": "data", "api_key": "typed-by-hand"},
+        auth=AuthConfig(auth_type="api_key", api_key_name="api_key", api_key_location="query"),
+        pagination=PaginationConfig(pagination_type="page", max_pages=2),
+    )
+    entries = _trace(settings, secret="s3cr3t-value")
+    sent = [request.query for request in api.requests]
+    assert sent == [
+        {"team": "data", "api_key": "s3cr3t-value", "page": "1"},
+        {"team": "data", "api_key": "s3cr3t-value", "page": "2"},
+    ]
+    shown = [dict(httpx.URL(entry["url"]).params) for entry in entries]
+    assert shown == [{**query, "api_key": SECRET_MASK} for query in sent]
 
 
 def test_a_failed_request_names_itself_and_the_answer_without_the_secret(api):
