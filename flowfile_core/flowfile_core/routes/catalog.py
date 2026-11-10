@@ -16,8 +16,10 @@ from functools import wraps
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
@@ -72,7 +74,6 @@ from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.utils import create_unique_id
-from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
@@ -150,11 +151,72 @@ from flowfile_core.schemas.catalog_schema import (
 from flowfile_scheduler.engine import STALE_THRESHOLD
 from shared.storage_config import require_flow_in_storage, storage
 
+_READ_HERE = ("/preview", "/history", "/materialize")
+"""The table routes that read data: this install's worker reads a remote table through its storage target."""
+
+
+class _RemoteAnswer(Exception):
+    """A remote catalog answered the request (``_remote_rows``); ``response`` is its answer."""
+
+    def __init__(self, response: Response):
+        self.response = response
+
+
+class _RemoteRoute(APIRoute):
+    """A catalog route whose request a remote catalog answered answers with that, its own handler not run."""
+
+    def get_route_handler(self):
+        local = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await local(request)
+            except _RemoteAnswer as answered:
+                return answered.response
+
+        return handler
+
+
+async def _remote_rows(
+    request: Request,
+    current_user=Depends(get_user_or_internal_service),
+    kernel_owner: int | None = Depends(kernel_owner_id),
+) -> None:
+    """Hand a metadata request that names a row of a remote catalog to that catalog (``table_sources.relayed``).
+
+    Every route of this router goes through it, so a remote table, flow or namespace has the detail, lineage, run
+    history, favourites, rename, delete and schedules a local one has, answered where its catalog's database is,
+    as the signed-in person. Left to the handlers here: the routes that read a table's data (``_READ_HERE``) and a
+    kernel's lookups, which the handlers answer from the remote catalog's rows themselves.
+    """
+    path = request.url.path
+    if kernel_owner is not None or getattr(current_user, "disabled", False) or path.endswith(_READ_HERE):
+        return
+    body = None
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+    answered = await run_in_threadpool(
+        table_sources.relayed,
+        current_user.id,
+        request.method,
+        f"/catalog{path.split('/catalog', 1)[1]}",
+        dict(request.query_params),
+        body,
+    )
+    if answered is not None:
+        status, answer = answered
+        raise _RemoteAnswer(Response(status_code=status) if answer is None else JSONResponse(answer, status))
+
+
 router = APIRouter(
     prefix="/catalog",
     tags=["catalog"],
     # JWT or the kernel's X-Internal-Token; a JWT-only endpoint re-checks with get_current_active_user.
-    dependencies=[Depends(get_user_or_internal_service)],
+    dependencies=[Depends(get_user_or_internal_service), Depends(_remote_rows)],
+    route_class=_RemoteRoute,
 )
 
 
@@ -408,12 +470,12 @@ def get_namespace_tree(
 ):
     """Return the full catalog tree with flows nested under schemas.
 
-    The local catalogs come first; a user connected to a hub gets the hub's catalogs and tables after them, each
-    row marked ``source: "hub"`` with the negative of the hub's id as its ``id``. Beside the hub's, every row says
-    where it lives (``place``), a hub catalog this Flowfile cannot use says why (``unavailable_reason``), and on a
-    server joined to its hub with keys of its own the server's own rows are not ``offered`` (``hub_catalog.merged``).
+    The local catalogs come first, then those of a remote catalog the user reads, each row marked with its
+    ``source`` and a negative ``id``. Beside those, every row says where it lives (``place``), a remote catalog this
+    Flowfile cannot use says why (``unavailable_reason``), and on a server joined with keys of its own the server's
+    own rows are not ``offered`` (``table_sources.merged_tree``).
     """
-    return hub_catalog.merged(current_user.id, service.get_namespace_tree(user_id=current_user.id))
+    return table_sources.merged_tree(current_user.id, service.get_namespace_tree(user_id=current_user.id))
 
 
 # Default namespace helper
@@ -1744,12 +1806,12 @@ def get_catalog_overview(
     FastAPI caches ``get_db`` per request, so ``db`` is the session the service was
     built on: the whole screen costs one pooled connection instead of one per call.
     The individual endpoints stay for detail views, mutations and the poll loop. The tree is the one
-    ``/namespaces/tree`` answers, a connected hub's catalogs after the local ones.
+    ``/namespaces/tree`` answers, a remote catalog's rows after the local ones.
     """
     user_id = current_user.id
     return CatalogOverview(
         stats=service.get_catalog_stats(user_id=user_id),
-        tree=hub_catalog.merged(user_id, service.get_namespace_tree(user_id=user_id)),
+        tree=table_sources.merged_tree(user_id, service.get_namespace_tree(user_id=user_id)),
         flows=service.list_flows(user_id=user_id),
         tables=service.list_tables(user_id=user_id),
         favorites=service.list_favorites(user_id=user_id),

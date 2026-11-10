@@ -412,6 +412,10 @@ class _RunCatalog:
                 f"The table was written to {table['table_path']} but could not be registered on the hub: {e}"
             ) from e
 
+    def request(self, user_id: int | None, method: str, path: str, params: dict | None, body) -> tuple[int, object]:
+        """A metadata request on a row of the hub's catalog, answered by the hub's same route (``catalog.relay``)."""
+        return catalog.relay(user_id, method, path, params, body)
+
 
 table_sources.register_remote("hub", _RunCatalog())
 

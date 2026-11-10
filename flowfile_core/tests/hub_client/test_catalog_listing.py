@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from flowfile_core import main
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger as core_logger
 from flowfile_core.database.connection import get_db_context
@@ -263,7 +263,7 @@ def test_a_server_says_its_own_catalogs_are_on_this_server(connected, hub, user_
     with get_db_context() as db:
         local = CatalogService(SQLAlchemyCatalogRepository(db)).get_namespace_tree(user_id=user_id)
 
-    rows = [node.model_dump(mode="json") for node in hub_catalog.merged(user_id, local)]
+    rows = [node.model_dump(mode="json") for node in table_sources.merged_tree(user_id, local)]
 
     assert {row["place"] for row in _namespace_rows(rows) if row["source"] == "local"} == {"On this server"}
     assert all(row["offered"] for row in _namespace_rows(rows))
@@ -322,7 +322,7 @@ def test_a_hub_tables_detail_is_the_hubs_own_answer_marked_as_the_tree_marks_it(
     seeded = _seed(hub)
     [sales] = [root for root in connected.get("/catalog/namespaces/tree").json() if root["name"] == "sales"]
     in_tree = sales["children"][0]["tables"][0]
-    resp = connected.get(f"/hub_client/catalog/tables/{in_tree['id']}")
+    resp = connected.get(f"/catalog/tables/{in_tree['id']}")
     assert resp.status_code == 200
     assert resp.json() == in_tree
     assert resp.json() == {
@@ -339,19 +339,19 @@ def test_a_hub_tables_detail_is_the_hubs_own_answer_marked_as_the_tree_marks_it(
 def test_a_hub_table_is_renamed_favourited_and_deleted_on_the_hub(connected, hub):
     seeded = _seed(hub)
     row = -seeded["orders"]["id"]
-    renamed = connected.put(f"/hub_client/catalog/tables/{row}", json={"name": "orders_v2", "namespace_id": -2})
+    renamed = connected.put(f"/catalog/tables/{row}", json={"name": "orders_v2", "namespace_id": -2})
     assert renamed.status_code == 200 and renamed.json()["name"] == "orders_v2" and renamed.json()["id"] == row
     assert hub.tables[0]["name"] == "orders_v2" and hub.tables[0]["namespace_id"] == 2
-    favourite = connected.post(f"/hub_client/catalog/tables/{row}/favorite")
+    favourite = connected.post(f"/catalog/tables/{row}/favorite")
     assert favourite.status_code == 201 and favourite.json()["table_id"] == row
-    deleted = connected.delete(f"/hub_client/catalog/tables/{row}")
+    deleted = connected.delete(f"/catalog/tables/{row}")
     assert deleted.status_code == 204 and deleted.content == b""
     assert seeded["orders"]["id"] not in [t["id"] for t in hub.tables]
 
 
 def test_a_hub_flows_run_history_is_asked_of_the_hub_by_the_hubs_own_id(connected, hub):
     hub.runs = [{"id": 5, "registration_id": 201, "flow_name": "orders-clean", "success": True}]
-    resp = connected.get("/hub_client/catalog/runs", params={"registration_id": -201, "limit": 10})
+    resp = connected.get("/catalog/runs", params={"registration_id": -201, "limit": 10})
     assert resp.status_code == 200
     assert resp.json() == {
         "items": [
@@ -365,22 +365,41 @@ def test_a_hub_flows_run_history_is_asked_of_the_hub_by_the_hubs_own_id(connecte
 
 def test_the_hubs_refusal_of_a_catalog_route_is_answered_as_the_hub_gave_it(connected, hub, api):
     _seed(hub)
-    missing = connected.get("/hub_client/catalog/tables/-999")
+    missing = connected.get("/catalog/tables/-999")
     assert missing.status_code == 404 and missing.json() == {"detail": "Catalog table not found"}
     hub.down = True
-    assert connected.get("/hub_client/catalog/tables/-101").status_code == 502
+    assert connected.get("/catalog/tables/-101").status_code == 502
 
 
 def test_a_catalog_route_of_the_hub_without_a_hub_connection_answers_400(api):
-    resp = api.get("/hub_client/catalog/tables/-101")
+    resp = api.get("/catalog/tables/-101")
     assert resp.status_code == 400 and "not connected" in resp.json()["detail"]
 
 
-def test_the_other_catalog_routes_stay_local(connected, hub):
-    seeded = _seed(hub)
+def test_a_hub_flows_detail_is_the_hubs_own_answer_through_cores_own_address(connected, hub):
+    flow = hub.seed_flow(_seed(hub)["raw"], "orders-clean")
+    resp = connected.get(f"/catalog/flows/{-flow['registration_id']}")
+    assert resp.status_code == 200
+    assert resp.json()["id"] == -flow["registration_id"] and resp.json()["source"] == "hub"
+    assert resp.json()["name"] == "orders-clean" and resp.json()["namespace_id"] == -flow["namespace_id"]
+    assert hub.catalog_calls[-1] == (f"/catalog/flows/{flow['registration_id']}", "")
+    assert connected.get("/catalog/flows/-999").json() == {"detail": "Flow not found"}
+
+
+def test_a_request_naming_a_hub_row_in_its_body_alone_is_asked_of_the_hub(connected, hub):
+    resp = connected.post("/catalog/schedules", json={"registration_id": -201, "schedule_type": "interval"})
+    assert resp.status_code == 201
+    assert resp.json() == {
+        "id": -7, "hub_id": 7, "source": "hub", "registration_id": -201, "schedule_type": "interval"
+    }
+
+
+def test_the_catalog_routes_that_name_no_hub_row_stay_local(connected, hub):
+    _seed(hub)
     assert connected.get("/catalog/tables").status_code == 200
     assert connected.get("/catalog/namespaces").status_code == 200
-    assert connected.get(f"/catalog/tables/{-seeded['orders']['id']}").status_code == 404
+    assert connected.get("/catalog/tables/999999").status_code == 404
+    assert connected.get("/catalog/runs", params={"limit": 5}).status_code == 200
     assert hub.calls == []
 
 

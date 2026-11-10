@@ -36,8 +36,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import yaml
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
@@ -62,7 +61,6 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.utils import create_unique_id
-from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client import client, node_addresses, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.routes.compute_backends import ComputeBackendOut, listed_backends
@@ -627,35 +625,3 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     if holder == "another":
         auto_register_flow(flow_path, checked_out["name"], current_user.id)
     return HubOpenOut(flow_path=flow_path)
-
-
-@router.api_route(
-    "/catalog/{path:path}",
-    methods=["GET", "POST", "PUT", "DELETE"],
-    summary="A metadata route of the hub's catalog, answered by the hub",
-)
-def hub_catalog_route(
-    path: str,
-    request: Request,
-    body: dict | list | None = Body(None),
-    current_user=Depends(get_current_active_user),
-) -> Response:
-    """Core's own catalog route ``/catalog/{path}`` for a row of the hub's catalog, answered by the hub's same route
-    as this person (``hub_catalog.relay``): a table's or a flow's detail, run history, favourites, rename, delete,
-    grants. Ids are the ones the tree shows, negative for the hub's rows, in the path, the query and the body alike;
-    the answer and its status are the hub's, its rows marked as the tree marks them. A refusal is the hub's own with
-    its status and detail (a 401 answers 400); a route that reads table data is refused by the hub, not here.
-    """
-    try:
-        status, answer = hub_catalog.relay(
-            current_user.id, request.method, f"/catalog/{path}", params=dict(request.query_params), body=body
-        )
-    except LookupError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except HubRefused as e:
-        if not 400 <= e.status < 500:
-            raise _hub_error(e) from e
-        raise HTTPException(status_code=400 if e.status == 401 else e.status, detail=e.payload or e.detail) from e
-    except (HubUnreachable, HubVersionRefused) as e:
-        raise _hub_error(e) from e
-    return Response(status_code=status) if answer is None else JSONResponse(answer, status_code=status)

@@ -321,7 +321,14 @@ class FakeHubWithCatalog(FakeHub):
         table favourite, and the run history of a registration."""
         if path == "/catalog/runs":
             return httpx.Response(200, json={"items": self.runs, "total": len(self.runs)})
+        if path == "/catalog/schedules":
+            return httpx.Response(201, json={"id": 7, **body})
         parts = path.split("/")
+        if parts[2] == "flows":
+            flow = next((f for f in self.flows if str(f["registration_id"]) == parts[3]), None)
+            if flow is None:
+                return httpx.Response(404, json={"detail": "Flow not found"})
+            return httpx.Response(200, json={"id": flow["registration_id"], **flow})
         table = next((t for t in self.tables if str(t["id"]) == parts[3]), None) if parts[2] == "tables" else None
         if table is None:
             return httpx.Response(404, json={"detail": "Catalog table not found"})
@@ -437,7 +444,7 @@ class FakeHubWithCatalog(FakeHub):
             return httpx.Response(200, json={"table": table, "warnings": []})
         if path == "/catalog/namespaces/tree":
             return httpx.Response(200, json=self.tree() if self.tree_answer is None else self.tree_answer)
-        if path.startswith("/catalog/tables/") or path == "/catalog/runs":
+        if path.startswith(("/catalog/tables/", "/catalog/flows/")) or path in ("/catalog/runs", "/catalog/schedules"):
             body = json.loads(request.content) if request.content else None
             return self._catalog_row(request.method, path, body)
         if path == "/catalog/namespaces":

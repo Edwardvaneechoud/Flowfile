@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.init_db import create_default_catalog_namespace
@@ -96,7 +96,7 @@ def test_an_account_without_a_hub_session_is_offered_none_of_the_servers_own_cat
     with get_db_context() as db:
         own = CatalogService(SQLAlchemyCatalogRepository(db)).get_namespace_tree(user_id=account)
 
-    tree = [node.model_dump(mode="json") for node in hub_catalog.merged(account, own)]
+    tree = [node.model_dump(mode="json") for node in table_sources.merged_tree(account, own)]
 
     assert [root["name"] for root in tree] == [node.name for node in own] and tree
     assert {row["offered"] for row in namespace_rows(tree)} == {False}

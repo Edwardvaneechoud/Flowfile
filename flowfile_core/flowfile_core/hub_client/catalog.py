@@ -12,12 +12,10 @@ marking only what makes a row of the hub recognisable here (``marked``). A hub f
 ``latest_version`` and ``author_name`` as the hub lists them, so the Catalog tab can open the version a person picks
 as Open Flow → Hub does; a flow with no published version has nothing to open and is left out.
 
-Each row also says where it lives and whether this Flowfile can use it (``merged``): the hub's rows carry the hub's
-name as their ``place`` and, for a catalog on the hub's own disk or on storage other than S3, the sentence a run over
-it would be refused with as their ``unavailable_reason``; this machine's rows carry ``On this computer`` or ``On this
-server`` beside them. On a server that joined its hub with keys of its own, this machine's rows are not ``offered``:
-the people there work in the hub's catalogs. A hub row's ``access`` is what the hub sent, ``owner`` on a row the person
-owns.
+Each hub row also says where it lives and whether this Flowfile can use it: the hub's name as its ``place`` and, for
+a catalog on the hub's own disk or on storage other than S3, the sentence a run over it would be refused with as its
+``unavailable_reason``; ``table_sources.merged_tree`` puts them after this machine's. A hub row's ``access`` is what
+the hub sent, ``owner`` on a row the person owns.
 
 A run that reads or writes the hub's tables finds their namespaces and tables here too (``locate``, ``table``,
 ``table_named``), each lookup a fresh request through the user's hub session. A saved flow names a hub table by its
@@ -30,9 +28,7 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from flowfile_core.auth import issuer_accounts
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import is_server_mode
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.hub_client.node_tokens import RECONNECT
@@ -47,8 +43,6 @@ _THEIR_VALUE = re.compile(r"-\d+")
 NOT_CONNECTED = (
     f"This flow uses tables on the hub, but this Flowfile is not connected to it; {RECONNECT} (Compute → Hub)"
 )
-ON_THIS_COMPUTER = "On this computer"
-ON_THIS_SERVER = "On this server"
 _WHAT_TO_DO = "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there."
 
 
@@ -100,29 +94,6 @@ def unreachable(storage_uri: str | None, full_name: str) -> str | None:
     return None
 
 
-def merged(user_id: int, local: list[NamespaceTree]) -> list[NamespaceTree]:
-    """The catalog tree ``user_id`` reads: this machine's catalogs ``local`` first, then those of their hub.
-
-    Not connected to a hub, ``local`` is answered as it is. With the hub's catalogs beside them, each of this
-    machine's rows says where it lives, ``On this computer``, or ``On this server`` in server mode. On a server that
-    joined its hub with keys of its own (``issuer_accounts.joined_with_keys``) this machine's rows are marked not
-    ``offered``, whatever the hub answers: the Catalog panel and the catalog reader's and writer's pickers show only
-    the hub's catalogs there, while the flow pickers still find the server's own.
-    """
-    hub = tree(user_id)
-    joined = issuer_accounts.joined_with_keys() is not None
-    if not hub and not joined:
-        return local
-    place = ON_THIS_SERVER if is_server_mode() else ON_THIS_COMPUTER
-    return [_marked(node, place=place, offered=not joined) for node in local] + hub
-
-
-def _marked(node: NamespaceTree, **fields) -> NamespaceTree:
-    """``node`` and every namespace under it with ``fields`` set."""
-    children = [_marked(child, **fields) for child in node.children]
-    return node.model_copy(update={**fields, "children": children})
-
-
 def tree(user_id: int) -> list[NamespaceTree]:
     """The hub's catalogs, their schemas, their tables and their flows, for ``user_id``'s hub connection; ``[]``
     without one.
@@ -170,18 +141,28 @@ def _placed(node: NamespaceTree, place: str, storage_uri: str | None, parents: s
     )
 
 
-def relay(user_id: int, method: str, path: str, *, params: dict | None = None, body=None) -> tuple[int, object]:
-    """A metadata request on a catalog that lives on ``user_id``'s hub, answered by the hub's same route.
+def relay(user_id: int | None, method: str, path: str, params: dict | None = None, body=None) -> tuple[int, object]:
+    """A metadata request on a catalog that lives on ``user_id``'s hub, answered by the hub's same route
+    (``table_sources.RemoteCatalog.request``).
 
     ``path`` is core's own catalog route (``/catalog/tables/-12``). An id this machine shows negative, in the path,
     the query or the body, goes to the hub as the hub's own; the answer comes back as the hub gave it, with its
-    status, changed only by ``marked``. Core adds no logic: what the hub refuses, the hub refuses.
-
-    Raises:
-        LookupError: ``user_id`` has no hub session (``NOT_CONNECTED``).
-        HubUnreachable, HubRefused, HubVersionRefused: the hub's own answer, or none.
+    status, changed only by ``marked``. Core adds no logic: what the hub refuses, the hub refuses, with its status
+    and detail (a 401 answers 400, as does a person with no hub session). A hub that does not answer is a 502, one
+    that refuses this client's version a 426.
     """
-    return _relayed(*signed_in(user_id), method, path, params, body)
+    try:
+        return _relayed(*signed_in(user_id), method, path, params, body)
+    except LookupError as e:
+        return 400, {"detail": str(e)}
+    except HubRefused as e:
+        if 400 <= e.status < 500:
+            return (400 if e.status == 401 else e.status), {"detail": e.payload or e.detail}
+        return 502, {"detail": f"The hub failed to answer: {e}"}
+    except HubVersionRefused as e:
+        return 426, {"detail": e.detail}
+    except HubUnreachable as e:
+        return 502, {"detail": str(e)}
 
 
 def _relayed(hub_url: str, access_token: str, method: str, path: str, params=None, body=None) -> tuple[int, object]:
