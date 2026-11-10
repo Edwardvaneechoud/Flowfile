@@ -24,7 +24,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client import client, session
 from flowfile_core.schemas import input_schema
-from tests.hub_client.conftest import HUB_URL, INFO, NEVER_RUNS, FakeHubWithCatalog
+from tests.hub_client.conftest import CANCEL_REFUSED, HUB_URL, INFO, NEVER_RUNS, FakeHubWithCatalog
 
 CONNECT = {"hub_url": HUB_URL, "username": "ana", "password": "s3cret", "device_name": "ana-laptop"}
 SHARED = {"is_owner": False, "access_level": "use", "shared_by": "bob"}
@@ -486,6 +486,18 @@ def test_a_hub_flow_is_renamed_and_deleted_on_the_hub_through_cores_own_address(
     assert deleted.status_code == 204 and deleted.content == b""
     assert -row not in [f["registration_id"] for f in hub.flows]
     assert connected.get(f"/catalog/flows/{row}").status_code == 404
+
+
+def test_a_hub_flows_run_is_cancelled_on_the_hub_and_its_refusal_is_the_hubs_sentence(connected, hub):
+    row, _ = _flow_with_schedule(hub)
+    flow = next(f for f in hub.flows if f["registration_id"] == -row)
+    under_way = hub.seed_run(flow, ended=False)
+    cancelled = connected.post(f"/catalog/runs/{-under_way['id']}/cancel")
+    assert cancelled.status_code == 204 and cancelled.content == b""
+    assert hub.calls[-1] == ("POST", f"/catalog/runs/{under_way['id']}/cancel")
+    again = connected.post(f"/catalog/runs/{-under_way['id']}/cancel")
+    assert again.status_code == 422 and again.json() == {"detail": CANCEL_REFUSED}
+    assert connected.post("/catalog/runs/-999/cancel").status_code == 404
 
 
 def test_running_a_hub_flow_now_and_a_new_schedule_of_it_are_refused_by_the_hub_not_here(connected, hub):

@@ -195,6 +195,7 @@ class FakeHub:
 
 _STAMP = "2026-11-01T12:00:00Z"
 NEVER_RUNS = "The hub never runs, schedules or computes; run this on a compute node."
+CANCEL_REFUSED = "The server that runs this flow could not be told to stop it."
 _LOCAL_ONLY = {"source", "hub_id", "hub_namespace_id"}
 
 
@@ -403,6 +404,8 @@ class FakeHubWithCatalog(FakeHub):
         if path == "/catalog/active-runs":
             return httpx.Response(200, json=self._active_runs())
         parts = path.split("/")
+        if parts[2] == "runs" and parts[4:] == ["cancel"]:
+            return self._cancel(parts[3])
         if parts[2] == "schedules":
             return self._schedule_row(method, parts[3:], body, params.get("registration_id"))
         if parts[2] == "flows":
@@ -433,6 +436,17 @@ class FakeHubWithCatalog(FakeHub):
         if method == "PUT":
             table.update(body)
         return httpx.Response(200, json=table)
+
+    def _cancel(self, run_id: str) -> httpx.Response:
+        """``POST /catalog/runs/{id}/cancel`` as the hub answers a run it sent: 204 for one under way, the hub's
+        sentence (422) for one already ended, 404 for no such run."""
+        run = next((r for r in self.runs if str(r["id"]) == run_id), None)
+        if run is None:
+            return httpx.Response(404, json={"detail": "Run not found"})
+        if run["ended_at"] is not None:
+            return httpx.Response(422, json={"detail": CANCEL_REFUSED})
+        run["ended_at"] = _STAMP
+        return httpx.Response(204)
 
     def _schedule_row(self, method: str, rest: list[str], body, registration_id: str | None = None) -> httpx.Response:
         """Core's schedule routes as the hub answers them from its own schedules: every flow's listed, or those of
@@ -557,7 +571,8 @@ class FakeHubWithCatalog(FakeHub):
         if path == "/catalog/namespaces/tree":
             return httpx.Response(200, json=self.tree() if self.tree_answer is None else self.tree_answer)
         rows = ("/catalog/tables/", "/catalog/flows/", "/catalog/schedules")
-        if path.startswith(rows) or path in ("/catalog/runs", "/catalog/active-runs"):
+        cancel = path.startswith("/catalog/runs/") and path.endswith("/cancel")
+        if path.startswith(rows) or cancel or path in ("/catalog/runs", "/catalog/active-runs"):
             body = json.loads(request.content) if request.content else None
             return self._catalog_row(request.method, path, body, request.url.params)
         if path == "/catalog/namespaces":
