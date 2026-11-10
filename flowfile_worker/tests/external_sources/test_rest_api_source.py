@@ -1,15 +1,14 @@
-"""Worker/shared tests for the REST API reader engine.
+"""Worker/shared tests for the REST API reader engine against a real HTTP server.
 
-The HTTP layer is mocked with ``httpx.MockTransport`` so the tests never hit the
-network. They cover each auth scheme, each pagination strategy, ``record_path``
-extraction, retry/429 handling, JSON->Polars typing, sampling, and the
-worker-side credential decryption path.
+``fetch_rest_api`` talks to ``test_utils.rest_api_server`` over real sockets with a real ``httpx.Client``; a test
+that needs a particular answer registers a route for it. They cover each auth scheme, each pagination strategy
+(including keyset cursors sent in the JSON body), ``record_path`` extraction, retry/429 handling, JSON->Polars typing,
+sampling, the stop rules, and the worker-side credential decryption path.
 """
 
 from __future__ import annotations
 
 import base64
-import contextlib
 
 import httpx
 import polars as pl
@@ -18,368 +17,474 @@ import pytest
 from flowfile_worker.external_sources.rest_api_source.main import read_rest_api
 from flowfile_worker.external_sources.rest_api_source.models import RestApiReadSettings as WorkerRestApiReadSettings
 from flowfile_worker.secrets import encrypt_secret
-from shared.rest_api.fetch import _parse_retry_after, fetch_rest_api
-from shared.rest_api.models import (
-    AuthConfig,
-    PaginationConfig,
-    RestApiReadSettings,
+from shared.rest_api.fetch import _extract_by_path, _parse_retry_after, fetch_rest_api
+from shared.rest_api.models import AuthConfig, PaginationConfig, RestApiReadSettings
+from test_utils.rest_api_server import KEYSET_RECORDS, Reply, closed_port_url, start_api_server
+
+
+@pytest.fixture(scope="module")
+def _server():
+    with start_api_server() as server:
+        yield server
+
+
+@pytest.fixture()
+def api(_server):
+    _server.reset()
+    yield _server
+
+
+@pytest.fixture()
+def no_sleep(monkeypatch):
+    monkeypatch.setattr("shared.rest_api.fetch.time.sleep", lambda *_: None)
+
+
+def _answer(payload=None, status: int = 200, headers: dict | None = None, text: str | None = None):
+    return lambda _req, _srv: Reply(status, payload, headers or {}, text)
+
+
+def _keyset(path: str = "/keyset", **pagination) -> RestApiReadSettings:
+    """The issue's configuration: POST, keyset cursor ``data_id`` in the body, read from ``data.-1._id``."""
+    return RestApiReadSettings(
+        url=path,
+        method="POST",
+        json_body={"app_id": "app-1", "entry_id": "entry-1", "limit": 3},
+        record_path="data",
+        pagination=PaginationConfig(
+            pagination_type="cursor",
+            cursor_param="data_id",
+            cursor_request_location="body",
+            cursor_response_path="data.-1._id",
+            **pagination,
+        ),
+    )
+
+
+def _with(settings: RestApiReadSettings, **update) -> RestApiReadSettings:
+    return RestApiReadSettings.model_validate({**settings.model_dump(), **update})
+
+
+def _at(api, settings: RestApiReadSettings) -> RestApiReadSettings:
+    return _with(settings, url=api.url(settings.url))
+
+
+# --- path walker --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("data.0._id", "a"),
+        ("data.-1._id", "c"),
+        ("data.1", {"_id": "b"}),
+        ("data.3._id", None),
+        ("data.-4._id", None),
+        ("data.x._id", None),
+        ("keyed.0", "dict key wins"),
+        ("data.0._id.more", None),
+        ("", {"data": [{"_id": "a"}, {"_id": "b"}, {"_id": "c"}], "keyed": {"0": "dict key wins"}}),
+    ],
 )
-
-
-@contextlib.contextmanager
-def mock_transport(handler):
-    """Swap ``httpx.Client`` for one wired to a MockTransport for the block."""
-    transport = httpx.MockTransport(handler)
-    original = httpx.Client
-
-    def factory(*args, **kwargs):
-        kwargs["transport"] = transport
-        return original(*args, **kwargs)
-
-    httpx.Client = factory
-    try:
-        yield
-    finally:
-        httpx.Client = original
-
-
-def _run(handler, settings: RestApiReadSettings, secret: str | None = None) -> pl.DataFrame:
-    with mock_transport(handler):
-        return fetch_rest_api(settings, secret=secret)
+def test_extract_by_path_walks_keys_and_list_indices(path, expected):
+    body = {"data": [{"_id": "a"}, {"_id": "b"}, {"_id": "c"}], "keyed": {"0": "dict key wins"}}
+    assert _extract_by_path(body, path) == expected
 
 
 # --- record_path extraction + typing -----------------------------------------
 
 
-def test_record_path_list_of_objects():
-    def handler(_req):
-        return httpx.Response(200, json={"data": {"items": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]}})
-
-    df = _run(handler, RestApiReadSettings(url="https://x/api", record_path="data.items"))
+def test_record_path_list_of_objects(api):
+    url = api.route("/r", _answer({"data": {"items": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]}}))
+    df = fetch_rest_api(RestApiReadSettings(url=url, record_path="data.items"))
     assert df.shape == (2, 2)
     assert df.columns == ["id", "name"]
     assert df.schema["id"] == pl.Int64
     assert df.schema["name"] == pl.String
 
 
-def test_single_object_becomes_one_row_and_flattens_nested():
-    def handler(_req):
-        return httpx.Response(200, json={"id": 9, "nested": {"city": "ams"}})
+def test_record_path_through_a_list_index(api):
+    url = api.route("/r", _answer({"data": [{"items": [{"id": 1}, {"id": 2}]}, {"items": [{"id": 3}]}]}))
+    df = fetch_rest_api(RestApiReadSettings(url=url, record_path="data.0.items"))
+    assert df["id"].to_list() == [1, 2]
 
-    df = _run(handler, RestApiReadSettings(url="https://x/api"))
+
+def test_single_object_becomes_one_row_and_flattens_nested(api):
+    url = api.route("/r", _answer({"id": 9, "nested": {"city": "ams"}}))
+    df = fetch_rest_api(RestApiReadSettings(url=url))
     assert df.shape == (1, 2)
     assert "nested.city" in df.columns
 
 
-def test_empty_result_returns_empty_frame():
-    def handler(_req):
-        return httpx.Response(200, json={"items": []})
-
-    df = _run(handler, RestApiReadSettings(url="https://x/api", record_path="items"))
+def test_empty_result_returns_empty_frame(api):
+    url = api.route("/r", _answer({"items": []}))
+    df = fetch_rest_api(RestApiReadSettings(url=url, record_path="items"))
     assert df.shape == (0, 0)
 
 
-def test_missing_record_path_returns_empty():
-    def handler(_req):
-        return httpx.Response(200, json={"data": []})
-
-    df = _run(handler, RestApiReadSettings(url="https://x/api", record_path="nope.missing"))
+def test_missing_record_path_returns_empty(api):
+    url = api.route("/r", _answer({"data": []}))
+    df = fetch_rest_api(RestApiReadSettings(url=url, record_path="nope.missing"))
     assert df.height == 0
 
 
-def test_non_json_response_raises():
-    def handler(_req):
-        return httpx.Response(200, text="not json", headers={"content-type": "text/plain"})
-
+def test_non_json_response_raises(api):
+    url = api.route("/r", _answer(text="not json"))
     with pytest.raises(RuntimeError, match="not valid JSON"):
-        _run(handler, RestApiReadSettings(url="https://x/api"))
+        fetch_rest_api(RestApiReadSettings(url=url))
+
+
+def test_scalar_list_wrapped_as_value_column(api):
+    url = api.route("/r", _answer({"items": [1, 2, 3]}))
+    df = fetch_rest_api(RestApiReadSettings(url=url, record_path="items"))
+    assert df.columns == ["value"]
+    assert df["value"].to_list() == [1, 2, 3]
 
 
 # --- authentication -----------------------------------------------------------
 
 
-def test_api_key_in_header():
-    seen = {}
-
-    def handler(req):
-        seen["key"] = req.headers.get("X-API-Key")
-        return httpx.Response(200, json=[{"id": 1}])
-
+def test_api_key_in_header(api):
     settings = RestApiReadSettings(
-        url="https://x/api", auth=AuthConfig(auth_type="api_key", api_key_name="X-API-Key", api_key_location="header")
+        url=api.url("/items"),
+        auth=AuthConfig(auth_type="api_key", api_key_name="X-API-Key", api_key_location="header"),
     )
-    _run(handler, settings, secret="abc123")
-    assert seen["key"] == "abc123"
+    fetch_rest_api(settings, secret="abc123")
+    assert api.requests[0].headers["X-API-Key"] == "abc123"
 
 
-def test_api_key_in_query():
-    seen = {}
-
-    def handler(req):
-        seen["key"] = req.url.params.get("api_key")
-        return httpx.Response(200, json=[{"id": 1}])
-
+def test_api_key_in_query(api):
     settings = RestApiReadSettings(
-        url="https://x/api", auth=AuthConfig(auth_type="api_key", api_key_name="api_key", api_key_location="query")
+        url=api.url("/items"),
+        auth=AuthConfig(auth_type="api_key", api_key_name="api_key", api_key_location="query"),
     )
-    _run(handler, settings, secret="qval")
-    assert seen["key"] == "qval"
+    fetch_rest_api(settings, secret="qval")
+    assert api.requests[0].query["api_key"] == "qval"
 
 
-def test_bearer_header():
-    seen = {}
-
-    def handler(req):
-        seen["auth"] = req.headers.get("Authorization")
-        return httpx.Response(200, json=[{"id": 1}])
-
-    _run(handler, RestApiReadSettings(url="https://x/api", auth=AuthConfig(auth_type="bearer")), secret="tok")
-    assert seen["auth"] == "Bearer tok"
+def test_bearer_header(api):
+    fetch_rest_api(RestApiReadSettings(url=api.url("/items"), auth=AuthConfig(auth_type="bearer")), secret="tok")
+    assert api.requests[0].headers["Authorization"] == "Bearer tok"
 
 
-def test_basic_auth_header():
-    seen = {}
-
-    def handler(req):
-        seen["auth"] = req.headers.get("Authorization")
-        return httpx.Response(200, json=[{"id": 1}])
-
-    settings = RestApiReadSettings(url="https://x/api", auth=AuthConfig(auth_type="basic", basic_username="user"))
-    _run(handler, settings, secret="pw")
-    assert seen["auth"] is not None and seen["auth"].startswith("Basic ")
+def test_basic_auth_header(api):
+    settings = RestApiReadSettings(url=api.url("/items"), auth=AuthConfig(auth_type="basic", basic_username="user"))
+    fetch_rest_api(settings, secret="pw")
+    scheme, token = api.requests[0].headers["Authorization"].split(" ", 1)
+    assert scheme == "Basic"
+    assert base64.b64decode(token).decode() == "user:pw"
 
 
 # --- pagination ---------------------------------------------------------------
 
 
-def test_offset_pagination_walks_pages_and_sends_params():
-    seen_params = []
-
-    def handler(req):
-        seen_params.append(dict(req.url.params))
-        off = int(req.url.params.get("offset", "0"))
-        if off == 0:
-            return httpx.Response(200, json=[{"id": 1}, {"id": 2}])
-        return httpx.Response(200, json=[{"id": 3}])  # short page -> stop
-
+def test_offset_pagination_walks_pages_and_sends_params(api):
     settings = RestApiReadSettings(
-        url="https://x/api", pagination=PaginationConfig(pagination_type="offset", page_size=2)
+        url=api.url("/offset"), pagination=PaginationConfig(pagination_type="offset", page_size=2)
     )
-    df = _run(handler, settings)
-    assert df.height == 3
-    assert seen_params[0] == {"offset": "0", "limit": "2"}
-    assert seen_params[1] == {"offset": "2", "limit": "2"}
+    df = fetch_rest_api(settings)
+    assert df["id"].to_list() == [0, 1, 2, 3, 4]
+    assert [r.query for r in api.requests] == [
+        {"offset": "0", "limit": "2"},
+        {"offset": "2", "limit": "2"},
+        {"offset": "4", "limit": "2"},
+    ]
 
 
-def test_page_number_pagination_stops_on_empty():
-    pages = []
+def test_page_number_pagination_stops_on_empty(api):
+    settings = RestApiReadSettings(url=api.url("/page"), pagination=PaginationConfig(pagination_type="page"))
+    df = fetch_rest_api(settings)
+    assert df["id"].to_list() == [1, 2, 3]
+    assert [r.query["page"] for r in api.requests] == ["1", "2", "3", "4"]
 
-    def handler(req):
-        page = int(req.url.params.get("page", "0"))
-        pages.append(page)
-        if page <= 2:
-            return httpx.Response(200, json=[{"id": page}])
-        return httpx.Response(200, json=[])
 
+def test_cursor_pagination_from_body(api):
     settings = RestApiReadSettings(
-        url="https://x/api", pagination=PaginationConfig(pagination_type="page", start_page=1)
+        url=api.url("/cursor"),
+        record_path="rows",
+        pagination=PaginationConfig(pagination_type="cursor", cursor_response_path="next"),
     )
-    df = _run(handler, settings)
-    assert df.height == 2
-    assert pages[:3] == [1, 2, 3]
+    df = fetch_rest_api(settings)
+    assert df["id"].to_list() == [1, 2, 3]
+    assert [r.query.get("cursor") for r in api.requests] == [None, "c2", "c3"]
 
 
-def test_cursor_pagination_from_body():
-    def handler(req):
-        cursor = req.url.params.get("cursor")
-        if cursor is None:
-            return httpx.Response(200, json={"rows": [{"id": 1}], "next": "abc"})
-        if cursor == "abc":
-            return httpx.Response(200, json={"rows": [{"id": 2}], "next": None})
-        return httpx.Response(200, json={"rows": [], "next": None})
+def test_cursor_pagination_from_header(api):
+    def handler(req, _srv):
+        if "cursor" not in req.query:
+            return Reply(payload=[{"id": 1}], headers={"X-Next": "p2"})
+        return Reply(payload=[{"id": 2}])
 
     settings = RestApiReadSettings(
-        url="https://x/api",
+        url=api.route("/h", handler),
+        pagination=PaginationConfig(
+            pagination_type="cursor", cursor_location="header", cursor_response_path="X-Next"
+        ),
+    )
+    df = fetch_rest_api(settings)
+    assert df["id"].to_list() == [1, 2]
+
+
+def test_initial_cursor_sent_on_first_request(api):
+    url = api.route("/r", _answer({"rows": [{"id": 1}], "next": None}))
+    settings = RestApiReadSettings(
+        url=url,
+        record_path="rows",
+        pagination=PaginationConfig(pagination_type="cursor", initial_cursor="seed", cursor_response_path="next"),
+    )
+    df = fetch_rest_api(settings)
+    assert api.requests[0].query["cursor"] == "seed"
+    assert df.height == 1
+
+
+def test_max_pages_cap(api):
+    url = api.route("/r", _answer([{"id": 1}, {"id": 2}]))
+    settings = RestApiReadSettings(
+        url=url, pagination=PaginationConfig(pagination_type="offset", page_size=2, max_pages=3)
+    )
+    assert fetch_rest_api(settings).height == 6
+    assert api.request_count == 3
+
+
+def test_max_records_cap(api):
+    url = api.route("/r", _answer([{"id": i} for i in range(10)]))
+    settings = RestApiReadSettings(
+        url=url, pagination=PaginationConfig(pagination_type="offset", page_size=10, max_records=4)
+    )
+    assert fetch_rest_api(settings).height == 4
+
+
+def test_sample_size_caps_records(api):
+    url = api.route("/r", _answer([{"id": i} for i in range(100)]))
+    assert fetch_rest_api(RestApiReadSettings(url=url, sample_size=5)).height == 5
+
+
+# --- keyset cursor in the JSON body (issue #858) ------------------------------
+
+
+def test_keyset_cursor_in_body_walks_every_page(api):
+    df = fetch_rest_api(_at(api, _keyset()))
+
+    assert df["_id"].to_list() == [r["_id"] for r in KEYSET_RECORDS]
+    bodies = [r.body for r in api.requests]
+    assert len(bodies) == 4  # three pages and the empty one that ends it
+    assert "data_id" not in bodies[0]
+    assert [b.get("data_id") for b in bodies[1:]] == ["id03", "id06", "id07"]
+    assert all(b["app_id"] == "app-1" and b["entry_id"] == "entry-1" and b["limit"] == 3 for b in bodies)
+    assert all(not r.query for r in api.requests)
+
+
+def test_body_cursor_goes_into_a_nested_field(api):
+    def handler(req, _srv):
+        after = (req.body.get("page") or {}).get("after")
+        return Reply(payload={"items": [{"id": 1}], "next": "n2"} if after is None else {"items": [], "next": None})
+
+    settings = RestApiReadSettings(
+        url=api.route("/nested", handler),
+        method="POST",
+        json_body={"page": {"size": 1}},
+        record_path="items",
+        pagination=PaginationConfig(
+            pagination_type="cursor",
+            cursor_param="page.after",
+            cursor_request_location="body",
+            cursor_response_path="next",
+        ),
+    )
+    df = fetch_rest_api(settings)
+    assert df["id"].to_list() == [1]
+    assert api.requests[1].body == {"page": {"size": 1, "after": "n2"}}
+
+
+def test_body_cursor_with_no_configured_body_starts_from_an_empty_object(api):
+    settings = _with(_at(api, _keyset()), json_body=None)
+    df = fetch_rest_api(settings)
+    assert df.height == len(KEYSET_RECORDS)
+    assert api.requests[0].body == {}
+    assert api.requests[1].body == {"data_id": "id03"}
+
+
+def test_numeric_body_cursor_keeps_its_type(api):
+    def handler(req, _srv):
+        after = req.body.get("after")
+        rows = [{"id": 1}, {"id": 2}] if after is None else []
+        return Reply(payload={"rows": rows})
+
+    settings = RestApiReadSettings(
+        url=api.route("/numeric", handler),
+        method="POST",
+        json_body={},
         record_path="rows",
         pagination=PaginationConfig(
-            pagination_type="cursor", cursor_param="cursor", cursor_location="body", cursor_response_path="next"
+            pagination_type="cursor",
+            cursor_param="after",
+            cursor_request_location="body",
+            cursor_response_path="rows.-1.id",
         ),
     )
-    df = _run(handler, settings)
-    assert sorted(df["id"].to_list()) == [1, 2]
+    fetch_rest_api(settings)
+    assert api.requests[1].body == {"after": 2}
 
 
-def test_cursor_pagination_from_header():
-    def handler(req):
-        cursor = req.url.params.get("cursor")
-        if cursor is None:
-            return httpx.Response(200, json=[{"id": 1}], headers={"X-Next": "p2"})
-        return httpx.Response(200, json=[{"id": 2}])  # no next header -> stop
+def test_body_cursor_refuses_a_get_before_any_request(api):
+    settings = _with(_at(api, _keyset()), method="GET")
+    with pytest.raises(ValueError, match="POST"):
+        fetch_rest_api(settings)
+    assert api.request_count == 0
+
+
+def test_body_cursor_refuses_a_body_that_is_no_object(api):
+    settings = _with(_at(api, _keyset()), json_body=[1, 2])
+    with pytest.raises(ValueError, match="JSON object"):
+        fetch_rest_api(settings)
+    assert api.request_count == 0
+
+
+def test_cursor_path_into_an_empty_array_ends_after_one_page(api):
+    url = api.route("/r", _answer({"data": []}))
+    settings = _with(_at(api, _keyset()), url=url)
+    assert fetch_rest_api(settings).height == 0
+    assert api.request_count == 1
+
+
+def test_cursor_path_out_of_range_ends_after_one_page(api):
+    url = api.route("/r", _answer({"data": [{"_id": "a"}]}))
+    settings = _with(_at(api, _keyset()), url=url)
+    settings.pagination.cursor_response_path = "data.5._id"
+    assert fetch_rest_api(settings).height == 1
+    assert api.request_count == 1
+
+
+def test_first_list_item_as_cursor(api):
+    url = api.route("/r", _answer({"data": [{"_id": "first"}, {"_id": "second"}]}))
+    settings = _with(_at(api, _keyset(max_pages=2)), url=url)
+    settings.pagination.cursor_response_path = "data.0._id"
+    fetch_rest_api(settings)
+    assert api.requests[1].body["data_id"] == "first"
+
+
+# --- stop rules ---------------------------------------------------------------
+
+
+def test_cursor_stops_on_an_empty_page_even_with_a_next_cursor(api):
+    def handler(req, _srv):
+        if "cursor" not in req.query:
+            return Reply(payload={"rows": [{"id": 1}], "next": "c2"})
+        return Reply(payload={"rows": [], "next": "c3"})
 
     settings = RestApiReadSettings(
-        url="https://x/api",
-        pagination=PaginationConfig(
-            pagination_type="cursor", cursor_param="cursor", cursor_location="header", cursor_response_path="X-Next"
-        ),
+        url=api.route("/r", handler),
+        record_path="rows",
+        pagination=PaginationConfig(pagination_type="cursor", cursor_response_path="next"),
     )
-    df = _run(handler, settings)
-    assert sorted(df["id"].to_list()) == [1, 2]
+    assert fetch_rest_api(settings)["id"].to_list() == [1]
+    assert api.request_count == 2
 
 
-def test_max_pages_cap():
-    def handler(_req):
-        return httpx.Response(200, json=[{"id": 1}, {"id": 2}])  # always a full page
+def test_repeated_cursor_stops_without_duplicate_rows(api):
+    df = fetch_rest_api(_at(api, _keyset("/keyset-echo")))
+
+    assert df["_id"].to_list() == [r["_id"] for r in KEYSET_RECORDS]
+    assert api.request_count == 4
+    assert api.requests[-1].body["data_id"] == "id07"
+
+
+def test_a_cursor_that_cycles_back_stops(api):
+    def handler(req, _srv):
+        cursor = req.query.get("cursor")
+        nxt = {None: "a", "a": "b", "b": "a"}[cursor]
+        return Reply(payload={"rows": [{"at": cursor or "start"}], "next": nxt})
 
     settings = RestApiReadSettings(
-        url="https://x/api", pagination=PaginationConfig(pagination_type="offset", page_size=2, max_pages=3)
+        url=api.route("/cycle", handler),
+        record_path="rows",
+        pagination=PaginationConfig(pagination_type="cursor", cursor_response_path="next"),
     )
-    df = _run(handler, settings)
-    assert df.height == 6  # 3 pages * 2
-
-
-def test_max_records_cap():
-    def handler(_req):
-        return httpx.Response(200, json=[{"id": i} for i in range(10)])
-
-    settings = RestApiReadSettings(
-        url="https://x/api", pagination=PaginationConfig(pagination_type="offset", page_size=10, max_records=4)
-    )
-    df = _run(handler, settings)
-    assert df.height == 4
-
-
-def test_sample_size_caps_records():
-    def handler(_req):
-        return httpx.Response(200, json=[{"id": i} for i in range(100)])
-
-    df = _run(handler, RestApiReadSettings(url="https://x/api", sample_size=5))
-    assert df.height == 5
+    df = fetch_rest_api(settings)
+    assert df["at"].to_list() == ["start", "a", "b"]
+    assert api.request_count == 3
 
 
 # --- retries / 429 ------------------------------------------------------------
 
 
-def test_retry_on_429_then_success(monkeypatch):
-    monkeypatch.setattr("shared.rest_api.fetch.time.sleep", lambda *_: None)
-    calls = {"n": 0}
-
-    def handler(_req):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return httpx.Response(429, headers={"Retry-After": "0"}, json={})
-        return httpx.Response(200, json=[{"id": 1}])
-
-    df = _run(handler, RestApiReadSettings(url="https://x/api", max_retries=2))
-    assert calls["n"] == 2
+def test_retry_on_429_then_success(api, no_sleep):
+    df = fetch_rest_api(RestApiReadSettings(url=api.url("/flaky"), max_retries=2))
+    assert api.request_count == 2
     assert df.height == 1
 
 
-def test_retry_on_5xx_then_success(monkeypatch):
-    monkeypatch.setattr("shared.rest_api.fetch.time.sleep", lambda *_: None)
-    calls = {"n": 0}
-
-    def handler(_req):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return httpx.Response(503, json={})
-        return httpx.Response(200, json=[{"id": 1}])
-
-    df = _run(handler, RestApiReadSettings(url="https://x/api", max_retries=2))
-    assert calls["n"] == 2
+def test_retry_on_5xx_then_success(api, no_sleep):
+    df = fetch_rest_api(RestApiReadSettings(url=api.url("/fail-once"), max_retries=2))
+    assert api.request_count == 2
     assert df.height == 1
 
 
-def test_4xx_raises_without_retry(monkeypatch):
-    monkeypatch.setattr("shared.rest_api.fetch.time.sleep", lambda *_: None)
-    calls = {"n": 0}
-
-    def handler(_req):
-        calls["n"] += 1
-        return httpx.Response(404, json={"error": "nope"})
-
+def test_4xx_raises_without_retry(api, no_sleep):
     with pytest.raises(httpx.HTTPStatusError):
-        _run(handler, RestApiReadSettings(url="https://x/api", max_retries=3))
-    assert calls["n"] == 1  # not retried
+        fetch_rest_api(RestApiReadSettings(url=api.url("/nope"), max_retries=3))
+    assert api.request_count == 1
 
 
-# --- POST body ----------------------------------------------------------------
+def test_network_error_is_retried_then_raised(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("shared.rest_api.fetch.time.sleep", sleeps.append)
+    with pytest.raises(httpx.ConnectError):
+        fetch_rest_api(RestApiReadSettings(url=closed_port_url(), max_retries=2))
+    assert len(sleeps) == 2
 
 
-def test_post_sends_json_body():
-    seen = {}
+# --- request body -------------------------------------------------------------
 
-    def handler(req):
-        seen["body"] = req.content
-        return httpx.Response(200, json=[{"id": 1}])
 
-    settings = RestApiReadSettings(url="https://x/api", method="POST", json_body={"q": "search"})
-    _run(handler, settings)
-    assert b'"q"' in seen["body"]
+def test_post_sends_json_body(api):
+    fetch_rest_api(RestApiReadSettings(url=api.url("/items"), method="POST", json_body={"q": "search"}))
+    assert api.requests[0].method == "POST"
+    assert api.requests[0].body == {"q": "search"}
+
+
+def test_get_ignores_json_body(api):
+    fetch_rest_api(RestApiReadSettings(url=api.url("/items"), method="GET", json_body={"q": "x"}))
+    assert api.requests[0].raw_body == b""
 
 
 # --- worker decrypt path ------------------------------------------------------
 
 
-def test_read_rest_api_decrypts_bearer_token():
+def test_read_rest_api_decrypts_bearer_token(api):
     """The worker wrapper decrypts the stored ciphertext before the request."""
-    seen = {}
-
-    def handler(req):
-        seen["auth"] = req.headers.get("Authorization")
-        return httpx.Response(200, json=[{"id": 1}])
-
-    encrypted = encrypt_secret("supersecret")  # legacy master-key form
     settings = WorkerRestApiReadSettings(
-        url="https://x/api", auth=AuthConfig(auth_type="bearer", bearer_token_encrypted=encrypted)
+        url=api.url("/items"), auth=AuthConfig(auth_type="bearer", bearer_token_encrypted=encrypt_secret("s3cret"))
     )
-    with mock_transport(handler):
-        df = read_rest_api(settings)
-    assert seen["auth"] == "Bearer supersecret"
-    assert df.height == 1
+    df = read_rest_api(settings)
+    assert api.requests[0].headers["Authorization"] == "Bearer s3cret"
+    assert df.height == 3
 
 
-def test_read_rest_api_decrypts_api_key():
-    """The worker wrapper decrypts an API key and places it in the header."""
-    seen = {}
-
-    def handler(req):
-        seen["key"] = req.headers.get("X-Key")
-        return httpx.Response(200, json=[{"id": 1}])
-
-    encrypted = encrypt_secret("apikeyval")
+def test_read_rest_api_decrypts_api_key(api):
     settings = WorkerRestApiReadSettings(
-        url="https://x/api",
+        url=api.url("/items"),
         auth=AuthConfig(
-            auth_type="api_key", api_key_name="X-Key", api_key_location="header", api_key_encrypted=encrypted
+            auth_type="api_key",
+            api_key_name="X-Key",
+            api_key_location="header",
+            api_key_encrypted=encrypt_secret("apikeyval"),
         ),
     )
-    with mock_transport(handler):
-        df = read_rest_api(settings)
-    assert seen["key"] == "apikeyval"
-    assert df.height == 1
+    read_rest_api(settings)
+    assert api.requests[0].headers["X-Key"] == "apikeyval"
 
 
-def test_read_rest_api_decrypts_basic_password():
-    """The worker wrapper decrypts the basic-auth password into the Authorization header."""
-    seen = {}
-
-    def handler(req):
-        seen["auth"] = req.headers.get("Authorization")
-        return httpx.Response(200, json=[{"id": 1}])
-
-    encrypted = encrypt_secret("pw123")
+def test_read_rest_api_decrypts_basic_password(api):
     settings = WorkerRestApiReadSettings(
-        url="https://x/api",
-        auth=AuthConfig(auth_type="basic", basic_username="user", basic_password_encrypted=encrypted),
+        url=api.url("/items"),
+        auth=AuthConfig(auth_type="basic", basic_username="user", basic_password_encrypted=encrypt_secret("pw123")),
     )
-    with mock_transport(handler):
-        df = read_rest_api(settings)
-    assert seen["auth"].startswith("Basic ")
-    assert base64.b64decode(seen["auth"].split(" ", 1)[1]).decode() == "user:pw123"
-    assert df.height == 1
+    read_rest_api(settings)
+    token = api.requests[0].headers["Authorization"].split(" ", 1)[1]
+    assert base64.b64decode(token).decode() == "user:pw123"
 
 
-# --- retry-after parsing + network-error retry --------------------------------
+# --- retry-after parsing ------------------------------------------------------
 
 
 def test_parse_retry_after_numeric_and_invalid():
@@ -389,63 +494,4 @@ def test_parse_retry_after_numeric_and_invalid():
 
 
 def test_parse_retry_after_http_date_in_past_clamps_to_zero():
-    # A fixed HTTP-date in the past exercises the parsedate_to_datetime branch
-    # without depending on the wall clock; elapsed time clamps to 0.
     assert _parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT") == 0.0
-
-
-def test_network_error_then_success(monkeypatch):
-    monkeypatch.setattr("shared.rest_api.fetch.time.sleep", lambda *_: None)
-    calls = {"n": 0}
-
-    def handler(_req):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise httpx.ConnectError("boom")
-        return httpx.Response(200, json=[{"id": 1}])
-
-    df = _run(handler, RestApiReadSettings(url="https://x/api", max_retries=2))
-    assert calls["n"] == 2
-    assert df.height == 1
-
-
-# --- misc fetch branches ------------------------------------------------------
-
-
-def test_initial_cursor_sent_on_first_request():
-    seen = []
-
-    def handler(req):
-        seen.append(req.url.params.get("cursor"))
-        return httpx.Response(200, json={"rows": [{"id": 1}], "next": None})
-
-    settings = RestApiReadSettings(
-        url="https://x/api",
-        record_path="rows",
-        pagination=PaginationConfig(
-            pagination_type="cursor", cursor_param="cursor", initial_cursor="seed", cursor_response_path="next"
-        ),
-    )
-    df = _run(handler, settings)
-    assert seen[0] == "seed"
-    assert df.height == 1
-
-
-def test_get_ignores_json_body():
-    seen = {}
-
-    def handler(req):
-        seen["content"] = req.content
-        return httpx.Response(200, json=[{"id": 1}])
-
-    _run(handler, RestApiReadSettings(url="https://x/api", method="GET", json_body={"q": "x"}))
-    assert seen["content"] == b""
-
-
-def test_scalar_list_wrapped_as_value_column():
-    def handler(_req):
-        return httpx.Response(200, json={"items": [1, 2, 3]})
-
-    df = _run(handler, RestApiReadSettings(url="https://x/api", record_path="items"))
-    assert df.columns == ["value"]
-    assert df["value"].to_list() == [1, 2, 3]

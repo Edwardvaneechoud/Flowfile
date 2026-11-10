@@ -265,7 +265,7 @@ Fetches JSON from an HTTP endpoint. Supports `GET` and `POST`, custom headers an
 | **None** | A single request. Default. |
 | **Offset / limit** | Increments an offset parameter (default `offset`) by the page size, passed via a limit parameter (default `limit`, default `100`). |
 | **Page number** | Increments a page parameter (default `page`) from a configurable start page (default `1`). |
-| **Cursor / next-page token** | Follows a cursor read from the response body (dot-path) or a response header, sent back via a configurable request parameter. |
+| **Cursor / next-page token** | Follows a cursor read from the response body (dot-path; `data.-1._id` is the `_id` of the last record) or a response header, sent back as a query parameter or, for `POST`, as a field of the JSON body. Stops at an empty page or a cursor the API already gave. See [Cursor paging](../../connect/apis.md#cursor-paging). |
 
 Paginated reads are bounded by **Max pages** (default `1000`) and an optional **Max records** cap. **Timeout** defaults to 30 seconds and **Max retries** to `3`.
 

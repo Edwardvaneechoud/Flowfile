@@ -20,7 +20,7 @@ The node's request is built from these settings (the same fields `ff.read_api` a
 | Headers | Request headers as key/value pairs. |
 | Query params | URL query parameters. |
 | JSON body | Request body for `POST`. |
-| Record path | Dot-path to the record array inside the response (e.g. `data.items`). Empty uses the top-level response. |
+| Record path | Dot-path to the record array inside the response (e.g. `data.items`). Empty uses the top-level response. A number picks a list item, so `data.0.items` reads the `items` of the first element of `data`. |
 | Timeout (seconds) | Per-request timeout (default 30). |
 | Max retries | Retries for transient failures (default 3). |
 
@@ -42,9 +42,41 @@ In the node, the credential references a stored secret by name ([Secrets](../vis
 - `none` — a single request.
 - `offset` — offset/limit paging (`offset_param`, `limit_param`, `page_size`).
 - `page` — page-number paging (`page_param`, `start_page`, `page_size`).
-- `cursor` — cursor / next-token paging (`cursor_param`, `cursor_response_path`, `initial_cursor`).
+- `cursor` — cursor / next-token paging (`cursor_param`, `cursor_response_path`, `initial_cursor`, `cursor_request_location`).
 
 Safety caps `max_pages` (default 1000), `max_records`, and `page_delay_seconds` bound the paging loop.
+
+#### Cursor paging
+
+`cursor_response_path` says where the next cursor is in each response: a dot-path into the JSON body (or a header name, with `cursor_location="header"`). A number in the path picks a list item and a negative number counts from the end, so `data.-1._id` is the `_id` of the last record on the page. That is how keyset APIs that page by "the last id you saw" are read.
+
+`cursor_request_location` says where the next request carries it:
+
+- `query` (default) — as the query parameter `cursor_param`.
+- `body` — as the field `cursor_param` of the JSON body, merged into the configured body on every page (a dotted name such as `page.after` places it in a nested object). The first request is sent without it unless `initial_cursor` is set. Needs `POST`.
+
+Cursor paging stops at the first of: no next cursor, a page with no records, or a cursor the API already handed out (a page that only repeats the previous page's records is dropped, so the result holds no duplicates).
+
+For example, an API that takes `{"app_id": …, "entry_id": …, "limit": 100, "data_id": <last id>}` and answers `{"data": [...]}`:
+
+```python
+# Illustrative — not runnable as written.
+records = ff.read_api(
+    "https://api.example.com/v5/app/entry/data/list",
+    method="POST",
+    json_body={"app_id": "YOUR_APP", "entry_id": "YOUR_ENTRY", "limit": 100},
+    auth={"auth_type": "bearer", "secret": "YOUR_TOKEN"},
+    record_path="data",
+    pagination={
+        "pagination_type": "cursor",
+        "cursor_param": "data_id",
+        "cursor_request_location": "body",
+        "cursor_response_path": "data.-1._id",
+    },
+).collect()
+```
+
+In the node: set **Method** to `POST`, choose **Cursor / next-page token**, set **Cursor path** to `data.-1._id`, **Send cursor as** to **Field in JSON body** and **Body field** to `data_id`.
 
 ### Read a REST API in Python
 

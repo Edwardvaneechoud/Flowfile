@@ -58,7 +58,7 @@ Invariant 1 binds a core that serves: the desktop sidecar, the Docker image, the
 `ComputeBackend` is a `runtime_checkable` `Protocol` in `flowfile_core/flowfile_core/flowfile/execution/protocol.py`. `Capabilities` and `PROTOCOL_VERSION` live in `shared/compute_protocol.py`, which core and the worker both import.
 
 ```python
-PROTOCOL_VERSION = 1                         # the worker contract: everything core and a worker exchange
+PROTOCOL_VERSION = 2                         # the worker contract: everything core and a worker exchange
 
 class ComputeBackend(Protocol):
     id: str                                  # "local", "worker", "worker:team"
@@ -293,6 +293,8 @@ A refusal is a `VersionMismatch`, raised before the backend is sent any work and
 - A capabilities answer this release cannot read is a `VersionMismatch` when it carries an `app_version` (a worker of another release). Without one, the URL is not a Flowfile worker.
 
 Core and a worker of different app releases work together while they speak one contract. Workers upgrade when the number changes, and when Polars does.
+
+Version 2 added `cursor_request_location` to the REST API read's `PaginationConfig` (the `rest_api_read` operation and `POST /store_rest_api_read_result`), so a version 1 worker is refused by a version 2 core and the other way round.
 
 The worker serves its capabilities at `GET /capabilities` and `GET /v1/capabilities`. `POST /shutdown` takes the internal token like every other route; without it, the worker answers only a loopback peer while the desktop shell supervises it (`FLOWFILE_SUPERVISOR_PID`).
 

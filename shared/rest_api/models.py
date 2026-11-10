@@ -60,6 +60,13 @@ class CursorLocation(str, Enum):
     HEADER = "header"  # a response header name
 
 
+class CursorRequestLocation(str, Enum):
+    """Where the cursor is sent on the next request."""
+
+    QUERY = "query"  # a query parameter
+    BODY = "body"  # a field of the JSON request body (POST only)
+
+
 class AuthConfig(WireModel):
     """Authentication settings. Secret material is carried encrypted."""
 
@@ -93,7 +100,8 @@ class PaginationConfig(WireModel):
     start_page: int = 1
 
     # cursor / next-page token
-    cursor_param: str = "cursor"  # request param that carries the cursor
+    cursor_param: str = "cursor"  # query param, or dot-path into the JSON body, that carries the cursor
+    cursor_request_location: CursorRequestLocation = CursorRequestLocation.QUERY
     cursor_location: CursorLocation = CursorLocation.BODY
     cursor_response_path: str = ""  # dot-path into the body, or a header name
     initial_cursor: str = ""  # value to send on the first request (usually empty)

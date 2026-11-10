@@ -1418,6 +1418,8 @@ class RestApiPaginationSettings(BaseModel):
     start_page: int = 1
     # cursor / next-page token
     cursor_param: str = "cursor"
+    # Where the next request carries the cursor: a query parameter, or a field of the JSON body (POST only).
+    cursor_request_location: Literal["query", "body"] = "query"
     cursor_location: Literal["body", "header"] = "body"
     cursor_response_path: str = ""
     initial_cursor: str = ""
@@ -1445,6 +1447,17 @@ class RestApiSettings(BaseModel):
     record_path: str = ""
     timeout_seconds: float = 30.0
     max_retries: int = 3
+
+    @model_validator(mode="after")
+    def _cursor_in_body_needs_post(self) -> "RestApiSettings":
+        """A cursor sent in the JSON body only exists on a POST request."""
+        p = self.pagination
+        if p.pagination_type == "cursor" and p.cursor_request_location == "body" and self.method != "POST":
+            raise ValueError(
+                "A cursor sent in the JSON body needs the POST method; "
+                "switch the method to POST or send the cursor as a query parameter."
+            )
+        return self
 
 
 class NodeRestApiReader(NodeBase):

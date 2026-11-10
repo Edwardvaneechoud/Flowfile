@@ -235,33 +235,68 @@
         <template v-if="settings.pagination.pagination_type === 'cursor'">
           <div class="form-row">
             <div class="form-group half">
-              <label>Cursor request param</label>
-              <input v-model="settings.pagination.cursor_param" type="text" class="form-control" />
-            </div>
-            <div class="form-group half">
-              <label>Read cursor from</label>
-              <select v-model="settings.pagination.cursor_location" class="form-control">
-                <option value="body">Response body (dot-path)</option>
+              <label for="rest-cursor-location">Read next cursor from</label>
+              <select
+                id="rest-cursor-location"
+                v-model="settings.pagination.cursor_location"
+                class="form-control"
+              >
+                <option value="body">Response body</option>
                 <option value="header">Response header</option>
               </select>
             </div>
+            <div class="form-group half">
+              <label for="rest-cursor-path">{{
+                settings.pagination.cursor_location === "header" ? "Header name" : "Cursor path"
+              }}</label>
+              <input
+                id="rest-cursor-path"
+                v-model="settings.pagination.cursor_response_path"
+                type="text"
+                class="form-control"
+                :placeholder="
+                  settings.pagination.cursor_location === 'header'
+                    ? 'X-Next-Cursor'
+                    : 'meta.next_cursor'
+                "
+              />
+            </div>
           </div>
-          <div class="form-group">
-            <label>{{
-              settings.pagination.cursor_location === "header"
-                ? "Response header name"
-                : "Cursor body path"
-            }}</label>
-            <input
-              v-model="settings.pagination.cursor_response_path"
-              type="text"
-              class="form-control"
-              :placeholder="
-                settings.pagination.cursor_location === 'header'
-                  ? 'X-Next-Cursor'
-                  : 'meta.next_cursor'
-              "
-            />
+          <div v-if="settings.pagination.cursor_location === 'body'" class="helper-text cursor-hint">
+            <i class="fa-solid fa-info-circle"></i>
+            <span
+              >Dot-path in the response. A number picks a list item:
+              <code>data.-1._id</code> is the <code>_id</code> of the last record.</span
+            >
+          </div>
+          <div class="form-row">
+            <div v-if="settings.method === 'POST'" class="form-group half">
+              <label for="rest-cursor-send">Send cursor as</label>
+              <select
+                id="rest-cursor-send"
+                v-model="settings.pagination.cursor_request_location"
+                class="form-control"
+              >
+                <option value="query">Query parameter</option>
+                <option value="body">Field in JSON body</option>
+              </select>
+            </div>
+            <div class="form-group" :class="{ half: settings.method === 'POST' }">
+              <label for="rest-cursor-param">{{
+                cursorInBody ? "Body field" : "Query parameter name"
+              }}</label>
+              <input
+                id="rest-cursor-param"
+                v-model="settings.pagination.cursor_param"
+                type="text"
+                class="form-control"
+                :placeholder="cursorInBody ? 'data_id' : 'cursor'"
+              />
+            </div>
+          </div>
+          <div class="helper-text cursor-hint">
+            <i class="fa-solid fa-info-circle"></i>
+            <span>Stops at an empty page, or when the API sends back a cursor it already gave.</span>
           </div>
         </template>
 
@@ -349,7 +384,7 @@
 
 <script lang="ts" setup>
 import axios from "axios";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElOption, ElSelect } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -383,6 +418,20 @@ const sampling = ref<boolean>(false);
 const sampleError = ref<string>("");
 
 const settings = computed(() => nodeRestApi.value!.rest_api_settings);
+
+const cursorInBody = computed(
+  () => settings.value.method === "POST" && settings.value.pagination.cursor_request_location === "body",
+);
+
+// A GET request has no body, so a body cursor falls back to the query string.
+watch(
+  () => nodeRestApi.value?.rest_api_settings.method,
+  (method) => {
+    if (method === "GET" && nodeRestApi.value) {
+      nodeRestApi.value.rest_api_settings.pagination.cursor_request_location = "query";
+    }
+  },
+);
 
 const secretLabel = computed(() => {
   switch (settings.value.auth.auth_type) {
@@ -653,6 +702,14 @@ defineExpose({
   font-size: 11px;
   color: var(--color-text-secondary, #888);
   margin-top: 4px;
+}
+
+.cursor-hint {
+  margin: -6px 0 12px;
+}
+
+.helper-text code {
+  font-family: var(--font-family-mono, monospace);
 }
 
 .helper-text-warning {

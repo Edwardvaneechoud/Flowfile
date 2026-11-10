@@ -4704,6 +4704,32 @@ def test_rest_api_reader_cursor_pagination():
     ast.parse(code)
 
 
+def test_rest_api_reader_body_cursor_round_trips():
+    """A cursor sent in the JSON body is emitted, and only when it is not the query default."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    pagination = input_schema.RestApiPaginationSettings(
+        pagination_type="cursor",
+        cursor_param="data_id",
+        cursor_request_location="body",
+        cursor_response_path="data.-1._id",
+    )
+    arg = FlowGraphToFlowFrameConverter._build_rest_api_pagination_arg(pagination)
+    assert input_schema.RestApiPaginationSettings(**eval(arg)) == pagination
+
+    query = pagination.model_copy(update={"cursor_request_location": "query"})
+    assert "cursor_request_location" not in FlowGraphToFlowFrameConverter._build_rest_api_pagination_arg(query)
+
+
+def test_rest_api_settings_refuse_a_body_cursor_on_get():
+    body_cursor = input_schema.RestApiPaginationSettings(pagination_type="cursor", cursor_request_location="body")
+    with pytest.raises(ValueError, match="POST"):
+        input_schema.RestApiSettings(url="https://x", method="GET", pagination=body_cursor)
+    assert input_schema.RestApiSettings(url="https://x", method="POST", pagination=body_cursor).method == "POST"
+    offset = body_cursor.model_copy(update={"pagination_type": "offset"})
+    assert input_schema.RestApiSettings(url="https://x", method="GET", pagination=offset).method == "GET"
+
+
 def test_rest_api_reader_dispatches_via_node_type():
     """The dispatcher routes 'rest_api_reader' to the handler (no unsupported node)."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter

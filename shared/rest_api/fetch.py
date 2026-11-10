@@ -12,6 +12,8 @@ flattened with ``pl.json_normalize``.
 
 from __future__ import annotations
 
+import copy
+import json
 import time
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -23,6 +25,7 @@ from shared.rest_api.models import (
     ApiKeyLocation,
     AuthType,
     CursorLocation,
+    CursorRequestLocation,
     PaginationType,
     RestApiReadSettings,
 )
@@ -58,16 +61,40 @@ def _parse_retry_after(value: str | None) -> float | None:
 
 
 def _extract_by_path(obj: Any, path: str) -> Any:
-    """Walk a dot-separated path into a nested mapping. Empty path returns ``obj``."""
+    """Walk a dot-separated path into nested JSON. Empty path returns ``obj``.
+
+    A segment is a key of a mapping (a key ``"0"`` is still a key) or, on a list, an integer index; a negative index
+    counts from the end, so ``data.-1._id`` is the ``_id`` of the last item of ``data``. A segment that matches nothing
+    gives ``None``.
+    """
     if not path:
         return obj
     current = obj
     for key in path.split("."):
-        if isinstance(current, dict) and key in current:
+        if isinstance(current, dict):
+            if key not in current:
+                return None
             current = current[key]
+        elif isinstance(current, list):
+            try:
+                current = current[int(key)]
+            except (ValueError, IndexError):
+                return None
         else:
             return None
     return current
+
+
+def _set_by_path(obj: dict, path: str, value: Any) -> None:
+    """Set ``value`` at a dot-separated path in ``obj``, creating the mappings on the way."""
+    *parents, leaf = path.split(".")
+    current = obj
+    for key in parents:
+        child = current.setdefault(key, {})
+        if not isinstance(child, dict):
+            raise ValueError(f"Cannot place the cursor at '{path}': '{key}' in the JSON body is not an object.")
+        current = child
+    current[leaf] = value
 
 
 def _to_records(extracted: Any) -> list[dict]:
@@ -139,14 +166,41 @@ def _request_with_retries(
     raise RuntimeError("REST API request failed after retries")
 
 
-def _read_next_cursor(body: Any, response: httpx.Response, pagination) -> str | None:
-    """Read the next-page cursor/token from the response body or a header."""
+def _read_next_cursor(body: Any, response: httpx.Response, pagination) -> Any:
+    """Read the next-page cursor from the response body or a header; ``None`` when there is none.
+
+    A body cursor keeps its JSON type, so a numeric id travels back into a JSON request body as a number.
+    """
     if pagination.cursor_location == CursorLocation.HEADER:
         return response.headers.get(pagination.cursor_response_path) or None
     value = _extract_by_path(body, pagination.cursor_response_path)
-    if value in (None, ""):
+    if value is None or value == "":
         return None
-    return str(value)
+    return value
+
+
+def _cursor_key(cursor: Any) -> str:
+    """A hashable identity for a cursor value, to tell a cursor already sent."""
+    return cursor if isinstance(cursor, str) else json.dumps(cursor, sort_keys=True, default=str)
+
+
+def _repeats_page(page: list[dict], previous: list[dict]) -> bool:
+    """Whether every record of ``page`` was already on ``previous``."""
+    if not page:
+        return True
+    seen = {json.dumps(r, sort_keys=True, default=str) for r in previous}
+    return all(json.dumps(r, sort_keys=True, default=str) in seen for r in page)
+
+
+def _cursor_body(json_body: Any, cursor_param: str) -> dict:
+    """The request body a body-located cursor is merged into, copied so each page starts from the configured body."""
+    if json_body is None:
+        return {}
+    if not isinstance(json_body, dict):
+        raise ValueError("Sending the cursor in the JSON body needs the body to be a JSON object ({...}).")
+    if not cursor_param:
+        raise ValueError("Name the JSON body field that carries the cursor.")
+    return copy.deepcopy(json_body)
 
 
 def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) -> pl.DataFrame:
@@ -180,9 +234,16 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
     method = settings.method.value
     json_body = settings.json_body if method == "POST" else None
     ptype = pagination.pagination_type
+    cursor_in_body = ptype == PaginationType.CURSOR and pagination.cursor_request_location == CursorRequestLocation.BODY
+    if cursor_in_body:
+        if method != "POST":
+            raise ValueError("A cursor sent in the JSON body needs the POST method.")
+        json_body = _cursor_body(json_body, pagination.cursor_param)
 
     all_records: list[dict] = []
-    cursor = pagination.initial_cursor
+    cursor: Any = pagination.initial_cursor or None
+    sent_cursors: set[str] = set()
+    previous_page: list[dict] = []
     offset = 0
     page_number = pagination.start_page
     page_index = 0
@@ -190,13 +251,19 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
     with httpx.Client(timeout=settings.timeout_seconds, auth=httpx_auth, follow_redirects=True) as client:
         while page_index < max_pages:
             params = dict(base_params)
+            request_body = json_body
             if ptype == PaginationType.OFFSET:
                 params[pagination.offset_param] = str(offset)
                 params[pagination.limit_param] = str(pagination.page_size)
             elif ptype == PaginationType.PAGE:
                 params[pagination.page_param] = str(page_number)
-            elif ptype == PaginationType.CURSOR and cursor:
-                params[pagination.cursor_param] = cursor
+            elif ptype == PaginationType.CURSOR and cursor is not None:
+                sent_cursors.add(_cursor_key(cursor))
+                if cursor_in_body:
+                    request_body = copy.deepcopy(json_body)
+                    _set_by_path(request_body, pagination.cursor_param, cursor)
+                else:
+                    params[pagination.cursor_param] = str(cursor)
 
             response = _request_with_retries(
                 client,
@@ -204,7 +271,7 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
                 url=settings.url,
                 headers=headers,
                 params=params,
-                json_body=json_body,
+                json_body=request_body,
                 max_retries=settings.max_retries,
             )
 
@@ -214,6 +281,12 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
                 raise RuntimeError(f"REST API response was not valid JSON: {exc}") from exc
 
             page_records = _to_records(_extract_by_path(body, settings.record_path))
+            next_cursor = None
+            if ptype == PaginationType.CURSOR:
+                next_cursor = _read_next_cursor(body, response, pagination)
+                cursor_repeated = next_cursor is not None and _cursor_key(next_cursor) in sent_cursors
+                if cursor_repeated and _repeats_page(page_records, previous_page):
+                    page_records = []
             all_records.extend(page_records)
             page_index += 1
 
@@ -232,10 +305,11 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
                     break
                 page_number += 1
             elif ptype == PaginationType.CURSOR:
-                next_cursor = _read_next_cursor(body, response, pagination)
-                if not next_cursor:
+                # Stop on an empty page, at the last page, or when the API hands back a cursor already sent.
+                if not page_records or next_cursor is None or _cursor_key(next_cursor) in sent_cursors:
                     break
                 cursor = next_cursor
+                previous_page = page_records
 
             if pagination.page_delay_seconds > 0:
                 time.sleep(pagination.page_delay_seconds)
