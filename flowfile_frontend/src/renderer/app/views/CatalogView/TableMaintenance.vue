@@ -1,10 +1,20 @@
 <template>
   <span class="maintenance-actions">
-    <button class="action-btn-lg" :disabled="!table.file_exists" @click="openOptimize">
+    <button
+      class="action-btn-lg"
+      data-testid="table-optimize"
+      :disabled="!remote && !table.file_exists"
+      @click="openOptimize"
+    >
       <i class="fa-solid fa-compress"></i>
       Optimize
     </button>
-    <button class="action-btn-lg" :disabled="!table.file_exists" @click="openVacuum">
+    <button
+      class="action-btn-lg"
+      data-testid="table-vacuum"
+      :disabled="!remote && !table.file_exists"
+      @click="openVacuum"
+    >
       <i class="fa-solid fa-broom"></i>
       Vacuum
     </button>
@@ -128,7 +138,8 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { formatSize } from "./catalog-formatters";
 
-const props = defineProps<{ table: CatalogTable }>();
+// remote: a table of a remote catalog, whose file this machine does not probe.
+const props = defineProps<{ table: CatalogTable; remote?: boolean }>();
 const store = useCatalogStore();
 const { canManage } = useResourceSharing();
 
@@ -210,6 +221,7 @@ const enablingCdc = ref(false);
 
 const canEnableTracking = computed(
   () =>
+    !props.remote &&
     !props.table.cdc_enabled &&
     props.table.table_type !== "virtual" &&
     !props.table.scd2 &&

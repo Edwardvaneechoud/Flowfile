@@ -72,8 +72,8 @@
           <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
           {{ table.is_favorite ? "Favorited" : "Favorite" }}
         </button>
-        <!-- A remote table's optimize and vacuum compute, which its catalog refuses; its grants are not this machine's. -->
-        <TableMaintenance v-if="!isHub && table.table_type !== 'virtual'" :table="table" />
+        <!-- A remote table is optimized and vacuumed by this machine's worker, as a local one is. -->
+        <TableMaintenance v-if="table.table_type !== 'virtual'" :table="table" :remote="isHub" />
         <button
           v-if="isHub ? canShareHubRow(table) : canShare(table)"
           class="action-btn-lg"

@@ -21,7 +21,12 @@ vi.mock("../../composables/useResourceSharing", () => ({
   }),
 }));
 vi.mock("./VisualizationsTab.vue", () => ({ default: { render: () => null } }));
-vi.mock("./TableMaintenance.vue", () => ({ default: { render: () => null } }));
+vi.mock("./TableMaintenance.vue", async () => {
+  const { h } = await import("vue");
+  const render = (props: { remote?: boolean }) =>
+    h("span", { "data-testid": "maintenance", "data-remote": String(props.remote) });
+  return { default: Object.assign(render, { props: ["table", "remote"] }) };
+});
 vi.mock("./TableEditorDialog.vue", () => ({ default: { render: () => null } }));
 vi.mock("../../components/sharing/ShareDialog.vue", () => ({ default: { render: () => null } }));
 
@@ -75,7 +80,7 @@ describe("TableDetailPanel", () => {
     expect(host.querySelector('[data-testid="hub-badge"]')).toBeNull();
   });
 
-  it("gives a hub table Favourite, Delete and Share, and no maintenance, which its catalog does not answer", async () => {
+  it("gives a hub table Favourite, Delete, Share and the maintenance a local table has", async () => {
     const favourited = vi.fn();
     const deleted = vi.fn();
     host = await mountIn(TableDetailPanel, {
@@ -100,6 +105,9 @@ describe("TableDetailPanel", () => {
     expect(host.querySelector('[title="Share table"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="query-table"]')?.hasAttribute("disabled")).toBe(false);
     expect(host.querySelector('[data-testid="hub-create-viz"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="maintenance"]')?.getAttribute("data-remote")).toBe(
+      "true",
+    );
     expect(host.querySelector(".viz-section")).toBeNull();
   });
 });
