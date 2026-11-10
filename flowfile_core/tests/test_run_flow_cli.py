@@ -598,3 +598,72 @@ def test_a_scheduled_run_with_no_backend_named_runs_on_the_backend_its_environme
     assert _finished_run(flow_path, backend=None, monkeypatch=monkeypatch)[0] is False
     monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "")
     assert _finished_run(flow_path, backend=None, monkeypatch=monkeypatch) == (True, 2)
+
+
+def _run_now(flow_path: Path, backend: str | None, monkeypatch) -> tuple[bool | None, int, bool, str]:
+    """Runs a schedule naming ``backend`` through Run now with a real child; ``(success, nodes completed, schedule
+    still enabled, the run's log)``."""
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+    from flowfile_core.catalog.service import CatalogService
+    from flowfile_core.database import models as db_models
+    from flowfile_core.database.connection import get_db_context
+    from shared import subprocess_utils
+    from shared.run_logs import run_log_path
+
+    children: list[subprocess.Popen] = []
+
+    def popen(cmd, **kwargs):
+        children.append(subprocess.Popen(cmd, **kwargs))
+        return children[-1]
+
+    monkeypatch.setattr(subprocess_utils, "subprocess", SimpleNamespace(Popen=popen))
+    with get_db_context() as db:
+        registration = db_models.FlowRegistration(
+            flow_uuid=str(uuid.uuid4()), name="headless_backend", flow_path=str(flow_path), owner_id=1
+        )
+        db.add(registration)
+        db.commit()
+        schedule = db_models.FlowSchedule(
+            registration_id=registration.id,
+            owner_id=1,
+            schedule_type="interval",
+            interval_seconds=3600,
+            enabled=True,
+            backend=backend,
+        )
+        db.add(schedule)
+        db.commit()
+        schedule_id = schedule.id
+        run = CatalogService(SQLAlchemyCatalogRepository(db)).trigger_schedule_now(
+            schedule_id, user_id=1, suppress_telemetry=True
+        )
+    assert len(children) == 1
+    children[0].wait(timeout=300)
+    with get_db_context() as db:
+        finished = db.get(db_models.FlowRun, run.id)
+        enabled = db.get(db_models.FlowSchedule, schedule_id).enabled
+        return finished.success, finished.nodes_completed, enabled, run_log_path(run.id).read_text()
+
+
+def test_a_schedule_naming_a_backend_with_no_row_fails_its_run_and_stays_enabled(tmp_path, monkeypatch):
+    flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
+
+    success, _nodes, enabled, log = _run_now(flow_path, "worker:nobody", monkeypatch)
+    assert success is False
+    assert "worker:nobody" in log, log
+    assert enabled is True
+
+
+def test_a_schedule_naming_no_backend_runs_in_its_own_process(tmp_path, monkeypatch):
+    flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
+
+    success, nodes, enabled, _log = _run_now(flow_path, None, monkeypatch)
+    assert (success, nodes, enabled) == (True, 2, True)
+
+
+def test_a_schedule_naming_the_worker_runs_on_the_session_worker(tmp_path, monkeypatch, session_worker):
+    monkeypatch.setenv("FLOWFILE_WORKER_URL", session_worker)
+    flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
+
+    success, nodes, enabled, _log = _run_now(flow_path, "worker", monkeypatch)
+    assert (success, nodes, enabled) == (True, 2, True)

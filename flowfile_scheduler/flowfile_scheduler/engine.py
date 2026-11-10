@@ -537,7 +537,7 @@ class FlowScheduler:
         )
 
         try:
-            pid = self._spawn_flow(flow_path, run.id)
+            pid = self._spawn_flow(flow_path, run.id, backend=sched.backend)
         except Exception:
             logger.exception("Spawn raised for run %s", run.id)
             pid = None
@@ -553,11 +553,12 @@ class FlowScheduler:
         db.commit()
         return LaunchOutcome.LAUNCHED
 
-    def _spawn_flow(self, flow_path: str, run_id: int) -> int | None:
+    def _spawn_flow(self, flow_path: str, run_id: int, backend: str | None = None) -> int | None:
         """Fire-and-forget a ``flowfile run flow`` subprocess.
 
+        ``backend`` is the schedule's backend id, passed as ``--backend``; ``None`` spawns the command unchanged.
         Returns the child PID on success, or ``None`` on failure.
         """
         from shared.subprocess_utils import spawn_flow_subprocess
 
-        return spawn_flow_subprocess(flow_path, run_id)
+        return spawn_flow_subprocess(flow_path, run_id, backend=backend)

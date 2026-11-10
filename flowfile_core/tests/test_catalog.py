@@ -3458,6 +3458,88 @@ class TestCronSchedules:
         assert bad_tz.json()["valid"] is False
 
 
+class TestScheduleBackend:
+    """A schedule names the backend its runs go to; Run now and the push trigger pass it as ``--backend``."""
+
+    @staticmethod
+    def _spawns(monkeypatch) -> list[dict]:
+        calls: list[dict] = []
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda *a, **kw: calls.append(kw) or None,
+        )
+        return calls
+
+    def test_create_get_clear_and_keep(self):
+        flow_id = TestCronSchedules._register_flow()
+        created = client.post(
+            "/catalog/schedules",
+            json={
+                "registration_id": flow_id,
+                "schedule_type": "interval",
+                "interval_seconds": 3600,
+                "backend": " worker:team ",
+            },
+        )
+        assert created.status_code == 201, created.text
+        sched_id = created.json()["id"]
+        assert created.json()["backend"] == "worker:team"
+        assert client.get(f"/catalog/schedules/{sched_id}").json()["backend"] == "worker:team"
+
+        kept = client.put(f"/catalog/schedules/{sched_id}", json={"enabled": False})
+        assert kept.status_code == 200, kept.text
+        assert kept.json()["backend"] == "worker:team"
+
+        cleared = client.put(f"/catalog/schedules/{sched_id}", json={"backend": ""})
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["backend"] is None
+        with get_db_context() as db:
+            assert db.get(FlowSchedule, sched_id).backend is None
+
+    def test_create_without_a_backend_stores_null(self):
+        flow_id = TestCronSchedules._register_flow()
+        created = client.post(
+            "/catalog/schedules",
+            json={"registration_id": flow_id, "schedule_type": "interval", "interval_seconds": 3600},
+        ).json()
+        assert created["backend"] is None
+
+    def test_run_now_passes_the_backend(self, monkeypatch):
+        calls = self._spawns(monkeypatch)
+        flow_id = TestCronSchedules._register_flow()
+        named = client.post(
+            "/catalog/schedules",
+            json={
+                "registration_id": flow_id,
+                "schedule_type": "interval",
+                "interval_seconds": 3600,
+                "backend": "worker:team",
+            },
+        ).json()
+        assert client.post(f"/catalog/schedules/{named['id']}/run-now").status_code == 200
+        assert calls[-1]["backend"] == "worker:team"
+
+        other_flow = TestCronSchedules._register_flow()
+        plain = client.post(
+            "/catalog/schedules",
+            json={"registration_id": other_flow, "schedule_type": "interval", "interval_seconds": 3600},
+        ).json()
+        assert client.post(f"/catalog/schedules/{plain['id']}/run-now").status_code == 200
+        assert calls[-1]["backend"] is None
+
+    def test_push_trigger_passes_the_backend(self, monkeypatch):
+        calls = self._spawns(monkeypatch)
+        _schema_id, _flow_id, table_id, schedule_id, parquet_path = TestPushTableTrigger._setup_table_and_schedule()
+        with get_db_context() as db:
+            db.get(FlowSchedule, schedule_id).backend = "worker:team"
+            db.commit()
+
+        with get_db_context() as db:
+            CatalogService(SQLAlchemyCatalogRepository(db)).overwrite_table_data(table_id, parquet_path)
+
+        assert [kw["backend"] for kw in calls] == ["worker:team"]
+
+
 # Catalog table storage-deletion tests
 
 

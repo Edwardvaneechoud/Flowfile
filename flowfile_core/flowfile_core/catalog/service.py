@@ -1332,6 +1332,7 @@ class CatalogService:
         enabled: bool = True,
         name: str | None = None,
         description: str | None = None,
+        backend: str | None = None,
     ) -> FlowScheduleOut:
         """Create a new schedule (interval, cron, table_trigger or table_set_trigger) for a flow."""
         # Use suffices: the schedule runs as its creator, so it resolves secrets and connections as them.
@@ -1348,6 +1349,7 @@ class CatalogService:
             enabled=enabled,
             name=name,
             description=description,
+            backend=backend,
         )
 
     def update_schedule(
@@ -1359,8 +1361,9 @@ class CatalogService:
         cron_timezone: str | None = None,
         name: str | None = None,
         description: str | None = None,
+        backend: str | None = None,
     ) -> FlowScheduleOut:
-        """Update a schedule's enabled flag, interval, cron expression/timezone, name or description."""
+        """Update a schedule's enabled flag, interval, cron expression/timezone, name, description or backend."""
         self._require_manage_schedule(schedule_id)
         return self._schedules.update_schedule(
             schedule_id=schedule_id,
@@ -1370,6 +1373,7 @@ class CatalogService:
             cron_timezone=cron_timezone,
             name=name,
             description=description,
+            backend=backend,
         )
 
     def delete_schedule(self, schedule_id: int) -> None:

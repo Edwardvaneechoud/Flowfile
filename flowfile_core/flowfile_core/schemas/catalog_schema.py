@@ -1004,6 +1004,7 @@ class FlowScheduleCreate(BaseModel):
     enabled: bool = True
     name: str | None = None
     description: str | None = None
+    backend: str | None = None
 
 
 class FlowScheduleUpdate(BaseModel):
@@ -1013,6 +1014,7 @@ class FlowScheduleUpdate(BaseModel):
     cron_timezone: str | None = None
     name: str | None = None
     description: str | None = None
+    backend: str | None = None
 
 
 class FlowScheduleOut(BaseModel):
@@ -1034,6 +1036,7 @@ class FlowScheduleOut(BaseModel):
     trigger_table_ids: list[int] = Field(default_factory=list)
     trigger_table_names: list[str] = Field(default_factory=list)
     trigger_full_table_names: list[str] = Field(default_factory=list)
+    backend: str | None = None
     last_triggered_at: datetime | None = None
     last_trigger_table_updated_at: datetime | None = None
     created_at: datetime

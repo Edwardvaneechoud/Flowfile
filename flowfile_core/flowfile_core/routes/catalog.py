@@ -1559,6 +1559,7 @@ def create_schedule(
         enabled=body.enabled,
         name=body.name,
         description=body.description,
+        backend=body.backend,
     )
 
 
@@ -1604,6 +1605,7 @@ def update_schedule(
         cron_timezone=body.cron_timezone,
         name=body.name,
         description=body.description,
+        backend=body.backend,
     )
 
 
