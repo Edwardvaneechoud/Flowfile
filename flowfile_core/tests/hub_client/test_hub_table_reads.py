@@ -42,7 +42,7 @@ def _vended_reads(fake) -> list[list[int]]:
 
 
 def test_the_catalog_page_previews_a_hub_table(api, hub):
-    resp = api.get(f"/hub_client/catalog/tables/{hub.orders['id']}/preview", params={"limit": 3})
+    resp = api.get(f"/catalog/tables/{-hub.orders['id']}/preview", params={"limit": 3})
 
     assert resp.status_code == 200, resp.text
     preview = resp.json()
@@ -50,6 +50,32 @@ def test_the_catalog_page_previews_a_hub_table(api, hub):
     assert preview["rows"] == [[1, "NL", 10], [2, "US", 20], [3, "DE", 30]]
     assert preview["total_rows"] == 5
     assert _vended_reads(hub.fake) == [[hub.sales["id"]]]
+
+
+def test_the_catalog_page_lists_the_versions_of_a_hub_table_and_previews_one(api, hub):
+    pl.DataFrame({"id": [6], "country": ["FR"], "amount": [60]}).write_delta(
+        hub.orders["file_path"], mode="append", storage_options=e2e.MINIO_OPTIONS
+    )
+
+    history = api.get(f"/catalog/tables/{-hub.orders['id']}/history")
+    first = api.get(f"/catalog/tables/{-hub.orders['id']}/preview", params={"version": 0})
+
+    assert history.status_code == 200, history.text
+    assert history.json()["current_version"] == 1
+    assert [entry["version"] for entry in history.json()["history"]] == [1, 0]
+    assert first.status_code == 200, first.text
+    assert first.json()["total_rows"] == 5
+    assert _vended_reads(hub.fake) == [[hub.sales["id"]], [hub.sales["id"]]]
+
+
+def test_a_hub_table_this_person_is_not_connected_for_answers_the_sentence(api, hub):
+    e2e.session.clear(1)
+
+    resp = api.get(f"/catalog/tables/{-hub.orders['id']}/preview")
+
+    assert resp.status_code == 422, resp.text
+    assert "not connected" in resp.json()["detail"]
+    assert hub.fake.vend_calls == []
 
 
 def test_the_sql_editor_queries_a_hub_table(api, hub):

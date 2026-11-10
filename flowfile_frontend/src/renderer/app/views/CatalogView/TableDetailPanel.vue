@@ -584,10 +584,7 @@ const hasHistory = computed(() => props.tableHistory && props.tableHistory.histo
 
 // Show the Version History section when there's history (cached or freshly loaded) or while it loads.
 const showVersionHistory = computed(
-  () =>
-    !isHub.value &&
-    props.table.table_type !== "virtual" &&
-    (!!hasHistory.value || props.loadingTableHistory),
+  () => props.table.table_type !== "virtual" && (!!hasHistory.value || props.loadingTableHistory),
 );
 
 const historyStale = computed(() => !!hasHistory.value && props.tableHistoryStale);

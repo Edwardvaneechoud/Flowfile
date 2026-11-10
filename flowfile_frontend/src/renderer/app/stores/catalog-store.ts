@@ -594,17 +594,15 @@ export const useCatalogStore = defineStore("catalog", {
       // Show recently-loaded version history automatically from the sessionStorage cache (flagged
       // stale after 5 min). Only the data preview stays gated for object-storage tables.
       const found = tableId !== null ? this.findTableInTree(tableId) : null;
-      const hubRow = !!found && isHubRow(found);
-      const cachedHistory = tableId !== null && !hubRow ? readCachedHistory(tableId) : null;
+      const cachedHistory = tableId !== null ? readCachedHistory(tableId) : null;
       this.tableHistory = cachedHistory?.history ?? null;
       this.tableHistoryStale = cachedHistory?.stale ?? false;
       this.selectedVersion = null;
 
       if (tableId !== null) {
         this.selectedTable = found;
-        // A hub table's preview loads on demand, as an object-storage table's does; its history stays on the hub.
         // Where this core previews nothing (a hub's own page) nothing is read: no table data, no history.
-        if (hubRow || !setupService.previews()) return;
+        if (!setupService.previews()) return;
         const isPhysical = this.selectedTable?.table_type !== "virtual";
         const isRemote = !!this.selectedTable?.is_remote_storage;
         // Data preview: local auto-loads; object storage loads on demand (a button).
@@ -637,13 +635,8 @@ export const useCatalogStore = defineStore("catalog", {
       const version = this.selectedVersion;
       this.loadingTablePreview = true;
       this.previewError = null;
-      const table = this.findTableInTree(tableId);
-      const hubId = table && isHubRow(table) ? table.hub_id : null;
       try {
-        const preview =
-          hubId != null
-            ? await CatalogApi.getHubTablePreview(hubId, limit)
-            : await CatalogApi.getTablePreview(tableId, limit, version);
+        const preview = await CatalogApi.getTablePreview(tableId, limit, version);
         if (token !== tablePreviewRequestToken) return;
         this.tablePreview = preview;
       } catch (e: any) {

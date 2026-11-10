@@ -26,12 +26,8 @@ from flowfile_core.catalog.serializers import format_pyarrow_preview
 from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.tables import TableService, _is_managed_table_path
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
-from flowfile_core.catalog.storage_backend import (
-    CatalogStorageTarget,
-    _catalog_table_dir_name,
-    _is_cloud_uri,
-    resolve_for_table,
-)
+from flowfile_core.catalog.storage_backend import CatalogStorageTarget, _catalog_table_dir_name, _is_cloud_uri
+from flowfile_core.catalog.table_sources import row_targets, table_row
 from flowfile_core.catalog.text_utils import parse_delta_history
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.models import CatalogTable
@@ -80,17 +76,15 @@ class TablePreviewService:
         version: int | None = None,
         user_id: int | None = None,
     ) -> CatalogTablePreview:
-        """Read the first N rows from a catalog table."""
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
+        """Read the first N rows from a catalog table, whichever catalog keeps it (``table_row``)."""
+        table = table_row(self.repo, table_id, user_id)
 
         if getattr(table, "table_type", "physical") == "virtual":
             if getattr(table, "sql_query", None):
                 return self._get_query_virtual_table_preview(table, limit, user_id)
             return self._get_virtual_table_preview(table, limit, user_id)
 
-        target = resolve_for_table(table.file_path, table.namespace_id)
+        [target] = row_targets([table], user_id, "preview")
         return self.physical_table_preview(table, target, limit, version)
 
     def _format_virtual_preview(
@@ -300,12 +294,13 @@ class TablePreviewService:
         pa_table, total_rows = read_delta_preview(dt, limit, storage_options)
         return format_pyarrow_preview(pa_table, total_rows=total_rows)
 
-    def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
-        """Return the version history for a Delta catalog table."""
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-        return self.table_history(table, resolve_for_table(table.file_path, table.namespace_id), limit)
+    def get_table_history(
+        self, table_id: int, limit: int | None = None, user_id: int | None = None
+    ) -> DeltaTableHistory:
+        """Return the version history for a Delta catalog table, whichever catalog keeps it."""
+        table = table_row(self.repo, table_id, user_id)
+        [target] = row_targets([table], user_id, "history")
+        return self.table_history(table, target, limit)
 
     def table_history(
         self, table: CatalogTable | CatalogTableOut, target: CatalogStorageTarget, limit: int | None = None

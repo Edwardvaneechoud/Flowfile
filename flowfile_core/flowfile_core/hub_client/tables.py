@@ -16,12 +16,12 @@ import hashlib
 import re
 import time
 import uuid
+from collections.abc import Sequence
 
 import polars as pl
 from requests.exceptions import RequestException
 
 from flowfile_core.catalog.exceptions import WorkerUnavailableError
-from flowfile_core.catalog.serializers import format_pyarrow_preview
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.catalog.text_utils import friendly_relation_error, is_table_reference, rewrite_qualified_references
 from flowfile_core.flowfile.execution import registry
@@ -36,14 +36,12 @@ from flowfile_core.hub_client import catalog, session, vend
 from flowfile_core.schemas.catalog_schema import (
     CatalogTableMaterializeResult,
     CatalogTableOut,
-    CatalogTablePreview,
     NamespaceTree,
     SqlQueryResult,
 )
 from shared.delta_utils import make_json_safe, validate_catalog_path
 from shared.storage_config import storage
 
-PREVIEW_RUN_PREFIX = "preview-"
 SQL_RUN_PREFIX = "sql-"
 VISUAL_RUN_PREFIX = "visual-"
 NOTEBOOK_RUN_PREFIX = "notebook-"
@@ -93,26 +91,26 @@ def _physical(table: dict, namespace_name) -> dict:
     return table
 
 
-def preview(user_id: int, hub_table_id: int, limit: int) -> CatalogTablePreview:
-    """The first ``limit`` rows of the hub's table ``hub_table_id`` and its row count, as a local table's preview.
+def table(user_id: int | None, table_id: int) -> CatalogTableOut:
+    """The hub's table whose row in the catalog tree is ``table_id``, as that row, for a read outside a run
+    (``table_sources.table_row``); raises as ``readable`` does."""
+    return CatalogTableOut.model_validate(catalog.marked(readable(user_id, -table_id)))
 
-    The row count is the one the hub keeps for the table; a table the hub has no count for is counted where the rows
-    are read.
+
+def read_targets(user_id: int, tables: Sequence[CatalogTableOut], purpose: str) -> list[vend.VendedTarget]:
+    """The storage target of each of ``tables``, rows of the catalog tree, for one read outside a run
+    (``table_sources.row_targets``): the Catalog page's preview and history, the SQL editor, a visual, a notebook cell.
+
+    The hub vends one read of the tables' schemas to ``user_id`` now, keyed by table and not by a schema's name,
+    under a run id of its own that starts with ``purpose`` (the hub's vend ledger keeps it). The credential lives
+    for the call, or as long as the plan built from the target carries it, encrypted.
 
     Raises:
-        LookupError: A sentence for the person: not connected to the hub, no such table, or the hub's refusal.
-        ValueError: The hub keeps the table on its own disk, or it is a virtual table.
-        ComputeError: The backend could not read the rows.
+        LookupError: A sentence for the person: not connected to the hub, or the hub's refusal.
     """
-    table = readable(user_id, hub_table_id)
-    vended = vend.request_for_tables(user_id, f"{PREVIEW_RUN_PREFIX}{uuid.uuid4().hex}", [table])
-    plan = vended.scan_delta(table["file_path"], user_id, _columns(table))
-    backend = current_context().backend
-    rows = head_rows(backend, plan, limit)
-    total_rows = table.get("row_count")
-    if total_rows is None:
-        total_rows = count_rows(backend, plan)
-    return format_pyarrow_preview(rows, total_rows=total_rows)
+    rows = [{"namespace_id": row.hub_namespace_id, "name": row.name} for row in tables]
+    vended = vend.request_for_tables(user_id, f"{purpose}-{uuid.uuid4().hex}", rows)
+    return [vend.VendedTarget(vended, row.file_path.rstrip("/").rpartition("/")[0], user_id) for row in tables]
 
 
 def named(user_id: int | None, query: str, own: set[str]) -> dict[str, int]:

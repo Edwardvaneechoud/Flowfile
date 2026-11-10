@@ -20,7 +20,14 @@ vi.mock("../api/catalog.api", () => ({
 import { useCatalogStore } from "./catalog-store";
 
 const localTable = table({ id: 5, is_remote_storage: false, is_favorite: false });
-const hubTable = table({ ...localTable, id: -5, source: "hub", hub_id: 5, hub_namespace_id: 3 });
+const hubTable = table({
+  ...localTable,
+  id: -5,
+  source: "hub",
+  hub_id: 5,
+  hub_namespace_id: 3,
+  is_remote_storage: true,
+});
 
 describe("catalog-store with hub rows in the tree", () => {
   beforeEach(() => {
@@ -44,13 +51,16 @@ describe("catalog-store with hub rows in the tree", () => {
     return store;
   };
 
-  it("selects a hub table without asking for its preview or history", () => {
+  it("selects a hub table as a local one on object storage: history at once, the preview when asked", async () => {
     const store = seed();
     store.selectTable(-5);
     expect(store.selectedTableId).toBe(-5);
     expect(store.selectedTable?.hub_id).toBe(5);
     expect(getTablePreviewMock).not.toHaveBeenCalled();
-    expect(getTableHistoryMock).not.toHaveBeenCalled();
+    expect(getTableHistoryMock).toHaveBeenCalledWith(-5);
+
+    await store.loadSelectedPreview();
+    expect(getTablePreviewMock).toHaveBeenCalledWith(-5, 100, null);
   });
 
   it("loads a local table's preview and history as before", () => {

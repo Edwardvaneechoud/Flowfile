@@ -62,6 +62,7 @@ from flowfile_core.catalog.services.tables import (
 from flowfile_core.catalog.services.virtual_tables import _UNSET as _VERSIONS_UNSET
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
+from flowfile_core.catalog.table_sources import remote_of
 
 # Re-exported under the underscore names external callers and tests still use.
 from flowfile_core.catalog.text_utils import hash_source_versions as _hash_source_versions  # noqa: F401
@@ -204,7 +205,8 @@ class CatalogService:
         return (self.access.user_id if self.access is not None else None) or -1
 
     def _require_use(self, resource_type: str, resource_id: int) -> None:
-        if self._restricted:
+        """A table of a remote catalog (``table_sources.remote_of``) is that catalog's to refuse, not this one's."""
+        if self._restricted and not (resource_type == "catalog_table" and remote_of(resource_id) is not None):
             self.access.require_use(resource_type, resource_id)
 
     def _require_manage(self, resource_type: str, resource_id: int) -> None:
@@ -1208,10 +1210,12 @@ class CatalogService:
         self._require_use("catalog_table", table_id)
         return self._previews.resolve_virtual_flow_table_preview(table_id, limit, user_id)
 
-    def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
+    def get_table_history(
+        self, table_id: int, limit: int | None = None, user_id: int | None = None
+    ) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table."""
         self._require_use("catalog_table", table_id)
-        return self._previews.get_table_history(table_id, limit)
+        return self._previews.get_table_history(table_id, limit, user_id)
 
     def optimize_table(self, table_id: int, z_order_columns: list[str] | None = None) -> OptimizeTableResponse:
         """Compact (and optionally Z-order) a Delta catalog table."""

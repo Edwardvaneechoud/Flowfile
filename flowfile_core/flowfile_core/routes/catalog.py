@@ -992,7 +992,7 @@ def get_table_history(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Return version history for a Delta catalog table."""
-    return service.get_table_history(table_id, limit=limit)
+    return service.get_table_history(table_id, limit=limit, user_id=current_user.id)
 
 
 @router.post("/tables/{table_id}/optimize", response_model=OptimizeTableResponse)
