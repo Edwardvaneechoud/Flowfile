@@ -169,7 +169,7 @@ The worker materialises when `must_materialise or (wide and (preview_rows is not
 
 | Kind | Returns |
 |---|---|
-| `database_read`, `kafka_read`, `google_analytics_read`, `rest_api_read`, `file_read` | one reference; `kafka_read` adds its offsets as `metadata` |
+| `database_read`, `kafka_read`, `google_analytics_read`, `rest_api_read`, `file_read` | one reference; `kafka_read` adds its offsets as `metadata`, `rest_api_read` the requests it sent (`trace`, secrets masked) and its first response's `suggested_paths`, `response_tree` and `response_text` |
 | `fuzzy_join`, `ml_apply` | one reference |
 | `polars_code`, `sql_query` | one reference, its schema from running the code on the backend |
 | `random_split` | one reference per split |

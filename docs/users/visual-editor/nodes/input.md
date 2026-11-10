@@ -244,10 +244,10 @@ Fetches JSON from an HTTP endpoint. Supports `GET` and `POST`, custom headers an
 |---|---|
 | **Method** | `GET` or `POST`. Default `GET`. |
 | **URL** | The request URL. Required. |
-| **Record path** | Dot-path to the array of records inside the response, e.g. `data.items`. Leave empty to use the top level. Nested objects are flattened into dotted column names. |
-| **Headers** | Optional request headers, as name/value pairs. |
 | **Query parameters** | Optional query-string parameters, as name/value pairs. |
+| **Headers** | Optional request headers, as name/value pairs. |
 | **JSON body** | Body sent with `POST` requests. Must be valid JSON. |
+| **Record path** | Dot-path to the array of records inside the response, e.g. `data.items`. Leave empty to use the top level. Nested objects are flattened into dotted column names. After a test request you pick it by clicking the list in the response. |
 
 **Authentication** — the credential is never stored on the node; it references a reusable [secret](../catalog/secrets.md) by name.
 
@@ -258,18 +258,20 @@ Fetches JSON from an HTTP endpoint. Supports `GET` and `POST`, custom headers an
 | **Bearer token** | Sends the secret as an `Authorization: Bearer <token>` header. |
 | **Basic** | HTTP Basic authentication with a username and a secret password. |
 
-**Pagination**
+**More pages**
 
-| Strategy | Description |
+| How this API pages | Description |
 |---|---|
-| **None** | A single request. Default. |
-| **Offset / limit** | Increments an offset parameter (default `offset`) by the page size, passed via a limit parameter (default `limit`, default `100`). |
-| **Page number** | Increments a page parameter (default `page`) from a configurable start page (default `1`). |
-| **Cursor / next-page token** | Follows a cursor read from the response body (dot-path; `data.-1._id` is the `_id` of the last record) or a response header, sent back as a query parameter or, for `POST`, as a field of the JSON body. Stops at an empty page or a cursor the API already gave. See [Cursor paging](../../connect/apis.md#cursor-paging). |
+| **It doesn't: one request** | A single request. Default. |
+| **Next-page token (cursor)** | Follows a cursor read from the response body (dot-path; `data.-1._id` is the `_id` of the last record) or a response header, sent back as a query parameter or, for `POST`, as a field of the JSON body. Stops at an empty page or a cursor the API already gave. See [Cursor paging](../../connect/apis.md#cursor-paging). |
+| **Page number** | Increments a page parameter (default `page`) from a configurable first page (default `1`). |
+| **Offset and limit** | Increments an offset parameter (default `offset`) by the page size, passed via a limit parameter (default `limit`, default `100`). |
 
-Paginated reads are bounded by **Max pages** (default `1000`) and an optional **Max records** cap. **Timeout** defaults to 30 seconds and **Max retries** to `3`.
+The **Advanced** section holds the limits. Paginated reads are bounded by **Max pages** (default `1000`) and an optional **Max records** cap, with an optional wait between pages. **Timeout** defaults to 30 seconds and **Max retries** to `3`.
 
-**Fetch sample** runs one capped request and previews the inferred columns. Skip it and the schema is inferred on the first run instead.
+**Test request** sends one request and shows what came back: the status, the response as a tree, and the columns. Click a list in the tree to read its items as rows. On a node's first test the list of records is picked for you when the record path is empty, and when the response holds a next-page token the node offers **Read all pages**. **Show request** shows the request exactly as it was sent, with the secret replaced by its name, and **Copy as cURL** copies it as a command. Skip the test and the columns are found on the first run instead.
+
+A run writes one line per page to the flow's log (the request, the status, the time it took and the records it held) and then why it stopped. A request that fails names the request, the status and the API's own answer. See [Debugging a request](../../connect/apis.md#debugging-a-request).
 
 ## ![Kafka Source](../../../assets/images/nodes/kafka_source.svg){ width="44" height="44" } Kafka Source
 

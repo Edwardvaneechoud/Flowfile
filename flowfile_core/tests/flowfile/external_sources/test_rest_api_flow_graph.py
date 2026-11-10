@@ -422,6 +422,76 @@ def test_sample_route_fetches_one_page(api_client, api_server, protocol_flag):
     flow_file_handler.delete_flow(flow_id)
 
 
+def test_sample_route_suggests_record_and_cursor_paths(api_client, local_api_server, monkeypatch):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+    flow_id, node_id = 7005, 1
+    url = f"{local_api_server}/wrapped"
+    _register_rest_node_in_global_handler(flow_id, node_id, url)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url)
+    ).model_dump()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["suggested_paths"] == {"record_paths": ["data.items"], "cursor_paths": ["data.items.-1.id"]}
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_sample_route_returns_the_request_it_sent_and_the_shape_of_the_response(
+    api_client, local_api_server, monkeypatch
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+    flow_id, node_id = 7006, 1
+    url = f"{local_api_server}/wrapped"
+    auth = input_schema.RestApiAuthSettings(auth_type="bearer", secret=SECURE_TOKEN)
+    _register_rest_node_in_global_handler(flow_id, node_id, url, auth=auth)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        user_id=1,
+        rest_api_settings=input_schema.RestApiSettings(url=url, auth=auth, record_path="data.items"),
+    ).model_dump()
+    payload["rest_api_settings"]["auth"]["secret"] = SECURE_TOKEN
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    (sent,) = body["trace"]
+    assert (sent["method"], sent["url"], sent["status"], sent["records"]) == ("GET", url, 200, 2)
+    assert sent["headers"] == {"Authorization": "Bearer REDACTED"}
+    items = body["response_tree"]["children"][0]["children"][0]
+    assert (items["path"], items["kind"], items["length"], items["records"]) == ("data.items", "list", 2, True)
+    assert '"city": "ams"' in body["response_text"] and body["response_truncated"] is False
+    assert SECURE_TOKEN not in resp.text
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_failed_sample_names_the_request_and_the_answer_without_the_secret(
+    api_client, local_api_server, protocol_flag
+):
+    flow_id, node_id = 7007, 1
+    url = f"{local_api_server}/secure"
+    auth = input_schema.RestApiAuthSettings(
+        auth_type="api_key", api_key_name="api_key", api_key_location="query", secret="wrong-key-value"
+    )
+    _register_rest_node_in_global_handler(flow_id, node_id, url, auth=auth)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url, auth=auth)
+    ).model_dump()
+    payload["rest_api_settings"]["auth"]["secret"] = "wrong-key-value"
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert f"GET {url}?api_key=REDACTED answered 401 Unauthorized" in detail
+    assert '{"error": "unauthorized"}' in detail
+    assert "wrong-key-value" not in resp.text
+    flow_file_handler.delete_flow(flow_id)
+
+
 def test_with_the_protocol_flag_the_sample_route_reads_over_v1_and_releases_the_read(
     api_client, local_api_server, monkeypatch
 ):

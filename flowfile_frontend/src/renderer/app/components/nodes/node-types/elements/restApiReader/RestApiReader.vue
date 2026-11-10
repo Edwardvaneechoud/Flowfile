@@ -5,9 +5,7 @@
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
-      <!-- Request -->
-      <div class="listbox-wrapper">
-        <h4 class="section-subtitle">Request</h4>
+      <div class="request-bar">
         <div class="form-row">
           <div class="form-group method-col">
             <label for="rest-method">Method</label>
@@ -27,59 +25,45 @@
             />
           </div>
         </div>
-
-        <div class="form-group">
-          <label for="rest-record-path">Record path</label>
-          <input
-            id="rest-record-path"
-            v-model="settings.record_path"
-            type="text"
-            class="form-control"
-            placeholder="data.items (leave empty for top-level)"
-          />
-          <div class="helper-text">
-            <i class="fa-solid fa-info-circle"></i>
-            <span
-              >Dot-path to the array of records in the JSON response. Nested objects are flattened
-              into dotted column names.</span
-            >
-          </div>
-        </div>
       </div>
 
-      <!-- Headers -->
-      <div class="listbox-wrapper">
-        <h4 class="section-subtitle">Headers</h4>
-        <div v-for="(pair, index) in headerPairs" :key="`h-${index}`" class="kv-row">
-          <input v-model="pair.key" type="text" class="form-control" placeholder="Header name" />
-          <input v-model="pair.value" type="text" class="form-control" placeholder="Value" />
-          <button type="button" class="icon-btn" title="Remove" @click="removeHeader(index)">
-            <i class="fa-solid fa-trash"></i>
+      <section class="reader-section" data-testid="rest-section-request">
+        <h4 class="reader-section-title">Parameters and headers</h4>
+        <div class="kv-head">
+          <label class="group-label">Query parameters</label>
+          <button type="button" class="link-btn" @click="addParam">
+            <i class="fa-solid fa-plus"></i> Add parameter
           </button>
         </div>
-        <button type="button" class="add-btn" @click="addHeader">
-          <i class="fa-solid fa-plus"></i> Add header
-        </button>
-      </div>
-
-      <!-- Query params -->
-      <div class="listbox-wrapper">
-        <h4 class="section-subtitle">Query parameters</h4>
         <div v-for="(pair, index) in paramPairs" :key="`p-${index}`" class="kv-row">
-          <input v-model="pair.key" type="text" class="form-control" placeholder="Param name" />
+          <input v-model="pair.key" type="text" class="form-control" placeholder="Name" />
           <input v-model="pair.value" type="text" class="form-control" placeholder="Value" />
           <button type="button" class="icon-btn" title="Remove" @click="removeParam(index)">
             <i class="fa-solid fa-trash"></i>
           </button>
         </div>
-        <button type="button" class="add-btn" @click="addParam">
-          <i class="fa-solid fa-plus"></i> Add parameter
-        </button>
-      </div>
 
-      <!-- JSON body (POST only) -->
-      <div v-if="settings.method === 'POST'" class="listbox-wrapper">
-        <h4 class="section-subtitle">JSON body</h4>
+        <div class="kv-head kv-head-spaced">
+          <label class="group-label">Headers</label>
+          <button type="button" class="link-btn" @click="addHeader">
+            <i class="fa-solid fa-plus"></i> Add header
+          </button>
+        </div>
+        <div v-for="(pair, index) in headerPairs" :key="`h-${index}`" class="kv-row">
+          <input v-model="pair.key" type="text" class="form-control" placeholder="Name" />
+          <input v-model="pair.value" type="text" class="form-control" placeholder="Value" />
+          <button type="button" class="icon-btn" title="Remove" @click="removeHeader(index)">
+            <i class="fa-solid fa-trash"></i>
+          </button>
+        </div>
+      </section>
+
+      <section
+        v-if="settings.method === 'POST'"
+        class="reader-section"
+        data-testid="rest-section-body"
+      >
+        <h4 class="reader-section-title">JSON body</h4>
         <div class="form-group" :class="{ 'has-error': bodyError }">
           <textarea
             v-model="bodyText"
@@ -92,11 +76,10 @@
             <span>{{ bodyError }}</span>
           </div>
         </div>
-      </div>
+      </section>
 
-      <!-- Authentication -->
-      <div class="listbox-wrapper">
-        <h4 class="section-subtitle">Authentication</h4>
+      <section class="reader-section" data-testid="rest-section-auth">
+        <h4 class="reader-section-title">Authentication</h4>
         <div class="form-group">
           <label for="rest-auth-type">Type</label>
           <select id="rest-auth-type" v-model="settings.auth.auth_type" class="form-control">
@@ -174,22 +157,118 @@
             </span>
           </div>
         </div>
+      </section>
+
+      <div class="test-bar">
+        <div class="test-row">
+          <span class="test-hint">{{ testHint }}</span>
+          <button
+            type="button"
+            class="sample-btn"
+            data-testid="rest-test-request"
+            :disabled="sampling || !settings.url"
+            @click="fetchSample()"
+          >
+            <i v-if="sampling" class="fa-solid fa-spinner fa-spin"></i>
+            <i v-else class="fa-solid fa-vial"></i>
+            {{ sampling ? "Sending..." : "Test request" }}
+          </button>
+        </div>
+        <div v-if="sampleError" class="test-error" data-testid="rest-test-error">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>{{ sampleError }}</span>
+        </div>
+        <request-trace
+          v-if="sentRequest"
+          :entry="sentRequest"
+          :secret-name="settings.auth.secret_name"
+          :response-text="sample?.response_text ?? ''"
+          :truncated="sample?.response_truncated ?? false"
+        />
       </div>
 
-      <!-- Pagination -->
-      <div class="listbox-wrapper">
-        <h4 class="section-subtitle">Pagination</h4>
+      <section class="reader-section" data-testid="rest-section-records">
+        <h4 class="reader-section-title">Records</h4>
+        <template v-if="sample?.response_tree">
+          <response-tree
+            :tree="sample.response_tree"
+            :record-path="settings.record_path"
+            :cursor-path="settings.pagination.cursor_response_path"
+            :pick-cursor="cursorFromBody"
+            @pick-records="useRecordPath"
+            @pick-cursor="useCursorPath"
+          />
+          <div class="helper-text tree-hint">
+            <i class="fa-solid fa-info-circle"></i>
+            <span>{{
+              detectedRecords
+                ? "Detected the list of records. Click another list to use it instead."
+                : "Click a list to read its items as rows."
+            }}</span>
+          </div>
+        </template>
         <div class="form-group">
-          <label for="rest-pagination-type">Strategy</label>
+          <label for="rest-record-path">Record path</label>
+          <input
+            id="rest-record-path"
+            v-model="settings.record_path"
+            type="text"
+            class="form-control"
+            placeholder="data.items (leave empty for the whole response)"
+          />
+          <div v-if="!sample?.response_tree" class="helper-text">
+            <i class="fa-solid fa-info-circle"></i>
+            <span
+              >Where the list of records is in the JSON response. Test the request to pick it from
+              the response instead of typing it.</span
+            >
+          </div>
+          <div
+            v-if="!sample?.response_tree && recordSuggestions.length"
+            class="path-suggestions"
+            data-testid="record-path-suggestions"
+          >
+            <span>Found in the response:</span>
+            <button
+              v-for="path in recordSuggestions"
+              :key="path"
+              type="button"
+              class="path-chip"
+              @click="useRecordPath(path)"
+            >
+              {{ path }}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="reader-section" data-testid="rest-section-pagination">
+        <h4 class="reader-section-title">More pages</h4>
+        <div
+          v-if="settings.pagination.pagination_type === 'none' && detectedCursor"
+          class="detected-paging"
+          data-testid="rest-detected-paging"
+        >
+          <span
+            >This response has a next-page token at <code>{{ detectedCursor }}</code
+            >.</span
+          >
+          <button type="button" class="add-btn" @click="followCursor(detectedCursor)">
+            Read all pages
+          </button>
+        </div>
+
+        <div class="form-group">
+          <label for="rest-pagination-type">How this API pages</label>
           <select
             id="rest-pagination-type"
             v-model="settings.pagination.pagination_type"
             class="form-control"
           >
-            <option value="none">None (single request)</option>
-            <option value="offset">Offset / limit</option>
-            <option value="page">Page number</option>
-            <option value="cursor">Cursor / next-page token</option>
+            <option value="none">It doesn't: one request</option>
+            <option value="cursor">Next-page token (cursor)</option>
+            <option value="page">Page number (?page=2)</option>
+            <option value="offset">Offset and limit (?offset=100)</option>
           </select>
         </div>
 
@@ -222,7 +301,7 @@
               <input v-model="settings.pagination.page_param" type="text" class="form-control" />
             </div>
             <div class="form-group half">
-              <label>Start page</label>
+              <label>First page</label>
               <input
                 v-model.number="settings.pagination.start_page"
                 type="number"
@@ -233,75 +312,104 @@
         </template>
 
         <template v-if="settings.pagination.pagination_type === 'cursor'">
+          <label class="group-label">The next-page token is in</label>
           <div class="form-row">
             <div class="form-group half">
-              <label for="rest-cursor-location">Read next cursor from</label>
               <select
                 id="rest-cursor-location"
                 v-model="settings.pagination.cursor_location"
                 class="form-control"
+                aria-label="Where the next-page token is"
               >
                 <option value="body">Response body</option>
                 <option value="header">Response header</option>
               </select>
             </div>
             <div class="form-group half">
-              <label for="rest-cursor-path">{{
-                settings.pagination.cursor_location === "header" ? "Header name" : "Cursor path"
-              }}</label>
               <input
                 id="rest-cursor-path"
                 v-model="settings.pagination.cursor_response_path"
                 type="text"
                 class="form-control"
-                :placeholder="
-                  settings.pagination.cursor_location === 'header'
-                    ? 'X-Next-Cursor'
-                    : 'meta.next_cursor'
-                "
+                :aria-label="cursorFromBody ? 'Path to the token' : 'Header name'"
+                :placeholder="cursorFromBody ? 'meta.next_cursor' : 'X-Next-Cursor'"
               />
             </div>
           </div>
-          <div v-if="settings.pagination.cursor_location === 'body'" class="helper-text cursor-hint">
-            <i class="fa-solid fa-info-circle"></i>
+          <div
+            v-if="!settings.pagination.cursor_response_path"
+            class="helper-text helper-text-warning cursor-hint"
+            data-testid="cursor-path-missing"
+          >
+            <i class="fa-solid fa-triangle-exclamation"></i>
             <span
-              >Dot-path in the response. A number picks a list item:
-              <code>data.-1._id</code> is the <code>_id</code> of the last record.</span
+              >Needed to read past the first page.{{
+                sample ? " Pick it in the response above." : " Test the request to pick it."
+              }}</span
             >
           </div>
+          <div
+            v-if="cursorFromBody && cursorSuggestions.length"
+            class="path-suggestions"
+            data-testid="cursor-path-suggestions"
+          >
+            <span>Found in the response:</span>
+            <button
+              v-for="path in cursorSuggestions"
+              :key="path"
+              type="button"
+              class="path-chip"
+              @click="useCursorPath(path)"
+            >
+              {{ path }}
+            </button>
+          </div>
+
+          <label class="group-label">Send it back as</label>
           <div class="form-row">
             <div v-if="settings.method === 'POST'" class="form-group half">
-              <label for="rest-cursor-send">Send cursor as</label>
               <select
                 id="rest-cursor-send"
                 v-model="settings.pagination.cursor_request_location"
                 class="form-control"
+                aria-label="How the token is sent"
               >
                 <option value="query">Query parameter</option>
                 <option value="body">Field in JSON body</option>
               </select>
             </div>
-            <div class="form-group" :class="{ half: settings.method === 'POST' }">
-              <label for="rest-cursor-param">{{
-                cursorInBody ? "Body field" : "Query parameter name"
-              }}</label>
+            <div class="form-group half">
               <input
                 id="rest-cursor-param"
                 v-model="settings.pagination.cursor_param"
                 type="text"
                 class="form-control"
+                :aria-label="cursorInBody ? 'Body field' : 'Query parameter name'"
                 :placeholder="cursorInBody ? 'data_id' : 'cursor'"
               />
             </div>
           </div>
           <div class="helper-text cursor-hint">
             <i class="fa-solid fa-info-circle"></i>
-            <span>Stops at an empty page, or when the API sends back a cursor it already gave.</span>
+            <span
+              >The API's documentation names this {{ cursorInBody ? "field" : "parameter" }}.
+              Reading stops at an empty page, or when the API sends a token it already gave.</span
+            >
           </div>
         </template>
+      </section>
 
+      <CollapsibleSection
+        title="Advanced"
+        :summary="limitsSummary(settings)"
+        :default-open="false"
+        persist-key="restApiReader.advanced"
+        nested
+        class="advanced-fold"
+        data-testid="rest-section-advanced"
+      >
         <div v-if="settings.pagination.pagination_type !== 'none'" class="form-row">
-          <div class="form-group half">
+          <div class="form-group third">
             <label>Max pages</label>
             <input
               v-model.number="settings.pagination.max_pages"
@@ -310,7 +418,7 @@
               min="1"
             />
           </div>
-          <div class="form-group half">
+          <div class="form-group third">
             <label>Max records</label>
             <input
               v-model.number="maxRecordsModel"
@@ -320,12 +428,17 @@
               min="1"
             />
           </div>
+          <div class="form-group third">
+            <label>Wait between pages (s)</label>
+            <input
+              v-model.number="settings.pagination.page_delay_seconds"
+              type="number"
+              class="form-control"
+              min="0"
+              step="0.1"
+            />
+          </div>
         </div>
-      </div>
-
-      <!-- Advanced -->
-      <div class="listbox-wrapper">
-        <h4 class="section-subtitle">Advanced</h4>
         <div class="form-row">
           <div class="form-group half">
             <label>Timeout (seconds)</label>
@@ -346,27 +459,22 @@
             />
           </div>
         </div>
-      </div>
-
-      <!-- Schema / Fetch sample -->
-      <div class="listbox-wrapper">
-        <h4 class="section-subtitle">Output schema</h4>
-        <button
-          type="button"
-          class="sample-btn"
-          :disabled="sampling || !settings.url"
-          @click="fetchSample"
-        >
-          <i v-if="sampling" class="fa-solid fa-spinner fa-spin"></i>
-          <i v-else class="fa-solid fa-vial"></i>
-          {{ sampling ? "Fetching sample..." : "Fetch sample" }}
-        </button>
-        <div v-if="sampleError" class="helper-text helper-text-warning">
-          <i class="fa-solid fa-triangle-exclamation"></i>
-          <span>{{ sampleError }}</span>
+        <div v-if="settings.pagination.pagination_type === 'cursor'" class="form-group">
+          <label for="rest-initial-cursor">Token the first request sends</label>
+          <input
+            id="rest-initial-cursor"
+            v-model="settings.pagination.initial_cursor"
+            type="text"
+            class="form-control"
+            placeholder="no token"
+          />
         </div>
-        <div v-if="nodeRestApi.fields && nodeRestApi.fields.length" class="schema-preview">
-          <div v-for="field in nodeRestApi.fields" :key="field.name" class="schema-row">
+      </CollapsibleSection>
+
+      <section class="reader-section" data-testid="rest-section-columns">
+        <h4 class="reader-section-title">Columns</h4>
+        <div v-if="columnCount" class="schema-preview">
+          <div v-for="field in nodeRestApi.fields ?? []" :key="field.name" class="schema-row">
             <span class="schema-name">{{ field.name }}</span>
             <span class="schema-type">{{ field.data_type }}</span>
           </div>
@@ -374,23 +482,33 @@
         <div v-else class="helper-text">
           <i class="fa-solid fa-info-circle"></i>
           <span
-            >Fetch a sample to preview columns. Otherwise they are inferred on the first run.</span
+            >Test the request to see the columns. Otherwise they are found on the first run.</span
           >
         </div>
-      </div>
+      </section>
     </generic-node-settings>
   </div>
 </template>
 
 <script lang="ts" setup>
 import axios from "axios";
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElOption, ElSelect } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { CollapsibleSection } from "../../../../common";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { createNodeRestApiReader } from "./utils";
+import RequestTrace from "./RequestTrace.vue";
+import ResponseTree from "./ResponseTree.vue";
+import {
+  detectedCursorPath,
+  guessCursorParam,
+  limitsSummary,
+  testErrorText,
+  type SampleDebug,
+} from "./restApiView";
 import { SecretsApi } from "../../../../../api";
 import type { Secret } from "../../../../../types";
 import type { NodeRestApiReader } from "../../../../../types/node.types";
@@ -419,18 +537,37 @@ const sampleError = ref<string>("");
 
 const settings = computed(() => nodeRestApi.value!.rest_api_settings);
 
-const cursorInBody = computed(
-  () => settings.value.method === "POST" && settings.value.pagination.cursor_request_location === "body",
+// What the last test request sent and got back; never saved with the node.
+const sample = ref<SampleDebug | null>(null);
+const detectedRecords = ref<boolean>(false);
+const sentRequest = computed(() => sample.value?.trace?.[0] ?? null);
+
+const recordSuggestions = computed(() =>
+  (sample.value?.suggested_paths?.record_paths ?? []).filter(
+    (p) => p !== settings.value.record_path,
+  ),
+);
+const cursorSuggestions = computed(() =>
+  (sample.value?.suggested_paths?.cursor_paths ?? []).filter(
+    (p) => p !== settings.value.pagination.cursor_response_path,
+  ),
+);
+const detectedCursor = computed(() =>
+  detectedCursorPath(sample.value?.suggested_paths?.cursor_paths ?? []),
 );
 
-watch(
-  () => nodeRestApi.value?.rest_api_settings.method,
-  (method) => {
-    if (method === "GET" && nodeRestApi.value) {
-      nodeRestApi.value.rest_api_settings.pagination.cursor_request_location = "query";
-    }
-  },
+const cursorInBody = computed(
+  () =>
+    settings.value.method === "POST" &&
+    settings.value.pagination.cursor_request_location === "body",
 );
+const cursorFromBody = computed(
+  () =>
+    settings.value.pagination.pagination_type === "cursor" &&
+    settings.value.pagination.cursor_location === "body",
+);
+
+const columnCount = computed(() => nodeRestApi.value?.fields?.length ?? 0);
 
 const secretLabel = computed(() => {
   switch (settings.value.auth.auth_type) {
@@ -487,6 +624,14 @@ const pairsToRecord = (pairs: KvPair[]): Record<string, string> => {
   return out;
 };
 
+const DEFAULTS = createNodeRestApiReader(0, 0).rest_api_settings;
+
+const testHint = computed(() => {
+  if (sampling.value) return "Sending one request...";
+  if (sample.value || sampleError.value) return "Sends one request; nothing is saved by testing.";
+  return "Send one request to see what the API returns.";
+});
+
 const addHeader = () => headerPairs.value.push({ key: "", value: "" });
 const removeHeader = (index: number) => headerPairs.value.splice(index, 1);
 const addParam = () => paramPairs.value.push({ key: "", value: "" });
@@ -511,6 +656,8 @@ const syncToModel = (): boolean => {
   } else {
     settings.value.json_body = null;
   }
+  // A token in the JSON body needs a POST, so a GET is saved sending it as a query parameter.
+  if (settings.value.method === "GET") settings.value.pagination.cursor_request_location = "query";
   return true;
 };
 
@@ -528,31 +675,71 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   },
 });
 
-const fetchSample = async () => {
+const fetchSample = async (afterDetection = false) => {
   if (!nodeRestApi.value) return;
   if (!syncToModel()) {
     ElMessage.error(bodyError.value || "Invalid request body.");
     return;
   }
+  const firstTest = !columnCount.value;
   sampling.value = true;
   sampleError.value = "";
   try {
     const response = await axios.post("/rest_api/sample", nodeRestApi.value, {
       params: { sample_size: 50 },
     });
-    const inferred = response.data.fields ?? [];
-    nodeRestApi.value.fields = inferred;
-    if (!inferred.length) {
-      sampleError.value = "The sample returned no columns. Check the URL and record path.";
-    } else {
-      ElMessage.success(`Inferred ${inferred.length} column(s).`);
+    const { fields, ...debug } = response.data;
+    nodeRestApi.value.fields = fields ?? [];
+    sample.value = debug as SampleDebug;
+    if (!afterDetection) detectedRecords.value = false;
+    const found = sample.value.suggested_paths?.record_paths?.[0];
+    const responseIsRecords = Boolean(sample.value.response_tree?.records);
+    // The record path is filled in once, on a node's first test, and only while it is empty.
+    if (
+      !afterDetection &&
+      firstTest &&
+      !settings.value.record_path &&
+      found &&
+      !responseIsRecords
+    ) {
+      settings.value.record_path = found;
+      detectedRecords.value = true;
+      sampling.value = false;
+      await fetchSample(true);
+      return;
+    }
+    if (!nodeRestApi.value.fields?.length) {
+      sampleError.value = "The request worked, but no columns were found. Check the record path.";
     }
   } catch (error: any) {
     const detail = error?.response?.data?.detail ?? error?.message ?? "Unknown error";
-    sampleError.value = `Failed to fetch sample: ${detail}`;
+    sample.value = null;
+    sampleError.value = testErrorText(String(detail), settings.value.auth.secret_name);
   } finally {
     sampling.value = false;
   }
+};
+
+// The columns depend on the record path, so picking one sends the test request again.
+const useRecordPath = (path: string) => {
+  if (path === settings.value.record_path) return;
+  settings.value.record_path = path;
+  detectedRecords.value = false;
+  void fetchSample(true);
+};
+
+const useCursorPath = (path: string) => {
+  const pagination = settings.value.pagination;
+  pagination.cursor_response_path = path;
+  if (pagination.cursor_param === DEFAULTS.pagination.cursor_param) {
+    pagination.cursor_param = guessCursorParam(path);
+  }
+};
+
+const followCursor = (path: string) => {
+  settings.value.pagination.pagination_type = "cursor";
+  settings.value.pagination.cursor_location = "body";
+  useCursorPath(path);
 };
 
 const initEditors = () => {
@@ -560,6 +747,7 @@ const initEditors = () => {
   const s = nodeRestApi.value.rest_api_settings;
   headerPairs.value = recordToPairs(s.headers);
   paramPairs.value = recordToPairs(s.query_params);
+  if (!paramPairs.value.length) addParam();
   bodyText.value =
     s.json_body !== null && s.json_body !== undefined ? JSON.stringify(s.json_body, null, 2) : "";
 };
@@ -596,15 +784,101 @@ defineExpose({
   color: var(--color-text-primary);
 }
 
-.section-subtitle {
+.reader-section {
+  margin-bottom: 18px;
+}
+
+.advanced-fold {
+  margin-bottom: 18px;
+}
+
+.reader-section-title {
   margin: 0 0 10px;
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
-.listbox-wrapper {
+.request-bar {
+  margin-bottom: 6px;
+}
+
+.test-bar {
   margin-bottom: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-primary, #e0e0e0);
+}
+
+.kv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kv-head-spaced {
+  margin-top: 12px;
+}
+
+.link-btn {
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--color-accent, #3b82f6);
+}
+
+.test-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.test-hint {
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+}
+
+.test-error {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark, var(--color-danger));
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.group-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tree-hint {
+  margin: 4px 0 12px;
+}
+
+.detected-paging {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--color-info-light);
+  font-size: 12px;
+}
+
+.detected-paging code {
+  font-family: var(--font-family-mono, monospace);
 }
 
 .form-group {
@@ -685,6 +959,12 @@ defineExpose({
   border-color: var(--color-border-focus);
 }
 
+.sample-btn {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
 .sample-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -709,6 +989,32 @@ defineExpose({
 
 .helper-text code {
   font-family: var(--font-family-mono, monospace);
+}
+
+.path-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 12px;
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+}
+
+.path-chip {
+  cursor: pointer;
+  border: 1px solid var(--color-border, #d0d0d0);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  padding: 1px 8px;
+  font-family: var(--font-family-mono, monospace);
+  font-size: 11px;
+}
+
+.path-chip:hover {
+  border-color: var(--color-border-focus);
+  background: var(--color-background-hover);
 }
 
 .helper-text-warning {

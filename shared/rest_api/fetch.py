@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import json
 import time
+from collections.abc import Callable
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -34,6 +35,20 @@ from shared.rest_api.models import (
 # without a Retry-After hint).
 _BACKOFF_BASE_SECONDS = 0.5
 _BACKOFF_CAP_SECONDS = 30.0
+
+SECRET_MASK = "REDACTED"
+_ERROR_BODY_CHARS = 300
+_PREVIEW_CHARS = 80
+
+STOP_REASONS = {
+    "single_request": "one request, no pagination",
+    "empty_page": "the API returned an empty page",
+    "short_page": "the last page held fewer records than the page size",
+    "no_next_cursor": "the API returned no next cursor",
+    "cursor_repeated": "the API returned a cursor it already gave",
+    "max_records": "the record limit was reached",
+    "max_pages": "the page limit was reached; the API may have more",
+}
 
 
 def _backoff_delay(attempt: int) -> float:
@@ -91,6 +106,13 @@ def _set_by_path(obj: dict, path: str, value: Any) -> None:
     current[leaf] = value
 
 
+def _url_with(url: str, params: dict[str, str]) -> str:
+    try:
+        return str(httpx.URL(url).copy_merge_params(params)) if params else url
+    except httpx.InvalidURL:
+        return url
+
+
 def _to_records(extracted: Any) -> list[dict]:
     """Normalise the located payload into a list of record dicts.
 
@@ -106,6 +128,16 @@ def _to_records(extracted: Any) -> list[dict]:
     return [{"value": extracted}]
 
 
+class RestApiRequestError(RuntimeError):
+    """A request that failed; the message names it as sent, secrets masked, and what the API answered."""
+
+
+def _failed(shown: str, response: httpx.Response, scrub: Callable[[str], str]) -> RestApiRequestError:
+    answer = " ".join(scrub(response.text[:_ERROR_BODY_CHARS]).split())
+    told = f": {answer}" if answer else ""
+    return RestApiRequestError(f"{shown} answered {response.status_code} {response.reason_phrase}{told}")
+
+
 def _request_with_retries(
     client: httpx.Client,
     *,
@@ -115,14 +147,17 @@ def _request_with_retries(
     params: dict[str, str],
     json_body: Any | None,
     max_retries: int,
+    shown: str,
+    scrub: Callable[[str], str],
 ) -> httpx.Response:
     """Issue one request, retrying transient failures with backoff.
 
     Retries network errors and 5xx responses with exponential backoff, and 429
     responses honoring ``Retry-After`` when present. 4xx (other than 429) are
-    raised immediately — they are not transient.
+    raised immediately — they are not transient. A failure is a
+    ``RestApiRequestError`` built from *shown*, the request with its secret masked,
+    never from httpx's own message, which repeats the URL with its query.
     """
-    last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
             response = client.request(
@@ -133,30 +168,28 @@ def _request_with_retries(
                 json=json_body if (method == "POST" and json_body is not None) else None,
             )
         except httpx.HTTPError as exc:
-            last_exc = exc
             if attempt >= max_retries:
-                raise
+                detail = scrub(str(exc))
+                reason = f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+                raise RestApiRequestError(f"{shown} failed: {reason}") from None
             time.sleep(_backoff_delay(attempt))
             continue
 
         if response.status_code == 429:
             if attempt >= max_retries:
-                response.raise_for_status()
+                raise _failed(shown, response, scrub)
             retry_after = _parse_retry_after(response.headers.get("Retry-After"))
             time.sleep(retry_after if retry_after is not None else _backoff_delay(attempt))
             continue
         if response.status_code >= 500:
             if attempt >= max_retries:
-                response.raise_for_status()
+                raise _failed(shown, response, scrub)
             time.sleep(_backoff_delay(attempt))
             continue
-
-        # 2xx -> done; 4xx (non-429) -> raise (not retryable).
-        response.raise_for_status()
+        if not response.is_success:
+            raise _failed(shown, response, scrub)
         return response
 
-    if last_exc is not None:
-        raise last_exc
     raise RuntimeError("REST API request failed after retries")
 
 
@@ -165,6 +198,12 @@ def _read_next_cursor(body: Any, response: httpx.Response, pagination) -> Any:
     if pagination.cursor_location == CursorLocation.HEADER:
         return response.headers.get(pagination.cursor_response_path) or None
     value = _extract_by_path(body, pagination.cursor_response_path)
+    if isinstance(value, dict | list):
+        kind = "a list" if isinstance(value, list) else "an object"
+        raise ValueError(
+            f"The cursor path '{pagination.cursor_response_path}' points at {kind} in the response, "
+            "not a single value. Choose the field that holds the next cursor."
+        )
     return None if value == "" else value
 
 
@@ -173,11 +212,99 @@ def _repeats_page(page: list[dict], previous: list[dict]) -> bool:
     return all(json.dumps(r, sort_keys=True, default=str) in seen for r in page)
 
 
-def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) -> pl.DataFrame:
+_CURSOR_KEYS = {
+    "next", "nextcursor", "nextpage", "nextpagetoken", "nexttoken", "cursor", "endcursor", "after",
+    "continuationtoken", "pagetoken", "scrollid", "nextmarker", "marker", "nextkey",
+}  # fmt: skip
+_ID_KEYS = {"id", "_id", "uuid"}
+
+
+def suggest_paths(body: Any, limit: int = 8) -> dict[str, list[str]]:
+    """Record and cursor paths a response offers: its lists of objects, cursor-named fields and last-record ids."""
+    records: list[tuple[int, str]] = []
+    cursors: list[str] = []
+
+    def is_cursor(key: str, value: Any) -> bool:
+        if isinstance(value, bool) or not (value is None or isinstance(value, str | int)):
+            return False
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return False
+        return key.replace("_", "").replace("-", "").lower() in _CURSOR_KEYS
+
+    def walk(node: Any, path: str, depth: int) -> None:
+        if depth > 8:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                child = f"{path}.{key}" if path else key
+                if isinstance(value, dict | list):
+                    walk(value, child, depth + 1)
+                elif is_cursor(key, value):
+                    cursors.append(child)
+        elif isinstance(node, list) and node and all(isinstance(item, dict) for item in node):
+            if path:
+                records.append((len(node), path))
+            last = f"{path}.-1" if path else "-1"
+            for key, value in node[-1].items():
+                if is_cursor(key, value) or (key.lower() in _ID_KEYS and isinstance(value, str | int)):
+                    cursors.append(f"{last}.{key}")
+
+    walk(body, "", 0)
+    record_paths = [path for _, path in sorted(records, key=lambda r: (-r[0], r[1].count(".")))]
+    return {"record_paths": record_paths[:limit], "cursor_paths": list(dict.fromkeys(cursors))[:limit]}
+
+
+def describe_response(body: Any, max_children: int = 40, max_depth: int = 6) -> dict:
+    """The shape of a response as a tree: each node's path, kind and size, a list described by its first item."""
+
+    def node(value: Any, key: str, path: str, depth: int) -> dict:
+        out: dict[str, Any] = {"key": key, "path": path}
+        if isinstance(value, dict):
+            out["kind"] = "object"
+            items = list(value.items())
+        elif isinstance(value, list):
+            out["kind"] = "list"
+            out["length"] = len(value)
+            out["records"] = bool(value) and all(isinstance(item, dict) for item in value)
+            first = f"{path}.0" if path else "0"
+            if not value:
+                items = []
+            elif isinstance(value[0], dict):
+                items = [(k, v, f"{first}.{k}") for k, v in value[0].items()]
+            else:
+                out["preview"] = json.dumps(value[:3], default=str)[:_PREVIEW_CHARS]
+                items = []
+        else:
+            out["kind"] = "value"
+            out["preview"] = json.dumps(value, default=str)[:_PREVIEW_CHARS]
+            return out
+        if depth >= max_depth:
+            items = []
+        children = []
+        for item in items[:max_children]:
+            child_path = item[2] if len(item) == 3 else (f"{path}.{item[0]}" if path else item[0])
+            children.append(node(item[1], str(item[0]), child_path, depth + 1))
+        out["children"] = children
+        out["more"] = max(0, len(items) - max_children)
+        return out
+
+    return node(body, "", "", 0)
+
+
+def fetch_rest_api(
+    settings: RestApiReadSettings,
+    *,
+    secret: str | None = None,
+    on_page: Callable[[dict, Any], None] | None = None,
+) -> pl.DataFrame:
     """Fetch all (or a capped sample of) records from a REST API as a typed frame.
 
     ``secret`` is the plaintext credential matching ``settings.auth.auth_type``
     (the API key, bearer token, or basic password); the caller decrypts it.
+    ``on_page`` is called after every response with the request as sent and what
+    came back (method, url, headers, body, status, elapsed_ms, bytes, records,
+    next_cursor, and ``stopped``, a ``STOP_REASONS`` key on the last page), the
+    secret replaced by ``SECRET_MASK``, and with the response's JSON.
     """
     pagination = settings.pagination
     is_sample = settings.sample_size is not None
@@ -188,22 +315,33 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
 
     headers = dict(settings.headers)
     base_params: dict[str, str] = {k: str(v) for k, v in settings.query_params.items()}
+    shown_headers = dict(headers)
+    masked_param: str | None = None
     httpx_auth: httpx.Auth | None = None
 
     auth = settings.auth
     if auth.auth_type == AuthType.API_KEY and secret is not None:
         if auth.api_key_location == ApiKeyLocation.HEADER:
             headers[auth.api_key_name] = secret
+            shown_headers[auth.api_key_name] = SECRET_MASK
         else:
             base_params[auth.api_key_name] = secret
+            masked_param = auth.api_key_name
     elif auth.auth_type == AuthType.BEARER and secret is not None:
         headers["Authorization"] = f"Bearer {secret}"
+        shown_headers["Authorization"] = f"Bearer {SECRET_MASK}"
     elif auth.auth_type == AuthType.BASIC:
         httpx_auth = httpx.BasicAuth(auth.basic_username, secret or "")
+        shown_headers["Authorization"] = f"Basic {SECRET_MASK}"
+
+    def scrub(text: str) -> str:
+        return text.replace(secret, SECRET_MASK) if secret else text
 
     method = settings.method.value
     json_body = settings.json_body if method == "POST" else None
     ptype = pagination.pagination_type
+    if ptype == PaginationType.CURSOR and max_pages > 1 and not pagination.cursor_response_path:
+        raise ValueError("Cursor pagination needs a cursor path: where the next cursor is in the response.")
     cursor_in_body = ptype == PaginationType.CURSOR and pagination.cursor_request_location == CursorRequestLocation.BODY
     if cursor_in_body:
         if method != "POST":
@@ -221,7 +359,7 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
     page_index = 0
 
     with httpx.Client(timeout=settings.timeout_seconds, auth=httpx_auth, follow_redirects=True) as client:
-        while page_index < max_pages:
+        while True:
             params = dict(base_params)
             request_body = json_body
             if ptype == PaginationType.OFFSET:
@@ -237,6 +375,8 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
                 else:
                     params[pagination.cursor_param] = str(cursor)
 
+            shown_params = {k: SECRET_MASK if k == masked_param else v for k, v in params.items()}
+            shown_url = scrub(_url_with(settings.url, shown_params))
             response = _request_with_retries(
                 client,
                 method=method,
@@ -245,39 +385,74 @@ def fetch_rest_api(settings: RestApiReadSettings, *, secret: str | None = None) 
                 params=params,
                 json_body=request_body,
                 max_retries=settings.max_retries,
+                shown=f"{method} {shown_url}",
+                scrub=scrub,
             )
 
             try:
                 body = response.json()
-            except Exception as exc:  # noqa: BLE001 - surface any decode failure uniformly
-                raise RuntimeError(f"REST API response was not valid JSON: {exc}") from exc
+            except Exception:  # noqa: BLE001 - surface any decode failure uniformly
+                starts = " ".join(scrub(response.text[:_ERROR_BODY_CHARS]).split())
+                raise RestApiRequestError(
+                    f"{method} {shown_url} answered {response.status_code}, but the response was not valid JSON. "
+                    f"It starts with: {starts}"
+                ) from None
 
             page_records = _to_records(_extract_by_path(body, settings.record_path))
             next_cursor = None
-            if ptype == PaginationType.CURSOR:
+            repeated = False
+            if ptype == PaginationType.CURSOR and page_index + 1 < max_pages:
                 next_cursor = _read_next_cursor(body, response, pagination)
                 if str(next_cursor) in sent_cursors and _repeats_page(page_records, previous_page):
                     page_records = []
+                    repeated = True
             all_records.extend(page_records)
             page_index += 1
 
+            stopped: str | None = None
             if max_records is not None and len(all_records) >= max_records:
                 all_records = all_records[:max_records]
+                stopped = "max_records"
+            elif ptype == PaginationType.NONE:
+                stopped = "single_request"
+            elif repeated:
+                stopped = "cursor_repeated"
+            elif not page_records:
+                stopped = "empty_page"
+            elif ptype == PaginationType.OFFSET and len(page_records) < pagination.page_size:
+                stopped = "short_page"
+            elif page_index >= max_pages:
+                stopped = "max_pages"
+            elif ptype == PaginationType.CURSOR and next_cursor is None:
+                stopped = "no_next_cursor"
+            elif ptype == PaginationType.CURSOR and str(next_cursor) in sent_cursors:
+                stopped = "cursor_repeated"
+
+            if on_page is not None:
+                on_page(
+                    {
+                        "page": page_index,
+                        "method": method,
+                        "url": shown_url,
+                        "headers": shown_headers,
+                        "body": request_body if method == "POST" else None,
+                        "status": response.status_code,
+                        "elapsed_ms": round(response.elapsed.total_seconds() * 1000),
+                        "bytes": len(response.content),
+                        "records": len(page_records),
+                        "next_cursor": None if next_cursor is None else str(next_cursor),
+                        "stopped": stopped,
+                    },
+                    body,
+                )
+            if stopped is not None:
                 break
 
-            if ptype == PaginationType.NONE:
-                break
             if ptype == PaginationType.OFFSET:
-                if not page_records or len(page_records) < pagination.page_size:
-                    break
                 offset += pagination.page_size
             elif ptype == PaginationType.PAGE:
-                if not page_records:
-                    break
                 page_number += 1
             elif ptype == PaginationType.CURSOR:
-                if not page_records or next_cursor is None or str(next_cursor) in sent_cursors:
-                    break
                 cursor = next_cursor
                 previous_page = page_records
 

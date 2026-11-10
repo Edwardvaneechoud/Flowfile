@@ -76,7 +76,25 @@ records = ff.read_api(
 ).collect()
 ```
 
-In the node: set **Method** to `POST`, choose **Cursor / next-page token**, set **Cursor path** to `data.-1._id`, **Send cursor as** to **Field in JSON body** and **Body field** to `data_id`.
+In the node: set **Method** to `POST`, choose **Next-page token (cursor)**, set the token's path to `data.-1._id`, and under **Send it back as** choose **Field in JSON body** with the field `data_id`.
+
+Cursor paging needs a cursor path; a run without one stops before the first request. In the node, **Test request** shows the response as a tree: click a value to use it as the next-page token, or pick one of the paths listed under the field (that list includes the last record's id, for keyset APIs).
+
+### Debugging a request
+
+**Test request** in the node sends one request and nothing else; it saves nothing. Under the button you see the status, the time and size of the response and how many records it held. **Show request** unfolds the request as it was sent (the method, the URL with every query parameter, the headers and the JSON body) and the start of the response. A credential is never shown: where it was sent you see the name of the secret, and **Copy as cURL** writes it as an environment variable.
+
+A run logs every request to the flow's log, the first ten pages one by one and every tenth after that:
+
+```text
+Page 1: GET https://api.example.com/v1/orders answered 200 in 212 ms, 100 records, next cursor c2
+Page 2: GET https://api.example.com/v1/orders?cursor=c2 answered 200 in 198 ms, 37 records
+Stopped after 2 pages: the API returned no next cursor.
+```
+
+The last line says why the read stopped: no next cursor, an empty page, a last page shorter than the page size, a cursor the API already gave, or a limit. Stopping at **Max pages** is logged as a warning, since the API may hold more.
+
+A request that fails ends the node with the request, the status and the start of the API's own answer, for example `GET https://api.example.com/v1/orders?api_key=REDACTED answered 401 Unauthorized: {"error": "token expired"}`. The secret reads `REDACTED` wherever it was sent, in the message and in the log.
 
 ### Read a REST API in Python
 

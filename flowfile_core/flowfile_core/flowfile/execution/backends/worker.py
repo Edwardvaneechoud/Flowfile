@@ -452,7 +452,8 @@ class WorkerBackend(_WorkerReferences):
         - ``database_read``: ``DatabaseReadPayload``.
         - ``kafka_read``: ``KafkaReadPayload``; ``metadata["offsets"]`` to commit when it consumed messages.
         - ``google_analytics_read``: ``GoogleAnalyticsReadPayload``.
-        - ``rest_api_read``: ``RestApiReadPayload``.
+        - ``rest_api_read``: ``RestApiReadPayload``; ``metadata`` is the read's ``trace`` and its first response's
+          ``suggested_paths``, ``response_tree`` and ``response_text``.
         - ``file_read``: ``FileReadPayload``.
         - ``fuzzy_join``: ``FuzzyJoinPayload``, its sides prepared here over their payload schemas (``_fuzzy_sides``).
         - ``random_split``: ``RandomSplitPayload``, its rows shuffled once; one stored ref per split, keyed by split
@@ -2021,7 +2022,9 @@ V1_OPS: dict[OperationKind, V1Op] = {
         GoogleAnalyticsReadPayload, lambda job: _google_analytics_read_settings(job).model_dump(mode="json")
     ),
     OperationKind.rest_api_read: V1Op(
-        RestApiReadPayload, lambda job: _rest_api_read_settings(job).model_dump(mode="json")
+        RestApiReadPayload,
+        lambda job: _rest_api_read_settings(job).model_dump(mode="json"),
+        metadata=lambda answer: answer,
     ),
     OperationKind.file_read: V1Op(
         FileReadPayload,
