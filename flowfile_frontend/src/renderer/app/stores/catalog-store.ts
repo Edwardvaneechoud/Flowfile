@@ -946,6 +946,8 @@ export const useCatalogStore = defineStore("catalog", {
         await this.loadActiveRuns();
       } catch (e: any) {
         this.error = e?.message ?? "Failed to cancel run";
+        // A remote run's refusal is its catalog's sentence, which the caller shows.
+        if (runId < 0) throw e;
       }
     },
 

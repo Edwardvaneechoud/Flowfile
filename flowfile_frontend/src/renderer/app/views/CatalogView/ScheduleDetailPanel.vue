@@ -33,7 +33,7 @@
       </div>
       <div class="header-actions">
         <button
-          v-if="isScheduleRunning && !isHubRow(schedule)"
+          v-if="isScheduleRunning"
           class="btn btn-warning btn-sm"
           @click="$emit('cancelScheduleRun', schedule)"
         >
@@ -220,7 +220,7 @@ import {
   getScheduleDisplayName,
   scheduleIcon,
 } from "./catalog-formatters";
-import { flowInTree, isHubRow } from "./hubRows";
+import { flowInTree } from "./hubRows";
 import RunHistoryTable from "./RunHistoryTable.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";

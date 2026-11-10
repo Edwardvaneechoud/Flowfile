@@ -37,7 +37,7 @@
           Run Flow
         </button>
         <button
-          v-else-if="!remote && isFlowRunning"
+          v-else-if="isFlowRunning"
           class="btn btn-danger btn-sm"
           @click="$emit('cancelFlowRun', flow.id)"
         >
@@ -232,7 +232,6 @@
         :schedules="catalogStore.flowSchedules"
         :show-flow-column="false"
         :disable-run-now="isFlowRunning"
-        :hide-cancel="remote"
         :is-running-fn="isScheduleRunning"
         :save-description="onSaveDescription"
         @select-schedule="$emit('selectSchedule', $event)"
@@ -404,7 +403,7 @@ const emit = defineEmits([
 const runHistorySection = ref<HTMLElement | null>(null);
 
 // A flow of a remote catalog has this page through the same catalog routes, which its catalog answers; what
-// needs the flow's file here, or a route its catalog does not answer (cancelling a run), is left out.
+// needs the flow's file here is left out.
 const remote = computed(() => isHubRow(props.flow));
 const hasFile = computed(() => !remote.value && props.flow.file_exists);
 const runnable = computed(() => remote.value || hasFile.value);
@@ -505,8 +504,12 @@ function isScheduleRunning(schedule: FlowSchedule): boolean {
 
 async function handleCancelScheduleRun(schedule: FlowSchedule) {
   const activeRuns = catalogStore.activeRuns.filter((r) => r.schedule_id === schedule.id);
-  for (const run of activeRuns) {
-    await catalogStore.cancelRun(run.id);
+  try {
+    for (const run of activeRuns) {
+      await catalogStore.cancelRun(run.id);
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to cancel run");
   }
   await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(props.flow.id)]);
 }

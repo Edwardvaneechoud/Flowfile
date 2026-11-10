@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { ns, table } from "../__fixtures__/catalogTree";
 
-const { getTablePreviewMock, getTableHistoryMock, addTableFavoriteMock } = vi.hoisted(() => ({
+const { getTablePreviewMock, getTableHistoryMock, addTableFavoriteMock, cancelRunMock } = vi.hoisted(() => ({
+  cancelRunMock: vi.fn(),
   getTablePreviewMock: vi.fn(),
   getTableHistoryMock: vi.fn(),
   addTableFavoriteMock: vi.fn(),
@@ -14,6 +15,8 @@ vi.mock("../api/catalog.api", () => ({
     getTablePreview: getTablePreviewMock,
     getTableHistory: getTableHistoryMock,
     addTableFavorite: addTableFavoriteMock,
+    cancelRun: cancelRunMock,
+    getActiveRuns: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -78,5 +81,14 @@ describe("catalog-store with hub rows in the tree", () => {
 
     await store.toggleTableFavorite(5);
     expect(addTableFavoriteMock).toHaveBeenCalledWith(5);
+  });
+
+  it("hands a hub run's refused cancel to the caller with the hub's sentence, and keeps a local one's as before", async () => {
+    const store = useCatalogStore();
+    const refused = { response: { status: 422, data: { detail: "The server could not be told." } } };
+    cancelRunMock.mockReset().mockRejectedValue(refused);
+    await expect(store.cancelRun(-9)).rejects.toBe(refused);
+    expect(cancelRunMock).toHaveBeenCalledWith(-9);
+    await expect(store.cancelRun(9)).resolves.toBeUndefined();
   });
 });

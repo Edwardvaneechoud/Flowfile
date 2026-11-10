@@ -1,8 +1,7 @@
 // @vitest-environment happy-dom
 // A flow of a remote catalog (a hub row) has the page a local registered flow has: its run history, its schedules
 // with enable, disable and delete, and Favourite, each through core's own catalog route by the id its row carries.
-// It also has Run, Add schedule and a schedule's Run now; left out for it: what needs the flow's file here, and
-// cancelling a run, which its catalog does not answer.
+// It also has Run, Add schedule, a schedule's Run now and Cancel; left out for it: what needs the flow's file here.
 import { h, type FunctionalComponent } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 import { describe, expect, it, vi } from "vitest";
@@ -34,7 +33,7 @@ vi.mock("./RunHistoryTable.vue", () => ({
 }));
 vi.mock("./components/ScheduleTable.vue", () => ({
   default: {
-    props: ["schedules", "disableRunNow", "hideCancel"],
+    props: ["schedules", "disableRunNow"],
     emits: ["toggleSchedule"],
     render() {
       const self = this as any;
@@ -43,7 +42,6 @@ vi.mock("./components/ScheduleTable.vue", () => ({
         {
           "data-testid": "schedules",
           "data-run-now-off": String(self.disableRunNow),
-          "data-cancel-off": String(self.hideCancel),
           onClick: () => self.$emit("toggleSchedule", self.schedules[0].id, false),
         },
         String(self.schedules.length),
@@ -127,7 +125,7 @@ describe("FlowDetailPanel", () => {
     expect(api.updateSchedule).toHaveBeenCalledWith(-7, { enabled: false });
   });
 
-  it("gives a hub flow Run, Add schedule and Run now, and no Cancel", async () => {
+  it("gives a hub flow Run, Add schedule, Run now and Cancel", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const store = useCatalogStore();
@@ -138,7 +136,7 @@ describe("FlowDetailPanel", () => {
       pinia,
       stubs,
     });
-    expect(buttons(running)).not.toContain("Cancel Run");
+    expect(buttons(running)).toContain("Cancel Run");
 
     const { host } = await mount(hubFlow);
     expect(buttons(host)).toContain("Run Flow");
@@ -147,7 +145,6 @@ describe("FlowDetailPanel", () => {
     );
     const schedules = host.querySelector("[data-testid='schedules']");
     expect(schedules?.getAttribute("data-run-now-off")).toBe("false");
-    expect(schedules?.getAttribute("data-cancel-off")).toBe("true");
   });
 
   it("gives a hub flow Rename and Delete through core's routes by its own id", async () => {
