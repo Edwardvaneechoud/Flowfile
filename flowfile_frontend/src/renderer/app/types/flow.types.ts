@@ -52,6 +52,8 @@ export interface FlowSettings {
   parameters?: FlowParameter[];
   has_unsaved_changes?: boolean;
   display_name?: string | null;
+  // What the catalog a flow came from said of its last save, shown as given; null for a flow saved as a file.
+  save_note?: string | null;
   validate_settings: boolean;
 }
 

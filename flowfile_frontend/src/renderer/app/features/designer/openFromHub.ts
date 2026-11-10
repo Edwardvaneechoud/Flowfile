@@ -47,7 +47,7 @@ export async function openHubFlowVersion(
 ): Promise<OpenedFromHub> {
   try {
     const opened = await openFromHub({ flow_uuid: flowUuid, version, replace: false });
-    return { flowPath: opened.flow_path, message: OPENED_FROM_HUB };
+    return { flowPath: opened.flow_path, message: opened.note || OPENED_FROM_HUB };
   } catch (err) {
     const refusal = refusalOf(err);
     if (refusal?.kind !== "local_copy_exists") throw refusedWith(err);
@@ -71,7 +71,7 @@ async function askAboutLocalCopy(
     if (action !== "cancel") throw new OpenFromHubCancelled();
     try {
       const opened = await openFromHub({ flow_uuid: flowUuid, version, replace: true });
-      return { flowPath: opened.flow_path, message: OPENED_FROM_HUB };
+      return { flowPath: opened.flow_path, message: opened.note || OPENED_FROM_HUB };
     } catch (err) {
       throw refusedWith(err);
     }

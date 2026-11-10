@@ -302,6 +302,7 @@ import { ref, onMounted, watch, computed } from "vue";
 import { ElMessage } from "element-plus";
 
 import { saveFlowSilent } from "./utils";
+import { detailMessage } from "../../../composables/saveError";
 import RunButton from "./run.vue";
 import ParameterSettings from "./ParameterSettings.vue";
 import SaveDialog from "../../../features/designer/components/SaveDialog.vue";
@@ -585,12 +586,15 @@ const openSaveModal = async () => {
       await saveFlowSilent(nodeStore.flow_id);
       emit("flowSaved", nodeStore.flow_id);
       projectStore.onSourceChanged();
-      ElMessage.success("Flow saved");
+      // A flow kept in a catalog elsewhere says where the save went, in that catalog's words.
+      const saved = await getFlowSettings(nodeStore.flow_id);
+      if (saved?.save_note) ElMessage.success({ message: saved.save_note, duration: 6000 });
+      else ElMessage.success("Flow saved");
       tutorialStore.notify({ type: "flow-saved", flowId: nodeStore.flow_id });
     } catch (error: any) {
       ElMessage.error({
-        message: error.message || "Failed to save flow",
-        duration: 5000,
+        message: detailMessage(error, "Failed to save flow"),
+        duration: 8000,
       });
     }
     return;

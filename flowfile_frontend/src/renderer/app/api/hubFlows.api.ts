@@ -52,6 +52,8 @@ export interface HubOpenInput {
 
 export interface HubOpenResult {
   flow_path: string;
+  /** What the hub says of the content it gave, shown as given; absent when it has nothing to say. */
+  note?: string | null;
 }
 
 /** A refusal of publish or open, branched on its `kind`. */
