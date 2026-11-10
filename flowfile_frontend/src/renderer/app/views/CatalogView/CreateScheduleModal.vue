@@ -317,14 +317,7 @@
         </el-form-item>
 
         <el-form-item label="Runs on">
-          <el-select v-model="form.backend" style="width: 100%">
-            <el-option
-              v-for="option in backendOptions"
-              :key="option.key"
-              :label="option.label"
-              :value="option.key"
-            />
-          </el-select>
+          <ScheduleBackendSelect v-model="form.backend" />
           <div class="hint-text">
             Where each run computes. The default worker must be reachable from this server.
           </div>
@@ -397,8 +390,7 @@ import { useNotificationsStore } from "../../stores/notifications-store";
 import { channelTypeLabel } from "./catalog-formatters";
 import { AiDisabledError, generateCronExpression } from "../../api/ai.api";
 import { CatalogApi } from "../../api/catalog.api";
-import { listComputeBackends } from "../../api/computeBackends.api";
-import { scheduleBackendOptions, type BackendRow } from "../../utils/executionLocation";
+import ScheduleBackendSelect from "./components/ScheduleBackendSelect.vue";
 
 const props = defineProps<{
   visible: boolean;
@@ -472,20 +464,6 @@ const form = ref<{
   description: "",
   backend: "",
 });
-
-// A listing that fails leaves the flow's own setting and the default worker.
-const backendRows = ref<BackendRow[]>([]);
-const backendOptions = computed(() =>
-  scheduleBackendOptions(form.value.backend, backendRows.value),
-);
-
-async function loadBackendRows() {
-  try {
-    backendRows.value = await listComputeBackends();
-  } catch {
-    backendRows.value = [];
-  }
-}
 
 const builtCron = computed(() => buildCron(cron.value));
 const cronPreview = computed(() => describeCron(builtCron.value, timezone.value));
@@ -617,7 +595,6 @@ watch(
       form.value.name = "";
       form.value.description = "";
       form.value.backend = "";
-      void loadBackendRows();
       cron.value = defaultCronState();
       notifyOnFailure.value = false;
       notifyChannelId.value = null;

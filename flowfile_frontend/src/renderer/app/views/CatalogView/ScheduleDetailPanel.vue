@@ -96,20 +96,12 @@
       </div>
       <div class="meta-card">
         <span class="meta-label">Runs on</span>
-        <el-select
+        <ScheduleBackendSelect
           v-if="computes"
           :model-value="schedule.backend ?? ''"
           size="small"
-          style="width: 100%"
-          @change="saveBackend"
-        >
-          <el-option
-            v-for="option in backendOptions"
-            :key="option.key"
-            :label="option.label"
-            :value="option.key"
-          />
-        </el-select>
+          @update:model-value="saveBackend"
+        />
         <span v-else class="meta-value">{{ scheduleBackendLabel(schedule.backend ?? "") }}</span>
       </div>
       <div
@@ -226,7 +218,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { useCatalogStore } from "../../stores/catalog-store";
@@ -243,12 +235,8 @@ import RunHistoryTable from "./RunHistoryTable.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
 import setupService from "../../services/setup.service";
-import { listComputeBackends } from "../../api/computeBackends.api";
-import {
-  scheduleBackendLabel,
-  scheduleBackendOptions,
-  type BackendRow,
-} from "../../utils/executionLocation";
+import ScheduleBackendSelect from "./components/ScheduleBackendSelect.vue";
+import { scheduleBackendLabel } from "../../utils/executionLocation";
 
 // A schedule here fires on this core's own scheduler and its alerts go out from it. Where this core computes nothing
 // (a hub's own page) the schedule is another Flowfile's, read-only but for its switch and its delete: no Run Now or
@@ -393,20 +381,6 @@ async function saveDescription() {
     }
   }
 }
-
-// A listing that fails leaves the flow's own setting, the default worker and the schedule's own value.
-const backendRows = ref<BackendRow[]>([]);
-onMounted(async () => {
-  if (!computes) return;
-  try {
-    backendRows.value = await listComputeBackends();
-  } catch {
-    backendRows.value = [];
-  }
-});
-const backendOptions = computed(() =>
-  scheduleBackendOptions(props.schedule.backend ?? "", backendRows.value),
-);
 
 async function saveBackend(value: string) {
   if (value === (props.schedule.backend ?? "")) return;
