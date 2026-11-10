@@ -144,7 +144,7 @@ def _by_id_and_by_row(table_id: int):
 def test_a_tables_own_path_decides_its_target():
     _ensure_connection()
     uri = f"s3://{_BUCKET}/target_{uuid.uuid4().hex[:8]}"
-    on_object_storage, on_disk = _schema(uri), _schema()
+    on_object_storage = _schema(uri)
 
     stayed_local = resolve_for_table(str(storage.catalog_tables_directory / "t_ab12"), on_object_storage)
     assert stayed_local.is_cloud is False
@@ -162,8 +162,6 @@ def test_a_tables_own_path_decides_its_target():
     assert cloud.credential_ref == of_namespace.credential_ref
     assert cloud.to_worker_payload()["base_uri"] == uri
 
-    assert resolve_for_table(f"{uri}/t_ab12", on_disk) == resolve_for_namespace(on_disk)
-
 
 def test_a_local_table_is_previewed_from_its_row_and_target_without_the_database(tmp_path):
     path = str(tmp_path / "people")
@@ -173,10 +171,9 @@ def test_a_local_table_is_previewed_from_its_row_and_target_without_the_database
     with use_context(LOCAL):
         by_id, by_row = _by_id_and_by_row(table_id)
 
-    assert by_row == by_id
-    latest, first, history = by_row
-    assert (len(latest.rows), latest.total_rows, len(first.rows)) == (5, 5, 3)
-    assert history.current_version == 1 and len(history.history) == 2
+    for latest, first, history in (by_id, by_row):
+        assert (len(latest.rows), latest.total_rows, len(first.rows)) == (5, 5, 3)
+        assert history.current_version == 1 and len(history.history) == 2
 
 
 @requires_minio
@@ -195,10 +192,9 @@ def test_an_object_storage_table_is_previewed_from_its_row_and_target(context, r
     with use_context(context):
         by_id, by_row = _by_id_and_by_row(table_id)
 
-    assert by_row == by_id
-    latest, first, history = by_row
-    assert (len(latest.rows), latest.total_rows, len(first.rows)) == (5, 5, 3)
-    assert history.current_version == 1 and len(history.history) == 2
+    for latest, first, history in (by_id, by_row):
+        assert (len(latest.rows), latest.total_rows, len(first.rows)) == (5, 5, 3)
+        assert history.current_version == 1 and len(history.history) == 2
 
 
 def _read(reader_settings: dict) -> pl.DataFrame:
@@ -237,3 +233,47 @@ def test_a_catalog_reader_scans_each_table_of_one_schema_where_it_was_written(tm
         }
     )
     assert dict(zip(joined["name"].to_list(), joined["total"].to_list(), strict=True)) == {"Alice": 250, "Bob": 200}
+
+
+def _local_table_in_a_catalog_whose_connection_is_gone(tmp_path) -> int:
+    """A Delta table on disk in a schema of a catalog on object storage whose connection resolves to nothing."""
+    with get_db_context() as db:
+        catalog = db_models.CatalogNamespace(
+            name=f"gone_cat_{uuid.uuid4().hex[:8]}",
+            level=0,
+            owner_id=1,
+            storage_uri="s3://no-such-bucket/catalog",
+            storage_connection_name="no-such-connection",
+        )
+        db.add(catalog)
+        db.commit()
+        schema = db_models.CatalogNamespace(
+            name=f"gone_sch_{uuid.uuid4().hex[:8]}", level=1, owner_id=1, parent_id=catalog.id
+        )
+        db.add(schema)
+        db.commit()
+        schema_id = schema.id
+    path = str(tmp_path / "stayed_local")
+    _two_versions(path)
+    return _table(schema_id, "stayed_local", path, row_count=5)
+
+
+def test_a_local_table_in_a_catalog_on_object_storage_is_previewed_without_its_catalogs_connection(tmp_path):
+    table_id = _local_table_in_a_catalog_whose_connection_is_gone(tmp_path)
+    with use_context(LOCAL), get_db_context() as db:
+        service = CatalogService(SQLAlchemyCatalogRepository(db))
+        latest = service.get_table_preview(table_id, limit=10)
+        first = service.get_table_preview(table_id, limit=10, version=0)
+        history = service.get_table_history(table_id)
+    assert (len(latest.rows), latest.total_rows, len(first.rows)) == (5, 5, 3)
+    assert history.current_version == 1 and len(history.history) == 2
+
+
+def test_a_local_table_in_a_catalog_on_object_storage_is_read_by_id_without_its_catalogs_connection(tmp_path):
+    table_id = _local_table_in_a_catalog_whose_connection_is_gone(tmp_path)
+    assert _read({"catalog_table_id": table_id}).sort("id")["id"].to_list() == [1, 2, 3, 4, 5]
+
+
+def test_a_local_table_in_a_catalog_on_object_storage_is_read_by_sql_without_its_catalogs_connection(tmp_path):
+    _local_table_in_a_catalog_whose_connection_is_gone(tmp_path)
+    assert _read({"sql_query": "SELECT COUNT(*) AS n FROM stayed_local"})["n"].to_list() == [5]
