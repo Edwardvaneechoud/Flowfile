@@ -34,8 +34,8 @@ def test_a_run_token_for_this_node_is_accepted_with_its_claims(hub_signer):
     assert (claims.subject, claims.user_id, claims.scope) == ("ana", 7, "run")
 
 
-def test_a_dispatch_token_is_no_scope_this_node_knows(hub_signer):
-    assert refusal(hub_signer.token(scope="dispatch", sub="hub", uid=None)) == "unknown scope"
+def test_a_dispatch_token_is_a_scope_this_node_knows_and_no_run_token(hub_signer):
+    assert refusal(hub_signer.token(scope="dispatch", sub="hub", uid=None)) == "a dispatch token is not accepted here"
 
 
 def joined_file(tmp_path, monkeypatch, hub_url: str, **fields) -> None:

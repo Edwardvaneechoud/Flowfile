@@ -39,7 +39,7 @@ def test_the_internal_token_still_works_beside_hub_tokens(hub_signer):
         (lambda hub: hub.token(ttl=-120), "expired"),
         (lambda hub: hub.token(aud="another-node"), "wrong audience"),
         (lambda hub: hub.token(scope="admin"), "unknown scope"),
-        (lambda hub: hub.token(scope="dispatch", sub="hub", uid=None), "unknown scope"),
+        (lambda hub: hub.token(scope="dispatch", sub="hub", uid=None), "a dispatch token is not accepted here"),
     ],
     ids=["expired", "other node", "other scope", "dispatch"],
 )
