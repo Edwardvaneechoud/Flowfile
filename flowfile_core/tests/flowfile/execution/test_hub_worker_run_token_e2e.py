@@ -187,6 +187,8 @@ def clean_catalog():
 def test_a_catalog_writer_placed_on_the_node_writes_its_table_with_the_run_token(
     protocol, node_row, sent, clean_catalog
 ):
+    """With the flag off the write runs on the node with its run token. With it on, a hub-filled row is another machine
+    (94d7540ac), so a local catalog's write is refused there before any node starts and nothing is written."""
     from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 
     _, token = node_row
@@ -197,14 +199,23 @@ def test_a_catalog_writer_placed_on_the_node_writes_its_table_with_the_run_token
     try:
         run_info = graph.run_graph()
 
-        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        if protocol:
+            assert run_info.success is False
+            errors = [result.error or "" for result in run_info.node_step_result]
+            assert any('namespace "TestCat.TestSch" is on local disk, not object storage' in e for e in errors), errors
+        else:
+            assert run_info.success is True, [result.error for result in run_info.node_step_result]
     finally:
         graph.close_flow()
 
     with get_db_context() as db:
-        (table,) = SQLAlchemyCatalogRepository(db).list_tables(namespace_id=namespace_id)
-    assert table.name == "written"
-    assert sorted(pl.read_delta(table.file_path).rows()) == [(1, "ada"), (2, "grace")]
-    assert any(path.startswith("/submit_query/") or path.endswith("/ws/submit") for path, _, _ in sent.calls)
-    assert sent.tokens() == {token}
+        tables = SQLAlchemyCatalogRepository(db).list_tables(namespace_id=namespace_id)
+    if protocol:
+        assert tables == []
+    else:
+        (table,) = tables
+        assert table.name == "written"
+        assert sorted(pl.read_delta(table.file_path).rows()) == [(1, "ada"), (2, "grace")]
+        assert any(path.startswith("/submit_query/") or path.endswith("/ws/submit") for path, _, _ in sent.calls)
+    assert sent.tokens() <= {token}
     assert sent.refused() == []
