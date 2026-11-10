@@ -1,5 +1,6 @@
 """The editor's cloud storage connections: this machine's own, which these routes add, change and delete, listed with
-the ones the person's hub lists, read-only and marked ``source="hub"`` (``hub_client.connections``)."""
+the ones a provider elsewhere lists for the person, read-only and marked with their ``source``
+(``credential_sources``)."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -16,7 +17,6 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_cloud_connection,
     update_cloud_connection,
 )
-from flowfile_core.hub_client import connections as hub_connections
 from flowfile_core.routes._connection_sharing import (
     authorize_connection_mutation,
     changed_target_fields,
@@ -25,6 +25,7 @@ from flowfile_core.routes._connection_sharing import (
 
 # Schema and models
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
+from flowfile_core.secret_manager import credential_sources
 
 # External dependencies
 # File handling
@@ -134,7 +135,7 @@ def get_cloud_connections(
     db: Session = Depends(get_db), current_user=Depends(get_current_active_user)
 ) -> list[FullCloudStorageConnectionInterface]:
     """
-    Get all cloud storage connections for the current user: their own and granted ones, then the hub's (own wins).
+    Get all cloud storage connections for the current user: their own and granted ones, then a provider's (own wins).
     Parameters
         db: Session obtained from Depends(get_db)
         current_user: User obtained from Depends(get_current_active_user)
@@ -144,5 +145,5 @@ def get_cloud_connections(
     """
     own = get_all_cloud_connections_interface(db, current_user.id)
     names = {connection.connection_name for connection in own}
-    hub = [row for row in hub_connections.hub_rows(current_user.id, "cloud") if row.get("connection_name") not in names]
-    return own + [FullCloudStorageConnectionInterface.model_validate(row) for row in hub]
+    listed = credential_sources.connection_rows(current_user.id, "cloud", names)
+    return own + [FullCloudStorageConnectionInterface.model_validate(row) for row in listed]

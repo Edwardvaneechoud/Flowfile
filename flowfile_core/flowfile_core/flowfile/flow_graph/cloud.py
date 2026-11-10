@@ -94,13 +94,13 @@ def _resolve_cloud_node_connection(
 def _worker_connection(
     connection: FullCloudStorageConnection, user_id: int
 ) -> FullCloudStorageConnectionWorkerInterface:
-    """The connection a cloud write carries, its secrets encrypted for ``user_id``; a hub connection's (``from_hub``)
-    carries each secret field the hub names as the sealed string the server that runs the step opens
-    (``run_secrets.hub_fields``, which refuses off a hub server)."""
+    """The connection a cloud write carries, its secrets encrypted for ``user_id``; one a provider elsewhere keeps
+    (``granted``) carries each secret field the grant names in the form the server that runs the step opens
+    (``run_secrets.granted_fields``, which refuses where the grant does not reach)."""
     interface = connection.get_worker_interface(user_id)
-    if not connection.from_hub:
+    if not connection.granted:
         return interface
-    return interface.model_copy(update=run_secrets.hub_fields("cloud", connection.connection_name))
+    return interface.model_copy(update=run_secrets.granted_fields("cloud", connection.connection_name))
 
 
 def _cloud_write_uses_delta_ops(settings: CloudStorageWriteSettings) -> bool:

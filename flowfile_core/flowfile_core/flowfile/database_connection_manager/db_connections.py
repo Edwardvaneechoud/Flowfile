@@ -8,6 +8,7 @@ from flowfile_core.database.models import Secret
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
 from flowfile_core.schemas.sharing_schema import AccessInfo
+from flowfile_core.secret_manager import credential_sources
 from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
 
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
@@ -178,36 +179,32 @@ def get_database_connection_schema(db: Session, connection_name: str, user_id: i
 
 def get_local_database_connection(connection_name: str, user_id: int) -> FullDatabaseConnection | None:
     """The database connection ``connection_name`` a step of ``user_id`` uses, its password encrypted: this machine's
-    own, else one granted to the user, else the one the person's hub lists (``from_hub``, its password empty; the run's
-    vend seals it to the server that runs the step). ``None`` when none of them has it."""
+    own, else one granted to the user, else the one a provider elsewhere keeps for them (``granted``, its password
+    empty; the run is granted it for the server that runs the step). ``None`` when none of them has it."""
     with get_db_context() as db:
         connection = get_database_connection_schema(db, connection_name, user_id)
     if connection is not None:
         return connection
-    from flowfile_core.hub_client import connections as hub_connections
-
-    row = hub_connections.found(user_id, "database", connection_name)
+    row = credential_sources.connection(user_id, "database", connection_name)
     if row is None:
         return None
     fields = {key: value for key, value in row.items() if key in FullDatabaseConnection.model_fields}
-    return FullDatabaseConnection.model_validate({**fields, "password": "", "from_hub": True})
+    return FullDatabaseConnection.model_validate({**fields, "password": "", "granted": True})
 
 
 def get_local_cloud_connection(connection_name: str, user_id: int) -> FullCloudStorageConnection | None:
     """The cloud storage connection ``connection_name`` a step of ``user_id`` uses: this machine's own, else one
-    granted to the user, else the one the person's hub lists (``from_hub``, no secret; the run's vend seals its secrets
-    to the server that runs the step). ``None`` when none of them has it."""
+    granted to the user, else the one a provider elsewhere keeps for them (``granted``, no secret; the run is granted
+    its secrets for the server that runs the step). ``None`` when none of them has it."""
     with get_db_context() as db:
         connection = get_cloud_connection_schema(db, connection_name, user_id)
     if connection is not None:
         return connection
-    from flowfile_core.hub_client import connections as hub_connections
-
-    row = hub_connections.found(user_id, "cloud", connection_name)
+    row = credential_sources.connection(user_id, "cloud", connection_name)
     if row is None:
         return None
     fields = {key: value for key, value in row.items() if key in FullCloudStorageConnection.model_fields}
-    return FullCloudStorageConnection.model_validate({**fields, "from_hub": True})
+    return FullCloudStorageConnection.model_validate({**fields, "granted": True})
 
 
 def delete_database_connection(db: Session, connection_name: str, user_id: int) -> None:

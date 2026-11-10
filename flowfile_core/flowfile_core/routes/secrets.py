@@ -5,9 +5,9 @@ This router provides secure endpoints for creating, retrieving, and deleting
 sensitive credentials for the authenticated user. Secrets are encrypted before
 being stored and are associated with the user's ID.
 
-Every route acts on this machine's own secrets. The list adds the secrets the person's
-hub lists, names only and marked ``source="hub"`` (``hub_client.secrets``); they have no
-value here.
+Every route acts on this machine's own secrets. The list adds the secrets a provider
+elsewhere lists for the person, names only and marked with their ``source``
+(``credential_sources``); they have no value here.
 """
 
 import os
@@ -20,8 +20,8 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import Secret, SecretInput
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
-from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.schemas.sharing_schema import AccessInfo
+from flowfile_core.secret_manager import credential_sources
 from flowfile_core.secret_manager.secret_manager import delete_secret as delete_secret_action
 from flowfile_core.secret_manager.secret_manager import store_secret
 
@@ -76,7 +76,7 @@ def get_secrets(current_user=Depends(get_current_active_user), db: Session = Dep
         )
     secrets.extend(_shared_secret_rows(db, user_id))
     names = {secret.name for secret in secrets}
-    secrets.extend(Secret.model_validate(row) for row in hub_secrets.hub_rows(user_id) if row.get("name") not in names)
+    secrets.extend(Secret.model_validate(row) for row in credential_sources.secret_rows(user_id, names))
 
     return secrets
 

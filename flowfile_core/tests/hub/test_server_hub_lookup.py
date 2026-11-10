@@ -42,7 +42,7 @@ def test_a_lookup_of_a_secret_only_the_hub_holds_finds_no_value_here_and_asks_th
     hub.keep(UID, name, "from-the-hub")
 
     assert get_encrypted_secret(current_user_id=person_id, secret_name=name) is None
-    assert run_secrets.is_hub_secret(person_id, name)
+    assert run_secrets.is_provider_secret(person_id, name)
     with pytest.raises(ValueError, match=refusal(name)):
         run_secrets.encrypted_secret(person_id, name)
     assert hub.catalog.vend_calls == [] and rows_named(name) == 0
@@ -60,7 +60,7 @@ def test_a_secret_in_this_servers_database_is_found_by_a_lookup_and_wins_over_th
     assert (
         encrypted.startswith(f"$ffsec$1${person_id}$") and decrypt_secret(encrypted).get_secret_value() == "only-here"
     )
-    assert not run_secrets.is_hub_secret(person_id, name)
+    assert not run_secrets.is_provider_secret(person_id, name)
     assert hub.catalog.vend_calls == []
 
 

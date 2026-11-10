@@ -451,10 +451,10 @@ def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> Re
                 f"Database connection '{database_settings.database_connection_name}' not found "
                 "or not accessible for this user"
             )
-        if database_connection.from_hub:
+        if database_connection.granted:
             from flowfile_core.flowfile.execution import run_secrets
 
-            raise ValueError(run_secrets.hub_refusal(database_connection.connection_name))
+            raise ValueError(run_secrets.refusal(database_connection.connection_name))
         encrypted_secret = database_connection.password.get_secret_value()
         password = decrypt_secret(encrypted_secret)
 

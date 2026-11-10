@@ -17,7 +17,6 @@ from flowfile_core.catalog.service import CatalogService
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import CatalogNamespace as CatalogNamespaceModel
-from flowfile_core.hub_client import connections as hub_connections
 from flowfile_core.kafka.connection_manager import (
     build_consumer_config,
     decrypt_secret_value,
@@ -44,6 +43,7 @@ from flowfile_core.schemas.kafka_schemas import (
     KafkaSyncCreate,
     KafkaTopicInfo,
 )
+from flowfile_core.secret_manager import credential_sources
 from shared._version import get_version
 from shared.kafka.consumer import infer_topic_schema
 from shared.kafka.models import KafkaReadSettings
@@ -76,11 +76,11 @@ def get_kafka_connections(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """List the current user's Kafka connections: their own and granted ones, then the hub's (own wins)."""
+    """List the current user's Kafka connections: their own and granted ones, then a provider's (own wins)."""
     own = list_kafka_connections(db, current_user.id)
     names = {connection.connection_name for connection in own}
-    hub = [row for row in hub_connections.hub_rows(current_user.id, "kafka") if row.get("connection_name") not in names]
-    return [*own, *(KafkaConnectionOut.model_validate(row) for row in hub)]
+    listed = credential_sources.connection_rows(current_user.id, "kafka", names)
+    return [*own, *(KafkaConnectionOut.model_validate(row) for row in listed)]
 
 
 @router.put("/connections/{connection_id}", response_model=KafkaConnectionOut)

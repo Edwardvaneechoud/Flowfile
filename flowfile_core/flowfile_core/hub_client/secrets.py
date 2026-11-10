@@ -3,7 +3,7 @@ delegation, both ``session.load``.
 
 The hub's secrets are never copied here and have no value on any machine. The Secrets page lists them after the
 machine's own, read-only and marked ``source="hub"`` (``listed``, ``hub_rows``); a step that names one carries it only
-as the run's vend sealed it to the hub server that runs the step (``run_secrets.hub_value``).
+as the run's vend sealed it to the hub server that runs the step (``run_secrets.granted_value``).
 
 Requests log method, path and status only, never a body, a value or a token.
 """
@@ -77,10 +77,3 @@ def hub_rows(user_id: int) -> list[dict]:
     if session.load(user_id) is None:
         return []
     return listed_once((user_id, "secret"), lambda: listed(user_id), "secrets")
-
-
-def found(user_id: int, name: str | None) -> dict | None:
-    """The hub's list row of the person's secret ``name``; ``None`` when the hub lists none."""
-    if not name:
-        return None
-    return next((row for row in hub_rows(user_id) if row.get("name") == name), None)

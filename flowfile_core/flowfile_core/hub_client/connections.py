@@ -3,8 +3,9 @@ joined server's delegation, both ``session.load``.
 
 A connection is settings plus secrets, and the hub's are never copied here. Each connection page lists them after the
 machine's own, read-only and marked ``source="hub"`` (``listed``, ``hub_rows``); a step that names one gets its list
-row, its settings with no secret (``found``), and its secrets only as the run's vend sealed them to the hub server that
-runs the step (``run_secrets.hub_value``). Core never opens them.
+row, its settings with no secret, and its secrets only as the run's vend sealed them to the hub server that
+runs the step (``run_secrets.granted_value``). Core never opens them. ``_HubCredentials`` is the hub as core's provider
+of credentials (``secret_manager.credential_sources``), registered when this module is imported.
 
 Requests log method, path and status only, never a body, a value or a token.
 """
@@ -14,7 +15,10 @@ from __future__ import annotations
 from typing import Literal
 
 from flowfile_core.hub_client import client, session
+from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.hub_client.secrets import _bearer, _signed_in, listed_once, marked
+from flowfile_core.secret_manager import credential_sources
+from shared import hub_sealed
 
 Kind = Literal["cloud", "kafka", "database"]
 
@@ -41,8 +45,27 @@ def hub_rows(user_id: int, kind: Kind) -> list[dict]:
     return listed_once((user_id, kind), lambda: listed(user_id, kind), f"{LABELS[kind]}s")
 
 
-def found(user_id: int, kind: Kind, name: str | None) -> dict | None:
-    """The hub's list row of the person's ``kind`` connection ``name``, no secret; ``None`` when the hub lists none."""
-    if not name:
+class _HubCredentials:
+    """The hub as ``credential_sources.CredentialSource``: its list rows, and the forms its vend seals a run's
+    secrets in, which only the hub server that runs the step opens."""
+
+    def secret_rows(self, user_id: int) -> list[dict]:
+        return hub_secrets.hub_rows(user_id)
+
+    def connection_rows(self, user_id: int, kind: Kind) -> list[dict]:
+        return hub_rows(user_id, kind)
+
+    carried = staticmethod(hub_sealed.sealed_connection_secret)
+    storage_provider = staticmethod(hub_sealed.SealedConnectionProvider)
+
+    def unopened(self, value: object) -> str | None:
+        if hub_sealed.is_sealed_secret(value):
+            return "A hub secret is opened only by the hub server that runs the step, never by core"
         return None
-    return next((row for row in hub_rows(user_id, kind) if row.get("connection_name") == name), None)
+
+    def refusal(self, name: str | None, *, secret: bool = False, why: str | None = None) -> str:
+        what = f"{name} is a hub {'secret' if secret else 'connection'}, which only a hub server opens"
+        return f"{what}, and {why}" if why else f"{what}: run this step on a hub server"
+
+
+credential_sources.register(_HubCredentials())

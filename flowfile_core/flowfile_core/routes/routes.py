@@ -120,7 +120,6 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
-from flowfile_core.hub_client import connections as hub_connections
 from flowfile_core.hub_client import node_tokens
 from flowfile_core.hub_client.exchange_store import hub_store
 from flowfile_core.hub_client.report import build_run_report, hub_flow_uuid, hub_target, post_run_report
@@ -139,6 +138,7 @@ from flowfile_core.schemas import input_schema, output_model, schemas, transform
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.catalog_schema import VisualizationComputeResponse, VisualizationFieldsResponse
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
+from flowfile_core.secret_manager import credential_sources
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
@@ -963,13 +963,11 @@ def get_db_connections(
     db: Session = Depends(get_db), current_user=Depends(get_current_active_user)
 ) -> list[input_schema.FullDatabaseConnectionInterface]:
     """Retrieves the current user's database connections (without passwords): their own and granted ones, then the
-    ones the person's hub lists, marked ``source="hub"`` (own wins a name)."""
+    ones a provider elsewhere lists for the person, marked with their ``source`` (own wins a name)."""
     own = get_all_database_connections_interface(db, current_user.id)
     names = {connection.connection_name for connection in own}
-    hub = [
-        row for row in hub_connections.hub_rows(current_user.id, "database") if row.get("connection_name") not in names
-    ]
-    return own + [input_schema.FullDatabaseConnectionInterface.model_validate(row) for row in hub]
+    listed = credential_sources.connection_rows(current_user.id, "database", names)
+    return own + [input_schema.FullDatabaseConnectionInterface.model_validate(row) for row in listed]
 
 
 @router.post("/editor/connect_node/", tags=["editor"], response_model=OperationResponse)

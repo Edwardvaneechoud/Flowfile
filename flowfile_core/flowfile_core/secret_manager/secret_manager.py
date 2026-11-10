@@ -13,7 +13,7 @@ from flowfile_core.auth.models import SecretInput
 from flowfile_core.auth.secrets import get_master_key
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
-from shared import hub_sealed
+from flowfile_core.secret_manager import credential_sources
 
 # Version identifier for key derivation scheme (allows future migrations)
 KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"
@@ -101,11 +101,12 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
         SecretStr: The decrypted value wrapped in SecretStr
 
     Raises:
-        ValueError: The value is one a hub sealed to the server that runs a step
-            (``shared.hub_sealed.sealed_secret``): core opens none, on any machine.
+        ValueError: The value is one a provider granted to the server that runs a step
+            (``credential_sources.unopened``): core opens none, on any machine.
     """
-    if hub_sealed.is_sealed_secret(encrypted_value):
-        raise ValueError("A hub secret is opened only by the hub server that runs the step, never by core")
+    unopened = credential_sources.unopened(encrypted_value)
+    if unopened:
+        raise ValueError(unopened)
     if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
         # Parse: $ffsec$1${user_id}${fernet_token}
         remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]
@@ -132,8 +133,8 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
 
 def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
     """The secret ``secret_name`` as ``current_user_id`` reaches it on this machine, encrypted: their own, else one
-    granted to them (``stored_encrypted_secret``); ``None`` when they reach none. A hub secret has no value here: a
-    step carries it as the run's vend sealed it (``run_secrets.encrypted_secret``)."""
+    granted to them (``stored_encrypted_secret``); ``None`` when they reach none. A provider's secret has no value
+    here: a step carries it as the run was granted it (``run_secrets.encrypted_secret``)."""
     return stored_encrypted_secret(current_user_id, secret_name)
 
 

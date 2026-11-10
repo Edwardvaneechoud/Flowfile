@@ -229,7 +229,7 @@ def test_a_name_the_hub_also_holds_is_added_here_listed_once_as_this_servers_own
     person_id, access_token = person
     headers = bearer(access_token)
     hub.add(kind, UID, BODIES[kind](name, "the-hubs"))
-    before = run_secrets.hub_row(kind, name, person_id)
+    before = run_secrets.provider_row(kind, name, person_id)
 
     added = client.post(CREATE[kind], json=BODIES[kind](name, "this-servers"), headers=headers)
     listed = client.get(LIST[kind], headers=headers)
@@ -238,7 +238,7 @@ def test_a_name_the_hub_also_holds_is_added_here_listed_once_as_this_servers_own
     assert added.status_code == 200, added.text
     [row] = listed.json()
     assert (row["connection_name"], row["source"]) == (name, "local") and row["id"] > 0
-    assert run_secrets.hub_row(kind, name, person_id) is None
+    assert run_secrets.provider_row(kind, name, person_id) is None
     assert stored_secrets(person_id) == ["this-servers"]
     assert hub.resolve(kind, UID, name)["settings"][SECRET_FIELD[kind]] == "the-hubs"
 
@@ -276,7 +276,7 @@ def test_a_step_that_names_a_hub_connection_gets_its_list_row_with_no_secret_and
     lake = get_local_cloud_connection(name, person_id)
     config = _kafka_consumer_config(input_schema.KafkaSourceSettings(kafka_connection_name=name), person_id)
 
-    assert all(run_secrets.hub_row(kind, name, person_id)["source"] == "hub" for kind in KINDS)
+    assert all(run_secrets.provider_row(kind, name, person_id)["source"] == "hub" for kind in KINDS)
     assert (found.host, found.port, found.username) == ("localhost", 5433, "ada")
     assert found.password.get_secret_value() == ""
     assert lake.aws_access_key_id == "minio" and lake.endpoint_url.endswith(":9000")

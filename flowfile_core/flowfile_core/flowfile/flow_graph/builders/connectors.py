@@ -53,6 +53,7 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import (
     HistoryActionType,
 )
+from flowfile_core.secret_manager import credential_sources
 from flowfile_core.secret_manager.secret_manager import (
     _encrypt_with_master_key,
     decrypt_secret,
@@ -112,34 +113,34 @@ def _resolve_database_credentials(
 
 
 def _step_database_credentials(database_settings, user_id: int, resolved) -> tuple:
-    """The connection and password a database step carries: ``resolved()``'s connection, and for a hub connection
-    (``from_hub``) or a hub secret its password as the run's vend sealed it (``run_secrets.hub_value``, which refuses
-    off a hub server). The password is looked up per run, never kept with ``resolved()``'s."""
+    """The connection and password a database step carries: ``resolved()``'s connection, and for a connection
+    (``granted``) or a secret a provider elsewhere keeps its password as the run was granted it
+    (``run_secrets.granted_value``, which refuses where the grant does not reach). The password is looked up per run,
+    never kept with ``resolved()``'s."""
     if database_settings.connection_mode == "inline":
         connection = database_settings.database_connection
         name = connection.password_ref if connection is not None else None
-        if name and run_secrets.is_hub_secret(user_id, name):
-            return connection, run_secrets.hub_value(name)
+        if name and run_secrets.is_provider_secret(user_id, name):
+            return connection, run_secrets.granted_value(name)
     database_connection, encrypted_password, ref = resolved()
-    if ref is not None and ref.from_hub:
-        return database_connection, run_secrets.hub_value(ref.connection_name, kind="database", field="password")
+    if ref is not None and ref.granted:
+        return database_connection, run_secrets.granted_value(ref.connection_name, kind="database", field="password")
     return database_connection, encrypted_password
 
 
 def _step_kafka_settings(read_settings: KafkaReadSettings, kafka_settings, user_id: int) -> KafkaReadSettings:
-    """The read settings a Kafka step carries: for a hub connection each secret field the hub names as the run's vend
-    sealed it (``run_secrets.hub_fields``, which refuses off a hub server)."""
+    """The read settings a Kafka step carries: for a provider's connection each secret field the grant names as the
+    run was granted it (``run_secrets.granted_fields``, which refuses where the grant does not reach)."""
     name = kafka_settings.kafka_connection_name
-    if run_secrets.hub_row("kafka", name, user_id) is None:
+    if run_secrets.provider_row("kafka", name, user_id) is None:
         return read_settings
-    fields = run_secrets.hub_fields("kafka", name)
+    fields = run_secrets.granted_fields("kafka", name)
     return read_settings.model_copy(update={f: v for f, v in fields.items() if f in KafkaReadSettings.model_fields})
 
 
 def _kafka_consumer_config(kafka_settings, user_id: int) -> dict:
     """The consumer config of a Kafka source's connection, its secrets encrypted: this machine's own by id (when its
-    name matches), else by name, else the hub's list row by name, which holds no secret (``_step_kafka_settings``)."""
-    from flowfile_core.hub_client import connections as hub_connections
+    name matches), else by name, else a provider's row by name, which holds no secret (``_step_kafka_settings``)."""
     from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate
 
     name = kafka_settings.kafka_connection_name
@@ -151,7 +152,7 @@ def _kafka_consumer_config(kafka_settings, user_id: int) -> dict:
             db_conn = get_kafka_connection_by_name(db, name, user_id)
         if db_conn is not None:
             return build_consumer_config(db, db_conn, user_id)
-    row = hub_connections.found(user_id, "kafka", name)
+    row = credential_sources.connection(user_id, "kafka", name)
     if row is None:
         raise HTTPException(status_code=400, detail="Kafka connection not found")
     fields = {key: value for key, value in row.items() if key in KafkaConnectionCreate.model_fields}
@@ -257,8 +258,8 @@ class ConnectorBuildersMixin(GraphMixinBase):
             if node_database_reader.fields:
                 return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_database_reader.fields]
             database_connection, encrypted_password, ref = _get_creds()
-            if ref is not None and ref.from_hub:
-                raise ValueError(run_secrets.hub_refusal(ref.connection_name))
+            if ref is not None and ref.granted:
+                raise ValueError(run_secrets.refusal(ref.connection_name))
             sql_source = SqlSource(
                 connection_string=sql_utils.construct_sql_uri(
                     database_type=database_connection.database_type,
@@ -369,9 +370,9 @@ class ConnectorBuildersMixin(GraphMixinBase):
             fl = engine_from_read(backend, result.refs["result"])
             # Committed once the flow completes, so a failed or cancelled run commits nothing.
             offsets = result.metadata.get("offsets")
-            if offsets is not None and _on_hub():
+            if offsets is not None and _elsewhere():
                 self.flow_logger.warning(
-                    f"Node {node_kafka_source.node_id} read through a hub connection, which core never opens: its "
+                    f"Node {node_kafka_source.node_id} read through a connection core never opens: its "
                     "offsets are not committed"
                 )
             elif offsets is not None:
@@ -382,7 +383,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                     self.flow_logger,
                     _decrypt_fn,
                 )
-            if not _on_hub():
+            if not _elsewhere():
                 # The read frame may have fewer columns than inferred (empty topic); align to the schema.
                 fl = fl.align_to_schema(schema_callback())
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
@@ -391,16 +392,16 @@ class ConnectorBuildersMixin(GraphMixinBase):
         def _decrypt_fn(encrypted: str) -> str:
             return decrypt_secret(encrypted).get_secret_value()
 
-        def _on_hub() -> bool:
+        def _elsewhere() -> bool:
             name = kafka_settings.kafka_connection_name
-            return run_secrets.hub_row("kafka", name, node_kafka_source.user_id) is not None
+            return run_secrets.provider_row("kafka", name, node_kafka_source.user_id) is not None
 
         def schema_callback():
             # Prefer the cached schema so a saved flow renders columns without sampling the topic.
             if node_kafka_source.fields:
                 return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_kafka_source.fields]
-            if _on_hub():
-                raise ValueError(run_secrets.hub_refusal(kafka_settings.kafka_connection_name))
+            if _elsewhere():
+                raise ValueError(run_secrets.refusal(kafka_settings.kafka_connection_name))
             schema_pairs = root().infer_topic_schema(_get_kafka_read_settings(), sample_size=10, decrypt_fn=_decrypt_fn)
             # Since the schema callback takes quite some time, we only run the function once.
             if not schema_pairs:
