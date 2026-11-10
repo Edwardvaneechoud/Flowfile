@@ -2403,6 +2403,27 @@ class TestEditorOpensRegisteredFilesInsideTheFlowFolders:
         finally:
             inside.unlink(missing_ok=True)
 
+    @pytest.mark.parametrize("mode", ["docker", "server"])
+    def test_server_registers_a_flow_it_runs_only_inside_the_flow_folders(self, tmp_path, monkeypatch, mode):
+        """A run's auto-registration, which a catalog write needs, takes a server's flow only from its flow folders:
+        the zero-volume compose test therefore copies its flows into core's flows folder."""
+        from flowfile_core.flowfile.catalog_helpers import auto_register_flow
+
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        inside = storage.flows_directory / f"run_inside_{os.getpid()}.yaml"
+        outside = tmp_path / "run_outside.yaml"
+        TestFlowCode._save_flow(inside)
+        TestFlowCode._save_flow(outside)
+        as_server(monkeypatch, mode)
+        try:
+            auto_register_flow(str(inside), "run_inside", 1)
+            auto_register_flow(str(outside), "run_outside", 1)
+            registered = {flow["flow_path"] for flow in client.get("/catalog/flows").json()}
+            assert str(inside.resolve()) in registered
+            assert not {str(outside), str(outside.resolve())} & registered
+        finally:
+            inside.unlink(missing_ok=True)
+
     def test_desktop_opens_and_saves_its_own_flow_anywhere(self, tmp_path):
         anywhere = tmp_path / "anywhere.yaml"
         TestFlowCode._save_flow(anywhere)
