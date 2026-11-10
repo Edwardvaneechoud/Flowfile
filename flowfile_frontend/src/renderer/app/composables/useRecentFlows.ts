@@ -134,8 +134,9 @@ export function useRecentFlows() {
 
   /**
    * Re-derive every entry's name, catalog location and id from the live catalog,
-   * which is the authority for all three. Best-effort; APIs are imported lazily to
-   * keep this module dependency-free for unit tests.
+   * which is the authority for all three, and drop an entry whose registered file
+   * is gone. Best-effort; APIs are imported lazily to keep this module
+   * dependency-free for unit tests.
    */
   async function reconcileWithCatalog(): Promise<void> {
     if (!recentFlows.value.length) return;
@@ -151,7 +152,9 @@ export function useRecentFlows() {
       // id resolves whenever the flow is registered; ref only when it also
       // sits under a namespace.
       const byPath = new Map<string, { id: number; name: string; ref?: string }>();
+      const gone = new Set<string>();
       for (const reg of flows) {
+        if (reg.file_exists === false) gone.add(reg.flow_path);
         const nsPath = reg.namespace_id !== null ? findNamespacePath(tree, reg.namespace_id) : [];
         byPath.set(reg.flow_path, {
           id: reg.id,
@@ -159,19 +162,21 @@ export function useRecentFlows() {
           ref: nsPath.length ? `${nsPath.join(".")}.${reg.name}` : undefined,
         });
       }
-      recentFlows.value = recentFlows.value.map((f) => {
-        const match = byPath.get(f.path);
-        // Unregistered flows have no authoritative name — keep the local one and
-        // only drop a ref/id left over from a since-removed registration.
-        if (!match) {
-          if (f.catalogRef === undefined && f.catalogId === undefined) return f;
-          return { ...f, catalogRef: undefined, catalogId: undefined };
-        }
-        if (match.ref === f.catalogRef && match.id === f.catalogId && match.name === f.name) {
-          return f;
-        }
-        return { ...f, name: match.name, catalogRef: match.ref, catalogId: match.id };
-      });
+      recentFlows.value = recentFlows.value
+        .filter((f) => !gone.has(f.path))
+        .map((f) => {
+          const match = byPath.get(f.path);
+          // Unregistered flows have no authoritative name — keep the local one and
+          // only drop a ref/id left over from a since-removed registration.
+          if (!match) {
+            if (f.catalogRef === undefined && f.catalogId === undefined) return f;
+            return { ...f, catalogRef: undefined, catalogId: undefined };
+          }
+          if (match.ref === f.catalogRef && match.id === f.catalogId && match.name === f.name) {
+            return f;
+          }
+          return { ...f, name: match.name, catalogRef: match.ref, catalogId: match.id };
+        });
       persist(recentFlows.value);
     } catch {
       /* best-effort */
