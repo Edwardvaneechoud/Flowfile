@@ -71,7 +71,7 @@
       </div>
       <div class="col-actions" @click.stop>
         <el-tooltip
-          v-if="isRunning(schedule) && !hideCancel"
+          v-if="isRunning(schedule) && !hideCancel && !isHubRow(schedule)"
           content="Cancel run"
           placement="top"
           :show-after="400"
@@ -150,6 +150,7 @@ import {
   scheduleIcon,
 } from "../catalog-formatters";
 import { useInlineDescriptionEdit } from "../../../composables/useInlineDescriptionEdit";
+import { isHubRow } from "../hubRows";
 import ScheduleStatusBadge from "./ScheduleStatusBadge.vue";
 
 interface EnrichedFlowSchedule extends FlowSchedule {

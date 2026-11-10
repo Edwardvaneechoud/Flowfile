@@ -211,6 +211,9 @@ export interface FlowRun {
   remote_run_id?: string | null;
   log_ref?: string | null;
   flow_version?: number | null;
+  // Which catalog keeps the row; a hub's row carries the negative of the hub's id as `id`.
+  source?: "local" | "hub";
+  hub_id?: number | null;
 }
 
 export interface PaginatedFlowRuns {
@@ -571,6 +574,9 @@ export interface FlowSchedule {
   last_trigger_table_updated_at: string | null;
   created_at: string;
   updated_at: string;
+  // Which catalog keeps the row; a hub's row carries the negative of the hub's id as `id`.
+  source?: "local" | "hub";
+  hub_id?: number | null;
 }
 
 export interface FlowScheduleCreate {
@@ -620,6 +626,9 @@ export interface ActiveFlowRun {
   nodes_completed: number;
   number_of_nodes: number;
   run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "dispatched";
+  // Which catalog keeps the row; a hub's row carries the negative of the hub's id as `id`.
+  source?: "local" | "hub";
+  hub_id?: number | null;
 }
 
 // Catalog Stats

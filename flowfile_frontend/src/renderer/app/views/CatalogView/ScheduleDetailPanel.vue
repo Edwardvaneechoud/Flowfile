@@ -33,7 +33,7 @@
       </div>
       <div class="header-actions">
         <button
-          v-if="isScheduleRunning"
+          v-if="isScheduleRunning && !isHubRow(schedule)"
           class="btn btn-warning btn-sm"
           @click="$emit('cancelScheduleRun', schedule)"
         >
@@ -41,7 +41,7 @@
           Cancel Run
         </button>
         <button
-          v-else-if="!isFlowRunning"
+          v-else-if="!isScheduleRunning && !isFlowRunning"
           class="btn btn-success btn-sm"
           @click="$emit('runNow', schedule.id)"
         >
@@ -220,6 +220,7 @@ import {
   getScheduleDisplayName,
   scheduleIcon,
 } from "./catalog-formatters";
+import { flowInTree, isHubRow } from "./hubRows";
 import RunHistoryTable from "./RunHistoryTable.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
@@ -258,8 +259,9 @@ const showEdit = ref(false);
 const displayName = computed(() => getScheduleDisplayName(props.schedule, props.schedule.id));
 
 const flowName = computed(() => {
-  const flow = catalogStore.allFlows.find((f) => f.id === props.schedule.registration_id);
-  return flow?.name ?? `Flow #${props.schedule.registration_id}`;
+  const id = props.schedule.registration_id;
+  const flow = catalogStore.allFlows.find((f) => f.id === id) ?? flowInTree(catalogStore.tree, id);
+  return flow?.name ?? `Flow #${id}`;
 });
 
 const scheduleTypeName = computed(() => {

@@ -235,6 +235,7 @@ export const useCatalogStore = defineStore("catalog", {
         ...s,
         flowName:
           state.allFlows.find((f) => f.id === s.registration_id)?.name ??
+          flowInTree(state.tree, s.registration_id)?.name ??
           `Flow #${s.registration_id}`,
         isRunning: activeScheduleIds.has(s.id),
         isFlowRunning: activeRegistrationIds.has(s.registration_id),

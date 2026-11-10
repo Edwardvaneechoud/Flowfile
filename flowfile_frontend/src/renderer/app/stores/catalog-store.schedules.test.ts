@@ -89,3 +89,24 @@ describe("catalog-store enrichedSchedules isFlowRunning", () => {
     expect(other.isFlowRunning).toBe(false);
   });
 });
+
+describe("catalog-store enrichedSchedules of a hub", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("names a hub schedule's flow from the tree and marks it running by the hub's run", () => {
+    const store = useCatalogStore();
+    const hubFlow = { id: -201, name: "orders-clean", source: "hub" };
+    store.tree = [{ id: -1, flows: [], children: [{ id: -2, flows: [hubFlow], children: [] }] }] as any;
+    store.schedules = [
+      schedule(7),
+      { ...schedule(-7), registration_id: -201, source: "hub", backend: "worker:bmax" },
+    ];
+    store.activeRuns = [{ ...activeRun(-6, -7), registration_id: -201, source: "hub" }];
+    const [local, hub] = store.enrichedSchedules;
+    expect([local.flowName, local.isRunning]).toEqual([`Flow #${REGISTRATION_ID}`, false]);
+    expect([hub.flowName, hub.isRunning, hub.isFlowRunning]).toEqual(["orders-clean", true, true]);
+    expect([hub.source, hub.backend]).toEqual(["hub", "worker:bmax"]);
+  });
+});
