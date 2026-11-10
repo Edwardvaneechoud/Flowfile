@@ -277,7 +277,7 @@ KEPT_AS_FORMULA_TEXT = frozenset(
         ("DateTimeNS", "offset_by"),
         *(("StringNS", name) for name in ("count_matches", "find", "pad_end", "pad_start", "replace_many")),
         *(("StringNS", name) for name in ("slice", "split")),
-        *(("ff", name) for name in ("coalesce", "concat_list", "concat_str", "duration", "int_range")),
+        *(("ff", name) for name in ("any_horizontal", "coalesce", "concat_str", "duration", "int_range")),
         *(("ff", name) for name in ("max_horizontal", "min_horizontal")),
     }
 )

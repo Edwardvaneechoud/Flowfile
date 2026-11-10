@@ -400,15 +400,13 @@ def _build_polars_code_args(
         "schema": (None, lambda x: repr(x) if x is not None else "None"),
         "schema_overrides": (None, lambda x: repr(x) if x is not None else "None"),
         "null_values": (None, lambda x: repr(x) if x is not None else "None"),
-        "missing_utf8_is_empty_string": (False, str),
+        "empty_string_is_null": (True, str),
         "ignore_errors": (False, str),
-        "cache": (True, str),
         "with_column_names": (None, lambda x: repr(x) if x is not None else "None"),
         "infer_schema_length": (100, lambda x: str(x) if x is not None else "None"),
         "n_rows": (None, lambda x: str(x) if x is not None else "None"),
         "encoding": ("utf8", lambda x: repr(str(x))),
         "low_memory": (False, str),
-        "rechunk": (False, str),
         "skip_rows_after_header": (0, str),
         "row_index_name": (None, lambda x: repr(str(x)) if x is not None else "None"),
         "row_index_offset": (0, str),
@@ -422,6 +420,7 @@ def _build_polars_code_args(
         "storage_options": (None, lambda x: repr(x) if x is not None else "None"),
     }
 
+    empty_string_is_null = not missing_utf8_is_empty_string
     all_vars = locals()
     kwargs_list = []
 

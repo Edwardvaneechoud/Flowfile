@@ -11,7 +11,7 @@ This module is a thin HTTP adapter: it delegates all business logic to
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
 
@@ -1627,8 +1627,8 @@ def _scheduler_status(db: Session) -> SchedulerStatusOut:
     if lock.heartbeat_at is not None:
         heartbeat = lock.heartbeat_at
         if heartbeat.tzinfo is None:
-            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
-        elapsed = (datetime.now(timezone.utc) - heartbeat).total_seconds()
+            heartbeat = heartbeat.replace(tzinfo=UTC)
+        elapsed = (datetime.now(UTC) - heartbeat).total_seconds()
         if elapsed > STALE_THRESHOLD:
             active = False
             logger.warning(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
@@ -11,7 +11,7 @@ from flowfile_frame.config import logger
 if TYPE_CHECKING:
     from datetime import date, datetime, time
 
-    from polars._typing import IntoExprColumn, ListToStructWidthStrategy, NullBehavior
+    from polars._typing import IntoExprColumn, NullBehavior
 
     from flowfile_frame.expr import Expr
 
@@ -256,33 +256,14 @@ class ExprListNameSpace:
         res_expr = self.expr.to_array(width) if self.expr is not None else None
         return self._create_next_expr(width, method_name="to_array", result_expr=res_expr)
 
-    def to_struct(
-        self,
-        n_field_strategy: ListToStructWidthStrategy | None = None,
-        fields: Sequence[str] | Callable[[int], str] | None = None,
-        upper_bound: int | None = None,
-    ) -> Expr:
-        given = {
-            name: value
-            for name, value in (
-                ("n_field_strategy", n_field_strategy),
-                ("fields", fields),
-                ("upper_bound", upper_bound),
-            )
-            if value is not None
-        }
+    def to_struct(self, fields: Sequence[str]) -> Expr:
         res_expr = None
         if self.expr is not None:
             try:
-                res_expr = self.expr.to_struct(**given)
+                res_expr = self.expr.to_struct(fields=fields)
             except Exception as e:
                 logger.warning(f"Could not create polars expression for list.to_struct(): {e}")
-
-        # Only the arguments given are written, as Polars reads the rest; a naming function has no code form.
-        result = self._create_next_expr(method_name="to_struct", result_expr=res_expr, **given)
-        if callable(fields):
-            result.convertable_to_code = False
-        return result
+        return self._create_next_expr(method_name="to_struct", result_expr=res_expr, fields=list(fields))
 
     def eval(self, expr: Expr, *, parallel: bool = False) -> Expr:
         expr_inner = _polars(expr)

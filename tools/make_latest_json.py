@@ -3,7 +3,7 @@
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 DEFAULT_REPO = "Edwardvaneechoud/Flowfile"
@@ -41,7 +41,7 @@ def build_manifest(version: str, artifacts_dir: Path, repo: str = DEFAULT_REPO) 
         }
     return {
         "version": version,
-        "pub_date": datetime.now(timezone.utc).isoformat(),
+        "pub_date": datetime.now(UTC).isoformat(),
         "platforms": platforms,
     }
 

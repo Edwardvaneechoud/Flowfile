@@ -3,12 +3,13 @@
 Covers:
 - Virtual catalog writer: creates virtual tables without materializing data
 - Virtual writer requires a source_registration_id
-- Serialized lazy frame storage and is_optimized flag
+- Readable plan and is_optimized flag
 - check_flow_laziness / check_upstream_laziness scoping
 - FlowRegistration.flow_path usage (regression for file_path AttributeError)
 - Source table version tracking and staleness detection
 - Virtual table previews read through a backend with the protocol flag on
 - A virtual table's producer runs on the execution context's backend, and a stopped worker answers 503
+- A lazy table's read builds its plan without running the writer or writing the catalog row
 """
 
 import json
@@ -20,7 +21,6 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.catalog import CatalogService
-from flowfile_core.catalog.delta_utils import check_source_versions_current
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.services import previews
 from flowfile_core.catalog.services import virtual_tables as virtual_tables_module
@@ -33,10 +33,11 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.flow_graph import add_connection
+from flowfile_core.flowfile.flow_graph.builders import catalog as catalog_builders
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput, PivotInput
 from shared.compute_protocol import WorkerLocation
-from shared.delta_models import SourceTableVersion
 from tests.conftest import closed_url
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
@@ -305,9 +306,9 @@ class TestVirtualCatalogWriter:
         with pytest.raises(AssertionError, match="not linked to a catalog registration"):
             _run_graph(graph)
 
-    def test_virtual_writer_stores_serialized_lazyframe_when_lazy(self):
-        """A fully lazy graph (manual_input → filter → virtual writer) should store
-        a serialized lazy frame and set is_optimized=True."""
+    def test_virtual_writer_records_readable_plan_when_lazy(self):
+        """A fully lazy graph (manual_input → filter → virtual writer) sets is_optimized=True
+        and records the print_tree drawing of the writer's branch."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="lazy_flow")
         graph = _create_graph(source_registration_id=reg_id)
@@ -345,12 +346,17 @@ class TestVirtualCatalogWriter:
             assert len(tables) == 1
             table = tables[0]
             assert table.table_type == "virtual"
-            assert table.serialized_lazy_frame is not None
             assert table.is_optimized is True
+            plan = table.polars_plan
+
+        node_rows = [line for line in plan.splitlines() if "●" in line]
+        expected = [f"● {graph.get_node(i).node_template.name} ({i})" for i in (1, 2, 3)]
+        assert node_rows == expected
+        assert "SCAN" not in plan
 
     def test_virtual_writer_non_optimized_when_upstream_eager(self):
         """A graph with an eager node upstream of the virtual writer should
-        set is_optimized=False."""
+        set is_optimized=False and still record its branch."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="eager_flow")
         graph = _create_graph(source_registration_id=reg_id)
@@ -391,6 +397,9 @@ class TestVirtualCatalogWriter:
             table = tables[0]
             assert table.table_type == "virtual"
             assert table.is_optimized is False
+            plan = table.polars_plan
+
+        assert [line for line in plan.splitlines() if "●" in line][1] == f"● {graph.get_node(2).node_template.name} (2)"
 
 
 class TestReadVirtualFlowTables:
@@ -409,6 +418,17 @@ class TestReadVirtualFlowTables:
         assert isinstance(lf, pl.LazyFrame)
         df = lf.collect()
         assert df.height == 2
+
+    def test_a_lazy_read_runs_no_node_and_writes_no_row(self, lazy_virtual_table_id, catalog_service, monkeypatch):
+        def _refused(*_args, **_kwargs):
+            pytest.fail("a lazy virtual table read ran its producer")
+
+        monkeypatch.setattr(FlowNode, "execute_node", _refused)
+        monkeypatch.setattr(catalog_builders, "_handle_virtual_table_write", _refused)
+
+        lf = catalog_service.resolve_virtual_flow_table(lazy_virtual_table_id, run_location="remote")
+
+        assert sorted(lf.collect()["age"].to_list()) == [30, 35]
 
     def test_eager_frame_table_preview(self, eager_virtual_table_id, catalog_service):
         """Preview of a non-optimized (eager) virtual table should re-execute the flow."""
@@ -485,7 +505,6 @@ class TestReadVirtualFlowTables:
                 owner_id=1,
                 producer_registration_id=other_reg_id,
                 namespace_id=ns_id,
-                serialized_lazy_frame=b"\x00",
                 is_optimized=True,
             )
             svc.create_query_virtual_table(
@@ -537,7 +556,6 @@ class TestReadVirtualFlowTables:
                 owner_id=1,
                 producer_registration_id=reg_id,
                 namespace_id=ns_id,
-                serialized_lazy_frame=b"\x00",
                 is_optimized=True,
             )
 
@@ -585,7 +603,6 @@ class TestReadVirtualFlowTables:
                 owner_id=1,
                 producer_registration_id=reg_id,
                 namespace_id=ns_id,
-                serialized_lazy_frame=b"\x00",  # invalid bytes on purpose
                 is_optimized=True,
             )
 
@@ -1010,69 +1027,6 @@ class TestVirtualTableOptimizationPropagation:
 # Source table version tracking tests
 
 
-class TestCheckSourceVersionsCurrent:
-    """Unit tests for the check_source_versions_current utility."""
-
-    def test_none_returns_false(self):
-        """No fingerprint can't prove currency — a pinned serialized plan would
-        replay the first snapshot forever, so None must read as stale."""
-        assert check_source_versions_current(None) is False
-
-    def test_empty_string_returns_false(self):
-        """Empty string is no fingerprint either."""
-        assert check_source_versions_current("") is False
-
-    def test_empty_list_returns_true(self):
-        """Empty JSON list should return True (no sources to check)."""
-        assert check_source_versions_current("[]") is True
-
-    def test_invalid_json_returns_false(self):
-        """Malformed JSON should return False (treat as stale)."""
-        assert check_source_versions_current("not json") is False
-
-    def test_matching_versions_returns_true(self):
-        """When source delta table versions match, should return True."""
-        from shared.delta_utils import write_delta
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            delta_path = f"{tmp_dir}/test_table"
-            df = pl.DataFrame({"x": [1, 2, 3]})
-            write_delta(df, delta_path, mode="overwrite")
-
-            from deltalake import DeltaTable
-
-            current_version = DeltaTable(delta_path, without_files=True).version()
-
-            versions_json = json.dumps(
-                [SourceTableVersion(table_id=1, file_path=delta_path, version=current_version).model_dump()]
-            )
-            assert check_source_versions_current(versions_json) is True
-
-    def test_stale_version_returns_false(self):
-        """When source delta table has been updated, should return False."""
-        from shared.delta_utils import write_delta
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            delta_path = f"{tmp_dir}/test_table"
-            df = pl.DataFrame({"x": [1, 2, 3]})
-            write_delta(df, delta_path, mode="overwrite")
-
-            # Record version 0
-            versions_json = json.dumps([SourceTableVersion(table_id=1, file_path=delta_path, version=0).model_dump()])
-
-            # Write again to bump version
-            write_delta(pl.DataFrame({"x": [4, 5, 6]}), delta_path, mode="overwrite")
-
-            assert check_source_versions_current(versions_json) is False
-
-    def test_missing_file_path_returns_false(self):
-        """When the delta table path doesn't exist, should return False."""
-        versions_json = json.dumps(
-            [SourceTableVersion(table_id=1, file_path="/nonexistent/path", version=0).model_dump()]
-        )
-        assert check_source_versions_current(versions_json) is False
-
-
 class TestSourceTableVersionCapture:
     """Test that source_table_versions are captured when creating virtual tables
     from flows that read physical delta catalog tables."""
@@ -1160,7 +1114,7 @@ class TestSourceTableVersionCapture:
 
     def test_virtual_table_without_catalog_source_has_empty_versions(self):
         """A virtual table from a flow with only manual input stores "[]" —
-        a provably complete (empty) fingerprint, so plan replay stays valid.
+        its rows live in the flow file, which the producer fingerprint covers.
         None is reserved for unfingerprintable sources."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="no_source_flow")
@@ -1201,6 +1155,34 @@ class TestSourceTableVersionCapture:
             assert vt.is_optimized is True
             assert vt.source_table_versions is not None
             assert json.loads(vt.source_table_versions) == []
+
+    def test_virtual_write_survives_a_plan_drawing_failure(self, monkeypatch):
+        """The plan drawing is display-only: when it fails the table is still written, without one."""
+        from flowfile_core.flowfile.flow_graph import catalog_write
+
+        def _fail(_nodes):
+            raise RuntimeError("cannot draw")
+
+        monkeypatch.setattr(catalog_write, "render_flow", _fail)
+        ns_id = _create_namespace()
+        reg_id = _create_flow_registration(ns_id, name="undrawable_flow")
+        graph = _create_graph(source_registration_id=reg_id)
+        _add_manual_input(graph, SAMPLE_DATA, node_id=1)
+        _add_catalog_writer(
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            table_name="undrawable_virtual",
+            namespace_id=ns_id,
+            write_mode="virtual",
+        )
+
+        _run_graph(graph)
+
+        with get_db_context() as db:
+            tables = SQLAlchemyCatalogRepository(db).list_tables(namespace_id=ns_id)
+            vt = next(t for t in tables if t.name == "undrawable_virtual")
+            assert vt.polars_plan is None
 
 
 class TestVersionRestampAndClear:
@@ -1260,9 +1242,8 @@ class TestVersionRestampAndClear:
             vt = next(t for t in repo.list_tables(namespace_id=ns_id) if t.name == "restamp_virtual")
             return physical_id, vt.id, delta_path
 
-    def test_resolution_restamps_versions_after_source_change(self):
-        """Stale versions → resolution re-runs the producer flow and re-stamps,
-        and fresh_versions_hash (post-resolution, identity-map-bypassing) sees it."""
+    def test_the_snapshot_key_follows_a_source_change_without_a_restamp(self):
+        """A lazy read leaves the recorded versions as they are; fresh_versions_hash probes the live ones."""
         from flowfile_core.catalog.text_utils import hash_source_versions
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1287,8 +1268,9 @@ class TestVersionRestampAndClear:
 
                 fresh_hash = svc.fresh_versions_hash(virtual_id)
                 assert fresh_hash != stale_hash
+                assert svc.fresh_versions_hash(virtual_id) == fresh_hash
                 fresh_row = repo.get_table_fresh(virtual_id)
-                assert json.loads(fresh_row.source_table_versions)[0]["version"] == 1
+                assert json.loads(fresh_row.source_table_versions)[0]["version"] == 0
 
     def test_preview_reflects_out_of_band_source_change(self, catalog_service):
         """End-to-end fresh-result-not-discarded proof: the preview after an
@@ -1393,6 +1375,25 @@ class TestVersionRestampAndClear:
             )
             assert _collect_source_table_versions(graph) is None
 
+    def test_versions_none_when_a_file_source_feeds_the_writer(self):
+        """A file read is outside the producer's flow file, so its branch is unfingerprintable."""
+        from flowfile_core.flowfile.flow_graph import _collect_source_table_versions
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = f"{tmp_dir}/source.parquet"
+            pl.DataFrame({"x": [1]}).write_parquet(path)
+            graph = _create_graph()
+            graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="read"))
+            graph.add_read(
+                input_schema.NodeRead(
+                    flow_id=graph.flow_id,
+                    node_id=1,
+                    received_file=input_schema.ReceivedTable(file_type="parquet", name="source.parquet", path=path),
+                )
+            )
+            assert _collect_source_table_versions(graph) is None
+            assert _collect_source_table_versions(graph, graph.get_node(1)) is None
+
 
 @pytest.fixture()
 def no_snapshot(monkeypatch):
@@ -1449,7 +1450,7 @@ class TestVirtualTablePreviewThroughABackend:
         assert len(preview.rows) == 2
         assert preview.total_rows == 2
         assert sampled
-        assert all(ref.result_id.startswith("bounded_") for ref, _ in sampled)
+        assert _run_samples(sampled) == []
 
     def test_a_query_table_previews_its_plan_through_a_bounded_read(
         self, lazy_virtual_table_id, catalog_service, sampled

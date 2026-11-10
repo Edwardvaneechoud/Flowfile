@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import logging
 import re
+import secrets
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -17,7 +17,7 @@ from requests.exceptions import RequestException
 
 from flowfile_core.auth import sharing
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
-from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
+from flowfile_core.catalog.delta_utils import get_live_delta_version, is_delta_table
 from flowfile_core.catalog.exceptions import (
     CatalogError,
     FlowNotFoundError,
@@ -31,7 +31,7 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.tables import TableService
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
+from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace
 from flowfile_core.catalog.text_utils import (
     hash_source_versions,
     is_table_reference,
@@ -54,6 +54,7 @@ from shared.storage_config import storage
 if TYPE_CHECKING:
     from flowfile_core.catalog.services.sql import SqlService
     from flowfile_core.flowfile.execution.protocol import ResultRef
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,26 @@ def _project_sync_tables(owner_id: int) -> None:
     from flowfile_core.project import project_sync
 
     project_sync.tables_changed(owner_id)
+
+
+def _lazy_writer_input(table_name: str, writer_node: FlowNode) -> pl.LazyFrame:
+    """The plan a lazy producer's virtual writer receives, built from its input without running anything.
+
+    Raises:
+        ValueError: The writer has no input, or building the plan failed.
+    """
+    inputs = writer_node.node_inputs.main_inputs
+    if not inputs:
+        raise ValueError(f"No data produced for table '{table_name}'")
+    try:
+        flowframe = inputs[0].get_resulting_data()
+    except ComputeError:
+        raise
+    except Exception as e:
+        raise ValueError(f"Flow errors for table '{table_name}': {e}") from e
+    if flowframe is None or flowframe.data_frame is None:
+        raise ValueError(f"No data produced for table '{table_name}'")
+    return flowframe.data_frame.lazy()
 
 
 class VirtualTableService:
@@ -107,7 +128,6 @@ class VirtualTableService:
         producer_registration_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool = False,
         schema_json: str | None = None,
         polars_plan: str | None = None,
@@ -129,7 +149,6 @@ class VirtualTableService:
             storage_format="delta",
             table_type="virtual",
             producer_registration_id=producer_registration_id,
-            serialized_lazy_frame=serialized_lazy_frame,
             is_optimized=is_optimized,
             schema_json=schema_json,
             polars_plan=polars_plan,
@@ -145,7 +164,6 @@ class VirtualTableService:
         description: str | None = None,
         namespace_id: int | None = None,
         producer_registration_id: int | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool | None = None,
         schema_json: str | None = None,
         polars_plan: str | None = None,
@@ -173,8 +191,6 @@ class VirtualTableService:
             if producer is None:
                 raise FlowNotFoundError(registration_id=producer_registration_id)
             table.producer_registration_id = producer_registration_id
-        if serialized_lazy_frame is not None:
-            table.serialized_lazy_frame = serialized_lazy_frame
         if is_optimized is not None:
             table.is_optimized = is_optimized
         if schema_json is not None:
@@ -228,7 +244,6 @@ class VirtualTableService:
             storage_format="delta",
             table_type="virtual",
             producer_registration_id=None,
-            serialized_lazy_frame=None,
             is_optimized=False,
             sql_query=sql_query,
             schema_json=schema_json,
@@ -363,7 +378,10 @@ class VirtualTableService:
             for alias in aliases_by_table[tbl_id]:
                 sql_context.register(alias, lazy_frame)
 
-        return sql_context.execute(rewritten_query)
+        result = sql_context.execute(rewritten_query)
+        # Polars 2 validates a query when its schema resolves, not in execute(): fail here as before.
+        result.collect_schema()
+        return result
 
     def _resolve_table_for_sql_context(
         self,
@@ -375,8 +393,8 @@ class VirtualTableService:
         """Return a LazyFrame for a single referenced table when resolving a SQL context.
 
         ``resolve_or_log`` covers the broad set of errors that can come out of
-        nested virtual-table resolution — corrupt serialized frames, missing
-        producer files, polars eval errors, recursion bugs.
+        nested virtual-table resolution — missing producer files, polars eval
+        errors, recursion bugs.
         """
         if t.table_type == "virtual":
             if getattr(t, "sql_query", None):
@@ -385,13 +403,6 @@ class VirtualTableService:
                     kind="nested query virtual table",
                     identifier=t.name,
                 )
-            if (
-                t.is_optimized
-                and t.serialized_lazy_frame
-                and not serialized_frame_uses_cloud(t.serialized_lazy_frame)
-                and check_source_versions_current(t.source_table_versions)
-            ):
-                return pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame))
             if t.producer_registration_id:
                 return resolve_or_log(
                     lambda: self.resolve_virtual_flow_table(t.id, user_id=user_id),
@@ -415,9 +426,10 @@ class VirtualTableService:
     ) -> pl.LazyFrame:
         """Resolve a virtual flow table to a LazyFrame.
 
-        For optimized tables, deserializes the stored LazyFrame directly.
         For query-based virtual tables, delegates to resolve_query_virtual_table.
-        For non-optimized tables, runs the producer flow's writer node with ``run_location`` as its location, else
+        For a producer whose writer branch is lazy, builds the plan the writer receives in this process: nothing
+        runs, nothing is sent to a backend and the catalog row is not written.
+        For the others, runs the producer flow's writer node with ``run_location`` as its location, else
         on the current execution context's backend. A writer that failed on ``ComputeUnavailable`` raises it.
         """
         with self.held_virtual_flow_table(table_id, user_id, run_location, node_logger) as (plan, _):
@@ -433,9 +445,10 @@ class VirtualTableService:
     ) -> Iterator[tuple[pl.LazyFrame, ResultRef | None]]:
         """Resolve a virtual flow table as ``resolve_virtual_flow_table`` does; its plan and its producer run's ref.
 
-        The ref is ``None`` for a table that resolves without a run (a query table, an optimized one whose sources
-        are current). Otherwise it is the writer node's result, held for the block: a deferred one is released when
-        the block ends, a stored one stays, since the plan scans it.
+        The ref is ``None`` for a query table and a lazy producer, which resolve without a run. Laziness is read
+        from the producer flow as it is saved (``check_upstream_laziness``), not from the table's ``is_optimized``,
+        which the last producer run recorded. Otherwise the ref is the writer node's result, held for the block: a
+        deferred one is released when the block ends, a stored one stays, since the plan scans it.
         """
         if run_location is None:
             run_location = current_context().backend_id
@@ -449,16 +462,6 @@ class VirtualTableService:
         if table.sql_query:
             yield self.resolve_query_virtual_table(table_id, user_id=user_id), None
             return
-
-        if (
-            table.is_optimized
-            and table.serialized_lazy_frame
-            and not serialized_frame_uses_cloud(table.serialized_lazy_frame)
-        ):
-            if check_source_versions_current(table.source_table_versions):
-                yield pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame)), None
-                return
-            logger.info("Source table versions changed for virtual table %r, running its producer flow", table.name)
 
         if not table.producer_registration_id:
             raise ValueError(f"Virtual table {table.name} has no producer flow")
@@ -480,11 +483,18 @@ class VirtualTableService:
         producer_context = ExecutionContext.for_flow(
             flow.flow_settings.model_copy(update={"execution_location": run_location})
         )
+        is_lazy, _ = selected_node.check_upstream_laziness()
         with ExitStack() as params:
             params.enter_context(use_context(producer_context))
             for node in [selected_node, *upstream]:
                 params.enter_context(node_parameters_resolved(node))
-            selected_node.execute_node(reset_cache=True, performance_mode=True, node_logger=node_logger)
+            if is_lazy:
+                plan = _lazy_writer_input(table.name, selected_node)
+            else:
+                selected_node.execute_node(reset_cache=True, performance_mode=True, node_logger=node_logger)
+        if is_lazy:
+            yield plan, None
+            return
 
         if selected_node.results.errors:
             if isinstance(selected_node._last_run_error, ComputeUnavailable):
@@ -509,9 +519,21 @@ class VirtualTableService:
         session identity map. Callers must invoke it AFTER resolution, or they
         key the cache on the pre-resolution fingerprint and the worker serves
         the old snapshot while the fresh compute is discarded.
+
+        A lazy table's read restamps nothing, so its key is the live versions of the sources its last producer run
+        recorded (the worker also keys on the plan bytes, which follow the producer flow); a source it cannot
+        probe gives a key no snapshot has.
         """
         table = self.repo.get_table_fresh(table_id)
-        return hash_source_versions(table.source_table_versions if table is not None else None)
+        recorded = table.source_table_versions if table is not None else None
+        if table is None or not table.is_optimized or not recorded:
+            return hash_source_versions(recorded)
+        try:
+            live = [{**entry, "version": get_live_delta_version(entry["file_path"])} for entry in json.loads(recorded)]
+        except Exception:
+            logger.debug("Could not probe the sources of virtual table %s", table_id, exc_info=True)
+            return secrets.token_hex(32)
+        return hash_source_versions(json.dumps(live))
 
     def materialize_virtual_table(self, table_id: int, user_id: int | None = None) -> CatalogTableMaterializeResult:
         """Resolve a virtual table and have the worker materialise it to a kernel-readable IPC file.

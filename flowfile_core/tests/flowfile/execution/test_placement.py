@@ -1205,7 +1205,9 @@ def test_a_cloud_read_on_a_parameter_whose_value_is_no_path_is_refused_before_an
 
     run_info = graph.run_graph()
 
-    reason = unchecked(TypeError("argument of type 'int' is not iterable"))
+    with pytest.raises(TypeError) as error:
+        "$" in 1  # noqa: B015
+    reason = unchecked(error.value)
     assert_refused_before_any_node(graph, run_info, backend, {1: [reason]})
     assert graph.get_node(1).setting_input.cloud_storage_settings.resource_path == "${n}"
 

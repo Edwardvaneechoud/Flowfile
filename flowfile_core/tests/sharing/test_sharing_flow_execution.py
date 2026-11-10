@@ -67,7 +67,7 @@ def test_reader_denies_unshared_table_for_non_owner(users, alice_table):
     info = _resolve_catalog_table_info(_reader(users["bob"].id, alice_table["table"]))
     assert info.authorized is False
     assert info.file_path is None
-    assert info.serialized_lf is None
+    assert info.producer_fingerprint is None
 
 
 def test_reader_allows_owner(users, alice_table):
@@ -125,6 +125,13 @@ def test_sql_resolver_includes_granted_table(users, alice_table, team, grant_fac
 def test_sql_resolver_internal_run_sees_all(users, alice_table):
     resolved = _resolve_catalog_sql_tables(node_id=1, user_id=None)
     assert "alice_virtual_table" in resolved.virtual_tables
+
+
+def test_sql_resolver_resolves_only_the_virtual_tables_a_query_names(users, alice_table):
+    named = _resolve_catalog_sql_tables(node_id=1, user_id=None, sql_query="SELECT * FROM alice_virtual_table")
+    assert "alice_virtual_table" in named.virtual_tables
+    other = _resolve_catalog_sql_tables(node_id=1, user_id=None, sql_query="SELECT * FROM some_other_table")
+    assert "alice_virtual_table" not in other.virtual_tables
 
 
 # ---------- accessible-id helper ----------

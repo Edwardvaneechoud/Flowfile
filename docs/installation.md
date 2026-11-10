@@ -4,7 +4,7 @@ Five ways to run Flowfile, from zero-install to a team server. The Python packag
 
 | Path | Best for | Requires |
 |---|---|---|
-| Python package | Most users — the full platform locally | Python 3.10–3.13 |
+| Python package | Most users — the full platform locally | Python 3.11–3.14 |
 | Desktop app | A double-clickable app, no Python | macOS, Windows, or Linux |
 | Docker | Teams: auth, sharing, a shared catalog | Docker |
 | Browser (Lite) | Trying it with nothing installed | A browser tab |

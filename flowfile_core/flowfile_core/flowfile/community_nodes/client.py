@@ -18,7 +18,7 @@ import hashlib
 import shutil
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -58,7 +58,7 @@ class PinMismatchError(CommunityClientError):
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _is_fixture(url: str) -> bool:
@@ -200,7 +200,7 @@ class CommunityClient:
         if cached is None:
             raise CommunityUnavailableError("Community registry is unavailable and no cached copy exists")
         try:
-            mtime = datetime.fromtimestamp(self._index_cache_file().stat().st_mtime, timezone.utc).isoformat()
+            mtime = datetime.fromtimestamp(self._index_cache_file().stat().st_mtime, UTC).isoformat()
         except OSError:
             mtime = _now_iso()
         return cached, {"fetched_at": mtime, "source": "cache", "stale": True}

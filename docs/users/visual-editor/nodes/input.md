@@ -228,7 +228,7 @@ Every change mode adds `_change_type`, `_commit_version` and `_commit_timestamp`
 
 ### Reading virtual tables
 
-A virtual table resolves at run time and behaves identically to a physical one from the flow's perspective. Optimized virtual tables deserialize a stored execution plan instantly, keeping full Polars query optimization (predicate and projection pushdown); standard virtual tables run the producer flow end to end. See [Virtual Flow Tables](../catalog/virtual-tables.md).
+A virtual table resolves at run time and behaves identically to a physical one from the flow's perspective. Optimized virtual tables build the producer's lazy plan without computing anything, keeping full Polars query optimization (predicate and projection pushdown); standard virtual tables run the producer flow end to end. See [Virtual Flow Tables](../catalog/virtual-tables.md).
 
 ### SQL mode
 

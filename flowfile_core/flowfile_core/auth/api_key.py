@@ -33,9 +33,9 @@ def generate_api_key() -> tuple[str, str, str]:
 def _is_expired(expires_at: datetime.datetime | None) -> bool:
     if expires_at is None:
         return False
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
+        expires_at = expires_at.replace(tzinfo=datetime.UTC)
     return expires_at < now
 
 
@@ -103,6 +103,6 @@ def verify_api_key(
             detail="This API endpoint is disabled",
         )
 
-    key.last_used_at = datetime.datetime.now(datetime.timezone.utc)
+    key.last_used_at = datetime.datetime.now(datetime.UTC)
     db.commit()
     return endpoint

@@ -91,19 +91,16 @@ def _catalog_table(args: dict[str, Any], user_id: int) -> dict[str, Any]:
             "catalog_namespace_id": args.get("catalog_namespace_id"),
         }
     )
-    return {**_resolve_catalog_table_info(settings)._asdict(), "serialized_lf": None}
+    return _resolve_catalog_table_info(settings)._asdict()
 
 
 def _catalog_sql_tables(args: dict[str, Any], user_id: int) -> dict[str, Any]:
     from flowfile_core.flowfile.flow_graph import _resolve_catalog_sql_tables
 
-    resolved = _resolve_catalog_sql_tables(int(args.get("node_id") or 0), user_id)
+    resolved = _resolve_catalog_sql_tables(int(args.get("node_id") or 0), user_id, args.get("sql_query"))
     return {
         "table_paths": resolved.table_paths,
-        "virtual_tables": {
-            name: [is_optimized, None, table_id, versions]
-            for name, (is_optimized, _plan, table_id, versions) in resolved.virtual_tables.items()
-        },
+        "virtual_tables": {name: list(entry) for name, entry in resolved.virtual_tables.items()},
         "table_namespaces": resolved.table_namespaces,
     }
 

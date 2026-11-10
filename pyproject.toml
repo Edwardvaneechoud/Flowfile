@@ -31,7 +31,7 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.14"
+python = ">=3.11,<3.15"
 fastapi = "~0.142.2"
 starlette = ">=1.3.1"  # security floor; fastapi no longer caps starlette
 uvicorn = "~0.32.0"
@@ -41,17 +41,17 @@ databases = "~0.9.0"
 passlib = "~1.7.4"
 pyarrow = "^25.0.0"
 python-multipart = "~0.0.12"
-polars = ">=1.39.0, !=1.43.0, !=1.43.1, <1.44"  # floor: polars-grouper>=0.6.0 requires polars>=1.39; 1.43.0/.1 deadlock SQLContext.execute over scan_delta frames (catalog SQL readers/views); fixed in 1.43.2
+polars = ">=2.1.0, <2.2"
 methodtools = "~0.4.7"
 faker = "~23.1.0"
 XlsxWriter = "~3.2.0"
 loky = "~3.4.1"
-fastexcel = "~0.12.0"
+fastexcel = "~0.21.0"
 openpyxl = "~3.1.2"
-polars-distance = ">=0.4.3"
-polars-expr-transformer = ">=0.6.5"
-polars-grouper = ">=0.6.0"
-polars-ds = ">=0.11.0"
+polars-distance = ">=0.5.3"
+polars-expr-transformer = ">=0.7.1"
+polars-grouper = ">=0.7.0"
+polars-ds = ">=0.14.0"
 aiofiles = "^24.1.0"
 pyjwt = "^2.10.1"
 bcrypt = "^4.3.0"
@@ -63,14 +63,14 @@ polars-gw = "0.1.4"
 # Only install pendulum for Python versions below 3.12
 pendulum = { version = "2.1.2", markers = "python_version < '3.12'" }
 deltalake = ">=1.1.0,<1.6.4"  # 1.6.4 prunes lazy scans on ms stats, breaking µs timestamp equality (SCD2 changed mode)
-pyiceberg = {extras = ["hadoop"], version = "^0.9.1"}
+pyiceberg = {extras = ["hadoop"], version = "^0.12.0"}
 boto3 = ">=1.38.40,<1.38.47"
 cryptography = ">=48.0.1,<49.0.0"  # 49 drops x86_64 macOS wheels (Intel desktop build)
 httpx = "^0.28.1"
 docker = ">=7.0.0"
 tqdm = "^4.67.1"
 s3fs = ">=2026.6.0"  # fsspec <2026.6.0 renders reference-FS JSON through unsandboxed jinja2 (CVE-2026-104851)
-pl-fuzzy-frame-match = ">=0.6.0"
+pl-fuzzy-frame-match = ">=0.7.0"
 pyyaml = "^6.0.3"
 xlsx2csv = "^0.8.6"
 confluent-kafka = "^2.6"
@@ -81,10 +81,7 @@ google-analytics-data = ">=0.18.0"
 alembic = "^1.13.0"
 sqlalchemy = "^2.0.27"
 litellm = "^1.83.14"
-filelock = [  # 4.2.1 fixes the lock-file CVEs but needs Python 3.11
-    { version = "^3.13.0", python = "<3.11" },
-    { version = "^4.2.1", python = ">=3.11" },
-]
+filelock = "^4.2.1"
 croniter = ">=2.0"
 tzdata = ">=2024.1"
 gitpython = "^3.2.1"
@@ -138,7 +135,7 @@ pyinstaller = "^6.11.0"
 optional = true
 
 [tool.poetry.group.runtime64.dependencies]
-polars-runtime-64 = "==1.43.2"  # moves with the locked polars version (tools/tests/test_polars_runtime_group.py)
+polars-runtime-64 = "==2.1.0"  # moves with the locked polars version (tools/tests/test_polars_runtime_group.py)
 
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"
@@ -149,7 +146,7 @@ pytest-asyncio = "^1.3.0"
 pytest-cov = "^6.0"
 pytest-timeout = "^2.3.1"
 testcontainers = "^4.10.0"
-numpy = "1.26.4"
+numpy = "^2.3"
 mkdocstrings = "^0.30.0"
 mkdocstrings-python = "^1.16.12"
 griffe = ">=1.0,<2"
@@ -203,7 +200,7 @@ output = "coverage.xml"
 
 [tool.ruff]
 # Target Python 3.10 (minimum supported version)
-target-version = "py310"
+target-version = "py311"
 
 # Line length - 120 is reasonable for modern screens
 line-length = 120

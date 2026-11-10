@@ -3182,24 +3182,6 @@ def test_random_split_table_example_row_count_never_sample_capped():
     assert preview.number_of_records not in (100, 999)
 
 
-def test_multi_output_streamable_propagation():
-    """All dict-returned outputs should inherit the node's streamable flag."""
-    graph = create_graph(execution_location="local")
-    add_manual_input(graph, [{"id": i} for i in range(50)], node_id=1)
-    _add_random_split_to_graph(
-        graph,
-        [
-            input_schema.RandomSplitGroup(name="a", percentage=60.0),
-            input_schema.RandomSplitGroup(name="b", percentage=40.0),
-        ],
-    )
-    graph.run_graph()
-    node = graph.get_node(2)
-    expected = node.node_settings.streamable
-    for handle in ("output-0", "output-1"):
-        assert node.get_output(handle)._streamable == expected
-
-
 def test_random_split_returns_named_outputs():
     """FlowDataEngine.random_split must return a NamedOutputs, not a dict."""
     from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs

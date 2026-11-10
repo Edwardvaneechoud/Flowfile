@@ -12,7 +12,7 @@ import logging
 import time
 import uuid
 import zoneinfo
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 from croniter import croniter
@@ -55,7 +55,7 @@ class LaunchOutcome(Enum):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class FlowScheduler:
@@ -180,7 +180,7 @@ class FlowScheduler:
             return True
 
         if lock.heartbeat_at is not None:
-            elapsed = (now - lock.heartbeat_at.replace(tzinfo=timezone.utc)).total_seconds()
+            elapsed = (now - lock.heartbeat_at.replace(tzinfo=UTC)).total_seconds()
             if elapsed > STALE_THRESHOLD:
                 logger.warning("Taking over stale lock from %s (%.0fs old)", lock.holder_id, elapsed)
                 lock.holder_id = self._holder_id
@@ -218,7 +218,7 @@ class FlowScheduler:
                 continue
 
             if sched.last_triggered_at is not None:
-                last = sched.last_triggered_at.replace(tzinfo=timezone.utc)
+                last = sched.last_triggered_at.replace(tzinfo=UTC)
                 elapsed = (now - last).total_seconds()
                 remaining = sched.interval_seconds - elapsed
                 if remaining > 0:
@@ -285,7 +285,7 @@ class FlowScheduler:
                     )
                     continue
                 try:
-                    base_local = base_utc.replace(tzinfo=timezone.utc).astimezone(tz).replace(tzinfo=None)
+                    base_local = base_utc.replace(tzinfo=UTC).astimezone(tz).replace(tzinfo=None)
                 except Exception:
                     logger.warning("Cron schedule %s has an unusable base timestamp, skipping", sched.id)
                     continue
@@ -362,9 +362,9 @@ class FlowScheduler:
                 logger.warning("Schedule %s references missing table %s", sched.id, sched.trigger_table_id)
                 continue
 
-            table_updated = table.updated_at.replace(tzinfo=timezone.utc) if table.updated_at else None
+            table_updated = table.updated_at.replace(tzinfo=UTC) if table.updated_at else None
             last_seen = (
-                sched.last_trigger_table_updated_at.replace(tzinfo=timezone.utc)
+                sched.last_trigger_table_updated_at.replace(tzinfo=UTC)
                 if sched.last_trigger_table_updated_at
                 else None
             )
@@ -429,7 +429,7 @@ class FlowScheduler:
                 continue
 
             last_seen = (
-                sched.last_trigger_table_updated_at.replace(tzinfo=timezone.utc)
+                sched.last_trigger_table_updated_at.replace(tzinfo=UTC)
                 if sched.last_trigger_table_updated_at
                 else None
             )
@@ -442,7 +442,7 @@ class FlowScheduler:
                     break
                 if table.updated_at is None:
                     break
-                stamps.append(table.updated_at.replace(tzinfo=timezone.utc))
+                stamps.append(table.updated_at.replace(tzinfo=UTC))
             if len(stamps) != len(table_ids):
                 continue
 

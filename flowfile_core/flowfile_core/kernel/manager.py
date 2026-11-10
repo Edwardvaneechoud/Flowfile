@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Iterable
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import docker
@@ -269,10 +269,10 @@ def _too_young_to_reap(created: str | None) -> bool:
         head, _, frac = text.partition(".")
         text = f"{head}.{frac[:6]}"
     try:
-        stamp = datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
+        stamp = datetime.fromisoformat(text).replace(tzinfo=UTC)
     except (TypeError, ValueError):
         return True
-    return (datetime.now(timezone.utc) - stamp).total_seconds() < _GC_MIN_AGE_SECONDS
+    return (datetime.now(UTC) - stamp).total_seconds() < _GC_MIN_AGE_SECONDS
 
 
 def _load_or_create_core_instance_id() -> str:

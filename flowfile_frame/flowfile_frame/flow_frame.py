@@ -1032,7 +1032,7 @@ class FlowFrame:
             Other DataFrame.
         on : str or list of str, optional
             Name(s) of the join columns in both DataFrames.
-        how : {'inner', 'left', 'outer', 'semi', 'anti', 'cross'}, default 'inner'
+        how : {'inner', 'left', 'right', 'full', 'outer', 'semi', 'anti', 'cross'}, default 'inner'
             Join strategy.
         left_on : str or list of str, optional
             Name(s) of the left join column(s).
@@ -1194,7 +1194,7 @@ class FlowFrame:
             right_on,
             left_columns,
             right_columns,
-            how,
+            transform_schema.polars_join_how(how),
             suffix,
             validate,
             nulls_equal,

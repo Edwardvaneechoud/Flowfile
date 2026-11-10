@@ -14,7 +14,7 @@ import os
 import re
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -44,7 +44,7 @@ def _safe_revision(revision: str | None) -> str:
 
 
 def _snapshot_target(backup_dir: Path, db_path: Path, tag: str) -> Path:
-    stamp = datetime.now(timezone.utc).strftime(_STAMP_FORMAT)
+    stamp = datetime.now(UTC).strftime(_STAMP_FORMAT)
     base = f"{db_path.stem}.{tag}.{stamp}"
     target = backup_dir / f"{base}{db_path.suffix}"
     counter = 1
@@ -156,9 +156,9 @@ def _parse_tag(tag: str) -> tuple[str, str | None, str | None] | None:
 
 def _created_at(stamp: str, mtime: float) -> str:
     try:
-        return datetime.strptime(stamp, _STAMP_FORMAT).replace(tzinfo=timezone.utc).isoformat()
+        return datetime.strptime(stamp, _STAMP_FORMAT).replace(tzinfo=UTC).isoformat()
     except ValueError:
-        return datetime.fromtimestamp(mtime, timezone.utc).isoformat()
+        return datetime.fromtimestamp(mtime, UTC).isoformat()
 
 
 def _app_version(path: Path) -> str | None:

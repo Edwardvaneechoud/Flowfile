@@ -216,7 +216,7 @@ async def _call_provider_for_json(
 
     try:
         content = await asyncio.wait_for(_do_call(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return None, "timeout"
     except Exception as exc:  # noqa: BLE001 — we deliberately collapse to a single reason
         logger.warning("autocomplete provider call failed: %s", exc, exc_info=False)

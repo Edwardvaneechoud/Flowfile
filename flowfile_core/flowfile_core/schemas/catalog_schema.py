@@ -4,7 +4,7 @@ Covers namespaces (Unity Catalog-style hierarchy), flow registrations,
 run history, favorites and follows.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
@@ -695,7 +695,7 @@ class VisualizationUpdate(BaseModel):
     def _normalize_expected_updated_at(cls, v: datetime | None) -> datetime | None:
         """Normalize tz-aware tokens to naive UTC — the DB returns naive UTC."""
         if v is not None and v.tzinfo is not None:
-            return v.astimezone(timezone.utc).replace(tzinfo=None)
+            return v.astimezone(UTC).replace(tzinfo=None)
         return v
 
 

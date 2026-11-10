@@ -1,4 +1,5 @@
 import datetime
+import decimal
 import functools
 import hashlib
 import re
@@ -16,6 +17,22 @@ _NUMBER = re.compile(r"-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)")
 def _is_number(value: str | None) -> bool:
     """Whether a basic filter value is a plain decimal number, so it renders bare (``1-2`` stays text)."""
     return bool(value) and _NUMBER.fullmatch(value) is not None
+
+
+def _membership_numbers(values: list[str], field_dtype: str | None) -> list[str]:
+    """Numeric ``is_in`` members typed like the column, which Polars 2 requires.
+
+    A float column gets float members; an integer column drops members no integer equals and
+    writes the rest as integers, so the rows match the ``==`` chain the runtime filter keeps.
+    """
+    base = (field_dtype or "").split("(", 1)[0]
+    if base.startswith("Float"):
+        return [repr(float(v)) for v in values]
+    if base.startswith(("Int", "UInt")):
+        exact = [decimal.Decimal(v) for v in values]
+        whole = [int(d) for d in exact if d == d.to_integral_value()]
+        return [str(v) for v in whole if v >= 0 or not base.startswith("UInt")]
+    return values
 
 
 def _temporal_base(field_dtype: str | None) -> str | None:
@@ -181,7 +198,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
             if temporal:
                 values_str = ", ".join(render(v) for v in values)
             elif all(_is_number(v) for v in values):
-                values_str = ", ".join(values)
+                values_str = ", ".join(_membership_numbers(values, field_dtype))
             else:
                 values_str = ", ".join(self._py_str(v) for v in values)
             return f"{col}.is_in([{values_str}])"
@@ -191,7 +208,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
             if temporal:
                 values_str = ", ".join(render(v) for v in values)
             elif all(_is_number(v) for v in values):
-                values_str = ", ".join(values)
+                values_str = ", ".join(_membership_numbers(values, field_dtype))
             else:
                 values_str = ", ".join(self._py_str(v) for v in values)
             return f"{col}.is_in([{values_str}]).not_()"

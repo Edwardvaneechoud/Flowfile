@@ -153,7 +153,7 @@ async def sse_stream(
 
             try:
                 chunk = await asyncio.wait_for(asyncio.shield(next_task), timeout=keepalive_interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield format_sse_keepalive()
                 continue
             except StopAsyncIteration:
@@ -335,7 +335,7 @@ async def planner_events_sse(
                 next_task = asyncio.ensure_future(ait.__anext__())
             try:
                 event = await asyncio.wait_for(asyncio.shield(next_task), timeout=keepalive_interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield format_sse_keepalive()
                 continue
             except StopAsyncIteration:
