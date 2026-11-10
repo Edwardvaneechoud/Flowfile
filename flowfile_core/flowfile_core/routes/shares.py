@@ -9,20 +9,48 @@ Authorization rules (see plan in docs):
   groups they are a member of.
 - Secrets never accept ``manage`` grants (422) — managing a credential is
   equivalent to owning it.
+- A request that names a row of a remote catalog (a negative id) is that
+  catalog's to answer: its grants and the groups it shares with are its own.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import User
+from flowfile_core.catalog import table_sources
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
-from flowfile_core.routes.user_groups import require_sharing_enabled
-from flowfile_core.schemas.sharing_schema import ResourceType, ShareCreate, ShareOut, ShareUpdate
+from flowfile_core.routes.catalog import _RemoteAnswer, _RemoteRoute
+from flowfile_core.routes.user_groups import _groups_out, require_sharing_enabled
+from flowfile_core.schemas.sharing_schema import ResourceType, ShareCreate, ShareOut, ShareUpdate, UserGroupOut
 
-router = APIRouter(dependencies=[Depends(get_current_active_user), Depends(require_sharing_enabled)])
+
+async def _remote_shares(request: Request, current_user: User = Depends(get_current_active_user)) -> None:
+    """Hand a sharing request that names a row of a remote catalog to that catalog (``table_sources.relayed``), as
+    the signed-in person: the row is shared with that catalog's groups, whatever this install's own sharing is."""
+    body = None
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+    path = f"/shares{request.url.path.split('/shares', 1)[1]}"
+    answered = await run_in_threadpool(
+        table_sources.relayed, current_user.id, request.method, path, dict(request.query_params), body
+    )
+    if answered is not None:
+        code, answer = answered
+        raise _RemoteAnswer(Response(status_code=code) if answer is None else JSONResponse(answer, code))
+
+
+router = APIRouter(
+    dependencies=[Depends(get_current_active_user), Depends(_remote_shares), Depends(require_sharing_enabled)],
+    route_class=_RemoteRoute,
+)
 
 
 def _uniform_not_found() -> HTTPException:
@@ -75,6 +103,21 @@ def list_shares(
         .all()
     )
     return [_share_out(db, grant) for grant in grants]
+
+
+@router.get("/groups", response_model=list[UserGroupOut])
+def list_share_groups(
+    resource_type: ResourceType,
+    resource_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """The groups the caller may share the resource with: every group for an admin, else their own."""
+    _require_manageable(db, current_user, resource_type, resource_id)
+    groups = db.query(db_models.UserGroup).order_by(db_models.UserGroup.name)
+    if not current_user.is_admin:
+        groups = groups.filter(db_models.UserGroup.id.in_(sharing.user_group_ids(db, current_user.id)))
+    return _groups_out(db, groups.all(), current_user.id)
 
 
 @router.post("", response_model=ShareOut)

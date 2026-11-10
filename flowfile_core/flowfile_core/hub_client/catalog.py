@@ -45,6 +45,8 @@ _ROW_REFERENCES = (
     "schedule_id",
     "trigger_table_id",
     "trigger_namespace_id",
+    "resource_id",
+    "group_id",
 )
 _THEIR_ID = re.compile(r"(?<=/)-(\d+)(?=/|$)")
 _THEIR_VALUE = re.compile(r"-\d+")
