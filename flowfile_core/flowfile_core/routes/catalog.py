@@ -61,6 +61,7 @@ from flowfile_core.catalog import (
     VisualizationNotFoundError,
     WorkerUnavailableError,
     run_records,
+    table_sources,
 )
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.services.tables import catalog_table_location
@@ -72,7 +73,6 @@ from flowfile_core.fileExplorer import validate_path_under_cwd
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.hub_client import catalog as hub_catalog
-from flowfile_core.hub_client import tables as hub_tables
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
@@ -326,14 +326,14 @@ def list_namespaces(
 ):
     """List namespaces, optionally filtered by parent.
 
-    A kernel also gets the catalogs of its owner's hub after this machine's, and the schemas of one of those (a
-    negative ``parent_id``), so a notebook cell walks to a hub table as it does to a local one.
+    A kernel also gets its owner's remote catalogs after this machine's, and the schemas of one of those (a
+    negative ``parent_id``), so a notebook cell walks to a remote table as it does to a local one.
     """
     if kernel_owner is not None and parent_id is not None and parent_id < 0:
-        return hub_tables.notebook_namespaces(kernel_owner, parent_id)
+        return table_sources.kernel_namespaces(kernel_owner, parent_id)
     rows = service.list_namespaces(parent_id)
     if kernel_owner is not None and parent_id is None:
-        return [*rows, *hub_tables.notebook_namespaces(kernel_owner, None)]
+        return [*rows, *table_sources.kernel_namespaces(kernel_owner, None)]
     return rows
 
 
@@ -758,10 +758,10 @@ def list_tables(
 
     Accepts the kernel's internal token so ``flowfile_ctx.list_catalog_tables``
     can enumerate available tables. A negative ``namespace_id`` is a namespace
-    of the kernel owner's hub.
+    of a remote catalog of the kernel's owner.
     """
     if kernel_owner is not None and namespace_id is not None and namespace_id < 0:
-        return hub_tables.notebook_tables(kernel_owner, namespace_id)
+        return table_sources.kernel_tables(kernel_owner, namespace_id)
     return service.list_tables(namespace_id=namespace_id, user_id=current_user.id)
 
 
@@ -858,11 +858,11 @@ def resolve_table(
 
     Strict mode raises ``AmbiguousTableError`` (→ 409) when a bare name matches >1 row.
     Default mode soft-picks deterministically and reports alternatives in ``warnings``.
-    For a kernel, a name this machine's catalog does not hold is looked up among the tables of its owner's hub, and
-    a negative ``namespace_id`` names a namespace there (``hub_tables.for_notebook``).
+    For a kernel, a name this machine's catalog does not hold is looked up among the tables of its owner's remote
+    catalogs, and a negative ``namespace_id`` names a namespace there (``table_sources.kernel_table``).
     """
     if kernel_owner is not None and namespace_id is not None and namespace_id < 0:
-        in_namespace = hub_tables.for_notebook(kernel_owner, q, namespace_id)
+        in_namespace = table_sources.kernel_table(kernel_owner, q, namespace_id)
         if in_namespace is None:
             raise HTTPException(404, "Catalog table not found")
         return ResolveTableResult(table=in_namespace)
@@ -874,10 +874,10 @@ def resolve_table(
             user_id=current_user.id,
         )
     except (TableNotFoundError, NamespaceNotFoundError):
-        on_hub = hub_tables.for_notebook(kernel_owner, q) if kernel_owner is not None else None
-        if on_hub is None:
+        elsewhere = table_sources.kernel_table(kernel_owner, q) if kernel_owner is not None else None
+        if elsewhere is None:
             raise
-        return ResolveTableResult(table=on_hub)
+        return ResolveTableResult(table=elsewhere)
     return ResolveTableResult(table=table_out, warnings=warnings)
 
 
@@ -952,15 +952,13 @@ def materialize_table(
     Resolves the view (SQL, optimized plan, or producer re-run), has the
     worker collect it to an Arrow IPC file under the kernel-shared volume,
     and returns the host path. Used by ``flowfile_ctx.read_catalog_table``
-    for views; physical tables are rejected with 400. A negative id is a
-    table of the hub (``resolve_table``), written the same way for the
-    kernel's owner (``hub_tables.snapshot``); any other caller gets 403.
+    for views and for physical tables on object storage, which a kernel
+    holds no credential for; a physical table on disk is rejected with 400.
+    A table of a remote catalog (``resolve_table``) is read as the kernel's
+    owner, the person its catalog answers to.
     """
-    if table_id < 0:
-        if kernel_owner is None:
-            raise HTTPException(403, "A table on the hub is read as a person, through a kernel of theirs")
-        return hub_tables.snapshot(kernel_owner, -table_id)
-    return service.materialize_table(table_id, user_id=current_user.id)
+    as_owner = kernel_owner is not None and table_sources.remote_of(table_id) is not None
+    return service.materialize_table(table_id, user_id=kernel_owner if as_owner else current_user.id)
 
 
 @router.get(

@@ -37,7 +37,7 @@ from flowfile_core.catalog.storage_backend import (
     resolve_for_table,
     serialized_frame_uses_cloud,
 )
-from flowfile_core.catalog.table_sources import remote_sql_tables, row_targets, scan_delta
+from flowfile_core.catalog.table_sources import remote_sql_tables, row_targets, scan_delta, table_row
 from flowfile_core.catalog.text_utils import (
     hash_source_versions,
     is_table_reference,
@@ -538,28 +538,34 @@ class VirtualTableService:
         return hash_source_versions(table.source_table_versions if table is not None else None)
 
     def materialize_virtual_table(self, table_id: int, user_id: int | None = None) -> CatalogTableMaterializeResult:
-        """Resolve a virtual table and have the worker materialise it to a kernel-readable IPC file.
+        """Resolve a virtual table and have the worker materialise it to a kernel-readable IPC file. A physical
+        table on object storage, this catalog's or a remote one's, is written the same way from a scan with its
+        storage target: a kernel holds no credential for it.
 
         Every call rebuilds the snapshot: a serialised plan records table paths,
         not data, so its sha256 stays constant when referenced data changes.
         The plan hash therefore only names the snapshot file (the worker skips
         its idempotency cache for the kernel_shared target).
         """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-        if getattr(table, "table_type", "physical") != "virtual":
+        table = table_row(self.repo, table_id, user_id)
+        on_storage = bool(table.table_type != "virtual" and table.file_path and _is_cloud_uri(table.file_path))
+        if getattr(table, "table_type", "physical") != "virtual" and not on_storage:
             raise NotAVirtualTableError(table_id=table_id)
 
         try:
-            plan_bytes = self.resolve_virtual_flow_table(table_id, user_id=user_id).serialize()
+            if on_storage:
+                [target] = row_targets([table], user_id, "notebook")
+                plan_bytes = scan_object_storage_table(table, target, user_id, table.name).serialize()
+            else:
+                plan_bytes = self.resolve_virtual_flow_table(table_id, user_id=user_id).serialize()
         except (CatalogError, ValueError):
             raise
         except pl.exceptions.PolarsError as e:
             # e.g. a circular view leaves an unregistered relation behind.
             raise ValueError(f"Could not resolve virtual table '{table.name}': {_scrub_abs_paths(str(e))}") from e
 
-        key = hashlib.sha256(plan_bytes).hexdigest()
+        # A scan's encrypted credential differs on every build, so a table on object storage names its own file.
+        key = hashlib.sha256(f"{table_id}:{user_id}".encode() if on_storage else plan_bytes).hexdigest()
         try:
             result = trigger_resolve_virtual_table(
                 table_id, plan_bytes, key, target="kernel_shared", worker_url=registry.worker_url()

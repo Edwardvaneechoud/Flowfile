@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.auth.jwt import get_internal_token
+from flowfile_core.catalog import table_sources
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import Kernel
 from shared.storage_config import storage
@@ -164,11 +165,12 @@ def kernel_of_user_1():
         db.commit()
 
 
-def test_a_notebook_cell_reads_a_hub_table(hub, kernel_of_user_1, running_worker):
+def test_a_notebook_cell_reads_a_table_on_object_storage(hub, orders, kernel_of_user_1, running_worker):
+    table_id, _, vended = orders
     kernel = TestClient(main.app)
 
     resp = kernel.post(
-        f"/catalog/tables/{-hub.orders['id']}/materialize",
+        f"/catalog/tables/{table_id}/materialize",
         headers={"X-Internal-Token": get_internal_token(), "X-Kernel-Id": kernel_of_user_1},
     )
 
@@ -176,4 +178,20 @@ def test_a_notebook_cell_reads_a_hub_table(hub, kernel_of_user_1, running_worker
     result = resp.json()
     assert result["row_count"] == 5
     assert pl.read_ipc(result["path"]).sort("id").to_dict(as_series=False) == e2e.ORDERS
-    assert _vended_reads(hub.fake) == [[hub.sales["id"]]]
+    assert _vended_reads(hub.fake) == vended
+
+
+def test_a_notebook_kernel_walks_to_a_hub_table_and_finds_it_a_view(hub, kernel_of_user_1, monkeypatch):
+    monkeypatch.setattr(table_sources, "_listed", {})
+    kernel = TestClient(main.app)
+    kernel.headers = {"X-Internal-Token": get_internal_token(), "X-Kernel-Id": kernel_of_user_1}
+
+    root = next(row for row in kernel.get("/catalog/namespaces").json() if row["id"] < 0)
+    [schema] = kernel.get("/catalog/namespaces", params={"parent_id": root["id"]}).json()
+    [listed] = kernel.get("/catalog/tables", params={"namespace_id": schema["id"]}).json()
+    named = kernel.get("/catalog/tables/resolve", params={"q": hub.orders["qualified_name"]}).json()["table"]
+    in_schema = kernel.get("/catalog/tables/resolve", params={"q": "orders", "namespace_id": schema["id"]}).json()
+
+    assert listed["id"] == named["id"] == in_schema["table"]["id"] == -hub.orders["id"]
+    assert listed["table_type"] == named["table_type"] == "virtual"
+    assert hub.fake.vend_calls == []
