@@ -143,6 +143,14 @@
         </template>
       </el-dropdown>
     </div>
+    <span
+      v-if="hasOpenFlow && flowSettings?.save_note"
+      class="catalog-note"
+      data-testid="catalog-note"
+      :title="flowSettings.save_note"
+    >
+      {{ flowSettings.save_note }}
+    </span>
   </div>
 
   <!-- Hidden run-button instance kept solely to back loadFlowSettings()'s
@@ -552,7 +560,7 @@ const handleSaveDialogComplete = async (flowId: number) => {
 const recordRelocatedFlowAsRecent = async (previousPath: string | null) => {
   await loadFlowSettings();
   const newPath = flowSettings.value?.path;
-  if (!newPath) return;
+  if (!newPath || flowSettings.value?.working_copy) return;
   // Label from the registration: flow_settings.name is the on-disk stem after a save.
   const registration = catalogStore.allFlows.find((f) => f.flow_path === newPath);
   recordFlow({ path: newPath, name: registration?.name, catalogId: registration?.id });
@@ -588,6 +596,9 @@ const openSaveModal = async () => {
       projectStore.onSourceChanged();
       // A flow kept in a catalog elsewhere says where the save went, in that catalog's words.
       const saved = await getFlowSettings(nodeStore.flow_id);
+      if (flowSettings.value && saved?.flow_id === flowSettings.value.flow_id) {
+        flowSettings.value.save_note = saved.save_note ?? null;
+      }
       if (saved?.save_note) ElMessage.success({ message: saved.save_note, duration: 6000 });
       else ElMessage.success("Flow saved");
       tutorialStore.notify({ type: "flow-saved", flowId: nodeStore.flow_id });
@@ -678,6 +689,15 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.catalog-note {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
 .action-buttons {
   padding-left: var(--spacing-5);
   display: flex;

@@ -54,6 +54,8 @@ export interface FlowSettings {
   display_name?: string | null;
   // What the catalog a flow came from said of its last save, shown as given; null for a flow saved as a file.
   save_note?: string | null;
+  // The flow's file is this install's working copy of a flow a remote catalog keeps: never shown or reopened.
+  working_copy?: boolean;
   validate_settings: boolean;
 }
 

@@ -24,6 +24,7 @@
         <template #content>
           <div>{{ flow.display_name || flow.name }}</div>
           <div v-if="isDirty(flow.flow_id)" class="tooltip-dirty-line">● Unsaved changes</div>
+          <div v-if="flow.save_note" class="tooltip-dirty-line">{{ flow.save_note }}</div>
         </template>
         <div
           class="flow-tab"

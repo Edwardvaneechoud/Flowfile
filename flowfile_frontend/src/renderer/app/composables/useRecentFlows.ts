@@ -15,7 +15,11 @@ export interface RecentFlow {
 const STORAGE_KEY = "flowfile.recentFlows";
 export const MAX_RECENT = 8;
 
-export function upsertRecent(list: RecentFlow[], entry: RecentFlow, max = MAX_RECENT): RecentFlow[] {
+export function upsertRecent(
+  list: RecentFlow[],
+  entry: RecentFlow,
+  max = MAX_RECENT,
+): RecentFlow[] {
   return [entry, ...list.filter((f) => f.path !== entry.path)].slice(0, max);
 }
 
@@ -179,10 +183,18 @@ export function useRecentFlows() {
   // Centralizes the path-guard + entry shape so the create-flow recorders in
   // HomeView and HeaderButtons can't drift apart.
   function recordFlowFromSettings(
-    settings: { path?: string | null; name?: string; display_name?: string | null } | null | undefined,
+    settings:
+      | {
+          path?: string | null;
+          name?: string;
+          display_name?: string | null;
+          working_copy?: boolean;
+        }
+      | null
+      | undefined,
     catalogRef?: string,
   ): void {
-    if (!settings?.path) return;
+    if (!settings?.path || settings.working_copy) return;
     // display_name is the registration's name; settings.name is the file stem.
     const name = settings.display_name?.trim() || settings.name;
     recordFlow({ path: settings.path, name, catalogRef });
