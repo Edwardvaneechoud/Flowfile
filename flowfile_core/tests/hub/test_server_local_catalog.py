@@ -29,6 +29,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database import models as db_models
 from flowfile_core.database.init_db import create_default_catalog_namespace
 from flowfile_core.database.models import FlowRegistration, FlowRun
+from flowfile_core.flowfile.manage import io_flowfile
 from flowfile_core.routes import routes
 from shared.storage_config import storage
 from shared.tests.hub_jwks import HubSigner
@@ -168,7 +169,8 @@ def test_a_flow_opened_from_the_hub_is_registered_nowhere_here_by_its_open_its_s
     assert answered.status_code == 200, answered.text
     flow_path = Path(answered.json()["flow_path"])
     paths.append(flow_path)
-    assert flow_path.parent == storage.flows_directory / "hub" / str(person) and flow_path.exists()
+    assert flow_path.parent == io_flowfile.working_copy_directory() / str(person) and flow_path.exists()
+    assert not flow_path.is_relative_to(storage.flows_directory)
     assert registrations() == []
 
     flow_id = routes.flow_file_handler.import_flow(flow_path, user_id=person)
@@ -294,3 +296,64 @@ def test_a_flow_from_an_older_hub_and_a_flow_made_here_are_saved_as_files_with_n
         settings = client.get("/flow_settings", params={"flow_id": saved_id}, headers=bearer(access_token))
         assert settings.json()["save_note"] is None
     assert hub.kept == {}
+
+
+def flow_settings(flow_id: int, access_token: str) -> dict:
+    answered = client.get("/flow_settings", params={"flow_id": flow_id}, headers=bearer(access_token))
+    assert answered.status_code == 200, answered.text
+    return answered.json()
+
+
+def test_the_working_copy_is_the_hubs_content_at_every_open_named_as_the_hub_names_it_and_gone_at_close(
+    hub, username, opened
+):
+    flow_ids, paths = opened
+    person, access_token = sign_in(hub, username)
+    flow_id, flow_uuid = open_from_hub(hub, access_token, person, opened)
+    working_copy = paths[-1]
+
+    settings = flow_settings(flow_id, access_token)
+
+    assert (settings["name"], settings["working_copy"], settings["save_note"]) == ("demo-flow", True, None)
+
+    working_copy.write_text(working_copy.read_text(encoding="utf-8").replace("demo-flow", "scribbled"), encoding="utf-8")
+    assert "scribbled" in working_copy.read_text(encoding="utf-8")
+    hub.kept[(flow_uuid, test_server_run_report.UID)] = {
+        "base_version": test_dispatch.VERSION,
+        "definition": test_dispatch.definition(),
+    }
+    again = client.post("/hub_client/open", json={"flow_uuid": flow_uuid}, headers=bearer(access_token))
+
+    assert (again.status_code, again.json()) == (200, {"flow_path": str(working_copy), "note": YOURS}), again.text
+    assert routes.flow_file_handler.import_flow(working_copy, user_id=person) == flow_id
+    reopened = flow_settings(flow_id, access_token)
+    assert (reopened["name"], reopened["save_note"]) == ("demo-flow", YOURS)
+    sessions = client.get("/active_flowfile_sessions/", headers=bearer(access_token)).json()
+    assert [(s["save_note"], s["working_copy"]) for s in sessions if s["flow_id"] == flow_id] == [(YOURS, True)]
+
+    saved = client.post("/save_flow", params={"flow_id": flow_id}, headers=bearer(access_token))
+
+    assert saved.status_code == 200, saved.text
+    assert flow_settings(flow_id, access_token)["save_note"] == KEPT
+
+    closed = client.post("/editor/close_flow/", params={"flow_id": flow_id}, headers=bearer(access_token))
+
+    assert closed.status_code == 200, closed.text
+    flow_ids.remove(flow_id)
+    assert not working_copy.exists()
+
+
+def test_a_flow_made_on_the_server_is_no_working_copy_and_its_file_stays_when_it_is_closed(
+    hub, username, open_flow, opened
+):
+    flow_ids, paths = opened
+    person, access_token = sign_in(hub, username)
+    flow = open_flow(person, "made_on_the_server")
+    path = Path(flow.flow_settings.path)
+    paths.append(path)
+    client.post("/save_flow", params={"flow_id": flow.flow_id}, headers=bearer(access_token))
+
+    assert flow_settings(flow.flow_id, access_token)["working_copy"] is False
+    client.post("/editor/close_flow/", params={"flow_id": flow.flow_id}, headers=bearer(access_token))
+
+    assert path.exists()

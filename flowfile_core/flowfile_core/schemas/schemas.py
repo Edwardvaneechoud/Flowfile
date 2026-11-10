@@ -267,6 +267,7 @@ class FlowSettingsResponse(FlowSettings):
     has_unsaved_changes: bool = False
     display_name: str | None = None
     save_note: str | None = None
+    working_copy: bool = False
 
 
 class RawLogInput(BaseModel):

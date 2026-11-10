@@ -16,6 +16,22 @@ except ImportError:
     yaml = None
 
 
+def working_copy_directory() -> Path:
+    """Where this install keeps the file of an open flow that a remote catalog holds.
+
+    A cache, never a place a person saves in or opens from: the file is written from what the catalog answers at
+    every open, read by that open and written by the flow's saves while it is open, and removed when it is closed.
+    """
+    return storage.temp_directory_for_flows / "remote_catalog"
+
+
+def is_working_copy(flow_path: Path | str | None) -> bool:
+    """Whether ``flow_path`` is such a file (``working_copy_directory``)."""
+    if not flow_path:
+        return False
+    return Path(flow_path).resolve().is_relative_to(working_copy_directory().resolve())
+
+
 def _validate_flow_path(flow_path: Path) -> Path:
     """Validate flow path is within allowed directories or is an explicit absolute path."""
     resolved = flow_path.resolve()
@@ -314,7 +330,7 @@ def _resolve_flow_name(flow_path: Path, stored_name: str | None) -> str:
     file still renames the flow.
     """
     name = (stored_name or "").strip()
-    if name and storage.is_scratch_flow_path(str(flow_path)):
+    if name and (storage.is_scratch_flow_path(str(flow_path)) or is_working_copy(flow_path)):
         return name
     return flow_path.stem
 

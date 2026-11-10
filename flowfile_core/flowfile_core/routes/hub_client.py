@@ -60,11 +60,12 @@ from flowfile_core.flowfile.catalog_helpers import (
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+from flowfile_core.flowfile.manage.io_flowfile import working_copy_directory
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.hub_client import client, node_addresses, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.routes.compute_backends import ComputeBackendOut, listed_backends
-from flowfile_core.routes.routes import get_flow_or_404
+from flowfile_core.routes.routes import flow_file_handler, get_flow_or_404
 from flowfile_core.schemas import schemas
 from shared._version import get_version
 from shared.storage_config import registered_flow_path, storage
@@ -508,6 +509,23 @@ def _local_copy_path(flow_uuid: str, name: str, current_user) -> tuple[str, str]
     return str(folder / f"{stem}_{flow_uuid[:8]}.yaml"), holder
 
 
+def _working_copy_path(flow_uuid: str, current_user) -> str:
+    """The caller's working copy of this hub flow where the hub's catalog is the catalog of record: a file in the
+    install's cache, named by the flow's uuid, one per person."""
+    return str(working_copy_directory() / str(current_user.id) / f"{flow_uuid}.yaml")
+
+
+def _drop_earlier_copy(flow_uuid: str, name: str, current_user, hub_url: str, token: str, checked_out: dict) -> None:
+    """Remove the file an earlier open left under ``flows/hub`` for a flow that is now opened as a working copy,
+    unless it holds edits the hub does not have or is a registered flow's file."""
+    earlier, holder = _local_copy_path(flow_uuid, name, current_user)
+    if holder == "caller" or not os.path.exists(earlier):
+        return
+    local, _ = _read_local_copy(earlier)
+    if not _has_unpublished_edits(local, hub_url, token, checked_out):
+        Path(earlier).unlink(missing_ok=True)
+
+
 def _local_flows_namespace_id() -> int | None:
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
@@ -579,7 +597,11 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     several people use, each person has a copy of their own: where another person's registration holds the uuid,
     the caller's file is registered beside it under an id of its own, and the other's is never named or written.
     Where this install's own catalog is not offered (``table_sources.local_catalog_offered``: a server that joined the
-    hub with keys of its own) the copy is a file only and nothing is registered here: the flow's place is the hub's.
+    hub with keys of its own) nothing is registered here and the flow's place is the hub's: the file is a working copy
+    in the install's cache (``io_flowfile.working_copy_directory``), written over from what the hub answers at every
+    open, whatever it held, and removed when the flow is closed; only for a hub that keeps no saved content (its answer
+    has no ``draft``) is it still a file under ``flows/hub``, asked about as below. The hub's ``note`` is kept for the
+    flow that the open of the file makes (``FlowfileHandler.note_at_open``), where a save's note replaces it.
 
     A copy that exists already is written over when nothing is lost by it: it still equals the hub version it came
     from. One with edits that were not published is 409 ``local_copy_exists`` with its path, unless ``replace`` is
@@ -591,8 +613,14 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         raise _hub_error(e) from e
 
-    flow_path, holder = _local_copy_path(checked_out["flow_uuid"], checked_out["name"], current_user)
     registers = table_sources.local_catalog_offered()
+    # A hub that answers ``draft`` keeps what the person saves; one that does not leaves the file as its only home.
+    cached = not registers and "draft" in checked_out
+    if not cached:
+        flow_path, holder = _local_copy_path(checked_out["flow_uuid"], checked_out["name"], current_user)
+    else:
+        flow_path, holder = _working_copy_path(checked_out["flow_uuid"], current_user), "nobody"
+        _drop_earlier_copy(checked_out["flow_uuid"], checked_out["name"], current_user, hub_url, token, checked_out)
     namespace_id = _local_flows_namespace_id() if holder == "nobody" and registers else None
     try:
         require_flow_save_permitted(flow_path, namespace_id, current_user)
@@ -605,7 +633,7 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     existing_id = None
     if os.path.exists(flow_path):
         local, existing_id = _read_local_copy(flow_path)
-        if not request.replace and _has_unpublished_edits(local, hub_url, token, checked_out):
+        if not cached and not request.replace and _has_unpublished_edits(local, hub_url, token, checked_out):
             raise HTTPException(status_code=409, detail={"kind": "local_copy_exists", "flow_path": flow_path})
 
     document = schemas.FlowfileData.model_validate(checked_out["definition"])
@@ -615,6 +643,8 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     document.flowfile_settings.hub_origin = schemas.HubOrigin(
         hub_url=hub_url, flow_uuid=checked_out["flow_uuid"], version=checked_out["version"]
     )
+    if cached:
+        document.flowfile_name = checked_out["name"]
 
     if holder == "nobody" and registers:
         try:
@@ -638,4 +668,5 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
         yaml.dump(document.model_dump(mode="json"), f, default_flow_style=False, sort_keys=False, allow_unicode=True)
     if holder == "another" and registers:
         auto_register_flow(flow_path, checked_out["name"], current_user.id)
+    flow_file_handler.note_at_open(flow_path, checked_out.get("note"))
     return HubOpenOut(flow_path=flow_path, note=checked_out.get("note"))
