@@ -667,3 +667,8 @@ def test_a_schedule_naming_the_worker_runs_on_the_session_worker(tmp_path, monke
 
     success, nodes, enabled, _log = _run_now(flow_path, "worker", monkeypatch)
     assert (success, nodes, enabled) == (True, 2, True)
+
+    monkeypatch.setenv("FLOWFILE_WORKER_URL", closed_url())
+    success, _nodes, enabled, log = _run_now(flow_path, "worker", monkeypatch)
+    assert (success, enabled) == (False, True), log
+    assert "Could not reach the worker" in log, log

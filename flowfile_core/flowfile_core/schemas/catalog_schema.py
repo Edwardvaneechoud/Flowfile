@@ -7,7 +7,7 @@ run history, favorites and follows.
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas.sharing_schema import AccessInfo
@@ -993,6 +993,17 @@ class TableFavoriteOut(BaseModel):
 # ==================== Schedule Schemas ====================
 
 
+def _schedule_backend(value: str | None) -> str | None:
+    """A schedule's backend becomes the value of the run command's ``--backend``, so it may not read as an option."""
+    stripped = (value or "").strip()
+    if stripped.startswith("-") or len(stripped) > 255:
+        raise ValueError("A backend id cannot start with '-' and is at most 255 characters long.")
+    return value
+
+
+ScheduleBackend = Annotated[str | None, AfterValidator(_schedule_backend)]
+
+
 class FlowScheduleCreate(BaseModel):
     registration_id: int
     schedule_type: Literal["interval", "cron", "table_trigger", "table_set_trigger"]
@@ -1004,7 +1015,7 @@ class FlowScheduleCreate(BaseModel):
     enabled: bool = True
     name: str | None = None
     description: str | None = None
-    backend: str | None = None
+    backend: ScheduleBackend = None
 
 
 class FlowScheduleUpdate(BaseModel):
@@ -1014,7 +1025,7 @@ class FlowScheduleUpdate(BaseModel):
     cron_timezone: str | None = None
     name: str | None = None
     description: str | None = None
-    backend: str | None = None
+    backend: ScheduleBackend = None
 
 
 class FlowScheduleOut(BaseModel):

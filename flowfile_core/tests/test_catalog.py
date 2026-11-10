@@ -3527,17 +3527,33 @@ class TestScheduleBackend:
         assert client.post(f"/catalog/schedules/{plain['id']}/run-now").status_code == 200
         assert calls[-1]["backend"] is None
 
-    def test_push_trigger_passes_the_backend(self, monkeypatch):
+    @pytest.mark.parametrize("backend", ["worker:team", None])
+    def test_push_trigger_passes_the_backend_and_none_without_one(self, monkeypatch, backend):
         calls = self._spawns(monkeypatch)
         _schema_id, _flow_id, table_id, schedule_id, parquet_path = TestPushTableTrigger._setup_table_and_schedule()
         with get_db_context() as db:
-            db.get(FlowSchedule, schedule_id).backend = "worker:team"
+            db.get(FlowSchedule, schedule_id).backend = backend
             db.commit()
 
         with get_db_context() as db:
             CatalogService(SQLAlchemyCatalogRepository(db)).overwrite_table_data(table_id, parquet_path)
 
-        assert [kw["backend"] for kw in calls] == ["worker:team"]
+        assert [kw["backend"] for kw in calls] == [backend]
+
+    @pytest.mark.parametrize("backend", ["-x", " --port=1", "w" * 256])
+    def test_a_backend_that_reads_as_an_option_or_is_too_long_is_refused(self, backend):
+        flow_id = TestCronSchedules._register_flow()
+        body = {"registration_id": flow_id, "schedule_type": "interval", "interval_seconds": 3600}
+        refused = client.post("/catalog/schedules", json={**body, "backend": backend})
+        assert refused.status_code == 422, refused.text
+        assert "cannot start with '-'" in refused.json()["detail"][0]["msg"]
+        assert client.get("/catalog/schedules", params={"registration_id": flow_id}).json() == []
+
+        sched_id = client.post("/catalog/schedules", json={**body, "backend": "worker:team"}).json()["id"]
+        refused = client.put(f"/catalog/schedules/{sched_id}", json={"backend": backend})
+        assert refused.status_code == 422, refused.text
+        with get_db_context() as db:
+            assert db.get(FlowSchedule, sched_id).backend == "worker:team"
 
 
 # Catalog table storage-deletion tests

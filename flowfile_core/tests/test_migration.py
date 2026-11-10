@@ -1342,12 +1342,27 @@ class TestFlowSchedulesBackendMigration:
         db_path = tmp_path / "catalog.db"
         _run_migration(db_path, monkeypatch)
         cfg = _get_alembic_config()
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO flow_schedules (registration_id, owner_id, enabled, schedule_type, interval_seconds, "
+                    "backend, created_at, updated_at) VALUES (1, 1, 1, 'interval', 60, 'worker:team', "
+                    "'2026-11-01 00:00:00', '2026-11-01 00:00:00')"
+                )
+            )
+            conn.commit()
+        engine.dispose()
 
         command.downgrade(cfg, "041")
         assert "backend" not in self._columns(db_path)
 
         command.upgrade(cfg, "042")
-        assert "backend" in self._columns(db_path)
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT interval_seconds, backend FROM flow_schedules")).all()
+        engine.dispose()
+        assert [tuple(r) for r in rows] == [(60, None)]
 
     def test_upgrade_is_guarded_when_the_column_already_exists(self, tmp_path, monkeypatch):
         from alembic import command
