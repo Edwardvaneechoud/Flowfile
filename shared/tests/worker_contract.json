@@ -1,5 +1,5 @@
 {
-  "protocol_version": 2,
+  "protocol_version": 3,
   "entries": {
     "catalog cloud_storage_connections": "d07b34d88d5d98f4dcefc5379e59f4654fa069a22f353e0d23453d3c802192e9",
     "operation cloud_write": "95757474fb2916fc076f766f5da5484db9bd508e75605e677917040a091b1079",
@@ -75,8 +75,8 @@
     "route POST /submit_query/": "6c1e087886fa59aba2b72ff6d8167f5cd2ea469cb7553d5e628ae10b078421a9",
     "route POST /train_ml_model": "f9676b29f1c45ea323e1e905ae13f722093cd18f7ddb0ed601e040de14ab5704",
     "route POST /v1/jobs/{job_id}/cancel": "a74de59fee1b82df0544a71dc1dfcafc6acb4ced99f1f6d5e6710dcf9a36ab8c",
-    "route POST /v1/results/{result_id}/export": "9fe905b9a1cf03425c5c1f340babcc321aca25e42e360b3c2ee8073e05cc2501",
-    "route POST /v1/results/{result_id}/import": "792490f079295462c0c6739d396ddd19425e99a2166b09efd14686e49a82256e",
+    "route POST /v1/results/{result_id}/export": "8c252bc211dad6af0bedb5cd929d3810a7080dbf4190223fe9a76797d4053b25",
+    "route POST /v1/results/{result_id}/import": "c775b5e44e0af68964fdadc263513979a1dc88834dae45388156bdba1425b630",
     "route POST /v1/submit": "8ca057e16048ceb02afeee525e0b9f1548ff71a303bbc9a1cf2ab73ea32f00b8",
     "route POST /write_data_to_cloud/": "c5a36f1ea5677f30a8a1bf2439018eba5ec5150ac1f67fc4a73e3e6338e6f480",
     "route POST /write_results/": "328a7ba38f9f83c2d2d0ced9127c60f18aaeed8c56d0a5a1541672be99f2faf5",

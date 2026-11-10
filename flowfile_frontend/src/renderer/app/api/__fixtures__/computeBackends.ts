@@ -5,7 +5,7 @@ export const capabilities = (overrides: Partial<WorkerCapabilities> = {}): Worke
   app_version: "0.23.0",
   polars_version: "1.43.2",
   python_version: "3.12.15",
-  protocol_version: 2,
+  protocol_version: 3,
   platform: "linux-x86_64",
   polars_runtime: "64",
   plugins: { polars_ds: "0.10.0", polars_grouper: "0.6.0" },
