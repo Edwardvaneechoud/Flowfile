@@ -17,10 +17,11 @@ import polars as pl
 
 from flowfile_core.catalog.exceptions import TableNotFoundError
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, resolve_for_namespace, resolve_for_table
+from flowfile_core.catalog.text_utils import reads_other
 
 if TYPE_CHECKING:
     from flowfile_core.database.models import CatalogTable
-    from flowfile_core.schemas.catalog_schema import CatalogTableOut
+    from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceTree
 
 LOCAL = "local"
 
@@ -52,6 +53,10 @@ class RemoteCatalog(Protocol):
     def read_targets(self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str) -> list[Any]:
         """The target of each of ``tables``, in order, for one read outside a run that ``purpose`` names (a preview,
         a query): asked now, for a credential that does not last. Each ``base`` is its table's parent."""
+
+    def tree(self, user_id: int | None) -> list[NamespaceTree]:
+        """The catalogs ``user_id`` sees there, each with its schemas and their tables; empty when it cannot be
+        asked."""
 
 
 _remotes: dict[str, RemoteCatalog] = {}
@@ -129,6 +134,30 @@ def row_targets(
         found[table.id] if table.id in found else resolve_for_table(table.file_path, table.namespace_id)
         for table in tables
     ]
+
+
+def remote_sql_tables(query: str, user_id: int | None, own: set[str]) -> dict[str, CatalogTableOut]:
+    """The tables of the remote catalogs by their SQL names, for a ``query`` that reads a name ``own`` does not hold.
+
+    ``own`` are the names this install's catalog answers, which win. A remote table is named as a local one is:
+    ``catalog.schema.table`` always, ``schema.table`` and the bare name where the remote catalogs have one table by
+    it. A query over this install's own tables asks no remote catalog and gets none.
+    """
+    if user_id is None or not _remotes or not reads_other(query, own):
+        return {}
+    full: dict[str, CatalogTableOut] = {}
+    short: dict[str, dict[int, CatalogTableOut]] = {}
+    for catalog in _remotes.values():
+        for root in catalog.tree(user_id):
+            for holder in (root, *root.children):
+                for table in holder.tables:
+                    parts = [root.name, table.name] if holder is root else [root.name, holder.name, table.name]
+                    full[".".join(parts)] = table
+                    for name in (".".join(parts[1:]), table.name):
+                        short.setdefault(name, {})[table.id] = table
+    names = {name: next(iter(found.values())) for name, found in short.items() if len(found) == 1}
+    names.update(full)
+    return {name: table for name, table in names.items() if name not in own}
 
 
 def table_target(
