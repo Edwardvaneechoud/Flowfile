@@ -6,7 +6,6 @@ The join runs against ``FakeJoinHub`` over real HTTP; the sync through ``/hub_cl
 ``tests/hub_client``. ``hub_node.json`` lives under the test's ``tmp_path``, never in the storage dir.
 """
 
-import errno
 import json
 import logging
 import multiprocessing
@@ -410,6 +409,13 @@ def held():
         sock.close()
 
 
+def in_use_reason(port: int) -> str:
+    """The OS's own reason a second bind of the held ``port`` on 127.0.0.1 is refused (its wording differs per OS)."""
+    with socket.socket() as sock, pytest.raises(OSError) as refused:
+        sock.bind(("127.0.0.1", port))
+    return refused.value.strerror
+
+
 def named(monkeypatch) -> None:
     """This machine's name is ``team-7.example.com``, so no lookup is asked of the network."""
     monkeypatch.setattr(hub_node.socket, "gethostname", lambda: "team-7.example.com")
@@ -460,7 +466,7 @@ def test_a_core_whose_port_is_in_use_exits_1_before_any_request_and_keeps_its_to
         main.run(host="127.0.0.1", port=port if given_by == "run" else None)
 
     assert exited.value.code == 1
-    assert f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}" in caplog.text
+    assert f"Cannot serve on 127.0.0.1:{port}: {in_use_reason(port)}" in caplog.text
     assert join_hub.calls == []
     assert serving == []
     assert hub_node.join(join_hub.url, token, name="team-1", worker_url="http://w:1")[0].name == "team-1"

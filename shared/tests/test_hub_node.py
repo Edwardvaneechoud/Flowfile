@@ -2,7 +2,6 @@
 storage dir a node that joins must have, the port it binds, the address it gives, and the heartbeat that tells the hub
 the node is up."""
 
-import errno
 import json
 import logging
 import os
@@ -653,6 +652,13 @@ def held():
         sock.close()
 
 
+def in_use_reason(port: int) -> str:
+    """The OS's own reason a second bind of the held ``port`` on 127.0.0.1 is refused (its wording differs per OS)."""
+    with socket.socket() as sock, pytest.raises(OSError) as refused:
+        sock.bind(("127.0.0.1", port))
+    return refused.value.strerror
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -687,7 +693,7 @@ def test_a_node_whose_port_is_in_use_exits_1_with_the_sentence_before_any_reques
 
     assert exited.value.code == 1
     assert [record.getMessage() for record in caplog.records] == [
-        f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}"
+        f"Cannot serve on 127.0.0.1:{port}: {in_use_reason(port)}"
     ]
     assert join_hub.calls == []
 
