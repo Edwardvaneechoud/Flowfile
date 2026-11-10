@@ -31,7 +31,7 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.tables import TableService
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
+from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_table, serialized_frame_uses_cloud
 from flowfile_core.catalog.text_utils import (
     hash_source_versions,
     is_table_reference,
@@ -401,7 +401,7 @@ class VirtualTableService:
             return None
         if t.file_path and _is_cloud_uri(t.file_path):
             # The resolved frame is shipped to the worker, so the credentials must not sit in the plan.
-            return pl.scan_delta(t.file_path, **resolve_for_namespace(t.namespace_id).scan_kwargs(user_id))
+            return pl.scan_delta(t.file_path, **resolve_for_table(t.file_path, t.namespace_id).scan_kwargs(user_id))
         if t.file_path and is_delta_table(Path(t.file_path)):
             return pl.scan_delta(t.file_path)
         return None

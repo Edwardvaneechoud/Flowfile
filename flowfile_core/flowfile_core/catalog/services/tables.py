@@ -50,6 +50,7 @@ from flowfile_core.catalog.storage_backend import (
     join_catalog_uri,
     locate_for_namespace,
     resolve_for_namespace,
+    resolve_for_table,
 )
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
 from flowfile_core.database.models import CatalogCdcCursor, CatalogNamespace, CatalogTable, TableFavorite
@@ -954,14 +955,14 @@ class TableService:
             if missing:
                 raise ValueError(f"z_order_columns not in table schema: {missing}")
 
-        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
-        storage_options = target.storage_options if target else None
+        target = resolve_for_table(data_path, table.namespace_id)
+        storage_options = target.storage_options if is_cloud else None
 
         if uses_worker():
             result = trigger_optimize_catalog_table(
                 _catalog_table_dir_name(data_path),
                 z_order_columns,
-                storage=target.to_worker_payload() if target else None,
+                storage=target.to_worker_payload(),
                 worker_url=registry.worker_url(),
             )
             metrics, size_bytes = result.get("metrics", {}), result.get("size_bytes")
@@ -998,15 +999,15 @@ class TableService:
             if at_risk:
                 raise CdcCursorsAtRiskError(at_risk)
 
-        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
-        storage_options = target.storage_options if target else None
+        target = resolve_for_table(data_path, table.namespace_id)
+        storage_options = target.storage_options if is_cloud else None
 
         if uses_worker():
             result = trigger_vacuum_catalog_table(
                 _catalog_table_dir_name(data_path),
                 retention_hours,
                 dry_run,
-                storage=target.to_worker_payload() if target else None,
+                storage=target.to_worker_payload(),
                 worker_url=registry.worker_url(),
             )
             files, size_bytes = result.get("files_removed", []), result.get("size_bytes")
@@ -1054,10 +1055,8 @@ class TableService:
         return str(path)
 
     def _cdc_storage_options(self, table: CatalogTable) -> dict[str, str] | None:
-        if not table.file_path or not _is_cloud_uri(table.file_path):
-            return None
-        target = resolve_for_namespace(table.namespace_id)
-        return target.storage_options if target else None
+        target = resolve_for_table(table.file_path, table.namespace_id)
+        return target.storage_options if target.is_cloud else None
 
     def _live_delta_version(self, table: CatalogTable) -> int | None:
         """Live Delta head, or ``None`` when the table has no readable Delta log."""
@@ -1214,7 +1213,7 @@ class TableService:
             raise ValueError(f"New columns already exist in the table: {colliding}")
 
         is_cloud = _is_cloud_uri(data_path)
-        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
+        target = resolve_for_table(data_path, table.namespace_id)
         commit_metadata = None
         if edited_by:
             commit_metadata = {"flowfile_user": edited_by, "flowfile_operation": "catalog_table_edit"}
@@ -1236,7 +1235,7 @@ class TableService:
                         "delete_keys": delete_keys,
                         "commit_metadata": commit_metadata,
                     },
-                    storage=target.to_worker_payload() if target else None,
+                    storage=target.to_worker_payload(),
                     worker_url=registry.worker_url(),
                 )
             else:
@@ -1251,7 +1250,7 @@ class TableService:
                         new_columns=new_columns,
                         delete_keys=delete_keys,
                         expected_version=expected_version,
-                        storage_options=(target.storage_options or None) if target else None,
+                        storage_options=target.storage_options or None,
                         commit_metadata=commit_metadata,
                     )
                 except DeltaEditStaleError as e:
@@ -1301,7 +1300,7 @@ class TableService:
             raise ValueError(f"Column '{column_name}' already exists in the table")
 
         is_cloud = _is_cloud_uri(data_path)
-        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
+        target = resolve_for_table(data_path, table.namespace_id)
 
         # The gate of apply_table_edits: bare directory names are unambiguous only for managed tables.
         offload = uses_worker() and (is_cloud or _is_managed_table_path(data_path))
@@ -1313,7 +1312,7 @@ class TableService:
                     table_id,
                     column_name,
                     expected_version=expected_version,
-                    storage=target.to_worker_payload() if target else None,
+                    storage=target.to_worker_payload(),
                     worker_url=registry.worker_url(),
                 )
             else:
@@ -1324,7 +1323,7 @@ class TableService:
                         data_path,
                         column_name=column_name,
                         expected_version=expected_version,
-                        storage_options=(target.storage_options or None) if target else None,
+                        storage_options=target.storage_options or None,
                     )
                 except DeltaEditStaleError as e:
                     raise StaleWriteError("catalog_table", table_id, expected=e.expected, current=e.current) from e

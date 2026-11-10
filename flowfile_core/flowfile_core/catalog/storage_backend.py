@@ -200,11 +200,11 @@ def resolve_for_namespace(namespace_id: int | None, *, db: Session | None = None
 
 
 def resolve_for_table(file_path: str | None, namespace_id: int | None) -> CatalogStorageTarget:
-    """Resolve the storage of an existing table: where its data lives and how a plan or the worker gets in.
+    """The storage of an existing table's data, as the reads and maintenance that start from its row ask it.
 
-    A table stays where it was written, so its own path decides. One on local disk answers the local target
-    whatever its catalog stores new tables in; one on object storage answers its namespace's storage
-    (:func:`resolve_for_namespace`, which the schema of a new table asks directly).
+    Previews, history, the catalog readers, optimize, vacuum, edits and change tracking: a path on local disk
+    answers the local target, one on object storage its namespace's (:func:`resolve_for_namespace`). Registration,
+    overwrite and ``CatalogTableOut.is_remote_storage`` still answer by namespace.
     """
     if not file_path or not _is_cloud_uri(file_path):
         return _local_target()
