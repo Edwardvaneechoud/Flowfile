@@ -18,6 +18,7 @@ from flowfile_core.database import models as db_models
 from flowfile_core.hub_client import delegation, node_addresses
 from flowfile_core.hub_client import session as hub_session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable
+from flowfile_core.hub_client.delegation import Delegation
 from shared import hub_node
 
 
@@ -49,6 +50,28 @@ def live(user_id: int) -> bool:
         return hub_session.access_token(user_id) is not None
     except (HubRefused, HubUnreachable, LookupError):
         return False
+
+
+def renew(user_id: int, sid: str | None) -> Delegation | None:
+    """What the hub answers when the sign-in ``sid`` of ``user_id`` is refreshed there now; ``None`` when the hub no
+    longer takes it or it is not the one kept here. ``HubUnreachable`` for a hub that does not answer."""
+    try:
+        return hub_session.refresh_delegation(user_id, sid)
+    except HubRefused:
+        return None
+
+
+def sign_out(user_id: int) -> None:
+    """End the sign-in through the hub of ``user_id``: revoked at the hub as far as it answers, and forgotten here.
+    Any other hub connection of the account is left as it is."""
+    stored = hub_session.load(user_id)
+    if stored is None or stored.get("kind") != "delegation":
+        return
+    try:
+        delegation.revoke(stored["hub_url"], hub_node.resolved().issuer, stored["refresh_token"])
+    except (HubRefused, HubUnreachable, LookupError) as e:
+        logger.warning("The hub was not told of a sign-out on this server: %s", e)
+    hub_session.clear(user_id)
 
 
 def sign_in(db: Session, token: str, user_id: int) -> SignedIn:

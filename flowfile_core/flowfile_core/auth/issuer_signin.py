@@ -9,6 +9,7 @@ its caller says who the issuer is on this machine, who the person is there, and 
 import time
 from datetime import timedelta
 
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import issuer_accounts
@@ -55,6 +56,30 @@ def renew(db: Session, user: db_models.User, person: dict) -> None:
     user.full_name = person["full_name"]
     db.commit()
     invalidate_user_cache(user.username)
+
+
+def issuer_of(db: Session, user_id: int) -> str | None:
+    """The issuer the account ``user_id`` signs in through, ``None`` for an account of this server's own."""
+    mapping = db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user_id).first()
+    return None if mapping is None else mapping.issuer
+
+
+def forget(db: Session, user_id: int) -> None:
+    """Drop what maps the account ``user_id`` to an issuer's person, for the caller to commit: a reused rowid would
+    otherwise hand the mapping to the next account."""
+    db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user_id).delete(
+        synchronize_session=False
+    )
+
+
+def ended(issuer_name: str) -> HTTPException:
+    """The 401 of a session its issuer no longer vouches for: it ended there, or a later sign-in replaced it here, so
+    nothing is issued and the person signs in again."""
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=f"Your sign-in through {issuer_name} has ended; sign in again",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def session(user: db_models.User, sid: str | None, expires_in: int) -> dict:

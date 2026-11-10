@@ -16,12 +16,11 @@ from flowfile_core.auth.jwt import (
 )
 from flowfile_core.auth.models import ChangePassword, Token, User, UserCreate, UserUpdate
 from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash, validate_password, verify_password
-from flowfile_core.configs import logger
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
-from flowfile_core.hub_client import delegation, signin
 from flowfile_core.hub_client import session as hub_session
-from flowfile_core.hub_client.client import HubRefused, HubUnreachable
+from flowfile_core.hub_client import signin
+from flowfile_core.hub_client.client import HubUnreachable
 from shared import hub_node, hub_tokens
 
 router = APIRouter()
@@ -105,9 +104,9 @@ def refresh_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    mapping = db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user.id).first()
-    if mapping is not None:
-        refreshed = _refresh_through_hub(user.id, mapping.issuer, sid)
+    issuer = issuer_signin.issuer_of(db, user.id)
+    if issuer is not None:
+        refreshed = _refresh_through_hub(user.id, issuer, sid)
         issuer_signin.renew(db, user, refreshed.user)
         return issuer_signin.session(user, sid, refreshed.expires_in)
     _refuse_passwords_once_joined()
@@ -127,30 +126,20 @@ def logout(current_user: User = Depends(get_current_active_user)) -> None:
 
     Answers 204 whether or not the hub took the revocation. Any other hub connection of the account is left as it is.
     """
-    stored = hub_session.load(current_user.id)
-    if stored is None or stored.get("kind") != "delegation":
-        return None
-    try:
-        delegation.revoke(stored["hub_url"], hub_node.resolved().issuer, stored["refresh_token"])
-    except (HubRefused, HubUnreachable, LookupError) as e:
-        logger.warning("The hub was not told of a sign-out on this server: %s", e)
-    hub_session.clear(current_user.id)
+    signin.sign_out(current_user.id)
     return None
 
 
-def _refresh_through_hub(user_id: int, issuer: str, sid: str | None) -> delegation.Delegation:
+def _refresh_through_hub(user_id: int, issuer: str, sid: str | None) -> signin.Delegation:
     """Refresh the sign-in through the hub ``sid`` names at the hub and answer what the hub said; a 401 when the hub no
     longer takes it or it is not the one kept here for ``user_id``, a 502 when the hub does not answer.
     """
     try:
-        refreshed = hub_session.refresh_delegation(user_id, sid)
+        refreshed = signin.renew(user_id, sid)
     except HubUnreachable as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
-    except HubRefused:
-        refreshed = None
     if refreshed is None:
-        host = issuer_accounts.hub_host(hub_node.resolved().hub_url or issuer)
-        raise _refused(f"Your sign-in through {host} has ended; sign in again")
+        raise issuer_signin.ended(issuer_accounts.hub_host(hub_node.resolved().hub_url or issuer))
     return refreshed
 
 
@@ -381,9 +370,7 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
         synchronize_session=False
     )
     # A hub person's mapping and hub session go too: a reused rowid would otherwise hand both to the next account.
-    db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user_id).delete(
-        synchronize_session=False
-    )
+    issuer_signin.forget(db, user_id)
     hub_session.clear(user_id)
 
     # Notification channels hold an encrypted webhook credential and rules keep alerting
