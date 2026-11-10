@@ -28,6 +28,7 @@ from dataclasses import dataclass, field, replace
 import polars as pl
 from pydantic import SecretStr
 
+from flowfile_core.auth import issuer_accounts
 from flowfile_core.catalog import table_sources
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.flowfile.execution import registry
@@ -412,6 +413,11 @@ class _RunCatalog:
     def request(self, user_id: int | None, method: str, path: str, params: dict | None, body) -> tuple[int, object]:
         """A metadata request on a row of the hub's catalog, answered by the hub's same route (``catalog.relay``)."""
         return catalog.relay(user_id, method, path, params, body)
+
+    def of_record(self) -> bool:
+        """On a server that joined the hub with keys of its own the organisation's catalog is the hub's; a desktop
+        connected to a hub keeps its own beside it."""
+        return issuer_accounts.joined_with_keys() is not None
 
 
 table_sources.register_remote("hub", _RunCatalog())

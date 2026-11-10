@@ -101,6 +101,9 @@ class RemoteCatalog(Protocol):
         route, ids as this install shows them) as ``user_id``: its status and its answer, ``None`` for an empty one.
         Never raises: a catalog that cannot be asked answers a status and a ``detail`` of its client's own."""
 
+    def of_record(self) -> bool:
+        """Whether this catalog is the one people's work on this install is kept in, in place of the install's own."""
+
 
 _remotes: dict[str, RemoteCatalog] = {}
 
@@ -202,6 +205,16 @@ def merged_rows(user_id: int | None, path: str, local: list, row: type[BaseModel
         except (ValidationError, TypeError):
             continue
     return merged
+
+
+def local_catalog_offered() -> bool:
+    """Whether this install's own catalog is a place a person's work is saved or registered in.
+
+    It is unless a remote catalog says it is the catalog of record here (``RemoteCatalog.of_record``): then nothing
+    a person saves, opens from that catalog or publishes is registered in this install's own, whose existing rows
+    stay as they are, and the destinations a person is offered are the remote catalog's.
+    """
+    return not any(catalog.of_record() for catalog in _remotes.values())
 
 
 def has_its_record_here(executed_on: str | None) -> bool:

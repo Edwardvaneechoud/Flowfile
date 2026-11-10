@@ -33,7 +33,7 @@ from flowfile_core import change_feed, events, flow_file_handler
 
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
-from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository, table_sources
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.exceptions import (
     FlowExistsError,
@@ -476,12 +476,20 @@ def _resolve_run_identity(flow) -> tuple[int | None, str, str | None, str | None
     return reg_id, display_name, flow_path, flow_uuid
 
 
+def _kept_in_remote_catalog(flow) -> bool:
+    """Whether ``flow`` is a working copy of a flow a remote catalog keeps, on an install whose own catalog is not
+    offered: its runs are that catalog's flow's, so a run registers nothing here."""
+    came_from_elsewhere = getattr(flow.flow_settings, "hub_origin", None) is not None
+    return came_from_elsewhere and not table_sources.local_catalog_offered()
+
+
 def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tuple:
     """The pre-work of a tracked run: registration, the snapshot and the run record (phase 1)."""
     # Before execution, so kernel nodes (e.g. publish_global) can reference the registration.
     resolve_source_registration_id(flow)
     # A first run registers any unregistered flow, also one whose registration was deleted.
-    if user_id is not None and getattr(flow.flow_settings, "source_registration_id", None) is None:
+    unregistered = user_id is not None and getattr(flow.flow_settings, "source_registration_id", None) is None
+    if unregistered and not _kept_in_remote_catalog(flow):
         reg_path = flow.flow_settings.path or flow.flow_settings.save_location
         if reg_path:
             try:
@@ -1497,9 +1505,22 @@ def save_generated_project(
     return output_model.ProjectSaveResponse(saved_to=str(project_dir), file_count=len(manifest.files))
 
 
+LOCAL_CATALOG_NOT_OFFERED = (
+    "Flows on this Flowfile are kept in the catalog it is connected to, not in its own: "
+    "save the flow as a file and publish it to that catalog."
+)
+
+
 def _require_flow_save_permitted(flow_path: str | None, namespace_id: int | None, current_user) -> None:
     """403 before any file/DB side effect when the user may neither manage an
-    existing registration at ``flow_path`` nor create in ``namespace_id``."""
+    existing registration at ``flow_path`` nor create in ``namespace_id``.
+
+    409 for a new registration in ``namespace_id`` where this install's own catalog is not offered
+    (``table_sources.local_catalog_offered``); a flow already registered here is still saved in place.
+    """
+    if namespace_id is not None and not table_sources.local_catalog_offered():
+        if flow_path is None or find_registration_by_path(flow_path) is None:
+            raise HTTPException(status_code=409, detail=LOCAL_CATALOG_NOT_OFFERED)
     try:
         require_flow_save_permitted(flow_path, namespace_id, current_user)
     except NotAuthorizedError as err:
@@ -2502,6 +2523,8 @@ def _save_flow_impl(
 
     if is_new_path:
         user_id = current_user.id if current_user else None
+        # A copy saved elsewhere is filed by itself only where this install's own catalog takes people's work.
+        registers_here = register_in_catalog and (namespace_id is not None or table_sources.local_catalog_offered())
 
         def _register(fp: str, n: str, uid: int | None) -> None:
             register_flow_in_namespace(fp, n, uid, namespace_id, requesting_user=current_user)
@@ -2511,7 +2534,7 @@ def _save_flow_impl(
                 flow_id=flow_id,
                 new_path=flow_path,
                 user_id=user_id,
-                on_catalog_register=_register if register_in_catalog else None,
+                on_catalog_register=_register if registers_here else None,
                 on_resolve_registration=resolve_source_registration_id,
             )
         except (FlowPathNamespaceCollision, FlowNameNamespaceCollision) as err:

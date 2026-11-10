@@ -43,7 +43,7 @@ from sqlalchemy.orm import Session
 from flowfile_core.auth import issuer_accounts
 from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user
 from flowfile_core.auth.sharing import sharing_enabled
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.exceptions import FlowExistsError, NamespaceNotFoundError, NotAuthorizedError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
@@ -567,6 +567,8 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     published from here, or an earlier open), else a file under ``flows/hub`` registered under that uuid. On a core
     several people use, each person has a copy of their own: where another person's registration holds the uuid,
     the caller's file is registered beside it under an id of its own, and the other's is never named or written.
+    Where this install's own catalog is not offered (``table_sources.local_catalog_offered``: a server that joined the
+    hub with keys of its own) the copy is a file only and nothing is registered here: the flow's place is the hub's.
 
     A copy that exists already is written over when nothing is lost by it: it still equals the hub version it came
     from. One with edits that were not published is 409 ``local_copy_exists`` with its path, unless ``replace`` is
@@ -579,7 +581,8 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
         raise _hub_error(e) from e
 
     flow_path, holder = _local_copy_path(checked_out["flow_uuid"], checked_out["name"], current_user)
-    namespace_id = _local_flows_namespace_id() if holder == "nobody" else None
+    registers = table_sources.local_catalog_offered()
+    namespace_id = _local_flows_namespace_id() if holder == "nobody" and registers else None
     try:
         require_flow_save_permitted(flow_path, namespace_id, current_user)
     except NotAuthorizedError as err:
@@ -602,7 +605,7 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
         hub_url=hub_url, flow_uuid=checked_out["flow_uuid"], version=checked_out["version"]
     )
 
-    if holder == "nobody":
+    if holder == "nobody" and registers:
         try:
             register_flow_in_namespace(
                 flow_path,
@@ -622,6 +625,6 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     Path(flow_path).parent.mkdir(parents=True, exist_ok=True)
     with open(flow_path, "w", encoding="utf-8") as f:
         yaml.dump(document.model_dump(mode="json"), f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-    if holder == "another":
+    if holder == "another" and registers:
         auto_register_flow(flow_path, checked_out["name"], current_user.id)
     return HubOpenOut(flow_path=flow_path)
