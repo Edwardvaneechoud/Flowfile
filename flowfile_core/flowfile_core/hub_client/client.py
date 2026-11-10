@@ -331,6 +331,28 @@ def checkout(
     return _require(body, ("flow_uuid", "version", "name", "definition"), url, "/hub/flows/{flow_uuid}/checkout")
 
 
+def for_editing(
+    url: str, access_token: str, flow_uuid: str, version: int | None = None, *, http: httpx.Client | None = None
+) -> dict:
+    """The flow's document for the person to work on, as the hub chooses it: what ``checkout`` answers, with a
+    ``note`` when the hub has a sentence to show them. A hub without the route answers ``checkout``."""
+    params = {"version": version} if version is not None else None
+    path = f"/hub/flows/{flow_uuid}/edit"
+    try:
+        body = _request("GET", url, path, http, params=params, headers=_bearer(access_token))
+    except HubRefused as e:
+        if e.status not in (404, 405) or e.detail not in ("Not Found", "Method Not Allowed"):
+            raise
+        return checkout(url, access_token, flow_uuid, version, http=http)
+    return _require(body, ("flow_uuid", "version", "name", "definition"), url, "/hub/flows/{flow_uuid}/edit")
+
+
+def save_content(url: str, access_token: str, flow_uuid: str, body: dict, *, http: httpx.Client | None = None) -> dict:
+    """Keep ``body["definition"]`` on the hub as the person's working content of the flow, no version made; the
+    hub's answer carries the ``note`` to show them. Raises ``HubRefused`` as every call does."""
+    return _request("PUT", url, f"/hub/flows/{flow_uuid}/draft", http, json=body, headers=_bearer(access_token))
+
+
 def publish(url: str, access_token: str, flow_uuid: str, body: dict, *, http: httpx.Client | None = None) -> dict:
     """Store ``body["definition"]`` as the flow's next version; the hub's 201 answer with the version it got.
 

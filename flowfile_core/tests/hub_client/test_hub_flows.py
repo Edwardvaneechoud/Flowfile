@@ -94,6 +94,10 @@ class FakeHubWithFlows(FakeHub):
                 ]
                 return self._json(200, items)
             match = _FLOW_PATH.match(path)
+            if match is None:
+                # A hub from before a route answers as FastAPI does for a path it does not have.
+                self.calls.pop()
+                return self._json(404, {"detail": "Not Found"})
             flow_uuid, action = match.group(1), match.group(2)
             if action == "versions":
                 if flow_uuid not in self.flows:

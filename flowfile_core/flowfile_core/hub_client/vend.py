@@ -34,7 +34,7 @@ from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.protocol import EncryptedCredential, SealedCredential
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
-from flowfile_core.hub_client import catalog, client
+from flowfile_core.hub_client import catalog, client, session
 from flowfile_core.hub_client.catalog import HubNamespace
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceTree
@@ -418,6 +418,28 @@ class _RunCatalog:
         """On a server that joined the hub with keys of its own the organisation's catalog is the hub's; a desktop
         connected to a hub keeps its own beside it."""
         return issuer_accounts.joined_with_keys() is not None
+
+    def save_flow(self, user_id: int | None, flow) -> str | None:
+        """The hub keeps the content of a flow that came from it for a person signed in to it, and words where; a
+        flow from elsewhere, a person with no hub session, and a hub without the route or the flow, are not its to
+        keep."""
+        origin = getattr(flow.flow_settings, "hub_origin", None)
+        stored = session.load(user_id) if user_id is not None else None
+        if origin is None or stored is None or origin.hub_url.rstrip("/") != stored["hub_url"].rstrip("/"):
+            return None
+        document = flow.get_flowfile_data()
+        document.flowfile_settings.source_registration_id = None
+        document.flowfile_settings.hub_origin = None
+        body = {"base_version": origin.version, "definition": document.model_dump(mode="json")}
+        with _hub_answers():
+            hub_url, access_token = catalog.signed_in(user_id)
+            try:
+                saved = client.save_content(hub_url, access_token, origin.flow_uuid, body)
+            except HubRefused as e:
+                if e.status in (404, 405):
+                    return None
+                raise
+        return saved.get("note") or None
 
 
 table_sources.register_remote("hub", _RunCatalog())

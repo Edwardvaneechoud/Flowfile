@@ -1505,6 +1505,7 @@ def save_generated_project(
     return output_model.ProjectSaveResponse(saved_to=str(project_dir), file_count=len(manifest.files))
 
 
+NOT_SAVED_TO_ITS_CATALOG = "The flow's working file was saved, but the catalog the flow came from did not take it:"
 LOCAL_CATALOG_NOT_OFFERED = (
     "Flows on this Flowfile are kept in the catalog it is connected to, not in its own: "
     "save the flow as a file and publish it to that catalog."
@@ -2482,7 +2483,10 @@ def _save_flow_impl(
 ):
     """Shared implementation for GET and POST ``/save_flow``.
 
-    If ``flow_path`` is omitted, the flow is saved silently to its existing path.
+    If ``flow_path`` is omitted, the flow is saved silently to its existing path. A flow that came from a remote
+    catalog is then saved to that catalog too (``table_sources.save_flow``): its file here is a working copy, and
+    what the catalog says of the save is kept as the flow's ``save_note`` for the editor to show. A catalog that
+    refuses or cannot be asked is a 409 with its sentence, the file written.
 
     When saving to a new path ("Save As"), the flow is treated as a new flow:
     a new flowfile_id is generated, the old handler entry is replaced, and a
@@ -2549,6 +2553,11 @@ def _save_flow_impl(
 
     resolve_source_registration_id(flow)
     flow.save_flow(flow_path=flow_path)  # save_flow itself calls mark_as_saved()
+    # A flow that came from a remote catalog is kept there; what it says of the save is shown as given.
+    try:
+        flow.save_note = table_sources.save_flow(current_user.id if current_user else None, flow)
+    except LookupError as err:
+        raise HTTPException(status_code=409, detail=f"{NOT_SAVED_TO_ITS_CATALOG} {err}") from None
 
     # If namespace_id provided, ensure the flow is registered in that namespace
     if namespace_id is not None:
@@ -2822,8 +2831,10 @@ def get_flow_settings(
     flow_id: int | None = 1, current_user=Depends(get_current_active_user)
 ) -> schemas.FlowSettingsResponse:
     """Retrieves the main settings for a flow (including dirty-state info)."""
-    get_flow_or_404(flow_id, current_user)
-    return _with_display_name(flow_file_handler.get_flow_info_with_runtime(flow_id))
+    flow = get_flow_or_404(flow_id, current_user)
+    settings = _with_display_name(flow_file_handler.get_flow_info_with_runtime(flow_id))
+    settings.save_note = getattr(flow, "save_note", None)
+    return settings
 
 
 _SERVER_OWNED_FLOW_SETTINGS = (

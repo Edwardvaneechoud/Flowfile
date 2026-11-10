@@ -104,6 +104,10 @@ class RemoteCatalog(Protocol):
     def of_record(self) -> bool:
         """Whether this catalog is the one people's work on this install is kept in, in place of the install's own."""
 
+    def save_flow(self, user_id: int | None, flow) -> str | None:
+        """Keep the content of ``flow`` for ``user_id`` in this catalog when the flow came from it: the catalog's own
+        sentence on where the flow is kept now, to show the person as given; ``None`` for a flow that is not its."""
+
 
 _remotes: dict[str, RemoteCatalog] = {}
 
@@ -215,6 +219,19 @@ def local_catalog_offered() -> bool:
     stay as they are, and the destinations a person is offered are the remote catalog's.
     """
     return not any(catalog.of_record() for catalog in _remotes.values())
+
+
+def save_flow(user_id: int | None, flow) -> str | None:
+    """Save the content of ``flow`` for ``user_id`` to the remote catalog it came from.
+
+    Answers that catalog's own sentence on where the flow is kept now, shown to the person as given, or ``None``
+    for a flow no remote catalog keeps for this person: then the file this install wrote is the flow's home.
+
+    Raises:
+        LookupError: The catalog's sentence when it refuses the save or cannot be asked.
+    """
+    notes = (catalog.save_flow(user_id, flow) for catalog in _remotes.values())
+    return next((note for note in notes if note is not None), None)
 
 
 def has_its_record_here(executed_on: str | None) -> bool:

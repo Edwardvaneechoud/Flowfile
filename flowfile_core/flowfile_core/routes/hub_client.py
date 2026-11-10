@@ -304,6 +304,7 @@ class HubOpenRequest(BaseModel):
 
 class HubOpenOut(BaseModel):
     flow_path: str
+    note: str | None = None
 
 
 def _hub(current_user) -> tuple[str, str]:
@@ -483,6 +484,7 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
         hub_url=hub_url, flow_uuid=published["flow_uuid"], version=published["version"]
     )
     flow.save_flow(flow_path=flow_path)
+    flow.save_note = None
     return HubPublishOut(version=published["version"], name=published["name"])
 
 
@@ -536,7 +538,8 @@ def _content(document: schemas.FlowfileData) -> dict:
 
 
 def _has_unpublished_edits(local: schemas.FlowfileData | None, hub_url: str, token: str, checked_out: dict) -> bool:
-    """Whether writing over the local copy would lose work: it differs from the hub version it came from.
+    """Whether writing over the local copy would lose work: it differs from what the hub answers now and from the
+    hub version it came from.
 
     A copy that cannot be read, that names no origin on this hub flow, or whose origin version the hub does not
     answer counts as edited, so the caller is asked and nothing is written over unseen.
@@ -546,8 +549,13 @@ def _has_unpublished_edits(local: schemas.FlowfileData | None, hub_url: str, tok
         return True
     if origin.hub_url.rstrip("/") != hub_url.rstrip("/"):
         return True
+    try:
+        if _content(local) == _content(schemas.FlowfileData.model_validate(checked_out["definition"])):
+            return False
+    except ValueError:
+        return True
     base = checked_out
-    if origin.version != checked_out["version"]:
+    if origin.version != checked_out["version"] or checked_out.get("note"):
         try:
             base = client.checkout(hub_url, token, origin.flow_uuid, origin.version)
         except (HubUnreachable, HubRefused, HubVersionRefused):
@@ -558,9 +566,12 @@ def _has_unpublished_edits(local: schemas.FlowfileData | None, hub_url: str, tok
         return True
 
 
-@router.post("/open", summary="Open a flow from the hub")
+@router.post("/open", summary="Open a flow from the hub", response_model_exclude_none=True)
 def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_active_user)) -> HubOpenOut:
-    """Check a version out of the hub and write it as the caller's local copy of that flow.
+    """Read a flow from the hub for the caller to work on and write it as their local copy of that flow.
+
+    The hub chooses the content (``client.for_editing``) and may send a ``note`` about it, answered for the editor
+    to show as given.
 
     The file carries ``hub_origin``, so a later publish from it names this version as its base and its runs are
     reported as the hub flow's. The copy is the file of the caller's registration holding the hub's uuid (a flow
@@ -576,7 +587,7 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     """
     hub_url, token = _hub(current_user)
     try:
-        checked_out = client.checkout(hub_url, token, request.flow_uuid, request.version)
+        checked_out = client.for_editing(hub_url, token, request.flow_uuid, request.version)
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         raise _hub_error(e) from e
 
@@ -627,4 +638,4 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
         yaml.dump(document.model_dump(mode="json"), f, default_flow_style=False, sort_keys=False, allow_unicode=True)
     if holder == "another" and registers:
         auto_register_flow(flow_path, checked_out["name"], current_user.id)
-    return HubOpenOut(flow_path=flow_path)
+    return HubOpenOut(flow_path=flow_path, note=checked_out.get("note"))
