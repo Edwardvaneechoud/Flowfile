@@ -5,6 +5,7 @@ import {
   catalogSectionOfTab,
   catalogTabs,
   catalogTabsInSection,
+  schedulesBadge,
 } from "./catalogTabs";
 
 describe("catalog sections", () => {
@@ -49,5 +50,17 @@ describe("catalog sections", () => {
       (t) => t.key,
     );
     expect([...all].sort()).toEqual(catalogTabs.map((t) => t.key).sort());
+  });
+});
+
+describe("schedulesBadge", () => {
+  it("counts the listed schedules, a remote catalog's included, not this machine's stats", () => {
+    expect(schedulesBadge(true, [{ id: -1, source: "hub" }, { id: -2, source: "hub" }])).toBe(2);
+    expect(schedulesBadge(true, [{ id: 3, source: "local" }])).toBe(1);
+    expect(schedulesBadge(true, [])).toBe(0);
+  });
+
+  it("shows nothing before the screen has loaded", () => {
+    expect(schedulesBadge(false, [])).toBeNull();
   });
 });

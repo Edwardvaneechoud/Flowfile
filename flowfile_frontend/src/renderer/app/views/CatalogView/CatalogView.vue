@@ -682,7 +682,12 @@ import { countMatches, normalizeQuery, shownNamespaces } from "./catalogTreeFilt
 import { apiErrorMessage, artifactRef, pageAfterDelete } from "./artifactVersions";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { findNamespacePath } from "../../types";
-import { CATALOG_TAB_GROUP_LABELS, catalogSectionOfTab, catalogTabsInSection } from "./catalogTabs";
+import {
+  CATALOG_TAB_GROUP_LABELS,
+  catalogSectionOfTab,
+  catalogTabsInSection,
+  schedulesBadge,
+} from "./catalogTabs";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   ArtifactVersionInfo,
@@ -738,7 +743,7 @@ const tabs = computed(() => {
       tab.key === "favorites"
         ? (catalogStore.stats?.total_favorites ?? null)
         : tab.key === "schedules"
-          ? (catalogStore.stats?.total_schedules ?? null)
+          ? schedulesBadge(catalogStore.stats !== null, catalogStore.schedules)
           : null,
   }));
 });
