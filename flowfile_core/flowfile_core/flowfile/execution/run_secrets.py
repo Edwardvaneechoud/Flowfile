@@ -56,22 +56,10 @@ def use_sealed(
         _sealed.reset(token)
 
 
-def active() -> bool:
-    """Whether the step running now carries any secret or connection the run was granted for it."""
-    return bool(_sealed.get()) or bool(_connections.get())
-
-
 def sealed_connection(kind: str, name: str | None) -> Mapping[str, str] | None:
     """The sealed map of the ``kind`` connection ``name`` for the step running now; ``None`` when the run was granted
     none."""
     return _connections.get().get((kind, name)) if name else None
-
-
-def connection_secret(kind: str, name: str | None, field: str) -> str | None:
-    """The secret ``field`` of the ``kind`` connection ``name`` as the running step carries it in a ciphertext's place;
-    ``None`` when the run was granted no such connection for the step."""
-    sealed = sealed_connection(kind, name)
-    return credential_sources.source().carried(kind, name, field, sealed) if sealed is not None else None
 
 
 NO_STORE = "the hub has no exchange store set to bring its rows back"
