@@ -1,13 +1,11 @@
 # app_routes/auth.py
 
 import os
-import time
-from datetime import timedelta
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth import issuer_accounts, sharing
+from flowfile_core.auth import issuer_accounts, issuer_signin, sharing
 from flowfile_core.auth.jwt import (
     create_access_token,
     create_refresh_token,
@@ -107,34 +105,20 @@ def refresh_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    expires = None
-    expires_at = None
-    renewed = {"sub": user.username}
     mapping = db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user.id).first()
     if mapping is not None:
         refreshed = _refresh_through_hub(user.id, mapping.issuer, sid)
-        user.is_admin = refreshed.user["node_admin"]
-        user.full_name = refreshed.user["full_name"]
-        db.commit()
-        invalidate_user_cache(user.username)
-        expires = timedelta(seconds=refreshed.expires_in)
-        expires_at = _expires_at(refreshed.expires_in)
-        renewed["sid"] = sid
-    else:
-        _refuse_passwords_once_joined()
-    new_access_token = create_access_token(data={"sub": user.username}, expires_delta=expires)
-    new_refresh_token = create_refresh_token(data=renewed)
+        issuer_signin.renew(db, user, refreshed.user)
+        return issuer_signin.session(user, sid, refreshed.expires_in)
+    _refuse_passwords_once_joined()
+    new_access_token = create_access_token(data={"sub": user.username})
+    new_refresh_token = create_refresh_token(data={"sub": user.username})
     return {
         "access_token": new_access_token,
         "refresh_token": new_refresh_token,
         "token_type": "bearer",
-        "expires_at": expires_at,
+        "expires_at": None,
     }
-
-
-def _expires_at(seconds: int) -> int:
-    """An access token's expiry in milliseconds since the epoch, taken before it is signed so it is never late."""
-    return int(time.time() + seconds) * 1000
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -218,18 +202,7 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
         raise _refused(str(e)) from None
     except HubUnreachable as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
-    user = signed_in.user
-    expires_at = _expires_at(signed_in.expires_in)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=timedelta(seconds=signed_in.expires_in)
-    )
-    refresh_token = create_refresh_token(data={"sub": user.username, "sid": signed_in.sid})
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "expires_at": expires_at,
-    }
+    return issuer_signin.session(signed_in.user, signed_in.sid, signed_in.expires_in)
 
 
 @router.get("/users/me", response_model=User)

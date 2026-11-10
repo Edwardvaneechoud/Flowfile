@@ -11,18 +11,14 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth import issuer_accounts
-from flowfile_core.auth.jwt import invalidate_user_cache
+from flowfile_core.auth import issuer_accounts, issuer_signin
+from flowfile_core.auth.issuer_signin import SignInRefused
 from flowfile_core.configs import logger
 from flowfile_core.database import models as db_models
 from flowfile_core.hub_client import delegation, node_addresses
 from flowfile_core.hub_client import session as hub_session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable
 from shared import hub_node
-
-
-class SignInRefused(Exception):
-    """A sign-in this server will not make; the message is one sentence fit to answer."""
 
 
 @dataclass(frozen=True)
@@ -58,16 +54,14 @@ def live(user_id: int) -> bool:
 def sign_in(db: Session, token: str, user_id: int) -> SignedIn:
     """Trade ``token``, a hub token naming the person ``user_id`` on the hub, for their sign-in here.
 
-    The hub's exchange signs the delegation; the account is made at a first sign-in and administers this server as
-    ``node_admin`` says at every one; the delegation is kept as the person's hub session, never in the database; and the
+    The hub's exchange signs the delegation; the account is the one ``issuer_signin.admit`` answers for the hub's issuer
+    and the person the hub described; the delegation is kept as the person's hub session, never in the database; and the
     hub's servers this person may run on become backend rows with it (``node_addresses.sync_for``), a hub whose list
     cannot be read leaving one warning. ``SignInRefused`` for a disabled account, a trade the hub refuses or a hub that
     answers for another person; ``HubUnreachable`` for a hub that does not answer.
     """
     settings = hub_node.resolved()
-    user = account(db, user_id)
-    if user is not None and user.disabled:
-        raise SignInRefused("This account is disabled on this server.")
+    issuer_signin.refuse_disabled(db, settings.issuer, user_id)
     try:
         granted = delegation.exchange(settings.hub_url, settings.issuer, token)
     except HubRefused as e:
@@ -77,11 +71,7 @@ def sign_in(db: Session, token: str, user_id: int) -> SignedIn:
         raise SignInRefused("This server cannot sign for itself at its hub.") from None
     if granted.user["uid"] != user_id:
         raise SignInRefused("The hub answered this sign-in for another person.")
-    if user is None:
-        user = issuer_accounts.new_issuer_account(db, settings.issuer, settings.hub_url, granted.user)
-    user.is_admin = granted.user["node_admin"]
-    db.commit()
-    invalidate_user_cache(user.username)
+    user = issuer_signin.admit(db, settings.issuer, settings.hub_url, granted.user)
     sid = hub_session.save_delegation(user.id, settings.hub_url, granted)
     node_addresses.sync_for(user.id)
     return SignedIn(user=user, sid=sid, expires_in=granted.expires_in)
