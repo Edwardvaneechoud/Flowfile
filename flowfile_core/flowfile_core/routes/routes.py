@@ -1931,11 +1931,12 @@ def _rest_api_sample_rows(
     node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
 ) -> tuple[pl.DataFrame, dict[str, Any]]:
     """The first page of *node*'s request (at most *sample_size* records) from the worker, and the op's metadata."""
-    settings = node.rest_api_settings
-    one_page = settings.pagination.model_copy(update={"max_pages": 1, "max_records": sample_size})
-    capped = node.model_copy(update={"rest_api_settings": settings.model_copy(update={"pagination": one_page})})
     read = RestApiReadPayload(
-        flow_id=node.flow_id, node_id=node.node_id, settings=capped, encrypted_secret=secret_encrypted
+        flow_id=node.flow_id,
+        node_id=node.node_id,
+        settings=node,
+        encrypted_secret=secret_encrypted,
+        sample_size=sample_size,
     )
     backend = compute_registry.backend(compute_registry.WORKER_BACKEND_ID)
     result = backend.run_op(OperationKind.rest_api_read, op_payload(read))

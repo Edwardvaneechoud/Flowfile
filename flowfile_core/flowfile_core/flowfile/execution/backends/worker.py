@@ -452,8 +452,9 @@ class WorkerBackend(_WorkerReferences):
         - ``database_read``: ``DatabaseReadPayload``.
         - ``kafka_read``: ``KafkaReadPayload``; ``metadata["offsets"]`` to commit when it consumed messages.
         - ``google_analytics_read``: ``GoogleAnalyticsReadPayload``.
-        - ``rest_api_read``: ``RestApiReadPayload``; ``metadata`` is the read's ``trace`` and its first response's
-          ``suggested_paths``, ``response_tree`` and ``response_text``.
+        - ``rest_api_read``: ``RestApiReadPayload``; ``metadata`` is the read's ``trace`` and, for a test request
+          (a payload with a ``sample_size``), its first response's ``suggested_paths``, ``response_tree`` and
+          ``response_text``.
         - ``file_read``: ``FileReadPayload``.
         - ``fuzzy_join``: ``FuzzyJoinPayload``, its sides prepared here over their payload schemas (``_fuzzy_sides``).
         - ``random_split``: ``RandomSplitPayload``, its rows shuffled once; one stored ref per split, keyed by split
@@ -1799,7 +1800,8 @@ def _google_analytics_read_settings(read: GoogleAnalyticsReadPayload) -> GoogleA
 
 
 def _rest_api_read_settings(read: RestApiReadPayload) -> RestApiReadSettings:
-    return build_rest_api_worker_settings(read.settings, read.encrypted_secret).model_copy(update=_filed_under(read))
+    settings = build_rest_api_worker_settings(read.settings, read.encrypted_secret, sample_size=read.sample_size)
+    return settings.model_copy(update=_filed_under(read))
 
 
 def _file_to_read(read: FileReadPayload) -> ReceivedTable:

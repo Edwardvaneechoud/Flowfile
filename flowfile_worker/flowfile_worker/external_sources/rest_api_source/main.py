@@ -50,8 +50,9 @@ def read_rest_api(
     """Decrypt the worker-side credential and run the shared fetch engine.
 
     Every request is logged to *logger* (the flow's log) with its secret masked: each of the first pages, then
-    every tenth, and why the read stopped. *debug_file* gets what the drawer shows of a test request: the trace,
-    the first response's shape and text, the secret masked where the API echoes it, and the paths it suggests.
+    every tenth, and why the read stopped. *debug_file* gets the trace and, for a test request (a read with a
+    ``sample_size``), what the drawer shows of the first response: its shape and text, the secret masked where the
+    API echoes it, and the paths it suggests.
     """
     log = logger or worker_logger
     log.info(
@@ -72,12 +73,13 @@ def read_rest_api(
         secret = settings.get_basic_password()
 
     forms = secret_forms(settings, secret)
+    is_sample = settings.sample_size is not None
     trace: list[dict] = []
     first: dict[str, Any] = {}
 
     def on_page(entry: dict, body: Any) -> None:
         page, stopped = entry["page"], entry["stopped"]
-        if page == 1:
+        if page == 1 and is_sample:
             body = mask_secrets(body, forms)
             text = json.dumps(body, indent=2, ensure_ascii=False, default=str)
             first.update(

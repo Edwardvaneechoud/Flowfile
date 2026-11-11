@@ -641,6 +641,7 @@ def test_read_rest_api_masks_a_secret_the_response_echoes(api, tmp_path):
     settings = WorkerRestApiReadSettings(
         url=api.url("/echo"),
         record_path="items",
+        sample_size=10,
         auth=AuthConfig(
             auth_type="basic", basic_username="alice", basic_password_encrypted=encrypt_secret("s3cr3t-value")
         ),
@@ -689,7 +690,7 @@ class _Lines:
         self.lines.append(("warning", message % args if args else message))
 
 
-def test_read_rest_api_logs_each_page_and_writes_what_a_test_request_shows(api, tmp_path):
+def test_read_rest_api_logs_each_page_and_writes_the_trace_of_a_run(api, tmp_path):
     token = encrypt_secret("s3cr3t-value")
     settings = WorkerRestApiReadSettings(
         url=api.url("/page"),
@@ -709,8 +710,21 @@ def test_read_rest_api_logs_each_page_and_writes_what_a_test_request_shows(api, 
     assert "s3cr3t-value" not in str(log.lines)
 
     debug = json.loads(debug_file.read_text())
-    assert set(debug) == {"suggested_paths", "response_tree", "response_text", "response_truncated", "trace"}
+    assert set(debug) == {"trace"}
     assert [e["page"] for e in debug["trace"]] == [1, 2]
+    assert "s3cr3t-value" not in debug_file.read_text()
+
+
+def test_read_rest_api_writes_what_a_test_request_shows_of_the_first_response(api, tmp_path):
+    settings = WorkerRestApiReadSettings(
+        url=api.url("/page"), pagination=PaginationConfig(pagination_type="page", max_pages=2), sample_size=5
+    )
+    debug_file = tmp_path / "debug.json"
+    df = read_rest_api(settings, debug_file=str(debug_file))
+    assert df.height == 1
+
+    debug = json.loads(debug_file.read_text())
+    assert set(debug) == {"suggested_paths", "response_tree", "response_text", "response_truncated", "trace"}
+    assert [e["page"] for e in debug["trace"]] == [1]
     assert debug["response_tree"]["records"] is True and debug["response_truncated"] is False
     assert json.loads(debug["response_text"]) == [{"id": 1}]
-    assert "s3cr3t-value" not in debug_file.read_text()

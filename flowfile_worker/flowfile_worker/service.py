@@ -823,8 +823,9 @@ def google_analytics_read(settings: GoogleAnalyticsReadSettings, job_id: str) ->
 def rest_api_read(settings: RestApiReadSettings, job_id: str) -> OpOutputs:
     """Fetch from a REST API in a child as job *job_id* and hold the rows as ``result``.
 
-    The ``metadata`` is what a test request shows: ``trace`` (each request as sent, secrets masked, and what came
-    back), and of the first response ``suggested_paths``, ``response_tree`` and ``response_text``.
+    The ``metadata`` is the ``trace`` (each request as sent, secrets masked, and what came back) and, for a test
+    request (settings with a ``sample_size``), the first response's ``suggested_paths``, ``response_tree`` and
+    ``response_text``.
     """
     flow_id, node_id = settings.flowfile_flow_id, settings.flowfile_node_id
     (result_id,) = _op_outputs(job_id, 1)
