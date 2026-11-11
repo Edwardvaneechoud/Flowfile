@@ -71,7 +71,7 @@ def _patch_local_fetch(monkeypatch, result: pl.DataFrame) -> dict:
     """Patch the embedded worker's REST reader's fetch (local execution path); returns a dict capturing the call."""
     captured: dict = {}
 
-    def _fake(settings, *, secret=None):
+    def _fake(settings, *, secret=None, on_page=None):
         captured["settings"] = settings
         captured["secret"] = secret
         return result
