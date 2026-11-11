@@ -1,10 +1,8 @@
 // Paths match the FastAPI decorators exactly: a trailing slash would answer 307.
 
 import axios from "../services/axios.config";
-import type { ComputeBackend } from "./computeBackends.api";
 
 const CONNECTION_URL = "/hub_client/connection";
-const COMPUTE_NODES_SYNC_URL = "/hub_client/compute_nodes/sync";
 
 export interface HubConnection {
   connected: boolean;
@@ -23,12 +21,6 @@ export interface HubConnection {
   joined: boolean;
   /** On a joined server, the organisation's storage root as the hub shows it; null when not known. */
   organisation_storage: string | null;
-}
-
-/** What a node sync left behind: every configured backend, and the hub nodes skipped for a hand-added row. */
-export interface HubComputeNodesSync {
-  backends: ComputeBackend[];
-  skipped: string[];
 }
 
 export interface HubConnectInput {
@@ -55,13 +47,4 @@ export async function connectHub(input: HubConnectInput): Promise<HubConnection>
 /** Forgets the hub session on this machine; the hub is not told. */
 export async function disconnectHub(): Promise<void> {
   await axios.delete(CONNECTION_URL);
-}
-
-/**
- * Reads the hub's compute nodes now and makes the backends table match them; core handshakes the rows it wrote
- * before it answers, so the answer carries their verdicts.
- */
-export async function syncHubComputeNodes(): Promise<HubComputeNodesSync> {
-  const response = await axios.post<HubComputeNodesSync>(COMPUTE_NODES_SYNC_URL);
-  return response.data;
 }

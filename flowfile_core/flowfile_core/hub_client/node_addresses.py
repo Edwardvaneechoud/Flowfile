@@ -1,9 +1,9 @@
 """The hub's compute nodes as rows of core's backends table.
 
-A desktop syncs when its user connects or asks; a server joined with keys syncs by itself with each person's sign-in
-through the hub, at sign-in and before a run that names a hub server, since the node's own assertion cannot read the
-list. There each person's list holds only the servers they may run on, so a row another person's list brought stays
-theirs. A hub that cannot be read leaves the rows as they are.
+A desktop syncs when its user connects and whenever the backends are listed; a server joined with keys syncs by itself
+with each person's sign-in through the hub, at sign-in, when the backends are listed and before a run that names a hub
+server, since the node's own assertion cannot read the list. There each person's list holds only the servers they may
+run on, so a row another person's list brought stays theirs. A hub that cannot be read leaves the rows as they are.
 """
 
 from collections.abc import Iterable
@@ -31,11 +31,12 @@ def drop_row(db: Session, row: ConfiguredBackend) -> None:
     handshake.reset_handshake(row.url)
 
 
-def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tuple[list[str], list[str]]:
-    """Make the hub-filled ``worker:<name>`` rows follow ``user_id``'s list of enabled nodes; ``(synced, skipped)``.
+def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> list[str]:
+    """Make the hub-filled ``worker:<name>`` rows follow ``user_id``'s list of enabled nodes; the ids it wrote.
 
-    A row added by hand is never touched and its node is skipped; this core's own node gets no row. On a joined server
-    a row of another person still signed in through the hub keeps its person. Nothing is committed on a hub error.
+    A row added by hand is never touched and its node is skipped (logged); this core's own node gets no row. On a
+    joined server a row of another person still signed in through the hub keeps its person. Nothing is committed on
+    a hub error.
     """
     nodes = client.list_compute_nodes(hub_url, access_token)
     own = hub_node.resolved().name
@@ -55,7 +56,6 @@ def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tu
     for backend_id, row in rows.items():
         if row.remote_id is not None and backend_id not in wanted and follows(row):
             drop_row(db, row)
-    skipped: list[str] = []
     synced: list[str] = []
     for backend_id, node in wanted.items():
         url = node["worker_url"].rstrip("/")
@@ -63,7 +63,7 @@ def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tu
         if row is None:
             db.add(ConfiguredBackend(id=backend_id, url=url, remote_id=node["id"], account_user_id=user_id))
         elif row.remote_id is None:
-            skipped.append(backend_id)
+            logger.info('Kept the worker added here as "%s"; the hub\'s server of that name gets no row', backend_id)
             continue
         else:
             person = user_id if follows(row) else row.account_user_id
@@ -81,7 +81,7 @@ def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tu
                 registry.forget(backend_id)
         synced.append(backend_id)
     db.commit()
-    return synced, skipped
+    return synced
 
 
 def server_for(user_id: int) -> str | None:
@@ -112,21 +112,20 @@ def server_for(user_id: int) -> str | None:
     return backend_id
 
 
-def _sync_for(db: Session, user_id: int, when: str) -> bool:
-    """``sync_nodes`` with ``user_id``'s session, best effort; whether the list was read."""
+def _sync_for(db: Session, user_id: int, when: str) -> list[str]:
+    """``sync_nodes`` with ``user_id``'s session, best effort; the ids it wrote, none when the list was not read."""
     stored = session.load(user_id)
     if stored is None:
-        return False
+        return []
     try:
         token = session.access_token(user_id)
         if token is None:
-            return False
-        sync_nodes(db, user_id, stored["hub_url"], token)
+            return []
+        return sync_nodes(db, user_id, stored["hub_url"], token)
     except (*_UNREAD, IntegrityError) as e:
         db.rollback()
         logger.warning("Could not read %s's servers %s; the rows stay as they were: %s", stored["hub_url"], when, e)
-        return False
-    return True
+        return []
 
 
 def sync_for(user_id: int) -> None:
@@ -135,6 +134,12 @@ def sync_for(user_id: int) -> None:
         return
     with get_db_context() as db:
         _sync_for(db, user_id, "at a sign-in")
+
+
+def listing(user_id: int) -> list[str]:
+    """Before the backends are listed, follow ``user_id``'s list when they are signed in to a hub; the ids written."""
+    with get_db_context() as db:
+        return _sync_for(db, user_id, "to list them")
 
 
 def refresh(backend_ids: Iterable[str]) -> None:
@@ -160,3 +165,4 @@ def refresh(backend_ids: Iterable[str]) -> None:
 
 
 registry.remote_servers.refresh, registry.remote_servers.server_for = refresh, server_for
+registry.remote_servers.sync = listing

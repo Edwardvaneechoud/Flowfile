@@ -17,7 +17,7 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.hub_client import node_tokens, session
-from flowfile_core.routes import hub_client as hub_routes
+from flowfile_core.routes import compute_backends as compute_backends_routes
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared._version import get_version
 from tests.hub_client.conftest import HUB_URL, INFO, compute_node
@@ -36,7 +36,7 @@ def no_configured_backends(monkeypatch):
     ``test_node_verdicts.py`` checks real workers.
     """
     monkeypatch.setattr(node_tokens, "_tokens", {})
-    monkeypatch.setattr(hub_routes, "_check_nodes", lambda backend_ids: None)
+    monkeypatch.setattr(compute_backends_routes, "check_unchecked", lambda backend_ids: None)
     yield
     with get_db_context() as db:
         for row in db.query(ConfiguredBackend).all():
@@ -81,9 +81,8 @@ def test_every_route_requires_the_local_sign_in(store, method, kwargs):
     [
         ("POST", "/hub_client/connection", {"json": CONNECT}),
         ("DELETE", "/hub_client/connection", {}),
-        ("POST", "/hub_client/compute_nodes/sync", {}),
     ],
-    ids=["connect", "disconnect", "sync"],
+    ids=["connect", "disconnect"],
 )
 def test_on_a_server_with_users_only_an_administrator_connects_or_fills_the_backends(
     store, hub, non_admin_client, method, path, kwargs
@@ -260,8 +259,8 @@ def test_connecting_fills_the_backends_table_with_the_hubs_enabled_nodes(api, hu
     assert team.account_user_id == _user_id(api)
     listed = api.get("/compute_backends").json()
     assert [(row["id"], row["source"], row["url"]) for row in listed] == [
-        ("worker:gpu", "hub", GPU["worker_url"]),
-        ("worker:team", "hub", TEAM["worker_url"]),
+        ("worker:gpu", "remote", GPU["worker_url"]),
+        ("worker:team", "remote", TEAM["worker_url"]),
     ]
     assert hub.minted == []
 
@@ -280,7 +279,7 @@ def test_a_failed_node_sync_does_not_fail_the_connect(api, hub):
     assert api.get("/hub_client/connection").json()["connected"] is True
 
 
-def test_sync_writes_updates_and_removes_rows_as_the_hub_changed(api, hub):
+def test_the_listing_writes_updates_and_removes_rows_as_the_hub_changed(api, hub):
     hub.nodes = [TEAM, GPU]
     api.post("/hub_client/connection", json=CONNECT)
     team_backend = registry.backend("worker:team")
@@ -289,15 +288,13 @@ def test_sync_writes_updates_and_removes_rows_as_the_hub_changed(api, hub):
     hub.nodes = [moved, compute_node(GPU["id"], "gpu", enabled=False), etl]
     hub.calls.clear()
 
-    response = api.post("/hub_client/compute_nodes/sync")
+    response = api.get("/compute_backends")
 
     assert response.status_code == 200, response.text
-    body = response.json()
     assert hub.calls == [("GET", "/hub/compute-nodes")]
-    assert body["skipped"] == []
-    assert [(row["id"], row["source"], row["url"]) for row in body["backends"]] == [
-        ("worker:etl", "hub", etl["worker_url"]),
-        ("worker:team", "hub", moved["worker_url"]),
+    assert [(row["id"], row["source"], row["url"]) for row in response.json()] == [
+        ("worker:etl", "remote", etl["worker_url"]),
+        ("worker:team", "remote", moved["worker_url"]),
     ]
     rows = _rows()
     assert sorted(rows) == ["worker:etl", "worker:team"]
@@ -310,12 +307,12 @@ def test_sync_writes_updates_and_removes_rows_as_the_hub_changed(api, hub):
         registry.backend("worker:gpu")
 
 
-def test_sync_renames_a_node_by_removing_its_old_row(api, hub):
+def test_the_listing_renames_a_node_by_removing_its_old_row(api, hub):
     hub.nodes = [TEAM]
     api.post("/hub_client/connection", json=CONNECT)
     hub.nodes = [compute_node(TEAM["id"], "team-two")]
 
-    response = api.post("/hub_client/compute_nodes/sync")
+    response = api.get("/compute_backends")
 
     assert response.status_code == 200, response.text
     assert sorted(_rows()) == ["worker:team-two"]
@@ -327,11 +324,10 @@ def test_a_core_that_is_a_node_itself_never_lists_its_own_node_and_drops_a_row_w
     assert sorted(_rows()) == ["worker:gpu", "worker:team-local"]
     monkeypatch.setenv("FLOWFILE_NODE_NAME", "team-local")
 
-    response = api.post("/hub_client/compute_nodes/sync")
+    response = api.get("/compute_backends")
 
     assert response.status_code == 200, response.text
-    assert response.json()["skipped"] == []
-    assert [row["id"] for row in response.json()["backends"]] == ["worker:gpu"]
+    assert [row["id"] for row in response.json()] == ["worker:gpu"]
     assert sorted(_rows()) == ["worker:gpu"]
     reconnected = api.post("/hub_client/connection", json=CONNECT)
     assert reconnected.status_code == 200, reconnected.text
@@ -346,43 +342,40 @@ def test_a_hand_added_row_with_a_hub_nodes_name_is_skipped_and_untouched(api, hu
     hub.nodes = [TEAM, GPU]
 
     connected = api.post("/hub_client/connection", json=CONNECT)
-    synced = api.post("/hub_client/compute_nodes/sync")
+    listed = api.get("/compute_backends")
 
     assert connected.status_code == 200, connected.text
-    assert synced.status_code == 200, synced.text
-    assert synced.json()["skipped"] == ["worker:team"]
+    assert listed.status_code == 200, listed.text
     team = _rows()["worker:team"]
     assert team.url == "https://own-team.example.test:63579"
     assert team.token == stored
     assert team.remote_id is None and team.account_user_id is None
-    sources = {row["id"]: row["source"] for row in synced.json()["backends"]}
-    assert sources == {"worker:team": "local", "worker:gpu": "hub"}
+    sources = {row["id"]: row["source"] for row in listed.json()}
+    assert sources == {"worker:team": "local", "worker:gpu": "remote"}
 
 
-def test_sync_without_a_hub_connection_is_refused_with_400(api, hub):
+def test_the_listing_without_a_hub_connection_reads_no_hub(api, hub):
     hub.nodes = [TEAM]
 
-    response = api.post("/hub_client/compute_nodes/sync")
+    response = api.get("/compute_backends")
 
-    assert response.status_code == 400
-    assert "Connect to a hub first" in response.json()["detail"]
+    assert response.status_code == 200, response.text
+    assert response.json() == []
     assert hub.calls == []
     assert _rows() == {}
 
 
-def test_sync_when_the_hub_is_down_is_502_and_keeps_the_rows(api, hub):
+def test_the_listing_answers_with_the_rows_as_they_were_when_the_hub_cannot_be_read(api, hub):
     hub.nodes = [TEAM]
     api.post("/hub_client/connection", json=CONNECT)
+    hub.nodes = [GPU]
     hub.down = True
 
-    response = api.post("/hub_client/compute_nodes/sync")
+    response = api.get("/compute_backends")
 
-    assert response.status_code == 502
+    assert response.status_code == 200, response.text
+    assert [(row["id"], row["source"]) for row in response.json()] == [("worker:team", "remote")]
     assert sorted(_rows()) == ["worker:team"]
-
-
-def test_sync_requires_the_local_sign_in(store):
-    assert TestClient(main.app).post("/hub_client/compute_nodes/sync").status_code == 401
 
 
 def test_a_hub_filled_backend_mints_a_run_token_on_first_use_and_reuses_it(api, hub):
@@ -430,5 +423,5 @@ def test_a_hub_filled_row_is_not_removed_on_the_backends_page(api, hub):
     response = api.delete("/compute_backends/worker:team")
 
     assert response.status_code == 409, response.text
-    assert "managed by the hub connection" in response.json()["detail"]
+    assert "managed by the remote that filled it" in response.json()["detail"]
     assert sorted(_rows()) == ["worker:team"]

@@ -2,7 +2,7 @@
 
 No hub state ever answers 401, which the frontend reads as an expired local session: refused credentials answer 400,
 an unreachable hub 502, an unsupported version 426. The password is sent once, on connect, and never stored, logged
-or answered. Connect, disconnect and the node sync write the backends table every user shares, so they need an admin.
+or answered. Connect and disconnect write the backends table every user shares, so they need an admin.
 """
 
 import os
@@ -35,14 +35,11 @@ from flowfile_core.flowfile.catalog_helpers import (
     require_flow_save_permitted,
     resolve_source_registration_id,
 )
-from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.errors import ComputeError
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.manage.io_flowfile import working_copy_directory
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.hub_client import client, node_addresses, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
-from flowfile_core.routes.compute_backends import ComputeBackendOut, listed_backends
+from flowfile_core.routes import compute_backends
 from flowfile_core.routes.routes import flow_file_handler, get_flow_or_404
 from flowfile_core.schemas import schemas
 from shared._version import get_version
@@ -158,11 +155,11 @@ def connect(
     stored = session.load(current_user.id)
     connection = _connection(stored, info, account=_account(stored, current_user))
     try:
-        synced, _ = node_addresses.sync_nodes(db, current_user.id, request.hub_url, tokens["access_token"])
+        synced = node_addresses.sync_nodes(db, current_user.id, request.hub_url, tokens["access_token"])
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         logger.warning("Connected to the hub at %s, but its compute nodes could not be read: %s", request.hub_url, e)
         return connection
-    background.add_task(_check_nodes, synced)
+    background.add_task(compute_backends.check_unchecked, synced)
     return connection
 
 
@@ -175,35 +172,6 @@ def disconnect(current_user=Depends(get_current_admin_user), db: Session = Depen
     db.commit()
     session.clear(current_user.id)
     return {"connected": False}
-
-
-class ComputeNodesSync(BaseModel):
-    """Every configured backend, and the hub nodes skipped because a row of that id was added by hand."""
-
-    backends: list[ComputeBackendOut]
-    skipped: list[str]
-
-
-def _check_nodes(backend_ids: list[str]) -> None:
-    """Handshake each synced row so the listing carries its verdict."""
-    for backend_id in backend_ids:
-        try:
-            handshake.verdict_for(registry.backend(backend_id))
-        except (LookupError, ComputeError):
-            continue
-
-
-@router.post("/compute_nodes/sync", summary="Fill the backends table from the hub's compute nodes")
-def sync_compute_nodes(current_user=Depends(get_current_admin_user), db: Session = Depends(get_db)) -> ComputeNodesSync:
-    """Make the backends table match the hub's compute nodes now; explicit, never on a timer."""
-    hub_url, token = _hub(current_user)
-    try:
-        synced, skipped = node_addresses.sync_nodes(db, current_user.id, hub_url, token)
-    except (HubUnreachable, HubRefused, HubVersionRefused) as e:
-        raise _hub_error(e) from e
-    _check_nodes(synced)
-    rows = db.query(ConfiguredBackend).order_by(ConfiguredBackend.id).all()
-    return ComputeNodesSync(backends=listed_backends(rows, current_user), skipped=skipped)
 
 
 class LocalPathUse(BaseModel):

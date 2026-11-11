@@ -2,8 +2,8 @@
 
 A fake worker on a loopback port answers its capabilities to any token and counts its requests; a second URL is a
 loopback port nothing listens on. The fake hub (``conftest``) lists both as nodes and mints the tokens the check
-signs with. A sync checks before it answers; the check a connect queues runs in the request's background tasks,
-which the test client runs before it answers, so the listing right after either carries the verdict.
+signs with. The check a connect or a listing queues runs in the request's background tasks, which the test client runs
+before it answers, so the listing after either carries the verdict.
 """
 
 import threading
@@ -22,7 +22,7 @@ from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.hub_client import node_tokens, session
-from flowfile_core.routes import hub_client as hub_routes
+from flowfile_core.routes import compute_backends as compute_backends_routes
 from flowfile_core.routes.compute_backends import listed_backends
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared.compute_protocol import local_capabilities
@@ -116,7 +116,7 @@ def test_a_connect_checks_each_node_once_and_the_listing_carries_the_verdict(api
     assert worker.hits == 1
     assert [m["node_id"] for m in hub.minted] == [1, 2]
     listed = _listed(api)
-    assert listed["worker:team"]["source"] == "hub"
+    assert listed["worker:team"]["source"] == "remote"
     assert listed["worker:team"]["verdict"]["ok"] is True
     assert listed["worker:team"]["verdict"]["error"] is None
     gpu = listed["worker:gpu"]["verdict"]
@@ -125,12 +125,7 @@ def test_a_connect_checks_each_node_once_and_the_listing_carries_the_verdict(api
     assert closed in gpu["error"]
 
 
-def _synced(response) -> dict[str, dict]:
-    assert response.status_code == 200, response.text
-    return {row["id"]: row for row in response.json()["backends"]}
-
-
-def test_a_syncs_answer_carries_the_verdict_of_each_node_it_wrote(api, hub, worker):
+def test_a_listing_checks_each_node_it_wrote_and_the_next_listing_carries_the_verdict(api, hub, worker):
     closed = closed_url()
     hub.nodes = [compute_node(1, "team", worker_url=worker.url), compute_node(2, "gpu", worker_url=closed)]
     api.post("/hub_client/connection", json=CONNECT)
@@ -138,28 +133,27 @@ def test_a_syncs_answer_carries_the_verdict_of_each_node_it_wrote(api, hub, work
     registry.forget("worker:team")
     registry.forget("worker:gpu")
 
-    synced = _synced(api.post("/hub_client/compute_nodes/sync"))
+    first = _listed(api)
+    listed = _listed(api)
 
-    assert synced["worker:team"]["verdict"]["ok"] is True
-    assert synced["worker:gpu"]["verdict"]["error_kind"] == "ComputeUnavailable"
-    assert closed in synced["worker:gpu"]["verdict"]["error"]
+    assert {row["verdict"] for row in first.values()} == {None}
+    assert listed["worker:team"]["verdict"]["ok"] is True
+    assert listed["worker:gpu"]["verdict"]["error_kind"] == "ComputeUnavailable"
+    assert closed in listed["worker:gpu"]["verdict"]["error"]
     assert worker.hits == 2
-    assert {k: row["verdict"] for k, row in _listed(api).items()} == {k: row["verdict"] for k, row in synced.items()}
 
 
-def test_a_sync_keeps_a_passing_verdict_and_checks_a_node_the_hub_moved(api, hub, worker):
+def test_a_listing_keeps_a_passing_verdict_and_checks_a_node_the_hub_moved(api, hub, worker):
     hub.nodes = [compute_node(1, "team", worker_url=worker.url)]
     api.post("/hub_client/connection", json=CONNECT)
     assert _listed(api)["worker:team"]["verdict"]["ok"] is True
-
-    synced = _synced(api.post("/hub_client/compute_nodes/sync"))
-
+    assert _listed(api)["worker:team"]["verdict"]["ok"] is True
     assert worker.hits == 1
-    assert synced["worker:team"]["verdict"]["ok"] is True
 
     closed = closed_url()
     hub.nodes = [compute_node(1, "team", worker_url=closed)]
-    team = _synced(api.post("/hub_client/compute_nodes/sync"))["worker:team"]["verdict"]
+    assert _listed(api)["worker:team"]["verdict"] is None
+    team = _listed(api)["worker:team"]["verdict"]
 
     assert team["ok"] is False
     assert team["error_kind"] == "ComputeUnavailable"
@@ -168,13 +162,13 @@ def test_a_sync_keeps_a_passing_verdict_and_checks_a_node_the_hub_moved(api, hub
     assert worker.hits == 1
 
 
-def test_a_row_added_here_is_never_checked_by_a_sync(api, hub, worker):
+def test_a_row_added_here_is_never_checked_by_a_listing(api, hub, worker):
     with get_db_context() as db:
         db.add(ConfiguredBackend(id="worker:own", url=worker.url, token=encrypt_secret("row-token", 1)))
         db.commit()
 
     api.post("/hub_client/connection", json=CONNECT)
-    api.post("/hub_client/compute_nodes/sync")
+    _listed(api)
 
     assert _listed(api)["worker:own"]["verdict"] is None
     assert worker.hits == 0
@@ -182,13 +176,13 @@ def test_a_row_added_here_is_never_checked_by_a_sync(api, hub, worker):
 
 
 def test_a_row_whose_hub_session_is_gone_is_left_unchecked_and_calls_no_worker(api, hub, worker, monkeypatch):
-    check_nodes = hub_routes._check_nodes
-    monkeypatch.setattr(hub_routes, "_check_nodes", lambda backend_ids: None)
+    check_unchecked = compute_backends_routes.check_unchecked
+    monkeypatch.setattr(compute_backends_routes, "check_unchecked", lambda backend_ids: None)
     hub.nodes = [compute_node(1, "team", worker_url=worker.url)]
     api.post("/hub_client/connection", json=CONNECT)
     session.clear(_user_id(api))
 
-    check_nodes(["worker:team"])
+    check_unchecked(["worker:team"])
 
     assert handshake.last_verdict("worker:team") is None
     assert _listed(api)["worker:team"]["verdict"] is None

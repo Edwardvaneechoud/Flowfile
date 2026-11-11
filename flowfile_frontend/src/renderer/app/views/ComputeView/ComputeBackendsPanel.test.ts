@@ -1,23 +1,13 @@
 // @vitest-environment happy-dom
-// The Backends list as an administrator sees it beside a hub: it loads without waiting for the hub connection, a
-// row the hub filled carries its chip and no Remove, and only a server that joined its hub loads through Sync.
+// The Backends list as an administrator sees it: a row a remote fills carries its chip and no Remove.
 import type { FunctionalComponent } from "vue";
 import { createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { desktop, none, server } from "../../__fixtures__/hubConnection";
-import { element, fakeStorage, mountIn, settle } from "../../__fixtures__/mount";
-import { deferred } from "../../__fixtures__/promises";
+import { element, fakeStorage, mountIn } from "../../__fixtures__/mount";
 import type { ComputeBackend } from "../../api/computeBackends.api";
-import type { HubConnection } from "../../api/hubConnection.api";
 
-const mocks = vi.hoisted(() => ({ connection: vi.fn(), list: vi.fn(), sync: vi.fn() }));
+const mocks = vi.hoisted(() => ({ list: vi.fn() }));
 
-vi.mock("../../api/hubConnection.api", () => ({
-  getHubConnection: mocks.connection,
-  connectHub: vi.fn(),
-  disconnectHub: vi.fn(),
-  syncHubComputeNodes: mocks.sync,
-}));
 vi.mock("../../api/computeBackends.api", () => ({
   listComputeBackends: mocks.list,
   addComputeBackend: vi.fn(),
@@ -53,18 +43,12 @@ const row = (id: string, source: ComputeBackend["source"]): ComputeBackend => ({
 
 let host: HTMLElement;
 
-const mount = async () => {
-  host = await mountIn(ComputeBackendsPanel, { pinia: createPinia(), stubs });
-};
-
 const find = (testId: string) => host.querySelector(`[data-testid="${testId}"]`);
 const remove = (id: string) => host.querySelector(`[aria-label="Remove ${id}"]`);
 
 beforeEach(() => {
   vi.stubGlobal("localStorage", fakeStorage());
-  mocks.connection.mockReset();
   mocks.list.mockReset();
-  mocks.sync.mockReset();
 });
 
 afterEach(() => {
@@ -72,45 +56,15 @@ afterEach(() => {
 });
 
 describe("ComputeBackendsPanel", () => {
-  it("lists the configured workers before the hub connection has answered", async () => {
-    const connection = deferred<HubConnection>();
-    mocks.connection.mockReturnValue(connection.promise);
-    mocks.list.mockResolvedValue([row("worker:own", "local")]);
+  it("gives a row a remote fills the chip and no Remove, from one listing", async () => {
+    mocks.list.mockResolvedValue([row("worker:team", "remote"), row("worker:own", "local")]);
 
-    await mount();
+    host = await mountIn(ComputeBackendsPanel, { pinia: createPinia(), stubs });
 
-    expect(find("backend-row-worker:own")).not.toBeNull();
-    expect(mocks.sync).not.toHaveBeenCalled();
-    connection.resolve(none);
-    await settle();
-    expect(mocks.list).toHaveBeenCalledTimes(1);
-    expect(find("backends-hub")).toBeNull();
-  });
-
-  it("gives a connected desktop's hub rows the chip and no Remove, and loads them as any worker", async () => {
-    mocks.connection.mockResolvedValue(desktop);
-    mocks.list.mockResolvedValue([row("worker:team", "hub"), row("worker:own", "local")]);
-
-    await mount();
-
-    expect(find("backend-from-hub-worker:team")?.textContent).toBe("From your hub");
+    expect(find("backend-managed-worker:team")?.textContent).toBe("Managed elsewhere");
     expect(remove("worker:team")).toBeNull();
-    expect(find("backend-from-hub-worker:own")).toBeNull();
+    expect(find("backend-managed-worker:own")).toBeNull();
     expect(remove("worker:own")).not.toBeNull();
-    expect(mocks.sync).not.toHaveBeenCalled();
-    expect(find("backends-hub")).not.toBeNull();
-  });
-
-  it("loads a joined server's list through Sync once the connection says it joined", async () => {
-    mocks.connection.mockResolvedValue(server);
-    mocks.list.mockResolvedValue([]);
-    mocks.sync.mockResolvedValue({ backends: [row("worker:team", "hub")], skipped: [] });
-
-    await mount();
-
     expect(mocks.list).toHaveBeenCalledTimes(1);
-    expect(mocks.sync).toHaveBeenCalledTimes(1);
-    expect(find("backend-row-worker:team")).not.toBeNull();
-    expect(remove("worker:team")).toBeNull();
   });
 });

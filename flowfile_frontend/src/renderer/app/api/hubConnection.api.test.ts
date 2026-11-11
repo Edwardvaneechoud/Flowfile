@@ -6,12 +6,7 @@ vi.mock("../services/axios.config", () => ({
   default: { get: mocks.get, post: mocks.post, delete: mocks.del },
 }));
 
-import {
-  connectHub,
-  disconnectHub,
-  getHubConnection,
-  syncHubComputeNodes,
-} from "./hubConnection.api";
+import { connectHub, disconnectHub, getHubConnection } from "./hubConnection.api";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -36,14 +31,6 @@ describe("hubConnection.api", () => {
 
     expect(await connectHub(input)).toEqual({ connected: true });
     expect(mocks.post).toHaveBeenCalledWith("/hub_client/connection", input);
-  });
-
-  it("posts /hub_client/compute_nodes/sync and returns the rows and the skipped ids", async () => {
-    const answer = { backends: [], skipped: ["worker:gpu"] };
-    mocks.post.mockResolvedValueOnce({ data: answer });
-
-    expect(await syncHubComputeNodes()).toEqual(answer);
-    expect(mocks.post).toHaveBeenCalledWith("/hub_client/compute_nodes/sync");
   });
 
   it("deletes /hub_client/connection to disconnect", async () => {

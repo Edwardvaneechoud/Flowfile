@@ -130,21 +130,22 @@ def test_a_members_first_sign_in_lists_the_hubs_servers_and_a_run_on_one_works(p
     dee, dee_token = sign_in(hub, DEE, "dee")
 
     [listed] = backends(dee_token)
-    assert (listed["id"], listed["source"], listed["url"]) == (BACKEND, "hub", None)
+    assert (listed["id"], listed["source"], listed["url"]) == (BACKEND, "remote", None)
     assert owners() == {BACKEND: dee}
-    assert hub.listed == [DEE]
+    assert hub.listed == [DEE, DEE]
     flow = open_flow(dee, "dees_flow")
     ran = run(flow, dee_token)
     assert ran.success is True, errors(ran)
     assert sorted_ranks(flow) == [1, 2, 3]
     assert hub.minted == [hub.people[DEE]["username"]]
-    assert hub.listed == ([DEE, DEE] if protocol else [DEE])
+    assert hub.listed == ([DEE] * 3 if protocol else [DEE, DEE])
 
 
 def test_a_server_removed_on_the_hub_leaves_the_backends_at_the_next_run(protocol_on, hub, open_flow):
     dee, dee_token = sign_in(hub, DEE, "dee")
     flow = open_flow(dee, "dees_flow")
     assert [backend["id"] for backend in backends(dee_token)] == [BACKEND]
+    minted = list(hub.minted)
 
     hub.nodes = []
     ran = run(flow, dee_token)
@@ -152,7 +153,7 @@ def test_a_server_removed_on_the_hub_leaves_the_backends_at_the_next_run(protoco
     assert ran.success is False
     assert all(f"Unknown compute backend {BACKEND!r}" in error for _, error in errors(ran)), errors(ran)
     assert backends(dee_token) == []
-    assert hub.minted == []
+    assert hub.minted == minted
 
 
 def test_a_server_only_another_person_may_use_stays_while_they_are_signed_in(protocol_on, hub, open_flow, server):

@@ -29,7 +29,7 @@ from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.hub_client import node_tokens
-from flowfile_core.routes import hub_client as hub_routes
+from flowfile_core.routes import compute_backends as compute_backends_routes
 from shared import hub_node
 from shared.tests import hub_join
 from tests.hub_client import conftest as hub_client_fakes
@@ -352,7 +352,7 @@ def api(store) -> TestClient:
 def no_configured_backends(monkeypatch):
     """No node token or queued node check outlives the test, and every backends row it left is removed."""
     monkeypatch.setattr(node_tokens, "_tokens", {})
-    monkeypatch.setattr(hub_routes, "_check_nodes", lambda backend_ids: None)
+    monkeypatch.setattr(compute_backends_routes, "check_unchecked", lambda backend_ids: None)
     yield
     with get_db_context() as db:
         for row in db.query(ConfiguredBackend).all():
@@ -375,11 +375,10 @@ def test_a_joined_core_never_lists_its_own_node_and_drops_a_row_written_before(
     assert _row_ids() == ["worker:gpu", "worker:team-local"]
     joined_as(node_file, "team-local")
 
-    response = api.post("/hub_client/compute_nodes/sync")
+    response = api.get("/compute_backends")
 
     assert response.status_code == 200, response.text
-    assert response.json()["skipped"] == []
-    assert [row["id"] for row in response.json()["backends"]] == ["worker:gpu"]
+    assert [row["id"] for row in response.json()] == ["worker:gpu"]
     assert _row_ids() == ["worker:gpu"]
     reconnected = api.post("/hub_client/connection", json=CONNECT)
     assert reconnected.status_code == 200, reconnected.text

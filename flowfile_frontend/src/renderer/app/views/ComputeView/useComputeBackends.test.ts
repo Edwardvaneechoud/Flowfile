@@ -12,11 +12,6 @@ const mocks = vi.hoisted(() => ({
   add: vi.fn(),
   remove: vi.fn(),
   handshake: vi.fn(),
-  sync: vi.fn(),
-}));
-
-vi.mock("../../api/hubConnection.api", () => ({
-  syncHubComputeNodes: mocks.sync,
 }));
 
 vi.mock("../../api/computeBackends.api", () => ({
@@ -31,7 +26,6 @@ import {
   emptyBackendForm,
   plainHttpOffLoopback,
   serverFilesLabel,
-  skippedNotice,
   useComputeBackends,
   workersSummary,
 } from "./useComputeBackends";
@@ -69,7 +63,6 @@ beforeEach(() => {
     rows = rows.filter((row) => row.id !== id);
   });
   mocks.handshake.mockReset();
-  mocks.sync.mockReset();
 });
 
 const checked = verdict();
@@ -439,40 +432,5 @@ describe("workersSummary", () => {
       tone: "neutral",
       label: "2 not checked",
     });
-  });
-});
-
-describe("the one Sync: the hub's nodes", () => {
-  const hubRow: ComputeBackend = { ...teamRow(), id: "worker:gpu", source: "hub" };
-
-  it("names the worker added here that a sync kept, and says nothing when none was", () => {
-    expect(skippedNotice([])).toBe("");
-    expect(skippedNotice(["worker:own"])).toBe(
-      "Kept the worker added here under worker:own; the hub's node of that name is not listed.",
-    );
-  });
-
-  it("fills the rows from the hub's answer, no list in between", async () => {
-    mocks.sync.mockResolvedValue({ backends: [teamRow(), hubRow], skipped: [] });
-    const page = useComputeBackends();
-
-    await page.load(true);
-
-    expect(mocks.sync).toHaveBeenCalledTimes(1);
-    expect(mocks.list).not.toHaveBeenCalled();
-    expect(page.backends.value).toEqual([teamRow(), hubRow]);
-    expect(page.hubNotice.value).toBe("");
-    expect(page.loading.value).toBe(false);
-  });
-
-  it("lists the rows it has and says why when the hub's servers cannot be read", async () => {
-    mocks.sync.mockRejectedValue(httpError(502, "The hub is not answering"));
-    rows = [teamRow()];
-    const page = useComputeBackends();
-
-    await page.load(true);
-
-    expect(page.backends.value).toEqual([teamRow()]);
-    expect(page.hubNotice.value).toBe("The hub is not answering");
   });
 });

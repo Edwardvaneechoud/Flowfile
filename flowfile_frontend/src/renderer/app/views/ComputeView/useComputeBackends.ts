@@ -9,7 +9,6 @@ import {
   type ComputeBackendInput,
   type HandshakeVerdict,
 } from "../../api/computeBackends.api";
-import { syncHubComputeNodes } from "../../api/hubConnection.api";
 import { detailOf } from "../../utils/apiDetail";
 import {
   handshakeStatus,
@@ -94,44 +93,22 @@ export function workersSummary(
   return { tone: parts[0].tone, label: parts.map((part) => part.label).join(" · ") };
 }
 
-/** The line a sync leaves when it kept a worker added here under a name the hub also uses. */
-export function skippedNotice(skipped: string[]): string {
-  if (!skipped.length) return "";
-  return `Kept the worker added here under ${skipped.join(", ")}; the hub's node of that name is not listed.`;
-}
-
 /**
  * The configured workers and the admin's actions on them; the caller loads, nothing polls. A load seeds the
- * verdicts from the listing, so one a run produced shows without pressing Handshake. A load `fromHub` is the one
- * Sync: it fills the rows from the hub's compute nodes, which core checks once before it answers, so the answer
- * carries their verdicts as any worker's; a server joined to its hub loads that way, so the hub's servers show with
- * no Sync step.
+ * verdicts from the listing, so one a run produced shows without pressing Handshake.
  */
 export function useComputeBackends() {
   const backends: Ref<ComputeBackend[]> = ref([]);
   const loading = ref(false);
   const loadError = ref("");
-  const hubNotice = ref("");
   const adding = ref(false);
   const busy: Ref<Record<string, boolean>> = ref({});
   const verdicts: Ref<Record<string, HandshakeVerdict>> = ref({});
 
-  const fromHubOrList = async (fromHub: boolean): Promise<ComputeBackend[]> => {
-    if (!fromHub) return listComputeBackends();
-    try {
-      const synced = await syncHubComputeNodes();
-      hubNotice.value = skippedNotice(synced.skipped);
-      return synced.backends;
-    } catch (error) {
-      hubNotice.value = detailOf(error, "Couldn't read the hub's servers.");
-      return listComputeBackends();
-    }
-  };
-
-  const load = async (fromHub = false) => {
+  const load = async () => {
     loading.value = true;
     try {
-      backends.value = await fromHubOrList(fromHub);
+      backends.value = await listComputeBackends();
       for (const backend of backends.value) {
         if (backend.verdict) verdicts.value[backend.id] = backend.verdict;
       }
@@ -183,17 +160,5 @@ export function useComputeBackends() {
     }
   };
 
-  return {
-    backends,
-    loading,
-    loadError,
-    hubNotice,
-    adding,
-    busy,
-    verdicts,
-    load,
-    add,
-    remove,
-    handshake,
-  };
+  return { backends, loading, loadError, adding, busy, verdicts, load, add, remove, handshake };
 }

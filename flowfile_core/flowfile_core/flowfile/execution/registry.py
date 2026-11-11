@@ -184,11 +184,15 @@ _through_hub: set[str] = set()
 _acting: ContextVar[int | None] = ContextVar("acting_user", default=None)
 _scheduled: ContextVar[bool] = ContextVar("scheduled_run", default=False)
 remote_servers = SimpleNamespace(
-    refresh=lambda backend_ids: None, server_for=lambda user_id: None, run_refused=lambda on_servers: None
+    refresh=lambda backend_ids: None,
+    sync=lambda user_id: [],
+    server_for=lambda user_id: None,
+    run_refused=lambda on_servers: None,
 )
 """What the remote that fills ``compute_backends`` rows answers, each set by its client at import: ``token(name,
 account_user_id, remote_id, through)`` a call's token for its server ``name``; ``refresh(backend_ids)`` makes the rows
-follow its list before a run is placed; ``server_for(user_id)`` the backend id of the server a moved step goes to;
+follow its list before a run is placed; ``sync(user_id)`` makes them follow ``user_id``'s list before they are listed,
+answering the ids it wrote; ``server_for(user_id)`` the backend id of the server a moved step goes to;
 ``run_refused(on_servers)`` the run's nodes on its servers that it mints no token for, each with its sentence."""
 _entry_points_scanned = False
 _default_override: str | None = None
