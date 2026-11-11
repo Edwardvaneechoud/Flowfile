@@ -92,7 +92,7 @@ def _run_flow(flow_path: str, param_overrides: list[str] | None, run_id: int | N
 
     # Run on the embedded worker unless --backend, the flow's saved backend id or FLOWFILE_COMPUTE_BACKEND names one
     if backend is None and flow.execution_location not in ("local", "remote", "auto"):
-        backend_id = registry.headless_backend_id(flow.execution_location)
+        backend_id = flow.execution_location
         registry.set_default_override(backend_id)
     flow.execution_location = "local" if backend_id == registry.LOCAL_BACKEND_ID else "remote"
 

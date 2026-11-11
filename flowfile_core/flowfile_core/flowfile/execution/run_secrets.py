@@ -250,7 +250,3 @@ def connections_for(node: FlowNode) -> list[tuple[str, str]]:
     if ref is None or provider_row(ref[0], ref[1], user_id) is None:
         return []
     return [ref]
-
-
-# The names flow_graph/execution.py still reads these by.
-hub_refusal, hub_secret_names = refusal, provider_secret_names

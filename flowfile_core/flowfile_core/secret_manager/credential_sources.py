@@ -36,12 +36,13 @@ class CredentialSource(Protocol):
         """Why a step that uses its connection or secret ``name`` cannot run where it was placed, in one sentence."""
 
 
-_sources: list[CredentialSource] = []
+_source: CredentialSource | None = None
 
 
 def register(source: CredentialSource) -> None:
     """Make ``source`` this core's provider of credentials."""
-    _sources[:] = [source]
+    global _source
+    _source = source
 
 
 def source() -> CredentialSource:
@@ -50,19 +51,20 @@ def source() -> CredentialSource:
     Raises:
         LookupError: No provider registered in this process.
     """
-    if not _sources:
+    if _source is None:
         raise LookupError("This Flowfile has no provider of credentials other than itself")
-    return _sources[0]
+    return _source
 
 
 def secret_rows(user_id: int, taken: Collection[str] = ()) -> list[dict]:
     """The provider's secrets for ``user_id`` whose name is not ``taken`` by one of this machine's."""
-    return [row for each in _sources for row in each.secret_rows(user_id) if row.get("name") not in taken]
+    rows = _source.secret_rows(user_id) if _source is not None else []
+    return [row for row in rows if row.get("name") not in taken]
 
 
 def connection_rows(user_id: int, kind: str, taken: Collection[str] = ()) -> list[dict]:
     """The provider's ``kind`` connections for ``user_id`` whose name is not ``taken`` by one of this machine's."""
-    rows = (row for each in _sources for row in each.connection_rows(user_id, kind))
+    rows = _source.connection_rows(user_id, kind) if _source is not None else []
     return [row for row in rows if row.get("connection_name") not in taken]
 
 
@@ -81,4 +83,4 @@ def keeps_secret(user_id: int, name: str | None) -> bool:
 def unopened(value: object) -> str | None:
     """Why core does not open ``value``: a form a provider granted to the server that runs a step. ``None`` for a
     value of this machine's own."""
-    return next((why for why in (each.unopened(value) for each in _sources) if why), None)
+    return (_source.unopened(value) or None) if _source is not None else None

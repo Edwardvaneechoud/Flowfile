@@ -104,12 +104,14 @@ class RemoteCatalog(Protocol):
         that is not its."""
 
 
-_remotes: dict[str, RemoteCatalog] = {}
+_source: str | None = None
+_remote: RemoteCatalog | None = None
 
 
 def register_remote(source: str, catalog: RemoteCatalog) -> None:
-    """Make ``catalog`` the answer for every table whose ``source`` is ``source``."""
-    _remotes[source] = catalog
+    """Make ``catalog`` this core's one remote catalog, the answer for every table whose ``source`` is ``source``."""
+    global _source, _remote
+    _source, _remote = source, catalog
 
 
 def is_remote(source: str | None) -> bool:
@@ -119,79 +121,78 @@ def is_remote(source: str | None) -> bool:
 
 def remote(source: str) -> RemoteCatalog:
     """The remote catalog registered for ``source``; a ``LookupError`` when this process has none."""
-    if source not in _remotes:
+    if _remote is None or source != _source:
         raise LookupError(f"This Flowfile has no catalog named {source!r} to read or write tables of")
-    return _remotes[source]
+    return _remote
 
 
 def remote_of(table_id: int) -> RemoteCatalog | None:
     """The remote catalog that keeps ``table_id`` (a remote row's id is negative), ``None`` for a local one."""
-    return next(iter(_remotes.values()), None) if table_id < 0 else None
+    return _remote if table_id < 0 else None
 
 
 def run_starts(start: RunStart) -> Any:
     """Tell the remote catalog the run begins and answer its grant, kept until ``run_ends``."""
-    catalog = next(iter(_remotes.values()), None)
-    if catalog is None:
+    if _remote is None:
         raise LookupError("This Flowfile has no remote catalog to ask for what this run uses")
-    return catalog.run_starts(start)
+    return _remote.run_starts(start)
 
 
 def run_grant(run_id: str | None) -> Any | None:
     """What the remote catalog gave the run ``run_id`` when it started; ``None`` between runs."""
-    grants = (catalog.run_grant(run_id) for catalog in _remotes.values()) if run_id else ()
-    return next((grant for grant in grants if grant is not None), None)
+    return _remote.run_grant(run_id) if run_id and _remote is not None else None
 
 
 def run_ends(run_id: str) -> None:
-    """Tell the remote catalogs the run ``run_id`` ended, so none keeps what it was given."""
-    for catalog in _remotes.values():
-        catalog.run_ends(run_id)
+    """Tell the remote catalog the run ``run_id`` ended, so it keeps nothing it was given."""
+    if _remote is not None:
+        _remote.run_ends(run_id)
 
 
 def relayed(user_id: int | None, method: str, path: str, params: dict | None, body) -> tuple[int, object] | None:
     """The remote catalog's answer to a request naming one of its rows (a negative id in the path, query or body),
     ``None`` for one that names none."""
+    if _remote is None:
+        return None
     named = [*path.split("/")]
     for sent in (params, body):
         if isinstance(sent, Mapping):
             named += [value for key, value in sent.items() if key == "id" or key.endswith("_id")]
-    catalog = next(iter(_remotes.values()), None)
-    if catalog is None or not any(_REMOTE_ID.fullmatch(str(value)) for value in named):
+    if not any(_REMOTE_ID.fullmatch(str(value)) for value in named):
         return None
-    return catalog.request(user_id, method, path, params, body)
+    return _remote.request(user_id, method, path, params, body)
 
 
-def remote_answers(user_id: int | None, path: str, params: dict | None = None) -> list[object]:
-    """Each remote catalog's answer to the list route ``path`` for ``user_id``. A catalog that does not answer 200,
-    one the person has no session with included, is left out, as it is left out of the tree."""
-    if user_id is None:
-        return []
-    answers = [catalog.request(user_id, "GET", path, params, None) for catalog in _remotes.values()]
-    return [answer for status, answer in answers if status == 200]
+def has_remote() -> bool:
+    """Whether a remote catalog is registered in this process."""
+    return _remote is not None
+
+
+def remote_answer(user_id: int | None, path: str, params: dict | None = None) -> object | None:
+    """The remote catalog's answer to the list route ``path`` for ``user_id``; ``None`` unless it answers 200, as a
+    catalog the person has no session with is left out of the tree."""
+    if user_id is None or _remote is None:
+        return None
+    status, answer = _remote.request(user_id, "GET", path, params, None)
+    return answer if status == 200 else None
 
 
 def merged_rows(user_id: int | None, path: str, local: list, row: type[BaseModel], params: dict | None = None) -> list:
-    """The rows of the list route ``path`` that ``user_id`` reads: this install's ``local`` first, then the remote
-    catalogs' rows of the same list, each as ``row``. An answer that is no list of ``row`` is left out."""
-    merged = list(local)
-    for answer in remote_answers(user_id, path, params):
-        try:
-            merged += [row.model_validate(item) for item in answer]
-        except (ValidationError, TypeError):
-            continue
-    return merged
+    """This install's ``local`` rows of the list route ``path``, then the remote catalog's, each as ``row``."""
+    try:
+        return [*local, *(row.model_validate(item) for item in remote_answer(user_id, path, params) or ())]
+    except (ValidationError, TypeError):
+        return list(local)
 
 
 def local_catalog_offered() -> bool:
     """Whether this install's own catalog is offered for saving work: not while a remote catalog is of record."""
-    return not any(catalog.of_record() for catalog in _remotes.values())
+    return _remote is None or not _remote.of_record()
 
 
 def save_flow(user_id: int | None, flow) -> str | None:
     """Save ``flow`` to the remote catalog it came from: its sentence, ``None`` for a flow no remote catalog keeps."""
-    notes = (catalog.save_flow(user_id, flow) for catalog in _remotes.values())
-    return next((note for note in notes if note is not None), None)
+    return _remote.save_flow(user_id, flow) if _remote is not None else None
 
 
 def has_its_record_here(executed_on: str | None) -> bool:
@@ -201,7 +202,7 @@ def has_its_record_here(executed_on: str | None) -> bool:
 
 def merged_tree(user_id: int, local: list[NamespaceTree]) -> list[NamespaceTree]:
     """The catalog tree ``user_id`` reads: this install's catalogs ``local`` first, then the remote catalogs'."""
-    listed = [root for catalog in _remotes.values() for root in catalog.tree(user_id)]
+    listed = _remote.tree(user_id) if _remote is not None else []
     joined = issuer_accounts.joined_with_keys() is not None
     if not listed and not joined:
         return local
@@ -273,7 +274,7 @@ def write_row(table: CatalogTable | CatalogTableOut, user_id: int | None, **fact
 
 def flow_uuid(flow) -> str | None:
     """The uuid a remote catalog keeps ``flow`` under, ``None`` for a flow no remote catalog keeps."""
-    return next((uuid for catalog in _remotes.values() if (uuid := catalog.flow_uuid(flow))), None)
+    return (_remote.flow_uuid(flow) or None) if _remote is not None else None
 
 
 def _cursor_answer(table_id: int, user_id: int | None, method: str, route: str, body=None):
@@ -321,10 +322,9 @@ def reset_cursor(table_id: int, user_id: int | None, consumer_key: str, version:
 
 def remote_sql_tables(query: str, user_id: int | None, own: set[str]) -> dict[str, CatalogTableOut]:
     """The remote tables by SQL name for a ``query`` reading a name not in ``own``, this install's names, which win."""
-    if user_id is None or not _remotes or not reads_other(query, own):
+    if user_id is None or _remote is None or not reads_other(query, own):
         return {}
-    listed = [root for catalog in _remotes.values() for root in catalog.tree(user_id)]
-    return {name: table for name, table in _sql_names(listed).items() if name not in own}
+    return {name: table for name, table in _sql_names(_remote.tree(user_id)).items() if name not in own}
 
 
 def _sql_names(listed: list[NamespaceTree]) -> dict[str, CatalogTableOut]:
@@ -352,7 +352,7 @@ def _kernel_tree(user_id: int) -> list[NamespaceTree]:
     for them several times in a row."""
     held = _listed.get(user_id)
     if held is None or time.monotonic() - held[0] >= LISTED_SECONDS:
-        listed = [root for catalog in _remotes.values() for root in catalog.tree(user_id)]
+        listed = _remote.tree(user_id) if _remote is not None else []
         held = _listed[user_id] = (time.monotonic(), listed)
     return held[1]
 

@@ -76,7 +76,7 @@ def _run_flow(flow_path: str, run_id: int, backend: str | None) -> int:
         return 1
 
     if backend is None and flow.execution_location not in ("local", "remote", "auto"):
-        backend_id = registry.headless_backend_id(flow.execution_location)
+        backend_id = flow.execution_location
         registry.set_default_override(backend_id)
     flow.execution_location = "local" if backend_id == registry.LOCAL_BACKEND_ID else "remote"
 

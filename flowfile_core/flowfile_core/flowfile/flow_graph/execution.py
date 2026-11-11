@@ -282,8 +282,8 @@ def _stranded(step: tuple[list[str], list[tuple[str, str]]], why: str | None) ->
     """The refusal of a step using a remote secret or connection that is on no server able to open it."""
     names, refs = step
     if refs:
-        return run_secrets.hub_refusal(refs[0][1], why=why)
-    return run_secrets.hub_refusal(names[0], secret=True, why=why)
+        return run_secrets.refusal(refs[0][1], why=why)
+    return run_secrets.refusal(names[0], secret=True, why=why)
 
 
 def _read_preview(node: FlowNode) -> pa.Table | None:
@@ -1784,7 +1784,7 @@ class ExecutionMixin(GraphMixinBase):
             found: dict[int | str, tuple[list[str], list[tuple[str, str]]]] = {}
             for node in self.nodes:
                 try:
-                    names, refs = run_secrets.hub_secret_names(node), run_secrets.connections_for(node)
+                    names, refs = run_secrets.provider_secret_names(node), run_secrets.connections_for(node)
                 except Exception as e:
                     logger.debug(f"Could not read the hub secrets of node {node.node_id}: {e}")
                     continue

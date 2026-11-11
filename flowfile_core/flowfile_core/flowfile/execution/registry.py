@@ -353,15 +353,6 @@ def environment_backend_id() -> str | None:
     return os.environ.get(BACKEND_ENV_VAR, "").strip() or None
 
 
-def headless_backend_id(saved_location: str, backend: str | None = None) -> str:
-    """``backend``, else a backend id the flow saved, else ``environment_backend_id``, else ``local``."""
-    if backend:
-        return backend
-    if saved_location not in ("local", "remote", "auto"):
-        return saved_location
-    return environment_backend_id() or LOCAL_BACKEND_ID
-
-
 def fallback_backend_id() -> str:
     """The id of the backend a node goes to when the one its settings name cannot run it.
 

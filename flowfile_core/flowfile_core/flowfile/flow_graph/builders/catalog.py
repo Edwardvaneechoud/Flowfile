@@ -60,17 +60,8 @@ PICK_REMOTE_TABLE = "No table on the hub is picked for this reader; pick one."
 
 
 def unnamed_remote_table(settings: input_schema.NodeCatalogReader) -> str | None:
-    """Why a reader on the hub cannot be read: it names no table (``PICK_REMOTE_TABLE``), or only a bare name, which a
-    flow saved by an older Flowfile carries when its hub ids could not be converted at open; ``None`` when it names
-    its table by its qualified name."""
-    if settings.catalog_full_table_name:
-        return None
-    if settings.catalog_table_name:
-        return (
-            f"The table {settings.catalog_table_name} on the hub is named by an id from an older Flowfile; open this "
-            "flow while connected to the hub to convert it, or pick the table again."
-        )
-    return PICK_REMOTE_TABLE
+    """Why a remote reader cannot be read: it names no table by its qualified name; ``None`` when it does."""
+    return None if settings.catalog_full_table_name else PICK_REMOTE_TABLE
 
 
 def _filtered_frame(lf: pl.LazyFrame, row_filter: pl.Expr | None, backend: ComputeBackend | None) -> FlowDataEngine:

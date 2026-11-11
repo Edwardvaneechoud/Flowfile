@@ -132,14 +132,6 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
 
 
 def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
-    """The secret ``secret_name`` as ``current_user_id`` reaches it on this machine, encrypted: their own, else one
-    granted to them (``stored_encrypted_secret``); ``None`` when they reach none. A provider's secret has no value
-    here: a step carries it as the run was granted it (``run_secrets.encrypted_secret``)."""
-    return stored_encrypted_secret(current_user_id, secret_name)
-
-
-def stored_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
-    """The secret ``secret_name`` in this server's database: the user's own, else the lowest-id one granted to them."""
     with get_db_context() as db:
         user_id = current_user_id
         # (user_id, name) is not unique at the DB level; order by id so resolution

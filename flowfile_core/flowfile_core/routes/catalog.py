@@ -194,6 +194,8 @@ class _RemoteRoute(APIRoute):
 async def relay_remote(request: Request, user_id: int, prefix: str) -> None:
     """Hand a request that names a row of a remote catalog to that catalog (``table_sources.relayed``), as
     ``user_id`` and on core's own route from ``prefix`` on; its answer is the route's (``_RemoteAnswer``)."""
+    if not table_sources.has_remote():
+        return
     body = None
     if request.headers.get("content-type", "").startswith("application/json"):
         try:
@@ -674,29 +676,22 @@ def _all_runs(
     window = min(offset + limit, _RUNS_WINDOW)
     asked = {"limit": window, "offset": 0, "run_type": run_type, "search": search}
     params = {key: value for key, value in asked.items() if value is not None}
-    pages = []
-    for answer in table_sources.remote_answers(user_id, "/catalog/runs", params):
-        try:
-            pages.append(PaginatedFlowRuns.model_validate(answer))
-        except ValidationError:
-            continue
-    if not pages:
+    try:
+        page = PaginatedFlowRuns.model_validate(table_sources.remote_answer(user_id, "/catalog/runs", params))
+    except ValidationError:
         return service.list_runs(run_type=run_type, limit=limit, offset=offset, search=search)
     local = service.list_runs(run_type=run_type, limit=window, offset=0, search=search)
     own_ids = {run.remote_run_id for run in local.items if run.remote_run_id}
-    items, merged = list(local.items), local.model_copy()
-    for page in pages:
-        theirs = [
-            run
-            for run in page.items
-            if not table_sources.has_its_record_here(run.executed_on) and run.remote_run_id not in own_ids
-        ]
-        items += theirs
-        twice = len(page.items) - len(theirs)
-        merged.total += page.total - twice
-        merged.total_success += page.total_success
-        merged.total_failed += page.total_failed
-        merged.total_running += page.total_running
+    theirs = [
+        run
+        for run in page.items
+        if not table_sources.has_its_record_here(run.executed_on) and run.remote_run_id not in own_ids
+    ]
+    items, merged = [*local.items, *theirs], local.model_copy()
+    merged.total += page.total - (len(page.items) - len(theirs))
+    merged.total_success += page.total_success
+    merged.total_failed += page.total_failed
+    merged.total_running += page.total_running
     items.sort(key=lambda run: run.started_at.replace(tzinfo=None), reverse=True)
     merged.items = items[offset : offset + limit]
     return merged
@@ -1887,12 +1882,10 @@ def _scheduler_status(db: Session) -> SchedulerStatusOut:
 def _remote_scheduler_status(user_id: int) -> SchedulerStatusOut | None:
     """The status a remote catalog answers for its own scheduler, the one that fires its listed schedules; ``None``
     when no remote catalog answers it."""
-    for answer in table_sources.remote_answers(user_id, "/catalog/scheduler/status"):
-        try:
-            return SchedulerStatusOut.model_validate(answer)
-        except (ValidationError, TypeError):
-            continue
-    return None
+    try:
+        return SchedulerStatusOut.model_validate(table_sources.remote_answer(user_id, "/catalog/scheduler/status"))
+    except (ValidationError, TypeError):
+        return None
 
 
 @router.get("/scheduler/status", response_model=SchedulerStatusOut)

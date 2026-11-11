@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from flowfile_core import main
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret, stored_encrypted_secret
+from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from shared import hub_node
 from shared.tests.hub_jwks import HubSigner
 from tests import test_hub_sign_in
@@ -89,7 +89,7 @@ def test_a_secret_added_in_the_editor_lands_in_this_servers_database_and_not_on_
     assert added.status_code == 200, added.text
     assert added.json()["name"] == name and "s3cret" not in added.text
     assert (added.json()["source"], added.json()["user_id"]) == ("local", str(person_id))
-    encrypted = stored_encrypted_secret(current_user_id=person_id, secret_name=name)
+    encrypted = get_encrypted_secret(current_user_id=person_id, secret_name=name)
     assert encrypted.startswith(f"$ffsec$1${person_id}$") and decrypt_secret(encrypted).get_secret_value() == "s3cret"
     assert rows_named(name) == 1
     assert name not in hub.values and hub.secret_calls == []
