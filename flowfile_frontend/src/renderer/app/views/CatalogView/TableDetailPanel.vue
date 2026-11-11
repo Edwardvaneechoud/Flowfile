@@ -102,7 +102,6 @@
       :resource-id="table.id"
       :resource-name="table.name"
       :can-manage-grants="isHub ? ownsHubRow(table) : canManageGrants(table)"
-      :remote="isHub"
     />
 
     <TableEditorDialog

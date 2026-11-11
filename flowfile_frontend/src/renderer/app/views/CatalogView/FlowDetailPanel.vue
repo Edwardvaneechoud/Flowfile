@@ -121,7 +121,6 @@
       :resource-id="flow.id"
       :resource-name="flow.name"
       :can-manage-grants="remote ? ownsHubRow(flow) : canManageGrants(flow)"
-      :remote="remote"
     />
 
     <!-- File missing banner -->
