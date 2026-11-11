@@ -237,16 +237,15 @@ interface NodeResultData {
   is_running: boolean;
   // Deliberately skipped behind a closed gate: succeeds without running.
   skipped?: boolean;
+  cancelled?: boolean;
 }
 
-const runEnded = computed(() => props.run.success !== null);
-
 function nodeStatusText(nr: NodeResultData): string {
-  return NODE_OUTCOME_LABEL[nodeOutcome(nr, runEnded.value)];
+  return NODE_OUTCOME_LABEL[nodeOutcome(nr)];
 }
 
 function nodeStatusClass(nr: NodeResultData): string {
-  return NODE_OUTCOME_BADGE[nodeOutcome(nr, runEnded.value)];
+  return NODE_OUTCOME_BADGE[nodeOutcome(nr)];
 }
 
 const outcome = computed(() => runOutcome(props.run.success, props.run.cancelled));

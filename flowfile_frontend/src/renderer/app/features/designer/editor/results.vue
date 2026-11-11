@@ -155,6 +155,8 @@ interface RunNode {
   success?: boolean;
   // Deliberately skipped behind a closed gate: succeeds without running.
   skipped?: boolean;
+  // Stopped by a cancel before it reported an outcome.
+  cancelled?: boolean;
 }
 
 const nodeStore = useNodeStore();
@@ -228,8 +230,7 @@ const runStatusClass = computed(() => ({
   skipped: runCancelled.value,
 }));
 
-// A node row without an outcome in an ended run is one a cancel stopped.
-const nodeStopped = (node: RunNode) => !node.skipped && node.success === null && runEnded.value;
+const nodeStopped = (node: RunNode) => !node.skipped && !!node.cancelled;
 
 // Performance mode skips per-step example data, so after a successful run we
 // nudge the user toward Development mode to inspect step-by-step data.

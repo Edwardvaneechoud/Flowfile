@@ -52,7 +52,7 @@ describe("RunDetailPanel", () => {
     mounted = mount(RunDetailPanel, {
       run: run({
         cancelled: true,
-        node_results_json: JSON.stringify([node(1, true), node(2, null, "Cancelled")]),
+        node_results_json: JSON.stringify([node(1, true), { ...node(2, null), cancelled: true }]),
       }),
     });
 

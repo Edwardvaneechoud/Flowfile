@@ -57,7 +57,7 @@ describe("the designer's run results", () => {
     show(
       run({
         cancelled: true,
-        node_step_result: [node(1, true), node(2, null, "Cancelled")] as never,
+        node_step_result: [node(1, true), { ...node(2, null), cancelled: true }] as never,
       }),
     );
 
@@ -72,7 +72,11 @@ describe("the designer's run results", () => {
   });
 
   it("shows a run that failed as Failed, also one cancelled after a node failed", () => {
-    const nodes = [node(1, true), node(2, false, "boom"), node(3, null)] as never;
+    const nodes = [
+      node(1, true),
+      node(2, false, "boom"),
+      { ...node(3, null), cancelled: true },
+    ] as never;
     for (const fields of [{ cancelled: false }, {}]) {
       show(run({ ...fields, node_step_result: nodes }));
 

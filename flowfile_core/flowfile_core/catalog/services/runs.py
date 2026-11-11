@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-import os
-import signal
 from datetime import datetime, timezone
+
+from sqlalchemy.orm.attributes import flag_modified
 
 from flowfile_core.catalog.exceptions import (
     FlowAlreadyRunningError,
@@ -22,6 +22,7 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRunOut,
     PaginatedFlowRuns,
 )
+from shared.run_completion import terminate_pid
 from shared.run_logs import SUBPROCESS_RUN_TYPES, run_log_path
 from shared.subprocess_utils import spawn_flow_subprocess
 
@@ -188,6 +189,8 @@ class FlowRunService:
         run.ended_at = now
         run.success = success
         run.cancelled = cancelled and not success
+        # Written even when it equals the loaded value: a cancel may have been recorded since the load.
+        flag_modified(run, "cancelled")
         run.nodes_completed = nodes_completed
         if number_of_nodes is not None and number_of_nodes > 0:
             run.number_of_nodes = number_of_nodes
@@ -306,6 +309,9 @@ class FlowRunService:
             run.ended_at = datetime.now(timezone.utc)
             run.success = False
         self.repo.update_run(run)
+        if pid is not None and run.ended_at is not None:
+            # Cancelled while it was starting: that cancel saw no pid to signal.
+            logger.info("Run %s was cancelled while starting: %s", run.id, terminate_pid(pid))
         return run
 
     def run_flow_now(self, registration_id: int, user_id: int) -> FlowRunOut:
@@ -355,10 +361,4 @@ class FlowRunService:
             return
 
         if run.pid is not None:
-            try:
-                os.kill(run.pid, signal.SIGTERM)
-                logger.info("Sent SIGTERM to pid %s for run %s", run.pid, run_id)
-            except ProcessLookupError:
-                logger.info("Process %s for run %s already exited", run.pid, run_id)
-            except OSError:
-                logger.warning("Failed to kill pid %s for run %s", run.pid, run_id, exc_info=True)
+            logger.info("Cancelled run %s: %s", run_id, terminate_pid(run.pid))

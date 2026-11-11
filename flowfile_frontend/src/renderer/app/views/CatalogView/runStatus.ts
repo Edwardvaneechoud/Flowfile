@@ -41,19 +41,21 @@ export const RUN_OUTCOME_ICON: Record<RunOutcome, string> = {
 export type NodeOutcome = "skipped" | "ok" | "failed" | "cancelled" | "running";
 
 interface NodeRow {
-  success: boolean | null;
+  success?: boolean | null;
   skipped?: boolean;
+  cancelled?: boolean;
 }
 
 /**
- * A node row with no outcome belongs to a node a cancel stopped once its run has ended: the engine
- * leaves `success` null only then. Nodes that never started have no row at all.
+ * The engine marks a node a cancel stopped; a row with no outcome and no mark is still running.
+ * Nodes that never started have no row at all.
  */
-export function nodeOutcome(node: NodeRow, runEnded: boolean): NodeOutcome {
+export function nodeOutcome(node: NodeRow): NodeOutcome {
   if (node.skipped) return "skipped";
+  if (node.cancelled) return "cancelled";
   if (node.success) return "ok";
   if (node.success === false) return "failed";
-  return runEnded ? "cancelled" : "running";
+  return "running";
 }
 
 export const NODE_OUTCOME_LABEL: Record<NodeOutcome, string> = {

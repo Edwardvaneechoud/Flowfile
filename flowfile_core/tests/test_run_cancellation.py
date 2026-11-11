@@ -19,11 +19,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
+from flowfile_core.catalog.services.runs import FlowRunService
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.routes.routes import _run_and_track
 from flowfile_core.schemas import input_schema, transform_schema
+from shared import run_completion
 from shared.notifications.processor import process_pending_notifications
 from shared.run_logs import run_log_path
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
@@ -75,9 +77,9 @@ def _add_polars_code(graph: FlowGraph, node_id: int, code: str, depends_on: int)
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(depends_on, node_id))
 
 
-def _graph(flow_id: int, code: str) -> FlowGraph:
+def _graph(flow_id: int, code: str, execution_location: str = "local") -> FlowGraph:
     """Manual input -> Polars code -> record count, so a cancel leaves one node done, one stopped, one not started."""
-    graph = create_test_graph(flow_id, name=f"cancel_{flow_id}")
+    graph = create_test_graph(flow_id, name=f"cancel_{flow_id}", execution_location=execution_location)
     add_test_manual_input(graph, [{"a": i} for i in range(4)])
     _add_polars_code(graph, 2, code, depends_on=1)
     graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=3, node_type="record_count"))
@@ -311,6 +313,11 @@ def _wait_until_running(graph: FlowGraph, node_id: int, timeout: float = 120) ->
     raise AssertionError(f"node {node_id} never started")
 
 
+def _node_rows(run: dict) -> dict[int, tuple[bool | None, bool]]:
+    """Each reported node's ``(success, cancelled)``."""
+    return {node["node_id"]: (node["success"], node["cancelled"]) for node in json.loads(run["node_results_json"])}
+
+
 def _last_run(registration_id: int) -> dict:
     page = client.get("/catalog/runs", params={"registration_id": registration_id}).json()
     assert len(page["items"]) == 1, page
@@ -333,8 +340,7 @@ def test_a_run_cancelled_in_the_designer_reads_cancelled_with_its_stopped_node(t
     assert graph.latest_run_info.cancelled
     run = _last_run(registration_id)
     assert (run["run_type"], run["success"], run["cancelled"]) == ("in_designer_run", False, True)
-    nodes = {node["node_id"]: node["success"] for node in json.loads(run["node_results_json"])}
-    assert nodes == {1: True, 2: None}, "the finished node is done, the stopped one has no outcome, node 3 has no row"
+    assert _node_rows(run) == {1: (True, False), 2: (None, True)}, "node 1 is done, node 2 stopped, node 3 has no row"
     flow = client.get(f"/catalog/flows/{registration_id}").json()
     assert (flow["last_run_success"], flow["last_run_cancelled"]) == (False, True)
 
@@ -363,5 +369,129 @@ def test_a_designer_run_that_failed_before_the_cancel_stays_failed(tmp_path):
     assert not graph.latest_run_info.cancelled
     run = _last_run(registration_id)
     assert (run["success"], run["cancelled"]) == (False, False)
-    nodes = {node["node_id"]: node["success"] for node in json.loads(run["node_results_json"])}
-    assert nodes == {1: True, 2: False, 3: None}
+    assert _node_rows(run) == {1: (True, False), 2: (False, False), 3: (None, True)}
+
+
+def test_a_designer_run_cancelled_on_the_worker_reads_cancelled(tmp_path, flowfile_worker):
+    """The worker stops the node's job mid-run, long before it would end; the job's error is no failure."""
+    graph = _graph(99476, SLOW, execution_location="remote")
+    flow_path = tmp_path / "designer_worker.yaml"
+    graph.save_flow(str(flow_path))
+    registration_id = _register(flow_path, "designer_worker_cancel")
+
+    thread = _designer_run(graph, registration_id)
+    _wait_until_running(graph, 2)
+    time.sleep(3)
+    graph.cancel()
+    thread.join(timeout=60)
+    assert not thread.is_alive(), "the cancel did not stop the node's job"
+
+    run = _last_run(registration_id)
+    assert (run["success"], run["cancelled"]) == (False, True)
+    assert _node_rows(run) == {1: (True, False), 2: (None, True)}
+    assert json.loads(run["node_results_json"])[1]["error"] == ""
+
+
+def test_a_run_cancelled_before_any_node_ran_reads_cancelled_not_success(tmp_path):
+    graph = _graph(99477, BRIEF)
+    flow_path = tmp_path / "designer_early.yaml"
+    graph.save_flow(str(flow_path))
+    registration_id = _register(flow_path, "designer_cancel_before_start")
+    graph.flow_settings.source_registration_id = registration_id
+
+    assert graph.try_claim_run()
+    graph.cancel()
+    _run_and_track(graph, 1)
+
+    assert (graph.latest_run_info.success, graph.latest_run_info.cancelled) == (False, True)
+    run = _last_run(registration_id)
+    assert (run["success"], run["cancelled"], run["nodes_completed"]) == (False, True, 0)
+    assert _node_rows(run) == {}
+
+
+def test_a_cancelled_data_fetch_reads_cancelled(tmp_path):
+    graph = _graph(99478, BRIEF)
+
+    thread = threading.Thread(target=graph.trigger_fetch_node, args=(2,))
+    thread.start()
+    _wait_until_running(graph, 2)
+    time.sleep(1)
+    graph.cancel()
+    thread.join(timeout=120)
+    assert not thread.is_alive()
+
+    info = graph.get_run_info()
+    assert (info.run_type, info.success, info.cancelled) == ("fetch_one", False, True)
+    assert [(node.node_id, node.success, node.cancelled) for node in info.node_step_result] == [(2, None, True)]
+
+
+def _active_run(registration_id: int) -> int:
+    """A manual run row of the flow that has not ended and has no process."""
+    with get_db_context() as db:
+        registration = db.get(db_models.FlowRegistration, registration_id)
+        run = db_models.FlowRun(
+            registration_id=registration.id,
+            flow_uuid=registration.flow_uuid,
+            flow_name=registration.name,
+            flow_path=registration.flow_path,
+            user_id=1,
+            started_at=_now() - timedelta(seconds=5),
+            run_type="manual",
+        )
+        db.add(run)
+        db.commit()
+        return run.id
+
+
+def test_a_run_that_reports_its_end_after_a_cancel_keeps_its_outcome_and_alerts(tmp_path):
+    """The cancel did not stop it, so its failure is a failure: no mark, and the rules see it."""
+    registration_id = _register(tmp_path / "unused.yaml", "reported_after_cancel")
+    _alert_on_everything(registration_id)
+    run_id = _active_run(registration_id)
+    assert client.post(f"/catalog/runs/{run_id}/cancel").status_code == 204
+    assert _run_row(run_id).cancelled
+
+    run_completion.complete_run(run_id, success=False, nodes_completed=1, number_of_nodes=3)
+    process_pending_notifications()
+
+    row = _run_row(run_id)
+    assert (row.success, row.cancelled) == (False, False)
+    assert _events(run_id) == ["run_failed"]
+
+
+def test_a_cancel_recorded_while_a_run_reports_its_end_does_not_mark_it(tmp_path, monkeypatch):
+    """The cancel commits between the completion's load of the row and its write; the reported failure stands."""
+    registration_id = _register(tmp_path / "unused.yaml", "cancel_during_completion")
+    _alert_on_everything(registration_id)
+    run_id = _active_run(registration_id)
+    close_run = run_completion._close_run
+
+    def cancel_then_close(run, **kwargs):
+        assert client.post(f"/catalog/runs/{run_id}/cancel").status_code == 204
+        close_run(run, **kwargs)
+
+    monkeypatch.setattr(run_completion, "_close_run", cancel_then_close)
+    run_completion.complete_run(run_id, success=False, nodes_completed=1, number_of_nodes=3)
+    process_pending_notifications()
+
+    row = _run_row(run_id)
+    assert (row.success, row.cancelled) == (False, False)
+    assert _events(run_id) == ["run_failed"]
+
+
+def test_a_run_cancelled_while_it_starts_is_stopped(tmp_path, run_children, monkeypatch):
+    """The cancel lands before the run's pid is recorded, so it signals nothing; the start stops the child."""
+    registration_id = _registered_flow(tmp_path, 99479, SLOW)
+    spawn = FlowRunService._spawn_flow_subprocess
+
+    def spawn_then_cancel(flow_path, run_id, **kwargs):
+        pid = spawn(flow_path, run_id, **kwargs)
+        assert client.post(f"/catalog/runs/{run_id}/cancel").status_code == 204
+        return pid
+
+    monkeypatch.setattr(FlowRunService, "_spawn_flow_subprocess", staticmethod(spawn_then_cancel))
+    run_id = _start(registration_id)
+
+    assert run_children[0].wait(timeout=60) != 0
+    row = _run_row(run_id)
+    assert (row.success, row.cancelled, row.pid) == (False, True, run_children[0].pid)
