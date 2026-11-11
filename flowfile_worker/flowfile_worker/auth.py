@@ -4,7 +4,7 @@ Core is the worker's usual client; it signs every request with the shared intern
 A worker that trusts an issuer also takes a short-lived token the issuer signed for this server, in the same
 ``X-Flowfile-Internal`` header a backend row's token travels in, so a desktop handed such a token reaches the server
 without ever holding the internal token. ``verify_issuer_token`` is the issuer's own check against its published keys,
-set with ``issuer_name`` where the worker starts; a JWT is told from the internal token by its shape, and nothing here
+which the package names with ``issuer_name``; a JWT is told from the internal token by its shape, and nothing here
 holds a secret of the issuer's.
 """
 
@@ -13,16 +13,16 @@ import secrets
 from fastapi import HTTPException, Request, WebSocket
 from starlette.concurrency import run_in_threadpool
 
+from flowfile_worker import issuer_claims, issuer_name
 from flowfile_worker.internal_token import resolve_internal_token
 from shared.issuer_tokens import TokenRefused
 
 INTERNAL_TOKEN_HEADER = "X-Flowfile-Internal"
-issuer_name = "Issuer"
 
 
 def verify_issuer_token(supplied: str) -> object | None:
-    """The claims of ``supplied`` when the issuer this worker trusts signed it; none is trusted until one is set."""
-    return None
+    """The claims of ``supplied`` when the issuer this worker trusts signed it; ``None`` when it trusts none."""
+    return issuer_claims(supplied)
 
 
 def _header_matches(supplied: str) -> bool:

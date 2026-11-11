@@ -10,7 +10,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from flowfile_worker import auth, mp_context
+from flowfile_worker import mp_context
 from flowfile_worker.auth import carries_internal_token
 from flowfile_worker.configs import (
     FLOWFILE_CORE_URI,
@@ -26,13 +26,12 @@ from flowfile_worker.pool import task_pool
 from flowfile_worker.protocol_routes import router as protocol_router
 from flowfile_worker.routes import router
 from flowfile_worker.streaming import streaming_router, v1_streaming_router
-from shared import hub_node, hub_tokens
+from shared import hub_node
 from shared._version import get_version
 from shared.net import is_loopback_host
 from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
-auth.issuer_name, auth.verify_issuer_token = "Hub", hub_tokens.verify
 should_exit = False
 server_instance = None
 serving_port: int | None = None

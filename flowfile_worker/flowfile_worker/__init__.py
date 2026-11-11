@@ -44,6 +44,15 @@ def _server_on_its_hub() -> tuple:
 
 
 _sealed.server, _sealed.sealer = _server_on_its_hub, "hub"
+issuer_name = "Hub"
+
+
+def issuer_claims(supplied: str) -> object | None:
+    """The claims of a token the hub signed for this server, wherever the worker's routes are served: its own
+    process, or core's app in single-file mode. Imported at use, so a spawned child loads no token code."""
+    from shared import hub_tokens
+
+    return hub_tokens.verify(supplied)
 
 if TYPE_CHECKING:
     from flowfile_worker.models import Status
