@@ -26,6 +26,7 @@ from shared.compute_protocol import (
 
 TOKEN = "single-file-test-token"
 TOKEN_HEADER = "X-Flowfile-Internal"
+FOREIGN_VERSION = str(PROTOCOL_VERSION + 1)
 FLOW_ID = 4343
 
 
@@ -83,7 +84,7 @@ def test_capabilities_answer_under_worker_behind_the_token_and_the_version(app, 
     assert response.status_code == 200
     assert Capabilities.model_validate(response.json()) == worker_capabilities()
     assert TestClient(app).get("/worker/v1/capabilities").status_code == 401
-    foreign = TestClient(app, headers={TOKEN_HEADER: TOKEN, PROTOCOL_VERSION_HEADER: "2"})
+    foreign = TestClient(app, headers={TOKEN_HEADER: TOKEN, PROTOCOL_VERSION_HEADER: FOREIGN_VERSION})
     assert foreign.get("/worker/v1/capabilities").status_code == 426
 
 
@@ -146,12 +147,12 @@ def test_a_deferred_websocket_submit_answers_under_worker_with_its_sample(client
 def test_the_websocket_submit_under_worker_denies_a_foreign_version_and_closes_on_a_bad_token(app):
     signed = TestClient(app, headers={TOKEN_HEADER: TOKEN})
     with pytest.raises(WebSocketDenialResponse) as denied:
-        with signed.websocket_connect("/worker/v1/ws/submit", headers={PROTOCOL_VERSION_HEADER: "2"}):
+        with signed.websocket_connect("/worker/v1/ws/submit", headers={PROTOCOL_VERSION_HEADER: FOREIGN_VERSION}):
             pass
 
     unsigned = TestClient(app, headers={TOKEN_HEADER: "not-the-token"})
     with pytest.raises(WebSocketDisconnect) as closed:
-        with unsigned.websocket_connect("/worker/v1/ws/submit", headers={PROTOCOL_VERSION_HEADER: "2"}):
+        with unsigned.websocket_connect("/worker/v1/ws/submit", headers={PROTOCOL_VERSION_HEADER: FOREIGN_VERSION}):
             pass
 
     assert denied.value.status_code == 426
