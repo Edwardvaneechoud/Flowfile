@@ -1,16 +1,7 @@
-"""Tokens from a configured issuer, verified offline by core and the worker.
+"""Hub tokens, verified offline by core and the worker against the hub's JWKS (``shared.issuer_tokens.decode``).
 
-A node on a hub has a caller beside its own core: the hub signs short-lived tokens with a private key and publishes
-the public half at ``<FLOWFILE_HUB_URL>/.well-known/jwks.json``. This module says who that issuer is on this machine and
-what a hub token must carry; the check of the signature is ``shared.issuer_tokens.decode``, the one verifier core, the
-worker and a sealed credential (``shared.hub_sealed``) share. ``verify`` is the check of a hub token proper.
-
-The settings are read at call time, from the environment first and then from ``hub_node.json`` in the storage dir, the
-file a node writes when it joins a hub (``shared.hub_node``), field by field and the file only for the hub it names.
-``FLOWFILE_HUB_URL`` is where the hub is reached and the keys are fetched; ``FLOWFILE_NODE_NAME`` is this node's name on
-the hub, the audience a token must name; the ``iss`` claim to expect is the one the joined file keeps, else the URL.
-Hub tokens are accepted only when the node has a hub URL and a name; a URL without a name accepts none and says so
-once. Nothing runs at import.
+Settings are read at call time (``hub_node.resolved``); tokens are accepted only when the node has a hub URL and a
+name, the audience a token must name.
 """
 
 import logging
@@ -22,22 +13,14 @@ from shared.issuer_tokens import JWKS_PATH, REQUIRED_CLAIMS, TokenRefused, decod
 logger = logging.getLogger("flowfile.hub_tokens")
 
 SCOPES = ("run", "signin", "dispatch")
-"""What a hub token is for: ``run`` sends work to this node's worker as a user; ``signin`` signs a person in on this
-node's core once, and is taken only by the route that does that; ``dispatch`` has this node's core run one version of a
-hub flow as a person, and is taken only by ``POST /hub/dispatch``."""
 DISPATCH_CLAIMS = ["run_id", "flow_uuid", "flow_version", "uid"]
 
 HubTokenRefused = TokenRefused
-"""A hub token that does not verify: the verifier's own refusal under the name the hub's callers catch."""
 
 
 @dataclass(frozen=True)
 class HubClaims:
-    """What a verified hub token says: who (``subject``, and ``user_id`` when it names a user) and for what (``scope``).
-
-    The token's audience, expiry and ``jti`` are checked, not carried: this node is the audience, and a sign-in's
-    person is read from the delegation the hub answers, not from the token.
-    """
+    """A verified hub token; a sign-in's person is read from the hub's delegation, not from the token."""
 
     subject: str
     user_id: int | None
@@ -46,9 +29,7 @@ class HubClaims:
 
 @dataclass(frozen=True)
 class DispatchClaims:
-    """What a verified ``dispatch`` token says: the person (``subject``, ``user_id``), the run the hub keeps it as
-    (``run_id``), the flow version to check out and run (``flow_uuid``, ``flow_version``), and when the token expires
-    (``expires_at``, epoch seconds), which bounds how long the run id is remembered against a replay."""
+    """A verified ``dispatch`` token; ``expires_at`` bounds how long the run id is remembered against a replay."""
 
     subject: str
     user_id: int
@@ -62,7 +43,6 @@ _warned_no_node_name = False
 
 
 def _settings() -> tuple[str, str, str] | None:
-    """``(jwks_url, node_name, issuer)`` while hub tokens are on, else ``None``."""
     global _warned_no_node_name
     node = hub_node.resolved()
     if not node.hub_url:
@@ -79,12 +59,10 @@ def _settings() -> tuple[str, str, str] | None:
 
 
 def verify(token: str, scopes: tuple[str, ...] = ("run",)) -> HubClaims | None:
-    """The claims of ``token`` when it is a hub token this node accepts for one of ``scopes``.
+    """The claims of a hub token accepted for one of ``scopes``; ``None`` for a non-JWT or with hub tokens off.
 
-    ``None`` when ``token`` is not a JWT (fewer than two dots), decided before the node's settings are read, or when
-    hub tokens are off, so a caller can try the token it does know first and ask here after; ``HubTokenRefused`` for a
-    JWT that does not verify, with the reason. A token of a scope the caller does not name is refused like any other,
-    so a sign-in token is no user's token anywhere but on the sign-in route, which names ``("signin",)``.
+    A token of a scope the caller does not name is refused, so a sign-in token is no user's token anywhere but on the
+    sign-in route.
     """
     if not isinstance(token, str) or token.count(".") < 2:
         return None
@@ -106,9 +84,7 @@ def verify(token: str, scopes: tuple[str, ...] = ("run",)) -> HubClaims | None:
 
 
 def verify_dispatch(token: str) -> DispatchClaims | None:
-    """The claims of ``token`` when it is a ``dispatch`` token this node accepts; ``None`` and ``HubTokenRefused`` as
-    ``verify`` answers them. Every claim of ``DISPATCH_CLAIMS`` must be there and well formed: ``run_id`` and
-    ``flow_uuid`` non-empty text of at most 64 characters, ``flow_version`` and ``uid`` whole numbers."""
+    """``verify`` for a ``dispatch`` token, every claim of ``DISPATCH_CLAIMS`` there and well formed."""
     if not isinstance(token, str) or token.count(".") < 2:
         return None
     settings = _settings()

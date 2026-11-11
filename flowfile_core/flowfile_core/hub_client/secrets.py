@@ -1,9 +1,5 @@
-"""A person's secrets on their hub, for any machine signed in to it: a desktop's Connect or a joined server's
-delegation, both ``session.load``.
-
-The hub's secrets are never copied here and have no value on any machine. The Secrets page lists them after the
-machine's own, read-only and marked ``source="hub"`` (``listed``, ``hub_rows``); a step that names one carries it only
-as the run's vend sealed it to the hub server that runs the step (``run_secrets.granted_value``).
+"""A person's secrets on their hub, listed read-only after the machine's own; a value is never copied here and reaches a
+step only as the run's vend sealed it to the hub server that runs the step.
 
 Requests log method, path and status only, never a body, a value or a token.
 """
@@ -25,8 +21,8 @@ _listed: dict[tuple, tuple[float, list[dict]]] = {}
 
 
 def listed_once(key: tuple, read: Callable[[], list[dict]], what: str) -> list[dict]:
-    """``read()``'s rows, kept ``LISTED_SECONDS`` under ``key``: a run asks for the same list at every step that names
-    a connection. A hub that does not answer lists none, for as long."""
+    """``read()``'s rows kept ``LISTED_SECONDS``, since a run asks at every step; a hub that does not answer lists
+    none for as long."""
     held = _listed.get(key)
     if held is not None and time.monotonic() - held[0] < LISTED_SECONDS:
         return held[1]
@@ -40,7 +36,6 @@ def listed_once(key: tuple, read: Callable[[], list[dict]], what: str) -> list[d
 
 
 def _signed_in(user_id: int) -> tuple[str, str]:
-    """The hub's URL and an access token from ``user_id``'s sign-in through it; ``LookupError`` when there is none."""
     stored = session.load(user_id)
     if stored is None:
         raise LookupError(NOT_SIGNED_IN)
@@ -60,20 +55,19 @@ def _bearer(token: str) -> dict:
 
 
 def marked(row: dict) -> dict:
-    """A row the hub lists, marked ``source="hub"``; the hub's id, negated so it is never one of this machine's."""
+    """A hub row marked ``source="hub"``, its id negated so it never meets a local one."""
     row_id = row.get("id")
     return {**row, "source": HUB, "id": -row_id if isinstance(row_id, int) else row_id}
 
 
 def listed(user_id: int) -> list[dict]:
-    """The person's secrets as the hub lists them: names and metadata, never a value, each marked ``source="hub"``."""
     hub_url, token = _signed_in(user_id)
     rows = client._request_list("GET", hub_url, SECRETS_PATH, None, headers=_bearer(token))
     return [{**marked(row), "value": None} for row in rows]
 
 
 def hub_rows(user_id: int) -> list[dict]:
-    """``listed``, or none when the person has no sign-in to a hub here or the hub does not answer."""
+    """``listed``, or none without a hub session or when the hub does not answer."""
     if session.load(user_id) is None:
         return []
     return listed_once((user_id, "secret"), lambda: listed(user_id), "secrets")

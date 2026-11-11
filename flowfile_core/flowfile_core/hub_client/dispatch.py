@@ -1,23 +1,8 @@
 """A run the hub sends this server: one version of a hub flow, run here as the person the hub names.
 
-The hub pushes, the server pulls the flow: the ``dispatch`` token (``shared.hub_tokens.verify_dispatch``) carries the
-run id the hub keeps the run as, the flow's uuid and version and the person, never the flow itself. ``start`` answers
-at once and the rest runs in a thread of its own: the person is signed in here when they are not yet (the dispatch token
-is also their sign-in, ``hub_client.signin``), the version is checked out from the hub as them, built under a fresh flow
-id and run as a flow opened from the hub runs for them, with their vends, their run token on the hub's other servers and
-the hub's exchange store, and reported to the hub under the hub's run id with their delegated token, failed or not. A
-run that cannot start, a checkout the hub refuses or a flow that does not build, is reported failed with no nodes, so
-the hub does not wait for it. Nothing is registered or saved here; the run is in this server's own run history as
-the hub's (``run_type`` ``hub``, the person's, no registration), and its log is kept beside the flow logs as
-``hub_run_<run id>.log`` and under the name the run history reads it by.
-
-A run id is taken once per process (``taken``): a second dispatch with it is refused while its token could still be
-alive. A restart forgets them; the hub's row still says the run was dispatched.
-
-The hub cancels a run it sent with a ``dispatch`` token for the same run id (``cancel``, ``POST /hub/dispatch/cancel``):
-the graph in flight is cancelled as the editor's Cancel cancels one, a run that has not reached its graph yet never
-runs it, and this server's run history row is closed by core's own cancel of a run record. The run's thread still ends
-with its report to the hub, failed.
+The ``dispatch`` token carries the run id, the flow's uuid and version and the person, never the flow; the server
+pulls the version from the hub as that person. Every run is reported to the hub, failed or not, so it never waits for
+one. A run id is taken once per process (``taken``) against replay while its token could still be alive.
 """
 
 import json
@@ -62,8 +47,7 @@ def _forget_expired() -> None:
 
 
 def taken(claims: DispatchClaims) -> bool:
-    """Whether this process took a run with ``claims.run_id`` already; takes it otherwise. Run ids whose tokens have
-    expired are forgotten first."""
+    """Whether this process took ``claims.run_id`` already; takes it otherwise."""
     with _lock:
         _forget_expired()
         if claims.run_id in _taken:
@@ -73,13 +57,8 @@ def taken(claims: DispatchClaims) -> bool:
 
 
 def cancel(claims: DispatchClaims) -> str:
-    """Stop the run the hub sent here as ``claims.run_id``: ``cancelled``, ``finished`` when it had ended already
-    (nothing is changed), or ``unknown`` when this server neither runs it nor has a record of it.
-
-    The graph in flight is cancelled as the editor cancels one (``FlowGraph.cancel``); a run still signing in or
-    checking out never starts its graph. The run history row is closed by core's own cancel of a run record. The run
-    id is taken, so the cancel's token is never a dispatch here afterwards.
-    """
+    """Stop the hub's run ``claims.run_id``: ``cancelled``, ``finished`` (nothing changed) or ``unknown``. The run id
+    is taken, so the cancel's token is never a dispatch here afterwards."""
     with _lock:
         _forget_expired()
         known = claims.run_id in _taken
@@ -104,8 +83,7 @@ def cancel(claims: DispatchClaims) -> str:
 
 
 def _run_graph(run_id: str, flow):
-    """The graph's run, reachable by ``cancel`` under its run id while it lasts; ``None`` when the hub cancelled the
-    run before it got here."""
+    """``None`` when the hub cancelled the run before it got here."""
     with _lock:
         if run_id in _cancelled:
             return None
@@ -118,12 +96,10 @@ def _run_graph(run_id: str, flow):
 
 
 def start(claims: DispatchClaims, token: str) -> None:
-    """Run the dispatch in a thread of its own; answers at once."""
     threading.Thread(target=run, args=(claims, token), name=f"hub-dispatch-{claims.run_id[:8]}", daemon=True).start()
 
 
 def run(claims: DispatchClaims, token: str) -> None:
-    """The whole run, in this thread: sign the person in when needed, check out, build, run, report."""
     started_at = datetime.now(timezone.utc)
     label = f"run {claims.run_id} of hub flow {claims.flow_uuid} v{claims.flow_version}"
     try:
@@ -141,8 +117,7 @@ def run(claims: DispatchClaims, token: str) -> None:
 
 
 def _person(claims: DispatchClaims, token: str) -> int:
-    """The local account id of the person the token names, signed in here: their live sign-in when they have one, else
-    the dispatch token traded as their sign-in."""
+    """The person's local account id: their live sign-in, else the dispatch token traded as one."""
     with get_db_context() as db:
         user = signin.account(db, claims.user_id)
         if user is not None and not user.disabled and signin.live(user.id):
@@ -151,7 +126,6 @@ def _person(claims: DispatchClaims, token: str) -> int:
 
 
 def _checked_out(user_id: int, claims: DispatchClaims) -> schemas.FlowfileData:
-    """The version's document from the hub, as the person, carrying the hub origin a run of it is reported under."""
     hub_url = hub_node.resolved().hub_url
     access_token = hub_session.access_token(user_id)
     if access_token is None:
@@ -167,8 +141,6 @@ def _checked_out(user_id: int, claims: DispatchClaims) -> schemas.FlowfileData:
 
 
 def _run(user_id: int, claims: DispatchClaims, document: schemas.FlowfileData, label: str) -> None:
-    """Build the document under a fresh id in a file of its own, run it as the person, record it in this server's run
-    history and report it to the hub; the file goes, the log stays."""
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
     from flowfile_core.hub_client.report import hub_flow_uuid, hub_target
     from flowfile_core.routes.routes import _hub_store_for
@@ -208,12 +180,8 @@ def _run(user_id: int, claims: DispatchClaims, document: schemas.FlowfileData, l
 
 
 def _open_record(flow, user_id: int, claims: DispatchClaims, name: str | None) -> int | None:
-    """Open the run in this server's own run history, as an editor run's record is opened (``routes._open_run_record``):
-    no registration (the flow is not saved here), the hub's flow uuid and the name the checkout gave (the built graph
-    is named after its temp file), ``run_type`` ``dispatched``, the run id the hub gave as ``remote_run_id`` and the
-    published version that runs in place of a snapshot (the hub holds it). This row is the execution; the hub's
-    record of the run is written from the report. ``None`` when the row could not be written; the run goes on, and
-    the hub still gets the report."""
+    """The run's row in this server's run history, named from the checkout since the built graph is named after its
+    temp file; ``None`` when it could not be written, and the run goes on."""
     try:
         with get_db_context() as db:
             row = FlowRunService(SQLAlchemyCatalogRepository(db)).start_run(
@@ -234,7 +202,6 @@ def _open_record(flow, user_id: int, claims: DispatchClaims, name: str | None) -
 
 
 def _close_record(core_run_id: int | None, run_info) -> None:
-    """Close the run history row with the run's outcome; a run that ended without a result is closed as failed."""
     if core_run_id is None:
         return
     try:
@@ -253,9 +220,8 @@ def _close_record(core_run_id: int | None, run_info) -> None:
 
 
 def _keep_log(flow_id: int, run_id: str, core_run_id: int | None) -> None:
-    """Copy the run's flow log beside the flow logs as ``hub_run_<run id>.log`` and, when the run is in this server's
-    run history, under the name that history reads it by (``run_log_path``); the graph's release removes the
-    original."""
+    """Copy the flow log as ``hub_run_<run id>.log`` and under the run history's name; the graph's release removes
+    the original."""
     source = get_flow_log_file(flow_id)
     try:
         if source.exists():
@@ -267,8 +233,7 @@ def _keep_log(flow_id: int, run_id: str, core_run_id: int | None) -> None:
 
 
 def _report_failure(claims: DispatchClaims, started_at: datetime, after: int | None) -> None:
-    """Tell the hub the run failed with no nodes, as the person when they are signed in here (``after``), so the hub
-    closes the run instead of waiting an hour for it."""
+    """Report the run failed with no nodes, so the hub closes it instead of waiting an hour for it."""
     if after is None:
         with get_db_context() as db:
             user = signin.account(db, claims.user_id)

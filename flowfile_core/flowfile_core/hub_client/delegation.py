@@ -1,11 +1,7 @@
-"""A person's sign-in through the hub on a server that joined it: the token exchange, its refresh and its revocation.
+"""A person's sign-in through the hub on a joined server: the token exchange, its refresh and its revocation.
 
-The hub's Open page sends a person's browser to this server's editor with a one-time sign-in token. The server trades
-it at the hub's ``POST /hub/token`` for a delegation: a short access token it sends the hub's routes for that person,
-as a desktop sends its session's, and a refresh token that rotates on every use. Each request carries a node
-assertion signed with this node's own key (``shared.hub_node_key``), addressed to the issuer the hub signs with and the
-route's path, so only the node the sign-in was made for can trade it. The requests are form-encoded, as OAuth's token
-endpoint is; the hub answers a refusal with ``error`` and one sentence in ``error_description``.
+Each request carries a node assertion signed with this node's own key, addressed to the hub's issuer and the route's
+path, so only the node the sign-in was made for can trade it. Form-encoded, as OAuth's token endpoint is.
 
 Requests log method, path and status only, never a body, an assertion or a token.
 """
@@ -28,13 +24,7 @@ JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 
 @dataclass(frozen=True)
 class Delegation:
-    """The hub's answer to a sign-in or a refresh: the two tokens, how long each lives, and who the person is.
-
-    ``expires_in`` and ``refresh_expires_in`` are seconds from the answer; ``user`` is the hub's ``uid``,
-    ``username``, ``full_name`` and ``node_admin``. Neither token is part of its ``repr``. The answer's
-    ``token_type`` is checked to be there, as an OAuth token answer must have one, and the access token is sent as a
-    bearer whatever it says.
-    """
+    """The hub's answer to a sign-in or a refresh; lifetimes are seconds from the answer."""
 
     access_token: str = field(repr=False)
     expires_in: int
@@ -74,10 +64,8 @@ def _delegation(body, hub_url: str) -> Delegation:
 
 
 def _assertion(issuer: str, path: str) -> dict:
-    """The client assertion fields for a request to ``path``, signed as the node this storage dir joined.
-
-    ``LookupError`` when no node joined a hub from this storage dir or it has no keys of its own, so nothing is sent.
-    """
+    """The client assertion fields for ``path``; ``LookupError`` when this storage dir has no joined node with keys,
+    so nothing is sent."""
     node = hub_node.read()
     if node is None:
         raise LookupError(f"no node has joined a hub from {hub_node.path().parent}")
@@ -94,6 +82,7 @@ def _assertion(issuer: str, path: str) -> dict:
 
 
 def _post(hub_url: str, path: str, form: dict, http: httpx.Client | None):
+    """A refusal is the hub's OAuth ``error`` with its ``error_description`` as the detail."""
     url = hub_url.rstrip("/")
     try:
         resp = client._http(http).post(f"{url}{path}", data=form)
@@ -114,12 +103,8 @@ def _post(hub_url: str, path: str, form: dict, http: httpx.Client | None):
 
 
 def exchange(hub_url: str, issuer: str, sign_in_token: str, *, http: httpx.Client | None = None) -> Delegation:
-    """Trade a sign-in token the hub signed for this node for a delegation to act for the person it names.
-
-    Raises ``HubRefused`` with the hub's ``error_description`` (``payload`` holds the hub's ``error`` and the
-    description) when the hub refuses, ``HubUnreachable`` when it does not answer, ``LookupError`` when this node
-    cannot sign for itself.
-    """
+    """Trade a sign-in token the hub signed for this node for a delegation; ``LookupError`` when this node cannot sign
+    for itself."""
     form = {
         "grant_type": TOKEN_EXCHANGE,
         "subject_token": sign_in_token,
@@ -130,19 +115,11 @@ def exchange(hub_url: str, issuer: str, sign_in_token: str, *, http: httpx.Clien
 
 
 def refresh(hub_url: str, issuer: str, refresh_token: str, *, http: httpx.Client | None = None) -> Delegation:
-    """A new delegation for the same sign-in; ``refresh_token`` is refused by the hub from then on.
-
-    The sign-in's twelve hours run from the sign-in, so ``refresh_expires_in`` shrinks with every refresh. Raises as
-    ``exchange`` does; a refresh the hub no longer takes is ``HubRefused`` with ``payload["error"] == "invalid_grant"``.
-    """
+    """A new delegation for the same sign-in; one the hub no longer takes is ``invalid_grant``."""
     form = {"grant_type": "refresh_token", "refresh_token": refresh_token, **_assertion(issuer, TOKEN_PATH)}
     return _delegation(_post(hub_url, TOKEN_PATH, form, http), hub_url)
 
 
 def revoke(hub_url: str, issuer: str, refresh_token: str, *, http: httpx.Client | None = None) -> None:
-    """End the delegation ``refresh_token`` belongs to; the hub answers the same whether or not it was alive.
-
-    Raises as ``exchange`` does.
-    """
     form = {"token": refresh_token, "token_type_hint": "refresh_token", **_assertion(issuer, REVOKE_PATH)}
     _post(hub_url, REVOKE_PATH, form, http)

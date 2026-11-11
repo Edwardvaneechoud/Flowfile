@@ -1,16 +1,8 @@
 """The hub's catalogs, tables and flows as rows of the local catalog tree.
 
-Each hub row carries ``source = "hub"``, the negative of the hub's id as its ``id`` (local ids are positive, so the two
-never meet) and the hub's own id as ``hub_id``. The hub is read on every listing and nothing is kept; a hub that does
-not answer leaves its catalogs out of the tree with one warning in the log.
-
-Every metadata route of a catalog on the hub is the hub's same route (``relay``): core asks as the signed-in person and
-hands the answer back as the hub gave it, marking only what makes a row of the hub recognisable here (``marked``). A
-row of the tree also says where it lives (``place``) and, for a catalog on the hub's own disk or on storage other than
-S3, the sentence a run over it would be refused with (``unavailable_reason``).
-
-A saved flow names a hub table by its qualified name (``catalog.schema.table``), never by an id of the hub's database;
-the ids are resolved on the hub when the flow runs (``table_named``, ``namespaces``).
+A hub row carries ``source = "hub"``, its id negated (local ids are positive) and the hub's own as ``hub_id``. Nothing
+is kept; every metadata route of a hub catalog is the hub's same route (``relay``). A saved flow names a hub table by
+its qualified name, never by a hub database id, which is resolved when the flow runs.
 """
 
 import re
@@ -50,10 +42,7 @@ _WHAT_TO_DO = "Pick a catalog on the organisation's storage, or ask the hub's ad
 
 @dataclass(frozen=True)
 class HubNamespace:
-    """A namespace on the hub: its hub id, its ``catalog.schema`` name and the storage root of its catalog.
-
-    ``storage_uri`` is ``None`` when the hub keeps the catalog's tables on its own disk.
-    """
+    """A hub namespace; ``storage_uri`` is ``None`` when the hub keeps its tables on its own disk."""
 
     id: int
     full_name: str
@@ -61,17 +50,14 @@ class HubNamespace:
 
 
 def scheme(uri: str) -> str:
-    """The scheme of a storage URI, ``file`` for a path without one."""
     return uri.split("://", 1)[0] if "://" in uri else "file"
 
 
 def on_own_disk(full_name: str) -> str:
-    """Why a run cannot use the tables of the hub namespace ``full_name``, which the hub keeps on its own disk."""
     return f"The hub keeps the tables of {full_name} on its own disk; this Flowfile cannot read them. {_WHAT_TO_DO}"
 
 
 def other_scheme(found: str) -> str:
-    """Why a run cannot use the tables of a hub catalog on ``found://`` storage: only S3 is read and written."""
     return (
         f"Flowfile reads and writes hub tables on S3 storage; this catalog is on {found}:// storage. "
         "Pick a catalog on the organisation's S3 storage, or ask the hub's admin to put this one there."
@@ -79,8 +65,7 @@ def other_scheme(found: str) -> str:
 
 
 def unreachable(storage_uri: str | None, full_name: str) -> str | None:
-    """Why this Flowfile cannot use the tables of the hub namespace ``full_name`` under ``storage_uri``; ``None`` if
-    it can. The tree marks such a catalog with it and a run over it is refused with it, before anything is vended."""
+    """Why this Flowfile cannot use the namespace's tables (only S3 is read and written); ``None`` if it can."""
     found = None if storage_uri is None else scheme(storage_uri)
     if found in (None, "file"):
         return on_own_disk(full_name)
@@ -90,12 +75,8 @@ def unreachable(storage_uri: str | None, full_name: str) -> str | None:
 
 
 def tree(user_id: int) -> list[NamespaceTree]:
-    """The hub's catalogs, their schemas, tables and flows for ``user_id``'s hub connection, in one request: the
-    hub's own ``GET /catalog/namespaces/tree``, relayed (``marked``, ``_placed``).
-
-    ``[]`` without a connection, and, after one warning naming the hub and the reason, for a hub that cannot be
-    reached, refuses, or answers what is not core's tree.
-    """
+    """The hub's catalog tree for ``user_id``, in one request; ``[]`` without a connection or, with one warning, when
+    the hub cannot be read."""
     stored = session.load(user_id)
     if stored is None:
         return []
@@ -118,8 +99,7 @@ def tree(user_id: int) -> list[NamespaceTree]:
 
 
 def _placed(node: NamespaceTree, place: str, storage_uri: str | None, parents: str = "") -> NamespaceTree:
-    """``node`` and the namespaces under it saying where they live and whether this Flowfile can use their tables;
-    a flow with no published version has nothing to open and is left out."""
+    """Mark where each namespace lives and why it cannot be used; flows with no published version are left out."""
     full_name = f"{parents}{node.name}"
     return node.model_copy(
         update={
@@ -132,12 +112,9 @@ def _placed(node: NamespaceTree, place: str, storage_uri: str | None, parents: s
 
 
 def relay(user_id: int | None, method: str, path: str, params: dict | None = None, body=None) -> tuple[int, object]:
-    """A metadata request on a catalog that lives on ``user_id``'s hub, answered by the hub's same route
-    (``table_sources.RemoteCatalog.request``).
+    """A metadata request on a hub catalog answered by the hub's same route, negative ids sent as the hub's own.
 
-    An id this machine shows negative, in the path, the query or the body, goes to the hub as the hub's own, and the
-    answer comes back with its status, changed only by ``marked``. What the hub refuses, the hub refuses (a 401
-    answers 400, as does a person with no hub session); a hub that does not answer is a 502.
+    A hub 401 answers 400 (the frontend reads 401 as an expired local session); a hub that does not answer is 502.
     """
     try:
         return _relayed(*signed_in(user_id), method, path, params, body)
@@ -165,10 +142,8 @@ def _is_id(value) -> bool:
 
 
 def marked(answer):
-    """``answer`` of a catalog route on the hub as this machine shows it: every row that has an id says
-    ``source: "hub"`` and keeps the hub's id as ``hub_id`` (its namespace's as ``hub_namespace_id``), and every
-    reference to a row of the hub (``_ROW_REFERENCES``) is negated, so it never meets a local id. Nothing else
-    changes, whatever the shape."""
+    """A hub catalog answer as this machine shows it: rows with an id get ``source: "hub"``, ``hub_id`` and
+    ``hub_namespace_id``, and every reference in ``_ROW_REFERENCES`` is negated."""
     if isinstance(answer, list):
         return [marked(item) for item in answer]
     if not isinstance(answer, dict):
@@ -187,7 +162,6 @@ def marked(answer):
 
 
 def _theirs(sent):
-    """A request's query or body with this machine's negative row references back as the hub's own ids."""
     if isinstance(sent, list):
         return [_theirs(item) for item in sent]
     if not isinstance(sent, dict):
@@ -202,12 +176,7 @@ def _their_id(value):
 
 
 def signed_in(user_id: int) -> tuple[str, str]:
-    """The hub URL of ``user_id``'s hub session and an access token from it.
-
-    Raises:
-        LookupError: ``user_id`` has no hub session, or the hub no longer accepts it (``NOT_CONNECTED``).
-        HubUnreachable, HubRefused, HubVersionRefused: the refresh failed for another reason.
-    """
+    """The hub URL and an access token; ``LookupError(NOT_CONNECTED)`` without a session or on a hub 401."""
     stored = session.load(user_id)
     if stored is None:
         raise LookupError(NOT_CONNECTED)
@@ -223,7 +192,7 @@ def signed_in(user_id: int) -> tuple[str, str]:
 
 
 def schemas(hub_url: str, access_token: str) -> list[tuple[HubNamespace, list[dict]]]:
-    """Every namespace the account sees on the hub, each with its tables' rows, from the hub's tree: one request."""
+    """Every namespace the account sees on the hub with its tables' rows, from one request for the tree."""
     path = "/catalog/namespaces/tree"
     _, roots = client.catalog_request(hub_url, access_token, "GET", path)
     try:
@@ -237,17 +206,11 @@ def schemas(hub_url: str, access_token: str) -> list[tuple[HubNamespace, list[di
 
 
 def namespaces(hub_url: str, access_token: str) -> dict[int, HubNamespace]:
-    """Every namespace the account sees on the hub, by hub id (``schemas``)."""
     return {namespace.id: namespace for namespace, _ in schemas(hub_url, access_token)}
 
 
 def table_named(user_id: int, named: int | str) -> dict:
-    """The hub's catalog table ``named`` as the hub answers it (core's ``CatalogTableOut``): by the hub's id, or by
-    its qualified name (``catalog.schema.table``), as a saved flow names a hub table.
-
-    Raises:
-        LookupError: The hub has no such table for the account, does not answer, or the session is gone.
-    """
+    """The hub's table by its hub id or qualified name; any failure is a ``LookupError`` sentence."""
     read = client.get_table if isinstance(named, int) else client.resolve_table
     try:
         return read(*signed_in(user_id), named)

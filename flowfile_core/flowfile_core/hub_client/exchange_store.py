@@ -1,11 +1,5 @@
-"""The exchange store a machine signed in to a hub takes from it.
-
-An organisation sets its exchange store once, on its hub. A desktop connected to the hub and a server joined to it
-hold none of the hub's connections: each asks with the person's hub session (``hub_store``), and each run that crosses
-between backends has the hub vend the store's prefix, sealed to the hub's servers it runs on and, on a machine that is
-none, also for the worker beside its core, so no connection is looked up here. A hub that does not answer is no store,
-never a failed run.
-"""
+"""The exchange store a machine signed in to a hub takes from it; each crossing has the hub vend the store's prefix,
+so no connection is looked up here. A hub that does not answer is no store, never a failed run."""
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.exchange_config import ExchangeConfig
@@ -17,13 +11,8 @@ _warned: set[tuple[str, str]] = set()
 
 
 def hub_store(user_id: int | None) -> ExchangeConfig | None:
-    """The exchange store ``user_id``'s hub sets, asked with their hub session; ``None`` when none applies.
-
-    ``None`` without asking when no ``user_id`` is given. ``None`` too when the person has no hub session here, when
-    the hub sets no store, and when it cannot be asked or refuses, with one warning per process for each hub and status
-    (or error class) that names neither the token nor the hub's text. The answer's ``vended_for`` is ``user_id``: the
-    store is opened by what the hub vends each run through that session, never by a connection here.
-    """
+    """The store ``user_id``'s hub sets, else ``None``; one warning per hub and status, naming neither the token nor
+    the hub's text."""
     if user_id is None:
         return None
     try:

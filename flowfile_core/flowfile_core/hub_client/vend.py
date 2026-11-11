@@ -1,23 +1,9 @@
-"""The credential a run over the hub's tables gets from the hub: asked once per run, held in memory, never kept.
+"""The credentials a run over the hub's tables gets from the hub: asked once per run, held in memory, never kept.
 
-A flow that reads or writes tables on the hub holds no credential for them. When it runs, ``request`` asks the hub for
-one per storage root the run's namespaces live under (``POST /hub/vend``, which the hub records against the run id),
-and the graph holds the answer for that run only. A read's plan carries the options without their secrets and an
-``EncryptedCredentialProvider`` encrypted for the user; a write's payload carries a cloud connection whose secrets are
-encrypted for the worker. Both travel as a local cloud connection's credentials do, and the worker decrypts them with
-the master key it shares with core. Nothing here is cached, stored or logged beyond the hub's URL and the status.
-
-A server that joined its hub with keys of its own has its own master key, so what it sends a server of the hub's must be
-opened there instead: a run that places such a step on a server of the hub asks with ``targets``, the hub names of the
-servers its steps run on (``registry.server_name``), and the hub answers each credential with no options and a map of
-node name to a token sealed to that node (``shared.hub_sealed``). A desktop connected to the hub shares its master key
-with no server of the hub either, so a run that places a hub-table step on one asks the same way. Core hands the map on
-unopened: a read's plan scans through a Python source that opens it where the plan runs, a write's connection carries
-it, and the exchange store's crossings send it (``SealedCredential``). Such a vend also names the secrets the run's
-steps on those servers use (``secrets``), and the hub answers each sealed the same way: a step carries
-``sealed_secrets``' strings in place of its ``$ffsec$`` ciphertext, and the server that runs it opens them. It names the
-stored connections those steps use as well (``connections``, a kind and a name each), which the hub keeps for a server
-joined with keys and answers sealed the same way (``sealed_connections``).
+A plan or payload never carries a secret: unsealed, the secrets travel encrypted for the worker beside core, which
+shares core's master key. A joined server or a desktop shares no master key with the hub's servers, so for steps on
+those the vend names ``targets`` and the hub seals every credential, secret and connection to each target node; core
+hands the sealed maps on unopened and only the target opens them.
 """
 
 import uuid
@@ -52,13 +38,8 @@ _S3_SECRETS = ("aws_secret_access_key", "aws_session_token")
 
 @dataclass(frozen=True)
 class HubCredential:
-    """One credential the hub vended to a run, for the tables under ``base_uri``.
-
-    ``storage_options`` are what Polars and deltalake take, secrets included; ``repr`` never shows them. A vend with
-    targets leaves them empty and maps each target node to a token sealed to it in ``sealed``. The hub's answer also
-    carries the credential's expiry and the prefixes it may read and write; the hub enforces those, so nothing here
-    keeps them.
-    """
+    """One vended credential for the tables under ``base_uri``; ``repr`` never shows ``storage_options``, which hold
+    secrets. Expiry and prefixes are the hub's to enforce, so none are kept."""
 
     base_uri: str
     storage_options: dict[str, str]
@@ -74,18 +55,11 @@ class HubCredential:
 
 @dataclass(frozen=True)
 class RunVend:
-    """What the hub vended to the run ``run_id``: its ``vend_id``, the credentials, and where each namespace lives.
+    """What the hub vended to the run ``run_id``; ``bases`` and ``ids`` by ``catalog.schema``, ``targets`` empty for an
+    unsealed vend.
 
-    The run's steps name a hub namespace by its qualified ``catalog.schema``; ``bases`` is the storage root of each
-    such name the run asked for and ``ids`` the hub's own id of it, both resolved on the hub for this run.
-    ``targets`` are the hub servers the vend was sealed to; empty for a vend the run's own worker opens with core's
-    master key. ``secrets`` maps each secret name the run asked for to its map of node name to sealed token,
-    ``connections`` each ``(kind, name)`` of a stored connection to its map, and ``connection_fields`` each to the
-    names of the secret fields the hub says it holds.
-
-    ``own`` is the unsealed vend of the same run that a machine which is no server of the hub asks beside a sealed one,
-    for the steps on the hub's tables that run on the worker beside its core: a table on the hub reads and writes on
-    whichever machine its step runs (``here``).
+    ``own`` is the unsealed vend a machine that is no hub server asks beside a sealed one, for the steps on the worker
+    beside its core: a hub table reads and writes on whichever machine its step runs (``here``).
     """
 
     run_id: str
@@ -100,30 +74,23 @@ class RunVend:
     own: "RunVend | None" = field(default=None, repr=False)
 
     def sealed_secrets(self, names: Iterable[str]) -> dict[str, str]:
-        """Each of ``names`` the hub sealed to this run, as the string a step carries in place of its ciphertext."""
         return {name: hub_sealed.sealed_secret(name, self.secrets[name]) for name in names if name in self.secrets}
 
     def sealed_connections(self, refs: Iterable[tuple[str, str]]) -> dict[tuple[str, str], dict[str, str]]:
-        """The sealed map of each ``(kind, name)`` of ``refs`` the hub sealed to this run."""
         return {ref: dict(self.connections[ref]) for ref in refs if ref in self.connections}
 
     def secret_fields(self, refs: Iterable[tuple[str, str]]) -> dict[tuple[str, str], tuple[str, ...]]:
-        """The names of the secret fields the hub says each ``(kind, name)`` of ``refs`` holds; never a value."""
         return {ref: self.connection_fields[ref] for ref in refs if ref in self.connection_fields}
 
     @property
     def sealed(self) -> bool:
-        """Whether the hub sealed this vend to its target servers, so no credential holds options here."""
         return bool(self.targets)
 
     def sealed_for(self, backend_id: str) -> bool:
-        """Whether a step on ``backend_id`` opens this run's credentials sealed: the vend is sealed, and the backend
-        is not this machine's own worker with an unsealed vend of its own (``own``)."""
         return self.sealed and (self.own is None or registry.server_name(backend_id) is not None)
 
     def here(self) -> "RunVend":
-        """The vend the step running now opens: this one, or ``own`` when the step runs on this machine's own worker
-        and the run holds an unsealed vend for it."""
+        """The vend the step running now opens: ``own`` on this machine's own worker, else this one."""
         from flowfile_core.flowfile.execution.context import current_context
 
         if self.own is None or self.sealed_for(current_context().backend_id):
@@ -131,23 +98,13 @@ class RunVend:
         return self.own
 
     def sealed_credential(self, uri: str) -> SealedCredential:
-        """The sealed map of the credential for ``uri``, as an export, an import or a write's connection sends it.
-
-        Raises:
-            LookupError: No credential of this run covers ``uri``, or this vend was not sealed.
-        """
         credential = self.for_uri(uri)
         if not credential.sealed:
             raise LookupError(f"The hub sealed this run no credential for {uri}")
         return SealedCredential(base_uri=credential.base_uri, sealed=dict(credential.sealed))
 
     def encrypted_credential(self, uri: str, user_id: int | None) -> EncryptedCredential:
-        """The unsealed credential for ``uri`` as an export or an import on the worker beside this core takes it: its
-        options without their secrets, and the secrets encrypted for ``user_id`` as a scan's are (``scan_kwargs``).
-
-        Raises:
-            LookupError: No credential of this run covers ``uri``.
-        """
+        """The unsealed credential for the worker beside this core: options without secrets, secrets encrypted."""
         credential = self.for_uri(uri)
         kwargs = self.scan_kwargs(uri, user_id)
         provider = kwargs.get("credential_provider")
@@ -160,72 +117,41 @@ class RunVend:
     def exchange_credentials(
         self, uri: str, user_id: int | None
     ) -> tuple[SealedCredential | None, EncryptedCredential | None]:
-        """The exchange store at ``uri`` as the run's backends open it: sealed to the run's servers when this vend is
-        sealed, and, on a machine that is no server of the hub, encrypted for the worker beside its core."""
         sealed = self.sealed_credential(uri) if self.targets else None
         if registry.server_name(registry.WORKER_BACKEND_ID) is not None:
             return sealed, None
         return sealed, (self.own or self).encrypted_credential(uri, user_id)
 
     def scan_delta(self, uri: str, user_id: int | None, schema: Mapping[str, pl.DataType], **kwargs) -> pl.LazyFrame:
-        """A lazy scan of the Delta table at ``uri`` with the credential of the step running now (``here``), its plan
-        holding no secret.
-
-        Unsealed, the plan carries the options without their secrets and the secrets encrypted for ``user_id``
-        (``scan_kwargs``). Sealed, core knows no option of the store, so the plan reads the table through a Python
-        source that opens the map where the plan runs, with ``schema`` as its columns.
-        """
+        """A scan whose plan holds no secret; sealed, core knows no option, so a Python source opens the map where the
+        plan runs."""
         here = self.here()
         if here.sealed:
             return hub_sealed.scan_delta_sealed(uri, here.sealed_credential(uri).sealed, schema)
         return pl.scan_delta(uri, **kwargs, **here.scan_kwargs(uri, user_id))
 
     def for_namespace(self, namespace: str) -> HubCredential:
-        """The credential for the tables of the hub namespace ``namespace`` (``catalog.schema``).
-
-        Raises:
-            LookupError: The run did not ask for that namespace, or the hub gave no credential for its root.
-        """
         if namespace not in self.bases:
             raise LookupError(f"This run did not ask the hub for namespace {namespace}")
         return self.for_uri(self.bases[namespace])
 
     def namespace_id(self, namespace: str) -> int:
-        """The hub's own id of the namespace ``namespace`` (``catalog.schema``), as the hub answered it for this run.
-
-        Raises:
-            LookupError: The run did not ask for that namespace.
-        """
         if namespace not in self.ids:
             raise LookupError(f"This run did not ask the hub for namespace {namespace}")
         return self.ids[namespace]
 
     def for_uri(self, uri: str) -> HubCredential:
-        """The credential whose ``base_uri`` holds ``uri``.
-
-        Raises:
-            LookupError: No credential of this run covers ``uri``.
-        """
         for credential in self.credentials:
             if credential.covers(uri):
                 return credential
         raise LookupError(f"The hub gave this run no credential for {uri}")
 
     def scan_kwargs(self, uri: str, user_id: int | None) -> dict:
-        """``storage_options`` and ``credential_provider`` for a scan of ``uri``: the secrets encrypted for ``user_id``.
-
-        The options the plan carries hold no secret, so a serialized plan does not either.
-        """
+        """Scan kwargs whose options hold no secret, so a serialized plan does not either."""
         return CloudStorageReader.get_secure_scan_kwargs(self.for_uri(uri).storage_options, user_id)
 
     def worker_connection(self, uri: str, user_id: int) -> FullCloudStorageConnectionWorkerInterface:
-        """The credential for ``uri`` as an S3 access-key connection, its secrets encrypted for the worker.
-
-        A sealed vend's connection carries the map instead and nothing else, opened by the server that writes.
-
-        Raises:
-            ValueError: The credential is for storage other than S3.
-        """
+        """An S3 access-key connection, secrets encrypted for the worker; sealed, it carries only the map."""
         here = self.here()
         credential = here.for_uri(uri)
         scheme = catalog.scheme(credential.base_uri)
@@ -255,19 +181,16 @@ _held: dict[str, RunVend] = {}
 
 
 def hold(run_vend: RunVend) -> None:
-    """Keep ``run_vend`` for its run, under the run's id, until the run ends."""
     _held[run_vend.run_id] = run_vend
 
 
 def held(run_id: str | None) -> RunVend | None:
-    """What the hub vended to the run ``run_id``; ``None`` for a run that asked nothing, and once it ended."""
     return _held.get(run_id) if run_id else None
 
 
 @dataclass(frozen=True)
 class VendedTarget:
-    """A run's vend as the storage target of the tables under ``base``, as ``CatalogStorageTarget`` is for a local
-    catalog's. Nothing is resolved until it is used, and then for the step running now (``RunVend.here``)."""
+    """A vend as ``CatalogStorageTarget`` for the tables under ``base``, resolved at use for the step running now."""
 
     run_vend: RunVend = field(repr=False)
     base: str
@@ -295,7 +218,6 @@ class VendedTarget:
 
 
 def _physical(table: dict, namespace_name) -> dict:
-    """``table``, a row the hub answered, when this Flowfile can read it: a physical table on object storage."""
     if table.get("table_type", "physical") != "physical":
         raise ValueError("A virtual table on the hub cannot be read from this Flowfile")
     if not table.get("file_path") or not _is_cloud_uri(table["file_path"]):
@@ -304,13 +226,11 @@ def _physical(table: dict, namespace_name) -> dict:
 
 
 class _RunCatalog:
-    """The hub's catalog as ``table_sources.RemoteCatalog``: a run's targets from the vend held for the run, a read
-    outside a run from a vend of its own."""
+    """The hub's catalog as ``table_sources.RemoteCatalog``."""
 
     def run_starts(self, start: table_sources.RunStart) -> RunVend:
-        """The run's one vend: its tables' credentials, the secrets and connections its steps use and the exchange
-        store, sealed to ``start.servers``. A machine that is no server of the hub also asks an unsealed vend for the
-        steps that run on the worker beside its core (``RunVend.own``). Held under the run's id."""
+        """The run's one vend, sealed to ``start.servers``, plus ``RunVend.own`` on a machine that is no hub server."""
+
         def schemas(tables, writes: bool) -> set[str]:
             return {name for name, written, _ in tables if written is writes}
 
@@ -339,11 +259,9 @@ class _RunCatalog:
         _held.pop(run_id, None)
 
     def table_named(self, user_id: int | None, qualified_name: str) -> dict:
-        """The hub's table ``qualified_name``, which must be a physical table on object storage (``_physical``)."""
         return _physical(catalog.table_named(user_id, qualified_name), lambda: qualified_name.rpartition(".")[0])
 
     def table(self, user_id: int | None, table_id: int) -> CatalogTableOut:
-        """The hub's table whose row in the catalog tree is ``table_id``, as that row, for a read outside a run."""
         found = catalog.table_named(user_id, -table_id)
         _physical(found, lambda: (found.get("qualified_name") or found["name"]).rpartition(".")[0])
         return CatalogTableOut.model_validate(catalog.marked(found))
@@ -351,13 +269,11 @@ class _RunCatalog:
     def row_targets(
         self, user_id: int | None, tables: Sequence[CatalogTableOut], purpose: str, writes: bool
     ) -> list[VendedTarget]:
-        """The hub vends the schemas of ``tables`` to ``user_id`` now, to write too with ``writes``, under a run id
-        of its own that starts with ``purpose`` (``preview-…``, ``sql-…``), which the hub's vend ledger keeps."""
+        """A vend outside a run, under a run id starting with ``purpose`` for the hub's ledger."""
         vended = request_for_tables(user_id, f"{purpose}-{uuid.uuid4().hex}", tables, writes=writes)
         return [VendedTarget(vended, row.file_path.rstrip("/").rpartition("/")[0], user_id) for row in tables]
 
     def tree(self, user_id: int | None) -> list[NamespaceTree]:
-        """The person's hub catalogs, read now; empty without a hub session, or when the hub does not answer."""
         return catalog.tree(user_id) if user_id is not None else []
 
     def table_target(self, run_id: str | None, user_id: int | None, file_path: str) -> VendedTarget:
@@ -391,13 +307,11 @@ class _RunCatalog:
     request = staticmethod(catalog.relay)
 
     def of_record(self) -> bool:
-        """On a server that joined the hub with keys of its own the organisation's catalog is the hub's; a desktop
-        connected to a hub keeps its own beside it."""
+        """On a joined server the hub's catalog is the catalog of record; a desktop keeps its own beside it."""
         return issuer_accounts.joined_with_keys() is not None
 
     def save_flow(self, user_id: int | None, flow) -> str | None:
-        """The hub keeps a flow that came from it for a person signed in to it, and words where; a flow from
-        elsewhere, a person with no hub session, and a hub without the route or the flow, are not its to keep."""
+        """Keep a flow from this hub on the hub and return its note; ``None`` when it is not the hub's to keep."""
         origin = getattr(flow.flow_settings, "hub_origin", None)
         stored = session.load(user_id) if user_id is not None else None
         if origin is None or stored is None or origin.hub_url.rstrip("/") != stored["hub_url"].rstrip("/"):
@@ -417,7 +331,6 @@ class _RunCatalog:
         return saved.get("note") or None
 
     def flow_uuid(self, flow) -> str | None:
-        """The hub flow ``flow`` is a copy of, by its ``hub_origin``, which travels in the document to every server."""
         origin = getattr(flow.flow_settings, "hub_origin", None)
         return origin.flow_uuid if origin is not None else None
 
@@ -426,12 +339,7 @@ table_sources.register_remote("hub", _RunCatalog())
 
 
 def refusal_sentence(detail: str, status: int) -> str:
-    """The run's error for a vend the hub refused with ``detail`` (its HTTP ``status``).
-
-    A hub that says what to do answers a sentence of its own, capitalised as one ("You can read main.default but not
-    write to it; ask an admin or your team's manager for write access"), and the run's error is that sentence alone. A
-    bare reason ("no manage grant on namespace 6"), or no text at all, reads after ``REFUSED``.
-    """
+    """The hub's own capitalised sentence alone; a bare reason, or no text, after ``REFUSED``."""
     if detail[:1].isupper() and detail != client.answered(status):
         return detail
     return f"{REFUSED}: {detail}"
@@ -439,8 +347,7 @@ def refusal_sentence(detail: str, status: int) -> str:
 
 @contextmanager
 def _hub_answers():
-    """The hub's refusals and silences as the one ``LookupError`` sentence a caller shows the person; the hub's 403,
-    what the person may not do, as ``table_sources.Refused``."""
+    """Hub failures as one ``LookupError`` sentence; a 403 as ``table_sources.Refused``."""
     try:
         yield
     except HubRefused as e:
@@ -455,7 +362,6 @@ def _hub_answers():
 
 
 def _usable(namespace: HubNamespace | None, missing: str) -> HubNamespace:
-    """``namespace`` when this Flowfile can use its tables, else the sentence why: ``missing`` when there is none."""
     if namespace is None:
         raise LookupError(f"{REFUSED}: {missing}")
     refusal = catalog.unreachable(namespace.storage_uri, namespace.full_name)
@@ -475,18 +381,8 @@ def request(
     secrets: Iterable[str] = (),
     connections: Iterable[tuple[str, str]] = (),
 ) -> RunVend:
-    """Ask the hub, through ``user_id``'s hub session, for the credentials of a run over its tables.
-
-    ``readers`` and ``writers`` are the qualified names (``catalog.schema``) of the hub namespaces the run reads and
-    writes, each found and its hub id resolved in one walk of the hub's catalogs; one the hub does not list, keeps on
-    its own disk or on storage other than S3 is refused before the vend (``catalog.unreachable``). ``exchange`` also
-    asks for the organisation's exchange store; ``targets``, the hub names of the servers the run's steps use, has
-    the hub seal every credential to each of them, and each of ``secrets`` and ``connections`` (``(kind, name)``) too.
-
-    Raises:
-        LookupError: A sentence for the user: not connected to the hub, a namespace the hub keeps on its own disk or
-            on other storage, the hub's refusal with its reason, or a hub that does not answer.
-    """
+    """A run's vend for the namespaces ``readers`` and ``writers`` (``catalog.schema``); one this Flowfile cannot use
+    is refused before anything is vended. Every failure is a ``LookupError`` sentence for the user."""
     secrets = tuple(dict.fromkeys(secrets))
     connections = tuple(dict.fromkeys(connections))
     targets = tuple(dict.fromkeys(targets))
@@ -517,12 +413,8 @@ def request(
 def request_for_tables(
     user_id: int, run_id: str, tables: Iterable[CatalogTableOut], *, writes: bool = False
 ) -> RunVend:
-    """Ask the hub, through ``user_id``'s hub session, for one read of ``tables`` outside a run; with ``writes`` the
-    credential may also write their schemas.
-
-    ``tables`` are rows of the catalog tree, each carrying the hub's id of its namespace: names are free text, and
-    ``a.b`` + ``c`` names the same ``catalog.schema`` as ``a`` + ``b.c``. A refusal is ``request``'s ``LookupError``.
-    """
+    """A vend outside a run for tree rows, by their hub namespace id since ``a.b`` + ``c`` and ``a`` + ``b.c`` name the
+    same ``catalog.schema``."""
     tables = list(tables)
     with _hub_answers():
         hub_url, access_token = catalog.signed_in(user_id)

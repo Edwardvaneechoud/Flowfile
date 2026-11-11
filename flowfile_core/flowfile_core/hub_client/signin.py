@@ -1,11 +1,5 @@
-"""A person's sign-in on a server joined with keys, from a token the hub signed for them.
-
-Two tokens put a person on such a server: the one-time ``signin`` token the hub's Open page gives their browser
-(``POST /auth/hub/signin``), and a ``dispatch`` token the hub sends with a run of theirs (``POST /hub/dispatch``). Both
-are traded at the hub for a delegation signed with this node's own key, and the person's local account is the one mapped
-to the hub's issuer and their id there, made at their first sign-in. ``sign_in`` is that trade; what each route answers
-afterwards is its own.
-"""
+"""A person's sign-in on a server joined with keys, from a ``signin`` or ``dispatch`` token the hub signed for them,
+traded at the hub for a delegation; their local account is the one mapped to the hub's issuer and their hub id."""
 
 from dataclasses import dataclass
 
@@ -24,8 +18,7 @@ from shared import hub_node
 
 @dataclass(frozen=True)
 class SignedIn:
-    """A sign-in made: the person's account here, the ``sid`` core's own tokens for it carry, and how long the hub's
-    access token lives (seconds)."""
+    """A sign-in made; ``expires_in`` is the hub access token's lifetime in seconds."""
 
     user: db_models.User
     sid: str
@@ -37,12 +30,10 @@ def _sentence(text: str) -> str:
 
 
 def account(db: Session, user_id: int) -> db_models.User | None:
-    """The local account of the person ``user_id`` is on the hub, ``None`` before their first sign-in here."""
     return issuer_accounts.issuer_account(db, hub_node.resolved().issuer, user_id)
 
 
 def live(user_id: int) -> bool:
-    """Whether ``user_id`` has a sign-in through the hub on this server that still gives an access token."""
     stored = hub_session.load(user_id)
     if stored is None or stored.get("kind") != "delegation":
         return False
@@ -53,8 +44,7 @@ def live(user_id: int) -> bool:
 
 
 def renew(user_id: int, sid: str | None) -> Delegation | None:
-    """What the hub answers when the sign-in ``sid`` of ``user_id`` is refreshed there now; ``None`` when the hub no
-    longer takes it or it is not the one kept here. ``HubUnreachable`` for a hub that does not answer."""
+    """The hub's refresh of the sign-in ``sid`` now; ``None`` when it is not taken or not the one kept here."""
     try:
         return hub_session.refresh_delegation(user_id, sid)
     except HubRefused:
@@ -62,8 +52,7 @@ def renew(user_id: int, sid: str | None) -> Delegation | None:
 
 
 def sign_out(user_id: int) -> None:
-    """End the sign-in through the hub of ``user_id``: revoked at the hub as far as it answers, and forgotten here.
-    Any other hub connection of the account is left as it is."""
+    """Revoke the sign-in through the hub as far as the hub answers, and forget it here."""
     stored = hub_session.load(user_id)
     if stored is None or stored.get("kind") != "delegation":
         return
@@ -75,14 +64,8 @@ def sign_out(user_id: int) -> None:
 
 
 def sign_in(db: Session, token: str, user_id: int) -> SignedIn:
-    """Trade ``token``, a hub token naming the person ``user_id`` on the hub, for their sign-in here.
-
-    The hub's exchange signs the delegation; the account is the one ``issuer_signin.admit`` answers for the hub's issuer
-    and the person the hub described; the delegation is kept as the person's hub session, never in the database; and the
-    hub's servers this person may run on become backend rows with it (``node_addresses.sync_for``), a hub whose list
-    cannot be read leaving one warning. ``SignInRefused`` for a disabled account, a trade the hub refuses or a hub that
-    answers for another person; ``HubUnreachable`` for a hub that does not answer.
-    """
+    """Trade ``token``, naming the hub's person ``user_id``, for their sign-in here; the delegation is kept as their
+    hub session, never in the database. ``SignInRefused`` when the hub refuses or answers for another person."""
     settings = hub_node.resolved()
     issuer_signin.refuse_disabled(db, settings.issuer, user_id)
     try:

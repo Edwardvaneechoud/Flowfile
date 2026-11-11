@@ -1,11 +1,6 @@
-"""The stored connections a person reaches on their hub, for any machine signed in to it: a desktop's Connect or a
-joined server's delegation, both ``session.load``.
-
-A connection is settings plus secrets, and the hub's are never copied here. Each connection page lists them after the
-machine's own, read-only and marked ``source="hub"`` (``listed``, ``hub_rows``); a step that names one gets its list
-row, its settings with no secret, and its secrets only as the run's vend sealed them to the hub server that
-runs the step (``run_secrets.granted_value``). Core never opens them. ``_HubCredentials`` is the hub as core's provider
-of credentials (``secret_manager.credential_sources``), registered when this module is imported.
+"""The stored connections a person reaches on their hub, listed read-only after the machine's own; their secrets reach
+a step only as the run's vend sealed them to the hub server that runs it, and core never opens them.
+``_HubCredentials`` registers the hub as core's credential source on import.
 
 Requests log method, path and status only, never a body, a value or a token.
 """
@@ -31,23 +26,20 @@ LABELS = {"cloud": "cloud storage connection", "kafka": "Kafka connection", "dat
 
 
 def listed(user_id: int, kind: Kind) -> list[dict]:
-    """The person's connections of ``kind`` as the hub lists them: their own and those shared with them, no secret,
-    each marked ``source="hub"`` (``secrets.marked``)."""
     hub_url, token = _signed_in(user_id)
     rows = client._request_list("GET", hub_url, LIST_PATHS[kind], None, headers=_bearer(token))
     return [marked(row) for row in rows]
 
 
 def hub_rows(user_id: int, kind: Kind) -> list[dict]:
-    """``listed``, or none when the person has no sign-in to a hub here or the hub does not answer."""
+    """``listed``, or none without a hub session or when the hub does not answer."""
     if session.load(user_id) is None:
         return []
     return listed_once((user_id, kind), lambda: listed(user_id, kind), f"{LABELS[kind]}s")
 
 
 class _HubCredentials:
-    """The hub as ``credential_sources.CredentialSource``: its list rows, and the forms its vend seals a run's
-    secrets in, which only the hub server that runs the step opens."""
+    """The hub as ``credential_sources.CredentialSource``."""
 
     def secret_rows(self, user_id: int) -> list[dict]:
         return hub_secrets.hub_rows(user_id)

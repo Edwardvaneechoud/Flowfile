@@ -1,17 +1,9 @@
-"""The hub's compute nodes as rows of core's backends table: the one sync, and when a server joined to its hub runs it.
+"""The hub's compute nodes as rows of core's backends table.
 
-``sync_nodes`` makes the table follow one person's list of the hub's servers. A desktop runs it when its user connects
-or asks (``/hub_client/compute_nodes/sync``), and its one user's list is the table's whole. A server joined with keys
-of its own runs it by itself, with the person's own sign-in through the hub, so nobody has to open the Compute page
-first: when a person signs in (``sync_for``) and before a run that names one of the hub's servers (``refresh``).
-
-On a joined server each person's list is the servers the hub lets that person run on, so one list is not the table's
-whole: a row another person's list brought stays theirs. Whether a person may run on a row is still the hub's answer
-when the run's token is minted for them. The node's own assertion cannot read the list: the hub's
-``GET /hub/compute-nodes`` answers a person.
-
-One list request per person and refresh, whatever the number of servers. A hub that cannot be read, or a person
-without a session, leaves the rows as they are.
+A desktop syncs when its user connects or asks; a server joined with keys syncs by itself with each person's sign-in
+through the hub, at sign-in and before a run that names a hub server, since the node's own assertion cannot read the
+list. There each person's list holds only the servers they may run on, so a row another person's list brought stays
+theirs. A hub that cannot be read leaves the rows as they are.
 """
 
 from collections.abc import Iterable
@@ -33,27 +25,17 @@ _UNREAD = (HubUnreachable, HubRefused, HubVersionRefused)
 
 
 def drop_row(db: Session, row: ConfiguredBackend) -> None:
-    """Remove *row* as ``DELETE /compute_backends/{id}`` does: the registry's instance and its URL's verdicts go too."""
+    """Remove *row* as ``DELETE /compute_backends/{id}`` does."""
     db.delete(row)
     registry.forget(row.id)
     handshake.reset_handshake(row.url)
 
 
 def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tuple[list[str], list[str]]:
-    """Fill the backends table from the hub's enabled compute nodes for ``user_id``; ``(synced ids, skipped ids)``.
+    """Make the hub-filled ``worker:<name>`` rows follow ``user_id``'s list of enabled nodes; ``(synced, skipped)``.
 
-    One ``worker:<name>`` row per enabled node, at the node's worker URL, with no token and no CA, ``remote_id`` the
-    node's id on the hub and ``account_user_id`` the caller, whose hub session mints the tokens the backend signs with
-    outside a run. A hub-filled row whose node is gone, disabled or renamed is removed; a row added by hand is never
-    touched and its node is reported as skipped. A row written or changed is forgotten in the registry, so its next
-    use reads it; one the hub lists as before keeps its backend and the verdict it has. The node this core is itself
-    (``FLOWFILE_NODE_NAME``, or the name it joined with: ``hub_node.resolved``) is neither written nor counted nor
-    skipped, and a row an earlier sync wrote for it goes. The hub's errors propagate; nothing is committed then.
-
-    On a server joined with keys of its own the list is only the servers the hub lets ``user_id`` run on, so a row of
-    another person who is still signed in through the hub here is theirs: it stays when the list lacks it, and keeps
-    its person when the list has it (its address and node id still follow the hub). A row of ``user_id``'s own, or
-    of a person no longer signed in through the hub, follows the list as on a desktop.
+    A row added by hand is never touched and its node is skipped; this core's own node gets no row. On a joined server
+    a row of another person still signed in through the hub keeps its person. Nothing is committed on a hub error.
     """
     nodes = client.list_compute_nodes(hub_url, access_token)
     own = hub_node.resolved().name
@@ -103,14 +85,8 @@ def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tu
 
 
 def server_for(user_id: int) -> str | None:
-    """The backend id of the hub server a step of ``user_id`` moves to when the backend its settings name is no server
-    of the hub: the hub's default server when the person may run on it, else the first server the hub lists for them;
-    ``None`` when the person has no hub session, the hub lists them no server, or it cannot be read.
-
-    The hub lists a person only the enabled servers they may run on. The server's row is written when it has none yet
-    (``sync_nodes``), so the run reaches it. On a hub server whose own name the hub answers, that is this server's
-    ``worker``.
-    """
+    """The hub server a step of ``user_id`` moves to: the hub's default when listed for them, else the first; its row
+    is written when missing. ``None`` when there is none or the hub cannot be read."""
     stored = session.load(user_id)
     if stored is None:
         return None
@@ -137,11 +113,7 @@ def server_for(user_id: int) -> str | None:
 
 
 def _sync_for(db: Session, user_id: int, when: str) -> bool:
-    """``sync_nodes`` with the hub session of ``user_id``, best effort; whether the hub's list was read.
-
-    A person without a session reads nothing; a hub that cannot be read, or a row another sync wrote at the same time,
-    leaves the rows as they were and one warning naming ``when``.
-    """
+    """``sync_nodes`` with ``user_id``'s session, best effort; whether the list was read."""
     stored = session.load(user_id)
     if stored is None:
         return False
@@ -158,8 +130,7 @@ def _sync_for(db: Session, user_id: int, when: str) -> bool:
 
 
 def sync_for(user_id: int) -> None:
-    """Fill the backends table with the hub's servers ``user_id`` may run on, right after their sign-in through the
-    hub on a server joined with keys of its own, so the servers are there to pick before anyone opens Compute."""
+    """Sync right after a sign-in on a joined server, so the servers are there to pick before anyone opens Compute."""
     if issuer_accounts.joined_with_keys() is None:
         return
     with get_db_context() as db:
@@ -167,15 +138,8 @@ def sync_for(user_id: int) -> None:
 
 
 def refresh(backend_ids: Iterable[str]) -> None:
-    """Before a run on a server joined with keys of its own that names one of the hub's servers, make the rows follow
-    the hub's list now: a moved server is reached at its new address, one the hub no longer lists is gone, and one the
-    hub lists that has no row yet gets one.
-
-    The list is read with the hub session of the person the run is for (``node_tokens.acting``), the one whose sign-in
-    through the hub also mints the run's node tokens; a run for nobody reads with the named rows' own people. A run
-    naming no ``worker:`` id, or only rows added by hand, reads nothing. A desktop is left as it is: there the hub's
-    list is read when its user asks (``/hub_client/compute_nodes/sync``).
-    """
+    """Before a run on a joined server that names hub servers, sync with the acting person's session (the named rows'
+    people for a run for nobody), so a moved server is reached at its new address."""
     if issuer_accounts.joined_with_keys() is None:
         return
     ids = [backend_id for backend_id in backend_ids if backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX)]

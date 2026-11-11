@@ -1,10 +1,6 @@
-"""The hub's HTTP contract, as plain functions over ``httpx``.
+"""The hub's HTTP contract as plain functions over ``httpx``; tests pass ``http`` a ``MockTransport``.
 
-Each function takes the hub's base URL and an optional ``http`` client, which tests replace with a
-``httpx.MockTransport``. Sign-in and refresh use the auth routes the hub mounts from core (form fields, a token pair
-back), as do ``/catalog/namespaces`` and ``/catalog/tables``; ``/hub/info``, ``/hub/devices``, ``/hub/flows``,
-``/hub/compute-nodes``, ``/hub/node-tokens``, ``/hub/vend`` and ``/hub/exchange-store`` are the hub's own. Requests
-log method, path and status only, never a body, a password or a token.
+Requests log method, path and status only, never a body, a password or a token.
 """
 
 import threading
@@ -21,11 +17,8 @@ class HubUnreachable(Exception):
 
 
 class HubRefused(Exception):
-    """The hub answered with an error, or with something that is not a hub's answer.
-
-    ``detail`` is the hub's text; ``payload`` is its ``detail`` object when the hub sent one (the stale-base
-    409 carries ``current_version`` and ``base_version`` that way), else ``None``.
-    """
+    """The hub answered with an error, or with something that is not a hub's answer; ``payload`` is its ``detail``
+    object when it sent one (the stale-base 409 carries the versions that way)."""
 
     def __init__(self, status: int, detail: str, payload: dict | None = None):
         super().__init__(detail)
@@ -35,7 +28,7 @@ class HubRefused(Exception):
 
 
 class HubVersionRefused(Exception):
-    """The hub does not support this client's version (its 426); ``detail`` is the hub's own text."""
+    """The hub does not support this client's version (its 426)."""
 
     def __init__(self, detail: str):
         super().__init__(detail)
@@ -47,7 +40,6 @@ _module_http_lock = threading.Lock()
 
 
 def _http(http: httpx.Client | None) -> httpx.Client:
-    """Injected client for tests, else a lazily-created module singleton."""
     if http is not None:
         return http
     global _module_http
@@ -128,20 +120,17 @@ def _require(body: dict, fields: tuple[str, ...], url: str, path: str) -> dict:
 
 
 def get_info(url: str, *, http: httpx.Client | None = None) -> dict:
-    """The hub's ``org_name`` and ``hub_version``, and whatever else it sends (``organisation_storage`` from a hub that
-    has one); needs no sign-in."""
     body = _request("GET", url, "/hub/info", http)
     return _require(body, ("org_name", "hub_version"), url, "/hub/info")
 
 
 def sign_in(url: str, username: str, password: str, *, http: httpx.Client | None = None) -> dict:
-    """Exchange a hub account's username and password for ``access_token`` and ``refresh_token``."""
     body = _request("POST", url, "/auth/token", http, data={"username": username, "password": password})
     return _require(body, ("access_token", "refresh_token"), url, "/auth/token")
 
 
 def refresh(url: str, refresh_token: str, *, http: httpx.Client | None = None) -> dict:
-    """A new ``access_token`` and a rotated ``refresh_token``; the old refresh token is not to be used again."""
+    """A new token pair; the old refresh token is not to be used again."""
     body = _request("POST", url, "/auth/refresh", http, data={"refresh_token": refresh_token})
     return _require(body, ("access_token", "refresh_token"), url, "/auth/refresh")
 
@@ -149,10 +138,7 @@ def refresh(url: str, refresh_token: str, *, http: httpx.Client | None = None) -
 def register_device(
     url: str, access_token: str, name: str, client_version: str, *, http: httpx.Client | None = None
 ) -> dict:
-    """Register this machine under the signed-in account; the same name under the same account is the same device.
-
-    Answers the hub's device: ``id``, ``name``, ``client_version`` and ``last_seen_at``.
-    """
+    """The same name under the same account is the same device."""
     body = _request(
         "POST",
         url,
@@ -174,8 +160,7 @@ def catalog_request(
     body=None,
     http: httpx.Client | None = None,
 ) -> tuple[int, object]:
-    """One request to a catalog route the hub mounts from core, as the signed-in account: the hub's status and its
-    answer as it sent it, ``None`` for an empty one. A refusal is the hub's own (``HubRefused``)."""
+    """One request to a catalog route the hub mounts from core: its status and answer as sent, ``None`` when empty."""
     kwargs = {"params": params or None, "headers": _bearer(access_token)}
     if body is not None:
         kwargs["json"] = body
@@ -184,14 +169,12 @@ def catalog_request(
 
 
 def get_table(url: str, access_token: str, table_id: int, *, http: httpx.Client | None = None) -> dict:
-    """The hub's catalog table ``table_id`` as core's ``CatalogTableOut``; an unknown table is the hub's 404."""
     body = _request("GET", url, f"/catalog/tables/{table_id}", http, headers=_bearer(access_token))
     return _require(body, ("id", "name"), url, "/catalog/tables/{table_id}")
 
 
 def resolve_table(url: str, access_token: str, reference: str, *, http: httpx.Client | None = None) -> dict:
-    """The hub's catalog table named ``reference`` (``catalog.schema.table``) as core's ``CatalogTableOut``, through
-    core's own ``GET /catalog/tables/resolve``; a name the hub has no table for is its 404."""
+    """The hub's table named ``catalog.schema.table``; an unknown name is its 404."""
     body = _request("GET", url, "/catalog/tables/resolve", http, params={"q": reference}, headers=_bearer(access_token))
     table = _require(body, ("table",), url, "/catalog/tables/resolve")["table"]
     if not isinstance(table, dict):
@@ -200,11 +183,7 @@ def resolve_table(url: str, access_token: str, reference: str, *, http: httpx.Cl
 
 
 def register_table_from_data(url: str, access_token: str, body: dict, *, http: httpx.Client | None = None) -> dict:
-    """Record a table whose data is already written under a namespace's storage root on the hub; its 201 answer.
-
-    ``body`` is core's ``CatalogTableFromDataCreate``. A ``table_path`` that is not a table directory under the
-    namespace's storage root is the hub's 403, a name already taken in the namespace its 409.
-    """
+    """Record a table already written under a namespace's storage root on the hub."""
     answer = _request("POST", url, "/catalog/tables/from-data", http, json=body, headers=_bearer(access_token))
     return _require(answer, ("id", "name"), url, "/catalog/tables/from-data")
 
@@ -222,18 +201,10 @@ def vend(
     connections: list[tuple[str, str]] | tuple[tuple[str, str], ...] = (),
     http: httpx.Client | None = None,
 ) -> dict:
-    """A credential for each storage root the namespaces live under, for the run ``run_id``; the hub records the vend.
+    """A credential per storage root of the namespaces, for the run ``run_id``; the hub records the vend.
 
-    Answers ``vend_id`` and ``credentials``, each with ``base_uri``, ``storage_options``, ``expires_at``, ``mode``,
-    ``read_prefixes`` and ``write_prefixes``. A namespace the account may not use (read) or manage (write) is the
-    hub's 403, one on the hub's own disk its 422, a hub whose vending is not configured its 501. ``exchange`` asks for
-    the organisation's exchange store prefix too. With ``targets``, hub node names, each credential's
-    ``storage_options`` is empty and its ``sealed`` maps every target to a token only that node opens; a node the
-    caller may not run on, or that is disabled, is the hub's 403, one unknown, removed or without keys its 422. Without
-    targets the body is the one an older hub takes. ``secrets``, secret names, needs ``targets``: the answer's
-    ``secrets`` holds each name with its ``sealed`` map, and a name the caller cannot reach is the hub's 403.
-    ``connections``, ``(kind, name)`` pairs of stored connections (``cloud``, ``kafka``, ``database``), needs
-    ``targets`` too: the answer's ``connections`` holds each with its ``kind``, ``name`` and ``sealed`` map.
+    With ``targets`` (hub node names) every credential, secret and connection comes back sealed to each target, and
+    an answer missing a target is refused. Without targets the body is the one an older hub takes.
     """
     request = {
         "run_id": run_id,
@@ -288,11 +259,7 @@ def vend(
 
 
 def get_exchange_store(url: str, access_token: str, *, http: httpx.Client | None = None) -> dict | None:
-    """The exchange store the hub sets for its organisation, ``None`` when it sets none (the hub's 404).
-
-    Answers the hub's body: ``uri`` (``s3://`` without a trailing slash), ``connection`` (the name of the stored S3
-    connection that opens it), ``max_rows`` (``None`` for no limit), ``set_by`` and ``set_at``.
-    """
+    """The organisation's exchange store, ``None`` when the hub sets none (its 404)."""
     try:
         body = _request("GET", url, "/hub/exchange-store", http, headers=_bearer(access_token))
     except HubRefused as e:
@@ -312,20 +279,17 @@ def get_exchange_store(url: str, access_token: str, *, http: httpx.Client | None
 def list_flows(
     url: str, access_token: str, namespace_id: int | None = None, *, http: httpx.Client | None = None
 ) -> list:
-    """The flows the account may read, each with its newest hub version; ``namespace_id`` narrows the list."""
     params = {"namespace_id": namespace_id} if namespace_id is not None else None
     return _request_list("GET", url, "/hub/flows", http, params=params, headers=_bearer(access_token))
 
 
 def list_versions(url: str, access_token: str, flow_uuid: str, *, http: httpx.Client | None = None) -> list:
-    """Every published version of the flow, newest first."""
     return _request_list("GET", url, f"/hub/flows/{flow_uuid}/versions", http, headers=_bearer(access_token))
 
 
 def checkout(
     url: str, access_token: str, flow_uuid: str, version: int | None = None, *, http: httpx.Client | None = None
 ) -> dict:
-    """The stored document of ``version`` (the newest when omitted) with the flow's name and namespace."""
     params = {"version": version} if version is not None else None
     body = _request("GET", url, f"/hub/flows/{flow_uuid}/checkout", http, params=params, headers=_bearer(access_token))
     return _require(body, ("flow_uuid", "version", "name", "definition"), url, "/hub/flows/{flow_uuid}/checkout")
@@ -334,8 +298,8 @@ def checkout(
 def for_editing(
     url: str, access_token: str, flow_uuid: str, version: int | None = None, *, http: httpx.Client | None = None
 ) -> dict:
-    """The flow's document for the person to work on, as the hub chooses it: what ``checkout`` answers, with a
-    ``note`` when the hub has a sentence to show them. A hub without the route answers ``checkout``."""
+    """The document the hub chooses for the person to work on, with an optional ``note``; a hub without the route
+    answers ``checkout``."""
     params = {"version": version} if version is not None else None
     path = f"/hub/flows/{flow_uuid}/edit"
     try:
@@ -348,26 +312,17 @@ def for_editing(
 
 
 def save_content(url: str, access_token: str, flow_uuid: str, body: dict, *, http: httpx.Client | None = None) -> dict:
-    """Keep ``body["definition"]`` on the hub as the person's working content of the flow, no version made; the
-    hub's answer carries the ``note`` to show them. Raises ``HubRefused`` as every call does."""
+    """Keep the person's working content of the flow on the hub, no version made."""
     return _request("PUT", url, f"/hub/flows/{flow_uuid}/draft", http, json=body, headers=_bearer(access_token))
 
 
 def publish(url: str, access_token: str, flow_uuid: str, body: dict, *, http: httpx.Client | None = None) -> dict:
-    """Store ``body["definition"]`` as the flow's next version; the hub's 201 answer with the version it got.
-
-    A stale ``base_version`` is the hub's 409, raised as ``HubRefused`` whose ``payload`` carries
-    ``current_version`` and ``base_version``.
-    """
+    """Store the flow's next version; a stale ``base_version`` is the hub's 409 with the versions in ``payload``."""
     answer = _request("POST", url, f"/hub/flows/{flow_uuid}/publish", http, json=body, headers=_bearer(access_token))
     return _require(answer, ("flow_uuid", "version", "name"), url, "/hub/flows/{flow_uuid}/publish")
 
 
 def list_compute_nodes(url: str, access_token: str, *, http: httpx.Client | None = None) -> list:
-    """The compute nodes registered on the hub, enabled or not, as the hub lists them.
-
-    Each carries ``id``, ``name``, ``kind``, ``core_url``, ``worker_url``, ``ui_url``, ``enabled`` and ``is_default``.
-    """
     nodes = _request_list("GET", url, "/hub/compute-nodes", http, headers=_bearer(access_token))
     for node in nodes:
         if not isinstance(node, dict):
@@ -379,12 +334,7 @@ def list_compute_nodes(url: str, access_token: str, *, http: httpx.Client | None
 
 
 def mint_node_token(url: str, access_token: str, node_id: int, *, http: httpx.Client | None = None) -> dict:
-    """A short-lived ``run`` token the hub signs for one of its nodes, for the signed-in account.
-
-    Answers the hub's body: ``token``, ``node_id``, ``node_name`` (the token's audience), ``scope``, ``kid``,
-    ``issued_at``, ``expires_at`` and ``issuer``. The hub shows the token once and keeps none; a node that does
-    not exist or is disabled is the hub's refusal.
-    """
+    """A short-lived ``run`` token the hub signs for one of its nodes; the hub shows it once and keeps none."""
     body = _request(
         "POST",
         url,

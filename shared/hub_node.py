@@ -1,36 +1,9 @@
-"""This node's identity on a hub: the join, and the small file that remembers it.
+"""This node's identity on a hub: the join, ``hub_node.json`` that remembers it, and the heartbeat.
 
-A worker, or a core, becomes a node on a hub by joining it once: it posts a single-use join token from the hub's
-Compute page and its own description (its name, the address desktops reach it at) to ``<hub>/hub/nodes/join``, and
-keeps what the hub answers in ``hub_node.json`` in the storage dir: the hub's URL, the issuer the hub signs with, the
-name the hub recorded and the node's id there. The file holds nothing secret. The join token is spent by the join and
-written nowhere, and the hub's keys, the only thing a node verifies with, stay public. The node's own keys are another
-file: at its first join it makes two key pairs, keeps them in ``hub_node_key.json`` beside this one
-(``shared.hub_node_key``) and sends the hub their public halves with every join. ``joined()`` is the one question
-"did this storage dir join a hub, with keys of its own": the file and the key file both there.
-
-A joined node tells its hub it is up, since the hub may not reach it (behind a NAT, say) while it can always reach the
-hub: ``heartbeat`` posts one beat signed with the node's own key, and ``start_heartbeat`` beats at once and then every
-``HEARTBEAT_SECONDS`` from a daemon thread. One process speaks for the node: core when one joined for itself and its
-worker (the file's ``has_core``), else the worker. Each beat also names the addresses this machine can be reached at
-on the port the process serves (``reach_addresses``), worked out again before every beat since the network can change
-between them, so a hub whose stored address stopped answering has somewhere to look; which one it uses is the hub's.
-
-``shared.hub_tokens`` reads the node's settings through ``resolved()``: the environment first (``FLOWFILE_HUB_URL``,
-``FLOWFILE_NODE_NAME``), the file second, and the file only for the hub it names, so a node set up by hand behaves as
-before whatever the file says; the issuer to expect is the joined file's, else the hub's URL. The file also keeps a
-short hash of the join token it was written with: a start with that same token makes no request, so a restart with an
-unchanged command is quiet, and a start with any other join token joins again and replaces the file. One storage dir
-holds one node: every process reading it takes the name the latest join wrote.
-
-A node that joins keeps its files and keys in a storage dir and a secure store of its own, never in Flowfile desktop's
-``~/.flowfile`` or ``~/.config/flowfile``: the hub's install line sets ``FLOWFILE_STORAGE_DIR`` and
-``FLOWFILE_SECURE_STORAGE_PATH`` (in docker mode the storage dir is the container's), and a start with a join token
-outside docker mode and without them is refused before anything reads the storage dir (``require_own_storage_dir``). It
-serves on the port it is given, ``--port`` or the default, and binds that socket before it joins (``serving_socket``): a
-node whose port is in use exits with code 1 saying so, before it spends its token. The address it gives the hub is
-``--url``, which the install line computes, else this machine's full name and that port (``default_url``). A core joins
-for itself and the worker beside it the same way.
+The file holds nothing secret: the join token is spent by the join and written nowhere, only a short hash of it is
+kept so a restart with the same token makes no request. A joined node beats to its hub because the hub may not reach
+it (behind a NAT) while it can always reach the hub. A node keeps its files and keys in a storage dir and secure store
+of its own, never the desktop's, or the desktop would act as the joined node.
 """
 
 import hashlib
@@ -57,8 +30,6 @@ FILE_NAME = "hub_node.json"
 JOIN_PATH = "/hub/nodes/join"
 HEARTBEAT_PATH = "/hub/nodes/heartbeat"
 HEARTBEAT_SECONDS = 60
-"""How often a joined node tells its hub it is up, in seconds; not a setting. The hub shows a node Online while its last
-beat is under three minutes old."""
 
 _BACKLOG = 2048
 
@@ -70,7 +41,7 @@ _removed = False
 
 
 class JoinRefused(Exception):
-    """A join that did not happen. ``reason`` is the text to print; it never carries the token."""
+    """A join that did not happen; ``reason`` never carries the token."""
 
     def __init__(self, reason: str):
         super().__init__(reason)
@@ -79,12 +50,7 @@ class JoinRefused(Exception):
 
 @dataclass(frozen=True)
 class HubNode:
-    """What a node keeps after joining a hub: where the hub is, whose tokens to take, its own name and id there.
-
-    Whether the node is enabled is not kept: that changes on the hub. ``join_token_hash`` tells the join token it was
-    written with from another one. ``has_core`` is ``True`` when a core joined for itself and its worker, ``False``
-    when a worker joined alone: it decides which of the two beats.
-    """
+    """What a node keeps after joining; ``has_core`` (a core joined for itself and its worker) decides who beats."""
 
     hub_url: str
     issuer: str
@@ -96,15 +62,12 @@ class HubNode:
 
 @dataclass(frozen=True)
 class NodeSettings:
-    """The hub this node takes tokens from, its name there and the issuer to expect; each ``None`` when unset."""
-
     hub_url: str | None
     name: str | None
     issuer: str | None
 
 
 def path() -> Path:
-    """``hub_node.json`` in the storage dir, where this node keeps its identity on a hub."""
     from shared.storage_config import storage
 
     return storage.base_directory / FILE_NAME
@@ -119,11 +82,7 @@ def _fits(value, kind: type) -> bool:
 
 
 def read() -> HubNode | None:
-    """The node's identity on a hub, read from the file on every call; ``None`` when it never joined one.
-
-    A file that does not read as one (not JSON, a field missing or of the wrong type) is ``None`` as well, with one
-    warning per process naming the file.
-    """
+    """The joined identity, read on every call; ``None`` when absent or unreadable (one warning per process)."""
     global _warned_unreadable
     target = path()
     try:
@@ -142,8 +101,7 @@ def read() -> HubNode | None:
 
 
 def joined() -> HubNode | None:
-    """This storage dir's node when it joined a hub and has keys of its own (``hub_node_key.json`` beside the file);
-    ``None`` otherwise. Read from the files on every call."""
+    """This storage dir's node when it joined a hub and has keys of its own, else ``None``."""
     from shared import hub_node_key
 
     node = read()
@@ -155,11 +113,8 @@ def _env(name: str) -> str | None:
 
 
 def resolved() -> NodeSettings:
-    """Each setting from its variable when set, else from the joined file; the issuer is the file's, else the hub's URL.
-
-    The file counts only while ``FLOWFILE_HUB_URL`` is unset or names the file's hub (a trailing ``/`` aside), so a
-    file from another hub is never mixed with this one's URL.
-    """
+    """Each setting from its variable, else the joined file; the file counts only for the hub ``FLOWFILE_HUB_URL``
+    names, so a file from another hub is never mixed with this one's URL."""
     env_url = (_env("FLOWFILE_HUB_URL") or "").rstrip("/") or None
     node = read()
     if node is not None and env_url is not None and node.hub_url.rstrip("/") != env_url:
@@ -206,7 +161,6 @@ def _is_joined(answer) -> bool:
 
 
 def token_hash(token: str) -> str:
-    """The first 16 hex digits of the join token's SHA-256: enough to tell two tokens apart, nothing to join with."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
 
 
@@ -228,17 +182,8 @@ def join(
     ui_url: str | None = None,
     http: "httpx.Client | None" = None,
 ) -> tuple[HubNode, bool]:
-    """Join the hub at ``hub_url`` with a join token and keep its answer in the file: the node, and whether the hub
-    enabled it at once. ``JoinRefused`` when the hub says no.
-
-    ``name`` is the name this node asks for, ``worker_url`` the address desktops reach its worker at, ``core_url``
-    its core's, when it has one, and ``ui_url`` the browser editor's, when its core serves one; without it the join
-    says nothing about an editor. The join also sends the public halves of this node's own keys, made at its first
-    join and reused after; a storage dir that cannot keep them refuses the join before any request. The file is
-    written whole or not at all, with the name and issuer the hub answered and ``has_core`` set when ``core_url`` is
-    given (a core joining for itself and its worker).
-    Logs the method, the path and the status, never the token or a body.
-    """
+    """Join with a join token and keep the answer; ``(node, enabled)``. Keys that cannot be kept refuse the join
+    before any request. Logs method, path and status, never the token or a body."""
     import httpx
 
     from shared import hub_node_key
@@ -285,7 +230,6 @@ def join(
 
 
 def already_joined(token: str) -> HubNode | None:
-    """The node this storage dir joined with ``token``, so a start with it makes no request; else ``None``."""
     node = read()
     return node if node is not None and node.join_token_hash == token_hash(token) else None
 
@@ -299,12 +243,8 @@ def join_at_start(
     core_url: str | None = None,
     ui_url: str | None = None,
 ) -> HubNode:
-    """Join before serving; a refused join exits with code 2 and leaves the file as it was.
-
-    The join token this node joined with makes no request a second time, so a restart with the same command keeps
-    the node as it is. Any other join token joins ``hub_url`` and replaces the file, whichever hub and name it held:
-    a new token on the command line is the operator asking for a new join.
-    """
+    """Join before serving; a refused join exits 2. The same token joins once; a new one is the operator asking for a
+    new join and replaces the file."""
     hub_url = hub_url.strip().rstrip("/")
     node = already_joined(token)
     if node is not None:
@@ -345,23 +285,16 @@ def _removed_from_hub(node: HubNode, resp: "httpx.Response") -> bool:
 
 
 def _stop_this_process() -> None:
-    """Stop the process this node runs in as an operator's SIGTERM does: uvicorn shuts it down cleanly and it exits 0,
-    and the join script's service restarts a node only after a failure, so a removed node stays stopped."""
+    """SIGTERM ourselves: a clean exit 0, which the join script's service does not restart, so a removed node stays
+    stopped."""
     os.kill(os.getpid(), signal.SIGTERM)
 
 
 def heartbeat(
     process: Literal["core", "worker"], http: "httpx.Client | None" = None, *, addresses: list[str] | None = None
 ) -> bool:
-    """Tell the hub this storage dir's node joined that the node is up, as ``process``; whether the hub took the beat.
-
-    Posts ``{version, process}`` to the joined hub's ``/hub/nodes/heartbeat`` with a node assertion signed with this
-    node's own key, its audience the joined issuer and that path; with ``addresses``, the ``reach_addresses`` of this
-    machine, the body carries them as ``addresses`` too. A beat the hub does not take, or one that cannot be sent (no
-    joined node, no keys, a hub that does not answer), logs one warning per distinct reason until a beat is taken
-    again, and never the assertion. Never makes keys. A 410 is a hub that removed this node: said once at ERROR with
-    the hub's sentence, and the beat loop stops the process (``_stop_this_process``).
-    """
+    """One beat signed with the node's own key; whether the hub took it. Never makes keys and never logs the
+    assertion; a 410 means the hub removed this node and the beat loop stops the process."""
     global _removed
     import httpx
 
@@ -409,8 +342,7 @@ def _speaks_for(node: HubNode | None, process: str) -> bool:
 def _beat(
     process: Literal["core", "worker"], stop: threading.Event, *, port: int | None = None, tls: bool = False
 ) -> None:
-    """Beat at once and every ``HEARTBEAT_SECONDS`` until ``stop`` is set, each time ``process`` speaks for the node,
-    with this machine's addresses on ``port`` worked out afresh for each beat; none without a port."""
+    """Beat now and every ``HEARTBEAT_SECONDS``, addresses worked out afresh since the network can change."""
     while True:
         node = read()
         if _speaks_for(node, process):
@@ -429,14 +361,8 @@ def _beat(
 def start_heartbeat(
     process: Literal["core", "worker"], *, port: int | None = None, tls: bool = False
 ) -> threading.Event | None:
-    """Beat for this storage dir's node from a daemon thread, at start and every minute; set the event to stop it.
-
-    ``None``, and no thread, when ``process`` does not speak for a node: no node joined a hub from this storage dir with
-    keys of its own (``joined``), ``process`` is a worker beside a core that joined for both, or a core on the storage
-    dir of a worker that joined alone. The thread checks the file before every beat, so a worker that beats alone goes
-    quiet once a core joins beside it. ``port`` is the one ``process`` serves on, ``tls`` whether it serves TLS: each
-    beat then names this machine's addresses on it (``reach_addresses``); with no port a beat names none.
-    """
+    """Beat from a daemon thread; set the returned event to stop it. ``None`` when ``process`` does not speak for the
+    node (one process beats: core when it joined for both, else the worker)."""
     node = joined()
     if not _speaks_for(node, process):
         return None
@@ -449,16 +375,8 @@ def start_heartbeat(
 
 
 def reach_addresses(port: int, *, tls: bool, hub_url: str) -> list[str]:
-    """The addresses this machine can be reached at on ``port``, for the hub at ``hub_url`` to try when the one it
-    holds for this node stops answering; likeliest first, at most 8.
-
-    Each is ``http://<host>:<port>``, or ``https`` with ``tls``, in this order: ``localhost``, only when the hub itself
-    runs on this machine (its host is loopback); this machine's IPv4 address on the interface that reaches the hub's
-    host, asked of the OS with a UDP socket "connected" there, which sends nothing; the host ``default_url`` gives (this
-    machine's full name); and every other IPv4 address of an interface that is up. Loopback, unspecified and link-local
-    addresses are left out everywhere, and a host named twice is kept once. IPv4 only, since a joined node binds
-    ``0.0.0.0``. Only this machine knows these; which one the hub then uses is the hub's to decide.
-    """
+    """Addresses the hub may try when the one it holds stops answering, likeliest first, at most 8; IPv4 only, since a
+    joined node binds ``0.0.0.0``."""
     hosts: list[str] = []
     if is_loopback_host(urlsplit(hub_url).hostname or ""):
         hosts.append("localhost")
@@ -472,7 +390,6 @@ def reach_addresses(port: int, *, tls: bool, hub_url: str) -> list[str]:
 
 
 def _reaches_others(address: str) -> bool:
-    """Whether ``address`` is an IPv4 address another machine can reach: not loopback, unspecified or link-local."""
     try:
         ip = ipaddress.ip_address(address)
     except ValueError:
@@ -481,8 +398,7 @@ def _reaches_others(address: str) -> bool:
 
 
 def _address_toward(hub_url: str) -> str | None:
-    """This machine's IPv4 address on the interface that reaches ``hub_url``'s host, asked of the OS by "connecting" a
-    UDP socket there, which sends nothing; ``None`` when no route, or only a loopback or link-local one, leads there."""
+    """The local address toward the hub, from a "connected" UDP socket, which sends nothing."""
     parts = urlsplit(hub_url)
     try:
         hub_port = parts.port
@@ -506,7 +422,6 @@ def _address_toward(hub_url: str) -> str | None:
 
 
 def _interface_addresses() -> list[str]:
-    """The IPv4 addresses other machines can reach of every interface that is up, in the OS's order."""
     import psutil
 
     up = {name for name, stats in psutil.net_if_stats().items() if stats.isup}
@@ -520,13 +435,11 @@ def _interface_addresses() -> list[str]:
 
 
 def default_name() -> str:
-    """The name a node asks for when the operator gives none: this machine's host name up to its first dot."""
     return socket.gethostname().split(".")[0]
 
 
 def _default_host() -> str:
-    """This machine's full name; its host name where the full name is only a reverse-lookup name (``*.arpa``, as
-    macOS can answer for its own address), which no desktop reaches."""
+    """The full name, or the host name where that is a ``*.arpa`` reverse-lookup name, which no desktop reaches."""
     host = socket.getfqdn()
     if host.endswith(".arpa"):
         host = socket.gethostname()
@@ -534,21 +447,12 @@ def _default_host() -> str:
 
 
 def default_url(port: int, *, tls: bool) -> str:
-    """The address a node gives for itself when the operator gives none: this machine's full name and ``port``
-    (``_default_host``)."""
     return f"{'https' if tls else 'http'}://{_default_host()}:{port}"
 
 
 def require_own_storage_dir(token: str | None) -> None:
-    """Refuse a start with a join token that has no storage dir and secure store of its own, before anything reads
-    the storage dir.
-
-    Outside docker mode, whose storage dir is the container's, a node that joins needs ``FLOWFILE_STORAGE_DIR`` and
-    ``FLOWFILE_SECURE_STORAGE_PATH``, which the hub's install line sets: without them the node's files would land in
-    Flowfile desktop's ``~/.flowfile`` and its keys in the desktop's ``~/.config/flowfile``, and the desktop would then
-    act as the joined node. Exits with code 2 and one sentence naming the missing variables, writing nothing. Without a
-    join token, nothing.
-    """
+    """Exit 2 on a join outside docker mode without ``FLOWFILE_STORAGE_DIR`` and ``FLOWFILE_SECURE_STORAGE_PATH``,
+    before anything reads the storage dir: else the desktop would act as the joined node."""
     if not token or os.environ.get("FLOWFILE_MODE") == "docker":
         return
     missing = [name for name in ("FLOWFILE_STORAGE_DIR", "FLOWFILE_SECURE_STORAGE_PATH") if not os.environ.get(name)]
@@ -568,8 +472,8 @@ def _host_port(host: str, port: int) -> str:
 
 
 def _bind(host: str, port: int) -> socket.socket:
-    """A socket listening on ``host`` and ``port`` as the server's own bind makes it: the address reusable on POSIX, so
-    a restart is not refused for the last run's closing connections, and an IPv6 address bound for IPv6 alone."""
+    """Bind as the server does: reusable on POSIX so a restart is not refused for closing connections, IPv6 only for
+    an IPv6 address."""
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     sock = socket.socket(family, socket.SOCK_STREAM)
     try:
@@ -587,13 +491,8 @@ def _bind(host: str, port: int) -> socket.socket:
 
 
 def serving_socket(host: str, port: int) -> socket.socket:
-    """The socket a node that joins a hub serves on, bound and listening on ``host`` and ``port`` before it joins, so
-    one that cannot serve never spends a token.
-
-    The server is handed this socket, so nothing can take the port between this call and serving. The node serves on
-    ``port`` or not at all: when it cannot be bound, one line names the address and the OS's reason, ``Cannot serve on
-    127.0.0.1:63578: Address already in use``, and the process exits with code 1.
-    """
+    """Bind before joining, so a node that cannot serve never spends a token; the server is handed this socket, so
+    nothing takes the port in between. Exits 1 when it cannot be bound."""
     try:
         return _bind(host, port)
     except OSError as exc:
@@ -602,7 +501,6 @@ def serving_socket(host: str, port: int) -> socket.socket:
 
 
 def is_loopback_host(host: str) -> bool:
-    """Whether ``host``, a bind address, is one only this machine reaches: ``localhost`` or a loopback IP."""
     if host.lower() == "localhost":
         return True
     try:

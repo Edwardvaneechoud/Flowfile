@@ -1,30 +1,8 @@
-"""Connect this Flowfile to a hub, see the connection, and disconnect; publish a flow to it and open one from it.
+"""Connect this Flowfile to a hub, publish a flow to it and open one from it.
 
-Every route is behind the local sign-in and works on the caller's own connection. Connecting, disconnecting and the
-node sync write the backends table every user of this core shares, so they need an administrator, as the backends
-routes do (on the desktop, its one user is one). No hub state ever answers 401,
-which the frontend reads as an expired local session: refused credentials answer 400, a hub that cannot be reached
-502, a hub that does not support this version 426 with the hub's own text, and a URL that is not ``http(s)://`` 422.
-The password is sent to the hub once, on connect, and is never stored, logged or answered.
-
-Publish and open keep a flow's hub identity in the document itself (``flowfile_settings.hub_origin``: the hub, the
-flow's uuid there and the version last published or checked out), so the next publish names the version it edited
-from and the hub can tell a stale copy apart. Refusals of these routes carry a ``kind`` in their detail
-(``stale_base``, ``local_copy_exists``, ``refused``, ``other_hub``) so the frontend branches on a word.
-
-The hub's compute nodes fill core's ``compute_backends`` table (``/compute_nodes/sync``, also run by a connect): one
-``worker:<name>`` row per enabled node, holding no token, so placement and the per-node picker see them as any other
-worker while the registry asks the hub for a short-lived token when one is used. A row an administrator added by
-hand under the same id is never touched. Disconnecting removes the caller's hub-filled rows. A server joined with
-keys of its own also syncs by itself, with each person's sign-in through the hub (``node_addresses``); this route
-stays there as an explicit refresh. A core that is itself a node on the hub, named by ``FLOWFILE_NODE_NAME`` or by the
-hub it joined (``hub_node.json``), never writes a row for its own node: its worker is its built-in one.
-
-Each row a sync wrote is checked once as the Handshake button checks any worker (``handshake.verdict_for``): a node
-this machine cannot reach, or one that refuses it, gets the verdict the backends listing already carries for every
-worker, with the same reason, and the same hiding of the address from a non-administrator. ``/compute_nodes/sync``
-checks before it answers, so its answer carries the verdicts; a connect checks after its answer is sent. A row whose
-verdict passed is not checked again until the hub moves its node.
+No hub state ever answers 401, which the frontend reads as an expired local session: refused credentials answer 400,
+an unreachable hub 502, an unsupported version 426. The password is sent once, on connect, and never stored, logged
+or answered. Connect, disconnect and the node sync write the backends table every user shares, so they need an admin.
 """
 
 import os
@@ -86,15 +64,8 @@ class HubConnection(BaseModel):
     reachable: bool = False
     error: str | None = None
     account: str | None = None
-    """Who is signed in at the hub through this connection: on a server that signs people in through its hub, the
-    person's full name, else their username (their account here mirrors the hub's); on a desktop, the hub username it
-    connected with. ``None`` when not connected or not known."""
     joined: bool = False
-    """Whether this server joined its hub with keys of its own (``issuer_accounts.joined_with_keys``): it belongs to
-    that hub, whose URL ``hub_url`` names even for a person with no hub session here."""
     organisation_storage: str | None = None
-    """On a joined server, the organisation's storage root as the hub's ``/hub/info`` gives it; ``None`` elsewhere,
-    when the hub has none, or from a hub that does not say."""
 
 
 class HubConnectRequest(BaseModel):
@@ -114,7 +85,6 @@ class HubConnectRequest(BaseModel):
 
 
 def _account(stored: dict | None, current_user) -> str | None:
-    """Who ``stored`` signs in as at the hub; see ``HubConnection.account``."""
     if stored is None:
         return None
     if stored.get("kind") == "delegation":
@@ -151,14 +121,7 @@ def _http_error(e: Exception) -> HTTPException:
 
 @router.get("/connection", summary="This user's hub connection")
 def get_connection(current_user=Depends(get_current_active_user)) -> HubConnection:
-    """The stored connection, with the hub's organisation and version read live from ``/hub/info`` and who it signs
-    in as (``account``).
-
-    A hub that does not answer leaves the hub fields empty, ``reachable`` false and ``error`` set; the
-    connection itself is still reported. Not connected, ``device_name`` is the name a new connection would use. On a
-    server joined with keys of its own the answer is ``joined``, names the hub it joined whether or not the person has
-    a hub session, and carries the organisation's storage root its ``/hub/info`` gives.
-    """
+    """The stored connection with the hub's info read live; an unreachable hub sets ``error``."""
     stored = session.load(current_user.id)
     node = issuer_accounts.joined_with_keys()
     if stored is None and node is None:
@@ -184,14 +147,8 @@ def connect(
     current_user=Depends(get_current_admin_user),
     db: Session = Depends(get_db),
 ) -> HubConnection:
-    """Read the hub's info, sign in with the hub account, register this machine as a device, then store the session.
-
-    Nothing is stored unless every step succeeded. Connecting again replaces the earlier connection; the same
-    device name under the same hub account is the same device on the hub. Once connected, the hub's compute nodes
-    are synced into the backends table as ``/compute_nodes/sync`` does, best effort: a hub whose list could not be
-    read leaves one warning in the log, and the connection stands either way. The rows the sync wrote are checked
-    after the answer is sent (``_check_nodes``), so it is not held up.
-    """
+    """Sign in, register this machine as a device and store the session, nothing stored unless every step succeeded;
+    then sync the hub's compute nodes, best effort."""
     device_name = (request.device_name or "").strip() or socket.gethostname()
     try:
         info = client.get_info(request.hub_url)
@@ -221,10 +178,7 @@ def connect(
 
 @router.delete("/connection", summary="Disconnect from the hub")
 def disconnect(current_user=Depends(get_current_admin_user), db: Session = Depends(get_db)) -> dict:
-    """Forget the hub session on this machine, the node tokens minted through it and the backends rows it filled.
-
-    The hub keeps the device; nothing is sent to it. A row an administrator added by hand stays.
-    """
+    """Forget the session, its node tokens and the backends rows it filled; the hub is not told."""
     rows = db.query(ConfiguredBackend).filter(ConfiguredBackend.account_user_id == current_user.id).all()
     for row in rows:
         node_addresses.drop_row(db, row)
@@ -234,17 +188,14 @@ def disconnect(current_user=Depends(get_current_admin_user), db: Session = Depen
 
 
 class ComputeNodesSync(BaseModel):
-    """What a sync left behind: every configured backend as ``GET /compute_backends`` lists it, and the ids of the
-    hub's nodes it skipped because a row of that id was added by hand."""
+    """Every configured backend, and the hub nodes skipped because a row of that id was added by hand."""
 
     backends: list[ComputeBackendOut]
     skipped: list[str]
 
 
 def _check_nodes(backend_ids: list[str]) -> None:
-    """Check each of *backend_ids* as the Handshake button does, so the listing carries a verdict for the rows a sync
-    wrote: the one kept when it passed, else a fresh check (``handshake.verdict_for``). A refused check keeps its
-    verdict; a row the registry cannot make a backend of (no hub session to mint its token) is left unchecked."""
+    """Handshake each synced row so the listing carries its verdict."""
     for backend_id in backend_ids:
         try:
             handshake.verdict_for(registry.backend(backend_id))
@@ -254,12 +205,7 @@ def _check_nodes(backend_ids: list[str]) -> None:
 
 @router.post("/compute_nodes/sync", summary="Fill the backends table from the hub's compute nodes")
 def sync_compute_nodes(current_user=Depends(get_current_admin_user), db: Session = Depends(get_db)) -> ComputeNodesSync:
-    """Read the hub's compute nodes now and make the backends table match them (``node_addresses.sync_nodes``), then
-    check the rows written (``_check_nodes``) so the answer carries their verdicts.
-
-    Explicit, never on a timer: a desktop that wants the hub's newest list asks. 400 without a hub connection,
-    502 when the hub does not answer.
-    """
+    """Make the backends table match the hub's compute nodes now; explicit, never on a timer."""
     hub_url, token = _hub(current_user)
     try:
         synced, skipped = node_addresses.sync_nodes(db, current_user.id, hub_url, token)
@@ -271,8 +217,6 @@ def sync_compute_nodes(current_user=Depends(get_current_admin_user), db: Session
 
 
 class LocalPathUse(BaseModel):
-    """A node whose settings name a path on this machine, which the hub's other users will not have."""
-
     label: str
     path: str
 
@@ -309,7 +253,6 @@ class HubOpenOut(BaseModel):
 
 
 def _hub(current_user) -> tuple[str, str]:
-    """The hub this user is connected to and an access token for it; 400 when there is no connection."""
     stored = session.load(current_user.id)
     if stored is None:
         raise HTTPException(status_code=400, detail="Connect to a hub first (Compute → Hub).")
@@ -323,7 +266,6 @@ def _hub(current_user) -> tuple[str, str]:
 
 
 def _hub_error(e: Exception) -> HTTPException:
-    """A hub refusal as this route's answer: its own status (a hub 401 becomes 400), 502 when the hub did not answer."""
     if isinstance(e, HubVersionRefused):
         return HTTPException(status_code=426, detail=e.detail)
     if isinstance(e, HubUnreachable):
@@ -364,7 +306,6 @@ def _label(node) -> str:
 
 @router.get("/flows", summary="The hub's flows")
 def hub_flows(namespace_id: int | None = None, current_user=Depends(get_current_active_user)) -> list[dict]:
-    """The flows this account may read on the hub, each with its newest version; ``namespace_id`` narrows them."""
     hub_url, token = _hub(current_user)
     try:
         return client.list_flows(hub_url, token, namespace_id)
@@ -374,7 +315,6 @@ def hub_flows(namespace_id: int | None = None, current_user=Depends(get_current_
 
 @router.get("/flows/{flow_uuid}/versions", summary="A hub flow's versions")
 def hub_flow_versions(flow_uuid: str, current_user=Depends(get_current_active_user)) -> list[dict]:
-    """Every published version of the flow, newest first, as the hub lists them."""
     hub_url, token = _hub(current_user)
     try:
         return client.list_versions(hub_url, token, flow_uuid)
@@ -384,11 +324,7 @@ def hub_flow_versions(flow_uuid: str, current_user=Depends(get_current_active_us
 
 @router.get("/publish_check", summary="Local paths a flow would carry to the hub")
 def publish_check(flow_id: int, current_user=Depends(get_current_active_user)) -> list[LocalPathUse]:
-    """The ``read``, ``output`` and ``list_files`` nodes whose settings name a local path.
-
-    A warning for the person publishing, never a refusal: the flow publishes as it is, and whoever opens it from
-    the hub will not have these files.
-    """
+    """Nodes whose settings name a local path: a warning for the publisher, never a refusal."""
     flow = get_flow_or_404(flow_id, current_user)
     uses = []
     for node in flow.nodes:
@@ -401,7 +337,6 @@ def publish_check(flow_id: int, current_user=Depends(get_current_active_user)) -
 
 
 def _registration_identity(flow) -> tuple[str | None, str | None]:
-    """``(flow_uuid, name)`` of the flow's local catalog registration, ``(None, None)`` when it has none."""
     resolve_source_registration_id(flow)
     reg_id = getattr(flow.flow_settings, "source_registration_id", None)
     if reg_id is None:
@@ -421,18 +356,10 @@ def _version(versions: list, number: int | None) -> dict | None:
 
 @router.post("/publish", status_code=201, summary="Publish a flow to the hub")
 def publish(request: HubPublishRequest, current_user=Depends(get_current_active_user)) -> HubPublishOut:
-    """Store the open flow as the next version of its hub flow and stamp the document with the version it became.
+    """Store the open flow as its hub flow's next version and stamp ``hub_origin``, so the next publish names its base.
 
-    The flow publishes under the uuid of its ``hub_origin``, else of its local registration, else a new one, so a
-    flow that came from the hub keeps its identity and a local flow carries its own to the hub. The base is
-    ``overwrite_version`` when given, else the origin's version, else nothing (a first publish). The document goes
-    up without ``source_registration_id`` and ``hub_origin``, which are this machine's. On success the origin is
-    stamped and the flow saved to its own path, so it has to have one: an unsaved flow is refused with 422.
-
-    A stale base is 409 ``stale_base`` with the base and current versions as the hub lists them; a document that
-    came from another hub is 409 ``other_hub``; any other hub refusal keeps the hub's status under ``refused``.
-    The flow is looked up for the caller before the hub session is checked, so a flow the caller cannot see is 404
-    whether or not a hub is connected.
+    A stale base is 409 ``stale_base``. The flow is looked up before the hub session, so a flow the caller cannot see
+    is 404 whether or not a hub is connected.
     """
     flow = get_flow_or_404(request.flow_id, current_user)
     hub_url, token = _hub(current_user)
@@ -490,13 +417,8 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
 
 
 def _local_copy_path(flow_uuid: str, name: str, current_user) -> tuple[str, str]:
-    """Where the caller's copy of this hub flow lives, and who holds the hub's uuid in this catalog.
-
-    ``"caller"``: a registration of the caller's holds it, and its file is the copy. ``"nobody"``: the copy is a file
-    under ``flows/hub``, to be registered under the uuid. ``"another"``: someone else's registration holds it, which
-    the caller never opens or writes; their copy is a file of their own. On a core that several people use, a
-    person's files under ``flows/hub`` sit in a folder of their own, so each has a working copy of the same flow.
-    """
+    """The caller's copy path, and who holds the hub's uuid here: ``caller``, ``nobody`` or ``another``, whose file
+    the caller never opens or writes."""
     with get_db_context() as db:
         reg = SQLAlchemyCatalogRepository(db).get_flow_by_uuid(flow_uuid)
         holder = "nobody" if reg is None else "another"
@@ -510,14 +432,11 @@ def _local_copy_path(flow_uuid: str, name: str, current_user) -> tuple[str, str]
 
 
 def _working_copy_path(flow_uuid: str, current_user) -> str:
-    """The caller's working copy of this hub flow where the hub's catalog is the catalog of record: a file in the
-    install's cache, named by the flow's uuid, one per person."""
     return str(working_copy_directory() / str(current_user.id) / f"{flow_uuid}.yaml")
 
 
 def _drop_earlier_copy(flow_uuid: str, name: str, current_user, hub_url: str, token: str, checked_out: dict) -> None:
-    """Remove the file an earlier open left under ``flows/hub`` for a flow that is now opened as a working copy,
-    unless it holds edits the hub does not have or is a registered flow's file."""
+    """Remove an earlier open's file under ``flows/hub`` unless it holds unpublished edits or is registered."""
     earlier, holder = _local_copy_path(flow_uuid, name, current_user)
     if holder == "caller" or not os.path.exists(earlier):
         return
@@ -534,7 +453,6 @@ def _local_flows_namespace_id() -> int | None:
 
 
 def _read_local_copy(flow_path: str) -> tuple[schemas.FlowfileData | None, int | None]:
-    """The document in the file and the flow id it stores; ``None`` for whichever cannot be read."""
     try:
         with open(flow_path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
@@ -548,7 +466,6 @@ def _read_local_copy(flow_path: str) -> tuple[schemas.FlowfileData | None, int |
 
 
 def _content(document: schemas.FlowfileData) -> dict:
-    """A flow document without what belongs to one machine: its id, name, app version, registration and origin."""
     content = document.model_dump(mode="json", exclude={"flowfile_id", "flowfile_name", "flowfile_version"})
     content["flowfile_settings"].pop("source_registration_id", None)
     content["flowfile_settings"].pop("hub_origin", None)
@@ -556,12 +473,8 @@ def _content(document: schemas.FlowfileData) -> dict:
 
 
 def _has_unpublished_edits(local: schemas.FlowfileData | None, hub_url: str, token: str, checked_out: dict) -> bool:
-    """Whether writing over the local copy would lose work: it differs from what the hub answers now and from the
-    hub version it came from.
-
-    A copy that cannot be read, that names no origin on this hub flow, or whose origin version the hub does not
-    answer counts as edited, so the caller is asked and nothing is written over unseen.
-    """
+    """Whether writing over the local copy would lose work; anything that cannot be compared counts as edited, so
+    nothing is written over unseen."""
     origin = local.flowfile_settings.hub_origin if local is not None else None
     if origin is None or origin.flow_uuid != checked_out["flow_uuid"]:
         return True
@@ -586,26 +499,10 @@ def _has_unpublished_edits(local: schemas.FlowfileData | None, hub_url: str, tok
 
 @router.post("/open", summary="Open a flow from the hub", response_model_exclude_none=True)
 def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_active_user)) -> HubOpenOut:
-    """Read a flow from the hub for the caller to work on and write it as their local copy of that flow.
+    """Write the hub's flow as the caller's local copy, carrying ``hub_origin``.
 
-    The hub chooses the content (``client.for_editing``) and may send a ``note`` about it, answered for the editor
-    to show as given.
-
-    The file carries ``hub_origin``, so a later publish from it names this version as its base and its runs are
-    reported as the hub flow's. The copy is the file of the caller's registration holding the hub's uuid (a flow
-    published from here, or an earlier open), else a file under ``flows/hub`` registered under that uuid. On a core
-    several people use, each person has a copy of their own: where another person's registration holds the uuid,
-    the caller's file is registered beside it under an id of its own, and the other's is never named or written.
-    Where this install's own catalog is not offered (``table_sources.local_catalog_offered``: a server that joined the
-    hub with keys of its own) nothing is registered here and the flow's place is the hub's: the file is a working copy
-    in the install's cache (``io_flowfile.working_copy_directory``), written over from what the hub answers at every
-    open, whatever it held, and removed when the flow is closed; only for a hub that keeps no saved content (its answer
-    has no ``draft``) is it still a file under ``flows/hub``, asked about as below. The hub's ``note`` is kept for the
-    flow that the open of the file makes (``FlowfileHandler.note_at_open``), where a save's note replaces it.
-
-    A copy that exists already is written over when nothing is lost by it: it still equals the hub version it came
-    from. One with edits that were not published is 409 ``local_copy_exists`` with its path, unless ``replace`` is
-    set; the caller can open that path as any local flow instead.
+    Where this install offers no catalog of its own (a joined server) the copy is a working copy in the cache, written
+    over at every open. A copy with unpublished edits is 409 ``local_copy_exists`` unless ``replace`` is set.
     """
     hub_url, token = _hub(current_user)
     try:

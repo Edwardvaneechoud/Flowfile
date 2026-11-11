@@ -1,21 +1,8 @@
 """The report a finished run sends to a hub, and which hub that is.
 
-The hub keeps the organisation's record of runs. It receives who ran which flow (the bearer token says who), the
-outcome and timing of every node, the row counts core already knows and the catalog tables the run's catalog nodes
-read and wrote. A report never carries a plan, a sample, a schema or a column value, and the hub refuses any field
-it does not know, so the shape built here is exact.
-
-Two kinds of core report. A server that joined its hub with keys of its own has people of its own, each signed in
-through the hub, and reports every run of such a person with their delegated access token, so the hub's ledger names the
-person who ran it. A desktop, or any core not joined with keys, has a hub session and flows that came from the hub,
-and reports a run of such a flow with a token minted from the session, so the organisation's ledger also sees the
-version that ran on the desktop. It also reports a run that read or wrote the hub's tables, whatever flow it was: the
-hub vended that run a credential, so the run is the organisation's business too, and the report names the vend and the
-run id the vend was made for.
-
-Neither shares the hub's database or catalog, so a report names no run row of this core and no table of its own
-catalog, whose ids are not the hub's: only the hub's tables, by the hub's ids, which the report resolves on the hub
-from the names the run's steps carry (``_hub_table_ids``). The hub writes its run row itself.
+A report never carries a plan, a sample, a schema or a column value, and the hub refuses any field it does not know,
+so the shape built here is exact. It names only the hub's tables, by the hub's ids, never a run row or table of this
+core's catalog, whose ids are not the hub's.
 """
 
 import uuid
@@ -34,15 +21,11 @@ from flowfile_core.schemas.output_model import RunInformation
 
 
 def hub_target(flow, user_id: int | None) -> tuple[str, str] | None:
-    """Where a run of ``flow`` is reported: ``(hub_url, bearer_token)``, or ``None`` when it is not.
+    """``(hub_url, bearer_token)`` a run of ``flow`` is reported to, or ``None``.
 
-    While this storage dir's node is joined with keys of its own (``issuer_accounts.joined_with_keys()``), every run of
-    a person signed in through the hub (``user_id`` has a session of ``kind: "delegation"``) goes to that session's hub
-    with the person's delegated access token. A person with no such session (an account from before the join) is not
-    reported. Anywhere else the run is reported only when ``user_id`` has a hub session and either ``flow`` carries a
-    ``hub_origin`` on that same hub or the run vended a credential from it (``flow.last_run_grant``), with an access
-    token minted from the session. The token of the request that started the run is this core's own and never sent. A
-    refresh the hub does not grant is one warning; every other reason not to report is said at debug level.
+    On a server joined with keys, every run of a person signed in through the hub, with their delegated token. Else
+    only a run of a flow from that hub, or one that vended from it, with a token minted from the session. The token of
+    the request that started the run is this core's own and is never sent.
     """
     if issuer_accounts.joined_with_keys() is not None:
         return _delegated_target(user_id)
@@ -63,7 +46,6 @@ def hub_target(flow, user_id: int | None) -> tuple[str, str] | None:
 
 
 def _delegated_target(user_id: int | None) -> tuple[str, str] | None:
-    """The hub and the delegated access token of ``user_id``'s sign-in through the hub, on a server joined with keys."""
     stored = session.load(user_id) if user_id is not None else None
     if stored is None or stored.get("kind") != "delegation":
         logger.debug("Run not reported to the hub: the person who ran it did not sign in through the hub")
@@ -84,11 +66,7 @@ def _session_target(user_id: int, hub_url: str) -> tuple[str, str] | None:
 
 
 def _rows_out(flow, node) -> int | None:
-    """The row count the run already knows for ``node``'s output, else ``None``; nothing is counted.
-
-    ``flow.known_rows_out`` holds what no result does: what a table write's report says about its steps, and the count a
-    step knew when the end of the run's vend released its result.
-    """
+    """The row count the run already knows for ``node``'s output; nothing is counted."""
     released = getattr(flow, "known_rows_out", {}).get(node.node_id)
     if released is not None:
         return released
@@ -100,12 +78,8 @@ def _rows_out(flow, node) -> int | None:
 
 
 def _hub_table_ids(user_id: int, names: set[str]) -> tuple[dict[str, int], dict[str, int]]:
-    """The hub's ids behind the names a run's catalog steps carry: of each namespace, by ``catalog.schema``, and of
-    each table, by ``catalog.schema.table``, among ``names``.
-
-    One request for the hub's tree, through the steps' hub session. A hub that does not answer costs one warning and
-    answers nothing, so the report names no table.
-    """
+    """The hub's namespace ids by ``catalog.schema`` and table ids by qualified name among ``names``; a hub that does
+    not answer costs one warning and names nothing."""
     if not names:
         return {}, {}
     try:
@@ -119,11 +93,8 @@ def _hub_table_ids(user_id: int, names: set[str]) -> tuple[dict[str, int], dict[
 
 
 def hub_flow_uuid(flow, hub_url: str) -> str | None:
-    """The uuid ``flow`` has on the hub at ``hub_url``: its ``hub_origin``'s, ``None`` for a flow from elsewhere.
-
-    A run is reported under it before the local registration's uuid, which is another one for a copy of a hub flow
-    whose uuid a different person's copy holds in this catalog.
-    """
+    """The flow's uuid on that hub from its ``hub_origin``, preferred over the local registration's, which differs for
+    a copy whose uuid another person's copy holds here."""
     origin = getattr(flow.flow_settings, "hub_origin", None)
     if origin is None or origin.hub_url.rstrip("/") != hub_url.rstrip("/"):
         return None
@@ -131,21 +102,10 @@ def hub_flow_uuid(flow, hub_url: str) -> str | None:
 
 
 def build_run_report(flow, run_info: RunInformation, flow_uuid: str, run_row_id: int | None = None) -> dict:
-    """The report of a finished run of ``flow``, a run of the hub flow or local registration ``flow_uuid``.
+    """The one write of the hub's record of a finished run.
 
-    The report is the one write of the hub's record of the run: ``executed_on`` names this machine as the hub knows
-    it (its server name on a server of the hub, ``None`` on a desktop), ``log_ref`` the run row ``run_row_id`` of
-    this core whose log route holds the log (``catalog/run_records.py``; ``None`` off a hub server or without a
-    row), ``flow_name`` the flow's name for a flow the hub has no registration for.
-
-    ``inputs`` and ``outputs`` are the hub's tables that the catalog reader and writer nodes that ran and succeeded read
-    and wrote, named by the hub's ids, resolved on the hub from the qualified names the steps carry
-    (``_hub_table_ids``): a reader's table and its schema, a writer's schema and the id the hub lists for the written
-    name (``None`` when it lists none). A table whose schema the hub does not name, or a hub that does not answer,
-    leaves the table out. A table of this core's own catalog is never named. ``flow_version`` is the hub version of
-    the flow's ``hub_origin``, ``None`` for a flow that never met a hub. A run that vended from the hub
-    (``flow.last_run_grant``) is reported under the vend's run id with its ``vend_ids``; a run the hub dispatched here
-    under the id the hub gave it (``flow.hub_run_id``); any other run gets a new run id and no vend.
+    ``inputs`` and ``outputs`` are the hub tables the successful catalog readers and writers used. The run id is the
+    vend's for a run that vended, the hub's for a run it dispatched, else a new one.
     """
     nodes, readers, writers = [], [], []
     for result in run_info.node_step_result or []:
@@ -226,11 +186,7 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str, run_row_id:
 
 
 def post_run_report(hub_url: str, token: str, report: dict) -> None:
-    """Post ``report`` to ``{hub_url}/hub/runs`` as the user ``token`` belongs to; never raises.
-
-    The run is already recorded locally, so a hub that is down, slow or refusing costs one warning and nothing
-    else: no retry, and the run's outcome is unchanged.
-    """
+    """Never raises: the run is recorded locally, so a failed post is one warning and no retry."""
     try:
         hub_client._send("POST", hub_url, "/hub/runs", None, json=report, headers=hub_client._bearer(token))
     except (HubUnreachable, HubRefused, HubVersionRefused) as exc:
