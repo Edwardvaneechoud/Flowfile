@@ -509,7 +509,11 @@ def list_flows(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.list_flows(user_id=current_user.id, namespace_id=namespace_id)
+    """List flows; the list of every flow holds a remote catalog's too, after this install's."""
+    local = service.list_flows(user_id=current_user.id, namespace_id=namespace_id)
+    if namespace_id is not None:
+        return local
+    return table_sources.merged_rows(current_user.id, "/catalog/flows", local, FlowRegistrationOut)
 
 
 @router.post("/flows", response_model=FlowRegistrationOut, status_code=201)
@@ -1909,14 +1913,14 @@ def get_catalog_overview(
     FastAPI caches ``get_db`` per request, so ``db`` is the session the service was
     built on: the whole screen costs one pooled connection instead of one per call.
     The individual endpoints stay for detail views, mutations and the poll loop. The tree is the one
-    ``/namespaces/tree`` answers, a remote catalog's rows after the local ones, and so are the schedules, the active
+    ``/namespaces/tree`` answers, a remote catalog's rows after the local ones, and so are the flows, schedules, active
     runs and the runs; ``remote_scheduler`` is that catalog's own scheduler status, the one its schedules run by.
     """
     user_id = current_user.id
     return CatalogOverview(
         stats=service.get_catalog_stats(user_id=user_id),
         tree=table_sources.merged_tree(user_id, service.get_namespace_tree(user_id=user_id)),
-        flows=service.list_flows(user_id=user_id),
+        flows=table_sources.merged_rows(user_id, "/catalog/flows", service.list_flows(user_id), FlowRegistrationOut),
         tables=service.list_tables(user_id=user_id),
         favorites=service.list_favorites(user_id=user_id),
         schedules=table_sources.merged_rows(user_id, "/catalog/schedules", service.list_schedules(), FlowScheduleOut),

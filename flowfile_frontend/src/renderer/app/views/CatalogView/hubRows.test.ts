@@ -3,7 +3,6 @@
 import { describe, it, expect } from "vitest";
 import {
   byPlace,
-  flowInTree,
   hubFlowVersionTitle,
   hubPresence,
   canShareHubRow,
@@ -153,7 +152,7 @@ describe("hubFlowVersionTitle", () => {
   });
 });
 
-describe("flowInTree and rootOf", () => {
+describe("rootOf", () => {
   const tree = [
     {
       id: 1,
@@ -166,13 +165,6 @@ describe("flowInTree and rootOf", () => {
       children: [{ id: -11, flows: [{ id: -20 }, { id: -21 }], children: [] }],
     },
   ];
-
-  it("finds a flow under a schema by its id, a hub flow by its negative one", () => {
-    expect(flowInTree(tree, 5)).toEqual({ id: 5 });
-    expect(flowInTree(tree, -21)).toEqual({ id: -21 });
-    expect(flowInTree(tree, 4)).toEqual({ id: 4 });
-    expect(flowInTree(tree, 99)).toBeNull();
-  });
 
   it("gives the catalog that holds a schema, or the catalog itself", () => {
     expect(rootOf(tree, -11)?.id).toBe(-10);

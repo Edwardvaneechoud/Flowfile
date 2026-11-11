@@ -391,7 +391,6 @@ import { channelTypeLabel } from "./catalog-formatters";
 import { AiDisabledError, generateCronExpression } from "../../api/ai.api";
 import { CatalogApi } from "../../api/catalog.api";
 import ScheduleBackendSelect from "./components/ScheduleBackendSelect.vue";
-import { isHubRow } from "./hubRows";
 
 const props = defineProps<{
   visible: boolean;
@@ -544,7 +543,7 @@ const cronPreviewIcon = computed(() => {
   return cronValid.value ? "fa-solid fa-calendar-check" : "fa-solid fa-circle-exclamation";
 });
 
-const availableFlows = computed(() => props.flows.filter((f) => f.file_exists || isHubRow(f)));
+const availableFlows = computed(() => props.flows.filter((f) => f.file_exists));
 
 const selectedFlow = computed(
   () => props.flows.find((f) => f.id === form.value.registration_id) ?? null,

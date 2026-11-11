@@ -2,7 +2,9 @@
 // The panel of a flow published on the hub: its versions as the hub lists them, the newest picked, Open emitting the
 // picked version, and the hub's refusal shown when the versions cannot be read.
 import { describe, expect, it, vi } from "vitest";
-import { flow } from "../../__fixtures__/catalogTree";
+import { createPinia, setActivePinia } from "pinia";
+import { flow, ns } from "../../__fixtures__/catalogTree";
+import { useCatalogStore } from "../../stores/catalog-store";
 import { mountIn, settle, text } from "../../__fixtures__/mount";
 
 const mocks = vi.hoisted(() => ({ listHubFlowVersions: vi.fn() }));
@@ -18,7 +20,6 @@ const hubFlow = flow({
   namespace_id: -11,
   flow_path: "hub://flows/u-1",
   source: "hub",
-  hub_id: 20,
   flow_uuid: "u-1",
   latest_version: 2,
   author_name: "ana",
@@ -45,8 +46,19 @@ describe("HubFlowDetailPanel", () => {
   it("lists the versions newest first, picks the newest, and Open emits the picked one", async () => {
     mocks.listHubFlowVersions.mockResolvedValue(versions);
     const opened = vi.fn();
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore().tree = [
+      ns({
+        id: -10,
+        name: "main",
+        place: "Acme Data",
+        children: [ns({ id: -11, name: "default" })],
+      }),
+    ];
     const host = await mountIn(HubFlowDetailPanel, {
-      props: { flow: hubFlow, place: "Acme Data", schemaPath: "main.default", onOpen: opened },
+      pinia,
+      props: { flow: hubFlow, onOpen: opened },
     });
 
     expect(mocks.listHubFlowVersions).toHaveBeenCalledWith("u-1");
@@ -74,9 +86,9 @@ describe("HubFlowDetailPanel", () => {
     mocks.listHubFlowVersions.mockRejectedValue({
       response: { data: { detail: "Connect to a hub first (Compute → Hub)." } },
     });
-    const host = await mountIn(HubFlowDetailPanel, {
-      props: { flow: hubFlow, place: null, schemaPath: "" },
-    });
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const host = await mountIn(HubFlowDetailPanel, { pinia, props: { flow: hubFlow } });
 
     expect(text(host.querySelector("[data-testid='hub-flow-error']"))).toBe(
       "Connect to a hub first (Compute → Hub).",

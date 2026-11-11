@@ -220,7 +220,6 @@ import {
   getScheduleDisplayName,
   scheduleIcon,
 } from "./catalog-formatters";
-import { flowInTree } from "./hubRows";
 import RunHistoryTable from "./RunHistoryTable.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
@@ -260,7 +259,7 @@ const displayName = computed(() => getScheduleDisplayName(props.schedule, props.
 
 const flowName = computed(() => {
   const id = props.schedule.registration_id;
-  const flow = catalogStore.allFlows.find((f) => f.id === id) ?? flowInTree(catalogStore.tree, id);
+  const flow = catalogStore.allFlows.find((f) => f.id === id);
   return flow?.name ?? `Flow #${id}`;
 });
 

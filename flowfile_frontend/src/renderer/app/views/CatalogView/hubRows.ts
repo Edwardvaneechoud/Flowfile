@@ -102,21 +102,6 @@ export function hubFlowVersionTitle(flow: HubFlowRow): string {
   return flow.author_name ? `${version}, published by ${flow.author_name}` : version;
 }
 
-interface TreeRow<F> {
-  id: number;
-  flows: F[];
-  children: TreeRow<F>[];
-}
-
-/** The flow of `id` anywhere in `rows`, a hub flow being found by its negative id; null when the tree has none. */
-export function flowInTree<F extends { id: number }>(rows: TreeRow<F>[], id: number): F | null {
-  for (const row of rows) {
-    const found = row.flows.find((f) => f.id === id) ?? flowInTree(row.children, id);
-    if (found) return found;
-  }
-  return null;
-}
-
 /** The root row (the catalog) that holds namespace `namespaceId`, itself included; null when none does. */
 export function rootOf<R extends { id: number; children: R[] }>(
   rows: R[],

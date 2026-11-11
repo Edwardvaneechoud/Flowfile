@@ -247,7 +247,7 @@ const {
 } = useNodeSettings({ nodeRef: nodeRunFlow });
 
 const filteredFlows = computed(() => {
-  let flows = catalogStore.allFlows;
+  let flows = withoutHubRows(catalogStore.allFlows);
   if (selectedNamespaceId.value != null) {
     const ids =
       namespaceDescendants.value.get(selectedNamespaceId.value) ??

@@ -433,6 +433,20 @@ def test_the_list_of_every_schedule_holds_the_hubs_after_this_machines_marked_as
     assert paused.status_code == 200 and hub.schedules[0]["enabled"] is False
 
 
+def test_the_list_of_every_flow_holds_the_hubs_after_this_machines_marked_as_the_hubs(connected, hub, api):
+    clean = hub.seed_flow(_seed(hub)["raw"], "orders-clean", latest_version=2, author_name="ana")
+    listed = connected.get("/catalog/flows")
+    assert listed.status_code == 200
+    theirs = [row for row in listed.json() if row["source"] == "hub"]
+    assert [(row["id"], row["name"], row["latest_version"]) for row in theirs] == [(-201, "orders-clean", 2)]
+    assert theirs[0]["flow_uuid"] == clean["flow_uuid"] and theirs[0]["file_exists"] is True
+    assert all(row["source"] == "local" and row["id"] > 0 for row in listed.json() if row not in theirs)
+    assert connected.get("/catalog/overview").json()["flows"] == listed.json()
+    assert all(row["source"] == "local" for row in connected.get("/catalog/flows", params={"namespace_id": 1}).json())
+    hub.down = True
+    assert all(row["source"] == "local" for row in connected.get("/catalog/flows").json())
+
+
 def test_a_hub_that_does_not_answer_leaves_the_list_of_schedules_this_machines(connected, hub, api):
     hub.seed_schedule(hub.seed_flow(_seed(hub)["raw"], "orders-clean"))
     hub.down = True

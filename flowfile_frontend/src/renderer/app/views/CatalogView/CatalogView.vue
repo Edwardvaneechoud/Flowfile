@@ -152,7 +152,7 @@
                 v-for="node in group.rows"
                 :key="node.id"
                 :node="node"
-                :selected-flow-id="selectedHubFlowId ?? catalogStore.selectedFlowId"
+                :selected-flow-id="catalogStore.selectedFlowId"
                 :selected-artifact-id="catalogStore.selectedArtifactId"
                 :selected-table-id="catalogStore.selectedTableId"
                 :selected-namespace-id="catalogStore.selectedNamespaceId"
@@ -259,9 +259,9 @@
         />
         <!-- Flow detail view; a hub flow's is the same page with its versions and their Open on it -->
         <FlowDetailPanel
-          v-else-if="shownFlow"
-          :flow="shownFlow"
-          :artifacts="selectedHubFlow ? [] : catalogStore.flowArtifacts"
+          v-else-if="catalogStore.selectedFlow"
+          :flow="catalogStore.selectedFlow"
+          :artifacts="catalogStore.flowArtifacts"
           :focus-runs="flowDetailFocusRuns"
           @runs-focused="flowDetailFocusRuns = false"
           @close="handleCloseDetail"
@@ -285,13 +285,10 @@
           @recover-from-snapshot="openRunSnapshot($event)"
           @open-snapshot="openRunSnapshot($event)"
         >
-          <template v-if="selectedHubFlow" #remote>
+          <template v-if="isHubRow(catalogStore.selectedFlow)" #remote>
             <HubFlowDetailPanel
-              embedded
-              :flow="selectedHubFlow"
-              :place="selectedHubFlowRoot?.place ?? null"
-              :schema-path="selectedHubFlowSchema"
-              @open="selectedHubFlow && openHubFlowInDesigner(selectedHubFlow, $event)"
+              :flow="catalogStore.selectedFlow"
+              @open="openHubFlowInDesigner(catalogStore.selectedFlow, $event)"
             />
           </template>
         </FlowDetailPanel>
@@ -425,7 +422,7 @@
 
     <CreateScheduleModal
       :visible="showCreateSchedule"
-      :flows="selectedHubFlow ? [selectedHubFlow, ...catalogStore.allFlows] : catalogStore.allFlows"
+      :flows="catalogStore.allFlows"
       :tables="catalogStore.allTables"
       :preselected-flow-id="preselectedFlowId"
       @close="
@@ -657,13 +654,11 @@ import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import {
   byPlace,
   chartSource,
-  flowInTree,
   hubPresence as hubPresenceOf,
   isHubRow,
   isOffered,
   offersNew,
   ownsHubRow,
-  rootOf,
   showsPlaces,
   withoutHubRows,
 } from "./hubRows";
@@ -944,43 +939,15 @@ const artifactMenuOptions = computed<ContextMenuOption[]>(() => [
   { label: "Delete model", action: "delete", danger: true },
 ]);
 
-// Right-click context menu for catalog flows; a hub flow's run history is on its page.
+// Right-click context menu for catalog flows.
 const flowMenu = ref<{ flow: FlowRegistration; x: number; y: number } | null>(null);
-const flowMenuOptions = computed<ContextMenuOption[]>(() => {
-  const flow = flowMenu.value?.flow;
-  if (flow && isHubRow(flow)) {
-    return [
-      { label: "Open flow in editor", action: "open", disabled: flow.latest_version == null },
-      { label: "Flow overview", action: "view" },
-      { label: "Run history", action: "runs" },
-    ];
-  }
-  return [
-    { label: "Open flow in editor", action: "open", disabled: !flow?.file_exists },
-    { label: "Flow overview", action: "view" },
-    { label: "Run history", action: "runs" },
-  ];
-});
+const flowMenuOptions = computed<ContextMenuOption[]>(() => [
+  { label: "Open flow in editor", action: "open", disabled: !flowMenu.value?.flow.file_exists },
+  { label: "Flow overview", action: "view" },
+  { label: "Run history", action: "runs" },
+]);
 // One-shot signal: scroll the flow detail panel to its Run History section.
 const flowDetailFocusRuns = ref(false);
-
-// A hub flow selected in the tree, by its negative id in the URL. It is found in the tree, never through the store's
-// local flow list, and nothing of a local registration (runs, schedules, artifacts) is loaded for it.
-const selectedHubFlowId = ref<number | null>(null);
-const selectedHubFlow = computed(() =>
-  selectedHubFlowId.value === null ? null : flowInTree(catalogStore.tree, selectedHubFlowId.value),
-);
-const shownFlow = computed(() => selectedHubFlow.value ?? catalogStore.selectedFlow);
-const selectedHubFlowRoot = computed(() =>
-  selectedHubFlow.value?.namespace_id != null
-    ? rootOf(catalogStore.tree, selectedHubFlow.value.namespace_id)
-    : null,
-);
-const selectedHubFlowSchema = computed(() =>
-  selectedHubFlow.value?.namespace_id != null
-    ? findNamespacePath(catalogStore.tree, selectedHubFlow.value.namespace_id).join(".")
-    : "",
-);
 
 const showCreateVirtualTable = ref(false);
 
@@ -1746,9 +1713,8 @@ async function handleCreateSchedule(body: FlowScheduleCreate, notifyChannelId?: 
       }
     }
     const loads: Promise<void>[] = [catalogStore.loadSchedules(), catalogStore.loadStats()];
-    const shownFlowId = selectedHubFlowId.value ?? catalogStore.selectedFlowId;
-    if (shownFlowId) {
-      loads.push(catalogStore.loadFlowSchedules(shownFlowId));
+    if (catalogStore.selectedFlowId) {
+      loads.push(catalogStore.loadFlowSchedules(catalogStore.selectedFlowId));
     }
     await Promise.all(loads);
   } catch (e: any) {
@@ -1930,9 +1896,6 @@ function applyRouteToStore() {
     catalogStore.clearNamespaceSelection();
   }
 
-  // A hub flow stays selected only while the URL names it (a negative flowId).
-  if (flowId === null || flowId >= 0) selectedHubFlowId.value = null;
-
   // Handle selections (mutually exclusive: table, artifact, schedule, or flow+run)
   if (tableId !== null) {
     if (tableId !== catalogStore.selectedTableId) catalogStore.selectTable(tableId);
@@ -1956,18 +1919,7 @@ function applyRouteToStore() {
     if (catalogStore.selectedSchedule) catalogStore.clearScheduleSelection();
 
     // Flow selection (set manually to avoid selectFlow clearing run detail)
-    if (flowId !== null && flowId < 0) {
-      // A hub flow: found in the tree once it is loaded, nothing of a local registration's loaded for it.
-      if (catalogStore.selectedFlowId !== null) catalogStore.selectedFlowId = null;
-      if (flowId !== selectedHubFlowId.value) {
-        selectedHubFlowId.value = flowId;
-        catalogStore.clearTableSelection();
-        catalogStore.clearArtifactSelection();
-        catalogStore.clearScheduleSelection();
-        catalogStore.loadRuns(flowId);
-        catalogStore.loadFlowSchedules(flowId);
-      }
-    } else if (flowId !== null) {
+    if (flowId !== null) {
       if (flowId !== catalogStore.selectedFlowId) {
         catalogStore.selectedFlowId = flowId;
         catalogStore.clearTableSelection();

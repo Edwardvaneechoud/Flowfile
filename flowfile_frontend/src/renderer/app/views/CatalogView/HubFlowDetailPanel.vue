@@ -1,17 +1,7 @@
 <template>
   <div class="hub-flow-detail" data-testid="hub-flow-detail">
-    <button v-if="!embedded" class="back-btn" @click="$emit('close')">
-      <i class="fa-solid fa-arrow-left"></i> Back
-    </button>
     <div class="detail-header">
       <div class="header-main">
-        <div v-if="!embedded" class="header-name">
-          <h2>{{ flow.name }}</h2>
-          <span class="resource-badge" title="This flow is published on the hub">
-            <i class="fa-solid fa-building"></i>
-            Hub
-          </span>
-        </div>
         <p class="description" data-testid="hub-flow-home">{{ home }}</p>
       </div>
       <div class="header-actions">
@@ -59,24 +49,16 @@ import { computed, ref, watch } from "vue";
 import { listHubFlowVersions, type HubFlowVersion } from "../../api/hubFlows.api";
 import { authorLabel, publishedTime } from "../../features/designer/hubFlows";
 import { detailOf } from "../../utils/apiDetail";
-import type { FlowRegistration } from "../../types";
+import { findNamespacePath, type FlowRegistration } from "../../types";
+import { useCatalogStore } from "../../stores/catalog-store";
+import { rootOf } from "./hubRows";
 
-// A flow published on the hub, selected in the catalog tree: its versions, and Open for the one picked. The copy is
-// written by whoever listens to `open`, so this panel never navigates.
-const props = defineProps<{
-  flow: FlowRegistration;
-  // The hub's name, as the tree says where the flow's catalog lives.
-  place: string | null;
-  // The flow's `catalog.schema` on the hub.
-  schemaPath: string;
-  // Inside the flow's own page, which has the name and Back: only where it lives, its versions and Open.
-  embedded?: boolean;
-}>();
+// Inside a hub flow's page: where it lives, as the catalog tree says, its versions, and Open for the one picked. The
+// copy is written by whoever listens to `open`, so this panel never navigates.
+const props = defineProps<{ flow: FlowRegistration }>();
 
-const emit = defineEmits<{
-  (e: "close"): void;
-  (e: "open", version: number): void;
-}>();
+const emit = defineEmits<{ (e: "open", version: number): void }>();
+const catalogStore = useCatalogStore();
 
 const versions = ref<HubFlowVersion[]>([]);
 const selectedVersion = ref<number | null>(null);
@@ -84,8 +66,10 @@ const loading = ref(false);
 const error = ref("");
 
 const home = computed(() => {
-  const where = props.place ?? "the hub";
-  return props.schemaPath ? `On ${where}, in ${props.schemaPath}` : `On ${where}`;
+  const ns = props.flow.namespace_id;
+  const where = (ns != null && rootOf(catalogStore.tree, ns)?.place) || "the hub";
+  const schema = ns != null ? findNamespacePath(catalogStore.tree, ns).join(".") : "";
+  return schema ? `On ${where}, in ${schema}` : `On ${where}`;
 });
 
 async function load(flowUuid: string | null | undefined) {
@@ -122,19 +106,6 @@ function open() {
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: var(--spacing-5);
-}
-
-.header-name {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-}
-
-.header-main h2 {
-  margin: 0;
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
 }
 
 .description {

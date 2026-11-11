@@ -370,27 +370,29 @@ class FakeHubWithCatalog(FakeHub):
         self.namespaces.append(row)
         return row
 
+    @staticmethod
+    def flow_row(f: dict) -> dict:
+        """A flow as the hub's catalog service lists it (uuid, newest version and its author), in the tree and on
+        ``GET /catalog/flows``."""
+        return FlowRegistrationOut(
+            id=f["registration_id"],
+            name=f["name"],
+            flow_path=f"hub://flows/{f['flow_uuid']}",
+            namespace_id=f["namespace_id"],
+            owner_id=f["owner_id"],
+            created_at=_STAMP,
+            updated_at=_STAMP,
+            flow_uuid=f["flow_uuid"],
+            latest_version=f["latest_version"],
+            author_name=f["author_name"],
+        ).model_dump(mode="json", exclude=_LOCAL_ONLY)
+
     def tree(self) -> list[dict]:
         """What ``GET /catalog/namespaces/tree`` answers: core's ``NamespaceTree`` of ``namespaces``, each with its
-        ``tables`` and its ``flows`` as the hub's catalog service lists them (uuid, newest version and its author)."""
+        ``tables`` and its ``flows`` (``flow_row``)."""
 
         def node(namespace: dict) -> dict:
-            flows = [
-                FlowRegistrationOut(
-                    id=f["registration_id"],
-                    name=f["name"],
-                    flow_path=f"hub://flows/{f['flow_uuid']}",
-                    namespace_id=f["namespace_id"],
-                    owner_id=f["owner_id"],
-                    created_at=_STAMP,
-                    updated_at=_STAMP,
-                    flow_uuid=f["flow_uuid"],
-                    latest_version=f["latest_version"],
-                    author_name=f["author_name"],
-                ).model_dump(mode="json", exclude=_LOCAL_ONLY)
-                for f in self.flows
-                if f["namespace_id"] == namespace["id"]
-            ]
+            flows = [self.flow_row(f) for f in self.flows if f["namespace_id"] == namespace["id"]]
             row = NamespaceTree(**namespace).model_dump(mode="json", exclude=_LOCAL_ONLY)
             row["children"] = [node(ns) for ns in self.namespaces if ns["parent_id"] == namespace["id"]]
             row["tables"] = [t for t in self.tables if t["namespace_id"] == namespace["id"]]
@@ -612,6 +614,8 @@ class FakeHubWithCatalog(FakeHub):
             return httpx.Response(200, json=self.scheduler_status)
         if path == "/catalog/namespaces/tree":
             return httpx.Response(200, json=self.tree() if self.tree_answer is None else self.tree_answer)
+        if path == "/catalog/flows":
+            return httpx.Response(200, json=[self.flow_row(f) for f in self.flows])
         rows = ("/catalog/tables/", "/catalog/flows/", "/catalog/schedules")
         cancel = path.startswith("/catalog/runs/") and path.endswith("/cancel")
         if path.startswith(rows) or cancel or path in ("/catalog/runs", "/catalog/active-runs"):
