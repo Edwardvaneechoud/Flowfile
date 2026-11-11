@@ -8,7 +8,6 @@ vi.mock("../services/axios.config", () => ({
 
 import {
   listHubFlowVersions,
-  listHubFlows,
   openFromHub,
   publishCheck,
   publishToHub,
@@ -21,16 +20,6 @@ beforeEach(() => {
 });
 
 describe("the routes", () => {
-  it("narrows the flows to a namespace through the query and sends none without one", async () => {
-    await listHubFlows(2);
-    await listHubFlows();
-
-    expect(mocks.get).toHaveBeenNthCalledWith(1, "/hub_client/flows", {
-      params: { namespace_id: 2 },
-    });
-    expect(mocks.get).toHaveBeenNthCalledWith(2, "/hub_client/flows", { params: undefined });
-  });
-
   it("lists a flow's versions under its uuid", async () => {
     await listHubFlowVersions("u");
 

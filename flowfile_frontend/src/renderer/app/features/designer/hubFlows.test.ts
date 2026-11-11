@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HubFlowVersion } from "../../api/hubFlows.api";
 import {
   conflictLabel,
-  latestVersionLabel,
   openInsteadLabel,
   publishOverLabel,
   publishedLabel,
@@ -97,13 +96,6 @@ describe("refusalMessage", () => {
     expect(refusalMessage({ kind: "local_copy_exists", flow_path: "/f.yaml" })).toMatch(
       /\/f\.yaml/,
     );
-  });
-});
-
-describe("latestVersionLabel", () => {
-  it("shows the newest hub version, or that there is none", () => {
-    expect(latestVersionLabel(4)).toBe("v4");
-    expect(latestVersionLabel(null)).toBe("not published yet");
   });
 });
 

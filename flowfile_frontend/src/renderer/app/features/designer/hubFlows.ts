@@ -83,6 +83,3 @@ export function refusalMessage(refusal: HubRefusal): string {
       return `A local copy of this flow exists at ${refusal.flow_path}.`;
   }
 }
-
-export const latestVersionLabel = (latestVersion: number | null): string =>
-  latestVersion === null ? "not published yet" : `v${latestVersion}`;

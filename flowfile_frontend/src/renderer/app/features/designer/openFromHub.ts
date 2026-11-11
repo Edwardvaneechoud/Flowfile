@@ -1,5 +1,5 @@
-// Opening a version of a hub flow as the person's own copy, shared by Open Flow → Hub and the Catalog tab's hub
-// flow panel: core writes the copy, and a copy with unpublished edits is asked about before it is replaced.
+// Opening a version of a hub flow as the person's own copy, shared by the Open dialog's Catalog tab and the Catalog
+// view's hub flow panel: core writes the copy, and a copy with unpublished edits is asked about before it is replaced.
 import { ElMessageBox } from "element-plus";
 import { openFromHub, refusalOf } from "../../api/hubFlows.api";
 import { detailOf } from "../../utils/apiDetail";

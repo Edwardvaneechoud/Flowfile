@@ -4,16 +4,6 @@ import axios from "../services/axios.config";
 
 const BASE = "/hub_client";
 
-// Core answers more on each (ids of registrations, owners, the flow's uuid); the editor reads these.
-export interface HubFlow {
-  flow_uuid: string;
-  name: string;
-  /** The newest version published through the hub; null when the flow has none yet. */
-  latest_version: number | null;
-  /** Who published the newest version, by name; null when the hub does not say. */
-  author_name: string | null;
-}
-
 export interface HubFlowVersion {
   version: number;
   author_id: number;
@@ -69,12 +59,6 @@ export type HubRefusal =
   | { kind: "local_copy_exists"; flow_path: string };
 
 const REFUSAL_KINDS: unknown[] = ["stale_base", "refused", "other_hub", "local_copy_exists"];
-
-export async function listHubFlows(namespaceId?: number | null): Promise<HubFlow[]> {
-  const params = namespaceId == null ? undefined : { namespace_id: namespaceId };
-  const response = await axios.get<HubFlow[]>(`${BASE}/flows`, { params });
-  return response.data;
-}
 
 export async function listHubFlowVersions(flowUuid: string): Promise<HubFlowVersion[]> {
   const response = await axios.get<HubFlowVersion[]>(`${BASE}/flows/${flowUuid}/versions`);

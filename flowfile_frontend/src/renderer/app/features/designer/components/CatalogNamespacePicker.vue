@@ -75,7 +75,12 @@ const loadTree = async () => {
   error.value = null;
   try {
     const whole = await CatalogApi.getNamespaceTree();
-    const fetched = props.hub ? whole.filter(isHubRow) : withoutHubRows(whole);
+    // A save target is this machine's catalog; the Open dialog browses the hub's beside it.
+    const fetched = props.hub
+      ? whole.filter(isHubRow)
+      : props.writableOnly
+        ? withoutHubRows(whole)
+        : whole;
     tree.value = props.hideSystemNamespaces ? filterSelectableNamespaces(fetched) : fetched;
     // Auto-select the most appropriate "General" child when nothing is selected.
     if (selectedId.value === null && !props.hub) {
