@@ -89,9 +89,17 @@ import { onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../../stores/auth-store";
 import authService, { type SignInMethod } from "../../services/auth.service";
-import { hubAddress } from "../../components/layout/Header/hubIdentity";
 
 const router = useRouter();
+
+/** A hub URL as an address: its host and port, without the scheme. */
+const hubAddress = (url: string): string => {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+};
 const route = useRoute();
 const authStore = useAuthStore();
 
