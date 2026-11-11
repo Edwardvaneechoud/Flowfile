@@ -188,6 +188,13 @@ def register_table_from_data(url: str, access_token: str, body: dict, *, http: h
     return _require(answer, ("id", "name"), url, "/catalog/tables/from-data")
 
 
+def _sealed_to(items, targets) -> bool:
+    return isinstance(items, list) and all(
+        isinstance(item, dict) and isinstance(item.get("sealed"), dict) and set(targets) <= set(item["sealed"])
+        for item in items
+    )
+
+
 def vend(
     url: str,
     access_token: str,
@@ -221,38 +228,24 @@ def vend(
         request["connections"] = [{"kind": kind, "name": name} for kind, name in connections]
     body = _request("POST", url, "/hub/vend", http, json=request, headers=_bearer(access_token))
     _require(body, ("vend_id",), url, "/hub/vend")
-    credentials = body.get("credentials")
-    if not isinstance(credentials, list) or not all(
-        isinstance(credential, dict)
-        and isinstance(credential.get("base_uri"), str)
-        and isinstance(credential.get("storage_options"), dict)
-        and isinstance(credential.get("sealed", {}), dict)
-        and (not targets or set(targets) <= set(credential.get("sealed") or {}))
-        for credential in credentials
-    ):
-        raise HubRefused(200, f"{url} did not answer /hub/vend as a Flowfile hub does.")
-    answered = body.get("secrets", [])
-    if secrets and not (
-        isinstance(answered, list)
-        and all(
-            isinstance(secret, dict)
-            and isinstance(secret.get("sealed"), dict)
-            and set(targets) <= set(secret["sealed"])
-            for secret in answered
+    credentials, answered, stored = body.get("credentials"), body.get("secrets", []), body.get("connections", [])
+    if (
+        not isinstance(credentials, list)
+        or not all(
+            isinstance(credential, dict)
+            and isinstance(credential.get("base_uri"), str)
+            and isinstance(credential.get("storage_options"), dict)
+            and isinstance(credential.get("sealed", {}), dict)
+            and (not targets or set(targets) <= set(credential.get("sealed") or {}))
+            for credential in credentials
         )
-        and set(secrets) <= {secret.get("name") for secret in answered}
-    ):
-        raise HubRefused(200, f"{url} did not answer /hub/vend as a Flowfile hub does.")
-    stored = body.get("connections", [])
-    if connections and not (
-        isinstance(stored, list)
-        and all(
-            isinstance(connection, dict)
-            and isinstance(connection.get("sealed"), dict)
-            and set(targets) <= set(connection["sealed"])
-            for connection in stored
+        or (secrets and not (_sealed_to(answered, targets) and set(secrets) <= {s.get("name") for s in answered}))
+        or (
+            connections
+            and not (
+                _sealed_to(stored, targets) and set(connections) <= {(c.get("kind"), c.get("name")) for c in stored}
+            )
         )
-        and set(connections) <= {(connection.get("kind"), connection.get("name")) for connection in stored}
     ):
         raise HubRefused(200, f"{url} did not answer /hub/vend as a Flowfile hub does.")
     return body
