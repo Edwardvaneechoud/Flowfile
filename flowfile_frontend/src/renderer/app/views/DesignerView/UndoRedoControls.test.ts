@@ -37,13 +37,6 @@ vi.mock("../../services/mutationChannel", () => ({ flushPendingEdits: mocks.flus
 vi.mock("../../services/mutationFailure", () => ({ recoverFromFailedMutation: mocks.recover }));
 vi.mock("element-plus", () => ({ ElMessage: { error: mocks.error } }));
 
-const deferred = () => {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-};
 const settle = async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await nextTick();
@@ -152,98 +145,6 @@ describe("undo/redo dispatch and queue", () => {
     expect(order).toEqual(["undo", "redo", "undo", "undo", "redo", "redo", "redo", "undo"]);
     expect(positions).toEqual({ 7: 2, 8: 1 });
     expect(mocks.clearResults.mock.calls).toEqual(order.map(() => [7]));
-  });
-
-  it("does not apply queued presses from A to B when switching during a pending flush", async () => {
-    const gate = deferred();
-    mocks.flush.mockImplementationOnce(() => gate.promise);
-    mount();
-    key("undo");
-    key("redo");
-    key("undo");
-    await settle();
-    mocks.flow.flowId = mocks.node.flow_id = 8;
-    gate.resolve();
-    await settle();
-    expect(mocks.undo).not.toHaveBeenCalled();
-    expect(mocks.redo).not.toHaveBeenCalled();
-    expect(mocks.clearResults).not.toHaveBeenCalled();
-    expect(mocks.clearPreview).not.toHaveBeenCalled();
-    expect(mocks.flow.requestReload).not.toHaveBeenCalled();
-    // New presses in B still work after the discarded A queue.
-    key("undo");
-    await settle();
-    expect(mocks.undo).toHaveBeenCalledExactlyOnceWith(8);
-  });
-
-  it.each([true, false])(
-    "does not reload or clear B after A's in-flight response (success=%s)",
-    async (success) => {
-      const gate = deferred();
-      mocks.undo.mockImplementationOnce(async () => {
-        await gate.promise;
-        return { success, error_message: "restore failed" };
-      });
-      mount();
-      key("undo");
-      await settle();
-      expect(mocks.undo).toHaveBeenCalledExactlyOnceWith(7);
-      mocks.flow.flowId = mocks.node.flow_id = 8;
-      gate.resolve();
-      await settle();
-      expect(mocks.clearResults).not.toHaveBeenCalled();
-      expect(mocks.clearPreview).not.toHaveBeenCalled();
-      expect(mocks.flow.requestReload).not.toHaveBeenCalled();
-      expect(mocks.error).not.toHaveBeenCalled();
-    },
-  );
-
-  it("does not close B's drawer when A's drawer save finishes late", async () => {
-    const gate = deferred();
-    mocks.editor.executeDrawCloseFunctionOnce.mockImplementationOnce(async () => {
-      await gate.promise;
-      return true;
-    });
-    mount();
-    key("undo");
-    await settle();
-    mocks.flow.flowId = mocks.node.flow_id = 8;
-    mocks.node.nodeId = 99;
-    gate.resolve();
-    await settle();
-    expect(mocks.node.nodeId).toBe(99);
-    expect(mocks.undo).not.toHaveBeenCalled();
-  });
-
-  it("ignores an exception from A after switching to B", async () => {
-    const gate = deferred();
-    mocks.undo.mockImplementationOnce(async () => {
-      await gate.promise;
-      throw new Error("late failure");
-    });
-    mount();
-    key("undo");
-    await settle();
-    mocks.flow.flowId = mocks.node.flow_id = 8;
-    gate.resolve();
-    await settle();
-    expect(mocks.recover).not.toHaveBeenCalled();
-    expect(mocks.flow.requestReload).not.toHaveBeenCalled();
-  });
-
-  it("discards pending and queued presses after the toolbar unmounts", async () => {
-    const gate = deferred();
-    mocks.flush.mockImplementationOnce(() => gate.promise);
-    mount();
-    key("undo");
-    key("redo");
-    await settle();
-    visible.value = false;
-    await nextTick();
-    gate.resolve();
-    await settle();
-    expect(mocks.undo).not.toHaveBeenCalled();
-    expect(mocks.redo).not.toHaveBeenCalled();
   });
 
   it("does not throw with an absent toolbar or consume history keys with no flow", async () => {

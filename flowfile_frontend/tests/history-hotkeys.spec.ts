@@ -3,9 +3,6 @@ import { API_URL, authHeaders, closeFlow, createFlow, getAuthToken } from "./hel
 import { openFlow } from "./helpers/canvas";
 
 // Real core/worker services, with two independent histories. No API responses are mocked.
-// Dispatch clicks to the intended DOM handlers so missing icon fonts in headless runs
-// cannot redirect pointer input to overlapping header controls. This tests action
-// routing and backend state, not pointer hit-testing or header layout.
 test.describe("Designer history shortcuts", () => {
   test.use({ viewport: { width: 1600, height: 1000 } });
   let token: string;
@@ -31,7 +28,7 @@ test.describe("Designer history shortcuts", () => {
         new URL(r.url()).searchParams.get("flow_id") === String(flowId) &&
         r.status() === 200,
     );
-    await page.locator(".flow-tab", { hasText: name }).first().dispatchEvent("click");
+    await page.locator(".flow-tab", { hasText: name }).first().click();
     await loaded;
     await expect(page.locator(".flow-tab.active")).toContainText(name);
   };
@@ -78,7 +75,7 @@ test.describe("Designer history shortcuts", () => {
         await page
           .locator(".undo-redo-controls .control-btn")
           .nth(action === "undo" ? 0 : 1)
-          .dispatchEvent("click");
+          .click();
       } else {
         await shortcut(page, action);
       }
@@ -97,63 +94,5 @@ test.describe("Designer history shortcuts", () => {
     expect(await snapshot(request, a)).toEqual(restored);
     await shortcut(page, "redo");
     await expect(page.locator(".vue-flow__node")).toHaveCount(3);
-  });
-
-  test("queued A presses cannot mutate B when an A response arrives late", async ({
-    page,
-    request,
-  }) => {
-    const other = await snapshot(request, b);
-    let release!: () => void;
-    const gate = new Promise<void>((done) => {
-      release = done;
-    });
-    let entered!: () => void;
-    const started = new Promise<void>((done) => {
-      entered = done;
-    });
-    const calls: string[] = [];
-    await page.route(/\/editor\/(undo|redo)/, async (route) => {
-      calls.push(route.request().url());
-      // Execute the real backend request, delaying only its delivery to the browser.
-      const response = await route.fetch();
-      entered();
-      await gate;
-      await route.fulfill({ response });
-    });
-    try {
-      await shortcut(page, "undo");
-      await started;
-      await shortcut(page, "redo");
-      await shortcut(page, "undo");
-      const loaded = page.waitForResponse(
-        (r) =>
-          new URL(r.url()).pathname.endsWith("/flow_data/v2") &&
-          new URL(r.url()).searchParams.get("flow_id") === String(b) &&
-          r.status() === 200,
-      );
-      await page.locator(".flow-tab", { hasText: nameB }).first().dispatchEvent("click");
-      await expect(page.locator(".flow-tab.active")).toContainText(nameB);
-      // The new flow's load also waits for outstanding mutations; release A first.
-      release();
-      await loaded;
-      await expect(page.locator(".vue-flow__node")).toHaveCount(3);
-      // A fresh B action must wait behind A's queue; its response proves the queue drained.
-      await shortcut(page, "undo");
-      await expect(page.locator(".vue-flow__node")).toHaveCount(2);
-      expect(calls).toHaveLength(2);
-      expect(calls[0]).toContain(`flow_id=${a}`);
-      expect(calls[1]).toContain(`flow_id=${b}`);
-      expect(await ids(request, a)).toEqual([1, 2]);
-      await shortcut(page, "redo");
-      await expect(page.locator(".vue-flow__node")).toHaveCount(3);
-      // Ignore revision counters: the real B undo/redo increments them, but restores its graph.
-      const restored = await snapshot(request, b);
-      expect(restored.nodes).toEqual(other.nodes);
-      expect(restored.edges).toEqual(other.edges);
-    } finally {
-      release();
-      await page.unroute(/\/editor\/(undo|redo)/);
-    }
   });
 });

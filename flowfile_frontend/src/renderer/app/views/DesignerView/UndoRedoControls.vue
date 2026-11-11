@@ -73,7 +73,6 @@
 </template>
 
 <script setup lang="ts">
-import { onUnmounted } from "vue";
 import { ElMessage } from "element-plus";
 import { FlowApi } from "../../api";
 import { useFlowStore } from "../../stores/flow-store";
@@ -96,23 +95,15 @@ const drawerStore = useDrawerStore();
 
 // Presses run one after another, so each sees the history its predecessor left.
 let pressChain: Promise<void> = Promise.resolve();
-let disposed = false;
-onUnmounted(() => {
-  disposed = true;
-});
-const isCurrentFlow = (flowId: number) =>
-  !disposed && flowId > 0 && flowStore.flowId === flowId && nodeStore.flow_id === flowId;
 
 /**
  * Close the drawer, saving only the user's edits there (they become the step undone); a
  * refused save reports itself and keeps the drawer open.
  */
 const closeSettingsDrawer = async (): Promise<boolean> => {
-  const flowId = flowStore.flowId;
   if ((await editorStore.executeDrawCloseFunctionOnce({ userEditsOnly: true }, true)) === false) {
     return false;
   }
-  if (!isCurrentFlow(flowId)) return false;
   nodeStore.nodeId = -1;
   editorStore.activeDrawerComponent = null;
   return true;
@@ -121,10 +112,9 @@ const closeSettingsDrawer = async (): Promise<boolean> => {
 const isNothingToDo = (result: UndoRedoResult) =>
   /^nothing to (undo|redo)/i.test(result.error_message ?? "");
 
-const runHistoryAction = async (action: HistoryAction, pressedFlowId: number) => {
-  if (!isCurrentFlow(pressedFlowId)) return;
+const runHistoryAction = async (action: HistoryAction) => {
   const flowId = await prepareHistoryAction(action, {
-    flowId: () => (isCurrentFlow(pressedFlowId) ? pressedFlowId : -1),
+    flowId: () => flowStore.flowId,
     canRun: (candidate) => (candidate === "undo" ? flowStore.canUndo : flowStore.canRedo),
     drawerHasPendingEdits: () => editorStore.hasPendingDrawerEdits(),
     closeDrawer: closeSettingsDrawer,
@@ -136,10 +126,9 @@ const runHistoryAction = async (action: HistoryAction, pressedFlowId: number) =>
   try {
     result = action === "undo" ? await FlowApi.undo(flowId) : await FlowApi.redo(flowId);
   } catch (error) {
-    if (isCurrentFlow(flowId)) recoverFromFailedMutation(error, `Could not ${action}`);
+    recoverFromFailedMutation(error, `Could not ${action}`);
     return;
   }
-  if (!isCurrentFlow(flowId)) return;
   if (!result.success) {
     if (isNothingToDo(result)) return;
     // A restore that failed part-way may still have changed the graph.
@@ -148,16 +137,15 @@ const runHistoryAction = async (action: HistoryAction, pressedFlowId: number) =>
     return;
   }
   // Restore rebuilds the nodes, so the flow's run results no longer describe them.
+  if (flowStore.flowId !== flowId) return;
   resultsStore.clearFlowResults(flowId);
   drawerStore.clearPreview();
   flowStore.requestReload();
 };
 
 const enqueue = (action: HistoryAction) => {
-  // Bind a press now, not when earlier presses finish: it must never target another tab.
-  const flowId = flowStore.flowId;
   pressChain = pressChain
-    .then(() => runHistoryAction(action, flowId))
+    .then(() => runHistoryAction(action))
     .catch((error) => {
       console.error(`Failed to ${action}:`, error);
     });
