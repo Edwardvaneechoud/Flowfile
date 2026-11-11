@@ -3340,6 +3340,20 @@ class TestRewriteQualifiedReferences:
         )
         assert self._rw("SELECT * FROM fx_rates WHERE c = 'US'") == "SELECT * FROM fx_rates WHERE c = 'US'"
 
+    @pytest.mark.parametrize(
+        "form",
+        ['SELECT * FROM main.default."city-sales-unique"', "SELECT * FROM main.default.city-sales-unique"],
+    )
+    def test_a_name_that_continues_another_after_a_hyphen_is_collapsed_whole(self, form):
+        from flowfile_core.catalog.text_utils import rewrite_qualified_references
+
+        names = {
+            f"{prefix}{table}"
+            for table in ("city-sales", "city-sales-unique")
+            for prefix in ("main.default.", "default.", "")
+        }
+        assert rewrite_qualified_references(form, names) == 'SELECT * FROM "main.default.city-sales-unique"'
+
 
 class TestFriendlyRelationError:
     """Pure-function tests for clarifying polars 'relation not found' errors."""
