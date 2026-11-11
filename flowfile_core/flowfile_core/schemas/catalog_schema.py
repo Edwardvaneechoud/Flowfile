@@ -12,6 +12,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
+from shared.models import RunType
 
 # ==================== Namespace Schemas ====================
 
@@ -190,7 +191,7 @@ class FlowRunOut(BaseModel):
     nodes_completed: int = 0
     number_of_nodes: int = 0
     duration_seconds: float | None = None
-    run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand", "dispatched"] = "in_designer_run"
+    run_type: RunType = "in_designer_run"
     schedule_id: int | None = None
     # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
     source: Literal["local", "hub"] = "local"
@@ -1104,7 +1105,7 @@ class ActiveFlowRun(BaseModel):
     started_at: datetime
     nodes_completed: int = 0
     number_of_nodes: int = 0
-    run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand", "dispatched"] = "in_designer_run"
+    run_type: RunType = "in_designer_run"
     schedule_id: int | None = None
     remote_run_id: str | None = None
     # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.

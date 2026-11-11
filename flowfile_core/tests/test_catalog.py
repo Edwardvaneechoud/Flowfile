@@ -1047,6 +1047,14 @@ class TestRuns:
         assert client.get(f"/catalog/runs/{run_id}").json()["has_log"] is False
         assert client.get(f"/catalog/runs/{run_id}/log").status_code == 404
 
+    def test_runs_filter_by_the_dispatched_run_type(self):
+        run_id = self._make_run("dispatched")
+
+        resp = client.get("/catalog/runs", params={"run_type": "dispatched"})
+
+        assert resp.status_code == 200
+        assert run_id in [run["id"] for run in resp.json()["items"]]
+
     # Completed-run fallback
 
     @staticmethod
