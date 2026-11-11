@@ -12,12 +12,14 @@ flattened with ``pl.json_normalize``.
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import time
 from collections.abc import Callable
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import quote, quote_plus
 
 import httpx
 import polars as pl
@@ -126,6 +128,32 @@ def _to_records(extracted: Any) -> list[dict]:
     if isinstance(extracted, list):
         return [item if isinstance(item, dict) else {"value": item} for item in extracted]
     return [{"value": extracted}]
+
+
+def secret_forms(settings: RestApiReadSettings, secret: str | None) -> tuple[str, ...]:
+    """Every spelling of the secret a request carries: as given, percent-encoded, and the Basic credential."""
+    if not secret:
+        return ()
+    forms = {secret, quote(secret, safe=""), quote_plus(secret)}
+    if settings.auth.auth_type == AuthType.BASIC:
+        pair = f"{settings.auth.basic_username}:{secret}".encode()
+        forms.add(base64.b64encode(pair).decode())
+    return tuple(sorted(forms, key=len, reverse=True))
+
+
+def mask_secrets(value: Any, forms: tuple[str, ...]) -> Any:
+    """*value* with each of *forms* masked: a text, or every key and string of a JSON value."""
+    if not forms:
+        return value
+    if isinstance(value, str):
+        for form in forms:
+            value = value.replace(form, SECRET_MASK)
+        return value
+    if isinstance(value, dict):
+        return {mask_secrets(key, forms): mask_secrets(item, forms) for key, item in value.items()}
+    if isinstance(value, list):
+        return [mask_secrets(item, forms) for item in value]
+    return value
 
 
 class RestApiRequestError(RuntimeError):
@@ -335,8 +363,10 @@ def fetch_rest_api(
         httpx_auth = httpx.BasicAuth(auth.basic_username, secret or "")
         shown_headers["Authorization"] = f"Basic {SECRET_MASK}"
 
+    forms = secret_forms(settings, secret)
+
     def scrub(text: str) -> str:
-        return text.replace(secret, SECRET_MASK) if secret else text
+        return mask_secrets(text, forms)
 
     method = settings.method.value
     json_body = settings.json_body if method == "POST" else None

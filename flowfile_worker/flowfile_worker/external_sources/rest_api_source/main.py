@@ -20,7 +20,14 @@ import polars as pl
 
 from flowfile_worker.configs import logger as worker_logger
 from flowfile_worker.external_sources.rest_api_source.models import RestApiReadSettings
-from shared.rest_api.fetch import STOP_REASONS, describe_response, fetch_rest_api, suggest_paths
+from shared.rest_api.fetch import (
+    STOP_REASONS,
+    describe_response,
+    fetch_rest_api,
+    mask_secrets,
+    secret_forms,
+    suggest_paths,
+)
 from shared.rest_api.models import AuthType
 
 _TRACE_ENTRIES = 20
@@ -44,7 +51,7 @@ def read_rest_api(
 
     Every request is logged to *logger* (the flow's log) with its secret masked: each of the first pages, then
     every tenth, and why the read stopped. *debug_file* gets what the drawer shows of a test request: the trace,
-    the first response's shape and text, and the paths it suggests.
+    the first response's shape and text, the secret masked where the API echoes it, and the paths it suggests.
     """
     log = logger or worker_logger
     log.info(
@@ -64,12 +71,14 @@ def read_rest_api(
     elif auth_type == AuthType.BASIC:
         secret = settings.get_basic_password()
 
+    forms = secret_forms(settings, secret)
     trace: list[dict] = []
     first: dict[str, Any] = {}
 
     def on_page(entry: dict, body: Any) -> None:
         page, stopped = entry["page"], entry["stopped"]
         if page == 1:
+            body = mask_secrets(body, forms)
             text = json.dumps(body, indent=2, ensure_ascii=False, default=str)
             first.update(
                 suggested_paths=suggest_paths(body),

@@ -9,6 +9,7 @@ the read on the worker backend (mocked ``WorkerBackend.run_op``) — the core ne
 from __future__ import annotations
 
 import polars as pl
+import pytest
 
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult, ResultRef
@@ -313,3 +314,24 @@ def test_read_api_builds_graph_and_executes_locally(monkeypatch):
     assert settings.url == "https://x/api"
     assert settings.auth.bearer_token_encrypted is not None
     assert settings.pagination.pagination_type.value == "offset"
+
+
+def _body_cursor(**settings) -> input_schema.RestApiSettings:
+    pagination = input_schema.RestApiPaginationSettings(pagination_type="cursor", cursor_request_location="body")
+    return input_schema.RestApiSettings(url="https://api.test/items", pagination=pagination, **settings)
+
+
+@pytest.mark.parametrize("body", [["a"], "text", 3])
+def test_a_body_cursor_refuses_a_body_that_is_no_object_on_save(body):
+    with pytest.raises(ValueError, match="needs the body to be a JSON object"):
+        _body_cursor(method="POST", json_body=body)
+
+
+@pytest.mark.parametrize("body", [None, {"limit": 3}, "${request_body}"])
+def test_a_body_cursor_takes_an_object_no_body_or_a_parameter(body):
+    assert _body_cursor(method="POST", json_body=body).json_body == body
+
+
+def test_a_body_cursor_refuses_a_get_on_save():
+    with pytest.raises(ValueError, match="needs the POST method"):
+        _body_cursor(method="GET")

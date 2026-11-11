@@ -623,6 +623,38 @@ def test_a_failed_request_names_itself_and_the_answer_without_the_secret(api):
     assert raised.value.__cause__ is None and raised.value.__context__ is None
 
 
+def test_a_failed_request_masks_the_secret_as_the_url_encodes_it(api):
+    secret = "a+b/c=d&e f"
+    api.route("/denied", _answer(text="bad key a%2Bb%2Fc%3Dd%26e+f or a%2Bb%2Fc%3Dd%26e%20f", status=401))
+    settings = RestApiReadSettings(
+        url=api.url("/denied"),
+        auth=AuthConfig(auth_type="api_key", api_key_name="api_key", api_key_location="query"),
+    )
+    with pytest.raises(RestApiRequestError) as raised:
+        fetch_rest_api(settings, secret=secret)
+    assert str(raised.value).endswith("bad key REDACTED or REDACTED")
+
+
+def test_read_rest_api_masks_a_secret_the_response_echoes(api, tmp_path):
+    echoed = base64.b64encode(b"alice:s3cr3t-value").decode()
+    api.route("/echo", _answer({"headers": {"Authorization": f"Basic {echoed}"}, "items": [{"key": "s3cr3t-value"}]}))
+    settings = WorkerRestApiReadSettings(
+        url=api.url("/echo"),
+        record_path="items",
+        auth=AuthConfig(
+            auth_type="basic", basic_username="alice", basic_password_encrypted=encrypt_secret("s3cr3t-value")
+        ),
+    )
+    debug_file = tmp_path / "debug.json"
+    df = read_rest_api(settings, debug_file=str(debug_file))
+    assert df["key"].to_list() == ["s3cr3t-value"]
+
+    written = debug_file.read_text()
+    assert "s3cr3t-value" not in written and echoed not in written
+    shown = json.loads(json.loads(written)["response_text"])
+    assert shown == {"headers": {"Authorization": "Basic REDACTED"}, "items": [{"key": "REDACTED"}]}
+
+
 def test_a_response_that_is_no_json_names_the_request_and_how_it_starts(api):
     url = api.route("/login", _answer(text="<html><title>Sign in</title></html>"))
     with pytest.raises(RestApiRequestError, match=r"answered 200, but the response was not valid JSON.*<html>"):

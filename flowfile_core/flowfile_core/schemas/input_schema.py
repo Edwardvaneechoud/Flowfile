@@ -1457,6 +1457,15 @@ class RestApiSettings(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _cursor_in_body_needs_an_object(self) -> "RestApiSettings":
+        p, body = self.pagination, self.json_body
+        in_body = p.pagination_type == "cursor" and p.cursor_request_location == "body"
+        is_reference = isinstance(body, str) and "${" in body
+        if in_body and body is not None and not isinstance(body, dict) and not is_reference:
+            raise ValueError("A cursor sent in the JSON body needs the body to be a JSON object.")
+        return self
+
 
 class NodeRestApiReader(NodeBase):
     """Settings for a node that reads from a REST API."""
