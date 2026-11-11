@@ -36,7 +36,7 @@ const stubs: Record<string, FunctionalComponent> = {
 
 const storage_uri = "s3://acme/data";
 const catalog = ns({ storage_uri });
-const hubCatalog = ns({ storage_uri, id: -10, name: "main", source: "hub", hub_id: 10 });
+const hubCatalog = ns({ storage_uri, id: -10, name: "main", source: "hub" });
 
 let host: HTMLElement;
 

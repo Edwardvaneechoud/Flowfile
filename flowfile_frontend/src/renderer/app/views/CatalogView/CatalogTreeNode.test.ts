@@ -137,7 +137,6 @@ describe("a hub flow's row", () => {
             namespace_id: -31,
             flow_path: "hub://flows/u-1",
             source: "hub",
-            hub_id: 20,
             flow_uuid: "u-1",
             latest_version: 3,
             author_name: "ana",

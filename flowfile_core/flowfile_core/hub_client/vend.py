@@ -420,8 +420,8 @@ def request_for_tables(
         hub_url, access_token = session.bearer(user_id, catalog.NOT_CONNECTED)
         found = catalog.namespaces(hub_url, access_token)
         for table in tables:
-            _usable(found.get(table.hub_namespace_id), f"the hub lists no catalog schema of {table.name}")
-        namespace_ids = sorted({t.hub_namespace_id for t in tables})
+            _usable(found.get(-table.namespace_id), f"the hub lists no catalog schema of {table.name}")
+        namespace_ids = sorted({-t.namespace_id for t in tables})
         answer = client.vend(hub_url, access_token, run_id, namespace_ids, namespace_ids if writes else [])
     return _run_vend(run_id, answer, {}, {}, (), (), ())
 

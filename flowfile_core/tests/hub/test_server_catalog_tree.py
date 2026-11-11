@@ -80,7 +80,7 @@ def test_a_person_on_a_joined_server_is_offered_only_the_hubs_catalogs(hub, orga
     [default_row] = main_row["children"]
     [notes_row] = scratch_row["children"]
     assert (main_row["unavailable_reason"], default_row["unavailable_reason"]) == (None, None)
-    assert [table["hub_id"] for table in default_row["tables"]] == [organisation["orders"]["id"]]
+    assert [-table["id"] for table in default_row["tables"]] == [organisation["orders"]["id"]]
     assert scratch_row["unavailable_reason"] == ON_ITS_OWN_DISK.format("scratch")
     assert notes_row["unavailable_reason"] == ON_ITS_OWN_DISK.format("scratch.notes")
 
@@ -108,7 +108,7 @@ def test_a_run_writing_to_a_hub_catalog_on_its_own_disk_is_refused_with_the_tree
 ):
     person, access_token = sign_in(hub, username)
     tree = client.get("/catalog/namespaces/tree", headers=bearer(access_token)).json()
-    [notes_row] = [row for row in namespace_rows(tree) if row.get("hub_id") == organisation["notes"]["id"]]
+    [notes_row] = [row for row in namespace_rows(tree) if row["id"] == -organisation["notes"]["id"]]
     flow = open_flow(person, "into_the_hubs_disk")
     add_test_manual_input(flow, CATALOG_SAMPLE_DATA, node_id=1)
     add_promise(flow, 2, "catalog_writer")

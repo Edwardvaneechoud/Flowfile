@@ -138,19 +138,19 @@ def test_connected_lists_the_hub_catalogs_after_the_local_ones(connected, hub, u
     local = _local_tree(user_id, place="On this computer")
     assert local, "the local catalog has its seeded General catalog"
     assert tree[: len(local)] == local
-    assert all(node["source"] == "local" and node["hub_id"] is None for node in local)
+    assert all(node["source"] == "local" and "hub_id" not in node for node in local)
     assert all(row["offered"] and row["unavailable_reason"] is None for row in _namespace_rows(local))
 
     hub_rows = tree[len(local) :]
     assert [node["name"] for node in hub_rows] == ["sales", "finance"]
     sales, finance = hub_rows
-    assert sales["id"] == -seeded["sales"]["id"] and sales["hub_id"] == seeded["sales"]["id"]
+    assert sales["id"] == -seeded["sales"]["id"] and "hub_id" not in sales
     assert sales["parent_id"] is None and sales["level"] == 0
     assert sales["storage_uri"] == "s3://acme/sales" and sales["storage_connection_name"] == "acme-s3"
     assert sales["access"] == SHARED
     assert [schema["name"] for schema in sales["children"]] == ["raw", "curated"]
     raw, curated = sales["children"]
-    assert raw["id"] == -seeded["raw"]["id"] and raw["hub_id"] == seeded["raw"]["id"]
+    assert raw["id"] == -seeded["raw"]["id"]
     assert raw["parent_id"] == sales["id"] and raw["description"] == "Landed as it came"
     assert [t["name"] for t in raw["tables"]] == ["orders", "customers"]
     assert [t["name"] for t in curated["tables"]] == ["revenue"]
@@ -158,17 +158,15 @@ def test_connected_lists_the_hub_catalogs_after_the_local_ones(connected, hub, u
     assert sales["tables"] == []
 
     orders = raw["tables"][0]
-    assert orders["id"] == -seeded["orders"]["id"] and orders["hub_id"] == seeded["orders"]["id"]
-    assert orders["hub_namespace_id"] == seeded["raw"]["id"] and orders["namespace_id"] == raw["id"]
+    assert orders["id"] == -seeded["orders"]["id"] and orders["namespace_id"] == raw["id"]
+    assert "hub_id" not in orders and "hub_namespace_id" not in orders
     assert orders["row_count"] == 120 and orders["access"] == SHARED
     assert curated["tables"][0]["is_remote_storage"] is True
 
     namespaces = [sales, finance, raw, curated]
     tables = [t for ns in namespaces for t in ns["tables"]]
     for row in namespaces + tables:
-        assert row["source"] == "hub" and row["id"] < 0 and row["id"] == -row["hub_id"]
-    for table in tables:
-        assert table["namespace_id"] == -table["hub_namespace_id"]
+        assert row["source"] == "hub" and row["id"] < 0
     for ns in namespaces:
         assert ns["flows"] == [] and ns["notebooks"] == []
         assert ns["artifacts"] == [] and ns["visualizations"] == []
@@ -192,7 +190,7 @@ def test_a_hub_schemas_published_flows_are_listed_under_it_with_the_newest_versi
     assert sales["flows"] == [] and curated["flows"] == []
     [flow] = raw["flows"]
     assert flow["source"] == "hub" and flow["id"] == -clean["registration_id"]
-    assert flow["hub_id"] == clean["registration_id"] and flow["flow_uuid"] == clean["flow_uuid"]
+    assert flow["flow_uuid"] == clean["flow_uuid"]
     assert flow["name"] == "orders-clean" and flow["namespace_id"] == raw["id"] and flow["owner_id"] == 7
     assert flow["latest_version"] == 3 and flow["author_name"] == "ana"
     assert flow["flow_path"] == f"hub://flows/{clean['flow_uuid']}"
@@ -331,8 +329,6 @@ def test_a_hub_tables_detail_is_the_hubs_own_answer_marked_as_the_tree_marks_it(
         "id": -seeded["orders"]["id"],
         "namespace_id": -seeded["raw"]["id"],
         "source": "hub",
-        "hub_id": seeded["orders"]["id"],
-        "hub_namespace_id": seeded["raw"]["id"],
     }
     assert hub.catalog_calls[-1] == (f"/catalog/tables/{seeded['orders']['id']}", "")
 
@@ -356,7 +352,7 @@ def test_a_hub_flows_run_history_is_asked_of_the_hub_by_the_hubs_own_id(connecte
     assert resp.status_code == 200
     assert resp.json() == {
         "items": [
-            {"id": -5, "hub_id": 5, "source": "hub", "registration_id": -201, "flow_name": "orders-clean",
+            {"id": -5, "source": "hub", "registration_id": -201, "flow_name": "orders-clean",
              "success": True}
         ],
         "total": 1,
@@ -403,7 +399,7 @@ def test_a_hub_flows_schedules_are_listed_paused_resumed_and_removed_on_the_hub(
     listed = connected.get("/catalog/schedules", params={"registration_id": row})
     assert listed.status_code == 200
     assert listed.json() == [
-        {"id": -7, "hub_id": 7, "source": "hub", "registration_id": row, "schedule_type": "interval", "enabled": True}
+        {"id": -7, "source": "hub", "registration_id": row, "schedule_type": "interval", "enabled": True}
     ]
     assert hub.catalog_calls[-1] == ("/catalog/schedules", f"registration_id={-row}")
     paused = connected.put("/catalog/schedules/-7", json={"enabled": False})
@@ -422,7 +418,7 @@ def test_the_list_of_every_schedule_holds_the_hubs_after_this_machines_marked_as
     listed = connected.get("/catalog/schedules")
     assert listed.status_code == 200
     theirs = [row for row in listed.json() if row["source"] == "hub"]
-    assert [(row["id"], row["hub_id"], row["registration_id"]) for row in theirs] == [(-7, 7, -201), (-8, 8, -202)]
+    assert [(row["id"], row["registration_id"]) for row in theirs] == [(-7, -201), (-8, -202)]
     assert theirs[0]["backend"] == "worker:bmax" and theirs[0]["interval_seconds"] == schedule["interval_seconds"]
     assert all(row["source"] == "local" and row["id"] > 0 for row in listed.json() if row not in theirs)
     assert hub.catalog_calls[-1] == ("/catalog/schedules", "")

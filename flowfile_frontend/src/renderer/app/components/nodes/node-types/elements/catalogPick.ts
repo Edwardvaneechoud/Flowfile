@@ -101,7 +101,7 @@ export function namespaceOptions(
         label: `${catalog.name} / ${schema.name}`,
         full: `${catalog.name}.${schema.name}`,
         source: hub ? "hub" : "local",
-        hubId: hub ? (schema.hub_id ?? null) : null,
+        hubId: hub ? -schema.id : null,
         place: catalog.place ?? null,
         unavailableReason: unavailableReason(schema) ?? unavailableReason(catalog),
         writable: writableBy(schema.access ?? catalog.access, hub),

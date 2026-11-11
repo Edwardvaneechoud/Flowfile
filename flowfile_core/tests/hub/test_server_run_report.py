@@ -373,9 +373,9 @@ def test_a_person_reads_and_writes_the_hubs_tables_on_its_storage_and_the_run_is
     tree = client.get("/catalog/namespaces/tree", headers=bearer(access_token))
     assert tree.status_code == 200, tree.text
     [listed] = [row for row in tree.json() if row["source"] == "hub"]
-    assert (listed["hub_id"], listed["name"]) == (catalog["id"], catalog["name"])
+    assert (-listed["id"], listed["name"]) == (catalog["id"], catalog["name"])
     [schema] = listed["children"]
-    assert (schema["hub_id"], [table["hub_id"] for table in schema["tables"]]) == (sales["id"], [orders["id"]])
+    assert (-schema["id"], [-table["id"] for table in schema["tables"]]) == (sales["id"], [orders["id"]])
 
     flow = open_flow(person, "hub_tables_on_the_server")
     add_hub_tables_flow(flow, person, sales, orders)

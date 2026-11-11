@@ -47,7 +47,7 @@ const props = defineProps<{
   // the default selection. Leave unset for browse/read use (Open dialog).
   writableOnly?: boolean;
   // The connected hub's namespaces instead of this machine's, nothing preselected: the hub's rows of the
-  // one merged tree, each carrying the hub's own id as hub_id.
+  // one merged tree, each carrying the negative of the hub's own id.
   hub?: boolean;
   // Let a catalog (a top-level row) be picked as well as its schemas, as a publish to the hub allows.
   catalogsSelectable?: boolean;
@@ -117,17 +117,7 @@ const getNamespacePath = (id: number | null): string | null => {
 };
 
 // The hub's own id of a namespace in the tree, which the hub's routes take; null for none or a local row.
-const hubIdOf = (id: number | null): number | null => {
-  const find = (nodes: NamespaceTree[]): NamespaceTree | null => {
-    for (const node of nodes) {
-      if (node.id === id) return node;
-      const below = find(node.children);
-      if (below) return below;
-    }
-    return null;
-  };
-  return id === null ? null : (find(tree.value)?.hub_id ?? null);
-};
+const hubIdOf = (id: number | null): number | null => (id !== null && id < 0 ? -id : null);
 
 onMounted(() => {
   loadTree();

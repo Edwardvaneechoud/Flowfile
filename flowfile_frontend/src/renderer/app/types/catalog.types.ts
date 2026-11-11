@@ -19,9 +19,8 @@ export interface CatalogNamespace {
   storage_uri?: string | null;
   storage_connection_name?: string | null;
   access?: AccessInfo | null;
-  // "hub" for a connected hub's catalog: its id is the negative of the hub's own id, kept in hub_id.
+  // "hub" for a connected hub's catalog: its id is the negative of the hub's own id.
   source?: "local" | "hub";
-  hub_id?: number | null;
 }
 
 export interface NamespaceTree extends CatalogNamespace {
@@ -138,10 +137,9 @@ export interface FlowRegistration {
   tables_produced: CatalogTableSummary[];
   tables_read: CatalogTableSummary[];
   access?: AccessInfo | null;
-  // "hub" for a flow published to a connected hub: its id is the negative of the hub's registration id, kept in
-  // hub_id, with the flow's uuid and its newest version and who published it. Absent from this machine's flows.
+  // "hub" for a flow published to a connected hub: its id is the negative of the hub's registration id, with the
+  // flow's uuid and its newest version and who published it. Absent from this machine's flows.
   source?: "local" | "hub";
-  hub_id?: number | null;
   flow_uuid?: string | null;
   latest_version?: number | null;
   author_name?: string | null;
@@ -213,7 +211,6 @@ export interface FlowRun {
   flow_version?: number | null;
   // Which catalog keeps the row; a hub's row carries the negative of the hub's id as `id`.
   source?: "local" | "hub";
-  hub_id?: number | null;
 }
 
 export interface PaginatedFlowRuns {
@@ -373,10 +370,8 @@ export interface CatalogTable {
   created_at: string;
   updated_at: string;
   access?: AccessInfo | null;
-  // "hub" for a table on a connected hub: id and namespace_id are negated, the hub's own ids beside them.
+  // "hub" for a table on a connected hub: id and namespace_id are the hub's own negated.
   source?: "local" | "hub";
-  hub_id?: number | null;
-  hub_namespace_id?: number | null;
 }
 
 export interface OptimizeTableRequest {
@@ -576,7 +571,6 @@ export interface FlowSchedule {
   updated_at: string;
   // Which catalog keeps the row; a hub's row carries the negative of the hub's id as `id`.
   source?: "local" | "hub";
-  hub_id?: number | null;
 }
 
 export interface FlowScheduleCreate {
@@ -628,7 +622,6 @@ export interface ActiveFlowRun {
   run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "dispatched";
   // Which catalog keeps the row; a hub's row carries the negative of the hub's id as `id`.
   source?: "local" | "hub";
-  hub_id?: number | null;
 }
 
 // Catalog Stats

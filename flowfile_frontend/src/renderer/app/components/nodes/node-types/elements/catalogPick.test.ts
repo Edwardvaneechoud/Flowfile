@@ -34,8 +34,6 @@ const hubSales = table({
   full_table_name: "raw.sales",
   qualified_name: "Finance.raw.sales",
   source: "hub",
-  hub_id: 30,
-  hub_namespace_id: 20,
 });
 
 // The hub's catalog comes first on purpose: the options still list the local ones first.
@@ -44,10 +42,9 @@ const tree: NamespaceTree[] = [
     id: -10,
     name: "Finance",
     source: "hub",
-    hub_id: 10,
     children: [
-      ns({ id: -20, name: "raw", parent_id: -10, source: "hub", hub_id: 20, tables: [hubSales] }),
-      ns({ id: -21, name: "Local Flows", parent_id: -10, source: "hub", hub_id: 21 }),
+      ns({ id: -20, name: "raw", parent_id: -10, source: "hub", tables: [hubSales] }),
+      ns({ id: -21, name: "Local Flows", parent_id: -10, source: "hub" }),
     ],
   }),
   ns({
@@ -230,7 +227,6 @@ describe("pickers by place and reach", () => {
       id: -id,
       name,
       source: "hub",
-      hub_id: id,
       place: "Acme Data",
       ...fields,
       children: schemas.map((schema) => ns({ parent_id: -id, source: "hub", ...schema })),
@@ -242,10 +238,8 @@ describe("pickers by place and reach", () => {
       place: "On this computer",
       children: [ns({ id: 2, name: "default", parent_id: 1 })],
     }),
-    hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11, access: MANAGE }]),
-    hubCatalog(20, "scratch", [
-      { id: -21, name: "notes", hub_id: 21, unavailable_reason: ON_ITS_OWN_DISK },
-    ]),
+    hubCatalog(10, "main", [{ id: -11, name: "default", access: MANAGE }]),
+    hubCatalog(20, "scratch", [{ id: -21, name: "notes", unavailable_reason: ON_ITS_OWN_DISK }]),
   ];
   const joined: NamespaceTree[] = desktop.map((catalog) =>
     catalog.source === "hub" ? catalog : { ...catalog, offered: false },
@@ -329,10 +323,10 @@ describe("pickers by place and reach", () => {
 
     it("is the first usable hub schema the person may write when main.default is not one", () => {
       const tree = [
-        hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11, access: USE }]),
+        hubCatalog(10, "main", [{ id: -11, name: "default", access: USE }]),
         hubCatalog(50, "team", [
-          { id: -51, name: "raw", hub_id: 51, access: USE },
-          { id: -52, name: "curated", hub_id: 52, access: MANAGE },
+          { id: -51, name: "raw", access: USE },
+          { id: -52, name: "curated", access: MANAGE },
         ]),
       ];
       expect(hubDefaultSchema(namespaceOptions(tree))?.full).toBe("team.curated");
@@ -341,8 +335,8 @@ describe("pickers by place and reach", () => {
     it("greys a schema the person may only read, says why, and lists it", () => {
       const tree = [
         hubCatalog(10, "main", [
-          { id: -11, name: "default", hub_id: 11, access: USE },
-          { id: -12, name: "team", hub_id: 12, access: MANAGE },
+          { id: -11, name: "default", access: USE },
+          { id: -12, name: "team", access: MANAGE },
         ]),
       ];
       const options = namespaceOptions(tree);
@@ -369,7 +363,7 @@ describe("pickers by place and reach", () => {
 
     it("names this machine's reach before read-only when both hold", () => {
       const tree = [
-        hubCatalog(20, "scratch", [{ id: -21, name: "notes", hub_id: 21, access: USE }], {
+        hubCatalog(20, "scratch", [{ id: -21, name: "notes", access: USE }], {
           unavailable_reason: "on its own disk",
         }),
       ];
@@ -377,24 +371,20 @@ describe("pickers by place and reach", () => {
     });
 
     it("takes a catalog's grant for its schemas, and is nothing when no hub schema may be written", () => {
-      const tree = [
-        hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11 }], { access: USE }),
-      ];
+      const tree = [hubCatalog(10, "main", [{ id: -11, name: "default" }], { access: USE })];
       expect(namespaceOptions(tree)[0].writable).toBe(false);
       expect(hubDefaultSchema(namespaceOptions(tree))).toBeNull();
     });
 
     it("never counts a hub schema the hub stamped nothing on, nor preselects it", () => {
-      const tree = [hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11 }])];
+      const tree = [hubCatalog(10, "main", [{ id: -11, name: "default" }])];
       const [option] = namespaceOptions(tree);
       expect([option.writable, option.readOnly]).toEqual([false, false]);
       expect(writerDefault(namespaceOptions(tree))).toBeNull();
     });
 
     it("counts a hub schema the person owns as theirs to write", () => {
-      const tree = [
-        hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11 }], { access: OWNER }),
-      ];
+      const tree = [hubCatalog(10, "main", [{ id: -11, name: "default" }], { access: OWNER })];
       expect(writerDefault(namespaceOptions(tree))?.full).toBe("main.default");
     });
 

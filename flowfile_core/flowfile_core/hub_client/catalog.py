@@ -1,7 +1,7 @@
 """The hub's catalogs, tables and flows as rows of the local catalog tree.
 
-A hub row carries ``source = "hub"``, its id negated (local ids are positive) and the hub's own as ``hub_id``. Nothing
-is kept; every metadata route of a hub catalog is the hub's same route (``relay``). A saved flow names a hub table by
+A hub row carries ``source = "hub"`` and the hub's ids negated (local ids are positive). Nothing is kept; every
+metadata route of a hub catalog is the hub's same route (``relay``). A saved flow names a hub table by
 its qualified name, never by a hub database id, which is resolved when the flow runs.
 """
 
@@ -149,19 +149,15 @@ def _is_id(value) -> bool:
 
 
 def marked(answer):
-    """A hub catalog answer as this machine shows it: rows with an id get ``source: "hub"``, ``hub_id`` and
-    ``hub_namespace_id``, and every reference in ``_ROW_REFERENCES`` is negated."""
+    """A hub catalog answer as this machine shows it: rows with an id get ``source: "hub"``, and every reference in
+    ``_ROW_REFERENCES`` is negated."""
     if isinstance(answer, list):
         return [marked(item) for item in answer]
     if not isinstance(answer, dict):
         return answer
     row = {key: marked(value) for key, value in answer.items()}
-    if _is_id(answer.get("id")):
-        row["hub_id"] = answer["id"]
-        if answer.get("source", "local") == "local":
-            row["source"] = HUB
-        if _is_id(answer.get("namespace_id")):
-            row["hub_namespace_id"] = answer["namespace_id"]
+    if _is_id(answer.get("id")) and answer.get("source", "local") == "local":
+        row["source"] = HUB
     for key in _ROW_REFERENCES:
         if _is_id(row.get(key)) and row[key] > 0:
             row[key] = -row[key]

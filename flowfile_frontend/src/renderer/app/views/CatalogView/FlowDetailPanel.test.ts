@@ -82,7 +82,6 @@ const hubFlow = flow({
   id: -201,
   name: "orders-clean",
   source: "hub",
-  hub_id: 201,
   flow_path: "hub://flows/u-1",
 });
 

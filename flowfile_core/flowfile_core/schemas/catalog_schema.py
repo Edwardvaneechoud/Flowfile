@@ -48,9 +48,8 @@ class NamespaceOut(BaseModel):
     # How the requesting user accesses this resource (multi-user mode); None when
     # unrestricted (admin / electron / internal) — the frontend shows no badge then.
     access: AccessInfo | None = None
-    # Where the namespace lives; a hub's row carries the negative of the hub's id as ``id`` and that id as ``hub_id``.
+    # Where the namespace lives; a hub's row carries the negative of the hub's id as ``id``.
     source: Literal["local", "hub"] = "local"
-    hub_id: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -119,10 +118,9 @@ class FlowRegistrationOut(BaseModel):
     tables_produced: list["CatalogTableSummary"] = Field(default_factory=list)
     tables_read: list["CatalogTableSummary"] = Field(default_factory=list)
     access: AccessInfo | None = None
-    # Where the flow lives; a hub's row carries the negative of the hub's registration id as ``id``, that id as
-    # ``hub_id``, the flow's uuid, and its newest published version with who published it.
+    # Where the flow lives; a hub's row carries the negative of the hub's registration id as ``id``, the flow's uuid,
+    # and its newest published version with who published it.
     source: Literal["local", "hub"] = "local"
-    hub_id: int | None = None
     flow_uuid: str | None = None
     latest_version: int | None = None
     author_name: str | None = None
@@ -195,7 +193,6 @@ class FlowRunOut(BaseModel):
     schedule_id: int | None = None
     # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
     source: Literal["local", "hub"] = "local"
-    hub_id: int | None = None
     has_snapshot: bool = False
     has_log: bool = False
     # A run executed elsewhere: where, under which run id, where its log is, and the published version that ran.
@@ -525,10 +522,8 @@ class CatalogTableOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None
-    # Where the table lives; a hub's row carries negated ids and the hub's own ids beside them.
+    # Where the table lives; a hub's row carries the negatives of the hub's own ids.
     source: Literal["local", "hub"] = "local"
-    hub_id: int | None = None
-    hub_namespace_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1074,7 +1069,6 @@ class FlowScheduleOut(BaseModel):
     updated_at: datetime
     # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
     source: Literal["local", "hub"] = "local"
-    hub_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1110,7 +1104,6 @@ class ActiveFlowRun(BaseModel):
     remote_run_id: str | None = None
     # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
     source: Literal["local", "hub"] = "local"
-    hub_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

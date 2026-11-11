@@ -68,7 +68,6 @@ describe("findDefaultSaveNamespace", () => {
 const fromHub = (node: NamespaceTree): NamespaceTree => ({
   ...node,
   source: "hub",
-  hub_id: -node.id,
   children: node.children.map(fromHub),
 });
 

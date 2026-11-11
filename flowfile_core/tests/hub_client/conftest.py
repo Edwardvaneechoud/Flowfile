@@ -196,7 +196,7 @@ class FakeHub:
 _STAMP = "2026-11-01T12:00:00Z"
 NEVER_RUNS = "The hub never runs, schedules or computes; run this on a compute node."
 CANCEL_REFUSED = "The server that runs this flow could not be told to stop it."
-_LOCAL_ONLY = {"source", "hub_id", "hub_namespace_id"}
+_LOCAL_ONLY = {"source"}
 
 
 class FakeHubWithCatalog(FakeHub):

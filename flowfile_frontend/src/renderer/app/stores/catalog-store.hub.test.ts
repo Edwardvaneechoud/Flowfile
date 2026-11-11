@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { ns, table } from "../__fixtures__/catalogTree";
 
-const { getTablePreviewMock, getTableHistoryMock, addTableFavoriteMock, cancelRunMock } = vi.hoisted(() => ({
-  cancelRunMock: vi.fn(),
-  getTablePreviewMock: vi.fn(),
-  getTableHistoryMock: vi.fn(),
-  addTableFavoriteMock: vi.fn(),
-}));
+const { getTablePreviewMock, getTableHistoryMock, addTableFavoriteMock, cancelRunMock } =
+  vi.hoisted(() => ({
+    cancelRunMock: vi.fn(),
+    getTablePreviewMock: vi.fn(),
+    getTableHistoryMock: vi.fn(),
+    addTableFavoriteMock: vi.fn(),
+  }));
 
 vi.mock("../api/catalog.api", () => ({
   CatalogApi: {
@@ -27,8 +28,6 @@ const hubTable = table({
   ...localTable,
   id: -5,
   source: "hub",
-  hub_id: 5,
-  hub_namespace_id: 3,
   is_remote_storage: true,
 });
 
@@ -58,7 +57,7 @@ describe("catalog-store with hub rows in the tree", () => {
     const store = seed();
     store.selectTable(-5);
     expect(store.selectedTableId).toBe(-5);
-    expect(store.selectedTable?.hub_id).toBe(5);
+    expect(store.selectedTable?.source).toBe("hub");
     expect(getTablePreviewMock).not.toHaveBeenCalled();
     expect(getTableHistoryMock).toHaveBeenCalledWith(-5);
 
@@ -85,7 +84,9 @@ describe("catalog-store with hub rows in the tree", () => {
 
   it("hands a hub run's refused cancel to the caller with the hub's sentence, and keeps a local one's as before", async () => {
     const store = useCatalogStore();
-    const refused = { response: { status: 422, data: { detail: "The server could not be told." } } };
+    const refused = {
+      response: { status: 422, data: { detail: "The server could not be told." } },
+    };
     cancelRunMock.mockReset().mockRejectedValue(refused);
     await expect(store.cancelRun(-9)).rejects.toBe(refused);
     expect(cancelRunMock).toHaveBeenCalledWith(-9);
