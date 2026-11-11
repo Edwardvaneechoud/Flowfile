@@ -1,5 +1,5 @@
 {
-  "protocol_version": 3,
+  "protocol_version": 2,
   "entries": {
     "catalog cloud_storage_connections": "d07b34d88d5d98f4dcefc5379e59f4654fa069a22f353e0d23453d3c802192e9",
     "operation cloud_write": "95757474fb2916fc076f766f5da5484db9bd508e75605e677917040a091b1079",

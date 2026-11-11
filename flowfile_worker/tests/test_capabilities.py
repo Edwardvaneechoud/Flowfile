@@ -47,7 +47,7 @@ def test_capabilities_reports_this_process():
     response = client.get("/capabilities")
     assert response.status_code == 200
     caps = Capabilities.model_validate(response.json())
-    assert caps.protocol_version == PROTOCOL_VERSION == 3
+    assert caps.protocol_version == PROTOCOL_VERSION == 2
     assert caps.app_version == get_version()
     assert caps.polars_version == pl.__version__
     assert caps.python_version == platform.python_version()
