@@ -28,6 +28,7 @@ from flowfile_worker.routes import router
 from flowfile_worker.streaming import streaming_router, v1_streaming_router
 from shared import hub_node, hub_tokens
 from shared._version import get_version
+from shared.net import is_loopback_host
 from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
@@ -159,7 +160,7 @@ def signal_handler(signum, frame):
 
 def _worker_url(host: str, port: int, *, tls: bool) -> str:
     url = hub_node.default_url(port, tls=tls)
-    if hub_node.is_loopback_host(host):
+    if is_loopback_host(host):
         logger.warning(
             "This worker serves on %s, which only this machine reaches, and gives the hub %s; to be reached from other "
             "machines, start it with --host 0.0.0.0",

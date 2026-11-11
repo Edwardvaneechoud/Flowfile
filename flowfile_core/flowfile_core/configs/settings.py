@@ -11,6 +11,7 @@ from flowfile_core.configs import exchange_config
 from flowfile_core.configs.command_line import DEFAULT_SERVER_HOST, parse_args
 from flowfile_core.configs.utils import MutableBool
 from shared import hub_node
+from shared.net import is_loopback_host
 from shared.storage_config import storage
 
 # Constants for server and worker configuration
@@ -247,7 +248,7 @@ def join_addresses(
         core_url = JOIN_CORE_URL
     else:
         core_url = hub_node.default_url(port, tls=False)
-        if hub_node.is_loopback_host(host):
+        if is_loopback_host(host):
             logging.getLogger(__name__).warning(
                 "Core serves on %s, which only this machine reaches, and gives the hub %s; to be reached from other "
                 "machines, start it with --host 0.0.0.0 and --url <its address as they reach it>",

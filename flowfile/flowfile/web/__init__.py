@@ -179,9 +179,9 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
         os.environ["FLOWFILE_MODE"] = "electron"
 
     from flowfile_core.configs import settings
-    from shared import hub_node
+    from shared.net import is_loopback_host
 
-    if not settings.is_server_mode() and not hub_node.is_loopback_host(host):
+    if not settings.is_server_mode() and not is_loopback_host(host):
         print(
             f"Not serving on {host}, which other machines reach: outside FLOWFILE_MODE=docker the editor signs in "
             "whoever reaches it as this machine's user; see "

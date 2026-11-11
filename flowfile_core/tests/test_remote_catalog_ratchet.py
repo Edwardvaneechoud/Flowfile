@@ -14,6 +14,7 @@ PACKAGES = (
     "flowfile_worker/flowfile_worker",
     "flowfile_scheduler/flowfile_scheduler",
     "flowfile_frame/flowfile_frame",
+    "flowfile/flowfile",
     "shared",
 )
 IMPORTS = re.compile(
