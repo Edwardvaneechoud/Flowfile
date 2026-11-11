@@ -99,15 +99,6 @@ describe("CatalogTreeNode", () => {
     expect(sectionCounts()).toBe(1);
   });
 
-  it("names who shared a hub catalog only when a person did, never a team's raw account", async () => {
-    const sharedBy = (by: string) => ({ is_owner: false, access_level: "use", shared_by: by });
-    await mount({ ...hub, access: sharedBy("team:sales") } as NamespaceTree);
-    expect(host.querySelector(".resource-badge")?.getAttribute("title")).toBe("Shared with you");
-
-    await mount({ ...hub, access: sharedBy("ada") } as NamespaceTree);
-    expect(host.querySelector(".resource-badge")?.getAttribute("title")).toBe("Shared by ada");
-  });
-
   it("names the team that shared a hub catalog when the hub sends its name", async () => {
     const access = { is_owner: false, access_level: "use", shared_by: "Sales" };
     await mount({ ...hub, access } as NamespaceTree);

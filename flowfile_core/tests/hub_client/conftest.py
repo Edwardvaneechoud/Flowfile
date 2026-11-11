@@ -259,7 +259,7 @@ class FakeHubWithCatalog(FakeHub):
             owner_id=1,
             created_at=_STAMP,
             updated_at=_STAMP,
-            **fields,
+            **{"is_remote_storage": True, **fields},
         ).model_dump(mode="json", exclude=_LOCAL_ONLY)
         self.tables.append(row)
         return row

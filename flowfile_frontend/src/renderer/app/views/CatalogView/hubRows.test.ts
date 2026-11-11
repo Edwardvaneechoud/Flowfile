@@ -6,7 +6,6 @@ import {
   hubFlowVersionTitle,
   hubPresence,
   canShareHubRow,
-  hubSharedTitle,
   ownsHubRow,
   offersNew,
   offersOwnCatalog,
@@ -113,28 +112,6 @@ describe("sharing a hub row", () => {
   it("lets only its owner on the hub hand out manage", () => {
     expect(ownsHubRow({ access: { is_owner: true, access_level: "owner" } })).toBe(true);
     expect(ownsHubRow({ access: { is_owner: false, access_level: "manage" } })).toBe(false);
-  });
-});
-
-describe("hubSharedTitle", () => {
-  it("names a person who shared the row", () => {
-    expect(hubSharedTitle({ shared_by: "ada" })).toBe("Shared by ada");
-  });
-
-  it("never shows a team's or the organisation's raw account", () => {
-    expect(hubSharedTitle({ shared_by: "team:sales" })).toBe("Shared with you");
-    expect(hubSharedTitle({ shared_by: "org:organisation" })).toBe("Shared with you");
-  });
-
-  it("names a team by the name the hub gives, colon and all", () => {
-    expect(hubSharedTitle({ shared_by: "Sales" })).toBe("Shared by Sales");
-    expect(hubSharedTitle({ shared_by: "Sales: EMEA" })).toBe("Shared by Sales: EMEA");
-    expect(hubSharedTitle({ shared_by: "Cal Jones" })).toBe("Shared by Cal Jones");
-  });
-
-  it("says shared with you when the granter is not known", () => {
-    expect(hubSharedTitle({ shared_by: null })).toBe("Shared with you");
-    expect(hubSharedTitle(null)).toBe("Shared with you");
   });
 });
 

@@ -23,9 +23,8 @@ vi.mock("../../composables/useResourceSharing", () => ({
 vi.mock("./VisualizationsTab.vue", () => ({ default: { render: () => null } }));
 vi.mock("./TableMaintenance.vue", async () => {
   const { h } = await import("vue");
-  const render = (props: { remote?: boolean }) =>
-    h("span", { "data-testid": "maintenance", "data-remote": String(props.remote) });
-  return { default: Object.assign(render, { props: ["table", "remote"] }) };
+  const render = () => h("span", { "data-testid": "maintenance" });
+  return { default: Object.assign(render, { props: ["table"] }) };
 });
 vi.mock("./TableEditorDialog.vue", () => ({ default: { render: () => null } }));
 vi.mock("../../components/sharing/ShareDialog.vue", () => ({ default: { render: () => null } }));
@@ -49,9 +48,7 @@ const hubTable = table({
   ...localTable,
   id: -3,
   source: "hub",
-  hub_id: 3,
-  hub_namespace_id: 2,
-  file_exists: false,
+  is_remote_storage: true,
 });
 
 let host: HTMLElement;
@@ -110,9 +107,7 @@ describe("TableDetailPanel", () => {
     expect(host.querySelector('[title="Share table"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="query-table"]')?.hasAttribute("disabled")).toBe(false);
     expect(host.querySelector('[data-testid="hub-create-viz"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="maintenance"]')?.getAttribute("data-remote")).toBe(
-      "true",
-    );
+    expect(host.querySelector('[data-testid="maintenance"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="edit-data"]')).not.toBeNull();
     expect(host.querySelector(".viz-section")).toBeNull();
   });

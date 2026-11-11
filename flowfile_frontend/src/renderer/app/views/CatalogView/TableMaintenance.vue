@@ -3,7 +3,7 @@
     <button
       class="action-btn-lg"
       data-testid="table-optimize"
-      :disabled="!remote && !table.file_exists"
+      :disabled="!table.file_exists"
       @click="openOptimize"
     >
       <i class="fa-solid fa-compress"></i>
@@ -12,7 +12,7 @@
     <button
       class="action-btn-lg"
       data-testid="table-vacuum"
-      :disabled="!remote && !table.file_exists"
+      :disabled="!table.file_exists"
       @click="openVacuum"
     >
       <i class="fa-solid fa-broom"></i>
@@ -21,7 +21,7 @@
     <button
       v-if="canEnableTracking"
       class="action-btn-lg"
-      :disabled="(!remote && !table.file_exists) || enablingCdc"
+      :disabled="!table.file_exists || enablingCdc"
       title="Record inserts, updates and deletes so readers can read only what changed"
       @click="enableTracking"
     >
@@ -138,8 +138,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { formatSize } from "./catalog-formatters";
 
-// remote: a table of a remote catalog, whose file this machine does not probe.
-const props = defineProps<{ table: CatalogTable; remote?: boolean }>();
+const props = defineProps<{ table: CatalogTable }>();
 const store = useCatalogStore();
 const { canManage } = useResourceSharing();
 

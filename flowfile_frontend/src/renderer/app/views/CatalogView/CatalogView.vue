@@ -479,7 +479,6 @@
       :can-manage-grants="
         isHubRow(shareNamespace) ? ownsHubRow(shareNamespace) : canManageGrants(shareNamespace)
       "
-      :remote="isHubRow(shareNamespace)"
     />
 
     <!-- Right-click context menus for catalog tables and flows -->

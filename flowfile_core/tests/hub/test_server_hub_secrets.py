@@ -109,6 +109,8 @@ def test_the_secrets_page_lists_this_servers_own_secrets_then_the_hubs_read_only
     assert (mine["name"], mine["source"], mine["id"]) == (name, "local", own["id"]) and own["id"] > 0
     assert (the_hubs["name"], the_hubs["source"], the_hubs["id"]) == (f"hub_{name}", "hub", -on_the_hub["id"])
     assert the_hubs["value"] is None and "own-value" not in listed.text and "hub-value" not in listed.text
+    assert the_hubs["access"]["is_owner"] is False and the_hubs["access"]["access_level"] == "use"
+    assert the_hubs["access"]["shared_by"]
     [(method, route, token)] = hub.secret_calls
     assert (method, route) == ("GET", "/secrets/secrets") and hub.issued[token] == UID and token != access_token
 

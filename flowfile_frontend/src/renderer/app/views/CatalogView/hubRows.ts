@@ -120,15 +120,6 @@ export const canShareHubRow = (row: Shareable): boolean =>
 /** Whether the person may hand out manage on a hub row: its owner on the hub, whatever they are on this machine. */
 export const ownsHubRow = (row: Shareable): boolean => row.access?.is_owner !== false;
 
-/** An older hub's granter written as a team's or the organisation's account id, such as `team:sales`. */
-const RAW_PRINCIPAL = /^(team|org):\S+$/;
-
-/** A hub row's "Shared" title: the granter by the name the hub gives, never a team's or the organisation's raw account id. */
-export function hubSharedTitle(access: { shared_by?: string | null } | null | undefined): string {
-  const by = access?.shared_by;
-  return by && !RAW_PRINCIPAL.test(by) ? `Shared by ${by}` : "Shared with you";
-}
-
 export interface SchedulerBanners {
   local: boolean;
   localScoped: boolean;

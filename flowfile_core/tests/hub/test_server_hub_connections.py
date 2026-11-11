@@ -184,7 +184,9 @@ def test_each_page_lists_this_servers_own_connections_then_the_hubs_read_only_wi
         mine, the_hubs = listed[kind].json()
         assert (mine["connection_name"], mine["source"]) == (name, "local") and mine["id"] > 0
         assert (the_hubs["connection_name"], the_hubs["source"]) == (f"hub_{name}", "hub")
-        assert the_hubs["id"] == -on_the_hub[kind]["id"] and the_hubs["access"]["is_owner"]
+        assert the_hubs["id"] == -on_the_hub[kind]["id"]
+        assert the_hubs["access"]["is_owner"] is False and the_hubs["access"]["access_level"] == "use"
+        assert the_hubs["access"]["shared_by"]
     assert not any("secret" in response.text for response in listed.values())
     assert [(method, route) for method, route, _ in hub.connection_calls] == [("GET", LIST[kind]) for kind in KINDS]
     assert all(hub.issued[token] == UID and token != access_token for _, _, token in hub.connection_calls)

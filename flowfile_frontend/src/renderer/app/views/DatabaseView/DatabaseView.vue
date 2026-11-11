@@ -58,8 +58,7 @@
                 <i class="fa-solid fa-database"></i>
                 <span>{{ connection.connectionName }}</span>
                 <span class="badge">{{ connection.databaseType }}</span>
-                <span v-if="connection.source === 'hub'" class="badge">From your hub</span>
-                <SharedBadge v-else :access="connection.access" />
+                <SharedBadge :access="connection.access" />
               </div>
               <div class="connection-details">
                 <span>{{

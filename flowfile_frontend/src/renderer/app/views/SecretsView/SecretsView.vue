@@ -187,8 +187,7 @@
               <div class="secret-name">
                 <i class="fa-solid fa-key"></i>
                 <span>{{ secret.name }}</span>
-                <span v-if="secret.source === 'hub'" class="badge">From your hub</span>
-                <SharedBadge v-else :access="secret.access" />
+                <SharedBadge :access="secret.access" />
               </div>
               <div class="secret-value">
                 <input
@@ -199,7 +198,7 @@
                   aria-label="Masked secret value"
                 />
               </div>
-              <div v-if="secret.source !== 'hub'" class="secret-actions">
+              <div class="secret-actions">
                 <button
                   v-if="isMultiUser && isOwned(secret) && secret.id != null"
                   type="button"

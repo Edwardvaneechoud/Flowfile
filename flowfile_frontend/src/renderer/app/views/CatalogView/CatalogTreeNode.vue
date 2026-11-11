@@ -20,7 +20,7 @@
         class="ns-icon"
       ></i>
       <span class="ns-name">{{ node.name }}</span>
-      <SharedBadge :access="node.access" :title="isHub ? hubSharedTitle(node.access) : undefined" />
+      <SharedBadge :access="node.access" />
       <CatalogStorageBadge
         v-if="node.level === 0 && !isHub"
         :storage-uri="node.storage_uri"
@@ -376,13 +376,7 @@ import {
 } from "./catalogTreeFilter";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
-import {
-  canShareHubRow,
-  hubFlowVersionTitle,
-  hubSharedTitle,
-  isHubRow,
-  unavailableReason,
-} from "./hubRows";
+import { canShareHubRow, hubFlowVersionTitle, isHubRow, unavailableReason } from "./hubRows";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const { isMultiUser, isOwned, canManage } = useResourceSharing();

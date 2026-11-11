@@ -24,10 +24,7 @@
           <span v-if="table.scd2" class="scd2-badge" title="Slowly changing dimension (type 2)"
             >SCD2</span
           >
-          <SharedBadge
-            :access="table.access"
-            :title="isHub ? hubSharedTitle(table.access) : undefined"
-          />
+          <SharedBadge :access="table.access" />
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
@@ -35,7 +32,7 @@
         <button
           class="action-btn-lg"
           data-testid="query-table"
-          :disabled="!isHub && !table.file_exists"
+          :disabled="!table.file_exists"
           @click="emit('queryTable', table.qualified_name ?? table.full_table_name ?? table.name)"
         >
           <i class="fa-solid fa-code"></i>
@@ -73,7 +70,7 @@
           {{ table.is_favorite ? "Favorited" : "Favorite" }}
         </button>
         <!-- A remote table is optimized, vacuumed and tracked by this machine, as a local one is. -->
-        <TableMaintenance v-if="table.table_type !== 'virtual'" :table="table" :remote="isHub" />
+        <TableMaintenance v-if="table.table_type !== 'virtual'" :table="table" />
         <button
           v-if="isHub ? canShareHubRow(table) : canShare(table)"
           class="action-btn-lg"
@@ -112,10 +109,7 @@
     />
 
     <!-- File missing banner (physical tables only) -->
-    <div
-      v-if="!isHub && table.table_type !== 'virtual' && !table.file_exists"
-      class="missing-banner"
-    >
+    <div v-if="table.table_type !== 'virtual' && !table.file_exists" class="missing-banner">
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div>
         <strong>Table data not found</strong>
@@ -507,7 +501,7 @@
         This is a virtual table, no data preview available. Use the SQL editor or a flow to view the
         data.
       </div>
-      <div v-else-if="(isHub || table.is_remote_storage) && !preview" class="empty-state">
+      <div v-else-if="table.is_remote_storage && !preview" class="empty-state">
         <el-button size="small" type="primary" @click="emit('loadPreview')">Load preview</el-button>
       </div>
       <div v-else class="empty-state">No data to preview.</div>
@@ -541,7 +535,7 @@ import TableEditorDialog from "./TableEditorDialog.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
-import { canShareHubRow, hubSharedTitle, isHubRow, ownsHubRow } from "./hubRows";
+import { canShareHubRow, isHubRow, ownsHubRow } from "./hubRows";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
@@ -596,13 +590,13 @@ const isViewingHistorical = computed(
     props.selectedVersion !== props.tableHistory.current_version,
 );
 
-// Edit surface: physical non-SCD2 tables with data on disk (a hub table's file is not probed here),
+// Edit surface: physical non-SCD2 tables with data on disk,
 // manage access required. Legacy Parquet tables pass this gate but are refused server-side.
 const canEditData = computed(
   () =>
     canManage(props.table) &&
     props.table.table_type !== "virtual" &&
-    (isHub.value || props.table.file_exists) &&
+    props.table.file_exists &&
     !props.table.scd2,
 );
 
