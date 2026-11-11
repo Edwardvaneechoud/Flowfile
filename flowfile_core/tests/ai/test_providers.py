@@ -414,7 +414,13 @@ async def test_openai_default_reaches_http_transport() -> None:
 
     import httpx
     import litellm
+    from litellm.types.llms.openai import ChatCompletionReasoningSummaryTextBlock  # noqa: F401
+    from litellm.types.utils import Message as LiteLLMMessage
     from openai import AsyncOpenAI
+
+    # On Python 3.10 litellm's Message model is left with an unresolved forward
+    # reference; rebuild it with the referenced type in scope.
+    LiteLLMMessage.model_rebuild()
 
     requests = []
 
