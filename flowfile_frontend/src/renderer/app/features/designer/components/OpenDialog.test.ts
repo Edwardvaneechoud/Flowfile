@@ -77,7 +77,7 @@ const openRow = async (name: string) => {
   });
   (host.querySelector('[data-testid="pick-namespace"]') as HTMLElement).click();
   await settle();
-  const row = [...host.querySelectorAll(".flow-row")].find((r) => r.textContent?.includes(name));
+  const row = Array.from(host.querySelectorAll(".flow-row")).find((r) => r.textContent?.includes(name));
   row?.dispatchEvent(new MouseEvent("dblclick"));
   await settle();
 };
