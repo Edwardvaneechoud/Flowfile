@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
+from shared.net import is_loopback_host
+
 if TYPE_CHECKING:
     import httpx
 
@@ -498,12 +500,3 @@ def serving_socket(host: str, port: int) -> socket.socket:
     except OSError as exc:
         logger.error("Cannot serve on %s: %s", _host_port(host, port), exc.strerror or type(exc).__name__)
         raise SystemExit(1) from None
-
-
-def is_loopback_host(host: str) -> bool:
-    if host.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host.strip("[]")).is_loopback
-    except ValueError:
-        return False
