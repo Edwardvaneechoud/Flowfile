@@ -174,8 +174,8 @@
             <span
               v-if="flow.last_run_success !== null"
               class="run-indicator"
-              :class="flow.last_run_success ? 'success' : 'failure'"
-              :title="flow.last_run_success ? 'Last run succeeded' : 'Last run failed'"
+              :class="lastRunClass(flow)"
+              :title="lastRunTitle(flow)"
             ></span>
           </div>
         </div>
@@ -353,9 +353,10 @@
 <script setup lang="ts">
 import { computed, watch } from "vue";
 import { SCRATCH_NAMESPACE_NAMES, SYSTEM_NAMESPACE_NAMES } from "../../types";
-import type { CatalogTable, GlobalArtifact, NamespaceTree } from "../../types";
+import type { CatalogTable, FlowRegistration, GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
+import { RUN_OUTCOME_BADGE, runOutcome } from "./runStatus";
 import { isEmptySchema, isSeededSchema } from "./catalogStorageEdit";
 import { useCatalogStore } from "../../stores/catalog-store";
 import {
@@ -380,6 +381,21 @@ import { hubFlowVersionTitle, isHubRow, unavailableReason } from "./hubRows";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const { isMultiUser, isOwned, canManage, canShare } = useResourceSharing();
+
+const LAST_RUN_TITLE = {
+  success: "Last run succeeded",
+  failed: "Last run failed",
+  cancelled: "Last run was cancelled",
+  running: "Running",
+};
+
+function lastRunClass(flow: FlowRegistration): string {
+  return RUN_OUTCOME_BADGE[runOutcome(flow.last_run_success, flow.last_run_cancelled)];
+}
+
+function lastRunTitle(flow: FlowRegistration): string {
+  return LAST_RUN_TITLE[runOutcome(flow.last_run_success, flow.last_run_cancelled)];
+}
 
 const props = withDefaults(
   defineProps<{
@@ -760,6 +776,9 @@ const totalFlows = computed(() => {
 }
 .run-indicator.failure {
   background: var(--color-danger);
+}
+.run-indicator.cancelled {
+  background: var(--color-text-muted);
 }
 
 .tree-flow.file-missing,

@@ -362,6 +362,7 @@ import { formatDate, formatSize, formatType } from "./catalog-formatters";
 import { copyTextEverywhere } from "../../utils/clipboardUtils";
 import type { FlowCodeFormat } from "../../types";
 import RunHistoryTable from "./RunHistoryTable.vue";
+import { RUN_OUTCOME_LABEL, RUN_OUTCOME_TEXT, runOutcome } from "./runStatus";
 import { CollapsibleSection, EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
 import ApiEndpointPanel from "./ApiEndpointPanel.vue";
@@ -514,14 +515,18 @@ async function handleCancelScheduleRun(schedule: FlowSchedule) {
   await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(props.flow.id)]);
 }
 
+const lastRunOutcome = computed(() =>
+  runOutcome(props.flow.last_run_success, props.flow.last_run_cancelled),
+);
+
 const statusClass = computed(() => {
   if (props.flow.last_run_success === null) return "";
-  return props.flow.last_run_success ? "text-success" : "text-danger";
+  return RUN_OUTCOME_TEXT[lastRunOutcome.value];
 });
 
 const statusText = computed(() => {
   if (props.flow.last_run_success === null) return "No runs";
-  return props.flow.last_run_success ? "Success" : "Failed";
+  return RUN_OUTCOME_LABEL[lastRunOutcome.value];
 });
 
 async function onSaveDescription(scheduleId: number, description: string | null) {

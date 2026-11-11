@@ -131,6 +131,8 @@ export interface FlowRegistration {
   run_count: number;
   last_run_at: string | null;
   last_run_success: boolean | null;
+  // The last run was stopped on purpose (it keeps success false); absent from an older core.
+  last_run_cancelled?: boolean;
   file_exists: boolean;
   is_api_compatible: boolean;
   artifact_count: number;
@@ -197,6 +199,8 @@ export interface FlowRun {
   started_at: string;
   ended_at: string | null;
   success: boolean | null;
+  // Stopped on purpose before it finished (it keeps success false); absent from an older core.
+  cancelled?: boolean;
   nodes_completed: number;
   number_of_nodes: number;
   duration_seconds: number | null;
@@ -219,6 +223,8 @@ export interface PaginatedFlowRuns {
   total_success: number;
   total_failed: number;
   total_running: number;
+  // Runs stopped on purpose, which total_failed leaves out; absent from an older core.
+  total_cancelled?: number;
 }
 
 export interface FlowRunDetail extends FlowRun {

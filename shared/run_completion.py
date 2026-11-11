@@ -65,6 +65,18 @@ def _close_run(run: FlowRun, success: bool, now: datetime) -> None:
         run.duration_seconds = (now_utc - started_utc).total_seconds()
 
 
+def _drop_cancel_mark(session: Session, run_id: int) -> None:
+    """Undo a cancel recorded for a run that then reported its own end: the cancel did not stop it.
+
+    The mark goes and so does the cancel's notification stamp, so the reported outcome is evaluated for alerts
+    like any other. Keyed on the stored mark, after the caller's flush: a cancel can commit between the caller's
+    load of the row and its write, and the loaded value would then say there is nothing to undo.
+    """
+    session.query(FlowRun).filter(FlowRun.id == run_id, FlowRun.cancelled.is_(True)).update(
+        {FlowRun.cancelled: False, FlowRun.notification_processed_at: None}, synchronize_session=False
+    )
+
+
 def _pid_is_alive_windows(pid: int) -> bool:
     import ctypes
     from ctypes import wintypes
@@ -123,8 +135,8 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def _terminate_pid(pid: int) -> str:
-    """Best-effort SIGTERM, mirroring ``FlowRunService.cancel_run``. Returns a log phrase."""
+def terminate_pid(pid: int) -> str:
+    """Best-effort SIGTERM to a run child. Returns a log phrase."""
     try:
         os.kill(pid, signal.SIGTERM)
         return f"terminated pid {pid}"
@@ -177,7 +189,7 @@ def reap_orphaned_runs(max_age_seconds: int | None = None) -> int:
                 if pid_alive:
                     # Closing the row releases the double-launch guard, so the process
                     # must not outlive it — otherwise the next tick spawns a duplicate.
-                    reason = f"{reason}; {_terminate_pid(run.pid)}"
+                    reason = f"{reason}; {terminate_pid(run.pid)}"
 
             if reason is None:
                 continue
@@ -234,6 +246,8 @@ def complete_run(
             run.number_of_nodes = number_of_nodes
         if node_results_json is not None:
             run.node_results_json = node_results_json
+        session.flush()
+        _drop_cancel_mark(session, run_id)
 
         session.commit()
         logger.info("Run %s completed: success=%s", run_id, success)

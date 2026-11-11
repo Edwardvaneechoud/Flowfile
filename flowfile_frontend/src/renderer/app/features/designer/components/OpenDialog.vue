@@ -107,6 +107,7 @@ import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
 import { CatalogApi } from "../../../api";
 import type { FlowRegistration } from "../../../types";
 import { isHubRow } from "../../../views/CatalogView/hubRows";
+import { runOutcome } from "../../../views/CatalogView/runStatus";
 import { OpenFromHubCancelled, openHubFlowVersion } from "../openFromHub";
 
 const props = defineProps({
@@ -257,9 +258,11 @@ function handleOpenCatalogFlow(flow: FlowRegistration) {
   isVisible.value = false;
 }
 
+const LAST_RUN_MARK = { success: "✔", failed: "✖", cancelled: "cancelled", running: "…" };
+
 function formatLastRun(flow: FlowRegistration): string {
   if (!flow.last_run_at) return "never run";
-  const status = flow.last_run_success === true ? "✔" : flow.last_run_success === false ? "✖" : "…";
+  const status = LAST_RUN_MARK[runOutcome(flow.last_run_success, flow.last_run_cancelled)];
   const when = new Date(flow.last_run_at).toLocaleString();
   return `${when} · ${status}`;
 }

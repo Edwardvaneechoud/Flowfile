@@ -30,6 +30,13 @@
           <span class="summary-label">Running</span>
         </div>
       </div>
+      <div v-if="totalCancelled > 0" class="summary-card" data-testid="summary-cancelled">
+        <i class="fa-solid fa-ban summary-icon cancelled-icon"></i>
+        <div class="summary-info">
+          <span class="summary-value">{{ totalCancelled }}</span>
+          <span class="summary-label">Cancelled</span>
+        </div>
+      </div>
     </div>
 
     <!-- Filter bar -->
@@ -92,9 +99,7 @@
       <div v-for="run in runs" :key="run.id" class="table-row">
         <div class="col-status">
           <span class="status-badge" :class="runStatusClass(run)">
-            <i v-if="run.success === null" class="fa-solid fa-spinner fa-spin" />
-            <i v-else-if="run.success" class="fa-solid fa-circle-check" />
-            <i v-else class="fa-solid fa-circle-xmark" />
+            <i :class="runStatusIcon(run)" />
             {{ runStatusText(run) }}
           </span>
         </div>
@@ -190,6 +195,7 @@
 import { computed, ref, watch } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowRun } from "../../types";
+import { RUN_OUTCOME_BADGE, RUN_OUTCOME_ICON, RUN_OUTCOME_LABEL, runOutcome } from "./runStatus";
 import {
   formatDate,
   formatDuration,
@@ -255,6 +261,9 @@ const totalFailed = computed(() =>
 const totalRunning = computed(() =>
   isScheduleMode.value ? catalogStore.scheduleRunsTotalRunning : catalogStore.runsTotalRunning,
 );
+const totalCancelled = computed(() =>
+  isScheduleMode.value ? catalogStore.scheduleRunsTotalCancelled : catalogStore.runsTotalCancelled,
+);
 const page = computed(() =>
   isScheduleMode.value ? catalogStore.scheduleRunsPage : catalogStore.runsPage,
 );
@@ -282,13 +291,15 @@ function goToPage(p: number) {
 }
 
 function runStatusClass(run: FlowRun): string {
-  if (run.success === null) return "running";
-  return run.success ? "success" : "failure";
+  return RUN_OUTCOME_BADGE[runOutcome(run.success, run.cancelled)];
 }
 
 function runStatusText(run: FlowRun): string {
-  if (run.success === null) return "Running";
-  return run.success ? "Success" : "Failed";
+  return RUN_OUTCOME_LABEL[runOutcome(run.success, run.cancelled)];
+}
+
+function runStatusIcon(run: FlowRun): string {
+  return RUN_OUTCOME_ICON[runOutcome(run.success, run.cancelled)];
 }
 </script>
 

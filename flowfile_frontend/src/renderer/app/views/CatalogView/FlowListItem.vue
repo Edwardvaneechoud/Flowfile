@@ -31,7 +31,7 @@
       <span
         v-if="flow.last_run_success !== null"
         class="run-dot"
-        :class="flow.last_run_success ? 'success' : 'failure'"
+        :class="RUN_OUTCOME_BADGE[runOutcome(flow.last_run_success, flow.last_run_cancelled)]"
       ></span>
     </div>
   </div>
@@ -39,6 +39,7 @@
 
 <script setup lang="ts">
 import type { FlowRegistration } from "../../types";
+import { RUN_OUTCOME_BADGE, runOutcome } from "./runStatus";
 
 defineProps<{
   flow: FlowRegistration;
@@ -139,6 +140,9 @@ defineEmits(["select", "toggleFavorite"]);
 }
 .run-dot.failure {
   background: #ef4444;
+}
+.run-dot.cancelled {
+  background: var(--color-text-muted);
 }
 
 .flow-list-item.file-missing {

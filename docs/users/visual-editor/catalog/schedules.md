@@ -91,7 +91,7 @@ Each schedule in the list provides inline actions:
 | **Enable / Disable** | Toggle the schedule on or off without deleting it |
 | **Edit Description** | Click the description text to edit it inline |
 | **Delete** | Remove the schedule (with confirmation dialog) |
-| **Cancel Run** | Stop a currently running flow (sends SIGTERM to the process) |
+| **Cancel Run** | Stop a currently running flow (sends SIGTERM to the process). The run then reads **Cancelled** in the run history, not Failed |
 
 !!! warning "One active run per flow"
     A flow can only have one active run at a time. If a flow is already running, new triggers (both scheduled and manual) are skipped until the current run completes.

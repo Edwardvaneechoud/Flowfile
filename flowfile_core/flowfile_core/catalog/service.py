@@ -737,9 +737,12 @@ class CatalogService:
         nodes_completed: int,
         number_of_nodes: int | None = None,
         node_results_json: str | None = None,
+        cancelled: bool = False,
     ) -> FlowRun:
-        """Mark a run as completed."""
-        return self._runs.complete_run(run_id, success, nodes_completed, number_of_nodes, node_results_json)
+        """Mark a run as completed; ``cancelled`` when it was stopped on purpose and nothing in it failed."""
+        return self._runs.complete_run(
+            run_id, success, nodes_completed, number_of_nodes, node_results_json, cancelled=cancelled
+        )
 
     def create_completed_run(
         self,
@@ -755,6 +758,7 @@ class CatalogService:
         run_type: RunType,
         node_results_json: str | None = None,
         flow_snapshot: str | None = None,
+        cancelled: bool = False,
     ) -> FlowRun:
         """Record a fully completed run in one step (fallback when start_run was skipped)."""
         return self._runs.create_completed_run(
@@ -770,6 +774,7 @@ class CatalogService:
             run_type,
             node_results_json,
             flow_snapshot,
+            cancelled=cancelled,
         )
 
     def auto_register_flow(self, flow_path: str, name: str, user_id: int) -> FlowRegistration | None:
@@ -1466,7 +1471,7 @@ class CatalogService:
         return self._runs.list_active_runs()
 
     def cancel_run(self, run_id: int) -> None:
-        """Cancel a running flow by terminating its subprocess and marking the run failed."""
+        """Cancel a run that has not ended: mark it cancelled and terminate its subprocess."""
         self._require_use_run(run_id)
         self._runs.cancel_run(run_id)
 
