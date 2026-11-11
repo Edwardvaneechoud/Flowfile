@@ -17,6 +17,7 @@ from flowfile_core.hub_client.node_tokens import RECONNECT
 from flowfile_core.schemas.catalog_schema import NamespaceTree
 
 HUB = "hub"
+SCHEDULERS = "/catalog/schedulers"
 _ROW_REFERENCES = (
     "id",
     "namespace_id",
@@ -114,10 +115,16 @@ def _placed(node: NamespaceTree, place: str, storage_uri: str | None, parents: s
 def relay(user_id: int | None, method: str, path: str, params: dict | None = None, body=None) -> tuple[int, object]:
     """A metadata request on a hub catalog answered by the hub's same route, negative ids sent as the hub's own.
 
-    A hub 401 answers 400 (the frontend reads 401 as an expired local session); a hub that does not answer is 502.
+    A hub 401 answers 400 (the frontend reads 401 as an expired local session); a hub that does not answer is 502. The
+    hub's schedulers say they are the hub's, by the name its catalogs are placed under.
     """
     try:
-        return _relayed(*session.bearer(user_id, NOT_CONNECTED), method, path, params, body)
+        status, answer = _relayed(*session.bearer(user_id, NOT_CONNECTED), method, path, params, body)
+        if path == SCHEDULERS and isinstance(answer, list):
+            stored = session.load(user_id) or {}
+            place = stored.get("org_name") or stored.get("hub_url")
+            answer = [{**row, "place": row.get("place") or place} for row in answer if isinstance(row, dict)]
+        return status, answer
     except LookupError as e:
         return 400, {"detail": str(e)}
     except HubRefused as e:

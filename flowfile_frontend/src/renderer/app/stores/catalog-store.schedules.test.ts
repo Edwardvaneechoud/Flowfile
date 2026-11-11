@@ -95,10 +95,9 @@ describe("catalog-store enrichedSchedules of a hub", () => {
     setActivePinia(createPinia());
   });
 
-  it("names a hub schedule's flow from the tree and marks it running by the hub's run", () => {
+  it("names a hub schedule's flow from the merged flow list and marks it running by the hub's run", () => {
     const store = useCatalogStore();
-    const hubFlow = { id: -201, name: "orders-clean", source: "hub" };
-    store.tree = [{ id: -1, flows: [], children: [{ id: -2, flows: [hubFlow], children: [] }] }] as any;
+    store.allFlows = [{ id: -201, name: "orders-clean", source: "hub" }] as any;
     store.schedules = [
       schedule(7),
       { ...schedule(-7), registration_id: -201, source: "hub", backend: "worker:bmax" },

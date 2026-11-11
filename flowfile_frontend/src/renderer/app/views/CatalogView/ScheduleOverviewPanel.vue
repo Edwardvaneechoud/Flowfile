@@ -7,56 +7,28 @@
       </el-button>
     </div>
 
+    <!-- The schedulers that fire the listed schedules, this machine's first -->
     <div
-      v-if="banners.remote"
+      v-for="(status, i) in shownSchedulers"
+      :key="status.place ?? i"
       class="scheduler-status-bar"
-      data-testid="remote-scheduler-status"
-      :class="remoteStatus?.active ? 'scheduler-active' : 'scheduler-inactive'"
+      data-testid="scheduler-status"
+      :class="status.active ? 'scheduler-active' : 'scheduler-inactive'"
     >
       <div class="scheduler-status-info">
-        <span
-          class="scheduler-dot"
-          :class="remoteStatus?.active ? 'dot-green' : 'dot-orange'"
-        ></span>
+        <span class="scheduler-dot" :class="status.active ? 'dot-green' : 'dot-orange'"></span>
         <span class="scheduler-status-text">
-          {{
-            remoteStatus?.active ? "The hub's scheduler running" : "The hub's scheduler not running"
-          }}
+          {{ status.place ? `${status.place}: ` : ""
+          }}{{ status.active ? "Scheduler running" : "Scheduler not running" }}
         </span>
-        <span v-if="remoteStatus?.active && remoteStatus?.heartbeat_at" class="scheduler-heartbeat">
-          Last heartbeat: {{ formatDate(remoteStatus.heartbeat_at) }}
+        <span v-if="status.active && status.heartbeat_at" class="scheduler-heartbeat">
+          Last heartbeat: {{ formatDate(status.heartbeat_at) }}
         </span>
       </div>
-    </div>
-
-    <!-- Scheduler status bar -->
-    <div
-      v-if="banners.local"
-      class="scheduler-status-bar"
-      data-testid="local-scheduler-status"
-      :class="catalogStore.schedulerStatus?.active ? 'scheduler-active' : 'scheduler-inactive'"
-    >
-      <div class="scheduler-status-info">
-        <span
-          class="scheduler-dot"
-          :class="catalogStore.schedulerStatus?.active ? 'dot-green' : 'dot-orange'"
-        ></span>
-        <span class="scheduler-status-text">
-          {{ localStatusText }}
-        </span>
-        <span
-          v-if="catalogStore.schedulerStatus?.active && catalogStore.schedulerStatus?.heartbeat_at"
-          class="scheduler-heartbeat"
-        >
-          Last heartbeat: {{ formatDate(catalogStore.schedulerStatus.heartbeat_at) }}
-        </span>
-      </div>
-      <template v-if="isStandalone || isDockerMode">
-        <!-- No start/stop controls for standalone scheduler or Docker mode -->
-      </template>
-      <template v-else>
+      <!-- Start/stop only for this machine's embedded scheduler, outside Docker mode -->
+      <template v-if="status === ownShown && !isStandalone && !isDockerMode">
         <el-button
-          v-if="catalogStore.schedulerStatus?.active"
+          v-if="status.active"
           size="small"
           type="warning"
           text
@@ -71,7 +43,7 @@
     </div>
 
     <!-- Lifecycle warning (hidden in Docker mode where the scheduler is always running) -->
-    <div v-if="banners.local && !isDockerMode" class="scheduler-warning">
+    <div v-if="ownShown && !isDockerMode" class="scheduler-warning">
       <i class="fa-solid fa-circle-info"></i>
       <span v-if="isStandalone">
         The scheduler is running as a standalone service. Manage it from the process where it was
@@ -170,7 +142,7 @@ import { authService } from "../../services/auth.service";
 import { formatDate } from "./catalog-formatters";
 import { EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
-import { offersOwnCatalog, schedulerBanners } from "./hubRows";
+import { offersOwnCatalog } from "./hubRows";
 
 const catalogStore = useCatalogStore();
 const isDockerMode = computed(() => !authService.isInDesktopMode());
@@ -191,23 +163,13 @@ const isStandalone = computed(
 
 const enrichedSchedules = computed(() => catalogStore.enrichedSchedules);
 
-const remoteStatus = computed(() => catalogStore.remoteSchedulerStatus);
-const banners = computed(() =>
-  schedulerBanners(
-    catalogStore.schedules,
-    offersOwnCatalog(catalogStore.tree),
-    remoteStatus.value !== null,
-  ),
+// This machine's scheduler is shown where its own catalog is offered; a joined server's is not.
+const ownShown = computed(() =>
+  offersOwnCatalog(catalogStore.tree) ? catalogStore.schedulerStatus : null,
 );
-const localStatusText = computed(() => {
-  const active = catalogStore.schedulerStatus?.active;
-  if (banners.value.localScoped) {
-    return active
-      ? "This machine's scheduler running, for this machine's schedules"
-      : "This machine's scheduler not running: this machine's schedules wait for it";
-  }
-  return active ? "Scheduler running" : "Scheduler not running";
-});
+const shownSchedulers = computed(() =>
+  catalogStore.schedulers.filter((status, i) => i > 0 || ownShown.value !== null),
+);
 
 // Client-side filter over the fully-loaded schedule list (flow + schedule name).
 const scheduleSearch = ref("");

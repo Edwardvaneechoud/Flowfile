@@ -1138,6 +1138,9 @@ class CatalogStats(BaseModel):
 
 
 class SchedulerStatusOut(BaseModel):
+    """A scheduler's status; ``place`` says whose it is once a remote catalog's is listed beside this install's."""
+
+    place: str | None = None
     active: bool
     holder_id: str | None = None
     started_at: datetime | None = None
@@ -1156,9 +1159,7 @@ class CatalogOverview(BaseModel):
     schedules: list[FlowScheduleOut] = Field(default_factory=list)
     active_runs: list[ActiveFlowRun] = Field(default_factory=list)
     runs: PaginatedFlowRuns
-    scheduler: SchedulerStatusOut
-    # The scheduler of the remote catalog whose schedules are listed beside this machine's; None without one.
-    remote_scheduler: SchedulerStatusOut | None = None
+    schedulers: list[SchedulerStatusOut] = Field(default_factory=list)
     default_namespace_id: int | None = None
 
 

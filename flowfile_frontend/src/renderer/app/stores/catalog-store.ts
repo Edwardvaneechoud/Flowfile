@@ -92,8 +92,8 @@ interface CatalogState {
   scheduleRunsPage: number;
   scheduleRunsTriggerFilter: string | null;
   activeRuns: ActiveFlowRun[];
-  schedulerStatus: SchedulerStatus | null;
-  remoteSchedulerStatus: SchedulerStatus | null;
+  // This install's scheduler first, then a remote catalog's, each saying whose once both are listed.
+  schedulers: SchedulerStatus[];
   defaultNamespaceId: number | null;
   overviewLoadedAt: number | null;
   activeTab: CatalogTab;
@@ -191,8 +191,7 @@ export const useCatalogStore = defineStore("catalog", {
     scheduleRunsPage: 1,
     scheduleRunsTriggerFilter: null,
     activeRuns: [],
-    schedulerStatus: null,
-    remoteSchedulerStatus: null,
+    schedulers: [],
     defaultNamespaceId: null,
     overviewLoadedAt: null,
     activeTab: "runs",
@@ -205,6 +204,8 @@ export const useCatalogStore = defineStore("catalog", {
   }),
 
   getters: {
+    schedulerStatus: (state): SchedulerStatus | null => state.schedulers[0] ?? null,
+
     selectedFlow: (state): FlowRegistration | null =>
       state.allFlows.find((f) => f.id === state.selectedFlowId) ?? null,
 
@@ -906,7 +907,7 @@ export const useCatalogStore = defineStore("catalog", {
 
     async loadSchedulerStatus() {
       try {
-        this.schedulerStatus = await CatalogApi.getSchedulerStatus();
+        this.schedulers = await CatalogApi.getSchedulers();
       } catch {
         // Non-critical — leave current state
       }
@@ -1003,8 +1004,7 @@ export const useCatalogStore = defineStore("catalog", {
         this.favorites = overview.favorites;
         this.schedules = overview.schedules;
         this.activeRuns = overview.active_runs;
-        this.schedulerStatus = overview.scheduler;
-        this.remoteSchedulerStatus = overview.remote_scheduler ?? null;
+        this.schedulers = overview.schedulers;
         this.defaultNamespaceId = overview.default_namespace_id;
         this.overviewLoadedAt = Date.now();
         // The overview carries page 1 unfiltered; a persisted page/filter needs its own query.

@@ -1227,7 +1227,8 @@ class TestOverview:
         assert data["schedules"] == client.get("/catalog/schedules").json()
         assert data["active_runs"] == client.get("/catalog/active-runs").json()
         assert data["runs"] == client.get("/catalog/runs", params={"limit": 25, "offset": 0}).json()
-        assert data["scheduler"] == client.get("/catalog/scheduler/status").json()
+        assert data["schedulers"] == client.get("/catalog/schedulers").json()
+        assert data["schedulers"] == [client.get("/catalog/scheduler/status").json()]
         assert data["default_namespace_id"] == client.get("/catalog/default-namespace-id").json()
 
         assert [f["id"] for f in data["favorites"]] == [seeded["flow"]["id"]]

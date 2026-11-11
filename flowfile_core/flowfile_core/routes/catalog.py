@@ -1883,13 +1883,14 @@ def _scheduler_status(db: Session) -> SchedulerStatusOut:
     )
 
 
-def _remote_scheduler_status(user_id: int) -> SchedulerStatusOut | None:
-    """The status a remote catalog answers for its own scheduler, the one that fires its listed schedules; ``None``
-    when no remote catalog answers it."""
-    try:
-        return SchedulerStatusOut.model_validate(table_sources.remote_answer(user_id, "/catalog/scheduler/status"))
-    except (ValidationError, TypeError):
-        return None
+def _schedulers(db: Session, user_id: int) -> list[SchedulerStatusOut]:
+    """This install's scheduler, then a remote catalog's, which fires that catalog's listed schedules
+    (``table_sources.merged_rows``); each says whose it is once both are listed."""
+    own = _scheduler_status(db)
+    listed = table_sources.merged_rows(user_id, "/catalog/schedulers", [own], SchedulerStatusOut)
+    if len(listed) > 1:
+        own.place = table_sources.own_place()
+    return listed
 
 
 @router.get("/scheduler/status", response_model=SchedulerStatusOut)
@@ -1899,6 +1900,12 @@ def scheduler_status(
 ):
     """Return the current scheduler lock status."""
     return _scheduler_status(db)
+
+
+@router.get("/schedulers", response_model=list[SchedulerStatusOut])
+def list_schedulers(db: Session = Depends(get_db), current_user=Depends(get_current_active_user)):
+    """The schedulers that fire the listed schedules, this install's first (``_schedulers``)."""
+    return _schedulers(db, current_user.id)
 
 
 @router.get("/overview", response_model=CatalogOverview)
@@ -1914,7 +1921,7 @@ def get_catalog_overview(
     built on: the whole screen costs one pooled connection instead of one per call.
     The individual endpoints stay for detail views, mutations and the poll loop. The tree is the one
     ``/namespaces/tree`` answers, a remote catalog's rows after the local ones, and so are the flows, schedules, active
-    runs and the runs; ``remote_scheduler`` is that catalog's own scheduler status, the one its schedules run by.
+    runs, the runs and the schedulers.
     """
     user_id = current_user.id
     return CatalogOverview(
@@ -1926,8 +1933,7 @@ def get_catalog_overview(
         schedules=table_sources.merged_rows(user_id, "/catalog/schedules", service.list_schedules(), FlowScheduleOut),
         active_runs=_active_runs(service, user_id),
         runs=_all_runs(service, user_id, None, None, runs_limit, 0),
-        scheduler=_scheduler_status(db),
-        remote_scheduler=_remote_scheduler_status(user_id),
+        schedulers=_schedulers(db, user_id),
         default_namespace_id=service.get_default_namespace_id(),
     )
 

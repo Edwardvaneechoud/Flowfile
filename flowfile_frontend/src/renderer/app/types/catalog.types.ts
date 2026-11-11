@@ -652,6 +652,8 @@ export interface CatalogStats {
 // Scheduler Status
 
 export interface SchedulerStatus {
+  // Whose scheduler, once a remote catalog's is listed beside this install's.
+  place?: string | null;
   active: boolean;
   holder_id?: string;
   started_at?: string;
@@ -670,8 +672,7 @@ export interface CatalogOverview {
   schedules: FlowSchedule[];
   active_runs: ActiveFlowRun[];
   runs: PaginatedFlowRuns;
-  scheduler: SchedulerStatus;
-  remote_scheduler?: SchedulerStatus | null;
+  schedulers: SchedulerStatus[];
   default_namespace_id: number | null;
 }
 

@@ -213,7 +213,7 @@ class FakeHubWithCatalog(FakeHub):
     a refused grant is answered as a hub that says what to do does (team-spaces TS10), naming the schema; otherwise
     as core's bare reason. ``POST /hub/runs``
     keeps each run report in ``reports`` and answers 201; ``GET /catalog/scheduler/status`` answers
-    ``scheduler_status``, the hub's own scheduler.
+    ``scheduler_status``, the hub's own scheduler, and ``GET /catalog/schedulers`` the list of it alone.
     """
 
     def __init__(self):
@@ -612,6 +612,8 @@ class FakeHubWithCatalog(FakeHub):
             return httpx.Response(200, json={"table": table, "warnings": []})
         if path == "/catalog/scheduler/status":
             return httpx.Response(200, json=self.scheduler_status)
+        if path == "/catalog/schedulers":
+            return httpx.Response(200, json=[{"place": None, **self.scheduler_status}])
         if path == "/catalog/namespaces/tree":
             return httpx.Response(200, json=self.tree() if self.tree_answer is None else self.tree_answer)
         if path == "/catalog/flows":

@@ -206,8 +206,12 @@ def merged_tree(user_id: int, local: list[NamespaceTree]) -> list[NamespaceTree]
     joined = issuer_accounts.joined_with_keys() is not None
     if not listed and not joined:
         return local
-    place = "On this server" if is_server_mode() else "On this computer"
-    return [_marked(node, place=place, offered=not joined) for node in local] + listed
+    return [_marked(node, place=own_place(), offered=not joined) for node in local] + listed
+
+
+def own_place() -> str:
+    """Where this install's rows live, in words, once a remote catalog's are listed beside them."""
+    return "On this server" if is_server_mode() else "On this computer"
 
 
 def _marked(node: NamespaceTree, **fields) -> NamespaceTree:

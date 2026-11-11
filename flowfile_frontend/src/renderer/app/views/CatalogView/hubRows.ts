@@ -119,25 +119,3 @@ export const canShareHubRow = (row: Shareable): boolean =>
 
 /** Whether the person may hand out manage on a hub row: its owner on the hub, whatever they are on this machine. */
 export const ownsHubRow = (row: Shareable): boolean => row.access?.is_owner !== false;
-
-export interface SchedulerBanners {
-  local: boolean;
-  localScoped: boolean;
-  remote: boolean;
-}
-
-/**
- * Which scheduler statuses the Schedules page shows: this machine's only where it lists schedules of its own (or
- * none of the hub's) and its own catalog is offered, worded for this machine's schedules beside the hub's; the hub's
- * where its schedules are listed and the hub said how its scheduler is.
- */
-export function schedulerBanners(
-  schedules: { source?: string | null }[],
-  ownOffered: boolean,
-  remoteKnown: boolean,
-): SchedulerBanners {
-  const remoteListed = schedules.some(isHubRow);
-  const ownListed = schedules.some((s) => !isHubRow(s));
-  const local = ownOffered && (ownListed || !remoteListed);
-  return { local, localScoped: local && remoteListed, remote: remoteListed && remoteKnown };
-}
