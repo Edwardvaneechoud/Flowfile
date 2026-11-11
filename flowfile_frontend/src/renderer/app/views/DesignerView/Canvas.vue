@@ -404,7 +404,7 @@ const emit = defineEmits<{
 }>();
 
 useFlowHotkeys({
-  flowId: () => nodeStore.flow_id,
+  flowId: () => flowStore.flowId,
   undo: () => emit("undo"),
   redo: () => emit("redo"),
   selectAll: () => addSelectedNodes(instance.getNodes.value),

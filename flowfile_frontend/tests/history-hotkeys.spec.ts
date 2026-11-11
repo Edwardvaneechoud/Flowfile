@@ -24,9 +24,12 @@ test.describe("Designer history shortcuts", () => {
   };
   const ids = async (request: APIRequestContext, flowId: number) =>
     (await snapshot(request, flowId)).nodes.map((node: { id: number }) => node.id).sort();
-  const select = async (page: Page, name: string) => {
+  const select = async (page: Page, name: string, flowId: number) => {
     const loaded = page.waitForResponse(
-      (r) => r.url().includes("/flow_data/v2") && r.status() === 200,
+      (r) =>
+        new URL(r.url()).pathname.endsWith("/flow_data/v2") &&
+        new URL(r.url()).searchParams.get("flow_id") === String(flowId) &&
+        r.status() === 200,
     );
     await page.locator(".flow-tab", { hasText: name }).first().dispatchEvent("click");
     await loaded;
@@ -87,7 +90,7 @@ test.describe("Designer history shortcuts", () => {
     const restored = await snapshot(request, a);
     await shortcut(page, "redo");
     expect(await snapshot(request, a)).toEqual(restored);
-    await select(page, nameB);
+    await select(page, nameB, b);
     await expect(page.locator(".vue-flow__node")).toHaveCount(3);
     await shortcut(page, "undo");
     await expect(page.locator(".vue-flow__node")).toHaveCount(2);
@@ -96,7 +99,7 @@ test.describe("Designer history shortcuts", () => {
     await expect(page.locator(".vue-flow__node")).toHaveCount(3);
   });
 
-  test("queued A presses and a late A response cannot mutate or reload B", async ({
+  test("queued A presses cannot mutate B when an A response arrives late", async ({
     page,
     request,
   }) => {
@@ -124,7 +127,10 @@ test.describe("Designer history shortcuts", () => {
       await shortcut(page, "redo");
       await shortcut(page, "undo");
       const loaded = page.waitForResponse(
-        (r) => r.url().includes("/flow_data/v2") && r.status() === 200,
+        (r) =>
+          new URL(r.url()).pathname.endsWith("/flow_data/v2") &&
+          new URL(r.url()).searchParams.get("flow_id") === String(b) &&
+          r.status() === 200,
       );
       await page.locator(".flow-tab", { hasText: nameB }).first().dispatchEvent("click");
       await expect(page.locator(".flow-tab.active")).toContainText(nameB);
