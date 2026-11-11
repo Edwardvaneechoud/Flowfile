@@ -2149,7 +2149,7 @@ class FlowNode:
                 (``executor.hints_for``); ``None`` counts every consumer.
             preview: Fill the 100-row grid; ``None`` means ``not performance_mode``.
             recompute: The node is run again under its current hash because its result went missing; the
-                nodes below keep theirs, which come back under the same ids.
+                nodes below keep theirs unless its results come back under other ids.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")

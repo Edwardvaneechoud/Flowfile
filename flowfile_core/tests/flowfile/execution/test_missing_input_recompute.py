@@ -195,30 +195,59 @@ def add_split_with_two_readers(graph: FlowGraph) -> None:
         )
 
 
-def test_an_expired_secondary_output_is_recomputed_and_the_other_outputs_reader_keeps_its_result(backend, recomputes):
+def lose_the_small_split_once(graph: FlowGraph, backend: RecordingBackend) -> list[str]:
+    """Releases the split's second output just before node 4 first submits; the ids of both outputs then."""
+    before: list[str] = []
+
+    def lose(node_id):
+        if node_id == 4 and not before:
+            split = graph.get_node(2)
+            before.extend(split.held_output(handle).result_id for handle in ("output-0", "output-1"))
+            backend.release(split.held_output("output-1"))
+
+    backend.before_submit = lose
+    return before
+
+
+def test_a_recomputed_split_comes_back_under_new_ids_and_the_other_outputs_reader_is_read_again(backend, recomputes):
     graph = make_graph(9303, "remote", max_parallel_workers=1)
     add_split_with_two_readers(graph)
-    lost: list[str] = []
-
-    def lose_the_small_split_once(node_id):
-        if node_id == 4 and not lost:
-            ref = graph.get_node(2).held_output("output-1")
-            lost.append(ref.result_id)
-            backend.release(ref)
-
-    backend.before_submit = lose_the_small_split_once
+    before = lose_the_small_split_once(graph, backend)
     try:
         run_info = graph.run_graph()
 
         assert run_info.success is True, errors(run_info)
-        assert lost
         assert recomputes == [2]
-        assert [backend.succeeded(node_id) for node_id in (1, 3, 4)] == [1, 1, 1]
-        for node_id in (2, 3, 4):
-            node = graph.get_node(node_id)
-            assert node.node_stats.has_run_with_current_setup, node_id
-            assert all(backend.exists(ref) for ref in node.held_refs()), node_id
+        split = graph.get_node(2)
+        assert not {split.held_output(handle).result_id for handle in ("output-0", "output-1")} & set(before)
+        assert all(backend.exists(ref) for ref in split.held_refs())
         assert backend.count(graph.get_node(4).results.result_ref) == 20
+        # Its plan scanned the first output's old file, so it holds nothing until it runs again.
+        reader = graph.get_node(3)
+        assert reader.held_refs() == []
+        assert not reader.node_stats.has_run_with_current_setup
+
+        again = graph.run_graph()
+
+        assert again.success is True, errors(again)
+        assert recomputes == [2]
+        assert backend.count(graph.get_node(3).results.result_ref) == 80
+        assert backend.count(graph.get_node(4).results.result_ref) == 20
+    finally:
+        graph.close_flow()
+
+
+def test_a_node_below_the_other_outputs_reader_runs_after_the_split_is_recomputed(backend, recomputes):
+    graph = make_graph(9305, "remote", max_parallel_workers=1)
+    add_split_with_two_readers(graph)
+    add_sort_on(graph, 5, 3, "id")
+    lose_the_small_split_once(graph, backend)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, errors(run_info)
+        assert recomputes == [2]
+        assert backend.count(graph.get_node(5).results.result_ref) == 80
     finally:
         graph.close_flow()
 

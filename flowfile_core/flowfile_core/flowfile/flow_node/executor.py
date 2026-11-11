@@ -236,19 +236,27 @@ class NodeExecutor:
                 it.
 
         A ``reset_cache`` that released a stored result the node does not store again (a Performance-mode fetch of
-        a node an earlier run stored) drops the results of the nodes below, whose plans scanned its file. Not with
-        ``recompute``: the node runs again under its hash, so its ids do not change and the nodes below keep theirs.
+        a node an earlier run stored) drops the results of the nodes below, whose plans scanned its file. With
+        ``recompute`` the nodes below keep theirs while every result the node held comes back under its id (a
+        submit under its hash); an operation that mints a fresh job id per run (a random split, a read) does not
+        bring them back, so the nodes below are dropped then too.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
 
         state = self.state_provider.get_state(self.node.node_id, self.node.parent_uuid)
 
+        held_before = _held_ids(self.node) if recompute else set()
         released_stored = reset_cache and self._clear_cache(state, keep_downstream=recompute)
         try:
             self._run(state, reset_cache, performance_mode, retry, node_logger, unreachable, running, preview)
         finally:
-            if released_stored and not recompute and not self._holds_stored_result():
+            if recompute:
+                held = _held_ids(self.node)
+                replaced = bool(held) and not held_before <= held
+            else:
+                replaced = released_stored and not self._holds_stored_result()
+            if replaced:
                 self.node.drop_downstream_results()
 
     def _run(
@@ -486,7 +494,7 @@ class NodeExecutor:
 
     def _clear_cache(self, state: NodeExecutionState, keep_downstream: bool = False) -> bool:
         """Clear cached results; when that released operation outputs, the nodes downstream drop theirs too, unless
-        ``keep_downstream`` (a recompute under the same ids).
+        ``keep_downstream`` (a recompute, whose caller drops them once the ids are known to have changed).
 
         Answers whether a stored result was released: its file is gone until the node stores again under its hash.
         """
@@ -620,3 +628,8 @@ class NodeExecutor:
 def _recompute_counts(node: FlowNode) -> dict[int | str, int]:
     """Each input of ``node`` by id with its ``_recompute_count``, taken before ``node`` submits."""
     return {node_input.node_id: node_input._recompute_count for node_input in node.node_inputs.get_all_inputs()}
+
+
+def _held_ids(node: FlowNode) -> set[tuple[str, str]]:
+    """The backend and result id of every result ``node`` holds (``FlowNode.held_refs``)."""
+    return {(ref.backend_id, ref.result_id) for ref in node.held_refs()}
