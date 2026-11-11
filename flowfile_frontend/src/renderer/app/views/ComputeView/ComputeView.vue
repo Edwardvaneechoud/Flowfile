@@ -10,7 +10,7 @@
     <div class="compute-content">
       <KernelManagerView v-if="activeTab === 'kernels'" />
       <ComputeBackendsPanel v-else-if="activeTab === 'backends'" />
-      <HubPanel v-else-if="activeTab === 'hub' && authStore.isAdmin" />
+      <HubPanel v-else-if="activeTab === 'hub' && (authStore.isAdmin || hub.joined)" />
       <PrivacyPanel v-else-if="activeTab === 'privacy'" />
       <BackupsPanel v-else-if="activeTab === 'backups'" />
     </div>
@@ -26,17 +26,19 @@ import ComputeBackendsPanel from "./ComputeBackendsPanel.vue";
 import HubPanel from "./HubPanel.vue";
 import PrivacyPanel from "./PrivacyPanel.vue";
 import BackupsPanel from "./BackupsPanel.vue";
-import { computeTabs, COMPUTE_TAB_GROUP_LABELS, resolveComputeTab } from "./computeTabs";
+import { computeTabs, COMPUTE_TAB_GROUP_LABELS, resolveComputeTab, showsTab } from "./computeTabs";
 import type { ComputeTabKey } from "./computeTabs";
 import { useAuthStore } from "../../stores/auth-store";
+import { useHubConnectionStore } from "../../stores/hub-connection-store";
 
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
+const hub = useHubConnectionStore();
 
 // Captions derive from the visible list: hiding an admin tab must not strand one.
 const visibleTabs = computed(() => {
-  const shown = computeTabs.filter((t) => !t.requiresAdmin || authStore.isAdmin);
+  const shown = computeTabs.filter((t) => showsTab(t, authStore.isAdmin, hub.joined));
   return shown.map((tab, i) => ({
     key: tab.key,
     label: tab.label,
@@ -57,6 +59,8 @@ const activeTab = ref<ComputeTabKey>(getInitialTab());
 
 onMounted(() => {
   router.replace({ query: { ...route.query, tab: activeTab.value } });
+  // An admin sees every tab; anyone else gets the Hub tab only where the server belongs to a hub.
+  if (!authStore.isAdmin) void hub.load();
 });
 
 function handleTabClick(tab: ComputeTabKey) {
