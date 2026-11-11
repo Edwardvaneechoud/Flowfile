@@ -34,7 +34,7 @@ import {
 } from "../../../types";
 import type { NamespaceTree } from "../../../types";
 import { useWritableNamespaces } from "../../../composables/useWritableNamespaces";
-import { isHubRow, withoutHubRows } from "../../../views/CatalogView/hubRows";
+import { isHubRow, isOffered, withoutHubRows } from "../../../views/CatalogView/hubRows";
 
 const { isWritableNamespace } = useWritableNamespaces();
 
@@ -80,7 +80,7 @@ const loadTree = async () => {
       ? whole.filter(isHubRow)
       : props.writableOnly
         ? withoutHubRows(whole)
-        : whole;
+        : whole.filter(isOffered);
     tree.value = props.hideSystemNamespaces ? filterSelectableNamespaces(fetched) : fetched;
     // Auto-select the most appropriate "General" child when nothing is selected.
     if (selectedId.value === null && !props.hub) {
