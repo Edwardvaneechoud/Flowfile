@@ -22,6 +22,7 @@ from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.hub_client import node_tokens, session
+from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.routes import compute_backends as compute_backends_routes
 from flowfile_core.routes.compute_backends import listed_backends
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
@@ -152,6 +153,8 @@ def test_a_listing_keeps_a_passing_verdict_and_checks_a_node_the_hub_moved(api, 
 
     closed = closed_url()
     hub.nodes = [compute_node(1, "team", worker_url=closed)]
+    assert _listed(api)["worker:team"]["verdict"]["ok"] is True
+    hub_secrets._listed.clear()  # the hub is asked again once LISTED_SECONDS have passed
     assert _listed(api)["worker:team"]["verdict"] is None
     team = _listed(api)["worker:team"]["verdict"]
 

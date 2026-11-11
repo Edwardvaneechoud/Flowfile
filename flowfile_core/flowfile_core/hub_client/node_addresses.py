@@ -17,7 +17,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.hub_client import client, node_tokens, session
+from flowfile_core.hub_client import client, node_tokens, secrets, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from shared import hub_node
 
@@ -137,9 +137,14 @@ def sync_for(user_id: int) -> None:
 
 
 def listing(user_id: int) -> list[str]:
-    """Before the backends are listed, follow ``user_id``'s list when they are signed in to a hub; the ids written."""
-    with get_db_context() as db:
-        return _sync_for(db, user_id, "to list them")
+    """Before the backends are listed, follow ``user_id``'s list when they are signed in to a hub; the ids written.
+    Every backend picker lists them, so the hub is asked once per ``secrets.LISTED_SECONDS``."""
+
+    def synced() -> list[str]:
+        with get_db_context() as db:
+            return _sync_for(db, user_id, "to list them")
+
+    return secrets.listed_once(user_id, "servers", synced, "servers")
 
 
 def refresh(backend_ids: Iterable[str]) -> None:
