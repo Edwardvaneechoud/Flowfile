@@ -2,7 +2,6 @@
 its port before it joins, is refused without a storage dir of its own and gives the hub ``--url``, else its full name
 and port."""
 
-import errno
 import json
 import logging
 import os
@@ -196,6 +195,13 @@ def test_a_joined_worker_takes_the_hubs_tokens_for_its_name_with_no_variable_set
 STORAGE_VARIABLES = ("FLOWFILE_STORAGE_DIR", "FLOWFILE_SECURE_STORAGE_PATH", "SECURE_STORAGE_PATH", "FLOWFILE_MODE")
 
 
+def in_use_reason(port: int) -> str:
+    """The OS's own reason a second bind of the held ``port`` on 127.0.0.1 is refused (its wording differs per OS)."""
+    with socket.socket() as sock, pytest.raises(OSError) as refused:
+        sock.bind(("127.0.0.1", port))
+    return refused.value.strerror
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -265,7 +271,7 @@ def test_a_port_in_use_exits_1_before_any_request_and_the_token_stays_unspent(
         main.run(host="127.0.0.1", port=port if given_by == "run" else None)
 
     assert exited.value.code == 1
-    assert f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}" in caplog.text
+    assert f"Cannot serve on 127.0.0.1:{port}: {in_use_reason(port)}" in caplog.text
     assert join_hub.calls == []
     assert serving == []
     assert hub_node.join(join_hub.url, token, name="worker-1", worker_url="http://w:1")[0].name == "worker-1"

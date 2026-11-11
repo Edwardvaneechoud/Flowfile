@@ -26,11 +26,6 @@ import struct
 from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.concatkdf import ConcatKDFHash
-
 from shared.cloud_credential_provider import CredentialResolutionError, split_credentials
 
 if TYPE_CHECKING:
@@ -76,6 +71,8 @@ def _content_key(shared_secret: bytes) -> bytes:
     The OtherInfo is the AlgorithmID (the ``enc`` value, for direct key agreement), empty PartyUInfo and PartyVInfo,
     each with its 32-bit big-endian length, and SuppPubInfo, the key length in bits.
     """
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.concatkdf import ConcatKDFHash
 
     def counted(data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + data
@@ -85,7 +82,14 @@ def _content_key(shared_secret: bytes) -> bytes:
 
 
 def _decrypt(token: str, keys: Any) -> str:
-    """The plaintext of the JWE ``token`` sealed to ``keys``' ``enc`` key."""
+    """The plaintext of the JWE ``token`` sealed to ``keys``' ``enc`` key.
+
+    ``cryptography`` is imported here and in ``_content_key``, at use: a worker's every spawned child imports this
+    module, and most of them open nothing.
+    """
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     parts = token.split(".") if isinstance(token, str) else []
     if len(parts) != 5:
         raise SealedCredentialRefused("it is not a sealed token")
