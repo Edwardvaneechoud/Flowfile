@@ -309,7 +309,9 @@ class NodeExecutor:
             self._sync_state_to_legacy(state)
             self.state_provider.save_state(self.node.node_id, self.node.parent_uuid, state)
         except Exception as e:
-            if state.is_canceled:
+            # The flow's flag too: it is set before the node's own, and the stopped job can raise in between.
+            if state.is_canceled or self.node._cancel_requested():
+                state.is_canceled = True
                 # Cancelled mid-run: record a clean cancellation, not a failure, and skip the retry path.
                 node_logger.info("Node execution cancelled")
                 state.reset_results_only()

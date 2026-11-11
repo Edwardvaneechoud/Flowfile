@@ -1,0 +1,236 @@
+flowfile_version: 0.24.0
+flowfile_id: 14
+flowfile_name: Bill of Materials Explosion
+flowfile_settings:
+  description: Explode a multi-level bill of materials into its transitive closure and roll up the material cost
+    of every finished bike.
+  execution_mode: Development
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: 'BOM lines: one row per assembly -> component, with the quantity per assembly'
+  node_reference: null
+  x_position: 0
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [2, 9]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/bom_lines.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 2
+  type: explode_hierarchy
+  is_start_node: false
+  description: 'Transitive closure: every bike x every part anywhere below it, quantities multiplied along each
+    path and summed across paths'
+  node_reference: null
+  x_position: 250
+  y_position: 100
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [4]
+  setting_input:
+    cache_results: false
+    explode_hierarchy_input:
+      parent_column: assembly
+      child_column: component
+      quantity_column: qty_per
+      output_detail: totals
+      top_level_only: true
+      include_self: false
+      max_depth: null
+- id: 3
+  type: read
+  is_start_node: true
+  description: 'Purchase price per unit of every bought-in part'
+  node_reference: null
+  x_position: 250
+  y_position: 350
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [4]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: __TEMPLATE_DATA_DIR__/part_costs.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 4
+  type: join
+  is_start_node: false
+  description: 'Inner join on the part: sub-assemblies have no price, so only purchased parts remain'
+  node_reference: null
+  x_position: 500
+  y_position: 200
+  left_input_id: null
+  right_input_id: 3
+  input_ids: [2]
+  outputs: [5]
+  setting_input:
+    cache_results: false
+    auto_generate_selection: true
+    verify_integrity: true
+    join_input:
+      join_mapping:
+      - left_col: descendant
+        right_col: part
+      left_select:
+        select:
+        - old_name: ancestor
+          new_name: product
+        - old_name: descendant
+          new_name: part
+        - old_name: level
+        - old_name: quantity
+        - old_name: is_leaf
+          keep: false
+      right_select:
+        select:
+        - old_name: part
+          keep: false
+        - old_name: unit
+        - old_name: unit_cost
+      how: inner
+    auto_keep_all: true
+    auto_keep_right: true
+    auto_keep_left: true
+- id: 5
+  type: formula
+  is_start_node: false
+  description: 'Cost of this part in one finished bike'
+  node_reference: null
+  x_position: 750
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [4]
+  outputs: [6]
+  setting_input:
+    cache_results: false
+    function:
+      field:
+        name: extended_cost
+        data_type: Auto
+      function: '[quantity] * [unit_cost]'
+- id: 6
+  type: group_by
+  is_start_node: false
+  description: 'Roll the part costs up to one material cost per bike'
+  node_reference: null
+  x_position: 1000
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [5]
+  outputs: [7]
+  setting_input:
+    cache_results: false
+    groupby_input:
+      agg_cols:
+      - old_name: product
+        agg: groupby
+        new_name: product
+      - old_name: extended_cost
+        agg: sum
+        new_name: material_cost
+      - old_name: part
+        agg: count
+        new_name: purchased_parts
+      - old_name: level
+        agg: max
+        new_name: deepest_level
+- id: 7
+  type: sort
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 1250
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [6]
+  outputs: [8]
+  setting_input:
+    cache_results: false
+    sort_input:
+    - column: material_cost
+      how: descending
+- id: 8
+  type: explore_data
+  is_start_node: false
+  description: 'Explore the output!'
+  node_reference: null
+  x_position: 1500
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [7]
+  outputs: []
+  setting_input:
+    cache_results: false
+    graphic_walker_input: null
+- id: 9
+  type: explode_hierarchy
+  is_start_node: false
+  description: 'Every route from a bike down to each part, with the full path as a list'
+  node_reference: null
+  x_position: 250
+  y_position: 600
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [10]
+  setting_input:
+    cache_results: false
+    explode_hierarchy_input:
+      parent_column: assembly
+      child_column: component
+      quantity_column: qty_per
+      output_detail: paths
+      top_level_only: true
+      include_self: false
+      max_depth: null
+- id: 10
+  type: filter
+  is_start_node: false
+  description: 'Where used: every route an M5 screw takes into a bike'
+  node_reference: null
+  x_position: 500
+  y_position: 600
+  left_input_id: null
+  right_input_id: null
+  input_ids: [9]
+  outputs: []
+  setting_input:
+    cache_results: false
+    filter_input:
+      mode: basic
+      basic_filter:
+        field: descendant
+        operator: equals
+        value: screw_m5
+_template_meta:
+  template_id: bill_of_materials_explosion
+  name: Bill of Materials Explosion
+  description: Explode a multi-level bike BOM into a closure table (every bike x every part below it), then roll
+    up the material cost per bike and trace every route a screw takes.
+  category: Intermediate
+  tags: [explode_hierarchy, bom, join, group_by]
+  node_count: 10
+  icon: account_tree
+_required_csv_files: [bom_lines.csv, part_costs.csv]

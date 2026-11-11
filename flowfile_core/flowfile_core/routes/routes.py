@@ -516,10 +516,12 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                     success=run_info.success,
                     nodes_completed=run_info.nodes_completed,
                     node_results_json=node_results,
+                    cancelled=run_info.cancelled,
                 )
 
             logger.info(
                 f"Flow '{flow_name}' run completed: success={run_info.success}, "
+                f"cancelled={run_info.cancelled}, "
                 f"nodes={run_info.nodes_completed}/{run_info.number_of_nodes}"
             )
         else:
@@ -539,6 +541,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                     run_type="in_designer_run",
                     node_results_json=node_results,
                     flow_snapshot=snapshot_yaml,
+                    cancelled=run_info.cancelled,
                 )
     except Exception as exc:
         logger.error(

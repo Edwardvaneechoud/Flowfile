@@ -34,9 +34,10 @@
   color: var(--color-info);
 }
 
-/* Deliberately not run (e.g. a branch behind a closed gate) — muted, not red. */
+/* Deliberately not run (a branch behind a closed gate) or stopped on purpose (a cancel): muted, not red. */
 .status-badge--muted,
-.status-badge.skipped {
+.status-badge.skipped,
+.status-badge.cancelled {
   background: var(--color-background-soft);
   color: var(--color-text-secondary);
 }
@@ -72,4 +73,8 @@
 
 .text-info {
   color: var(--color-info);
+}
+
+.text-cancelled {
+  color: var(--color-text-secondary);
 }

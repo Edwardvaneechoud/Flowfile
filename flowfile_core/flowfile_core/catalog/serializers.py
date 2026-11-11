@@ -29,6 +29,15 @@ class VizEnrichment:
     namespace_name: str | None
 
 
+def run_cancelled(run: FlowRun | None) -> bool:
+    """Whether *run* ended because it was stopped on purpose.
+
+    The mark only counts on an ended, unsuccessful run: a run that reported its own outcome after a cancel was
+    requested keeps that outcome.
+    """
+    return run is not None and run.success is False and bool(run.cancelled)
+
+
 def run_to_out(run: FlowRun, *, has_log: bool, display_name: str | None = None) -> FlowRunOut:
     """Convert a FlowRun ORM row to its FlowRunOut DTO.
 
@@ -47,6 +56,7 @@ def run_to_out(run: FlowRun, *, has_log: bool, display_name: str | None = None) 
         started_at=run.started_at,
         ended_at=run.ended_at,
         success=run.success,
+        cancelled=run_cancelled(run),
         nodes_completed=run.nodes_completed,
         number_of_nodes=run.number_of_nodes,
         duration_seconds=run.duration_seconds,
