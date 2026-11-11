@@ -55,14 +55,12 @@ def _delegated_target(user_id: int | None) -> tuple[str, str] | None:
 
 def _session_target(user_id: int, hub_url: str) -> tuple[str, str] | None:
     try:
-        token = session.access_token(user_id)
+        return session.bearer(user_id, "the hub session is gone", ended=())
+    except LookupError as exc:
+        logger.debug(f"Run not reported to the hub: {exc}")
     except (HubUnreachable, HubRefused, HubVersionRefused) as exc:
         logger.warning(f"Could not get a token for the hub at {hub_url} to report the run: {exc}")
-        return None
-    if token is None:
-        logger.debug("Run not reported to the hub: the hub session is gone")
-        return None
-    return hub_url, token
+    return None
 
 
 def _rows_out(flow, node) -> int | None:
@@ -83,7 +81,7 @@ def _hub_table_ids(user_id: int, names: set[str]) -> tuple[dict[str, int], dict[
     if not names:
         return {}, {}
     try:
-        listed = hub_catalog.schemas(*hub_catalog.signed_in(user_id))
+        listed = hub_catalog.schemas(*session.bearer(user_id, hub_catalog.NOT_CONNECTED))
     except (LookupError, HubUnreachable, HubRefused, HubVersionRefused) as exc:
         logger.warning(f"Could not read the hub's ids of the tables this run read and wrote: {exc}")
         return {}, {}

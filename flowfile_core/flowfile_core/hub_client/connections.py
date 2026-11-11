@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from typing import Literal
 
-from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client import secrets as hub_secrets
-from flowfile_core.hub_client.secrets import _bearer, _signed_in, listed_once, marked
+from flowfile_core.hub_client.secrets import listed_once, rows_at
 from flowfile_core.secret_manager import credential_sources
 from shared import hub_sealed
 
@@ -26,16 +25,11 @@ LABELS = {"cloud": "cloud storage connection", "kafka": "Kafka connection", "dat
 
 
 def listed(user_id: int, kind: Kind) -> list[dict]:
-    hub_url, token = _signed_in(user_id)
-    rows = client._request_list("GET", hub_url, LIST_PATHS[kind], None, headers=_bearer(token))
-    return [marked(row) for row in rows]
+    return rows_at(user_id, LIST_PATHS[kind])
 
 
 def hub_rows(user_id: int, kind: Kind) -> list[dict]:
-    """``listed``, or none without a hub session or when the hub does not answer."""
-    if session.load(user_id) is None:
-        return []
-    return listed_once((user_id, kind), lambda: listed(user_id, kind), f"{LABELS[kind]}s")
+    return listed_once(user_id, kind, lambda: listed(user_id, kind), f"{LABELS[kind]}s")
 
 
 class _HubCredentials:

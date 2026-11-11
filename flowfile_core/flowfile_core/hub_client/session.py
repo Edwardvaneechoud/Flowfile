@@ -166,6 +166,23 @@ def access_token(user_id: int) -> str | None:
         raise
 
 
+def bearer(user_id: int | None, missing: str, *, ended: tuple[int, ...] = (401,)) -> tuple[str, str]:
+    """``(hub_url, access_token)`` of ``user_id``'s session; ``LookupError(missing)`` without one or when the hub
+    refuses its refresh with a status in ``ended``. Other hub errors propagate."""
+    stored = load(user_id)
+    if stored is None:
+        raise LookupError(missing)
+    try:
+        token = access_token(user_id)
+    except client.HubRefused as e:
+        if e.status in ended:
+            raise LookupError(missing) from e
+        raise
+    if token is None:
+        raise LookupError(missing)
+    return stored["hub_url"], token
+
+
 def refresh_delegation(user_id: int, sid: str | None) -> Delegation | None:
     """Refresh the sign-in ``sid`` at the hub now, whatever is cached; ``None``, nothing asked, when the kept sign-in
     is not ``sid``. Raises as ``access_token`` does."""

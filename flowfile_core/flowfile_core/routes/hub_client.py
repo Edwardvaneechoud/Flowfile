@@ -109,16 +109,6 @@ def _connection(
     )
 
 
-def _http_error(e: Exception) -> HTTPException:
-    if isinstance(e, HubVersionRefused):
-        return HTTPException(status_code=426, detail=e.detail)
-    if isinstance(e, HubUnreachable):
-        return HTTPException(status_code=502, detail=str(e))
-    if isinstance(e, HubRefused) and 400 <= e.status < 500:
-        return HTTPException(status_code=400, detail=f"The hub refused the request: {e.detail}")
-    return HTTPException(status_code=502, detail=f"The hub failed to answer: {e}")
-
-
 @router.get("/connection", summary="This user's hub connection")
 def get_connection(current_user=Depends(get_current_active_user)) -> HubConnection:
     """The stored connection with the hub's info read live; an unreachable hub sets ``error``."""
@@ -155,7 +145,7 @@ def connect(
         tokens = client.sign_in(request.hub_url, request.username, request.password)
         device = client.register_device(request.hub_url, tokens["access_token"], device_name, get_version())
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
-        raise _http_error(e) from e
+        raise _hub_error(e, connecting=True) from e
     session.save(
         current_user.id,
         {
@@ -253,24 +243,23 @@ class HubOpenOut(BaseModel):
 
 
 def _hub(current_user) -> tuple[str, str]:
-    stored = session.load(current_user.id)
-    if stored is None:
-        raise HTTPException(status_code=400, detail="Connect to a hub first (Compute → Hub).")
     try:
-        token = session.access_token(current_user.id)
+        return session.bearer(current_user.id, "Connect to a hub first (Compute → Hub).", ended=())
+    except LookupError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         raise _hub_error(e) from e
-    if token is None:
-        raise HTTPException(status_code=400, detail="Connect to a hub first (Compute → Hub).")
-    return stored["hub_url"], token
 
 
-def _hub_error(e: Exception) -> HTTPException:
+def _hub_error(e: Exception, *, connecting: bool = False) -> HTTPException:
+    """A hub 4xx keeps its status under ``refused`` (401 as 400); on connect it is a plain 400."""
     if isinstance(e, HubVersionRefused):
         return HTTPException(status_code=426, detail=e.detail)
     if isinstance(e, HubUnreachable):
         return HTTPException(status_code=502, detail=str(e))
     if isinstance(e, HubRefused) and 400 <= e.status < 500:
+        if connecting:
+            return HTTPException(status_code=400, detail=f"The hub refused the request: {e.detail}")
         status = 400 if e.status == 401 else e.status
         return HTTPException(status_code=status, detail={"kind": "refused", "status": e.status, "detail": e.detail})
     return HTTPException(status_code=502, detail=f"The hub failed to answer: {e}")

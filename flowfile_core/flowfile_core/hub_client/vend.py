@@ -290,14 +290,14 @@ class _RunCatalog:
 
     def schema_table(self, run_id: str | None, user_id: int | None, schema: str, name: str) -> dict | None:
         namespace_id = self.schema_target(run_id, user_id, schema).run_vend.namespace_id(schema)
-        listed = catalog.schemas(*catalog.signed_in(user_id))
+        listed = catalog.schemas(*session.bearer(user_id, catalog.NOT_CONNECTED))
         tables = (table for namespace, tables in listed if namespace.id == namespace_id for table in tables)
         return next(({"namespace_id": namespace_id, **table} for table in tables if table["name"] == name), None)
 
     def register_table(self, run_id: str | None, user_id: int | None, schema: str, table: dict) -> None:
         namespace_id = self.schema_target(run_id, user_id, schema).run_vend.namespace_id(schema)
         try:
-            hub_url, access_token = catalog.signed_in(user_id)
+            hub_url, access_token = session.bearer(user_id, catalog.NOT_CONNECTED)
             client.register_table_from_data(hub_url, access_token, {**table, "namespace_id": namespace_id})
         except (HubRefused, HubUnreachable, HubVersionRefused) as e:
             raise ValueError(
@@ -321,7 +321,7 @@ class _RunCatalog:
         document.flowfile_settings.hub_origin = None
         body = {"base_version": origin.version, "definition": document.model_dump(mode="json")}
         with _hub_answers():
-            hub_url, access_token = catalog.signed_in(user_id)
+            hub_url, access_token = session.bearer(user_id, catalog.NOT_CONNECTED)
             try:
                 saved = client.save_content(hub_url, access_token, origin.flow_uuid, body)
             except HubRefused as e:
@@ -387,7 +387,7 @@ def request(
     connections = tuple(dict.fromkeys(connections))
     targets = tuple(dict.fromkeys(targets))
     with _hub_answers():
-        hub_url, access_token = catalog.signed_in(user_id)
+        hub_url, access_token = session.bearer(user_id, catalog.NOT_CONNECTED)
         found = catalog.namespaces(hub_url, access_token) if readers | writers else {}
         by_name = {namespace.full_name: namespace for namespace in found.values()}
         ids: dict[str, int] = {}
@@ -417,7 +417,7 @@ def request_for_tables(
     same ``catalog.schema``."""
     tables = list(tables)
     with _hub_answers():
-        hub_url, access_token = catalog.signed_in(user_id)
+        hub_url, access_token = session.bearer(user_id, catalog.NOT_CONNECTED)
         found = catalog.namespaces(hub_url, access_token)
         for table in tables:
             _usable(found.get(table.hub_namespace_id), f"the hub lists no catalog schema of {table.name}")

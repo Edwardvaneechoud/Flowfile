@@ -54,8 +54,7 @@ def token_for(user_id: int, node_id: int, node_name: str, *, through_hub: bool =
             token, exp = cached
             if exp is not None and exp - time.time() > _MARGIN_SECONDS:
                 return token
-        mint = _mint_through_hub if through_hub else _mint
-        token = mint(user_id, node_id, node_name)
+        token = _mint(user_id, node_id, node_name, through_hub)
         _tokens[(user_id, node_id)] = (token, session._expiry(token))
         return token
 
@@ -102,40 +101,26 @@ def clear(user_id: int) -> None:
             del _tokens[key]
 
 
-def _mint(user_id: int, node_id: int, node_name: str) -> str:
-    stored = session.load(user_id)
-    if stored is None:
-        raise LookupError(f"no hub session mints a token for node {node_name!r}; {RECONNECT}")
+def _mint(user_id: int, node_id: int, node_name: str, through_hub: bool) -> str:
+    """With ``through_hub`` every way the sign-in through the hub is missing or over is ``SignedOut``."""
+    if through_hub and not signed_in_through_hub(user_id):
+        raise SignedOut(node_name)
     try:
-        access_token = session.access_token(user_id)
-        if access_token is None:
-            raise LookupError(f"no hub session mints a token for node {node_name!r}; {RECONNECT}")
-        minted = client.mint_node_token(stored["hub_url"], access_token, node_id)
+        minted = client.mint_node_token(
+            *session.bearer(user_id, f"no hub session mints a token for node {node_name!r}; {RECONNECT}", ended=()),
+            node_id,
+        )
+    except LookupError:
+        if through_hub:
+            raise SignedOut(node_name) from None
+        raise
     except HubRefused as e:
-        if e.status == 401:
+        if through_hub and (e.status == 401 or session._ended(e) or session.load(user_id) is None):
+            raise SignedOut(node_name) from e
+        if not through_hub and e.status == 401:
             raise LookupError(
                 f"the hub session that mints tokens for node {node_name!r} has expired; {RECONNECT}"
             ) from e
-        raise LookupError(f"the hub refused a token for node {node_name!r}: {e.detail}") from e
-    except HubVersionRefused as e:
-        raise LookupError(f"the hub refused a token for node {node_name!r}: {e.detail}") from e
-    except HubUnreachable as e:
-        raise LookupError(f"no token for node {node_name!r}: {e}") from e
-    return minted["token"]
-
-
-def _mint_through_hub(user_id: int, node_id: int, node_name: str) -> str:
-    stored = session.load(user_id)
-    if stored is None or stored.get("kind") != "delegation":
-        raise SignedOut(node_name)
-    try:
-        access_token = session.access_token(user_id)
-        if access_token is None:
-            raise SignedOut(node_name)
-        minted = client.mint_node_token(stored["hub_url"], access_token, node_id)
-    except HubRefused as e:
-        if e.status == 401 or session._ended(e) or session.load(user_id) is None:
-            raise SignedOut(node_name) from e
         raise LookupError(f"the hub refused a token for node {node_name!r}: {e.detail}") from e
     except HubVersionRefused as e:
         raise LookupError(f"the hub refused a token for node {node_name!r}: {e.detail}") from e

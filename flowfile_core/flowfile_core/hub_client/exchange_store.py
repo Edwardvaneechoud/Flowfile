@@ -5,6 +5,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.exchange_config import ExchangeConfig
 from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client import client as hub_client
+from flowfile_core.hub_client import session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 
 _warned: set[tuple[str, str]] = set()
@@ -16,7 +17,7 @@ def hub_store(user_id: int | None) -> ExchangeConfig | None:
     if user_id is None:
         return None
     try:
-        hub_url, access_token = hub_catalog.signed_in(user_id)
+        hub_url, access_token = session.bearer(user_id, hub_catalog.NOT_CONNECTED)
     except LookupError:
         logger.debug(f"User {user_id} has no hub session here; its runs take no exchange store from a hub")
         return None

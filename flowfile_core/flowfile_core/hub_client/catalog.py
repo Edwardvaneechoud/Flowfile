@@ -117,7 +117,7 @@ def relay(user_id: int | None, method: str, path: str, params: dict | None = Non
     A hub 401 answers 400 (the frontend reads 401 as an expired local session); a hub that does not answer is 502.
     """
     try:
-        return _relayed(*signed_in(user_id), method, path, params, body)
+        return _relayed(*session.bearer(user_id, NOT_CONNECTED), method, path, params, body)
     except LookupError as e:
         return 400, {"detail": str(e)}
     except HubRefused as e:
@@ -175,22 +175,6 @@ def _their_id(value):
     return value.lstrip("-") if isinstance(value, str) and _THEIR_VALUE.fullmatch(value) else value
 
 
-def signed_in(user_id: int) -> tuple[str, str]:
-    """The hub URL and an access token; ``LookupError(NOT_CONNECTED)`` without a session or on a hub 401."""
-    stored = session.load(user_id)
-    if stored is None:
-        raise LookupError(NOT_CONNECTED)
-    try:
-        access_token = session.access_token(user_id)
-    except HubRefused as e:
-        if e.status == 401:
-            raise LookupError(NOT_CONNECTED) from e
-        raise
-    if access_token is None:
-        raise LookupError(NOT_CONNECTED)
-    return stored["hub_url"], access_token
-
-
 def schemas(hub_url: str, access_token: str) -> list[tuple[HubNamespace, list[dict]]]:
     """Every namespace the account sees on the hub with its tables' rows, from one request for the tree."""
     path = "/catalog/namespaces/tree"
@@ -213,7 +197,7 @@ def table_named(user_id: int, named: int | str) -> dict:
     """The hub's table by its hub id or qualified name; any failure is a ``LookupError`` sentence."""
     read = client.get_table if isinstance(named, int) else client.resolve_table
     try:
-        return read(*signed_in(user_id), named)
+        return read(*session.bearer(user_id, NOT_CONNECTED), named)
     except HubRefused as e:
         if e.status == 404:
             raise LookupError(f"The hub has no catalog table {named} for this account") from e
