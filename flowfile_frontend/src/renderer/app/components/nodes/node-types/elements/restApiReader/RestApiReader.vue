@@ -472,11 +472,43 @@
       </CollapsibleSection>
 
       <section class="reader-section" data-testid="rest-section-columns">
-        <h4 class="reader-section-title">Columns</h4>
-        <div v-if="columnCount" class="schema-preview">
-          <div v-for="field in nodeRestApi.fields ?? []" :key="field.name" class="schema-row">
-            <span class="schema-name">{{ field.name }}</span>
-            <span class="schema-type">{{ field.data_type }}</span>
+        <div class="columns-header">
+          <h4 class="reader-section-title">Columns</h4>
+          <span v-if="columnCount" class="columns-count">{{ columnCount }}</span>
+          <button
+            v-if="hasColumnGroups"
+            type="button"
+            class="columns-fold-all"
+            data-testid="rest-columns-fold-all"
+            @click="toggleAllColumnGroups"
+          >
+            {{ allColumnGroupsOpen ? "Fold all" : "Unfold all" }}
+          </button>
+        </div>
+        <div v-if="columnCount" class="schema-preview" data-testid="rest-columns">
+          <div
+            v-for="row in columnTree"
+            :key="row.path"
+            class="schema-row"
+            :class="{ 'is-group': row.group }"
+            :style="{ paddingLeft: `${6 + row.depth * 14}px` }"
+            :title="row.group ? undefined : `${row.path}: ${row.dataType}`"
+            @click="row.group && toggleColumnGroup(row.path)"
+          >
+            <button
+              v-if="row.group"
+              type="button"
+              class="schema-toggle"
+              :aria-expanded="row.open"
+              :aria-label="`${row.open ? 'Fold' : 'Unfold'} ${row.path}`"
+              @click.stop="toggleColumnGroup(row.path)"
+            >
+              <i class="fa-solid fa-chevron-right" :class="{ 'is-open': row.open }"></i>
+            </button>
+            <span v-else class="schema-toggle"></span>
+            <span class="schema-name">{{ row.key }}</span>
+            <span v-if="row.group" class="schema-type">{{ row.count }} columns</span>
+            <span v-else class="schema-type">{{ row.dataType }}</span>
           </div>
         </div>
         <div v-else class="helper-text">
@@ -503,6 +535,8 @@ import { createNodeRestApiReader } from "./utils";
 import RequestTrace from "./RequestTrace.vue";
 import ResponseTree from "./ResponseTree.vue";
 import {
+  columnGroupPaths,
+  columnRows,
   detectedCursorPath,
   guessCursorParam,
   limitsSummary,
@@ -568,6 +602,30 @@ const cursorFromBody = computed(
 );
 
 const columnCount = computed(() => nodeRestApi.value?.fields?.length ?? 0);
+
+// Which column groups the reader unfolded; a view preference, never saved with the node.
+const openColumnGroups = ref<Set<string>>(new Set());
+const allColumnGroups = computed(() => columnGroupPaths(nodeRestApi.value?.fields ?? []));
+const hasColumnGroups = computed(() => allColumnGroups.value.size > 0);
+const allColumnGroupsOpen = computed(
+  () =>
+    hasColumnGroups.value &&
+    [...allColumnGroups.value].every((path) => openColumnGroups.value.has(path)),
+);
+const columnTree = computed(() =>
+  columnRows(nodeRestApi.value?.fields ?? [], openColumnGroups.value),
+);
+
+const toggleColumnGroup = (path: string) => {
+  const open = new Set(openColumnGroups.value);
+  if (open.has(path)) open.delete(path);
+  else open.add(path);
+  openColumnGroups.value = open;
+};
+
+const toggleAllColumnGroups = () => {
+  openColumnGroups.value = allColumnGroupsOpen.value ? new Set() : new Set(allColumnGroups.value);
+};
 
 const secretLabel = computed(() => {
   switch (settings.value.auth.auth_type) {
@@ -1041,16 +1099,38 @@ defineExpose({
   border-color: var(--color-danger, #d9534f);
 }
 
+.columns-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.columns-count {
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+}
+
+.columns-fold-all {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--color-accent, #3b82f6);
+}
+
 .schema-preview {
   margin-top: 10px;
   border: 1px solid var(--color-border, #e0e0e0);
   border-radius: 4px;
-  overflow: hidden;
+  max-height: 360px;
+  overflow: auto;
 }
 
 .schema-row {
   display: flex;
-  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
   padding: 4px 10px;
   font-size: 12px;
   border-bottom: 1px solid var(--color-border, #eee);
@@ -1060,11 +1140,45 @@ defineExpose({
   border-bottom: none;
 }
 
+.schema-row.is-group {
+  cursor: pointer;
+}
+
+.schema-row.is-group:hover {
+  background: var(--color-background-hover);
+}
+
+.schema-toggle {
+  flex: 0 0 14px;
+  width: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 9px;
+  color: var(--color-text-secondary, #888);
+  cursor: pointer;
+}
+
+.schema-toggle i {
+  transition: transform 0.15s;
+}
+
+.schema-toggle i.is-open {
+  transform: rotate(90deg);
+}
+
 .schema-name {
   font-family: var(--font-family-mono, monospace);
+  white-space: nowrap;
 }
 
 .schema-type {
+  margin-left: auto;
+  padding-left: 12px;
+  text-align: right;
   color: var(--color-text-secondary, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

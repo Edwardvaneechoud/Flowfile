@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  columnGroupPaths,
+  columnRows,
   detectedCursorPath,
   guessCursorParam,
   limitsSummary,
@@ -231,5 +233,55 @@ describe("limitsSummary", () => {
     expect(limitsSummary(s)).toBe(
       "1000 pages · 200 records · 0.5 s between pages · 30 s timeout · 1 retry",
     );
+  });
+});
+
+describe("columnRows", () => {
+  const fields = [
+    { name: "id", data_type: "Int64" },
+    { name: "post.uri", data_type: "String" },
+    { name: "post.author.handle", data_type: "String" },
+    { name: "post.author.associated.chat.allowIncoming", data_type: "String" },
+    { name: "reason.$type", data_type: "String" },
+    { name: "post.likeCount", data_type: "Int64" },
+  ];
+
+  it("folds every group at first, in the order the columns come", () => {
+    expect(columnRows(fields, new Set()).map((r) => [r.key, r.group, r.count])).toEqual([
+      ["id", false, 1],
+      ["post", true, 4],
+      ["reason", true, 1],
+    ]);
+  });
+
+  it("lists a group's children while it is open, a lone child group as one step", () => {
+    const rows = columnRows(
+      fields,
+      new Set(["post", "post.author", "post.author.associated.chat"]),
+    );
+    expect(rows.map((r) => [r.key, r.depth, r.dataType])).toEqual([
+      ["id", 0, "Int64"],
+      ["post", 0, ""],
+      ["uri", 1, "String"],
+      ["author", 1, ""],
+      ["handle", 2, "String"],
+      ["associated.chat", 2, ""],
+      ["allowIncoming", 3, "String"],
+      ["likeCount", 1, "Int64"],
+      ["reason", 0, ""],
+    ]);
+    expect(rows.find((r) => r.key === "allowIncoming")?.path).toBe(
+      "post.author.associated.chat.allowIncoming",
+    );
+  });
+
+  it("names every group path for unfolding them all", () => {
+    expect([...columnGroupPaths(fields)].sort()).toEqual([
+      "post",
+      "post.author",
+      "post.author.associated",
+      "post.author.associated.chat",
+      "reason",
+    ]);
   });
 });

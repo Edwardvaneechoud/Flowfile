@@ -112,6 +112,102 @@ export const treeRows = (
   return rows;
 };
 
+export interface ColumnRow {
+  key: string;
+  path: string;
+  depth: number;
+  dataType: string;
+  count: number;
+  group: boolean;
+  open: boolean;
+}
+
+interface ColumnGroup {
+  key: string;
+  path: string;
+  dataType: string | null;
+  children: Map<string, ColumnGroup>;
+}
+
+const countColumns = (node: ColumnGroup): number =>
+  (node.dataType === null ? 0 : 1) +
+  [...node.children.values()].reduce((sum, child) => sum + countColumns(child), 0);
+
+/**
+ * Flattened columns (`post.author.handle`) as a tree folded on their dotted parts, in the order the
+ * columns come; a group's children are listed only while its path is in *open*. A group with a
+ * single child group is shown as one step (`associated.chat`).
+ */
+export const columnRows = (
+  fields: ReadonlyArray<{ name: string; data_type: string }>,
+  open: ReadonlySet<string>,
+): ColumnRow[] => {
+  const root: ColumnGroup = { key: "", path: "", dataType: null, children: new Map() };
+  for (const field of fields) {
+    let node = root;
+    const parts = field.name.split(".");
+    parts.forEach((part, i) => {
+      let child = node.children.get(part);
+      if (!child) {
+        child = {
+          key: part,
+          path: parts.slice(0, i + 1).join("."),
+          dataType: null,
+          children: new Map(),
+        };
+        node.children.set(part, child);
+      }
+      node = child;
+    });
+    node.dataType = field.data_type;
+  }
+  const rows: ColumnRow[] = [];
+  const walk = (node: ColumnGroup, depth: number) => {
+    let key = node.key;
+    while (node.dataType === null && node.children.size === 1) {
+      const only = [...node.children.values()][0];
+      if (only.children.size === 0) break;
+      key = `${key}.${only.key}`;
+      node = only;
+    }
+    if (node.children.size === 0) {
+      rows.push({
+        key,
+        path: node.path,
+        depth,
+        dataType: node.dataType ?? "",
+        count: 1,
+        group: false,
+        open: false,
+      });
+      return;
+    }
+    const isOpen = open.has(node.path);
+    rows.push({
+      key,
+      path: node.path,
+      depth,
+      dataType: node.dataType ?? "",
+      count: countColumns(node),
+      group: true,
+      open: isOpen,
+    });
+    if (isOpen) for (const child of node.children.values()) walk(child, depth + 1);
+  };
+  for (const child of root.children.values()) walk(child, 0);
+  return rows;
+};
+
+/** The paths of every group in *fields*, for unfolding them all. */
+export const columnGroupPaths = (fields: ReadonlyArray<{ name: string }>): Set<string> => {
+  const paths = new Set<string>();
+  for (const field of fields) {
+    const parts = field.name.split(".");
+    for (let i = 1; i < parts.length; i++) paths.add(parts.slice(0, i).join("."));
+  }
+  return paths;
+};
+
 /** A masked value named after the secret the node uses, so a reader sees which one was sent. */
 export const showSecret = (text: string, secretName: string): string =>
   text.split(SECRET_MASK).join(`‹${secretName || "secret"}›`);
