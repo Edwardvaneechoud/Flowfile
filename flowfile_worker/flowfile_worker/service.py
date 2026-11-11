@@ -7,8 +7,8 @@ carrying a child's ``status``, ``error_message`` and ``error_kind`` (``_failure`
 
 A submit's job id is its result id; an operation holds its outputs as ``<job_id>_<i>``. One job runs under an id at a
 time (``_claim``): a later job under the id, or a release of it, replaces the running one, which is stopped and holds
-nothing. A submit (after its inputs are checked) and an import drop what has gone unused for ``CACHE_EXPIRATION_TIME``;
-an operation does not, since it cannot name the held results its plans scan.
+nothing. Every submit and import first drops what has been held for ``CACHE_EXPIRATION_TIME``; an operation does not,
+since it cannot name the held results its plans scan.
 
 A credential crosses as a stored connection's id and user, resolved where the plan runs. A blob takes none: the
 presigned URL it is copied to or from carries its own authorisation. With ``spawner.in_process`` set, every job runs in
@@ -267,11 +267,10 @@ def _materialise(hints: SubmitHints) -> bool:
 
 
 def _held(result_id: str) -> ResultRecord | None:
-    """The record held under *result_id*, its age reset; ``None`` when there is none or its file is gone."""
+    """The record held under *result_id*; ``None`` when there is none or its file is gone."""
     record = results.get(result_id)
     if record is None or (record.state == "materialised" and not os.path.isfile(record.path)):
         return None
-    results.touch(result_id)
     return record
 
 
@@ -374,7 +373,7 @@ def _claimed(op: Callable[..., OpOutputs]) -> Callable[..., OpOutputs]:
 
 
 def sweep_expired() -> None:
-    """Forget every result and job unused for ``CACHE_EXPIRATION_TIME`` seconds or more, failed submits too.
+    """Forget every result and job whose submit ended ``CACHE_EXPIRATION_TIME`` seconds ago or more, failed ones too.
 
     ``status_dict_lock`` is held across the expiry and the job entries' removal, so a resubmit under an expired id
     registers its job only after the old entry is gone. That lock is always taken before the registry's, never after.
@@ -570,17 +569,16 @@ def worker_capabilities() -> Capabilities:
 def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
     """Run *plan* in a child and hold its result under ``result_id``, written to a file or deferred.
 
-    An input that is not held is 404, checked before the sweep. A result or job already under the id is replaced
-    (``_claim``). A job that completed without reporting its result (a pool member that died after its last progress)
-    is a failed task's 500.
+    An input that is not held is 404. A result or job already under the id is replaced (``_claim``). A job that
+    completed without reporting its result (a pool member that died after its last progress) is a failed task's 500.
 
     A deferred submit with no preview still runs in a child to resolve the plan's columns, so its UDF modules and
     plugin libraries never load here.
     """
+    sweep_expired()
     for input_id in submit_meta.inputs:
         if _held(input_id) is None:
             raise HTTPException(status_code=404, detail=f"Input result {input_id} is not held by this worker")
-    sweep_expired()
 
     result_id = submit_meta.result_id
     with _claim(result_id) as claim:
@@ -978,8 +976,8 @@ def ml_apply(body: MlApplyInput, job_id: str) -> OpOutputs:
     blob 422, before anything runs. The child reports no count, so the rows are counted here from the file's metadata.
     """
     flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
-    model = _held(body.model)
     (result_id,) = _op_outputs(job_id, 1)
+    model = _held(body.model)
     if model is None:
         raise _not_held(body.model)
     if model.kind != "blob":

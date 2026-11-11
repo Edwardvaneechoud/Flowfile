@@ -120,7 +120,7 @@ A node releases all the results it made:
 - when it is deleted or its flow is closed;
 - when it fails after storing part of its outputs.
 
-A published API call and a headless run release everything when they end. As a backstop for a core that stopped without closing its flows, a worker forgets every result unused for 24 hours the next time it receives work.
+A published API call and a headless run release everything when they end. As a backstop for a core that stopped without closing its flows, a worker forgets every result older than 24 hours the next time it receives work.
 
 Core keeps the handles in memory, so a cached result does not survive a restart of core, and a flow moved to another worker runs again from its sources there.
 

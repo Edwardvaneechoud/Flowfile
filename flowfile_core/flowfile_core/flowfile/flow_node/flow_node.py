@@ -1744,6 +1744,26 @@ class FlowNode:
             for ref in [*self._stored_outputs.values(), *self._operation_refs.values()]
         )
 
+    def result_is_gone(self) -> bool:
+        """True when a result a read of this node touches is gone: its own, or one its deferred plan scans.
+
+        Asked by the reads outside a run (a preview, column statistics, an export, a chart) after one failed. A sink
+        also answers for the node it previews, whose result its statistics and export read. A backend that cannot
+        answer counts as not gone, so the read's own error stands.
+        """
+        try:
+            if self.result_is_missing():
+                return True
+            sink = self._sink_source()
+        except (ComputeError, ColumnStatsUnavailable):
+            return False
+        ref = self.results.result_ref
+        if ref is not None and ref.state == "deferred":
+            upstream = self.all_inputs
+        else:
+            upstream = [sink[0]] if sink else []
+        return any(node.result_is_gone() for node in upstream)
+
     def held_result(self, backend_id: str) -> ResultRef | None:
         """The result this node holds on backend ``backend_id`` under its current hash, else ``None``."""
         ref = self.results.result_ref
@@ -1987,8 +2007,8 @@ class FlowNode:
         release, since the engine built over it holds its plan. A stored output replaced under the same name by
         another id (a random split or database read rerun) is released first. Failures follow ``run_operation``.
 
-        With the protocol on, an input this node holds on ``backend`` is checked first (``exists``, which also resets
-        its age), as a submit's inputs are; one that is gone is ``ResultMissing`` before anything runs.
+        With the protocol on, an input this node holds on ``backend`` is checked first (``exists``), as a submit's
+        inputs are; one that is gone is ``ResultMissing`` before anything runs.
         """
         if settings.FLOWFILE_COMPUTE_PROTOCOL:
             for ref in self._input_refs(backend.id):
@@ -2010,9 +2030,9 @@ class FlowNode:
         return result
 
     def _input_refs(self, backend_id: str) -> list[ResultRef]:
-        """Every table result this node's upstream nodes hold on backend ``backend_id`` (``held_refs``), so one use of
-        a node keeps all of its outputs from the age sweep; a blob is no input to a plan (an apply names its model).
-        An input that crossed from another backend (``_boundary_inputs``) counts by its import.
+        """Every table result this node's upstream nodes hold on backend ``backend_id`` (``held_refs``), so a node with
+        any output gone is a missing input before anything runs; a blob is no input to a plan (an apply names its
+        model). An input that crossed from another backend (``_boundary_inputs``) counts by its import.
         """
         refs: dict[str, ResultRef] = {}
         held = [ref for node in self.all_inputs for ref in node.held_refs()]
@@ -2546,13 +2566,19 @@ class FlowNode:
                 if settings.FLOWFILE_COMPUTE_PROTOCOL and ref is not None:
                     cached = self.results.example_data_generator
                     output = self.held_output(output_handle) if output_handle != DEFAULT_OUTPUT_HANDLE else None
-                    if output_handle == DEFAULT_OUTPUT_HANDLE and cached is not None:
-                        table = cached()
-                    elif output is not None:
-                        table = _arrow_table(registry.backend(output.backend_id).sample(output, 100))
-                    else:
-                        table = head_rows(registry.backend(ref.backend_id), engine.data_frame, 100)
-                    data = table.to_pylist()
+                    try:
+                        if output_handle == DEFAULT_OUTPUT_HANDLE and cached is not None:
+                            table = cached()
+                        elif output is not None:
+                            table = _arrow_table(registry.backend(output.backend_id).sample(output, 100))
+                        else:
+                            table = head_rows(registry.backend(ref.backend_id), engine.data_frame, 100)
+                        data = table.to_pylist()
+                    except ComputeError:
+                        if not self.result_is_gone():
+                            raise
+                        # No rows: the grid then offers Fetch data, which recomputes what is gone.
+                        data = None
                 else:
                     preview_df = engine.data_frame.head(100)
                     if isinstance(preview_df, pl.LazyFrame):
@@ -2562,12 +2588,12 @@ class FlowNode:
                 return TableExample(
                     node_id=self.node_id,
                     name=str(self.node_id),
-                    number_of_records=self._preview_record_count(engine, len(data)),
+                    number_of_records=None if data is None else self._preview_record_count(engine, len(data)),
                     number_of_columns=len(schema),
                     table_schema=schema,
                     columns=[c.name for c in schema],
-                    data=data,
-                    has_example_data=True,
+                    data=data or [],
+                    has_example_data=data is not None,
                     has_run_with_current_setup=self.node_stats.has_run_with_current_setup,
                 )
 
