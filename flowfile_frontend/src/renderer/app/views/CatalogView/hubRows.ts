@@ -1,8 +1,6 @@
 // A connected hub's rows in the catalog tree: browsed here, managed on the hub.
 import type { VizSourceDescriptor } from "../../types";
 
-export const HUB_NAMESPACE_TITLE =
-  "This catalog lives on the hub. Create, rename and delete it there.";
 export const HUB_MANAGED_NOTE = "This catalog is managed on the hub.";
 
 export const isHubRow = (row: { source?: string | null }): boolean => row.source === "hub";
@@ -61,8 +59,7 @@ export const showsPlaces = (groups: PlaceGroup<unknown>[]): boolean =>
 
 /**
  * How the catalog tree shows a hub: not at all, only the hub's catalogs (a server that joined its hub, whose own are
- * not offered), or the hub's beside this machine's (a connected desktop). The tree marks hub catalogs with a badge
- * only beside this machine's, and with any hub rows shows counts only on collapsed catalogs and schemas.
+ * not offered), or the hub's beside this machine's (a connected desktop).
  */
 export type HubPresence = "none" | "only" | "beside";
 

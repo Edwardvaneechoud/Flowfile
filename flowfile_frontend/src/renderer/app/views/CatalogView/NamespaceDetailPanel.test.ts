@@ -1,13 +1,11 @@
 // @vitest-environment happy-dom
-// The catalog panel's Hub badge follows the tree's rule: none on a server whose every catalog is the hub's, one on a
-// hub catalog shown beside this machine's, never on this machine's own.
+// The catalog panel says a hub catalog is managed on the hub, and says nothing of the kind for this machine's own.
 import { h, type FunctionalComponent } from "vue";
 import { createPinia } from "pinia";
 import { describe, expect, it, vi } from "vitest";
 import { ns } from "../../__fixtures__/catalogTree";
 import { element, mountIn } from "../../__fixtures__/mount";
 import type { NamespaceTree } from "../../types/catalog.types";
-import type { HubPresence } from "./hubRows";
 
 vi.mock("element-plus", () => ({
   ElMessage: { success: vi.fn(), error: vi.fn() },
@@ -42,31 +40,22 @@ const hubCatalog = ns({ storage_uri, id: -10, name: "main", source: "hub", hub_i
 
 let host: HTMLElement;
 
-const mount = async (namespace: NamespaceTree, hubPresence: HubPresence) => {
+const mount = async (namespace: NamespaceTree) => {
   host = await mountIn(NamespaceDetailPanel, {
-    props: { namespace, hubPresence },
+    props: { namespace },
     pinia: createPinia(),
     stubs,
   });
 };
 
-const badge = () => host.querySelector('[data-testid="hub-badge"]');
 const note = () => host.querySelector('[data-testid="hub-managed-note"]');
 
 describe("NamespaceDetailPanel", () => {
-  it("badges a hub catalog only beside this machine's, and none of this machine's own", async () => {
-    await mount(hubCatalog, "beside");
-    expect(badge()).not.toBeNull();
+  it("notes that a hub catalog is managed on the hub, and not this machine's own", async () => {
+    await mount(hubCatalog);
     expect(note()).not.toBeNull();
 
-    await mount(hubCatalog, "only");
-    expect(badge()).toBeNull();
-    expect(note()).not.toBeNull();
-
-    await mount(catalog, "beside");
-    expect(badge()).toBeNull();
-
-    await mount(catalog, "none");
-    expect(badge()).toBeNull();
+    await mount(catalog);
+    expect(note()).toBeNull();
   });
 });

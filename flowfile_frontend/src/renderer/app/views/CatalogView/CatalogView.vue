@@ -158,7 +158,6 @@
                 :selected-namespace-id="catalogStore.selectedNamespaceId"
                 :search-query="searchQuery"
                 :show-unavailable="showUnavailable"
-                :hub-presence="hubPresence"
                 @select-flow="selectFlow($event)"
                 @select-artifact="selectArtifact($event)"
                 @select-table="selectTable($event)"
@@ -232,7 +231,6 @@
         <NamespaceDetailPanel
           v-else-if="catalogStore.selectedNamespace"
           :namespace="catalogStore.selectedNamespace"
-          :hub-presence="hubPresence"
           @close="handleCloseDetail"
         />
         <!-- Table detail view -->

@@ -307,7 +307,6 @@ import {
   namespaceChoice,
   namespaceOptions,
   optionGroups,
-  pickerPlace,
   pickable,
   selectedNamespaceRow,
   writeBlock,
@@ -384,7 +383,7 @@ const hubTarget = computed(
 const shownNamespaceOptions = computed(() =>
   pickable(catalogNamespaces.value, selectedNamespaceId.value),
 );
-const namespaceGroups = computed(() => optionGroups(shownNamespaceOptions.value, pickerPlace));
+const namespaceGroups = computed(() => optionGroups(shownNamespaceOptions.value, (o) => o.place));
 const selectedUnavailableReason = computed(() => {
   const selected = catalogNamespaces.value.find((ns) => ns.id === selectedNamespaceId.value);
   return selected ? writeBlock(selected) : null;

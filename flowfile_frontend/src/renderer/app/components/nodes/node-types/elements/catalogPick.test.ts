@@ -11,7 +11,6 @@ import {
   namespaceOptions,
   optionGroups,
   pickable,
-  pickerPlace,
   readerNamespaceChoice,
   selectedNamespaceRow,
   selectedTableRow,
@@ -252,19 +251,19 @@ describe("pickers by place and reach", () => {
     catalog.source === "hub" ? catalog : { ...catalog, offered: false },
   );
 
-  it("heads the hub's schemas with one Hub group beside this machine's, which keep their place", () => {
+  it("heads the hub's schemas and this machine's each with the place core names", () => {
     const options = namespaceOptions(desktop);
-    const groups = optionGroups(pickable(options, null), pickerPlace);
+    const groups = optionGroups(pickable(options, null), (o) => o.place);
     expect(groups.map((g) => [g.label, g.rows.map((o) => o.label)])).toEqual([
       ["On this computer", ["General / default"]],
-      ["Hub", ["main / default"]],
+      ["Acme Data", ["main / default"]],
     ]);
   });
 
-  it("offers a joined server's people the hub's catalogs only, as one group with no Hub heading", () => {
+  it("offers a joined server's people the hub's catalogs only, as one group with no heading", () => {
     const options = namespaceOptions(joined);
     expect(options.map((o) => o.label)).toEqual(["main / default", "scratch / notes"]);
-    const groups = optionGroups(pickable(options, null), pickerPlace);
+    const groups = optionGroups(pickable(options, null), (o) => o.place);
     expect(groups.map((g) => [g.label, g.rows.map((o) => o.label)])).toEqual([
       ["", ["main / default"]],
     ]);
@@ -272,7 +271,7 @@ describe("pickers by place and reach", () => {
 
   it("lists a desktop without a hub as one group with no heading, as before", () => {
     const options = namespaceOptions(tree.filter((c) => c.source !== "hub"));
-    const groups = optionGroups(pickable(options, null), pickerPlace);
+    const groups = optionGroups(pickable(options, null), (o) => o.place);
     expect(groups.map((g) => [g.label, g.rows.map((o) => o.label)])).toEqual([
       ["", ["General / default"]],
     ]);
@@ -303,10 +302,13 @@ describe("pickers by place and reach", () => {
     expect([...unusableNamespaceIds(tree)].sort((a, b) => a - b)).toEqual([-31, -30]);
   });
 
-  it("names each table's place by its source", () => {
+  it("names each table's place by its schema's catalog", () => {
     const options = namespaceOptions(desktop);
     expect(tablePlace(table({ id: 4 }), options)).toBe("On this computer");
-    expect(tablePlace(table({ id: -40, source: "hub" }), options)).toBe("Hub");
+    expect(tablePlace(table({ id: -40, source: "hub", namespace_id: -11 }), options)).toBe(
+      "Acme Data",
+    );
+    expect(tablePlace(table({ id: 5, namespace_id: 99 }), options)).toBeNull();
   });
 
   describe("the writer's default", () => {

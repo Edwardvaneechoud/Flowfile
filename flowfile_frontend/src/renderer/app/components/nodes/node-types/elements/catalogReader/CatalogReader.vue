@@ -241,7 +241,6 @@ import {
   isHubTarget,
   namespaceOptions,
   optionGroups,
-  pickerPlace,
   pickable,
   readerNamespaceChoice,
   selectedNamespaceRow,
@@ -344,7 +343,7 @@ const unusableNamespaces = ref<Set<number>>(new Set());
 const shownNamespaceOptions = computed(() =>
   pickable(catalogNamespaces.value, selectedNamespaceId.value),
 );
-const namespaceGroups = computed(() => optionGroups(shownNamespaceOptions.value, pickerPlace));
+const namespaceGroups = computed(() => optionGroups(shownNamespaceOptions.value, (o) => o.place));
 const selectedUnavailableReason = computed(
   () =>
     catalogNamespaces.value.find((ns) => ns.id === selectedNamespaceId.value)?.unavailableReason ??

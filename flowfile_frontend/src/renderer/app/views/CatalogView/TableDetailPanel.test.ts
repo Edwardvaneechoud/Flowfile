@@ -76,15 +76,13 @@ const metaLabels = () =>
   Array.from(host.querySelectorAll(".meta-label")).map((el) => el.textContent?.trim());
 
 describe("TableDetailPanel", () => {
-  it("shows a local table its Read by card, and a hub table none, whose flows are the hub's, and no Hub badge", async () => {
+  it("shows a local table its Read by card, and a hub table none, whose flows are the hub's", async () => {
     await mount(localTable);
     expect(metaLabels()).toContain("Read by");
-    expect(host.querySelector('[data-testid="hub-badge"]')).toBeNull();
 
     await mount(hubTable);
     expect(metaLabels()).not.toContain("Read by");
     expect(metaLabels()).toContain("Change tracking");
-    expect(host.querySelector('[data-testid="hub-badge"]')).toBeNull();
   });
 
   it("gives a hub table Favourite, Delete, Share, Edit data and the maintenance a local table has", async () => {

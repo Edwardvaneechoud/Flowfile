@@ -9,7 +9,6 @@
         <div class="header-title">
           <i class="fa-solid fa-box-archive header-icon"></i>
           <h2>{{ namespace.name }}</h2>
-          <HubBadge v-if="isHub && hubPresence === 'beside'" />
           <SharedBadge
             :access="namespace.access"
             :title="isHub ? hubSharedTitle(namespace.access) : undefined"
@@ -125,8 +124,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import EditCatalogStorageModal from "./EditCatalogStorageModal.vue";
-import HubBadge from "./HubBadge.vue";
-import { HUB_MANAGED_NOTE, hubSharedTitle, isHubRow, type HubPresence } from "./hubRows";
+import { HUB_MANAGED_NOTE, hubSharedTitle, isHubRow } from "./hubRows";
 import { deleteBlockedReason, storageLockedReason } from "./catalogStorageEdit";
 import { fetchCloudStorageConnectionsInterfaces } from "../CloudConnectionView/api";
 import {
@@ -135,9 +133,7 @@ import {
 } from "../CloudConnectionView/cloudConnectionFormatters";
 import type { FullCloudStorageConnectionInterface } from "../CloudConnectionView/CloudConnectionTypes";
 
-const props = withDefaults(defineProps<{ namespace: NamespaceTree; hubPresence?: HubPresence }>(), {
-  hubPresence: "none",
-});
+const props = defineProps<{ namespace: NamespaceTree }>();
 const emit = defineEmits(["close"]);
 
 const catalogStore = useCatalogStore();
