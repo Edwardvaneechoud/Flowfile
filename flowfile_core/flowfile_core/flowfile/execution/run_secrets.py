@@ -1,16 +1,9 @@
 """The secrets a step names, and the form of each that the run was granted for the step running now.
 
-A server with a master key of its own opens no other server's ``$ffsec$`` ciphertext, and a provider of credentials
-elsewhere (``secret_manager.credential_sources``) keeps connections and secrets that have no value on any machine. A
-run that places a step naming either where this machine's ciphertext does not open asks for them when it starts
-(``names_for``, ``provider_secret_names``, ``connections_for``), and while that step runs ``use_sealed`` holds what it
-was granted: each secret's form for the server that runs it, each connection's map and the names of its secret fields.
-``encrypted_secret`` and ``in_place_of`` hand that on where the step carried a ciphertext, and the server that runs the
-step opens it. Outside such a step both answer exactly what the step carried before.
-
-Core gets every value of a provider through ``granted_value`` (a connection's map through ``granted_connection``): the
-granted form while the step runs, else the step fails with the provider's sentence (``refusal``). This machine's own
-connection or secret of a name wins over the provider's.
+A server with a master key of its own opens no other server's ``$ffsec$`` ciphertext, and a credential provider
+(``secret_manager.credential_sources``) keeps values no machine holds. A run asks for those when it starts, and while
+the step runs ``use_sealed`` holds what was granted; outside such a step every answer is what the step carried before.
+This machine's own connection or secret of a name wins over the provider's.
 """
 
 from __future__ import annotations
@@ -42,9 +35,7 @@ def use_sealed(
     connections: Mapping[tuple[str, str], Mapping[str, str]] | None = None,
     fields: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
 ) -> Iterator[None]:
-    """Hold ``values``, secret name to its sealed form, ``connections``, each ``(kind, name)`` of a stored connection
-    to its sealed map, and ``fields``, the names of the secret fields its provider says each holds, for the step that
-    runs inside the block."""
+    """Hold the step's granted secrets, connection maps and each connection's secret field names inside the block."""
     token = _sealed.set(MappingProxyType(dict(values)))
     held = _connections.set(MappingProxyType(dict(connections or {})))
     named = _fields.set(MappingProxyType(dict(fields or {})))
@@ -57,8 +48,7 @@ def use_sealed(
 
 
 def sealed_connection(kind: str, name: str | None) -> Mapping[str, str] | None:
-    """The sealed map of the ``kind`` connection ``name`` for the step running now; ``None`` when the run was granted
-    none."""
+    """The sealed map of the ``kind`` connection ``name`` for the step running now; ``None`` when none was granted."""
     return _connections.get().get((kind, name)) if name else None
 
 
@@ -67,16 +57,15 @@ NO_SERVER = "you may run on none of the hub's servers"
 
 
 def refusal(name: str | None, *, secret: bool = False, why: str | None = None) -> str:
-    """Why a step that uses a provider's connection or secret ``name`` cannot run where it was placed, in the
-    provider's one sentence; ``why`` says what kept it from moving by itself."""
+    """The provider's sentence for a step using its connection or secret ``name`` where the grant does not reach."""
     return credential_sources.source().refusal(name, secret=secret, why=why)
 
 
 def granted_connection(kind: str, name: str | None) -> Mapping[str, str]:
-    """The map the run was granted a provider's ``kind`` connection ``name`` in for the step running now.
+    """The granted map of a provider's ``kind`` connection ``name`` for the step running now.
 
     Raises:
-        ValueError: ``refusal``'s sentence: the step runs where the grant does not reach, or outside a run.
+        ValueError: ``refusal``'s sentence when none was granted.
     """
     sealed_map = sealed_connection(kind, name)
     if sealed_map is None:
@@ -85,11 +74,10 @@ def granted_connection(kind: str, name: str | None) -> Mapping[str, str]:
 
 
 def granted_value(name: str | None, *, kind: str | None = None, field: str | None = None) -> str:
-    """What the running step carries in a ciphertext's place for a provider's secret ``name``, or, given ``kind``, for
-    the secret ``field`` of its ``kind`` connection ``name``: the form granted for the server that runs it.
+    """The granted form of a provider's secret ``name``, or with ``kind`` of that connection's secret ``field``.
 
     Raises:
-        ValueError: ``refusal``'s sentence when the run was granted none for the step.
+        ValueError: ``refusal``'s sentence when none was granted.
     """
     if kind is not None:
         return credential_sources.source().carried(kind, name, field, granted_connection(kind, name))
@@ -100,20 +88,17 @@ def granted_value(name: str | None, *, kind: str | None = None, field: str | Non
 
 
 def granted_fields(kind: str, name: str | None) -> dict[str, str]:
-    """Each secret field a provider's ``kind`` connection ``name`` holds, by its name in the connection's settings, as
-    the running step carries it in a ciphertext's place (``granted_value``). The grant names the fields, so no kind is
-    told apart here.
+    """Each secret field of a provider's ``kind`` connection ``name`` in its granted form (``granted_value``).
 
     Raises:
-        ValueError: ``refusal``'s sentence when the run was granted no such connection for the step.
+        ValueError: ``refusal``'s sentence when none was granted.
     """
     granted_connection(kind, name)
     return {field: granted_value(name, kind=kind, field=field) for field in _fields.get().get((kind, name), ())}
 
 
 def provider_row(kind: str, name: str | None, user_id: int) -> dict | None:
-    """A provider's list row of the ``kind`` connection ``name`` a step of ``user_id`` uses, no secret; ``None`` when
-    this machine has its own or a granted one of that name, or no provider lists one."""
+    """A provider's row for the ``kind`` connection ``name``; ``None`` when this machine has its own or none."""
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.flowfile.database_connection_manager import db_connections
     from flowfile_core.kafka.connection_manager import get_kafka_connection_by_name
@@ -151,9 +136,7 @@ def in_place_of(name: str | None, encrypted: str | None) -> str | None:
 
 
 def encrypted_secret(user_id: int, name: str) -> str | None:
-    """The secret ``name`` as the running step carries it: the user's ``$ffsec$`` ciphertext, else a provider's
-    secret's granted form (``granted_value``, which refuses where the grant does not reach); ``None`` when neither has
-    it."""
+    """The user's ``$ffsec$`` ciphertext of ``name``, else a provider's granted form; ``None`` when neither has it."""
     from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
 
     own = get_encrypted_secret(current_user_id=user_id, secret_name=name)
@@ -163,12 +146,7 @@ def encrypted_secret(user_id: int, name: str) -> str | None:
 
 
 def database_secret_name(settings: input_schema.DatabaseSettings | input_schema.DatabaseWriteSettings, user_id: int):
-    """The name of the secret a database reader's or writer's connection signs in with; ``None`` when it has none.
-
-    An inline connection names its ``password_ref``; a stored one keeps its password as a secret of its own, whose name
-    is the one asked for. A file-based database, or a stored connection this user cannot reach here, names none; a
-    provider's connection's password is its own field (``connections_for``).
-    """
+    """The name of the secret a database reader's or writer's connection signs in with; ``None`` when it has none."""
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.database.models import Secret
     from flowfile_core.flowfile.database_connection_manager.db_connections import get_database_connection
@@ -186,8 +164,7 @@ def database_secret_name(settings: input_schema.DatabaseSettings | input_schema.
 
 
 def kafka_secret_names(settings: input_schema.KafkaSourceSettings, user_id: int) -> dict[str, str]:
-    """The names of the secrets a Kafka source's stored connection here holds, by the ``KafkaReadSettings`` field of
-    each; none for a provider's connection, whose secrets are its own fields (``connections_for``)."""
+    """The secret names a Kafka source's stored connection here holds, by ``KafkaReadSettings`` field."""
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.database.models import Secret
     from flowfile_core.kafka.connection_manager import get_kafka_connection, get_kafka_connection_by_name
@@ -220,11 +197,7 @@ def _custom_node_secret_names(node: FlowNode) -> list[str]:
 
 
 def names_for(node: FlowNode) -> list[str]:
-    """The secret names ``node``'s settings use, each once.
-
-    A database reader's or writer's password, a Kafka source's stored secrets, a REST source's auth secret and a custom
-    node's selected secrets; any other node names none.
-    """
+    """The secret names ``node``'s settings use, each once."""
     settings = node.setting_input
     user_id = getattr(settings, "user_id", None)
     if user_id is None:
@@ -257,10 +230,7 @@ def provider_secret_names(node: FlowNode) -> list[str]:
 
 
 def connections_for(node: FlowNode) -> list[tuple[str, str]]:
-    """The ``(kind, name)`` of the provider's connection ``node``'s settings use, when its name is none of this
-    machine's (``provider_row``): a database reader's or writer's stored connection, a cloud storage reader's or
-    writer's and a Kafka source's. Any other node names none.
-    """
+    """The ``(kind, name)`` of the provider's connection ``node``'s settings use, when none of this machine's has it."""
     settings = node.setting_input
     user_id = getattr(settings, "user_id", None)
     if user_id is None:

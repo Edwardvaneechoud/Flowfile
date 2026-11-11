@@ -12,13 +12,9 @@ from:
 A configured worker, ``worker:<name>``, is a row of core's ``compute_backends`` table (``ConfiguredBackend``): its URL,
 its bearer token as secret-manager ciphertext, and an optional CA certificate. Its first lookup reads the row and makes
 a ``WorkerBackend`` from it. No row is a ``LookupError``. ``forget`` drops the cached instance, so the next lookup
-reads the row again. A row filled from a hub (``remote_id`` set) stores no token: its backend signs with the
-short-lived token the hub mints for that node through the row's user's hub session (``remote_servers.token``),
-asked for on the first lookup and again when it nears expiry, when the backend is made anew with the new token. On a
-server joined to its hub with keys of its own the row's user is only whoever last synced the hub's servers, so there
-each call is signed for the person it is made for (``acting``): a run's calls carry that person's token,
-minted through their own sign-in through the hub, and a run with no such person is refused. Only a call outside any
-run with no person behind it, such as the check of the Compute page, signs with the row's user's.
+reads the row again. A row filled from a remote (``remote_id`` set) stores no token: it signs with a short-lived one
+the remote mints (``remote_servers.token``). On a server joined with keys of its own, the row's user is only whoever
+last synced, so each call is signed for the person it is made for (``acting``) and a run with no such person is refused.
 
 A process that serves (the desktop sidecar, the Docker image, the pip server) is marked by ``mark_serving``. Its
 compute is the worker beside it, so its default backend is never ``local`` and a run placed on ``local`` is refused.
@@ -100,17 +96,13 @@ def _worker_backend() -> ComputeBackend:
 def _configured_worker_backend(backend_id: str, hub_token: str | None = None) -> ComputeBackend:
     """The ``WorkerBackend`` the ``compute_backends`` row of ``backend_id`` configures.
 
-    It signs with the row's token, or for a hub-filled row with the token the hub mints for its node (``hub_token``
-    when the caller holds it already), trusts the row's CA certificate, and offers ``file`` when the row is marked
-    ``shares_core_disk``. A hub-filled row is a server of the hub, another machine: it is never offered ``file`` on
-    its own word (``another_machine``), since the editor of that server declares it for its own disk. On a server
-    joined with keys of its own a hub-filled row's backend asks ``_hub_token`` for each call's token
-    (``token_source``), so every call carries the token of the person it is made for.
+    It signs with the row's token, or for a remote-filled row with a minted one, trusts the row's CA certificate, and
+    offers ``file`` when the row is marked ``shares_core_disk``. A remote-filled row is another machine, so it is never
+    offered ``file`` on its own word (``another_machine``).
 
     Raises:
-        LookupError: No row configures ``backend_id``; its token no longer decrypts (the master key changed), so it
-            must be added again; or, for a hub-filled row, no token could be minted (the message says to connect to
-            the hub again when the hub session is missing or expired).
+        LookupError: No row configures ``backend_id``, its token no longer decrypts (the master key changed), or no
+            token could be minted for a remote-filled row.
     """
     from cryptography.fernet import InvalidToken
 
@@ -154,8 +146,7 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
 
 
 def _hub_token(backend_id: str, account_user_id: int, remote_id: int, *, through_hub: bool = False) -> str:
-    """The token the remote mints for the server ``backend_id`` is filled from (``remote_servers.token``): the row's
-    user's, or with ``through_hub`` (a server joined with keys of its own) that of the person the call is made for."""
+    """The token minted for ``backend_id``'s server: the row's user's, or with ``through_hub`` the caller's."""
     name = backend_id.removeprefix(CONFIGURED_WORKER_PREFIX)
     try:
         return remote_servers.token(name, account_user_id, remote_id, through_hub)
@@ -164,12 +155,10 @@ def _hub_token(backend_id: str, account_user_id: int, remote_id: int, *, through
 
 
 def _replacement_token(backend_id: str, instance: ComputeBackend) -> str | None:
-    """The hub's current token for a hub-filled backend when it is not the one ``instance`` signs with, else ``None``.
+    """The current minted token for a remote-filled backend when ``instance`` signs with another, else ``None``.
 
-    A hub token lasts an hour; ``remote_servers.token`` answers the cached one until a minute before it expires
-    and mints a new one then. A backend signs with the token it was made with, so a new token means a new backend.
-    A backend that signs each call for the person it is made for (``_through_hub``) is never made anew: the token is
-    only asked for here, so a lookup for a person who can mint none raises.
+    A backend that signs each call for its person (``_through_hub``) is never made anew; asking here only makes a
+    lookup for a person who can mint none raise.
     """
     hub_row = _hub_rows.get(backend_id)
     if hub_row is None:
@@ -191,9 +180,7 @@ _lock = threading.RLock()
 _factories: dict[str, BackendFactory] = {}
 _instances: dict[str, ComputeBackend] = {}
 _hub_rows: dict[str, tuple[int, int]] = {}
-"""Backend id -> ``(account_user_id, remote_id)`` of each hub-filled row an instance was made from."""
 _through_hub: set[str] = set()
-"""Ids of the hub-filled backends made on a server joined with keys of its own, which sign each call for its person."""
 _acting: ContextVar[int | None] = ContextVar("acting_user", default=None)
 _scheduled: ContextVar[bool] = ContextVar("scheduled_run", default=False)
 remote_servers = SimpleNamespace(
@@ -211,10 +198,7 @@ _headless = False
 
 @contextmanager
 def acting_for(user_id: int | None) -> Iterator[None]:
-    """Make ``user_id`` the person the calls inside the block are made for, as a run route does around its run.
-
-    A run's stage threads run under a copy of the context, so they see it too.
-    """
+    """Make ``user_id`` the person the calls inside the block are made for."""
     token = _acting.set(user_id)
     try:
         yield
@@ -229,8 +213,7 @@ def acting() -> int | None:
 
 @contextmanager
 def for_run_record(run_id: int | None) -> Iterator[None]:
-    """The block a headless runner runs the run record ``run_id`` in: a schedule's run (its record names a schedule)
-    is marked so (``scheduled``), since no person is behind it to mint a remote's tokens with."""
+    """Mark a schedule's run (``scheduled``): no person is behind it to mint a remote's tokens with."""
     from shared.run_completion import get_run_schedule_id
 
     token = _scheduled.set(run_id is not None and get_run_schedule_id(run_id) is not None)
@@ -250,8 +233,7 @@ class Refused(LookupError):
 
 
 def refusal(error: BaseException) -> str | None:
-    """The sentence of the ``Refused`` that ``error`` is or was raised from, however it was wrapped on the way (a
-    backend's ``TaskFailed``, a route's ``HTTPException``); else ``None``."""
+    """The sentence of the ``Refused`` somewhere in ``error``'s chain; else ``None``."""
     seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
@@ -275,12 +257,12 @@ def register_backend(backend_id: str, factory: BackendFactory) -> None:
 def backend(backend_id: str) -> ComputeBackend:
     """The process's instance of ``backend_id``, made by its factory on first use.
 
-    A ``worker:`` id with no factory is made from its ``compute_backends`` row; one made from a hub-filled row is
-    made again when the hub's token for it has been replaced (``_replacement_token``).
+    A ``worker:`` id with no factory is made from its ``compute_backends`` row, and made again when its minted token
+    was replaced (``_replacement_token``).
 
     Raises:
         LookupError: No factory is known for ``backend_id`` (the message lists the known ids), or a ``worker:`` id
-            has no row, a token that no longer decrypts, or a hub session that mints none.
+            has no row, a token that no longer decrypts, or no minted token.
     """
     with _lock:
         instance = _instances.get(backend_id)
@@ -372,8 +354,7 @@ def environment_backend_id() -> str | None:
 
 
 def headless_backend_id(saved_location: str, backend: str | None = None) -> str:
-    """The backend a headless run of a flow saved with the location ``saved_location`` runs on: ``backend``
-    (``--backend``), else a backend id the flow saved, else ``environment_backend_id``, else ``local``."""
+    """``backend``, else a backend id the flow saved, else ``environment_backend_id``, else ``local``."""
     if backend:
         return backend
     if saved_location not in ("local", "remote", "auto"):

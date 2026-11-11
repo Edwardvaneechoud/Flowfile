@@ -14,7 +14,7 @@ class ComputeUnavailable(ComputeError):
     """Compute cannot be reached.
 
     ``backend_id`` names the unreachable backend when the code raising the error knows it, else ``None``; ``url`` the
-    address that did not answer, when the error is a transport's failure to reach it and is raised from that failure.
+    address that did not answer.
     """
 
     def __init__(self, message: str, *, backend_id: str | None = None, url: str | None = None) -> None:
@@ -27,11 +27,8 @@ class ComputeUnavailable(ComputeError):
     def __str__(self) -> str:
         """The message, plus a hint to start the backend when the connection was refused (POSIX or Windows wording).
 
-        A server filled from a hub (``registry.hub_server``) is named by its name on the hub, and the hint, given for
-        any failure to reach it, points at its address on the hub's Compute page, where the hub keeps it. When such a
-        server did not answer at its ``url``, the sentence says that and why in a few words (``_reason``) in place of
-        the transport's text, which is logged as the error is raised. The hint is added once, so an error rebuilt from
-        a run report row's text keeps the one it has.
+        A remote-filled server is named and pointed at the page that keeps its address. The hint is added once, so an
+        error rebuilt from a run report row's text keeps the one it has.
         """
         message = super().__str__()
         if message.endswith((_ADVICE, _HUB_ADVICE)):
@@ -56,8 +53,7 @@ def _hub_server(backend_id: str | None) -> str | None:
 
 
 def _reason(failure: BaseException) -> str:
-    """Why a transport failed to reach a worker, in a few words: "connection refused" (POSIX or Windows wording),
-    "timed out", else the failure's class name."""
+    """Why a transport failed to reach a worker, in a few words."""
     text = str(failure).lower()
     if "refused" in text:
         return "connection refused"

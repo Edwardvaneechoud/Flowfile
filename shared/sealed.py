@@ -1,20 +1,9 @@
 """Credentials an issuer seals to this server: opened here, with the server's own key, and nowhere else.
 
-A server with a master key and catalog database of its own cannot open a credential another core encrypted
-(``$ffsec$``), nor a connection it stored. An issuer that knows the server's ``enc`` key therefore seals each
-credential to each server that runs a step with it: a JWE compact token (``alg`` ECDH-ES with an ephemeral X25519
-``epk``, Concat KDF with empty ``apu`` and ``apv``, ``enc`` A256GCM, the protected header as the AAD; RFC 7518 §4.6),
-whose plaintext is a JWS the issuer signed, with the claims ``iss``, ``aud`` (``node:<name>``), ``run_id``,
-``vend_id``, ``iat``, ``exp`` and ``kind``: ``"storage"`` (or no ``kind``) with ``base_uri`` and ``storage_options``,
-``"secret"`` with a secret's ``name`` and ``value``, ``"connection"`` with ``connection_kind``, ``name`` and
-``settings``, a stored connection's whole settings with its secrets in plain.
-
-A run carries the whole map of server name to token, ``sealed``; whichever process opens it takes this server's entry,
-decrypts it with the server's key and verifies the JWS with ``shared.issuer_tokens.decode``. Who this server is and
-whose signature it takes is not known here: the module that knows the issuer sets ``server`` to answer it and
-``sealer`` to the word a refusal calls the issuer. What a plan carries (the providers, the Delta scan) holds only the
-map and pickles by reference, so it runs under another Python patch version than the one that built it. Nothing runs
-at import, and PyJWT loads at the first opening.
+A server with a master key of its own cannot open another core's ``$ffsec$`` ciphertext, so an issuer seals each
+credential to each server that runs a step with it: a JWE (ECDH-ES over X25519, A256GCM; RFC 7518 §4.6) around a JWS
+the issuer signed for ``node:<name>``. A run carries the whole map of server name to token (``sealed``) and each
+process opens only its own server's entry. The module that knows the issuer sets ``server`` and ``sealer``.
 """
 
 from __future__ import annotations
@@ -66,11 +55,7 @@ class SealedCredentialRefused(CredentialResolutionError):
 
 
 def _content_key(shared_secret: bytes) -> bytes:
-    """The A256GCM key ECDH-ES derives from ``shared_secret``: Concat KDF over SHA-256, RFC 7518 §4.6.2.
-
-    The OtherInfo is the AlgorithmID (the ``enc`` value, for direct key agreement), empty PartyUInfo and PartyVInfo,
-    each with its 32-bit big-endian length, and SuppPubInfo, the key length in bits.
-    """
+    """The A256GCM key ECDH-ES derives from ``shared_secret``: Concat KDF over SHA-256, RFC 7518 §4.6.2."""
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.concatkdf import ConcatKDFHash
 
@@ -84,8 +69,7 @@ def _content_key(shared_secret: bytes) -> bytes:
 def _decrypt(token: str, keys: Any) -> str:
     """The plaintext of the JWE ``token`` sealed to ``keys``' ``enc`` key.
 
-    ``cryptography`` is imported here and in ``_content_key``, at use: a worker's every spawned child imports this
-    module, and most of them open nothing.
+    ``cryptography`` is imported at use: every spawned worker child imports this module and most open nothing.
     """
     from cryptography.exceptions import InvalidTag
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -135,14 +119,11 @@ def _claims(sealed: Mapping[str, str], required: list[str]) -> dict[str, Any]:
 
 
 def _open(sealed: Mapping[str, str]) -> tuple[dict[str, str], int]:
-    """This node's entry of a vend's ``sealed`` map, decrypted with its key and verified against its issuer's keys: the
-    storage options, secrets included, and the ``exp`` they hold until. A token with no ``kind`` is a storage
-    credential, as they were sealed before secrets were.
+    """This node's entry of ``sealed``, opened and verified: the storage options and the ``exp`` they hold until.
 
     Raises:
-        SealedCredentialRefused: The map has no entry for this node's name, this node joined no issuer with keys of its
-            own, or the token does not decrypt, its signature, audience (``node:<name>``), issuer or expiry does not
-            hold, it holds a secret, or a claim is missing or malformed.
+        SealedCredentialRefused: No entry or issuer for this node, or the token does not open, verify or hold a
+            storage credential.
     """
     claims = _claims(sealed, REQUIRED_CLAIMS)
     if claims.get("kind", "storage") != "storage":
@@ -154,8 +135,8 @@ def _open(sealed: Mapping[str, str]) -> tuple[dict[str, str], int]:
 
 
 def sealed_secret(name: str, sealed: Mapping[str, str]) -> str:
-    """The secret ``name`` a vend sealed to each node of ``sealed``, as a string that takes a ``$ffsec$`` ciphertext's
-    place in what a step carries: ``SEALED_SECRET_PREFIX`` and the name and map as base64url JSON, nothing in clear."""
+    """The secret ``name`` sealed in ``sealed``, as a string that takes a ``$ffsec$`` ciphertext's place; nothing in
+    clear."""
     body = json.dumps({"name": name, "sealed": dict(sealed)}, separators=(",", ":")).encode("utf-8")
     return SEALED_SECRET_PREFIX + b64url(body)
 
@@ -166,8 +147,7 @@ def is_sealed_secret(value: object) -> bool:
 
 
 def sealed_connection_secret(kind: str, name: str, field: str, sealed: Mapping[str, str]) -> str:
-    """The secret ``field`` of the ``kind`` connection ``name`` a vend sealed to each node of ``sealed``, as a string
-    that takes a ``$ffsec$`` ciphertext's place in what a step carries, as ``sealed_secret``'s does."""
+    """The secret ``field`` of the ``kind`` connection ``name`` sealed in ``sealed``, as ``sealed_secret`` forms it."""
     body = {"name": name, "connection_kind": kind, "field": field, "sealed": dict(sealed)}
     return SEALED_SECRET_PREFIX + b64url(json.dumps(body, separators=(",", ":")).encode("utf-8"))
 
@@ -188,13 +168,11 @@ def open_connection(sealed: Mapping[str, str], kind: str, name: str) -> dict[str
 
 
 def open_secret(value: str) -> str:
-    """The value of the ``sealed_secret`` or ``sealed_connection_secret`` string ``value``: this node's entry opened
-    with its key and verified.
+    """The value of the ``sealed_secret`` or ``sealed_connection_secret`` string ``value``, opened here.
 
     Raises:
-        SealedCredentialRefused: The string does not read, the map has no entry for this node, the token does not
-            open or verify (as a storage credential's does not), or it holds another kind or another secret than it
-            names.
+        SealedCredentialRefused: The string does not read, or this node's entry does not open, verify or hold the
+            secret it names.
     """
     try:
         body = json.loads(unb64url(value.removeprefix(SEALED_SECRET_PREFIX)))
@@ -246,11 +224,7 @@ class SealedCredentialProvider:
 
 
 class SealedConnectionProvider:
-    """A Polars ``credential_provider`` holding a cloud storage connection's name and the map a vend sealed it in.
-
-    Called where the plan executes: that node opens its entry and resolves the connection's settings into the
-    credentials a scan takes, as ``shared.cloud_credential_provider.CredentialRefProvider`` resolves a stored one.
-    """
+    """A Polars ``credential_provider`` holding a connection's name and its ``sealed`` map, opened where it executes."""
 
     def __init__(self, name: str, sealed: Mapping[str, str]):
         self.name = name
@@ -268,11 +242,8 @@ class SealedConnectionProvider:
 
 
 def sealed_scan_kwargs(sealed: Mapping[str, str]) -> dict[str, Any]:
-    """What a sink or scan built here takes for ``sealed``: its plain options and a provider holding only the map.
-
-    The map is opened here for the plain options (endpoint, region, plain HTTP), so the plan carries those and no
-    secret, and the provider opens it again wherever the plan runs.
-    """
+    """What a sink or scan built here takes for ``sealed``: its plain options and a provider holding only the map, so
+    the plan carries no secret."""
     options, credentials = split_credentials(sealed_storage_options(sealed))
     kwargs: dict[str, Any] = {"storage_options": options}
     if credentials:
@@ -281,14 +252,10 @@ def sealed_scan_kwargs(sealed: Mapping[str, str]) -> dict[str, Any]:
 
 
 class SealedDeltaSource:
-    """A Polars Python scan reading the Delta table at ``path`` with a vend's ``sealed`` map, opened where it runs.
+    """A Polars Python scan reading the Delta table at ``path`` with a ``sealed`` map, opened where it runs.
 
-    It is the scan function itself rather than a callable wrapped by ``register_io_source``: Polars serialises that
-    wrapper, a closure, with cloudpickle and refuses it under any other Python patch version, while an instance of a
-    module's class pickles by reference, which Polars reads under any Python that imports this module. A desktop on one
-    Python therefore runs such a read on a server on another. Polars hands it the projected columns, the predicate
-    as serialised bytes, the row limit and a batch-size hint, and takes the frames and whether the predicate was
-    applied; one that does not deserialise is left to Polars.
+    It is the scan function itself, not a closure wrapped by ``register_io_source``: Polars cloudpickles a closure and
+    refuses it under another Python patch version, while a module's class pickles by reference.
     """
 
     def __init__(self, path: str, sealed: Mapping[str, str]):
@@ -326,11 +293,8 @@ class SealedDeltaSource:
 def scan_delta_sealed(path: str, sealed: Mapping[str, str], schema: Mapping[str, Any]) -> pl.LazyFrame:
     """A lazy scan of the Delta table at ``path`` with columns ``schema``, opened with ``sealed`` where it runs.
 
-    For a plan built in a process that does not hold the options (core, sending a read to another node): a Polars
-    scan takes only keys from a provider, never the endpoint or region, so the read is a Python scan instead, and its
-    plan names the table and the map, nothing secret. Projection, predicate and row limit are pushed into it. It is
-    registered as ``register_io_source`` registers one, with ``SealedDeltaSource`` as the scan function, so the plan
-    carries no cloudpickled function (see the class).
+    A Polars scan takes only keys from a provider, never the endpoint or region, so this is a Python scan whose plan
+    names the table and the map, nothing secret.
     """
     import polars as pl
 

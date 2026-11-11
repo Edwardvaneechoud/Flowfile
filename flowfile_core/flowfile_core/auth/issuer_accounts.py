@@ -1,9 +1,6 @@
-"""The local accounts of people from a hub, on a server that joined its hub with keys of its own.
+"""Local accounts of people from an issuer, keyed by the issuer and their id there (``issuer_accounts``).
 
-Such a server has people of its own, so a person from the hub is not found by a local id or a username: the table
-``issuer_accounts`` maps the hub's issuer and the person's id there to one local account. The account is made the first
-time the person comes, named as on the hub unless a local account already holds that name, and its password is a hash
-of random bytes nobody keeps, so it signs in through the hub only.
+An account's password is a hash of random bytes nobody keeps, so it signs in through the issuer only.
 """
 
 import secrets
@@ -19,14 +16,12 @@ from shared import hub_node
 
 
 def joined_with_keys() -> hub_node.HubNode | None:
-    """``hub_node.joined()``: this storage dir's node when it joined a hub with keys of its own, so people sign in here
-    through that hub. Core's name for it, which its routes, placement and vend read."""
+    """This storage dir's node when it joined an issuer with keys of its own; ``None`` otherwise."""
     return hub_node.joined()
 
 
 def joined_name() -> str | None:
-    """This server's name as its issuer knows it, its variable before its joined file; ``None`` when it joined with no
-    keys of its own."""
+    """This server's name as its issuer knows it; ``None`` when it joined with no keys of its own."""
     return hub_node.resolved().name if joined_with_keys() is not None else None
 
 
@@ -60,11 +55,7 @@ def _free_username(db: Session, wanted: str, host: str) -> str | None:
 
 
 def new_issuer_account(db: Session, issuer: str, hub_url: str, person: dict) -> db_models.User:
-    """A local account for a person from the hub, named as on the hub unless a local account already holds that name.
-
-    ``person`` is the hub's ``uid``, ``username``, ``full_name`` and ``node_admin``. The account and its mapping are
-    added to ``db`` and flushed, for the caller to commit; both names taken is a 409.
-    """
+    """A local account for ``person``, named as at the issuer unless taken, flushed for the caller to commit."""
     host = hub_host(hub_url)
     username = _free_username(db, person["username"], host)
     if username is None:

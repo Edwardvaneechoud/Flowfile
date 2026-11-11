@@ -2,12 +2,9 @@
 
 ``FLOWFILE_EXCHANGE_URI`` names its ``s3://`` root and ``FLOWFILE_EXCHANGE_CONNECTION`` the stored cloud connection
 that opens it, else the store saved from the Backends page (``exchange_config.effective_store``). The connection is the
-operator's, never a node's user's, and reaches a backend as a ``CredentialRef``. On a machine signed in to a hub, while
-neither names a store, the hub's store is opened by what the hub vends the run: sealed to each of the hub's servers its
-steps run on (``ExchangeRun.sealed``, a ``SealedCredential`` each such backend sends whole), and for a machine that is
-no server of the hub also encrypted for the worker beside its core (``ExchangeRun.own``, an ``EncryptedCredential``).
-Each side of a crossing takes the form its own worker opens (``credential_for``). A run writes under
-``<uri>/<flow id>/<run id>/``, which ``run_graph`` removes when the run ends.
+operator's, never a node's user's, and reaches a backend as a ``CredentialRef``. A remote's store is opened by what it
+vends the run instead (``ExchangeRun.sealed``, ``ExchangeRun.own``). A run writes under ``<uri>/<flow id>/<run id>/``,
+which ``run_graph`` removes when the run ends.
 """
 
 from __future__ import annotations
@@ -85,10 +82,8 @@ class ExchangeRun:
     """One run's prefix in the exchange store, ``<uri>/<flow id>/<run id>/``, and its removal when the run ends.
 
     The run looks the store up once, on the first ``prefix`` that finds one, and answers that store after; ``collect``
-    removes the run's prefix from it. ``hub_store`` is the store this machine's hub set for this run, if any, which
-    applies, with its row limit, while neither the environment nor the saved store names one. ``remote_steps`` and
-    ``moved`` are the run's own notes on its steps that use a hub connection or secret and the hub server each moved to
-    (``ExecutionMixin._remote_steps``, ``_moved``), read once per run.
+    removes the run's prefix from it. ``hub_store`` applies while neither the environment nor the saved store names
+    one.
     """
 
     def __init__(self, flow_id: int, run_id: str, hub_store: ExchangeConfig | None = None):
@@ -103,7 +98,7 @@ class ExchangeRun:
         self._store: ExchangeStore | None = None
 
     def vended(self) -> bool:
-        """Whether the run's store is the one a joined server's hub sets, opened by what the hub vends this run."""
+        """Whether the run's store is the remote's, opened by what it vends this run."""
         if self.hub_store is None or self.hub_store.vended_for is None:
             return False
         return exchange_config.effective_store(hub=self.hub_store).uri == self.hub_store.uri
@@ -112,8 +107,7 @@ class ExchangeRun:
         """The run's prefix and the credential that opens it; ``None`` when no store is configured.
 
         Raises:
-            ValueError: The store is misconfigured, as ``exchange_store`` says, or it is the hub's on a joined server
-                and the hub vended this run no credential for it (``NOT_VENDED``).
+            ValueError: The store is misconfigured, as ``exchange_store`` says, or no credential was vended for it.
         """
         if self._store is None and self.vended():
             credential = self.own or self.sealed
@@ -127,9 +121,7 @@ class ExchangeRun:
         return self._prefix(self._store), self._store.credential
 
     def credential_for(self, backend_id: str) -> Credential | None:
-        """The store's credential as ``backend_id`` takes it for its side of a crossing: what the hub sealed to its
-        server when it is one of the vend's targets, else what this machine's own worker opens; ``None`` before
-        ``prefix`` found a store."""
+        """The store's credential in the form ``backend_id``'s worker opens; ``None`` before ``prefix`` found one."""
         from flowfile_core.flowfile.execution import registry
 
         if self._store is None:
@@ -159,11 +151,8 @@ class ExchangeRun:
 def remove_prefix(store: ExchangeStore, prefix: str) -> None:
     """Delete every object under *prefix*, an ``s3://`` URI in *store*, resolving its connection as core does.
 
-    A sealed credential is opened with this server's own entry of the map: on a server of the hub the vend always
-    seals the exchange to the server core runs on, which removes the run's prefix. A machine that is no server of the
-    hub holds the store's keys encrypted for its own worker, and core opens those. Each listed page is deleted in one
-    request, so an empty prefix costs only the listing. Path-style addressing applies only to a connection with its
-    own endpoint (MinIO and other S3-compatible stores).
+    Each listed page is deleted in one request, so an empty prefix costs only the listing. Path-style addressing
+    applies only to a connection with its own endpoint (MinIO and other S3-compatible stores).
 
     Raises:
         OSError: The store refused to delete an object; the message names how many and the first reason.

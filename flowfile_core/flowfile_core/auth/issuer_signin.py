@@ -1,9 +1,6 @@
-"""Sign-in through an external issuer: the local account and the local session of a person an issuer vouched for.
+"""Sign-in through an external issuer: the local account and session of a person whose verified token it signed.
 
-An issuer signs people in for this machine: it signs a token, the token is verified against the keys the issuer
-publishes (``shared.issuer_tokens``), and the person it names gets a session here on the account keyed by the issuer
-and their id there (``issuer_accounts``). This module is that exchange once the token is verified. It knows no issuer:
-its caller says who the issuer is on this machine, who the person is there, and how long the issuer's word holds.
+It knows no issuer: its caller says who the issuer is, who the person is there, and how long the issuer's word holds.
 """
 
 import time
@@ -27,19 +24,14 @@ def expires_at(seconds: int) -> int:
 
 
 def refuse_disabled(db: Session, issuer: str, subject_id: int) -> None:
-    """``SignInRefused`` when the issuer's person ``subject_id`` has an account here that is disabled, asked before
-    anything is traded with the issuer for them."""
+    """``SignInRefused`` when ``subject_id``'s account here is disabled, asked before anything is traded for them."""
     user = issuer_accounts.issuer_account(db, issuer, subject_id)
     if user is not None and user.disabled:
         raise SignInRefused("This account is disabled on this server.")
 
 
 def admit(db: Session, issuer: str, issuer_url: str, person: dict) -> db_models.User:
-    """The local account of ``person`` as the issuer described them at this sign-in, committed.
-
-    ``person`` is the issuer's ``uid``, ``username``, ``full_name`` and ``node_admin``. The account is made at a first
-    sign-in (``issuer_accounts.new_issuer_account``) and administers this server as ``node_admin`` says at every one.
-    """
+    """The local account of ``person``, made at a first sign-in, an admin as ``node_admin`` says at every one."""
     user = issuer_accounts.issuer_account(db, issuer, person["uid"])
     if user is None:
         user = issuer_accounts.new_issuer_account(db, issuer, issuer_url, person)
@@ -50,8 +42,7 @@ def admit(db: Session, issuer: str, issuer_url: str, person: dict) -> db_models.
 
 
 def renew(db: Session, user: db_models.User, person: dict) -> None:
-    """Set ``user`` to what the issuer said of ``person`` when it renewed their sign-in: whether they administer this
-    server, and their full name, so someone the issuer no longer lets manage it stops at their next refresh."""
+    """Apply a renewal's ``node_admin`` and full name, so someone no longer let manage stops at their next refresh."""
     user.is_admin = person["node_admin"]
     user.full_name = person["full_name"]
     db.commit()
@@ -65,16 +56,14 @@ def issuer_of(db: Session, user_id: int) -> str | None:
 
 
 def forget(db: Session, user_id: int) -> None:
-    """Drop what maps the account ``user_id`` to an issuer's person, for the caller to commit: a reused rowid would
-    otherwise hand the mapping to the next account."""
+    """Drop the issuer mapping of ``user_id`` for the caller to commit: a reused rowid would inherit it."""
     db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user_id).delete(
         synchronize_session=False
     )
 
 
 def ended(issuer_name: str) -> HTTPException:
-    """The 401 of a session its issuer no longer vouches for: it ended there, or a later sign-in replaced it here, so
-    nothing is issued and the person signs in again."""
+    """The 401 of a session its issuer no longer vouches for."""
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail=f"Your sign-in through {issuer_name} has ended; sign in again",
@@ -83,11 +72,8 @@ def ended(issuer_name: str) -> HTTPException:
 
 
 def session(user: db_models.User, sid: str | None, expires_in: int) -> dict:
-    """This core's own token pair for ``user``, as ``/auth/token`` answers one.
-
-    The access token lives as long as the issuer's word does (``expires_in`` seconds, answered as ``expires_at``), and
-    the refresh token names the sign-in (``sid``) so a renewal asks the issuer about that one and no other.
-    """
+    """This core's token pair for ``user``: the access token lives as long as the issuer's word, the refresh token
+    names the sign-in (``sid``) so a renewal asks about that one only."""
     expiry = expires_at(expires_in)
     access_token = create_access_token(data={"sub": user.username}, expires_delta=timedelta(seconds=expires_in))
     refresh_token = create_refresh_token(data={"sub": user.username, "sid": sid})

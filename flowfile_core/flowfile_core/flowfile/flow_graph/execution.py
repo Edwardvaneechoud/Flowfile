@@ -162,10 +162,9 @@ class BoundaryEdge:
     """An input of ``target`` that crosses from another backend through the exchange store during one run.
 
     ``source``'s output on ``handle``, held on ``source_backend_id``, is exported to ``uri`` with ``credential`` and
-    imported on ``target_backend_id`` with ``import_credential``, each the form that side's worker opens
-    (``ExchangeRun.credential_for``), the first time ``target`` reads that input (``cross``); the import is held as
-    ``ref`` until ``release``. ``node_logger`` is the importing node's. ``cost`` is what core knows of the output's
-    size before the run.
+    imported on ``target_backend_id`` with ``import_credential`` the first time ``target`` reads that input
+    (``cross``); the import is held as ``ref`` until ``release``. ``node_logger`` is the importing node's. ``cost`` is
+    what core knows of the output's size before the run.
     """
 
     source: FlowNode
@@ -258,12 +257,7 @@ def _unsealed_crossing(
     ends: tuple[int, int],
     declared: Mapping[str, Capabilities],
 ) -> str | None:
-    """Why a crossing through ``exchange_run``'s store cannot run between the backends of its two ``ends``; ``None``
-    when it can.
-
-    Only a side that takes a sealed credential is checked: its backend must open what the hub sealed to the run's
-    servers.
-    """
+    """Why a backend at either of ``ends`` cannot open the store's sealed credential; ``None`` when both can."""
     for node_id in ends:
         backend_id = assignment[node_id]
         credential = exchange_run.credential_for(backend_id)
@@ -275,9 +269,7 @@ def _unsealed_crossing(
 
 
 def _may_cross(policy: MixedPlacementPolicy | SingleBackendPolicy, nodes: list[FlowNode]) -> bool:
-    """Whether an input of ``nodes`` may cross between backends under ``policy``: only the mixed policy crosses, when
-    its nodes are placed on more than one backend, or on one that is not the fallback, where a node it cannot run
-    goes."""
+    """Whether an input of ``nodes`` may cross backends: only under the mixed policy, counting its fallback."""
     if not isinstance(policy, MixedPlacementPolicy):
         return False
     backends = {policy.backend_for(node) for node in nodes}
@@ -287,8 +279,7 @@ def _may_cross(policy: MixedPlacementPolicy | SingleBackendPolicy, nodes: list[F
 
 
 def _stranded(step: tuple[list[str], list[tuple[str, str]]], why: str | None) -> str:
-    """Why a step that uses a hub connection or secret (``step``: its secret names and its connections) cannot run:
-    it is on no hub server, and ``why`` says what kept it from moving to one."""
+    """The refusal of a step using a remote secret or connection that is on no server able to open it."""
     names, refs = step
     if refs:
         return run_secrets.hub_refusal(refs[0][1], why=why)
@@ -321,8 +312,7 @@ def _release_boundary_inputs(node: FlowNode, edges: Sequence[BoundaryEdge]) -> N
 class ExecutionMixin(GraphMixinBase):
     @property
     def run_grant(self) -> Any | None:
-        """What the remote catalog gave the running run when it started (``table_sources.run_grant``): read here for
-        a step's sealed secrets and by placement's sealing checks, never for a table's storage."""
+        """What the remote catalog granted the running run; never read for a table's storage."""
         return table_sources.run_grant(self.catalog_run_id)
 
     # The running run's prefix in the exchange store; None between runs.
@@ -523,11 +513,11 @@ class ExecutionMixin(GraphMixinBase):
         as the fetch route does before it answers; the slot is released here either way.
 
         The node and its inputs are placed as a run's nodes are (``_place_run``), under an ``exchange_run`` of the
-        fetch's own, after the same refusal a run of a person with no sign-in through the hub gets
-        (``_signed_out_refusal``). A refusal runs nothing, each refused node a failed row. A placement that raises
-        fails the node's row and is raised again. Otherwise the node runs on its assigned backend: an input that ran
-        with its current setup on another backend crosses through the exchange store, and one that has not run is
-        composed into the node's plan. The fetch's nodes are the node and its inputs, so its hints count no consumer.
+        fetch's own, after the run's sign-in refusal (``_signed_out_refusal``). A refusal runs nothing, each refused
+        node a failed row. A placement that raises fails the node's row and is raised again. Otherwise the node runs on
+        its assigned backend: an input that ran with its current setup on another backend crosses through the exchange
+        store, and one that has not run is composed into the node's plan. The fetch's nodes are the node and its
+        inputs, so its hints count no consumer.
         """
         if not claimed and not self.try_claim_run():
             raise Exception("Flow is already running")
@@ -626,14 +616,9 @@ class ExecutionMixin(GraphMixinBase):
             self._end_exchange_run(exchange_run)
 
     def _vend_for_fetch(self, flow_node: FlowNode, exchange_run: ExchangeRun) -> list[tuple[FlowNode, str]] | None:
-        """Ask the hub for the credentials of the hub tables a fetch of ``flow_node`` reads, as a run does.
+        """Vend for what a fetch of ``flow_node`` uses remotely, as a run does, keeping the run's ``last_run_grant``.
 
-        A run keeps no hub reader's plan once it ends (``_end_remote_run``), so a fetch after a Performance run builds
-        its node's plan over the hub table again: the node, every upstream node that has not run with its current
-        setup and the node's own inputs are vended for (``_start_remote_run``) under the fetch's own run id, so a step on
-        a hub connection or secret and an input crossing through the hub's store are served as in a run. A fetch that
-        uses nothing of the hub asks nothing, and the run's ``last_run_grant``, which its report names, is kept. Answers
-        the nodes and the sentence when the hub cannot be asked or refuses, else ``None``.
+        A run keeps no remote reader's plan once it ends, so a fetch builds it again under a vend of its own.
         """
         upstream = [self.get_node(node_id) for node_id in self._get_upstream_node_ids(flow_node.node_id)]
         building = [node for node in upstream if not node.node_stats.has_run_with_current_setup] + [flow_node]
@@ -1200,12 +1185,9 @@ class ExecutionMixin(GraphMixinBase):
 
         With an exchange store (``FLOWFILE_EXCHANGE_URI``) the policy is ``MixedPlacementPolicy``, falling back to
         ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend, and a node
-        whose own Compute backend names one of the hub's servers (``registry.server_name``: a row filled from the hub, or
-        this server once joined with keys of its own) is refused (``unmoved_without_store``) rather than run on the run's
-        backend, on a joined server and a desktop connected to the hub alike; a node refused already keeps its first
-        refusal. Each backend named is read through its handshake verdict (``handshake.verdict_for``), except ``local``
-        in a process that serves, which runs no node and is never asked. On a joined server the hub's servers named are
-        first moved to the addresses the hub lists now (``registry.remote_servers``). A backend refused whole, a
+        whose own Compute backend names a remote server is refused (``unmoved_without_store``) rather than run
+        elsewhere. Each backend named is read through its handshake verdict (``handshake.verdict_for``), except
+        ``local`` in a process that serves, which runs no node and is never asked. A backend refused whole, a
         ``VersionMismatch`` or an id the registry does not know refuses every node assigned to it. Any other
         ``ComputeError`` keeps the backend's nodes on it unchecked, and each fails with that error when it runs
         (``Placement.unreachable``).
@@ -1341,12 +1323,8 @@ class ExecutionMixin(GraphMixinBase):
 
         ``None`` with the protocol flag off. Every node is placed as if every gate were open, under an exchange run that
         is never collected, and the boundary edges are dropped. Placement reads a resolved copy of each node's settings,
-        so a preview beside an edit or a run leaves both as they are.
-
-        ``hub_store`` is the store a joined server's hub sets, as a run takes it (``ExchangeRun.hub_store``). Nothing
-        is vended for a preview: its crossings are checked against the servers a run's vend would be sealed to
-        (``_seal_targets``), and a backend that is none of the hub's servers refuses the nodes the run would refuse,
-        with the run's sentence.
+        so a preview beside an edit or a run leaves both as they are. Nothing is vended: crossings are checked against
+        the servers a run's vend would be sealed to (``_seal_targets``).
         """
         nodes = list(self.nodes)
         exchange_run = ExchangeRun(self.flow_id, "preview", hub_store=hub_store)
@@ -1652,10 +1630,9 @@ class ExecutionMixin(GraphMixinBase):
         input from another backend crossing through the exchange store. ``RunInformation.boundaries`` lists those
         edges, a refused run's included.
 
-        A run with nodes on tables on the hub first asks the hub for their credentials, once (``_start_remote_run``),
-        before placement; a hub that cannot be asked or refuses ends the run before a node starts, each of those nodes a
-        failed result with the reason. ``run_grant`` holds the answer for the run only, and once the run ends neither it
-        nor any node's result holds the credential (``_end_remote_run``).
+        A run on remote tables asks for their credentials once, before placement (``_start_remote_run``); a refusal
+        ends the run before a node starts. Once the run ends no node's result holds the credential
+        (``_end_remote_run``).
 
         The run holds ``exchange_run`` from before ``flow_run_started`` is published. However the run ends, its prefix
         is removed and ``exchange_run`` is ``None`` again (``_end_exchange_run``).
@@ -1791,11 +1768,8 @@ class ExecutionMixin(GraphMixinBase):
     def _run_policy(
         self, exchange_run: ExchangeRun, run_backend_id: str | None = None
     ) -> MixedPlacementPolicy | SingleBackendPolicy:
-        """The run's placement policy: mixed, falling back to ``registry.fallback_backend_id``, while an exchange store
-        is in use (``FLOWFILE_EXCHANGE_URI``, the saved one or the hub's), else the run's backend for every node.
-
-        Under the mixed policy a step that uses a hub connection or secret runs on a server of the hub (``_moved``).
-        The run's backend is ``run_backend_id`` when given, else the current context's."""
+        """Mixed placement, falling back to ``registry.fallback_backend_id``, while an exchange store is in use; else
+        the run's backend for every node."""
         run_backend_id = run_backend_id or current_context(self).backend_id
         if not exchange_config.effective_store(hub=exchange_run.hub_store).uri:
             return SingleBackendPolicy(run_backend_id)
@@ -1805,11 +1779,7 @@ class ExecutionMixin(GraphMixinBase):
     def _remote_steps(
         self, nodes: list[FlowNode], exchange_run: ExchangeRun
     ) -> dict[FlowNode, tuple[list[str], list[tuple[str, str]]]]:
-        """The steps among ``nodes`` that use a secret or a connection the person's hub keeps, each with the secret
-        names and the ``(kind, name)`` of the connections (``run_secrets``), the same on every machine.
-
-        The flow's steps are read once per run. A step whose names cannot be read names none and fails as it runs.
-        """
+        """The steps among ``nodes`` using remote secrets or connections, with their names; read once per run."""
         if exchange_run.remote_steps is None:
             found: dict[int | str, tuple[list[str], list[tuple[str, str]]]] = {}
             for node in self.nodes:
@@ -1821,18 +1791,18 @@ class ExecutionMixin(GraphMixinBase):
                 if names or refs:
                     found[node.node_id] = (names, refs)
             exchange_run.remote_steps = found
-        return {node: exchange_run.remote_steps[node.node_id] for node in nodes if node.node_id in exchange_run.remote_steps}
+        return {
+            node: exchange_run.remote_steps[node.node_id] for node in nodes if node.node_id in exchange_run.remote_steps
+        }
 
     def uses_hub_secrets(self) -> bool:
         """Whether a step of this flow uses a secret or a connection the person's hub keeps."""
         return bool(self._remote_steps(self.nodes, ExchangeRun(self.flow_id, "check")))
 
     def _moved(self, exchange_run: ExchangeRun, policy: MixedPlacementPolicy) -> dict[int | str, str]:
-        """The hub server each step that uses a hub connection or secret is moved to, read once per run.
+        """The server each step using a remote secret or connection moves to, read once per run.
 
-        Only a hub server's worker opens what the hub seals. A step ``policy`` already places on one, its own backend or
-        the flow's, stays. Any other goes to ``remote_servers.server_for`` its person: the hub's default server, else
-        the first the person may run on. With none, the step stays where it is and ``exchange_run.unmoved`` says why.
+        Only a remote server's worker opens what is sealed to it, so a step not already on one moves.
         """
         if exchange_run.moved is None:
             moved: dict[int | str, str] = {}
@@ -1851,8 +1821,7 @@ class ExecutionMixin(GraphMixinBase):
         return exchange_run.moved
 
     def _on_hub_server(self, node: FlowNode, policy: MixedPlacementPolicy | SingleBackendPolicy) -> bool:
-        """Whether the policy places ``node`` on a hub server's worker (``registry.server_name``), a joined server's
-        own ``worker`` included, never core's own ``local``."""
+        """Whether ``policy`` places ``node`` on a remote server's worker, never core's own ``local``."""
         backend_id = policy.backend_for(node)
         return backend_id != registry.LOCAL_BACKEND_ID and registry.server_name(backend_id) is not None
 
@@ -1863,23 +1832,13 @@ class ExecutionMixin(GraphMixinBase):
         exchange_run: ExchangeRun,
         steps: Collection[FlowNode] = (),
     ) -> tuple[tuple[str, ...], bool, list[FlowNode]]:
-        """The hub servers a vend for this run is sealed to, whether it asks for the exchange store, and its nodes.
+        """The servers a vend for this run is sealed to, whether it asks for the exchange store, and the sealed nodes.
 
-        The same on every machine. A server of the hub shares neither its master key nor its database with this core, so
-        what it uses is sealed to it. The vend is sealed when a step uses a hub connection or secret (``steps``, each on
-        a hub server), when a node on a hub table runs on another server of the hub (a ``worker:<name>`` row filled
-        from the hub), or when the run's store is the hub's (``ExchangeRun.vended``), its nodes may go to more than
-        one backend (``_may_cross``) and one of them is a server of the hub. It is sealed to the server of every step
-        and hub-table node, and with the store to every server of the hub the run names, the fallback, and this server
-        when it is one, which removes the run's prefix. On a machine that is no server of the hub, a backend that is
-        none of the hub's servers is the worker beside its core, which takes the store and its hub tables from an
-        unsealed vend of its own instead (``ExchangeRun.own``, ``RunVend.own``). Otherwise ``((), exchange, [])``: an
-        unsealed vend, which the run's own worker opens with the master key it shares with core. The nodes are those
-        whose credential is sealed.
+        A remote server shares neither the master key nor the database with this core, so what it uses is sealed to
+        it. ``((), exchange, [])`` is an unsealed vend, which the run's own worker opens with the master key.
 
         Raises:
-            LookupError: On a server of the hub, a backend that must open a sealed credential is no server of the
-                hub; the sentence names it.
+            LookupError: On a remote server, a backend that must open a sealed credential is none of its servers.
         """
         policy = self._run_policy(exchange_run)
         steps = [node for node in steps if node not in hub_nodes]
@@ -1912,23 +1871,10 @@ class ExecutionMixin(GraphMixinBase):
         return tuple(dict.fromkeys(targets)), exchange, sealed_nodes
 
     def _start_remote_run(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> list[tuple[FlowNode, str]] | None:
-        """Ask the hub once for what the run's nodes use of it, held as ``run_grant`` for the run: the credentials of
-        its nodes on hub tables, the secrets and connections its steps use, and the exchange store. One path on every
-        machine, a desktop connected to the hub and a server joined to it alike.
+        """Ask the remote once for the run's table credentials, step secrets and connections and exchange store.
 
-        ``last_run_grant`` is the run's ``(run_id, vend_id)``, ``None`` when nothing was vended. A run that uses nothing
-        of the hub asks nothing. The user is the nodes' own; nodes of two users ask as the first, which the flow log
-        says; a run with only crossings asks as the user whose hub session found the store.
-
-        A step that uses a hub connection or secret must run on a hub server's worker: one that stayed elsewhere
-        (``_moved`` found no server, or no exchange store carries its rows back) is refused with one sentence saying
-        which. The vend is sealed to the hub servers the run's steps use (``_seal_targets``): the secrets and
-        connections they name are held in ``sealed_secret_steps`` and ``sealed_connection_steps``, and the store's
-        credential in ``exchange_run.sealed``. A machine that is no server of the hub also takes, in an unsealed vend
-        of its own when the run's is sealed (``RunVend.own``), the store for the worker beside its core
-        (``exchange_run.own``) and the credentials of the hub tables its steps there read and write, so a table on the
-        hub is read on whichever machine its step runs.
-        Answers each refused node with its sentence when the hub cannot be asked or refuses, else ``None``.
+        A step using a remote secret or connection must run on a remote server's worker, or it is refused. Answers
+        each refused node with its sentence, else ``None``.
         """
         self.last_run_grant = None
         self.sealed_secret_steps = None
@@ -1981,8 +1927,7 @@ class ExecutionMixin(GraphMixinBase):
     def _signed_out_refusal(
         self, nodes: list[FlowNode], exchange_run: ExchangeRun
     ) -> list[tuple[FlowNode, str]] | None:
-        """On a server joined with keys of its own, the run's nodes on the remote's other servers that it mints the
-        person the run is for no token for, each with its sentence (``registry.remote_servers.run_refused``)."""
+        """On a joined server, the nodes on other remote servers it mints the run's person no token for."""
         if not nodes or issuer_accounts.joined_with_keys() is None:
             return None
         return registry.remote_servers.run_refused(lambda: self._on_hub_servers(nodes, self._run_policy(exchange_run)))
@@ -1991,8 +1936,7 @@ class ExecutionMixin(GraphMixinBase):
     def _on_hub_servers(
         nodes: list[FlowNode], policy: MixedPlacementPolicy | SingleBackendPolicy
     ) -> dict[str, list[FlowNode]]:
-        """The nodes ``policy`` places on another of the hub's servers (a ``worker:<name>`` row filled from the hub),
-        by the hub's name of that server, in the order the servers are first named."""
+        """The nodes ``policy`` places on another remote server's ``worker:<name>`` row, by that server's name."""
         on_backend: dict[str, list[FlowNode]] = {}
         for node in nodes:
             backend_id = policy.backend_for(node)
@@ -2002,8 +1946,7 @@ class ExecutionMixin(GraphMixinBase):
         return {name: on_backend[backend_id] for backend_id, name in named.items() if name is not None}
 
     def _record_run_refusal(self, refused: list[tuple[FlowNode, str]]) -> None:
-        """Record each node the hub vends to or mints no token for as a failed result, its sentence its error, in a run
-        that starts none."""
+        """Record each refused node as a failed result with its sentence, in a run that starts none."""
         for node, sentence in refused:
             self._record_refused(node, sentence)
         sentences = {sentence for _, sentence in refused}
@@ -2011,17 +1954,11 @@ class ExecutionMixin(GraphMixinBase):
         self.flow_logger.error(f"{len(refused)} node(s) cannot run{reason}; no node was started")
 
     def _end_remote_run(self, exchange_run: ExchangeRun, keep_preview: FlowNode | None = None) -> None:
-        """Forget what the hub vended to the run: ``run_grant``, and every node result that embeds its credential.
+        """Forget what was vended to the run: ``run_grant`` and every node result that embeds its credential.
 
-        A hub reader's scan carries the credential, so a hub reader's result, and each result downstream of one, that
-        is still a plan (deferred, not handed to a backend, or with named outputs) is released and its node counts as
-        not run: a later preview or run reads the hub table again under a vend of its own. A result the backend stored
-        is kept, since it reads the stored file. Called before the run releases its slot, and only the run's own vend
-        is reset, so a run claimed afterwards keeps its own.
-
-        ``keep_preview``, the node a fetch was for, keeps the preview rows it already read, which hold no credential,
-        and still reads as completed, so its grid shows them; its plan is released like any other. At a run's end the
-        row count each released node knew is kept in ``known_rows_out`` for the run's report.
+        A remote reader's scan carries the credential, so its result and each downstream one still a plan is released
+        and counts as not run; a stored result is kept. ``keep_preview``, the node a fetch was for, keeps its preview
+        rows, which hold no credential.
         """
         if self.catalog_run_id != exchange_run.run_id:
             return
