@@ -14,6 +14,8 @@ vi.mock("../../composables/useResourceSharing", () => ({
     isMultiUser: false,
     isOwned: () => false,
     canManage: () => false,
+    canShare: (r: { access?: { is_owner: boolean; access_level: string } | null }) =>
+      !r.access || r.access.is_owner || r.access.access_level === "manage",
     isShared: (r: { access?: { is_owner: boolean } | null }) => r.access?.is_owner === false,
     sharedLabel: () => "Shared · use",
     sharedTitle: (r: { access?: { shared_by?: string | null } | null }) =>

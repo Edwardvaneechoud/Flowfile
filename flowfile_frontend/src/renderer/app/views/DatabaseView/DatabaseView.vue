@@ -68,7 +68,7 @@
                 <span>{{ connection.host ? connection.host : "Using connection URL" }}</span>
               </div>
             </div>
-            <div v-if="connection.source !== 'hub'" class="connection-actions">
+            <div class="connection-actions">
               <button
                 v-if="isMultiUser && isOwned(connection) && connection.id != null"
                 type="button"
