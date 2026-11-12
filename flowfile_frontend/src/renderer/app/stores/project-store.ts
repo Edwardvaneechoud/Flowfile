@@ -134,8 +134,8 @@ export const useProjectStore = defineStore("project", {
       this.saving = true;
       try {
         const { sha } = await ProjectApi.saveVersion(message);
-        this.dirty = false;
         this.hasUnsavedChanges = false;
+        await this.refreshActive();
         this.loadVersions().catch(() => undefined);
         return sha;
       } finally {

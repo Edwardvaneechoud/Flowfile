@@ -73,3 +73,45 @@ def test_git_unavailable_degrades_to_noop(tmp_path, monkeypatch):
     assert git_ops.uncommitted_changes(tmp_path) == []
     assert git_ops.is_dirty(tmp_path) is False
     git_ops.restore(tmp_path, "deadbeef")  # no-op, must not raise
+
+
+@pytest.mark.skipif(not git_ops.git_available(), reason="git not available")
+def test_status_and_commit_cover_managed_files_only(tmp_path):
+    """Files Flowfile did not write are neither unsaved nor committed; a deleted managed file is."""
+    from git import Repo
+
+    git_ops.init(tmp_path)
+    (tmp_path / "project.yaml").write_text("name: t\n", encoding="utf-8")
+    (tmp_path / ".DS_Store").write_text("", encoding="utf-8")
+    (tmp_path / "README.md").write_text("notes\n", encoding="utf-8")
+    (tmp_path / "connections").mkdir()
+    (tmp_path / "connections" / ".DS_Store").write_text("", encoding="utf-8")
+
+    # First commit with no flows/, schedules/ or notebooks/ on disk: the absent pathspecs must not fail.
+    assert git_ops.uncommitted_changes(tmp_path) == [{"status": "A", "path": "project.yaml"}]
+    first = git_ops.commit_all(tmp_path, "init")
+    assert first
+    assert git_ops.is_dirty(tmp_path) is False
+    assert git_ops.uncommitted_changes(tmp_path) == []
+    assert git_ops.commit_all(tmp_path, "nothing") is None
+
+    (tmp_path / "flows").mkdir()
+    (tmp_path / "flows" / "a.flow.yaml").write_text("flow_uuid: a\n", encoding="utf-8")
+    (tmp_path / "flows" / "notes.txt").write_text("not a yaml\n", encoding="utf-8")
+    assert git_ops.uncommitted_changes(tmp_path) == [{"status": "A", "path": "flows/a.flow.yaml"}]
+    second = git_ops.commit_all(tmp_path, "flow")
+    assert second
+
+    repo = Repo(str(tmp_path))
+    committed = {b.path for b in repo.commit(second).tree.traverse() if b.type == "blob"}
+    assert committed == {"project.yaml", "flows/a.flow.yaml"}
+    staged = {path for path, _stage in repo.index.entries}
+    assert staged == committed
+
+    (tmp_path / "flows" / "a.flow.yaml").unlink()
+    assert git_ops.is_dirty(tmp_path) is True
+    assert git_ops.uncommitted_changes(tmp_path) == [{"status": "D", "path": "flows/a.flow.yaml"}]
+    third = git_ops.commit_all(tmp_path, "drop flow")
+    assert third
+    assert {b.path for b in repo.commit(third).tree.traverse() if b.type == "blob"} == {"project.yaml"}
+    assert git_ops.is_dirty(tmp_path) is False

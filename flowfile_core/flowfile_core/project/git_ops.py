@@ -88,48 +88,48 @@ def init(root: Path) -> None:
         Repo.init(str(root))
 
 
-def _is_managed(path: str) -> bool:
-    """True when ``path`` (repo-relative, forward-slash) belongs to the managed set.
+def _managed_pathspecs() -> list[str]:
+    """Git pathspecs for the files Flowfile writes: the project manifest, ``.gitignore``, the root
+    manifests and the ``*.yaml`` files directly under each mirrored dir. Anything else in the folder
+    (a README, ``.DS_Store``) is never counted as unsaved and never staged."""
+    roots = [manifest.MANIFEST_NAME, ".gitignore"] + [f"{stem}.yaml" for stem in manifest.ROOT_MANIFESTS]
+    return [f":(literal){p}" for p in roots] + [f":(glob){d}/*.yaml" for d in manifest.MIRRORED_DIRS]
 
-    Root-level entries match exactly; directory entries match the prefix so that
-    any file under ``flows/`` is considered managed."""
-    for mp in manifest.MANAGED_PATHS:
-        if path == mp or path.startswith(mp + "/") or path.startswith(mp + "\\"):
-            return True
-    return False
+
+def _managed_status(repo) -> list[tuple[str, str]]:
+    """``(XY code, path)`` for each managed file that differs from HEAD, untracked ones included.
+
+    ``git status`` accepts pathspecs that match nothing, unlike ``git add``."""
+    out = repo.git.status("--porcelain", "-z", "--untracked-files=all", "--", *_managed_pathspecs())
+    entries = out.split("\0")
+    rows: list[tuple[str, str]] = []
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        code, path = entry[:2], entry[3:]
+        if code[0] in "RC":
+            i += 1  # -z puts a rename's source path in the next field
+        rows.append((code, path))
+    return rows
 
 
 def commit_all(root: Path, message: str) -> str | None:
-    """Stage only the known managed manifest paths and commit.
+    """Stage the managed files that changed and commit them.
 
-    Avoids ``git add -A``: staging everything under the root would sweep
-    unrelated tenant data and secret-bearing files into history.
-
-    Strategy: stage ALL changes (so deletions of tracked files are captured), then
-    unstage any file that falls outside the managed set before committing."""
+    Only the managed pathspecs are staged, so files Flowfile did not write never reach the index
+    or the object store. Each path changed in the working tree is staged by name, since ``git add``
+    refuses a pathspec that matches nothing (a first commit with no ``flows/``, or a deletion a
+    restore's ``read-tree`` already staged)."""
     if not is_repo(root):
         return None
     with repo_lock(root):
         repo = Repo(str(root))
-        repo.git.add(A=True)
-        # Unstage anything that is not in the managed set.
-        if repo.head.is_valid():
-            staged = repo.index.diff("HEAD")
-            to_reset: list[str] = [
-                diff.b_path or diff.a_path
-                for diff in staged
-                if not _is_managed(diff.b_path or diff.a_path or "")
-            ]
-            if to_reset:
-                repo.index.reset(paths=to_reset)
-        else:
-            # No HEAD yet (first/init commit): diff(None) is index-vs-worktree which is empty
-            # immediately after add -A.  Enumerate staged blobs directly and remove unmanaged ones.
-            # index.entries keys are (path, stage_number) tuples; path is repo-relative with '/' separators.
-            # index.reset() requires a HEAD ref so use index.remove() with working_tree=False instead.
-            to_remove = [path for path, _stage in repo.index.entries.keys() if not _is_managed(path)]
-            if to_remove:
-                repo.index.remove(to_remove, working_tree=False)
+        paths = [path for code, path in _managed_status(repo) if code[1] != " "]
+        if paths:
+            repo.git.add("-A", "--", *(f":(literal){p}" for p in paths))
         has_head = repo.head.is_valid()
         if has_head and not repo.index.diff("HEAD"):
             return None
@@ -232,20 +232,15 @@ def changes_in(root: Path, sha: str) -> list[dict]:
 
 
 def uncommitted_changes(root: Path) -> list[dict]:
-    """Working-tree changes vs the last version (incl. untracked new files), as name-status rows."""
+    """Managed files changed since the last version (incl. untracked new ones), as name-status rows."""
     if not is_repo(root):
         return []
     try:
-        out = Repo(str(root)).git.status("--porcelain")
+        rows = _managed_status(Repo(str(root)))
     except Exception:
         return []
     changes: list[dict] = []
-    for line in out.splitlines():
-        if not line.strip():
-            continue
-        code, path = line[:2], line[3:].strip()
-        if "->" in path:  # rename: report the new path
-            path = path.split("->")[-1].strip()
+    for code, path in rows:
         if code == "??" or "A" in code:
             status = "A"
         elif "D" in code:
@@ -257,10 +252,10 @@ def uncommitted_changes(root: Path) -> list[dict]:
 
 
 def is_dirty(root: Path) -> bool:
-    """True when the working tree has changes (incl. untracked) to save as a version."""
+    """True when a managed file has changes (incl. untracked) to save as a version."""
     if not is_repo(root):
         return False
     try:
-        return Repo(str(root)).is_dirty(untracked_files=True)
+        return bool(_managed_status(Repo(str(root))))
     except Exception:
         return False

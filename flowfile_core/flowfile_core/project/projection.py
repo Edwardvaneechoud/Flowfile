@@ -107,17 +107,47 @@ def _name_stem(name: str | None) -> str:
     return safe_stem(name)
 
 
-def _flow_stem(root: Path, reg: FlowRegistration) -> str:
+FlowIndex = dict[str, list[Path]]
+
+
+def _file_flow_uuid(path: Path) -> str | None:
+    """The ``flow_uuid`` a projected flow file carries, read from its first line.
+
+    The exporter writes ``flow_uuid`` first (``normalize_flow_data`` puts it at the head and
+    ``dump_yaml`` keeps key order), so one line is enough; a file written another way is parsed whole."""
+    try:
+        with path.open(encoding="utf-8") as f:
+            first = f.readline()
+        if first.startswith("flow_uuid:"):
+            value = (yaml.safe_load(first) or {}).get("flow_uuid")
+        else:
+            value = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("flow_uuid")
+    except Exception:
+        return None
+    return value if isinstance(value, str) else None
+
+
+def flow_index(root: Path) -> FlowIndex:
+    """``{flow_uuid: [paths]}`` of the files in ``flows/``, built once per operation.
+
+    One read of each file's first line replaces the sweep each lookup used to make. A uuid maps to a
+    list because a rename leaves the old file beside the new one until it is removed; the file the
+    flow is projected to comes first. The writers below keep it current as they write and unlink."""
+    index: FlowIndex = {}
+    for p in sorted(manifest.flows_dir(root).glob("*.flow.yaml")):
+        flow_uuid = _file_flow_uuid(p)
+        if flow_uuid is not None:
+            index.setdefault(flow_uuid, []).append(p)
+    return index
+
+
+def _flow_stem(root: Path, reg: FlowRegistration, index: FlowIndex) -> str:
     """The stem of the flow's actual projected file (matched by ``flow_uuid``), so a schedule lines up
     with a disambiguated ``<stem>_<uuid8>.flow.yaml`` instead of overwriting a same-named flow's file.
     Falls back to the intrinsic ``flowfile_name`` stem when the flow file isn't on disk yet."""
-    for p in manifest.flows_dir(root).glob("*.flow.yaml"):
-        try:
-            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        except Exception:
-            continue
-        if data.get("flow_uuid") == reg.flow_uuid:
-            return p.name[: -len(".flow.yaml")]
+    paths = index.get(reg.flow_uuid)
+    if paths:
+        return paths[0].name[: -len(".flow.yaml")]
     data = _load_flow_data(reg.flow_path) or {}
     return _name_stem(data.get("flowfile_name") or reg.name)
 
@@ -139,21 +169,25 @@ def _namespace_path(db: Session, namespace_id: int | None) -> dict | None:
     return {"catalog": parent.name if parent else ns.name, "schema": ns.name}
 
 
-def project_flow(root: Path, reg: FlowRegistration, namespace: dict | None = None) -> Path | None:
+def project_flow(root: Path, reg: FlowRegistration, index: FlowIndex, namespace: dict | None = None) -> Path | None:
     data = _load_flow_data(reg.flow_path)
     if data is None:
         return None
     stem = _name_stem(data.get("flowfile_name") or reg.name)
     target = manifest.flows_dir(root) / f"{stem}.flow.yaml"
-    if target.exists():
-        existing = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
-        if existing.get("flow_uuid") not in (None, reg.flow_uuid):
-            target = manifest.flows_dir(root) / f"{stem}_{reg.flow_uuid[:8]}.flow.yaml"
+    if target.exists() and _file_flow_uuid(target) not in (None, reg.flow_uuid):
+        target = manifest.flows_dir(root) / f"{stem}_{reg.flow_uuid[:8]}.flow.yaml"
     write_yaml(target, normalize_flow_data(data, reg.flow_uuid, reg.name, namespace))
+    index[reg.flow_uuid] = [target] + [p for p in index.get(reg.flow_uuid, []) if p != target]
     return target
 
 
-def remove_flow(root: Path, flow_uuid: str | None = None, name: str | None = None) -> None:
+def _unlink_flow_file(root: Path, path: Path) -> None:
+    path.unlink(missing_ok=True)
+    manifest.schedules_dir(root).joinpath(f"{path.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
+
+
+def remove_flow(root: Path, index: FlowIndex, flow_uuid: str | None = None, name: str | None = None) -> None:
     """Remove a flow's projected file and its schedule file.
 
     Matches by ``flow_uuid`` (filename-independent — the projected name is derived from the flow's
@@ -162,14 +196,8 @@ def remove_flow(root: Path, flow_uuid: str | None = None, name: str | None = Non
     """
     flows_dir = manifest.flows_dir(root)
     if flow_uuid:
-        for p in flows_dir.glob("*.flow.yaml"):
-            try:
-                data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-            except Exception:
-                continue
-            if data.get("flow_uuid") == flow_uuid:
-                p.unlink(missing_ok=True)
-                manifest.schedules_dir(root).joinpath(f"{p.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
+        for p in index.pop(flow_uuid, []):
+            _unlink_flow_file(root, p)
     elif name:
         stem = _name_stem(name)
         for p in flows_dir.glob(f"{stem}*.flow.yaml"):
@@ -178,19 +206,13 @@ def remove_flow(root: Path, flow_uuid: str | None = None, name: str | None = Non
         manifest.schedules_dir(root).joinpath(f"{stem}.yaml").unlink(missing_ok=True)
 
 
-def remove_stale_flow_files(root: Path, flow_uuid: str, keep: Path) -> None:
+def remove_stale_flow_files(root: Path, flow_uuid: str, keep: Path, index: FlowIndex) -> None:
     """After (re)projecting a flow, drop any other file carrying the same ``flow_uuid`` — e.g. an
     old name left behind by a rename — plus its now-orphaned schedule file."""
-    for p in manifest.flows_dir(root).glob("*.flow.yaml"):
-        if p == keep:
-            continue
-        try:
-            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        except Exception:
-            continue
-        if data.get("flow_uuid") == flow_uuid:
-            p.unlink(missing_ok=True)
-            manifest.schedules_dir(root).joinpath(f"{p.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
+    for p in index.get(flow_uuid, []):
+        if p != keep:
+            _unlink_flow_file(root, p)
+    index[flow_uuid] = [keep]
 
 
 # --- connections -------------------------------------------------------------
@@ -266,7 +288,7 @@ def _schedule_dict(s: FlowSchedule) -> dict:
 
 
 def project_schedules_for_registration(
-    db: Session, root: Path, reg: FlowRegistration, stem: str | None = None
+    db: Session, root: Path, reg: FlowRegistration, index: FlowIndex, stem: str | None = None
 ) -> Path | None:
     schedules = (
         db.query(FlowSchedule)
@@ -279,7 +301,7 @@ def project_schedules_for_registration(
     )
     # Share the flow's file stem so a flow and its schedule always line up (caller passes the
     # resolved stem in full projection; the single-schedule hook resolves it from the projected file).
-    target = manifest.schedules_dir(root) / f"{stem or _flow_stem(root, reg)}.yaml"
+    target = manifest.schedules_dir(root) / f"{stem or _flow_stem(root, reg, index)}.yaml"
     if not schedules:
         target.unlink(missing_ok=True)
         return None
@@ -632,17 +654,18 @@ def _prune_orphan_files(root: Path, written: set[Path]) -> None:
 
 def project_all(db: Session, root: Path, owner_id: int) -> None:
     written: set[Path] = set()
+    index = flow_index(root)
     # Order by flow_uuid so the bare-vs-suffixed filename for same-named flows is stable across runs.
     for reg in (
         db.query(FlowRegistration)
         .filter(FlowRegistration.owner_id == owner_id)
         .order_by(FlowRegistration.flow_uuid.asc())
     ):
-        flow_path = project_flow(root, reg, _namespace_path(db, reg.namespace_id))
+        flow_path = project_flow(root, reg, index, _namespace_path(db, reg.namespace_id))
         if flow_path is not None:
             written.add(flow_path)
         stem = flow_path.name[: -len(".flow.yaml")] if flow_path is not None else None
-        sched_path = project_schedules_for_registration(db, root, reg, stem)
+        sched_path = project_schedules_for_registration(db, root, reg, index, stem)
         if sched_path is not None:
             written.add(sched_path)
     for conn in db.query(DatabaseConnection).filter(DatabaseConnection.user_id == owner_id):

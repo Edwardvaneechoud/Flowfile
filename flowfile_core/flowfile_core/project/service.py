@@ -197,9 +197,10 @@ class ProjectSyncService:
                     reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).first()
                     if reg is not None and reg.owner_id == proj.owner_id:
                         namespace = projection._namespace_path(db, reg.namespace_id)
-                        target = projection.project_flow(proj.root, reg, namespace)
+                        index = projection.flow_index(proj.root)
+                        target = projection.project_flow(proj.root, reg, index, namespace)
                         if target is not None:
-                            projection.remove_stale_flow_files(proj.root, reg.flow_uuid, target)
+                            projection.remove_stale_flow_files(proj.root, reg.flow_uuid, target, index)
             self._mark_projection(proj.owner_id, failed=False)
         except Exception:
             self._mark_projection(proj.owner_id, failed=True)
@@ -210,7 +211,7 @@ class ProjectSyncService:
         if proj is None:
             return
         try:
-            projection.remove_flow(proj.root, flow_uuid=flow_uuid)
+            projection.remove_flow(proj.root, projection.flow_index(proj.root), flow_uuid=flow_uuid)
             self._mark_projection(proj.owner_id, failed=False)
         except Exception:
             self._mark_projection(proj.owner_id, failed=True)
@@ -246,7 +247,8 @@ class ProjectSyncService:
                 with get_db_context() as db:
                     reg = db.query(FlowRegistration).filter(FlowRegistration.id == registration_id).first()
                     if reg is not None and reg.owner_id == proj.owner_id:
-                        projection.project_schedules_for_registration(db, proj.root, reg)
+                        index = projection.flow_index(proj.root)
+                        projection.project_schedules_for_registration(db, proj.root, reg, index)
             self._mark_projection(proj.owner_id, failed=False)
         except Exception:
             self._mark_projection(proj.owner_id, failed=True)

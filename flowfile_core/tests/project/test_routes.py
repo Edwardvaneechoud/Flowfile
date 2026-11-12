@@ -105,17 +105,19 @@ def test_restore_on_dirty_tree_409s_without_force(tmp_path):
         client.post("/project/secrets", json={"secrets": [{"name": "DIRTY_SECRET_V2", "value": "v2"}]})
         assert client.post("/project/versions", json={"message": "v2"}).json()["sha"]
 
-        # Make an uncommitted change (untracked file is enough for is_dirty).
-        (root / "unsaved.txt").write_text("uncommitted", encoding="utf-8")
+        # Make an uncommitted change: a hand edit of a managed file.
+        secrets_file = root / "secrets.yaml"
+        edited = secrets_file.read_text(encoding="utf-8") + "# edited by hand\n"
+        secrets_file.write_text(edited, encoding="utf-8")
         assert client.get("/project/active").json()["dirty"] is True
         blocked = client.post("/project/restore", json={"sha": version_v1})
         assert blocked.status_code == 409
-        # The unsaved file is untouched (nothing destroyed).
-        assert (root / "unsaved.txt").read_text(encoding="utf-8") == "uncommitted"
+        # The edit is untouched (nothing destroyed).
+        assert secrets_file.read_text(encoding="utf-8") == edited
 
         # reload is guarded the same way.
         assert client.post("/project/reload", json={"force": False}).status_code == 409
-        assert (root / "unsaved.txt").read_text(encoding="utf-8") == "uncommitted"
+        assert secrets_file.read_text(encoding="utf-8") == edited
     finally:
         project_sync.close_project(OWNER)
 

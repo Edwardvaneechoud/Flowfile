@@ -49,6 +49,8 @@ Project actions live on the Project Tracking page: **Settings → Workspace → 
 - **Restore a version** — resets the folder to an earlier commit and rebuilds the database to match.
 - **Reload from disk** — accepts changes made to the files outside Flowfile (for example a `git pull`) by rebuilding the database from them.
 
+Files in the folder that Flowfile did not write, such as a `README.md` or a `.DS_Store`, are not counted as unsaved changes and are never committed.
+
 ![The Project Tracking page: the active project path, its version history, and the save, restore, and stop-tracking controls.](../assets/images/guides/projects/projects-panel.png)
 
 !!! warning "Restore and reload rebuild from the files"

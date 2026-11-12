@@ -281,8 +281,9 @@ describe("closeProject", () => {
 });
 
 describe("saveVersion", () => {
-  it("clears unsaved state and refreshes history", async () => {
+  it("re-reads status after the save and refreshes history", async () => {
     mocks.saveVersion.mockResolvedValue({ sha: "abc123" });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
     const store = useProjectStore();
     store.activeProject = PROJECT;
     store.dirty = true;
@@ -290,9 +291,25 @@ describe("saveVersion", () => {
 
     const sha = await store.saveVersion("note");
     expect(sha).toBe("abc123");
+    expect(mocks.getActive).toHaveBeenCalledTimes(1);
+    expect(mocks.saveVersion.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.getActive.mock.invocationCallOrder[0],
+    );
     expect(store.dirty).toBe(false);
     expect(store.hasUnsavedChanges).toBe(false);
     expect(mocks.getVersions).toHaveBeenCalled();
+  });
+
+  it("keeps the server's dirty answer when nothing was committed", async () => {
+    mocks.saveVersion.mockResolvedValue({ sha: null });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: true });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+    store.dirty = true;
+
+    expect(await store.saveVersion("note")).toBeNull();
+    expect(store.dirty).toBe(true);
+    expect(store.status).toBe("unsaved");
   });
 });
 
