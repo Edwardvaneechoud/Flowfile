@@ -56,7 +56,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_database_connection,
 )
 from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
-from flowfile_core.project import manifest, projection, repository
+from flowfile_core.project import kinds, manifest, projection, repository
 from flowfile_core.project.manifest_entries import CloudConnectionEntry, DatabaseConnectionEntry, SchemaColumn
 from flowfile_core.project.models import KeptResources, SetupResult
 from flowfile_core.project.normalize import atomic_write, dump_yaml, safe_stem, write_yaml
@@ -1244,14 +1244,28 @@ def _assert_within_cap(items: list, cap: int, kind: str) -> None:
     )
 
 
-_ROOT_MANIFEST_CAPS = [
-    ("namespaces.yaml", "namespaces", _MAX_NAMESPACES, "namespaces"),
-    ("tables.yaml", "tables", _MAX_TABLES, "catalog tables"),
-    ("models.yaml", "models", _MAX_ARTIFACTS, "models"),
-    ("kernels.yaml", "kernels", _MAX_KERNELS, "kernels"),
-    ("visualizations.yaml", "visualizations", _MAX_VISUALIZATIONS, "visualizations"),
-    ("dashboards.yaml", "dashboards", _MAX_DASHBOARDS, "dashboards"),
-]
+def _cap_noun(kind: kinds.Kind) -> str:
+    return kind.label if kind.entries_key else f"{kind.label}s"
+
+
+def _by_kind(rels) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for rel in rels:
+        owned = kinds.kind_for_path(rel)
+        if owned is not None:
+            out.setdefault(owned[0].name, []).append(rel)
+    return out
+
+
+def _assert_kind_caps(files: dict[str, list[str]], entries) -> None:
+    """Each folder kind's file count, then each root file's list (``entries(path)``), against its cap."""
+    capped = [k for k in kinds.ordered() if k.cap is not None]
+    for kind in capped:
+        if kind.entries_key is None:
+            _assert_within_cap(files.get(kind.name, []), kind.cap, _cap_noun(kind))
+    for kind in capped:
+        if kind.entries_key is not None:
+            _assert_within_cap(entries(kind.paths[0]).get(kind.entries_key, []) or [], kind.cap, _cap_noun(kind))
 
 
 def preflight_import_caps(root: Path, sha: str) -> None:
@@ -1268,24 +1282,14 @@ def preflight_import_caps(root: Path, sha: str) -> None:
                 f"which exceeds the {_MAX_YAML_BYTES}-byte cap. Import aborted."
             )
 
-    def _under(prefix: str, suffix: str) -> list[str]:
-        return [p for p in sizes if p.startswith(prefix) and p.endswith(suffix)]
-
-    _assert_within_cap(_under("flows/", ".flow.yaml"), _MAX_FLOWS, "flows")
-    _assert_within_cap(_under("schedules/", ".yaml"), _MAX_FLOWS, "schedules")
-    _assert_within_cap(_under("connections/database/", ".yaml"), _MAX_CONNECTIONS, "database connections")
-    _assert_within_cap(_under("connections/cloud/", ".yaml"), _MAX_CONNECTIONS, "cloud connections")
-    _assert_within_cap(_under("notebooks/", ".notebook.yaml"), _MAX_NOTEBOOKS, "notebooks")
-
-    for path, key, cap, kind in _ROOT_MANIFEST_CAPS:
+    def _blob_yaml(path: str) -> dict:
         text = git_ops.read_blob(root, sha, path)
-        if not text:
-            continue
-        _assert_within_cap((yaml.safe_load(text) or {}).get(key, []) or [], cap, kind)
+        return (yaml.safe_load(text) or {}) if text else {}
 
-    for path in _under("schedules/", ".yaml"):
-        text = git_ops.read_blob(root, sha, path)
-        schedules = ((yaml.safe_load(text) or {}) if text else {}).get("schedules", []) or []
+    files = _by_kind(sizes)
+    _assert_kind_caps(files, _blob_yaml)
+    for path in files.get("schedule", []):
+        schedules = _blob_yaml(path).get("schedules", []) or []
         if len(schedules) > _MAX_SCHEDULES_PER_FLOW:
             raise ImportTooLargeError(
                 f"Project import: schedule file {path.split('/')[-1]!r} has {len(schedules)} entries, "
@@ -1303,28 +1307,13 @@ def preflight_import_caps_worktree(root: Path) -> None:
                 f"Project import: manifest file {path.name!r} is {path.stat().st_size} bytes, "
                 f"which exceeds the {_MAX_YAML_BYTES}-byte cap. Import aborted."
             )
-    _assert_within_cap(list(manifest.flows_dir(root).glob("*.flow.yaml")), _MAX_FLOWS, "flows")
-    sched_files = list(manifest.schedules_dir(root).glob("*.yaml"))
-    _assert_within_cap(sched_files, _MAX_FLOWS, "schedules")
-    db_files = list(manifest.connections_dir(root, "database").glob("*.yaml"))
-    cloud_files = list(manifest.connections_dir(root, "cloud").glob("*.yaml"))
-    _assert_within_cap(db_files, _MAX_CONNECTIONS, "database connections")
-    _assert_within_cap(cloud_files, _MAX_CONNECTIONS, "cloud connections")
-    _assert_within_cap(list(manifest.notebooks_dir(root).glob("*.notebook.yaml")), _MAX_NOTEBOOKS, "notebooks")
-    for path_fn, key, cap, kind in (
-        (manifest.namespaces_manifest_path, "namespaces", _MAX_NAMESPACES, "namespaces"),
-        (manifest.tables_manifest_path, "tables", _MAX_TABLES, "catalog tables"),
-        (manifest.models_manifest_path, "models", _MAX_ARTIFACTS, "models"),
-        (manifest.kernels_manifest_path, "kernels", _MAX_KERNELS, "kernels"),
-        (manifest.visualizations_manifest_path, "visualizations", _MAX_VISUALIZATIONS, "visualizations"),
-        (manifest.dashboards_manifest_path, "dashboards", _MAX_DASHBOARDS, "dashboards"),
-    ):
-        _assert_within_cap(_read_yaml(path_fn(root)).get(key, []) or [], cap, kind)
-    for f in sched_files:
-        schedules = _read_yaml(f).get("schedules", []) or []
+    files = _by_kind(kinds.owned_paths(root))
+    _assert_kind_caps(files, lambda rel: _read_yaml(root / rel))
+    for rel in files.get("schedule", []):
+        schedules = _read_yaml(root / rel).get("schedules", []) or []
         if len(schedules) > _MAX_SCHEDULES_PER_FLOW:
             raise ImportTooLargeError(
-                f"Project import: schedule file {f.name!r} has {len(schedules)} entries, "
+                f"Project import: schedule file {rel.split('/')[-1]!r} has {len(schedules)} entries, "
                 f"exceeding the {_MAX_SCHEDULES_PER_FLOW}-entry cap. Import aborted."
             )
 
@@ -1340,30 +1329,12 @@ _LIST_MANIFESTS = {
 
 
 def _file_kind(rel: str) -> str | None:
-    """The kind of a repo-relative path the importer reads, or ``None`` for a file it never reads
-    (the same globs ``_do_import_project_inner`` uses: one level deep, by suffix)."""
-    parts = rel.split("/")
-    if len(parts) == 1:
-        if rel == manifest.MANIFEST_NAME:
-            return "project"
-        stem = rel[: -len(".yaml")] if rel.endswith(".yaml") else None
-        return stem if stem in manifest.ROOT_MANIFESTS else None
-    if len(parts) == 2:
-        folder, name = parts
-        if folder == "flows" and name.endswith(".flow.yaml"):
-            return "flow"
-        if folder == "schedules" and name.endswith(".yaml"):
-            return "schedule"
-        if folder == "notebooks" and name.endswith(".notebook.yaml"):
-            return "notebook"
-    if (
-        len(parts) == 3
-        and parts[0] == "connections"
-        and parts[1] in ("database", "cloud")
-        and parts[2].endswith(".yaml")
-    ):
-        return f"{parts[1]}_connection"
-    return None
+    """The kind of a repo-relative path the importer reads (``project`` for project.yaml, else the name of
+    the registered kind whose pattern it matches), or ``None`` for a file it never reads."""
+    if rel == manifest.MANIFEST_NAME:
+        return "project"
+    owned = kinds.kind_for_path(rel)
+    return owned[0].name if owned is not None else None
 
 
 def _yaml_problem(e: yaml.YAMLError) -> str:
@@ -1543,13 +1514,7 @@ def preflight_import_files(root: Path, sha: str) -> None:
 def preflight_import_files_worktree(root: Path) -> None:
     """Read and validate every managed file of the working tree before open or reload touches the
     database, so an unreadable or malformed file aborts it with nothing changed."""
-    paths = [manifest.manifest_path(root)] + [root / f"{stem}.yaml" for stem in manifest.ROOT_MANIFESTS]
-    paths += manifest.flows_dir(root).glob("*.flow.yaml")
-    paths += manifest.schedules_dir(root).glob("*.yaml")
-    paths += manifest.connections_dir(root, "database").glob("*.yaml")
-    paths += manifest.connections_dir(root, "cloud").glob("*.yaml")
-    paths += manifest.notebooks_dir(root).glob("*.notebook.yaml")
-    rels = [p.relative_to(root).as_posix() for p in paths if p.is_file()]
+    rels = ([manifest.MANIFEST_NAME] if manifest.manifest_path(root).is_file() else []) + kinds.owned_paths(root)
     _validate_project_files(lambda rel: (root / rel).read_text(encoding="utf-8"), rels)
 
 

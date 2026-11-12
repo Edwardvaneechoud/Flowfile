@@ -11,7 +11,7 @@ from pathlib import Path
 
 from filelock import FileLock
 
-from flowfile_core.project import manifest
+from flowfile_core.project import kinds, manifest
 
 logger = logging.getLogger(__name__)
 
@@ -123,11 +123,12 @@ def init(root: Path) -> None:
 
 
 def _managed_pathspecs() -> list[str]:
-    """Git pathspecs for the files Flowfile writes: the project manifest, ``.gitignore``, the root
-    manifests and the ``*.yaml`` files directly under each mirrored dir. Anything else in the folder
-    (a README, ``.DS_Store``) is never counted as unsaved and never staged."""
-    roots = [manifest.MANIFEST_NAME, ".gitignore"] + [f"{stem}.yaml" for stem in manifest.ROOT_MANIFESTS]
-    return [f":(literal){p}" for p in roots] + [f":(glob){d}/*.yaml" for d in manifest.MIRRORED_DIRS]
+    """Git pathspecs for the files Flowfile writes: the project manifest, ``.gitignore`` and every path
+    pattern a project kind owns (``project.kinds``). Anything else in the folder (a README,
+    ``.DS_Store``, ``flows/notes.yaml``) is never counted as unsaved and never staged."""
+    patterns = kinds.managed_patterns()
+    roots = [manifest.MANIFEST_NAME, ".gitignore"] + [p for p in patterns if "*" not in p]
+    return [f":(literal){p}" for p in roots] + [f":(glob){p}" for p in patterns if "*" in p]
 
 
 def _managed_status(repo) -> list[tuple[str, str]]:

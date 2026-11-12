@@ -26,7 +26,7 @@ from flowfile_core.database import backup
 from flowfile_core.database.connection import get_database_path, get_db_context
 from flowfile_core.database.models import FlowRegistration
 from flowfile_core.fileExplorer.funcs import _is_contained, validate_path_under_cwd
-from flowfile_core.project import git_ops, projection, repository
+from flowfile_core.project import git_ops, kinds, projection, repository
 from flowfile_core.project.importer import (
     import_project,
     preflight_import_caps,
@@ -36,7 +36,6 @@ from flowfile_core.project.importer import (
 )
 from flowfile_core.project.manifest import (
     MANIFEST_NAME,
-    ROOT_MANIFESTS,
     ProjectManifest,
     read_manifest,
     write_gitignore,
@@ -88,23 +87,12 @@ def _confine_project_root(folder_path: str, owner_id: int) -> Path:
 
 
 def _classify_path(path: str) -> tuple[str, str]:
-    """Map a project file path to a (kind, label) for a friendly change summary."""
-    name = path.split("/")[-1]
-    if path.startswith("flows/") and name.endswith(".flow.yaml"):
-        return "flow", name[: -len(".flow.yaml")]
-    if path.startswith("notebooks/") and name.endswith(".notebook.yaml"):
-        return "notebook", name[: -len(".notebook.yaml")]
-    stem = name[: -len(".yaml")] if name.endswith(".yaml") else name
-    if path.startswith("connections/database/"):
-        return "database connection", stem
-    if path.startswith("connections/cloud/"):
-        return "cloud connection", stem
-    if path.startswith("schedules/"):
-        return "schedule", stem
-    # Root-level manifests mirror a whole resource category; show the category rather than "settings".
-    if "/" not in path and stem in ROOT_MANIFESTS:
-        return ROOT_MANIFESTS[stem], stem
-    return "settings", name
+    """Map a project file path to a (kind label, name) for a friendly change summary."""
+    owned = kinds.kind_for_path(path)
+    if owned is not None:
+        kind, stem = owned
+        return kind.label, stem
+    return "settings", path.split("/")[-1]
 
 
 def _assert_not_foreign_owned(root: Path, owner_id: int) -> None:
