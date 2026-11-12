@@ -39,6 +39,7 @@ _BACKOFF_BASE_SECONDS = 0.5
 _BACKOFF_CAP_SECONDS = 30.0
 
 SECRET_MASK = "REDACTED"
+_SUBSTRING_MASK_MIN_CHARS = 4
 _ERROR_BODY_CHARS = 300
 _PREVIEW_CHARS = 80
 
@@ -142,12 +143,19 @@ def secret_forms(settings: RestApiReadSettings, secret: str | None) -> tuple[str
 
 
 def mask_secrets(value: Any, forms: tuple[str, ...]) -> Any:
-    """*value* with each of *forms* masked: a text, or every key and string of a JSON value."""
+    """*value* with each of *forms* masked: a text, or every key and string of a JSON value.
+
+    A form shorter than ``_SUBSTRING_MASK_MIN_CHARS`` is masked only where it is the whole string, since replacing a
+    one- or two-character secret wherever it occurs would garble unrelated text and keys.
+    """
     if not forms:
         return value
     if isinstance(value, str):
         for form in forms:
-            value = value.replace(form, SECRET_MASK)
+            if len(form) >= _SUBSTRING_MASK_MIN_CHARS:
+                value = value.replace(form, SECRET_MASK)
+            elif value == form:
+                return SECRET_MASK
         return value
     if isinstance(value, dict):
         return {mask_secrets(key, forms): mask_secrets(item, forms) for key, item in value.items()}

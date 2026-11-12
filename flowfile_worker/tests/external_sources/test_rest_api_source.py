@@ -656,6 +656,24 @@ def test_read_rest_api_masks_a_secret_the_response_echoes(api, tmp_path):
     assert shown == {"headers": {"Authorization": "Basic REDACTED"}, "items": [{"key": "REDACTED"}]}
 
 
+def test_a_short_secret_is_masked_only_where_it_is_the_whole_value(api, tmp_path):
+    echoed = base64.b64encode(b"alice:at").decode()
+    api.route("/echo", _answer({"data": [{"key": "at", "note": "date"}], "auth": f"Basic {echoed}"}))
+    settings = WorkerRestApiReadSettings(
+        url=api.url("/echo"),
+        record_path="data",
+        sample_size=10,
+        auth=AuthConfig(auth_type="basic", basic_username="alice", basic_password_encrypted=encrypt_secret("at")),
+    )
+    debug_file = tmp_path / "debug.json"
+    read_rest_api(settings, debug_file=str(debug_file))
+
+    written = json.loads(debug_file.read_text())
+    shown = json.loads(written["response_text"])
+    assert shown == {"data": [{"key": "REDACTED", "note": "date"}], "auth": "Basic REDACTED"}
+    assert "data" in written["suggested_paths"]["record_paths"]
+
+
 def test_a_response_that_is_no_json_names_the_request_and_how_it_starts(api):
     url = api.route("/login", _answer(text="<html><title>Sign in</title></html>"))
     with pytest.raises(RestApiRequestError, match=r"answered 200, but the response was not valid JSON.*<html>"):
