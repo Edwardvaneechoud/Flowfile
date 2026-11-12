@@ -22,13 +22,16 @@ from flowfile_core.project.normalize import atomic_write
 
 @dataclass
 class ExportContext:
-    """What a kind's export reads: the session, the project's owner and whether data artifacts are tracked.
+    """What a kind's export reads: the session, the project's owner and the kinds the project lists.
 
-    ``memo`` is shared by the kinds of one snapshot, so the schedule kind reuses the flow kind's file names."""
+    ``kinds`` of ``None`` exports every registered kind. ``scope`` is carried for the kinds and read by none of
+    core's. ``memo`` is shared by the kinds of one snapshot, so the schedule kind reuses the flow kind's file
+    names."""
 
     db: Session
     owner_id: int
-    track_data_artifacts: bool = True
+    kinds: frozenset[str] | None = None
+    scope: object = None
     memo: dict = field(default_factory=dict)
 
 
@@ -107,6 +110,12 @@ def kind_for_path(rel: str) -> tuple[Kind, str] | None:
     return None
 
 
+def unknown(names) -> list[str]:
+    """The names no registered kind has, in their order."""
+    known = {k.name for k in registered()}
+    return [n for n in names if n not in known]
+
+
 def managed_patterns() -> list[str]:
     return [p for kind in ordered() for p in kind.paths]
 
@@ -115,7 +124,7 @@ def snapshot(ctx: ExportContext) -> dict[str, str]:
     """Every kind's export as one ``{path: text}`` tree, nothing written."""
     tree: dict[str, str] = {}
     for kind in ordered():
-        if kind.tracked_by_data_flag and not ctx.track_data_artifacts:
+        if ctx.kinds is not None and kind.name not in ctx.kinds:
             continue
         tree.update(kind.export(ctx))
     return tree

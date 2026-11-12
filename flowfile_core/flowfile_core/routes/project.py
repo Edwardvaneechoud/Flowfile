@@ -104,12 +104,15 @@ class ImportedCounts(BaseModel):
     flows: int
     connections: int
     schedules: int
+    by_kind: dict[str, int] = {}
 
 
 class SetupResultOut(BaseModel):
     imported: ImportedCounts
     placeholder_secrets: list[str]
     prune_errors: list[str]
+    unknown_kinds: list[str] = []
+    not_applied: list[str] = []
     recovery_sha: str | None = None
 
 
@@ -241,6 +244,8 @@ def update_settings(req: UpdateSettingsRequest, current_user=Depends(get_current
         value = project_sync.update_settings(current_user.id, req.track_data_artifacts)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return SettingsOut(track_data_artifacts=value)
 
 
@@ -250,6 +255,8 @@ def save_version(req: SaveVersionRequest, current_user=Depends(get_current_activ
         sha = project_sync.save_version(current_user.id, req.message)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return SaveVersionOut(sha=sha)
 
 

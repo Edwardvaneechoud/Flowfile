@@ -19,9 +19,24 @@ import yaml
 _SAFE_STEM_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+class _ProjectDumper(yaml.Dumper):
+    """PyYAML's dumper with the list style of project files, so their bytes do not depend on what another
+    module registered on ``yaml.Dumper``."""
+
+
+def _represent_list(dumper: yaml.Dumper, data: list):
+    flow = len(data) <= 10 and all(isinstance(item, int | str | float | bool | type(None)) for item in data)
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=flow)
+
+
+_ProjectDumper.add_representer(list, _represent_list)
+
+
 def dump_yaml(data: Any) -> str:
     """The single canonical dumper used for every project file."""
-    return yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True, width=4096)
+    return yaml.dump(
+        data, Dumper=_ProjectDumper, default_flow_style=False, sort_keys=False, allow_unicode=True, width=4096
+    )
 
 
 def atomic_write(path: Path, content: str) -> None:

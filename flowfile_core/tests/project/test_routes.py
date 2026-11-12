@@ -76,7 +76,14 @@ def test_version_lifecycle_via_routes(tmp_path):
         # as a new version (so the tree is clean afterwards).
         restored = client.post("/project/restore", json={"sha": version_a})
         assert restored.status_code == 200
-        assert set(restored.json()) == {"imported", "placeholder_secrets", "prune_errors", "recovery_sha"}
+        assert set(restored.json()) == {
+            "imported",
+            "placeholder_secrets",
+            "prune_errors",
+            "recovery_sha",
+            "unknown_kinds",
+            "not_applied",
+        }
         assert client.get("/project/active").json()["dirty"] is False
         assert client.get("/project/versions").json()["versions"][0]["message"].startswith("Restore")
 
@@ -84,7 +91,14 @@ def test_version_lifecycle_via_routes(tmp_path):
         assert client.post("/project/reload").status_code == 409
         reloaded = client.post("/project/reload", json={"force": True})
         assert reloaded.status_code == 200
-        assert set(reloaded.json()) == {"imported", "placeholder_secrets", "prune_errors", "recovery_sha"}
+        assert set(reloaded.json()) == {
+            "imported",
+            "placeholder_secrets",
+            "prune_errors",
+            "recovery_sha",
+            "unknown_kinds",
+            "not_applied",
+        }
 
         assert client.post("/project/close").json() == {"ok": True}
         assert client.get("/project/active").json()["project"] is None

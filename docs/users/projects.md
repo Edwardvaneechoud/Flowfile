@@ -26,7 +26,7 @@ A project folder holds YAML mirrors of your resources:
 
 | Path | Contents |
 |---|---|
-| `project.yaml` | Project manifest — name, id, format version, data-tracking toggle. |
+| `project.yaml` | Project manifest — name, id, format version and `kinds`, the kinds of resource the folder describes. |
 | `flows/` | One `.flow.yaml` per registered flow. A node names the catalog tables, schemas and flows it uses instead of this install's row ids for them, so a project opened elsewhere reads the same tables. A project saved before this changes its flow files once, on the next save. |
 | `connections/database/`, `connections/cloud/` | One `.yaml` per connection (no credentials). |
 | `schedules/` | One `.yaml` per flow, listing its interval and cron schedules, each with an `id`. |
@@ -37,7 +37,7 @@ A project folder holds YAML mirrors of your resources:
 
 ### Tracking data artifacts
 
-The `project.yaml` manifest carries an all-or-nothing **track data artifacts** toggle (on by default). When on, catalog-table metadata (`tables.yaml`) and global-model metadata (`models.yaml`) are mirrored too. Turn it off to keep a project focused on flows and connections and leave data-artifact metadata out of git entirely. The materialized table data itself is never committed regardless — only its metadata.
+The **track data artifacts** toggle (on by default) adds `tables` and `models` to the `kinds` list in `project.yaml`, or removes them. When on, catalog-table metadata (`tables.yaml`) and global-model metadata (`models.yaml`) are mirrored too. Turn it off to keep a project focused on flows and connections and leave data-artifact metadata out of git entirely. The materialized table data itself is never committed regardless — only its metadata.
 
 ## Working with projects in the app
 
@@ -57,6 +57,8 @@ Files in the folder that Flowfile did not write, such as a `README.md` or a `.DS
     Restoring a version and reloading from disk both reset your resources to match the folder, removing any resource of a kind the files list that is not among them. A kind the folder has no file for is left alone: restoring a version without `kernels.yaml`, or with nothing under `connections/` or `notebooks/`, keeps your kernels, connections or notebooks, and a version without any flow file keeps your flows. A flow Flowfile cannot write into the folder (one whose file is missing, a `.flowfile` flow, a kernel's scratch flow) is never removed. Before either one, Flowfile compares your resources with the last version and names what it would lose, including changes made without touching the folder (a flow saved to the catalog, a quick-created flow). **Keep a recovery point and continue** saves them first: a restore records them as commits in the history, a reload as a recovery ref (`refs/flowfile/recovery/...`) that leaves the history as it was. A reload of files you edited by hand, with nothing unsaved in your resources, needs no confirmation. On a SQLite catalog (the default) a snapshot of the catalog database is also written to `db_backups/` first; a PostgreSQL catalog gets no snapshot, so the recovery point is the only copy. A version never holds stored passwords, only their names.
 
     A schedule whose `id` is in the file is updated in place by an open, restore or reload, so it keeps its notification rules and when it last ran; a schedule file saved before schedules had ids gets them on the next save.
+
+    Open, restore and reload apply only the kinds the version lists in `kinds`: a version that leaves out `kernels` neither changes nor removes your kernels, whatever its `kernels.yaml` holds. A listed kind this install does not know keeps its files, which saves and restores carry along unchanged, and is reported. A folder written by a newer Flowfile is refused before anything changes. A folder from an earlier release opens as before and lists its kinds from its next save. A file under a `@<username>/` folder (such as `flows/@alice/`) is reported as not applied and left as it is. An entry or a file whose `owner` names another user is reported as not applied too, but it is not kept: the next save writes the folder from your own resources and leaves it out.
 
     Every file is checked before anything changes. If one cannot be read (invalid YAML, or content of the wrong shape, such as a connection file missing its name), open, restore and reload stop with an error naming that file, and your folder and resources stay exactly as they were. A failure while your resources are being updated, such as a flow that does not load, changes none of them and writes no flow or notebook file.
 

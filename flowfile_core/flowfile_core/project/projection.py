@@ -819,7 +819,7 @@ def prune_orphan_notebooks(root: Path, written: set[Path]) -> None:
 def project_all(db: Session, root: Path, owner_id: int) -> None:
     """Write the registry's snapshot into ``root`` and remove the owned files it does not hold.
 
-    Catalog tables and models are left out when ``project.yaml`` opts out of tracking them."""
+    Only the kinds ``project.yaml`` lists are exported; without one, every registered kind is."""
     m = manifest.read_manifest(root)
-    ctx = kinds.ExportContext(db=db, owner_id=owner_id, track_data_artifacts=m is None or m.track_data_artifacts)
+    ctx = kinds.ExportContext(db=db, owner_id=owner_id, kinds=None if m is None else frozenset(m.kinds))
     kinds.write_tree(root, kinds.snapshot(ctx))

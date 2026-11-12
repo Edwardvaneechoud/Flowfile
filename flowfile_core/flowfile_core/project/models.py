@@ -44,6 +44,9 @@ class SetupResult:
     imported_flows: int = 0
     imported_connections: int = 0
     imported_schedules: int = 0
+    by_kind: dict[str, int] = field(default_factory=dict)
+    unknown_kinds: list[str] = field(default_factory=list)
+    not_applied: list[str] = field(default_factory=list)
     placeholder_secrets: list[str] = field(default_factory=list)
     prune_errors: list[str] = field(default_factory=list)
     recovery_sha: str | None = None
@@ -54,7 +57,10 @@ class SetupResult:
                 "flows": self.imported_flows,
                 "connections": self.imported_connections,
                 "schedules": self.imported_schedules,
+                "by_kind": dict(self.by_kind),
             },
+            "unknown_kinds": sorted(self.unknown_kinds),
+            "not_applied": sorted(self.not_applied),
             "placeholder_secrets": sorted(set(self.placeholder_secrets)),
             "prune_errors": list(self.prune_errors),
             "recovery_sha": self.recovery_sha,

@@ -300,7 +300,8 @@ def test_the_export_writes_the_recorded_tree(tmp_path, every_kind):
     from flowfile_core.project import kinds
 
     with get_db_context() as db:
-        tree = kinds.snapshot(kinds.ExportContext(db=db, owner_id=every_kind, track_data_artifacts=True))
+        everything = frozenset(k.name for k in kinds.registered())
+        tree = kinds.snapshot(kinds.ExportContext(db=db, owner_id=every_kind, kinds=everything))
     assert tree == expected
 
     before = {p: (root / p).read_bytes() for p in expected}
@@ -315,7 +316,8 @@ def test_data_artifact_kinds_leave_the_tree_when_not_tracked(tmp_path, every_kin
     _project_all(root, every_kind)
     assert (root / "tables.yaml").exists() and (root / "models.yaml").exists()
     with get_db_context() as db:
-        tree = kinds.snapshot(kinds.ExportContext(db=db, owner_id=every_kind, track_data_artifacts=False))
+        untracked = frozenset(k.name for k in kinds.registered()) - {"tables", "models"}
+        tree = kinds.snapshot(kinds.ExportContext(db=db, owner_id=every_kind, kinds=untracked))
     assert "tables.yaml" not in tree and "models.yaml" not in tree
     kinds.write_tree(root, tree)
     assert not (root / "tables.yaml").exists() and not (root / "models.yaml").exists()

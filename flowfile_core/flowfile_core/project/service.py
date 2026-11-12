@@ -36,7 +36,9 @@ from flowfile_core.project.importer import (
 )
 from flowfile_core.project.manifest import (
     MANIFEST_NAME,
+    PROJECT_FORMAT,
     ProjectManifest,
+    kinds_to_save,
     read_manifest,
     write_gitignore,
     write_manifest,
@@ -45,6 +47,13 @@ from flowfile_core.project.models import ActiveProject, NoActiveProjectError, Se
 from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
+
+
+def _save_manifest(root: Path, m: ProjectManifest) -> None:
+    """Write ``project.yaml`` in the current format, listing the kinds a save of it exports."""
+    m.project_format = PROJECT_FORMAT
+    m.kinds = kinds_to_save(m)
+    write_manifest(root, m)
 
 
 def project_root_base(owner_id: int) -> Path | None:
@@ -338,13 +347,11 @@ class ProjectSyncService:
         root.mkdir(parents=True, exist_ok=True)
         existing = read_manifest(root)
         # A new project takes the requested toggle; re-initializing an existing one keeps its manifest value.
-        m = existing or ProjectManifest(
-            name=name,
-            project_id=str(uuid.uuid4()),
-            created_with_version=__version__,
-            track_data_artifacts=track_data_artifacts,
-        )
-        write_manifest(root, m)
+        m = existing
+        if m is None:
+            m = ProjectManifest(name=name, project_id=str(uuid.uuid4()), created_with_version=__version__)
+            m.track_data_artifacts = track_data_artifacts
+        _save_manifest(root, m)
         write_gitignore(root)
         if not git_ops.git_available():
             logger.warning("git is unavailable; project %r is created without version tracking", name)
@@ -385,6 +392,9 @@ class ProjectSyncService:
             raise NoActiveProjectError("No active project")
         git_ops.init(proj.root)  # heal a folder created while git was unavailable; no-op otherwise
         with git_ops.project_lock(proj.root):
+            m = read_manifest(proj.root)
+            if m is not None:
+                _save_manifest(proj.root, m)
             with get_db_context() as db:
                 projection.project_all(db, proj.root, proj.owner_id)
             sha = git_ops.commit_all(proj.root, message)
@@ -538,8 +548,8 @@ class ProjectSyncService:
             self._projection_failed.discard(owner_id)
 
     def update_settings(self, user_id: int, track_data_artifacts: bool) -> bool:
-        """Flip the track-data-artifacts toggle: rewrite project.yaml + the DB mirror, then
-        re-project so tables.yaml / models.yaml are dropped (off) or regenerated (on)."""
+        """Flip the track-data-artifacts toggle: add or remove the data kinds in project.yaml's ``kinds``, update
+        the DB mirror, then re-project so tables.yaml / models.yaml are dropped (off) or regenerated (on)."""
         proj = self.get_active_project(user_id)
         if proj is None:
             raise NoActiveProjectError("No active project")
@@ -548,7 +558,7 @@ class ProjectSyncService:
             raise NoActiveProjectError("No active project")
         with git_ops.repo_lock(proj.root):
             m.track_data_artifacts = track_data_artifacts
-            write_manifest(proj.root, m)
+            _save_manifest(proj.root, m)
             with get_db_context() as db:
                 repository.set_track_data_artifacts(db, proj.id, track_data_artifacts)
             proj.track_data_artifacts = track_data_artifacts

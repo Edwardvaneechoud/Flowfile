@@ -42,6 +42,7 @@ from flowfile_core.database.models import (
     FlowSchedule,
     GlobalArtifact,
     Kernel,
+    User,
 )
 from flowfile_core.fileExplorer.funcs import _is_contained
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
@@ -123,6 +124,43 @@ _ns_resolve_cache: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
 _after_commit_queue: contextvars.ContextVar[list | None] = contextvars.ContextVar("_after_commit_queue", default=None)
 
 
+# The project owner's username and the import's ``not_applied`` list, for the length of one import.
+_import_owner: contextvars.ContextVar[tuple[str | None, list[str]] | None] = contextvars.ContextVar(
+    "_import_owner", default=None
+)
+
+
+def _foreign(owner) -> bool:
+    """Whether an ``owner`` a file or entry names is a user other than the project's owner."""
+    scope = _import_owner.get()
+    return scope is not None and owner is not None and owner != scope[0]
+
+
+def _not_applied(item: str) -> None:
+    scope = _import_owner.get()
+    if scope is not None:
+        scope[1].append(item)
+
+
+def _applies(rel: str, data: dict) -> bool:
+    """A file of a per-file kind is applied unless its ``owner`` names another user; then it is reported."""
+    if _foreign(data.get("owner")):
+        _not_applied(rel)
+        return False
+    return True
+
+
+def _applied_entries(rel: str, entries: list, name_key: str) -> list:
+    """A root manifest's entries less those whose ``owner`` names another user, each of those reported."""
+    out = []
+    for entry in entries:
+        if isinstance(entry, dict) and _foreign(entry.get("owner")):
+            _not_applied(f"{rel}: {entry.get(name_key)}")
+        else:
+            out.append(entry)
+    return out
+
+
 def _after_commit(action, *args, **kwargs) -> None:
     """Queue a disk or in-memory side effect of the import until the database has committed; run it
     at once when no import transaction is open (a direct call of one import function)."""
@@ -183,8 +221,10 @@ def _resolve_secret_value(name: str, owner_id: int, dotenv: dict, result: SetupR
     return ""
 
 
-def _import_standalone_secrets(root: Path, owner_id: int, dotenv: dict, result: SetupResult) -> None:
-    for name in _read_yaml(manifest.secrets_manifest_path(root)).get("required_secrets", []) or []:
+def _import_standalone_secrets(root: Path, owner_id: int, dotenv: dict, result: SetupResult) -> int:
+    """Store each secret ``secrets.yaml`` names that the owner has not; return how many names it lists."""
+    names = _read_yaml(manifest.secrets_manifest_path(root)).get("required_secrets", []) or []
+    for name in names:
         if get_encrypted_secret(owner_id, name) is not None:
             continue
         value = resolve(name, dotenv)
@@ -193,6 +233,7 @@ def _import_standalone_secrets(root: Path, owner_id: int, dotenv: dict, result: 
             value = ""
         with get_db_context() as db:
             store_secret(db, SecretInput(name=name, value=SecretStr(value)), owner_id)
+    return len(names)
 
 
 def _import_db_connection(data: dict, owner_id: int, dotenv: dict, result: SetupResult) -> str | None:
@@ -362,7 +403,9 @@ def _import_namespaces(root: Path, owner_id: int) -> set[int]:
     system namespaces resolve in place, while project-specific ones (custom catalogs/schemas and
     demo-seeded ``is_public`` ones the seeder didn't create on this machine) are recreated, preserving
     ``is_public`` so flows/tables can attach to their real schema."""
-    catalogs = _read_yaml(manifest.namespaces_manifest_path(root)).get("namespaces", []) or []
+    catalogs = _applied_entries(
+        "namespaces.yaml", _read_yaml(manifest.namespaces_manifest_path(root)).get("namespaces", []) or [], "catalog"
+    )
     _assert_within_cap(catalogs, _MAX_NAMESPACES, "namespaces")
     kept: set[int] = set()
     for catalog in sorted(catalogs, key=lambda c: c.get("catalog") or ""):
@@ -489,7 +532,9 @@ def _import_tables(root: Path, owner_id: int) -> set[int]:
     repopulates when its flow runs). Existing data is never overwritten. A SQL view is rebuilt from
     its stored query + schema without executing it."""
     kept: set[int] = set()
-    tables_entries = _read_yaml(manifest.tables_manifest_path(root)).get("tables", []) or []
+    tables_entries = _applied_entries(
+        "tables.yaml", _read_yaml(manifest.tables_manifest_path(root)).get("tables", []) or [], "name"
+    )
     _assert_within_cap(tables_entries, _MAX_TABLES, "catalog tables")
     for entry in tables_entries:
         name = entry.get("name")
@@ -545,7 +590,9 @@ def _import_artifacts(root: Path, owner_id: int) -> set[int]:
     flow re-runs. An artifact whose source flow isn't present is skipped (its FK can't be satisfied), and a
     version deleted locally is left deleted — import must never resurrect a deletion."""
     kept: set[int] = set()
-    artifact_entries = _read_yaml(manifest.models_manifest_path(root)).get("models", []) or []
+    artifact_entries = _applied_entries(
+        "models.yaml", _read_yaml(manifest.models_manifest_path(root)).get("models", []) or [], "name"
+    )
     _assert_within_cap(artifact_entries, _MAX_ARTIFACTS, "models")
     for entry in artifact_entries:
         name, version = entry.get("name"), entry.get("version")
@@ -590,7 +637,9 @@ def _import_kernels(root: Path, owner_id: int, ids_used: dict[str, str] | None =
     ``resolved_packages`` stays empty until the kernel is next baked on this machine. ``ids_used``
     receives ``{id in the file: id stored}``, so a notebook follows a kernel whose id was re-minted."""
     kept: set[str] = set()
-    kernel_entries = _read_yaml(manifest.kernels_manifest_path(root)).get("kernels", []) or []
+    kernel_entries = _applied_entries(
+        "kernels.yaml", _read_yaml(manifest.kernels_manifest_path(root)).get("kernels", []) or [], "name"
+    )
     _assert_within_cap(kernel_entries, _MAX_KERNELS, "kernels")
     for entry in kernel_entries:
         name = entry.get("name")
@@ -647,7 +696,11 @@ def _import_visualizations(root: Path, owner_id: int) -> set[str]:
     table is still absent keeps its definition with a null source rather than being dropped. The
     PNG thumbnail isn't restored — it re-exports on the next view."""
     kept: set[str] = set()
-    viz_entries = _read_yaml(manifest.visualizations_manifest_path(root)).get("visualizations", []) or []
+    viz_entries = _applied_entries(
+        "visualizations.yaml",
+        _read_yaml(manifest.visualizations_manifest_path(root)).get("visualizations", []) or [],
+        "name",
+    )
     _assert_within_cap(viz_entries, _MAX_VISUALIZATIONS, "visualizations")
     for entry in viz_entries:
         name = entry.get("name")
@@ -708,7 +761,9 @@ def _import_dashboards(root: Path, owner_id: int) -> set[str]:
     dashboard_uuid; the localized layout is validated through ``DashboardLayout`` and stored with the
     keys the file holds, so a row written before a field existed exports the same file again."""
     kept: set[str] = set()
-    dashboard_entries = _read_yaml(manifest.dashboards_manifest_path(root)).get("dashboards", []) or []
+    dashboard_entries = _applied_entries(
+        "dashboards.yaml", _read_yaml(manifest.dashboards_manifest_path(root)).get("dashboards", []) or [], "name"
+    )
     _assert_within_cap(dashboard_entries, _MAX_DASHBOARDS, "dashboards")
     for entry in dashboard_entries:
         name = entry.get("name")
@@ -760,6 +815,8 @@ def _import_notebooks(root: Path, owner_id: int, kernel_ids: dict[str, str] | No
     _assert_within_cap(files, _MAX_NOTEBOOKS, "notebooks")
     for f in files:
         data = _read_yaml(f)
+        if not _applies(f.relative_to(root).as_posix(), data):
+            continue
         name = data.get("name")
         if not name:
             continue
@@ -1401,6 +1458,7 @@ def _validate_manifest_entries(rel: str, stem: str, data: dict) -> None:
         where = f"entry {i + 1} of {key!r}"
         _check_file(rel, _is_text(entry.get(name_key)), f"{where} has no {name_key!r}")
         _check_file(rel, _optional(entry.get("namespace"), dict), f"{where} has a 'namespace' that is not a mapping")
+        _check_file(rel, _optional(entry.get("owner"), str), f"{where} has an 'owner' that is not text")
         if stem == "namespaces":
             schemas = entry.get("schemas")
             _check_file(rel, _is_mapping_list(schemas), f"{where} must list its 'schemas' as mappings")
@@ -1438,6 +1496,8 @@ def _validate_project_file(rel: str, kind: str, text: str) -> None:
     """Raise ``ProjectFileError`` when one file's content would make the import skip an entry as if it
     were absent, or raise half-way through."""
     data = _parse_project_file(rel, text)
+    if kind not in ("secrets", *_LIST_MANIFESTS):
+        _check_file(rel, _optional(data.get("owner"), str), "has an 'owner' that is not text")
     if kind == "secrets":
         names = data.get("required_secrets")
         ok = names is None or (isinstance(names, list) and all(_is_text(n) for n in names))
@@ -1481,25 +1541,28 @@ def _validate_project_file(rel: str, kind: str, text: str) -> None:
 
 
 def _validate_project_files(read_text, rels: list[str]) -> None:
-    """Validate every file the import reads, ``read_text(rel)`` giving its text. The tables and models
-    manifests are skipped when the tree's own project.yaml opts out of tracking them, as the import does."""
-    kinds = {rel: kind for rel in rels if (kind := _file_kind(rel)) is not None}
+    """Validate every file the import reads, ``read_text(rel)`` giving its text. ``project.yaml`` is parsed as
+    the import parses it, so a newer format stops here; a kind the tree's own ``kinds`` does not list is not
+    read by the import and is not validated."""
+    file_kinds = {rel: kind for rel in rels if (kind := _file_kind(rel)) is not None}
     texts: dict[str, str] = {}
-    for rel in sorted(kinds):
+    for rel in sorted(file_kinds):
         try:
             texts[rel] = read_text(rel)
         except UnicodeDecodeError:
             raise ProjectFileError(f"Project file {rel!r} is not UTF-8 text. Nothing was changed.") from None
-    project = (
-        _parse_project_file(manifest.MANIFEST_NAME, texts[manifest.MANIFEST_NAME])
-        if manifest.MANIFEST_NAME in texts
-        else {}
-    )
-    tracks_data = project.get("track_data_artifacts", True)
-    for rel in sorted(kinds):
-        if kinds[rel] in ("tables", "models") and not tracks_data:
+    listed = None
+    if manifest.MANIFEST_NAME in texts:
+        project = _parse_project_file(manifest.MANIFEST_NAME, texts[manifest.MANIFEST_NAME])
+        try:
+            listed = set(manifest.parse_manifest(project, "").kinds)
+        except ValueError as e:
+            raise ProjectFileError(str(e)) from None
+    for rel in sorted(file_kinds):
+        kind = file_kinds[rel]
+        if kind != "project" and listed is not None and kind not in listed:
             continue
-        _validate_project_file(rel, kinds[rel], texts[rel])
+        _validate_project_file(rel, kind, texts[rel])
 
 
 def preflight_import_files(root: Path, sha: str) -> None:
@@ -1518,85 +1581,144 @@ def preflight_import_files_worktree(root: Path) -> None:
     _validate_project_files(lambda rel: (root / rel).read_text(encoding="utf-8"), rels)
 
 
+def _owner_username(owner_id: int) -> str | None:
+    with get_db_context() as db:
+        user = db.get(User, owner_id)
+        return user.username if user is not None else None
+
+
 def _do_import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResult:
+    result = SetupResult()
     token = _ns_resolve_cache.set({})
+    owner_token = _import_owner.set((_owner_username(owner_id), result.not_applied))
     try:
-        return _do_import_project_inner(root, owner_id, prune)
+        return _do_import_project_inner(root, owner_id, prune, result)
     finally:
+        _import_owner.reset(owner_token)
         _ns_resolve_cache.reset(token)
 
 
-def _do_import_project_inner(root: Path, owner_id: int, prune: bool = False) -> SetupResult:
+def _report_reserved(root: Path, listed: list[str]) -> None:
+    """Report, unread, each file under a listed folder kind's ``@<name>/`` level, kept for other owners."""
+    for kind in kinds.ordered():
+        if kind.name not in listed:
+            continue
+        for pattern in kind.paths:
+            folder, _, name = pattern.rpartition("/")
+            if "*" not in name or not (root / folder).is_dir():
+                continue
+            for level in sorted((root / folder).glob("@*")):
+                if level.is_dir():
+                    for p in sorted(level.glob(name)):
+                        if p.is_file():
+                            _not_applied(p.relative_to(root).as_posix())
+
+
+def _do_import_project_inner(
+    root: Path, owner_id: int, prune: bool = False, result: SetupResult | None = None
+) -> SetupResult:
     dotenv = load_dotenv(root)
-    result = SetupResult()
+    result = result if result is not None else SetupResult()
+    m = manifest.read_manifest(root)
+    listed = [k.name for k in kinds.ordered()] if m is None else list(m.kinds)
+    if m is not None:
+        result.unknown_kinds = kinds.unknown(m.kinds)
+    _report_reserved(root, listed)
+    by_kind = result.by_kind
 
-    _import_standalone_secrets(root, owner_id, dotenv, result)
+    def root_file(name: str, path: Path) -> bool:
+        return name in listed and path.exists()
 
-    db_files = sorted(manifest.connections_dir(root, "database").glob("*.yaml"))
+    def folder_files(name: str, folder: Path, pattern: str) -> list[Path]:
+        return sorted(folder.glob(pattern)) if name in listed else []
+
+    if root_file("secrets", manifest.secrets_manifest_path(root)):
+        by_kind["secrets"] = _import_standalone_secrets(root, owner_id, dotenv, result)
+
+    db_files = folder_files("database_connection", manifest.connections_dir(root, "database"), "*.yaml")
     _assert_within_cap(db_files, _MAX_CONNECTIONS, "database connections")
     kept_db: set[str] = set()
     for f in db_files:
-        name = _import_db_connection(_read_yaml(f), owner_id, dotenv, result)
+        data = _read_yaml(f)
+        if not _applies(f.relative_to(root).as_posix(), data):
+            continue
+        name = _import_db_connection(data, owner_id, dotenv, result)
         if name:
             kept_db.add(name)
+    if db_files:
+        by_kind["database_connection"] = len(kept_db)
 
-    cloud_files = sorted(manifest.connections_dir(root, "cloud").glob("*.yaml"))
+    cloud_files = folder_files("cloud_connection", manifest.connections_dir(root, "cloud"), "*.yaml")
     _assert_within_cap(cloud_files, _MAX_CONNECTIONS, "cloud connections")
     kept_cloud: set[str] = set()
     for f in cloud_files:
-        name = _import_cloud_connection(_read_yaml(f), owner_id, dotenv, result)
+        data = _read_yaml(f)
+        if not _applies(f.relative_to(root).as_posix(), data):
+            continue
+        name = _import_cloud_connection(data, owner_id, dotenv, result)
         if name:
             kept_cloud.add(name)
+    if cloud_files:
+        by_kind["cloud_connection"] = len(kept_cloud)
 
-    kept_namespace_ids = _import_namespaces(root, owner_id)
-    if not manifest.namespaces_manifest_path(root).exists():
-        kept_namespace_ids = None
+    kept_namespace_ids = None
+    if root_file("namespaces", manifest.namespaces_manifest_path(root)):
+        kept_namespace_ids = _import_namespaces(root, owner_id)
+        by_kind["namespaces"] = len(kept_namespace_ids)
 
-    flow_files = sorted(manifest.flows_dir(root).glob("*.flow.yaml"))
+    flow_files = folder_files("flow", manifest.flows_dir(root), "*.flow.yaml")
     _assert_within_cap(flow_files, _MAX_FLOWS, "flows")
     kept_flow_uuids: set[str] = set()
     for f in flow_files:
         data = _read_yaml(f)
+        if not _applies(f.relative_to(root).as_posix(), data):
+            continue
         effective_uuid = _import_flow(data, owner_id)
         if effective_uuid is not None:
             result.imported_flows += 1
             kept_flow_uuids.add(effective_uuid)
+    if flow_files:
+        by_kind["flow"] = result.imported_flows
 
-    schedule_files = sorted(manifest.schedules_dir(root).glob("*.yaml"))
+    schedule_files = folder_files("schedule", manifest.schedules_dir(root), "*.yaml")
     _assert_within_cap(schedule_files, _MAX_FLOWS, "schedules")
     for f in schedule_files:
-        result.imported_schedules += _import_schedules(_read_yaml(f), owner_id)
+        data = _read_yaml(f)
+        if _applies(f.relative_to(root).as_posix(), data):
+            result.imported_schedules += _import_schedules(data, owner_id)
+    if schedule_files:
+        by_kind["schedule"] = result.imported_schedules
 
-    # Tables + models after flows so their namespace and source-flow lineage resolve. When the
-    # project opts out of tracking them, skip import and signal prune to leave them alone (None).
-    m = manifest.read_manifest(root)
-    track_data_artifacts = m is None or m.track_data_artifacts
-    # A root manifest absent from the tree says nothing about its kind: None, so prune leaves it alone.
-    kept_table_ids = (
-        _import_tables(root, owner_id)
-        if track_data_artifacts and manifest.tables_manifest_path(root).exists()
-        else None
-    )
-    kept_artifact_ids = (
-        _import_artifacts(root, owner_id)
-        if track_data_artifacts and manifest.models_manifest_path(root).exists()
-        else None
+    # After flows, so namespace and lineage resolve; an unlisted or absent manifest yields None.
+    def root_kind(name: str, path: Path, run) -> set | None:
+        if not root_file(name, path):
+            return None
+        kept = run()
+        by_kind[name] = len(kept)
+        return kept
+
+    kept_table_ids = root_kind("tables", manifest.tables_manifest_path(root), lambda: _import_tables(root, owner_id))
+    kept_artifact_ids = root_kind(
+        "models", manifest.models_manifest_path(root), lambda: _import_artifacts(root, owner_id)
     )
     kernel_ids_used: dict[str, str] = {}
-    kept_kernel_ids = (
-        _import_kernels(root, owner_id, kernel_ids_used) if manifest.kernels_manifest_path(root).exists() else None
+    kept_kernel_ids = root_kind(
+        "kernels", manifest.kernels_manifest_path(root), lambda: _import_kernels(root, owner_id, kernel_ids_used)
     )
     # Visualizations after tables (source re-links by name); dashboards after visualizations
     # (tiles re-link by viz_uuid).
-    kept_viz_uuids = (
-        _import_visualizations(root, owner_id) if manifest.visualizations_manifest_path(root).exists() else None
+    kept_viz_uuids = root_kind(
+        "visualizations",
+        manifest.visualizations_manifest_path(root),
+        lambda: _import_visualizations(root, owner_id),
     )
-    kept_dashboard_uuids = (
-        _import_dashboards(root, owner_id) if manifest.dashboards_manifest_path(root).exists() else None
+    kept_dashboard_uuids = root_kind(
+        "dashboards", manifest.dashboards_manifest_path(root), lambda: _import_dashboards(root, owner_id)
     )
-    kept_notebook_uuids = _import_notebooks(root, owner_id, kernel_ids_used)
-    if not any(manifest.notebooks_dir(root).glob("*.notebook.yaml")):
-        kept_notebook_uuids = None
+    kept_notebook_uuids = None
+    if folder_files("notebook", manifest.notebooks_dir(root), "*.notebook.yaml"):
+        kept_notebook_uuids = _import_notebooks(root, owner_id, kernel_ids_used)
+        by_kind["notebook"] = len(kept_notebook_uuids)
 
     if prune:
         _prune_removed(
