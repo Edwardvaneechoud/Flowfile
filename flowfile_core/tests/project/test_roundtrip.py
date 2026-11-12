@@ -1238,67 +1238,39 @@ def test_namespace_resolver_by_full_name(tmp_path):
         _cleanup_custom_namespaces(["ResCat"])
 
 
-def test_strip_node_namespace_ids_only_when_name_present():
-    from flowfile_core.project.normalize import _strip_node_namespace_ids
-
-    data = {
-        "nodes": [
-            {
-                "id": 1,
-                "type": "catalog_writer",
-                "catalog_write_settings": {
-                    "table_name": "t",
-                    "namespace_id": 6,
-                    "namespace_full_name": "Demo.sales_analytics",
-                },
-            },
-            {
-                "id": 2,
-                "type": "train_model",
-                "train_input": {"model_name": "m", "namespace_id": 7, "namespace_full_name": "Demo.market"},
-            },
-            {"id": 3, "type": "apply_model", "apply_input": {"model_name": "m", "namespace_id": 9}},
-            {"id": 4, "type": "manual_input"},
-        ]
-    }
-    _strip_node_namespace_ids(data)
-    writer = data["nodes"][0]["catalog_write_settings"]
-    assert writer["namespace_full_name"] == "Demo.sales_analytics" and writer["namespace_id"] is None
-    train = data["nodes"][1]["train_input"]
-    assert train["namespace_full_name"] == "Demo.market" and train["namespace_id"] is None
-    # No portable name → the (possibly stale) id is left untouched, never rewritten.
-    apply = data["nodes"][2]["apply_input"]
-    assert apply["namespace_id"] == 9 and "namespace_full_name" not in apply
-
-
 def test_flow_writer_projects_portable_namespace(tmp_path):
     project_sync.close_project(OWNER)
     flow_uuid, schema_id, _ = _make_flow_in_namespace(tmp_path, "wr_flow", "WrCat", "WrSchema")
     root = tmp_path / "project"
-    # Inject a catalog_writer node carrying the portable name (as the editor now stores) + the id.
+    # One writer carrying the portable name and the id, one with only the id, as the app writes them.
     with get_db_context() as db:
         flow_path = Path(db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first().flow_path)
     doc = yaml.safe_load(flow_path.read_text(encoding="utf-8"))
-    doc["nodes"].append(
-        {
-            "id": 99,
-            "type": "catalog_writer",
-            "catalog_write_settings": {
-                "table_name": "out_tbl",
-                "namespace_id": schema_id,
-                "namespace_full_name": "WrCat.WrSchema",
-                "write_mode": "overwrite",
-            },
-        }
-    )
+    for node_id, full_name in ((99, "WrCat.WrSchema"), (98, None)):
+        doc["nodes"].append(
+            {
+                "id": node_id,
+                "type": "catalog_writer",
+                "setting_input": {
+                    "catalog_write_settings": {
+                        "table_name": "out_tbl",
+                        "namespace_id": schema_id,
+                        "namespace_full_name": full_name,
+                        "write_mode": "overwrite",
+                    }
+                },
+            }
+        )
     flow_path.write_text(yaml.safe_dump(doc), encoding="utf-8")
     try:
         project_sync.init_project(str(root), "Writer NS", OWNER)
         projected = yaml.safe_load((root / "flows" / "wr_flow.flow.yaml").read_text(encoding="utf-8"))
-        writer = next(n for n in projected["nodes"] if n["type"] == "catalog_writer")
-        ws = writer["catalog_write_settings"]
-        assert ws["namespace_full_name"] == "WrCat.WrSchema"  # portable name preserved
-        assert ws["namespace_id"] is None  # install-local id dropped
+        nodes = projected["nodes"]
+        writers = [n["setting_input"]["catalog_write_settings"] for n in nodes if n["type"] == "catalog_writer"]
+        assert len(writers) == 2
+        for ws in writers:
+            assert ws["namespace_full_name"] == "WrCat.WrSchema"
+            assert ws["namespace_id"] is None
 
         snap1 = _snapshot(root)
         with get_db_context() as db:

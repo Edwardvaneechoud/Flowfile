@@ -16,6 +16,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.catalog.services import notebook_store
 from flowfile_core.catalog.services.tables import _is_managed_table_path
 from flowfile_core.database.models import (
@@ -169,7 +170,53 @@ def _namespace_path(db: Session, namespace_id: int | None) -> dict | None:
     return {"catalog": parent.name if parent else ns.name, "schema": ns.name}
 
 
-def project_flow(root: Path, reg: FlowRegistration, index: FlowIndex, namespace: dict | None = None) -> Path | None:
+def _reference_lookup(db: Session):
+    """The names a flow file's node references resolve to on this install, for ``normalize_flow_data``.
+
+    A table resolves as the catalog reader resolves it at run time (its id, else its name in its namespace) and is
+    named ``catalog.schema.table``, which resolves without ambiguity; a namespace as the writer and models resolve
+    it (a stored full name that resolves, else the id's); a flow by its ``flow_uuid``, namespace and name, unless
+    the reference already holds a uuid, which the run time reads before the id. ``None`` when nothing resolves.
+    """
+    repo = SQLAlchemyCatalogRepository(db)
+    svc = CatalogService(repo)
+
+    def lookup(kind: str, settings: dict) -> dict | None:
+        if kind == "namespace":
+            stored = settings.get("namespace_full_name")
+            if stored and svc.resolve_namespace_id_by_full_name(stored) is not None:
+                return {"namespace_full_name": stored}
+            full_name = svc.resolve_namespace_full_name(settings.get("namespace_id"))
+            return {"namespace_full_name": full_name} if full_name else None
+        if kind == "flow":
+            if settings.get("flow_uuid"):
+                return None
+            reg = repo.get_flow(settings["registration_id"])
+            if reg is None:
+                return None
+            return {
+                "flow_uuid": reg.flow_uuid,
+                "namespace": svc.resolve_namespace_full_name(reg.namespace_id),
+                "name": reg.name,
+            }
+        table = repo.get_table(settings["catalog_table_id"]) if settings.get("catalog_table_id") else None
+        reference = settings.get("catalog_full_table_name") or settings.get("catalog_table_name")
+        if table is None and not settings.get("catalog_table_id") and reference:
+            try:
+                table = svc.resolve_table(reference, default_namespace_id=settings.get("catalog_namespace_id"))
+            except Exception:
+                table = None
+        if table is None:
+            return None
+        namespace = svc.resolve_namespace_full_name(table.namespace_id)
+        return {"catalog_full_table_name": f"{namespace}.{table.name}" if namespace else table.name}
+
+    return lookup
+
+
+def project_flow(
+    db: Session, root: Path, reg: FlowRegistration, index: FlowIndex, namespace: dict | None = None
+) -> Path | None:
     data = _load_flow_data(reg.flow_path)
     if data is None:
         return None
@@ -177,7 +224,7 @@ def project_flow(root: Path, reg: FlowRegistration, index: FlowIndex, namespace:
     target = manifest.flows_dir(root) / f"{stem}.flow.yaml"
     if target.exists() and _file_flow_uuid(target) not in (None, reg.flow_uuid):
         target = manifest.flows_dir(root) / f"{stem}_{reg.flow_uuid[:8]}.flow.yaml"
-    write_yaml(target, normalize_flow_data(data, reg.flow_uuid, reg.name, namespace))
+    write_yaml(target, normalize_flow_data(data, reg.flow_uuid, reg.name, namespace, lookup=_reference_lookup(db)))
     index[reg.flow_uuid] = [target] + [p for p in index.get(reg.flow_uuid, []) if p != target]
     return target
 
@@ -667,7 +714,7 @@ def project_all(db: Session, root: Path, owner_id: int) -> None:
         .filter(FlowRegistration.owner_id == owner_id)
         .order_by(FlowRegistration.flow_uuid.asc())
     ):
-        flow_path = project_flow(root, reg, index, _namespace_path(db, reg.namespace_id))
+        flow_path = project_flow(db, root, reg, index, _namespace_path(db, reg.namespace_id))
         if flow_path is not None:
             written.add(flow_path)
         stem = flow_path.name[: -len(".flow.yaml")] if flow_path is not None else None

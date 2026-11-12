@@ -27,7 +27,7 @@ A project folder holds YAML mirrors of your resources:
 | Path | Contents |
 |---|---|
 | `project.yaml` | Project manifest — name, id, format version, data-tracking toggle. |
-| `flows/` | One `.flow.yaml` per registered flow. |
+| `flows/` | One `.flow.yaml` per registered flow. A node names the catalog tables, schemas and flows it uses instead of this install's row ids for them, so a project opened elsewhere reads the same tables. A project saved before this changes its flow files once, on the next save. |
 | `connections/database/`, `connections/cloud/` | One `.yaml` per connection (no credentials). |
 | `schedules/` | One `.yaml` per flow, listing its interval and cron schedules, each with an `id`. |
 | `notebooks/` | One `.notebook.yaml` per notebook. |

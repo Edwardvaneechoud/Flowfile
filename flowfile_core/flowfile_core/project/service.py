@@ -228,7 +228,7 @@ class ProjectSyncService:
                     if reg is not None and reg.owner_id == proj.owner_id:
                         namespace = projection._namespace_path(db, reg.namespace_id)
                         index = projection.flow_index(proj.root)
-                        target = projection.project_flow(proj.root, reg, index, namespace)
+                        target = projection.project_flow(db, proj.root, reg, index, namespace)
                         if target is not None:
                             projection.remove_stale_flow_files(proj.root, reg.flow_uuid, target, index)
             self._mark_projection(proj.owner_id, failed=False)
