@@ -58,7 +58,7 @@ Files in the folder that Flowfile did not write, such as a `README.md` or a `.DS
 
     A schedule whose `id` is in the file is updated in place by an open, restore or reload, so it keeps its notification rules and when it last ran; a schedule file saved before schedules had ids gets them on the next save.
 
-    Every file is checked before anything changes. If one cannot be read (invalid YAML, or content of the wrong shape, such as a connection file missing its name), open, restore and reload stop with an error naming that file, and your folder and resources stay exactly as they were.
+    Every file is checked before anything changes. If one cannot be read (invalid YAML, or content of the wrong shape, such as a connection file missing its name), open, restore and reload stop with an error naming that file, and your folder and resources stay exactly as they were. A failure while your resources are being updated, such as a flow that does not load, changes none of them and writes no flow or notebook file.
 
 ## Working with projects from the command line
 

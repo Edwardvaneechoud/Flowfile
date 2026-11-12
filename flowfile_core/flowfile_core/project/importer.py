@@ -11,6 +11,7 @@ import contextvars
 import copy
 import json
 import logging
+import tempfile
 import threading
 import uuid
 from contextlib import contextmanager
@@ -28,7 +29,7 @@ from flowfile_core.catalog.exceptions import NamespaceExistsError, NamespaceNotE
 from flowfile_core.catalog.services import notebook_store
 from flowfile_core.catalog.services.tables import _is_managed_table_path
 from flowfile_core.catalog.validators import validate_schedule_create
-from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.connection import apply_transaction, get_db_context
 from flowfile_core.database.models import (
     CatalogDashboard,
     CatalogNamespace,
@@ -54,10 +55,11 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_cloud_connection,
     update_database_connection,
 )
+from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
 from flowfile_core.project import manifest, projection, repository
 from flowfile_core.project.manifest_entries import CloudConnectionEntry, DatabaseConnectionEntry, SchemaColumn
 from flowfile_core.project.models import KeptResources, SetupResult
-from flowfile_core.project.normalize import safe_stem, write_yaml
+from flowfile_core.project.normalize import dump_yaml, safe_stem, write_yaml
 from flowfile_core.project.projection import _CLOUD_PLAIN_FIELDS, _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
 from flowfile_core.project.secrets_resolver import load_dotenv, placeholder_name, resolve
 from flowfile_core.schemas.catalog_schema import DashboardLayout, NotebookCellModel
@@ -116,6 +118,31 @@ def _flow_uuid_lock(flow_uuid: str):
 # during the rest of an import, so the same (catalog, schema, owner) read repeated per table/model/
 # flow/viz hits this map instead of a fresh session+query. Only create=False results are cached.
 _ns_resolve_cache: contextvars.ContextVar[dict | None] = contextvars.ContextVar("_ns_resolve_cache", default=None)
+
+# What an import does outside the database, held until its transaction has committed.
+_after_commit_queue: contextvars.ContextVar[list | None] = contextvars.ContextVar("_after_commit_queue", default=None)
+
+
+def _after_commit(action, *args, **kwargs) -> None:
+    """Queue a disk or in-memory side effect of the import until the database has committed; run it
+    at once when no import transaction is open (a direct call of one import function)."""
+    queue = _after_commit_queue.get()
+    if queue is None:
+        action(*args, **kwargs)
+    else:
+        queue.append((action, args, kwargs))
+
+
+def _run_after_commit(queue: list) -> None:
+    """Run the queued side effects in order. The database has committed, so a failing one is logged
+    and the rest still run."""
+    for action, args, kwargs in queue:
+        try:
+            action(*args, **kwargs)
+        except Exception:
+            name = getattr(action, "__name__", action)
+            logger.warning("Project import: %s failed after the commit", name, exc_info=True)
+
 
 # Import-size caps. Per-manifest-file YAML size cap (bytes); 5 MB is unreasonably large for a manifest.
 _MAX_YAML_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -461,12 +488,9 @@ def _import_tables(root: Path, owner_id: int) -> set[int]:
                 # Rebuild a real, empty Delta table from the stored schema when the managed data is
                 # absent on this machine (never overwrite existing data; never write external paths).
                 if resolved and pointer.get("type") == "managed" and schema and not table_exists(resolved):
-                    try:
-                        _materialize_empty_delta(resolved, schema)
-                        table.row_count = 0
-                        table.size_bytes = 0
-                    except Exception:
-                        logger.warning("Could not rebuild empty table %s from schema", name, exc_info=True)
+                    _after_commit(_materialize_empty_delta, resolved, schema)
+                    table.row_count = 0
+                    table.size_bytes = 0
                 table.file_path = resolved
                 table.source_registration_id = _resolve_flow_uuid_to_reg_id(entry.get("source_flow_uuid"), owner_id)
             if existing is None:
@@ -734,7 +758,8 @@ def _import_notebooks(root: Path, owner_id: int) -> set[str]:
                 logger.warning("Project import: notebook %r collides on (name, namespace) uniqueness; skipping", name)
                 continue
             ns_name = db.get(CatalogNamespace, ns_id).name if ns_id is not None else None
-        notebook_store.write_notebook_file(
+        _after_commit(
+            notebook_store.write_notebook_file,
             owner_id,
             notebook_uuid,
             name=name,
@@ -745,6 +770,16 @@ def _import_notebooks(root: Path, owner_id: int) -> set[str]:
         )
         kept.add(notebook_uuid)
     return kept
+
+
+def _check_flow_loads(data: dict, owner_id: int, flowfile_name: str) -> None:
+    """Build the flow from a temp copy, so a flow that does not load fails the import before its
+    transaction commits; the runtime file is written only after the commit."""
+    with tempfile.TemporaryDirectory(prefix="flowfile-import-") as tmp:
+        path = Path(tmp) / f"{safe_stem(flowfile_name)}.flow.yaml"
+        path.write_text(dump_yaml(data), encoding="utf-8")
+        with ephemeral_flow_graph(path, owner_id):
+            pass
 
 
 def _import_flow(data: dict, owner_id: int) -> str | None:
@@ -779,10 +814,12 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
                 if existing
                 else storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
             )
-        write_yaml(runtime_path, data)  # flow_uuid / catalog_name / namespace ignored by the FlowfileData loader
+        if _after_commit_queue.get() is not None:  # loaded now otherwise, which is the same check
+            _check_flow_loads(data, owner_id, flowfile_name)
+        _after_commit(write_yaml, runtime_path, data)  # flow_uuid / catalog_name / namespace ignored by the loader
         # Load (with owner_id so cloud connections resolve) but don't open an editor session: project
         # import must not auto-open flows on the canvas. The user opens a flow explicitly via /import_flow/.
-        flow_file_handler.import_flow(runtime_path, user_id=owner_id, register_session=False)
+        _after_commit(flow_file_handler.import_flow, runtime_path, user_id=owner_id, register_session=False)
         if existing is None:
             auto_register_flow(str(runtime_path), catalog_name, owner_id)
         # Reconcile identity + display name + namespace placement to the file (keeps flow_uuid stable for
@@ -993,7 +1030,7 @@ def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> N
             for nb_id, nb_uuid in nq.all():
                 sharing.delete_grants_for_resource(db, "catalog_notebook", nb_id)
                 db.query(CatalogNotebook).filter_by(id=nb_id).delete()
-                notebook_store.delete_notebook_file(owner_id, nb_uuid)
+                _after_commit(notebook_store.delete_notebook_file, owner_id, nb_uuid)
             db.commit()
     # Models first (soft-delete, keep the blob): a kept flow's pruned artifact just goes inactive.
     # A pruned flow's still-active artifacts are NOT touched here (delete_flow can't drop them — it
@@ -1047,10 +1084,12 @@ def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> N
             try:
                 for s in service.list_schedules(registration_id=reg.id):
                     service.delete_schedule(s.id)
-                service.delete_flow(reg.id, delete_file=True)
+                service.delete_flow(reg.id, delete_file=False)
+                if service.repo.count_flows_by_path(reg_flow_path) == 0:
+                    _after_commit(Path(reg_flow_path).unlink, missing_ok=True)
                 # Evict from the in-memory handler too (catalog delete only touches DB+disk), so a
                 # flow open before a restore can't ghost in _flows / a user session after pruning.
-                flow_file_handler.evict_flow_by_path(reg_flow_path)
+                _after_commit(flow_file_handler.evict_flow_by_path, reg_flow_path)
             except Exception:
                 logger.warning("Project prune: could not remove flow %s", reg_flow_uuid, exc_info=True)
                 result.prune_errors.append(f"flow:{reg_flow_uuid}")
@@ -1116,11 +1155,23 @@ def import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResul
     the DB→file hooks and regenerate the manifests from the half-built DB, wiping the very files being
     read. With ``prune=True`` (restore / reload) resources absent from the files are removed so the DB
     matches the files exactly; ``prune=False`` (open) is additive.
+
+    The database changes are one transaction (``apply_transaction``): a failure anywhere rolls all of
+    them back. Flow, notebook and empty-table files, the flow handler's loads and evictions and the
+    kernel reconcile are queued and run only once it has committed.
     """
     from flowfile_core.project import project_sync
 
     with project_sync.suppress_projection(owner_id):
-        return _do_import_project(root, owner_id, prune)
+        queue: list = []
+        token = _after_commit_queue.set(queue)
+        try:
+            with apply_transaction():
+                result = _do_import_project(root, owner_id, prune)
+        finally:
+            _after_commit_queue.reset(token)
+        _run_after_commit(queue)
+        return result
 
 
 def _assert_within_cap(items: list, cap: int, kind: str) -> None:
@@ -1538,7 +1589,7 @@ def _do_import_project_inner(root: Path, owner_id: int, prune: bool = False) -> 
             result,
         )
 
-    _reconcile_kernel_manager(owner_id)
+    _after_commit(_reconcile_kernel_manager, owner_id)
 
     from flowfile_core.project import git_ops
 
