@@ -90,6 +90,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import RESULT_GONE
 from flowfile_core.flowfile.execution.payloads import FileWritePayload, RestApiReadPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
@@ -2220,11 +2221,13 @@ def get_node_column_stats(
     try:
         return node.get_column_stats(column_name, output_handle=output_handle)
     except ColumnStatsUnavailable as e:
-        raise HTTPException(409, str(e)) from None
+        raise HTTPException(409, RESULT_GONE if node.result_is_gone() else str(e)) from None
     except ColumnNotFoundError:
         raise HTTPException(404, f"Column '{column_name}' not found in the node result") from None
     except Exception as e:
         logger.error(f"Failed to compute column stats for node {node_id}, column '{column_name}': {e}")
+        if node.result_is_gone():
+            raise HTTPException(409, RESULT_GONE) from None
         raise HTTPException(422, "Could not compute column statistics") from e
 
 
@@ -2257,7 +2260,7 @@ def export_node_data(
         try:
             schema = data.collect_schema()
         except Exception:
-            raise HTTPException(409, "The cached result is no longer available. Run the flow again.") from None
+            raise HTTPException(409, RESULT_GONE) from None
     if any(dtype.is_nested() for dtype in schema.dtypes()):
         raise HTTPException(422, "CSV cannot hold list or struct columns.")
     n = min(limit, 100_000 // max(len(schema), 1)) if file_format == "tsv" else limit
@@ -2281,6 +2284,8 @@ def export_node_data(
     except Exception as e:
         path.unlink(missing_ok=True)
         logger.error(f"Failed to export data for node {node_id}: {e}")
+        if node.result_is_gone():
+            raise HTTPException(409, RESULT_GONE) from None
         raise HTTPException(422, "Could not export the data") from e
     return FileResponse(
         path,
