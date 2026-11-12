@@ -2,10 +2,10 @@
 
 import os
 
-from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth import issuer_accounts, issuer_signin, sharing
+from flowfile_core.auth import sharing
 from flowfile_core.auth.jwt import (
     create_access_token,
     create_refresh_token,
@@ -19,9 +19,7 @@ from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 from flowfile_core.hub_client import session as hub_session
-from flowfile_core.hub_client import signin
-from flowfile_core.hub_client.client import HubUnreachable
-from shared import hub_node, hub_tokens
+from shared import server_extension
 
 router = APIRouter()
 
@@ -39,7 +37,7 @@ def login_for_access_token(
         return {"access_token": access_token, "token_type": "bearer"}
     else:
         # In Docker mode, authenticate against database
-        _refuse_passwords_once_joined()
+        _refuse_passwords()
         if not username or not password:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -61,16 +59,13 @@ def login_for_access_token(
         return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
-def _refuse_passwords_once_joined() -> None:
-    """403 while this storage dir's node joined its hub with keys of its own: people sign in here through that hub
-    only, so neither a password nor a session that began with one is taken.
+def _refuse_passwords() -> None:
+    """403 on a server whose extension signs people in elsewhere: neither a password nor a session that began with one
+    is taken there.
     """
-    node = issuer_accounts.joined_with_keys()
-    if node is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"This server signs people in through {issuer_accounts.hub_host(node.hub_url)}",
-        )
+    refusal = server_extension.call("password_refusal")
+    if refusal is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=refusal)
 
 
 @router.post("/refresh", response_model=Token)
@@ -80,12 +75,9 @@ def refresh_access_token(
 ):
     """Exchange a valid refresh token for a new access token and refresh token.
 
-    For a person who signed in through the hub, the sign-in the token was issued for is refreshed at the hub first, so
-    this server's session never outlives the hub's: once the hub no longer takes it, or it was replaced here by a later
-    sign-in or ended by a sign-out, the answer is a 401 and nothing is issued. The hub's answer then sets whether the
-    account administers this server, and its full name, so someone the hub no longer lets manage the server stops
-    administering it here at their next refresh. On a server that joined its hub with keys of its own, the session of
-    any other account is not renewed: 403, as its password sign-in is.
+    An account that signs in elsewhere is renewed by the server's extension (``refresh_session``, given the sign-in
+    ``sid`` the token names), which answers the new pair or refuses. On a server that takes no passwords the session
+    of any other account is not renewed: 403, as its password sign-in is.
     """
     claims = decode_refresh_token(refresh_token)
     username, sid = claims["sub"], claims.get("sid")
@@ -104,12 +96,10 @@ def refresh_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    issuer = issuer_signin.issuer_of(db, user.id)
-    if issuer is not None:
-        refreshed = _refresh_through_hub(user.id, issuer, sid)
-        issuer_signin.renew(db, user, refreshed.user)
-        return issuer_signin.session(user, sid, refreshed.expires_in)
-    _refuse_passwords_once_joined()
+    renewed = server_extension.call("refresh_session", db, user, sid)
+    if renewed is not None:
+        return renewed
+    _refuse_passwords()
     new_access_token = create_access_token(data={"sub": user.username})
     new_refresh_token = create_refresh_token(data={"sub": user.username})
     return {
@@ -122,76 +112,19 @@ def refresh_access_token(
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(current_user: User = Depends(get_current_active_user)) -> None:
-    """Sign out: a sign-in through the hub is revoked at the hub as far as it answers, and forgotten here.
-
-    Answers 204 whether or not the hub took the revocation. Any other hub connection of the account is left as it is.
+    """Sign out: a sign-in made elsewhere is ended there by the server's extension as far as that answers, and
+    forgotten here. Answers 204 either way; a plain server keeps no session, so there is nothing to end.
     """
-    signin.sign_out(current_user.id)
+    server_extension.call("sign_out", current_user.id)
     return None
-
-
-def _refresh_through_hub(user_id: int, issuer: str, sid: str | None) -> signin.Delegation:
-    """Refresh the sign-in through the hub ``sid`` names at the hub and answer what the hub said; a 401 when the hub no
-    longer takes it or it is not the one kept here for ``user_id``, a 502 when the hub does not answer.
-    """
-    try:
-        refreshed = signin.renew(user_id, sid)
-    except HubUnreachable as e:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
-    if refreshed is None:
-        raise issuer_signin.ended(issuer_accounts.hub_host(hub_node.resolved().hub_url or issuer))
-    return refreshed
 
 
 @router.get("/sign_in_method")
 def sign_in_method() -> dict:
-    """How people sign in on this server: with a password, or through the hub this server joined.
-
-    Through the hub, ``url`` is the hub's Open page for this node, where a person's browser starts the sign-in.
+    """How people sign in on this server: ``{"method": "password"}``, or what its extension answers, with the ``url``
+    where a person's browser starts the sign-in.
     """
-    node = issuer_accounts.joined_with_keys()
-    if node is None:
-        return {"method": "password"}
-    hub_url = node.hub_url.rstrip("/")
-    return {"method": "hub", "url": f"{hub_url}/open/{node.node_id}", "hub_url": hub_url}
-
-
-def _refused(detail: str) -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED, detail=detail, headers={"WWW-Authenticate": "Bearer"}
-    )
-
-
-def _sentence(text: str) -> str:
-    return text.rstrip(".") + "."
-
-
-@router.post("/hub/signin", response_model=Token)
-def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depends(get_db)):
-    """Sign a person in with the one-time sign-in token the hub's Open page gave their browser.
-
-    The token is verified against the hub's keys as a ``signin`` token for this node, then traded at the hub for a
-    delegation signed with this node's own key (``hub_client.signin.sign_in``: the person's account here, made at their
-    first sign-in, the delegation kept as their hub session, the hub's servers they may run on as backend rows). The
-    answer is this core's own token pair, as ``/auth/token`` answers, its access token living as long as the hub's (the
-    delegation's ``expires_in``, answered as ``expires_at``) and its refresh token naming this sign-in (``sid``). A
-    token or an exchange the hub refuses is a 401 with one sentence.
-    """
-    if issuer_accounts.joined_with_keys() is None:
-        raise _refused("This server does not sign people in through a hub.")
-    try:
-        claims = hub_tokens.verify(token, scopes=("signin",))
-    except hub_tokens.HubTokenRefused as e:
-        raise _refused(_sentence(f"The hub's sign-in token was refused: {e.reason}")) from None
-    if claims is None or claims.user_id is None:
-        raise _refused("This is not a sign-in token from the hub.")
-    try:
-        signed_in = signin.sign_in(db, token, claims.user_id)
-    except signin.SignInRefused as e:
-        raise _refused(str(e)) from None
-    except HubUnreachable as e:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
-    return issuer_signin.session(signed_in.user, signed_in.sid, signed_in.expires_in)
+    return server_extension.call("sign_in_method", default={"method": "password"})
 
 
 @router.get("/users/me", response_model=User)
@@ -370,7 +303,7 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
         synchronize_session=False
     )
     # A hub person's mapping and hub session go too: a reused rowid would otherwise hand both to the next account.
-    issuer_signin.forget(db, user_id)
+    server_extension.call("account_removed", db, user_id)
     hub_session.clear(user_id)
 
     # Notification channels hold an encrypted webhook credential and rules keep alerting

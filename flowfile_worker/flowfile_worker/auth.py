@@ -1,11 +1,10 @@
-"""Who may call the worker: core with the internal token, and the holder of a token from a configured issuer.
+"""Who may call the worker: core with the internal token, and whoever the server's extension vouches for.
 
 Core is the worker's usual client; it signs every request with the shared internal token (``FLOWFILE_INTERNAL_TOKEN``).
-A worker that trusts an issuer also takes a short-lived token the issuer signed for this server, in the same
-``X-Flowfile-Internal`` header a backend row's token travels in, so a desktop handed such a token reaches the server
-without ever holding the internal token. ``verify_issuer_token`` is the issuer's own check against its published keys,
-which the package names with ``issuer_name``; a JWT is told from the internal token by its shape, and nothing here
-holds a secret of the issuer's.
+A server whose extension trusts an issuer also takes a short-lived token that issuer signed for this server, in the
+same ``X-Flowfile-Internal`` header a backend row's token travels in, so a desktop handed such a token reaches the
+server without ever holding the internal token. ``verify_issuer_token`` asks the extension (``caller_claims``), and
+nothing here holds a key or a secret of an issuer; a worker with no extension takes the internal token only.
 """
 
 import secrets
@@ -13,16 +12,17 @@ import secrets
 from fastapi import HTTPException, Request, WebSocket
 from starlette.concurrency import run_in_threadpool
 
-from flowfile_worker import issuer_claims, issuer_name
 from flowfile_worker.internal_token import resolve_internal_token
-from shared.issuer_tokens import TokenRefused
+from shared import server_extension
+from shared.server_extension import Refused as TokenRefused
 
 INTERNAL_TOKEN_HEADER = "X-Flowfile-Internal"
 
 
 def verify_issuer_token(supplied: str) -> object | None:
-    """The claims of ``supplied`` when the issuer this worker trusts signed it; ``None`` when it trusts none."""
-    return issuer_claims(supplied)
+    """The claims of ``supplied`` when the issuer this server's extension trusts signed it; ``None`` when it trusts
+    none. Wherever the worker's routes are served: its own process, or core's app in single-file mode."""
+    return server_extension.call("caller_claims", supplied)
 
 
 def _header_matches(supplied: str) -> bool:
@@ -56,7 +56,8 @@ async def verify_internal_token(request: Request) -> None:
     try:
         claims = await run_in_threadpool(verify_issuer_token, supplied)
     except TokenRefused as exc:
-        raise HTTPException(status_code=401, detail=f"{issuer_name} token refused: {exc.reason}") from None
+        issuer = server_extension.word("caller_issuer", "Issuer")
+        raise HTTPException(status_code=401, detail=f"{issuer} token refused: {exc.reason}") from None
     if claims is None:
         raise HTTPException(status_code=401, detail="Invalid or missing internal token")
 

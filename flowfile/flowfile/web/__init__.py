@@ -167,13 +167,12 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     It sets single-file mode: flows compute on the worker embedded in this process. ``run`` marks the
     process as serving, so the worker's jobs run in its pool or a child, never in the serving process.
     ``FLOWFILE_WORKER_POOL_SIZE`` sizes the pool. ``host`` and ``port`` are where it serves; a
-    server bound to every address (``0.0.0.0``) is reached from this machine on the loopback address. A server that
-    joins a hub binds its socket first (core's ``listen``), so one whose port is in use exits with code 1 saying so
-    before it joins.
+    server bound to every address (``0.0.0.0``) is reached from this machine on the loopback address. A server whose
+    extension binds its socket first (core's ``listen``) does so here, before anything else is set up.
 
     A host other machines reach needs ``FLOWFILE_MODE=docker``, where everyone signs in with a password; in the
     default mode, where the editor signs in whoever reaches it as this machine's administrator, any host but a
-    loopback one exits with code 2 before anything is served or joined.
+    loopback one exits with code 2 before anything is served.
     """
     if "FLOWFILE_MODE" not in os.environ:
         os.environ["FLOWFILE_MODE"] = "electron"

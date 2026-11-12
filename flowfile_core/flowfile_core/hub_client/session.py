@@ -17,9 +17,8 @@ import jwt
 
 from flowfile_core.auth import secrets
 from flowfile_core.configs import logger
-from flowfile_core.hub_client import client, delegation
-from flowfile_core.hub_client.delegation import Delegation
-from shared import hub_node
+from flowfile_core.hub_client import client
+from shared import server_extension
 
 SERVICE = "flowfile_hub"
 _REFRESH_MARGIN_SECONDS = 60
@@ -77,9 +76,10 @@ def save(user_id: int, session: dict) -> None:
     _forget_node_tokens(user_id)
 
 
-def save_delegation(user_id: int, hub_url: str, granted: Delegation) -> str:
-    """Store a sign-in through the hub and return its ``sid``, which only core's own tokens for it carry, so only they
-    renew it. The access token is cached, never stored."""
+def save_delegation(user_id: int, hub_url: str, granted) -> str:
+    """Store a sign-in through the hub (``granted``: its two tokens and their lifetimes in seconds) and return its
+    ``sid``, which only core's own tokens for it carry, so only they renew it. The access token is cached, never
+    stored."""
     now = time.time()
     sid = uuid.uuid4().hex
     stored = {
@@ -114,11 +114,14 @@ def _ended(refused: client.HubRefused) -> bool:
     return isinstance(refused.payload, dict) and refused.payload.get("error") == "invalid_grant"
 
 
-def _refresh_delegation(user_id: int, stored: dict) -> Delegation:
-    """Refresh with ``_lock`` held. ``invalid_grant`` removes the session before re-raising; a node that cannot sign
-    for itself raises ``HubRefused`` (401) and keeps it."""
+def _refresh_delegation(user_id: int, stored: dict):
+    """Refresh with ``_lock`` held, through the server's extension, which signs the request as this server.
+    ``invalid_grant`` removes the session before re-raising; a server that cannot sign for itself raises ``HubRefused``
+    (401) and keeps it."""
     try:
-        granted = delegation.refresh(stored["hub_url"], hub_node.resolved().issuer, stored["refresh_token"])
+        if not server_extension.defines("refresh_delegation"):
+            raise LookupError("nothing on this server signs for it at its hub")
+        granted = server_extension.call("refresh_delegation", stored["hub_url"], stored["refresh_token"])
     except client.HubRefused as e:
         if _ended(e):
             _access_tokens.pop(user_id, None)
@@ -183,7 +186,7 @@ def bearer(user_id: int | None, missing: str, *, ended: tuple[int, ...] = (401,)
     return stored["hub_url"], token
 
 
-def refresh_delegation(user_id: int, sid: str | None) -> Delegation | None:
+def refresh_delegation(user_id: int, sid: str | None):
     """Refresh the sign-in ``sid`` at the hub now, whatever is cached; ``None``, nothing asked, when the kept sign-in
     is not ``sid``. Raises as ``access_token`` does."""
     try:

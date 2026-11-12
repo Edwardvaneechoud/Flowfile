@@ -36,8 +36,10 @@ from flowfile_core.schemas.catalog_schema import (
     NamespaceOut,
     NamespaceTree,
 )
+from shared import sealed as sealed_carriers
 
 _KEY = "a signing key only the fake hub knows"
+
 HUB_URL = "https://hub.example.test"
 INFO = {"org_name": "Acme Data", "hub_version": "0.3.0", "core_version": "0.24.0", "vend_mode": "static"}
 NODE_TOKEN_KID = "hub-key-1"
@@ -801,6 +803,61 @@ class SealingHubCatalog(FakeHubWithCatalog):
         return httpx.Response(200, json=answer)
 
 
+class StandInSigner:
+    """In the signer's place of ``SealingHubCatalog``, a hub that seals nothing: a token names the key it is for and
+    holds its claims in clear, so a test reads what a hub seals to whom.
+
+    Core never opens a token, so what it asks, keeps and hands a worker is the same as with a hub that seals;
+    ``StandInNode`` is the server that opens one.
+    """
+
+    url = HUB_URL
+
+    def _token(self, enc_jwk: dict, node: str, iss: str, run_id: str, vend_id: int, **held) -> str:
+        now = int(time.time())
+        claims = {"iss": iss, "aud": f"node:{node}", "run_id": run_id, "vend_id": vend_id, "iat": now, "exp": now + 900}
+        body = json.dumps({"for": enc_jwk["kid"], "claims": {**claims, **held}})
+        return "standin." + sealed_carriers.b64url(body.encode("utf-8"))
+
+    def sealed(self, enc_jwk: dict, *, node, iss, base_uri, storage_options, run_id, vend_id) -> str:
+        held = {"kind": "storage", "base_uri": base_uri, "storage_options": storage_options}
+        return self._token(enc_jwk, node, iss, run_id, vend_id, **held)
+
+    def sealed_secret(self, enc_jwk: dict, *, node, iss, name, value, run_id, vend_id) -> str:
+        return self._token(enc_jwk, node, iss, run_id, vend_id, kind="secret", name=name, value=value)
+
+    def sealed_connection(self, enc_jwk: dict, *, node, iss, connection_kind, name, settings, run_id, vend_id) -> str:
+        held = {"kind": "connection", "connection_kind": connection_kind, "name": name, "settings": settings}
+        return self._token(enc_jwk, node, iss, run_id, vend_id, **held)
+
+    def close(self) -> None:
+        pass
+
+
+class StandInNode:
+    """The server extension of the node ``name`` that holds the key ``enc_jwk``: it opens what ``StandInSigner``
+    sealed to it, and refuses a map with no entry for it or an entry made for another key."""
+
+    sealer = "hub"
+
+    def __init__(self, name: str, enc_jwk: dict):
+        self.name, self.enc_jwk = name, enc_jwk
+
+    def can_open_sealed(self) -> bool:
+        return True
+
+    def open_sealed(self, sealed, required: list[str]) -> dict:
+        token = sealed.get(self.name)
+        if token is None:
+            raise sealed_carriers.SealedCredentialRefused("it was not sealed to this server")
+        body = json.loads(sealed_carriers.unb64url(token.removeprefix("standin.")))
+        if body["for"] != self.enc_jwk["kid"]:
+            raise sealed_carriers.SealedCredentialRefused("it does not open with this server's key")
+        if any(claim not in body["claims"] for claim in required):
+            raise sealed_carriers.SealedCredentialRefused("its claims are malformed")
+        return body["claims"]
+
+
 _HOP_HEADERS = {"content-length", "transfer-encoding", "connection", "content-encoding"}
 
 
@@ -866,11 +923,11 @@ def hub(monkeypatch) -> FakeHub:
 def sign_in_through_hub(fake: FakeHub, user_id: int, username: str = "ana", password: str = "s3cret") -> None:
     """Keep a sign-in through ``fake`` as the session of ``user_id``, as a server joined with keys of its own keeps one:
     ``kind: "delegation"``, its access token one the fake issued, cached until it expires, so no refresh is asked."""
-    from flowfile_core.hub_client.delegation import Delegation
+    from types import SimpleNamespace
 
     url = getattr(fake, "url", HUB_URL)
     tokens = client.sign_in(url, username, password)
-    granted = Delegation(
+    granted = SimpleNamespace(
         access_token=tokens["access_token"],
         expires_in=fake.access_ttl,
         refresh_token=tokens["refresh_token"],

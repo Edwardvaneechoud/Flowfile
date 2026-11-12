@@ -165,11 +165,15 @@ def test_the_websocket_submit_under_worker_denies_a_foreign_version_and_closes_o
 
 
 def test_the_mounted_worker_asks_the_issuer_about_a_token_that_is_not_its_own(app, monkeypatch):
-    """A server run as one process takes a hub's token on its worker routes, as a worker of its own does."""
-    from shared import hub_tokens
+    """A server run as one process takes the token its extension vouches for on its worker routes, as a worker of its
+    own does."""
+    from types import SimpleNamespace
+
+    from shared.tests import toy_server_extension
 
     asked = []
-    monkeypatch.setattr(hub_tokens, "verify", lambda token: asked.append(token) or object())
+    extension = SimpleNamespace(caller_claims=lambda token: asked.append(token) or object())
+    toy_server_extension.use(monkeypatch, extension)
     signed = TestClient(app, headers={TOKEN_HEADER: "a.hub.token", PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION)})
 
     assert signed.get("/worker/v1/capabilities").status_code == 200

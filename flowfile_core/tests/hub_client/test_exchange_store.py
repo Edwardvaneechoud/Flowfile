@@ -1,5 +1,5 @@
-"""A machine signed in to a hub takes the exchange store the hub sets, a server joined with keys of its own and a
-desktop connected to it alike: when it asks, what wins over it, and how a run opens it.
+"""A machine signed in to a hub takes the exchange store the hub sets: when it asks, what wins over it, and how a run
+opens it. A server that joined a hub with keys of its own takes it the same way, which its node package's suite tests.
 
 The hub is the fake of ``tests/hub_client`` behind the client's http seam, and no bucket is opened.
 """
@@ -18,14 +18,12 @@ from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.hub_client import exchange_store as hub_exchange_store
 from flowfile_core.hub_client.client import HubRefused
 from flowfile_core.routes import routes
-from shared import hub_node
-from shared.tests import hub_join
+from shared import server_extension
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 from tests.hub_client import conftest as hub_client_fakes
 from tests.hub_client.conftest import HUB_URL
 
 hub = hub_client_fakes.hub
-join_hub = hub_join.join_hub
 
 HUB_STORE = {
     "uri": "s3://org-bucket/exchange",
@@ -43,21 +41,6 @@ def no_env(monkeypatch):
     for name in ENV_VARS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(hub_exchange_store, "_warned", set())
-
-
-@pytest.fixture
-def joined_with_keys(tmp_path, monkeypatch, join_hub):
-    """This storage dir joined ``join_hub`` with keys of its own, as a server whose people sign in through its hub."""
-    for name in ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
-    hub_node.join(
-        join_hub.url,
-        join_hub.mint(enable_on_join=True),
-        name="team-1",
-        worker_url="http://team-1.example:63579",
-        core_url="http://team-1.example:63578",
-    )
 
 
 def test_the_hubs_store_applies_while_nothing_is_saved():
@@ -164,23 +147,14 @@ def signed_in(store, hub):
     return hub
 
 
-def test_a_server_joined_with_its_keys_takes_its_hubs_store_through_the_persons_hub_session(
-    signed_in, joined_with_keys
-):
-    taken = hub_exchange_store.hub_store(1)
-
-    assert taken == ExchangeConfig(uri=HUB_STORE["uri"], connection="org exchange", max_rows=50000, vended_for=1)
-    assert ("GET", "/hub/exchange-store") in signed_in.calls
-
-
-def test_a_joined_server_asks_nothing_for_no_user_or_a_person_without_a_hub_session(signed_in, joined_with_keys):
+def test_nothing_is_asked_for_no_user_or_a_person_without_a_hub_session(signed_in):
     assert hub_exchange_store.hub_store(None) is None
     assert hub_exchange_store.hub_store(2) is None
     assert ("GET", "/hub/exchange-store") not in signed_in.calls
 
 
 def test_a_hub_that_refuses_is_no_store_with_one_warning_naming_its_status_and_never_the_token(
-    signed_in, joined_with_keys, monkeypatch, caplog
+    signed_in, monkeypatch, caplog
 ):
     monkeypatch.setattr(logger, "propagate", True)
     caplog.set_level(logging.WARNING, logger=logger.name)
@@ -201,9 +175,8 @@ def test_a_hub_that_refuses_is_no_store_with_one_warning_naming_its_status_and_n
     assert sent[0] not in message
 
 
-def test_a_desktop_connected_to_the_hub_takes_its_store_as_a_joined_server_does(signed_in, tmp_path, monkeypatch):
-    monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
-    assert hub_node.joined() is None
+def test_a_desktop_connected_to_the_hub_takes_its_store_through_the_persons_hub_session(signed_in):
+    assert server_extension.joined() is None
 
     taken = hub_exchange_store.hub_store(1)
 
@@ -211,7 +184,7 @@ def test_a_desktop_connected_to_the_hub_takes_its_store_as_a_joined_server_does(
     assert ("GET", "/hub/exchange-store") in signed_in.calls
 
 
-def test_the_hubs_store_on_a_joined_server_is_opened_by_what_the_hub_vends_the_run():
+def test_the_hubs_store_is_opened_by_what_the_hub_vends_the_run():
     from flowfile_core.flowfile.execution.exchange import NOT_VENDED
     from flowfile_core.flowfile.execution.protocol import SealedCredential
 
@@ -226,7 +199,7 @@ def test_the_hubs_store_on_a_joined_server_is_opened_by_what_the_hub_vends_the_r
     assert run.max_rows() is None
 
 
-def test_a_store_saved_on_a_joined_server_wins_over_the_vended_one(monkeypatch, tmp_path):
+def test_a_saved_store_wins_over_the_vended_one(monkeypatch, tmp_path):
     monkeypatch.setattr(exchange_config, "_settings_file", lambda: tmp_path / "exchange_store.yaml")
     exchange_config.save(ExchangeConfig(uri="s3://own-bucket/x", connection="own"))
     run = ExchangeRun(7, "r1", hub_store=ExchangeConfig(uri="s3://org-bucket/exchange", vended_for=1))
@@ -234,7 +207,7 @@ def test_a_store_saved_on_a_joined_server_wins_over_the_vended_one(monkeypatch, 
     assert not run.vended()
 
 
-def test_a_joined_servers_run_asks_for_the_store_only_for_a_flow_with_a_node_set_elsewhere(signed_in, joined_with_keys):
+def test_a_run_asks_for_the_store_only_for_a_flow_with_a_node_set_elsewhere(signed_in):
     graph = create_test_graph(flow_id=8401, execution_location="local")
     add_test_manual_input(graph, [{"id": 1}], node_id=1)
 
@@ -245,7 +218,7 @@ def test_a_joined_servers_run_asks_for_the_store_only_for_a_flow_with_a_node_set
     assert routes._hub_store_for(graph, 1).vended_for == 1
 
 
-def test_the_exchange_card_shows_a_joined_servers_hub_store_as_the_hubs(signed_in, joined_with_keys):
+def test_the_exchange_card_shows_the_hubs_store_as_the_hubs(signed_in):
     from types import SimpleNamespace
 
     from flowfile_core.routes import system_exchange

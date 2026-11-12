@@ -1,7 +1,10 @@
 """A vend with targets: what core asks, what it keeps of the hub's sealed answer, and what it hands a worker.
 
-The hub is ``SealingHubCatalog`` behind the hub client's seam, sealing with a ``HubSigner`` to node keys made here.
-Core never opens a token for another node: the tests open them as each target node would, with that node's key.
+The hub is ``SealingHubCatalog`` behind the hub client's seam. Core never opens a token for another node: the tests
+open them as each target node would, through the server extension that node runs with. Here the hub is a stand-in
+that seals nothing and the node one that reads its tokens (``StandInSigner``, ``StandInNode``); a suite that holds a
+hub's node package runs these tests again with a hub that seals and nodes that open with keys of their own, by
+giving its own ``signer``, ``node_keys`` and ``as_node``.
 """
 
 import polars as pl
@@ -9,10 +12,10 @@ import pytest
 
 from flowfile_core.hub_client import client, session, vend
 from flowfile_core.hub_client.client import HubRefused
-from shared import hub_node, hub_node_key, hub_sealed, issuer_tokens
-from shared.tests.hub_jwks import HubSigner
+from shared import sealed as carriers
+from shared.tests import toy_server_extension
 from tests.hub_client import conftest as hub_conftest
-from tests.hub_client.conftest import HUB_URL, SealingHubCatalog
+from tests.hub_client.conftest import HUB_URL, SealingHubCatalog, StandInNode, StandInSigner
 
 store = hub_conftest.store
 
@@ -28,21 +31,25 @@ COLUMNS = {"id": pl.Int64, "name": pl.String}
 
 @pytest.fixture
 def signer():
-    signer = HubSigner()
+    signer = StandInSigner()
     yield signer
     signer.close()
 
 
 @pytest.fixture
-def node_keys(tmp_path, monkeypatch):
-    """Keys of the nodes ``team`` and ``worker``, each in a storage dir of its own; ``as_node(name)`` makes this
-    process that node of ``signer``'s hub, as the node opening a token is."""
-    made = {}
-    for name in ("team", "worker"):
-        target = tmp_path / name / hub_node.FILE_NAME
-        monkeypatch.setattr(hub_node, "path", lambda target=target: target)
-        made[name] = (target, hub_node_key.load_or_create())
-    return made
+def node_keys() -> dict[str, dict]:
+    """The public encryption key the hub holds of each of the nodes ``team`` and ``worker``."""
+    return {name: {"kty": "OKP", "crv": "X25519", "kid": f"{name}-enc"} for name in ("team", "worker")}
+
+
+@pytest.fixture
+def as_node(node_keys, monkeypatch):
+    """``as_node(name)`` makes this process the node ``name``, as the server that opens a token is."""
+
+    def become(name: str) -> None:
+        toy_server_extension.use(monkeypatch, StandInNode(name, node_keys[name]))
+
+    return become
 
 
 @pytest.fixture
@@ -57,20 +64,10 @@ def hub(signer, node_keys, monkeypatch, store) -> SealingHubCatalog:
     fake.grants[raw["id"]] = "manage"
     fake.raw = "sales.raw"
     fake.raw_id = raw["id"]
-    fake.enc_keys = {name: keys.public_jwks()["enc"] for name, (_, keys) in node_keys.items()}
+    fake.enc_keys = dict(node_keys)
     tokens = client.sign_in(HUB_URL, "ana", "s3cret")
     session.save(1, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"]})
     return fake
-
-
-def open_as(name: str, node_keys, signer, monkeypatch, sealed: dict[str, str]) -> dict[str, str]:
-    """The storage options ``sealed`` holds for the node ``name``, opened as that node."""
-    target, _ = node_keys[name]
-    monkeypatch.setattr(hub_node, "path", lambda: target)
-    monkeypatch.setenv("FLOWFILE_HUB_URL", signer.url)
-    monkeypatch.setenv("FLOWFILE_NODE_NAME", name)
-    monkeypatch.setattr(issuer_tokens, "_client", None)
-    return hub_sealed.sealed_storage_options(sealed)
 
 
 def test_the_vend_body_names_targets_and_the_exchange_only_when_asked(hub):
@@ -92,7 +89,7 @@ def test_a_vend_without_targets_keeps_its_options_and_no_seal(hub):
         run_vend.sealed_credential("s3://acme/sales/raw/t")
 
 
-def test_a_sealed_vend_holds_no_option_and_each_target_opens_its_own_token(hub, signer, node_keys, monkeypatch):
+def test_a_sealed_vend_holds_no_option_and_each_target_opens_its_own_token(hub, as_node):
     run_vend = vend.request(1, "run-s", set(), {hub.raw}, targets=["team", "worker"], exchange=True)
 
     assert run_vend.sealed and run_vend.targets == ("team", "worker")
@@ -102,7 +99,8 @@ def test_a_sealed_vend_holds_no_option_and_each_target_opens_its_own_token(hub, 
     assert (table.base_uri, exchange.base_uri) == ("s3://acme/sales", "s3://acme/exchange")
     assert "vended-secret-key" not in repr(table) + repr(run_vend)
     for name in ("team", "worker"):
-        assert open_as(name, node_keys, signer, monkeypatch, exchange.sealed) == OPTIONS
+        as_node(name)
+        assert carriers.sealed_storage_options(exchange.sealed) == OPTIONS
 
 
 def test_a_sealed_writes_connection_and_reads_plan_carry_the_map_and_no_secret(hub):

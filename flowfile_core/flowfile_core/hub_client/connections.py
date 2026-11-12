@@ -12,7 +12,7 @@ from typing import Literal
 from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.hub_client.secrets import listed_once, rows_at
 from flowfile_core.secret_manager import credential_sources
-from shared import hub_sealed
+from shared import sealed
 
 Kind = Literal["cloud", "kafka", "database"]
 
@@ -41,11 +41,11 @@ class _HubCredentials:
     def connection_rows(self, user_id: int, kind: Kind) -> list[dict]:
         return hub_rows(user_id, kind)
 
-    carried = staticmethod(hub_sealed.sealed_connection_secret)
-    storage_provider = staticmethod(hub_sealed.SealedConnectionProvider)
+    carried = staticmethod(sealed.sealed_connection_secret)
+    storage_provider = staticmethod(sealed.SealedConnectionProvider)
 
     def unopened(self, value: object) -> str | None:
-        if hub_sealed.is_sealed_secret(value):
+        if sealed.is_sealed_secret(value):
             return "A hub secret is opened only by the hub server that runs the step, never by core"
         return None
 

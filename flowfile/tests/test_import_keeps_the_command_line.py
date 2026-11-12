@@ -1,5 +1,5 @@
-"""``import flowfile`` in a program leaves that program's own command line to it: core and the worker read their join
-flags only when they are the process being started."""
+"""``import flowfile`` in a program leaves that program's own command line to it: flags core and the worker do not
+know are the program's, and none of them stops the import."""
 
 import os
 import subprocess
@@ -11,7 +11,7 @@ _PROGRAM = (
     "import flowfile\n"
     "from flowfile_core.configs import settings\n"
     "from flowfile_worker import configs\n"
-    "print(settings.JOIN_TOKEN, settings.WORKER_PORT, configs.JOIN_TOKEN, configs.SERVICE_HOST)\n"
+    "print(settings.WORKER_PORT, configs.SERVICE_HOST)\n"
 )
 
 
@@ -36,4 +36,4 @@ def test_a_program_given_join_flags_imports_flowfile(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.split() == ["None", "5", "None", "127.0.0.1"]
+    assert result.stdout.split() == ["5", "127.0.0.1"]

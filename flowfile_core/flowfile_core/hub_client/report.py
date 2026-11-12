@@ -8,7 +8,6 @@ core's catalog, whose ids are not the hub's.
 import uuid
 from datetime import datetime, timezone
 
-from flowfile_core.auth import issuer_accounts
 from flowfile_core.catalog import run_records
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.execution import registry
@@ -18,6 +17,7 @@ from flowfile_core.hub_client import session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import RunInformation
+from shared import server_extension
 
 
 def hub_target(flow, user_id: int | None) -> tuple[str, str] | None:
@@ -27,7 +27,7 @@ def hub_target(flow, user_id: int | None) -> tuple[str, str] | None:
     only a run of a flow from that hub, or one that vended from it, with a token minted from the session. The token of
     the request that started the run is this core's own and is never sent.
     """
-    if issuer_accounts.joined_with_keys() is not None:
+    if server_extension.joined() is not None:
         return _delegated_target(user_id)
     stored = session.load(user_id) if user_id is not None else None
     if stored is None:

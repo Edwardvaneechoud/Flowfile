@@ -18,7 +18,6 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth import issuer_accounts
 from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user
 from flowfile_core.auth.sharing import sharing_enabled
 from flowfile_core.catalog import CatalogService, table_sources
@@ -42,6 +41,7 @@ from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersi
 from flowfile_core.routes import compute_backends
 from flowfile_core.routes.routes import flow_file_handler, get_flow_or_404
 from flowfile_core.schemas import schemas
+from shared import server_extension
 from shared._version import get_version
 from shared.storage_config import registered_flow_path, storage
 
@@ -110,10 +110,10 @@ def _connection(
 def get_connection(current_user=Depends(get_current_active_user)) -> HubConnection:
     """The stored connection with the hub's info read live; an unreachable hub sets ``error``."""
     stored = session.load(current_user.id)
-    node = issuer_accounts.joined_with_keys()
+    node = server_extension.joined()
     if stored is None and node is None:
         return _connection(None)
-    hub_url = stored["hub_url"] if stored else node.hub_url.rstrip("/")
+    hub_url = stored["hub_url"] if stored else node.url.rstrip("/")
     account = _account(stored, current_user)
     info = None
     try:

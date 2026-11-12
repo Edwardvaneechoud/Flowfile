@@ -319,10 +319,16 @@ def test_the_listing_renames_a_node_by_removing_its_old_row(api, hub):
 
 
 def test_a_core_that_is_a_node_itself_never_lists_its_own_node_and_drops_a_row_written_before(api, hub, monkeypatch):
+    from types import SimpleNamespace
+
+    from shared.server_extension import Identity
+    from shared.tests import toy_server_extension
+
     hub.nodes = [compute_node(1, "team-local"), GPU]
     api.post("/hub_client/connection", json=CONNECT)
     assert sorted(_rows()) == ["worker:gpu", "worker:team-local"]
-    monkeypatch.setenv("FLOWFILE_NODE_NAME", "team-local")
+    own = Identity(name="team-local", url=None, issuer=None)
+    toy_server_extension.use(monkeypatch, SimpleNamespace(identity=lambda: own))
 
     response = api.get("/compute_backends")
 

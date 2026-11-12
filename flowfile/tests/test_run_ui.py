@@ -1,18 +1,18 @@
-"""``flowfile run ui`` serves where ``--host`` and ``--port`` say, takes the join flags, and serves only the editor.
+"""``flowfile run ui`` serves where ``--host`` and ``--port`` say, takes its server extension's flags, and serves only
+the editor.
 
 A host other machines reach is served only in a server mode, where everyone signs in; in the default mode it is
-refused before anything is served or joined.
+refused before anything is served. A server extension that binds the socket first has it handed to the server.
 
 The command is parsed with ``start_server`` stubbed, and ``start_server`` runs with ``flowfile_core.main.run``
 stubbed and a bare app in place of core's, so no port is bound and no browser opens; every setting it changes is
 restored after the test.
 """
 
-import errno
-import logging
 import os
 import socket
 import sys
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -22,23 +22,11 @@ import flowfile.web as web
 import flowfile_core.main as core_main
 from flowfile.__main__ import main
 from flowfile_core.configs import settings
-from shared import hub_node
-
-JOIN_FLAGS = (
-    "--join",
-    "join-t",
-    "--hub",
-    "http://hub.example",
-    "--name",
-    "team-9",
-    "--url",
-    "http://team-9.example:8080",
-    "--worker-url",
-    "http://team-9.example:8080/worker",
-)
+from shared.tests import toy_server_extension as toy
 
 
-def test_run_ui_lists_the_join_flags_in_its_help(monkeypatch, capsys):
+def test_run_ui_lists_its_server_extension_s_flags_in_its_help(monkeypatch, capsys):
+    toy.use(monkeypatch, toy)
     monkeypatch.setattr(sys, "argv", ["flowfile", "run", "ui", "--help"])
 
     with pytest.raises(SystemExit) as exited:
@@ -46,22 +34,32 @@ def test_run_ui_lists_the_join_flags_in_its_help(monkeypatch, capsys):
 
     assert exited.value.code == 0
     out = capsys.readouterr().out
-    for flag in ("--join", "--hub", "--name", "--url", "--worker-url", "--host", "--port"):
+    for flag in ("--toy", "--host", "--port"):
         assert flag in out
 
 
-def test_run_ui_hands_host_and_port_to_the_server_and_its_core_reads_the_join_flags(monkeypatch):
+def test_run_ui_without_an_extension_refuses_a_flag_it_does_not_know(monkeypatch, capsys):
+    toy.use(monkeypatch, None)
+    monkeypatch.setattr(sys, "argv", ["flowfile", "run", "ui", "--toy", "t"])
+
+    with pytest.raises(SystemExit) as exited:
+        main()
+
+    assert exited.value.code == 2
+    assert "unrecognized arguments: --toy t" in capsys.readouterr().err
+
+
+def test_run_ui_hands_host_and_port_to_the_server_and_takes_its_extension_s_flags(monkeypatch):
+    toy.use(monkeypatch, toy)
     started = []
     monkeypatch.setattr(web, "start_server", lambda **kwargs: started.append(kwargs))
-    argv = ["flowfile", "run", "ui", "--host", "0.0.0.0", "--port", "8080", "--no-browser", *JOIN_FLAGS]
+    argv = ["flowfile", "run", "ui", "--host", "0.0.0.0", "--port", "8080", "--no-browser", "--toy", "t"]
     monkeypatch.setattr(sys, "argv", argv)
 
     main()
 
     assert started == [{"host": "0.0.0.0", "port": 8080, "open_browser": False}]
-    args = settings.parse_args()
-    assert (args.join, args.hub, args.name, args.url, args.worker_url) == JOIN_FLAGS[1::2]
-    assert args.host == "0.0.0.0"
+    assert settings.parse_args().host == "0.0.0.0"
 
 
 def test_run_ui_without_flags_serves_this_machine_only(monkeypatch):
@@ -75,14 +73,11 @@ def test_run_ui_without_flags_serves_this_machine_only(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "flags,token,port",
-    [([], None, 63578), (["--port", "8080"], None, 8080), ([], "join-t", 63578), (["--port", "8080"], "join-t", 8080)],
-    ids=["no port", "a port given", "joining", "joining on a port given"],
+    "flags,port", [([], 63578), (["--port", "8080"], 8080)], ids=["no port", "a port given"]
 )
-def test_run_core_serves_63578_unless_given_a_port_joining_a_hub_or_not(monkeypatch, flags, token, port):
+def test_run_core_serves_63578_unless_given_a_port(monkeypatch, flags, port):
     started = []
     monkeypatch.setattr(core_main, "run", lambda host, port: started.append((host, port)))
-    monkeypatch.setattr(settings, "JOIN_TOKEN", token)
     monkeypatch.setattr(sys, "argv", ["flowfile", "run", "core", "--host", "127.0.0.1", *flags])
 
     main()
@@ -131,7 +126,7 @@ def test_a_server_mode_serves_on_any_host_and_port_and_marks_the_editor_and_work
 
 def test_run_ui_on_a_host_other_machines_reach_is_refused_in_the_default_mode(served, monkeypatch, capsys):
     monkeypatch.delenv("FLOWFILE_MODE", raising=False)
-    argv = ["flowfile", "run", "ui", "--host", "0.0.0.0", "--no-browser", *JOIN_FLAGS]
+    argv = ["flowfile", "run", "ui", "--host", "0.0.0.0", "--no-browser"]
     monkeypatch.setattr(sys, "argv", argv)
 
     with pytest.raises(SystemExit) as exited:
@@ -192,48 +187,33 @@ def test_the_editor_is_served_at_ui_slash_and_never_a_file_outside_its_folder(se
         assert (response.status_code, response.text) == (200, "<html>editor</html>"), path
 
 
-@pytest.fixture
-def held():
-    """A port another server listens on, on 127.0.0.1, for the length of the test."""
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    sock.listen()
-    yield sock.getsockname()[1]
-    sock.close()
-
-
-@pytest.fixture
-def joining(monkeypatch, tmp_path):
-    """Core's command line carried a join token, and this node never joined: its file is under ``tmp_path``."""
-    monkeypatch.setattr(core_main, "JOIN_TOKEN", "join-t")
-    monkeypatch.setattr(core_main, "JOIN_HUB_URL", "http://hub.example")
-    monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
-
-
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
-def test_a_server_that_joins_binds_its_port_first_and_serves_there(served, joining):
-    port = free_port()
+def test_a_server_whose_extension_binds_first_is_handed_that_socket(served, monkeypatch):
+    bound = socket.socket()
+    bound.bind(("127.0.0.1", 0))
+    port = bound.getsockname()[1]
+    asked = []
+    toy.use(monkeypatch, SimpleNamespace(bind=lambda service, host, port: asked.append((service, host, port)) or bound))
 
     web.start_server(port=port, open_browser=False)
 
     with served["sock"] as sock:
-        assert sock.getsockname() == ("127.0.0.1", port)
+        assert sock is bound
+    assert asked == [("core", "127.0.0.1", port)]
     assert (served["host"], served["port"]) == ("127.0.0.1", port)
     assert settings.WORKER_URL == f"http://127.0.0.1:{port}/worker"
 
 
-def test_a_server_that_joins_on_a_port_in_use_exits_1_before_serving(served, joining, held, caplog):
+def test_a_server_whose_extension_cannot_bind_stops_before_anything_is_set_up(served, monkeypatch):
+    def refuse(service, host, port):
+        raise SystemExit(1)
+
+    toy.use(monkeypatch, SimpleNamespace(bind=refuse))
     worker_url = settings.WORKER_URL
 
-    with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
-        web.start_server(port=held, open_browser=False)
+    with pytest.raises(SystemExit) as exited:
+        web.start_server(port=8080, open_browser=False)
 
     assert exited.value.code == 1
-    assert f"Cannot serve on 127.0.0.1:{held}: {os.strerror(errno.EADDRINUSE)}" in caplog.text
     assert "host" not in served
     assert settings.WORKER_URL == worker_url
+    assert not hasattr(served["app"].state, "worker_path")

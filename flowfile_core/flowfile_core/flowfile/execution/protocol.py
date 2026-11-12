@@ -149,7 +149,7 @@ class CredentialRef:
 class SealedCredential:
     """What a hub vended to a run for the storage under ``base_uri``, sealed to each node that runs a step with it.
 
-    ``sealed`` maps a hub node's name to a token only that node opens (``shared.hub_sealed``); a backend sends the whole
+    ``sealed`` maps a hub node's name to a token only that node opens (``shared.sealed``); a backend sends the whole
     map and the node it reaches opens its own entry, so core never holds the storage options.
     """
 

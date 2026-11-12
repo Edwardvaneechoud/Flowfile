@@ -148,9 +148,9 @@ class TestEncryptDecryptSecret:
 
 
 def test_a_plain_secret_decrypts_without_loading_the_sealed_opener(tmp_path):
-    """``shared.hub_sealed`` and what it pulls in (PyJWT, the hub modules) load only for a secret a hub sealed, never
-    for a ``$ffsec$`` or legacy one, so every worker child that decrypts a secret is spared them. In a fresh process,
-    since the test session has long imported the module."""
+    """``shared.sealed`` loads only for a sealed secret, never for a ``$ffsec$`` or legacy one, so every worker child
+    that decrypts a secret is spared it and the server extension that opens one. In a fresh process, since the test
+    session has long imported the module."""
     repo_root = Path(__file__).resolve().parents[2]
     code = "\n".join(
         [
@@ -158,7 +158,7 @@ def test_a_plain_secret_decrypts_without_loading_the_sealed_opener(tmp_path):
             "from flowfile_worker.secrets import decrypt_secret, encrypt_secret",
             'assert decrypt_secret(encrypt_secret("mine", user_id=1)).get_secret_value() == "mine"',
             'assert decrypt_secret(encrypt_secret("legacy")).get_secret_value() == "legacy"',
-            'print("shared.hub_sealed" in sys.modules)',
+            'print("shared.sealed" in sys.modules)',
         ]
     )
     env = {

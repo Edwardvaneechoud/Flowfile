@@ -12,50 +12,38 @@ from fastapi.responses import JSONResponse
 
 from flowfile_worker import mp_context
 from flowfile_worker.auth import carries_internal_token
-from flowfile_worker.configs import (
-    FLOWFILE_CORE_URI,
-    HUB_URL,
-    JOIN_TOKEN,
-    NODE_NAME,
-    NODE_URL,
-    SERVICE_HOST,
-    SERVICE_PORT,
-    logger,
-)
+from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
 from flowfile_worker.pool import task_pool
 from flowfile_worker.protocol_routes import router as protocol_router
 from flowfile_worker.routes import router
 from flowfile_worker.streaming import streaming_router, v1_streaming_router
-from shared import hub_node
+from shared import server_extension
 from shared._version import get_version
-from shared.net import is_loopback_host
 from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
 should_exit = False
 server_instance = None
 serving_port: int | None = None
-"""The port ``run`` serves on, which each heartbeat names this machine's addresses on; ``None`` outside ``run``."""
+"""The port ``run`` serves on, which a server's extension is told while it serves; ``None`` outside ``run``."""
 
 
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
     """Handle application startup and shutdown.
 
-    A worker that joined a hub alone, with keys of its own, tells the hub the node is up while it serves, and at which
-    addresses on its port; beside a core that joined for both, the core does (``hub_node.start_heartbeat``).
+    A server's extension runs what it runs while the worker serves, on the port it serves on (``server_extension``'s
+    ``serving``).
     """
     logger.info("Starting application...")
-    beating = hub_node.start_heartbeat(
-        "worker", port=serving_port, tls=bool(os.environ.get("FLOWFILE_WORKER_TLS_CERT"))
-    )
+    stop_extension = server_extension.call("serving", "worker", serving_port, app)
     task_pool.prewarm()
     try:
         yield
     finally:
         logger.info("Shutting down application...")
-        if beating is not None:
-            beating.set()
+        if stop_extension is not None:
+            stop_extension()
         try:
             task_pool.shutdown()
         except Exception as e:
@@ -100,16 +88,16 @@ async def request_validation_without_input(request: Request, exc: RequestValidat
 async def health() -> dict[str, str]:
     """Say the worker is up and which Flowfile release it runs, to any caller, with or without a token.
 
-    A worker whose storage dir joined a hub also says the name it joined under, as ``node``: that name is what the hub
-    shows on its Compute page, and without it the hub could not tell this server from another machine at the same
-    private address on another network when it looks for a server that moved. Nothing more: the host, Python, Polars
+    A worker whose storage dir keeps a name as a controller's server (``server_extension.identity``) also says it,
+    as ``node``: a controller that looks for a server that moved tells it by that name from another machine at the
+    same private address on another network. Nothing more: the host, Python, Polars
     and the operations are in ``/v1/capabilities``, behind a token. Core never calls this route, so it is not part of
     the worker contract.
     """
     answer = {"status": "ok", "version": get_version()}
-    node = hub_node.read()
-    if node is not None:
-        answer["node"] = node.name
+    identity = server_extension.identity()
+    if identity is not None and identity.recorded_name is not None:
+        answer["node"] = identity.recorded_name
     return answer
 
 
@@ -157,47 +145,12 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
-def _worker_url(host: str, port: int, *, tls: bool) -> str:
-    url = hub_node.default_url(port, tls=tls)
-    if is_loopback_host(host):
-        logger.warning(
-            "This worker serves on %s, which only this machine reaches, and gives the hub %s; to be reached from other "
-            "machines, start it with --host 0.0.0.0",
-            host,
-            url,
-        )
-    return url
-
-
-def join_hub(port: int | None = None, host: str | None = None) -> None:
-    """Join the hub ``--join`` names, before the worker serves on ``host`` and ``port``; without a join token, nothing.
-
-    The worker asks for ``--name``, else the machine's name, and gives ``--url``, else this machine's full name and the
-    port it serves on (``hub_node.default_url``), ``https`` when it serves TLS; bound to a loopback address, which only
-    this machine reaches, it warns. A worker that joined already makes no request (``shared.hub_node``).
-    """
-    if not JOIN_TOKEN:
-        return
-    port = port or SERVICE_PORT
-    tls = bool(os.environ.get("FLOWFILE_WORKER_TLS_CERT"))
-    worker_url = NODE_URL or _worker_url(host or SERVICE_HOST, port, tls=tls)
-    if hub_node.already_joined(JOIN_TOKEN) is None:
-        logger.info("Telling the hub this worker is at %s", worker_url)
-    hub_node.join_at_start(
-        HUB_URL,
-        JOIN_TOKEN,
-        name=NODE_NAME or hub_node.default_name(),
-        worker_url=worker_url,
-    )
-
-
 def run(host: str = None, port: int = None):
     """Run the FastAPI app with graceful shutdown.
 
-    Without a join token uvicorn binds the port, as it always has. A worker started with a join token binds its socket
-    first, on the port it was started with (``hub_node.serving_socket``), then joins its hub (``join_hub``) with that
-    port, and serves on that same socket: one whose port is in use exits with code 1 before any request to the hub,
-    one the hub refuses with code 2 before it serves.
+    A storage dir marked for a server extension is served only with it loaded (``require_marked``). An extension may
+    bind the socket first (``bind``) and take a last step before requests are taken (``before_serving``); the worker
+    then serves on that socket. Otherwise uvicorn binds the port, as it always has.
     Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
     """
     global server_instance, serving_port
@@ -207,14 +160,14 @@ def run(host: str = None, port: int = None):
     if port is None:
         port = SERVICE_PORT
 
-    sock = None
-    if JOIN_TOKEN:
-        sock = hub_node.serving_socket(host, port)
-        try:
-            join_hub(port, host)
-        except BaseException:
+    server_extension.require_marked()
+    sock = server_extension.call("bind", "worker", host, port)
+    try:
+        server_extension.call("before_serving", "worker", host, port, app)
+    except BaseException:
+        if sock is not None:
             sock.close()
-            raise
+        raise
 
     from connectorx import __version__ as connectorx_version
 

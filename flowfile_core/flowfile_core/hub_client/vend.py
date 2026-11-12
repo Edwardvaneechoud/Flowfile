@@ -14,7 +14,6 @@ from dataclasses import dataclass, field, replace
 import polars as pl
 from pydantic import SecretStr
 
-from flowfile_core.auth import issuer_accounts
 from flowfile_core.catalog import table_sources
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.flowfile.execution import registry
@@ -28,7 +27,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnection,
     FullCloudStorageConnectionWorkerInterface,
 )
-from shared import hub_sealed
+from shared import sealed, server_extension
 from shared.cloud_storage.storage_options import ALLOW_INVALID_CERTIFICATES
 
 REFUSED = "The hub did not give this run access to its tables"
@@ -74,7 +73,7 @@ class RunVend:
     own: "RunVend | None" = field(default=None, repr=False)
 
     def sealed_secrets(self, names: Iterable[str]) -> dict[str, str]:
-        return {name: hub_sealed.sealed_secret(name, self.secrets[name]) for name in names if name in self.secrets}
+        return {name: sealed.sealed_secret(name, self.secrets[name]) for name in names if name in self.secrets}
 
     def sealed_connections(self, refs: Iterable[tuple[str, str]]) -> dict[tuple[str, str], dict[str, str]]:
         return {ref: dict(self.connections[ref]) for ref in refs if ref in self.connections}
@@ -127,7 +126,7 @@ class RunVend:
         plan runs."""
         here = self.here()
         if here.sealed:
-            return hub_sealed.scan_delta_sealed(uri, here.sealed_credential(uri).sealed, schema)
+            return sealed.scan_delta_sealed(uri, here.sealed_credential(uri).sealed, schema)
         return pl.scan_delta(uri, **kwargs, **here.scan_kwargs(uri, user_id))
 
     def for_namespace(self, namespace: str) -> HubCredential:
@@ -308,7 +307,7 @@ class _RunCatalog:
 
     def of_record(self) -> bool:
         """On a joined server the hub's catalog is the catalog of record; a desktop keeps its own beside it."""
-        return issuer_accounts.joined_with_keys() is not None
+        return server_extension.joined() is not None
 
     def save_flow(self, user_id: int | None, flow) -> str | None:
         """Keep a flow from this hub on the hub and return its note; ``None`` when it is not the hub's to keep."""

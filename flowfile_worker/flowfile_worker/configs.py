@@ -17,23 +17,10 @@ TEST_MODE = True if "TEST_MODE" in os.environ else False
 
 
 def parse_args():
-    """Parse command line arguments.
-
-    Every main process reads the worker's own flags, abbreviated or not, as it always has. Only the worker itself
-    (``flowfile_worker._launched_as_worker``) reads the join flags, by their full names only, and refuses ``--join``
-    without ``--hub``: a program that imports Flowfile keeps its own command line, ``--join`` included.
-    """
-    import flowfile_worker
-
-    launched = flowfile_worker._launched_as_worker()
-    parser = argparse.ArgumentParser(description="Flowfile Worker Server", add_help=not launched)
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="Flowfile Worker Server")
     parser.add_argument("--host", type=str, default=DEFAULT_SERVICE_HOST, help="Host to bind worker to")
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=DEFAULT_SERVICE_PORT,
-        help="Port to bind worker to; a worker joining a hub exits when it is in use",
-    )
+    parser.add_argument("--port", type=int, default=DEFAULT_SERVICE_PORT, help="Port to bind worker to")
     parser.add_argument(
         "--core-host",
         type=str,
@@ -46,29 +33,9 @@ def parse_args():
         default=DEFAULT_CORE_PORT,
         help="Port of the core service",
     )
-    joining = argparse.Namespace(join=None, hub=None, name=None, url=None)
-    if launched:
-        full = argparse.ArgumentParser(description="Flowfile Worker Server", parents=[parser], allow_abbrev=False)
-        full.add_argument(
-            "--join",
-            type=str,
-            default=os.environ.get("FLOWFILE_HUB_JOIN_TOKEN") or None,
-            help="A join token from the hub's Compute page; the worker joins that hub before it serves",
-        )
-        full.add_argument("--hub", type=str, default=os.environ.get("FLOWFILE_HUB_URL") or None, help="The hub to join")
-        full.add_argument(
-            "--name",
-            type=str,
-            default=os.environ.get("FLOWFILE_NODE_NAME") or None,
-            help="This worker's name on the hub; the machine's name when not given",
-        )
-        full.add_argument("--url", type=str, default=None, help="This worker's address as desktops reach it")
-        joining = full.parse_known_args()[0]
 
     # Use known_args to handle PyInstaller's extra args
     args = parser.parse_known_args()[0]
-    for field in ("join", "hub", "name", "url"):
-        setattr(args, field, getattr(joining, field))
 
     if args.port < 1 or args.port > 65535:
         raise ValueError(f"Invalid port number: {args.port}. Port must be between 1 and 65535.")
@@ -81,9 +48,6 @@ def parse_args():
 
     if not args.core_host:
         raise ValueError("Core host cannot be empty")
-
-    if args.join and not args.hub:
-        raise ValueError("--join needs --hub, the address of the hub to join")
 
     return args
 
@@ -113,19 +77,11 @@ if _is_main_process():
     SERVICE_PORT = args.port
     CORE_HOST = args.core_host
     CORE_PORT = args.core_port
-    JOIN_TOKEN = args.join
-    HUB_URL = args.hub
-    NODE_NAME = args.name
-    NODE_URL = args.url
 else:
     # In spawned processes, use defaults from environment variables
     SERVICE_HOST = DEFAULT_SERVICE_HOST
     SERVICE_PORT = DEFAULT_SERVICE_PORT
     CORE_HOST = DEFAULT_CORE_HOST
     CORE_PORT = DEFAULT_CORE_PORT
-    JOIN_TOKEN = None
-    HUB_URL = None
-    NODE_NAME = None
-    NODE_URL = None
 
 FLOWFILE_CORE_URI = get_core_url(CORE_HOST, CORE_PORT)

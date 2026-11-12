@@ -11,7 +11,6 @@ from collections.abc import Iterable
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth import issuer_accounts
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
@@ -19,9 +18,15 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.hub_client import client, node_tokens, secrets, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
-from shared import hub_node
+from shared import server_extension
 
 _UNREAD = (HubUnreachable, HubRefused, HubVersionRefused)
+
+
+def _own_name() -> str | None:
+    """This machine's own name among its hub's servers, when it is one."""
+    identity = server_extension.identity()
+    return identity.name if identity is not None else None
 
 
 def drop_row(db: Session, row: ConfiguredBackend) -> None:
@@ -39,8 +44,8 @@ def sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> li
     a hub error.
     """
     nodes = client.list_compute_nodes(hub_url, access_token)
-    own = hub_node.resolved().name
-    joined = issuer_accounts.joined_with_keys() is not None
+    own = _own_name()
+    joined = server_extension.joined() is not None
     wanted = {
         registry.CONFIGURED_WORKER_PREFIX + node["name"]: node
         for node in nodes
@@ -101,7 +106,7 @@ def server_for(user_id: int) -> str | None:
     if not nodes:
         return None
     node = next((node for node in nodes if node.get("is_default")), nodes[0])
-    if node["name"] == hub_node.resolved().name:
+    if node["name"] == _own_name():
         return registry.WORKER_BACKEND_ID
     backend_id = registry.CONFIGURED_WORKER_PREFIX + node["name"]
     with get_db_context() as db:
@@ -130,7 +135,7 @@ def _sync_for(db: Session, user_id: int, when: str) -> list[str]:
 
 def sync_for(user_id: int) -> None:
     """Sync right after a sign-in on a joined server, so the servers are there to pick before anyone opens Compute."""
-    if issuer_accounts.joined_with_keys() is None:
+    if server_extension.joined() is None:
         return
     with get_db_context() as db:
         _sync_for(db, user_id, "at a sign-in")
@@ -150,7 +155,7 @@ def listing(user_id: int) -> list[str]:
 def refresh(backend_ids: Iterable[str]) -> None:
     """Before a run on a joined server that names hub servers, sync with the acting person's session (the named rows'
     people for a run for nobody), so a moved server is reached at its new address."""
-    if issuer_accounts.joined_with_keys() is None:
+    if server_extension.joined() is None:
         return
     ids = [backend_id for backend_id in backend_ids if backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX)]
     if not ids:

@@ -442,12 +442,7 @@ def main():
         help="Host to bind the server to; for run ui, a host other machines reach needs FLOWFILE_MODE=docker, "
         "where everyone signs in",
     )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=63578,
-        help="Port to bind the server to; for run ui and run core, a server joining a hub exits when it is in use",
-    )
+    parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
     parser.add_argument(
         "--param",
@@ -476,25 +471,10 @@ def main():
     parser.add_argument("--format", default="md", choices=["md", "json"], help="Format of the --inspect report")
     parser.add_argument("--csv", action="store_true", help="Convert to CSV instead of Parquet")
     parser.add_argument("--overwrite", action="store_true", help="Replace existing converted files or flows")
-    # Core's settings read these from this same command line; listed here so run ui and run core take them.
-    parser.add_argument(
-        "--join",
-        metavar="TOKEN",
-        help="A join token from the hub's Compute page; the server joins that hub for itself and its worker before "
-        "it serves (or FLOWFILE_HUB_JOIN_TOKEN)",
-    )
-    parser.add_argument("--hub", metavar="URL", help="The hub to join (or FLOWFILE_HUB_URL)")
-    parser.add_argument("--name", help="This node's name on the hub; the machine's name when not given")
-    parser.add_argument(
-        "--url",
-        metavar="URL",
-        help="This server's address as a browser and the hub reach it; else this machine's full name and port",
-    )
-    parser.add_argument(
-        "--worker-url",
-        metavar="URL",
-        help="The worker's address as desktops reach it; for run ui, the server's address with /worker",
-    )
+    # A server's extension reads its own flags from this command line; listed here so run ui and run core take them.
+    from shared import server_extension
+
+    server_extension.call("add_arguments", parser)
 
     args = parser.parse_args()
 

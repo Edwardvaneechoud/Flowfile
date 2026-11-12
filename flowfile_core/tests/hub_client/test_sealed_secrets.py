@@ -37,7 +37,7 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionInterface
 from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate, KafkaConnectionOut
 from flowfile_core.secret_manager.secret_manager import store_secret
-from shared import hub_node, hub_sealed, issuer_tokens
+from shared import sealed as carriers
 from shared.kafka.models import KafkaReadSettings
 from tests.hub_client import test_sealed_vend
 from tests.hub_client.conftest import HUB_URL, SealingHubCatalog
@@ -45,18 +45,16 @@ from tests.hub_client.conftest import HUB_URL, SealingHubCatalog
 store = test_sealed_vend.store
 signer = test_sealed_vend.signer
 node_keys = test_sealed_vend.node_keys
+as_node = test_sealed_vend.as_node
 hub = test_sealed_vend.hub
 
 PASSWORD = "hub-only-password"
 
 
-def open_secret_as(name: str, node_keys, signer, monkeypatch, value: str) -> str:
-    target, _ = node_keys[name]
-    monkeypatch.setattr(hub_node, "path", lambda: target)
-    monkeypatch.setenv("FLOWFILE_HUB_URL", signer.url)
-    monkeypatch.setenv("FLOWFILE_NODE_NAME", name)
-    monkeypatch.setattr(issuer_tokens, "_client", None)
-    return hub_sealed.open_secret(value)
+def open_secret_as(name: str, as_node, value: str) -> str:
+    """The secret the sealed string ``value`` holds for the node ``name``, opened as that node."""
+    as_node(name)
+    return carriers.open_secret(value)
 
 
 @pytest.fixture
@@ -194,7 +192,7 @@ def test_each_kind_names_its_secrets(user_id, local_secret, stored_connections):
     assert run_secrets.names_for(Step(input_schema.NodeRecordCount(flow_id=1, node_id=6, user_id=user_id))) == []
 
 
-def test_the_vend_asks_the_names_and_each_target_opens_its_own_secret(hub, signer, node_keys, monkeypatch):
+def test_the_vend_asks_the_names_and_each_target_opens_its_own_secret(hub, as_node):
     hub.secret_values = {"warehouse": PASSWORD, "api": "tok-1"}
 
     run_vend = vend.request(1, "run-s", set(), set(), targets=["team", "worker"], secrets=["warehouse", "api"])
@@ -205,7 +203,7 @@ def test_the_vend_asks_the_names_and_each_target_opens_its_own_secret(hub, signe
     sealed = run_vend.sealed_secrets(["warehouse", "unknown"])
     assert set(sealed) == {"warehouse"} and PASSWORD not in sealed["warehouse"]
     for name in ("team", "worker"):
-        assert open_secret_as(name, node_keys, signer, monkeypatch, sealed["warehouse"]) == PASSWORD
+        assert open_secret_as(name, as_node, sealed["warehouse"]) == PASSWORD
 
 
 def test_a_vend_without_names_asks_none(hub):
@@ -257,7 +255,7 @@ def sealed_for_worker(hub):
 
 
 def test_a_database_step_carries_the_sealed_password_which_opens_where_it_runs(
-    user_id, sealed_for_worker, node_keys, signer, monkeypatch
+    user_id, sealed_for_worker, as_node
 ):
     settings = inline_reader(user_id, "on_the_hub")
     sealed = sealed_for_worker(on_the_hub=PASSWORD)
@@ -276,11 +274,11 @@ def test_a_database_step_carries_the_sealed_password_which_opens_where_it_runs(
 
     assert "$ffsec$" not in json.dumps(wire) and PASSWORD not in json.dumps(wire)
     assert connection is settings.database_settings.database_connection
-    assert open_secret_as("worker", node_keys, signer, monkeypatch, wire["connection"]["password"]) == PASSWORD
+    assert open_secret_as("worker", as_node, wire["connection"]["password"]) == PASSWORD
 
 
 def test_a_kafka_step_carries_its_connections_secrets_sealed_and_core_keeps_its_own_to_commit(
-    hub, user_id, stored_connections, sealed_for_worker, node_keys, signer, monkeypatch
+    hub, user_id, stored_connections, sealed_for_worker, as_node
 ):
     _, kafka, kafka_id = stored_connections
     sasl, ssl_key = kafka_names(kafka)
@@ -319,13 +317,13 @@ def test_a_kafka_step_carries_its_connections_secrets_sealed_and_core_keeps_its_
     assert "$ffsec$" not in json.dumps(wire) and stored.sasl_password == "$ffsec$1$1$core"
     sent = KafkaReadSettings.model_validate(wire)
     opened = [
-        open_secret_as("worker", node_keys, signer, monkeypatch, v) for v in (sent.sasl_password, sent.ssl_key_pem)
+        open_secret_as("worker", as_node, v) for v in (sent.sasl_password, sent.ssl_key_pem)
     ]
     assert opened == ["hub-sasl", "hub-key"]
 
 
 def test_a_rest_step_carries_its_sealed_auth_secret_which_opens_where_it_runs(
-    user_id, local_secret, sealed_for_worker, node_keys, signer, monkeypatch
+    user_id, local_secret, sealed_for_worker, as_node
 ):
     node = rest_reader(user_id, local_secret)
     auth = node.rest_api_settings.auth
@@ -339,11 +337,11 @@ def test_a_rest_step_carries_its_sealed_auth_secret_which_opens_where_it_runs(
     )
 
     assert "$ffsec$" not in json.dumps(wire.model_dump(mode="json"))
-    assert open_secret_as("worker", node_keys, signer, monkeypatch, wire.auth.bearer_token_encrypted) == "hub-token"
+    assert open_secret_as("worker", as_node, wire.auth.bearer_token_encrypted) == "hub-token"
 
 
 def test_a_custom_step_carries_its_selected_secrets_sealed_and_needs_none_here(
-    user_id, local_secret, sealed_for_worker, node_keys, signer, monkeypatch
+    user_id, local_secret, sealed_for_worker, as_node
 ):
     node = SecretNode.from_settings({"config": {"api_key": "hub_api_key"}})
     sealed = sealed_for_worker(hub_api_key="hub-key")
@@ -356,7 +354,7 @@ def test_a_custom_step_carries_its_selected_secrets_sealed_and_needs_none_here(
         carried = resolve_secret_payload(node, user_id)
 
     assert set(carried) == {"hub_api_key"} and "$ffsec$" not in carried["hub_api_key"]
-    assert open_secret_as("worker", node_keys, signer, monkeypatch, carried["hub_api_key"]) == "hub-key"
+    assert open_secret_as("worker", as_node, carried["hub_api_key"]) == "hub-key"
     mine = SecretNode.from_settings({"config": {"api_key": local_secret}})
     assert resolve_secret_payload(mine, user_id)[local_secret].startswith("$ffsec$")
 

@@ -17,7 +17,6 @@ import pyarrow as pa
 from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
-from flowfile_core.auth import issuer_accounts
 from flowfile_core.catalog import table_sources
 from flowfile_core.configs import exchange_config, logger, settings
 from flowfile_core.configs.exchange_config import ExchangeConfig
@@ -38,9 +37,9 @@ from flowfile_core.flowfile.execution.placement import (
     Placement,
     Refusal,
     SingleBackendPolicy,
-    remote_table_schema,
     place,
     remedy_for,
+    remote_table_schema,
     steps_in_words,
     unmoved_without_store,
     unsealed_for,
@@ -85,6 +84,7 @@ from flowfile_core.kernel.execution import (
 )
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import NodeResult, RunInformation
+from shared import server_extension
 from shared.compute_protocol import Capabilities
 
 ambient_kernel_hold: ContextVar[KernelHold | None] = ContextVar("ambient_kernel_hold", default=None)
@@ -1928,7 +1928,7 @@ class ExecutionMixin(GraphMixinBase):
         self, nodes: list[FlowNode], exchange_run: ExchangeRun
     ) -> list[tuple[FlowNode, str]] | None:
         """On a joined server, the nodes on other remote servers it mints the run's person no token for."""
-        if not nodes or issuer_accounts.joined_with_keys() is None:
+        if not nodes or server_extension.joined() is None:
             return None
         return registry.remote_servers.run_refused(lambda: self._on_hub_servers(nodes, self._run_policy(exchange_run)))
 

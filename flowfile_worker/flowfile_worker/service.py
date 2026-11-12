@@ -10,7 +10,7 @@ time (``_claim``): a later job under the id, or a release of it, replaces the ru
 nothing. Every submit, import and operation first drops what has been held for ``CACHE_EXPIRATION_TIME``.
 
 A credential crosses as a stored connection's id and user, resolved where the plan runs, or as the map of tokens a
-hub sealed to the nodes of a run, of which this node opens its own (``shared.hub_sealed``). A blob takes none: the
+hub sealed to the nodes of a run, of which this node opens its own (``shared.sealed``). A blob takes none: the
 presigned URL it is copied to or from carries its own authorisation. With ``spawner.in_process`` set, every job runs in
 the calling process instead of a child.
 """

@@ -41,6 +41,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 from flowfile_core.configs import settings
+from shared import server_extension
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -106,7 +107,6 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
     """
     from cryptography.fernet import InvalidToken
 
-    from flowfile_core.auth import issuer_accounts
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.database.models import ConfiguredBackend
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -120,7 +120,7 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
         hub_row = (row.account_user_id, row.remote_id) if row.remote_id is not None else None
     token_source = None
     if hub_row is not None:
-        through_hub = issuer_accounts.joined_with_keys() is not None
+        through_hub = server_extension.joined() is not None
         token = hub_token or _hub_token(backend_id, *hub_row, through_hub=through_hub)
         _hub_rows[backend_id] = hub_row
         if through_hub:
@@ -314,12 +314,12 @@ def server_name(backend_id: str) -> str | None:
     On a server joined with keys of its own, the embedded ``local`` and the built-in ``worker`` are this server, by
     the name it joined with; a ``worker:<name>`` row filled from the remote is its server ``<name>``.
     """
-    from flowfile_core.auth import issuer_accounts
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.database.models import ConfiguredBackend
 
     if backend_id in (LOCAL_BACKEND_ID, WORKER_BACKEND_ID):
-        return issuer_accounts.joined_name()
+        joined = server_extension.joined()
+        return joined.name if joined is not None else None
     if not backend_id.startswith(CONFIGURED_WORKER_PREFIX):
         return None
     with get_db_context() as db:

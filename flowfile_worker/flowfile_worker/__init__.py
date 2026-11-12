@@ -9,50 +9,13 @@ import time
 from multiprocessing.context import SpawnContext
 from typing import TYPE_CHECKING
 
+# A server's extension has its say before `shared.storage_config` reads a storage dir.
+from shared import server_extension as _server_extension
 
-def _launched_as_worker() -> bool:
-    """Whether this process is the worker itself, started by its console script or as ``python -m flowfile_worker``.
+_server_extension.before_import("worker")
 
-    Only then is the command line the worker's: core, a library host and every spawned child import this package too.
-    While ``python -m`` imports the package, ``sys.argv[0]`` is ``-m`` and ``sys.orig_argv`` names the module.
-    """
-    if multiprocessing.current_process().name != "MainProcess" or not sys.argv:
-        return False
-    if os.path.splitext(os.path.basename(sys.argv[0]))[0] == "flowfile_worker":
-        return True
-    command = getattr(sys, "orig_argv", [])
-    return sys.argv[0] == "-m" and "-m" in command and command[command.index("-m") + 1 :][:1] == ["flowfile_worker"]
-
-
-# A join without a storage dir and secure store of its own is refused before `shared.storage_config` reads one.
-if _launched_as_worker():
-    from flowfile_worker import configs as _configs
-    from shared import hub_node as _hub_node
-
-    _hub_node.require_own_storage_dir(_configs.JOIN_TOKEN)
-
-from shared import sealed as _sealed
 from shared._version import get_version
 from shared.storage_config import storage
-
-
-def _server_on_its_hub() -> tuple:
-    """Who this server is to the issuer that seals credentials to it, asked when one is opened: a node on its hub."""
-    from shared import hub_sealed
-
-    return hub_sealed.this_server()
-
-
-_sealed.server, _sealed.sealer = _server_on_its_hub, "hub"
-issuer_name = "Hub"
-
-
-def issuer_claims(supplied: str) -> object | None:
-    """The claims of a token the hub signed for this server, wherever the worker's routes are served: its own
-    process, or core's app in single-file mode. Imported at use, so a spawned child loads no token code."""
-    from shared import hub_tokens
-
-    return hub_tokens.verify(supplied)
 
 if TYPE_CHECKING:
     from flowfile_worker.models import Status

@@ -34,15 +34,10 @@ from flowfile_core import telemetry as core_telemetry
 from flowfile_core.ai import router as ai_router
 from flowfile_core.ai.admin_routes import router as ai_admin_router
 from flowfile_core.artifacts import router as artifacts_router
-from flowfile_core.configs import settings
 from flowfile_core.configs.access_log import install_access_log_redaction
 from flowfile_core.configs.settings import (
-    JOIN_HUB_URL,
-    JOIN_NODE_NAME,
-    JOIN_TOKEN,
     SERVER_HOST,
     SERVER_PORT,
-    join_addresses,
 )
 from flowfile_core.events import publish
 from flowfile_core.flowfile.execution import registry as compute_registry
@@ -66,7 +61,6 @@ from flowfile_core.routes.flow_api import data_router as flow_api_data_router
 from flowfile_core.routes.flow_api import management_router as flow_api_management_router
 from flowfile_core.routes.ga_connections import router as ga_connections_router
 from flowfile_core.routes.hub_client import router as hub_client_router
-from flowfile_core.routes.hub_dispatch import router as hub_dispatch_router
 from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.node_requests import router as node_requests_router
@@ -85,7 +79,7 @@ from flowfile_core.routes.telemetry import router as telemetry_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
 from flowfile_core.routes.user_groups import router as user_groups_router
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
-from shared import hub_node
+from shared import server_extension
 from shared.parent_watcher import start_parent_death_watcher
 from shared.run_completion import reap_orphaned_runs
 from shared.run_logs import cleanup_old_logs
@@ -99,8 +93,7 @@ if "FLOWFILE_MODE" not in os.environ:
 should_exit = False
 server_instance = None
 serving_port: int | None = None
-"""The port ``run`` serves on, which each heartbeat names this machine's addresses on; ``None`` outside ``run``."""
-_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+"""The port ``run`` serves on, which a server's extension is told while it serves; ``None`` outside ``run``."""
 
 
 @asynccontextmanager
@@ -109,12 +102,11 @@ async def shutdown_handler(app: FastAPI):
 
     This context manager ensures that resources, such as log files and kernel
     containers, are cleaned up properly when the application is terminated.
-    A core that joined a hub for itself and its worker, with keys of its own,
-    tells the hub the node is up while it serves, and at which addresses on its
-    port (``hub_node.start_heartbeat``).
+    A server's extension runs what it runs while core serves, on the port it
+    serves on (``server_extension``'s ``serving``).
     """
     # Ensure scheduler and subprocess loggers are visible on stdout (Electron pipes this)
-    logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     print("Starting core application...")
 
@@ -142,7 +134,7 @@ async def shutdown_handler(app: FastAPI):
         logging.getLogger(__name__).exception("Startup log retention sweep failed")
 
     publish("app_started")
-    beating = hub_node.start_heartbeat("core", port=serving_port)
+    stop_extension = server_extension.call("serving", "core", serving_port, app)
 
     # Only auto-start scheduler if explicitly opted in via env var
     if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "").lower() in ("true", "1", "yes"):
@@ -159,8 +151,8 @@ async def shutdown_handler(app: FastAPI):
         yield
     finally:
         print("Shutting down core application...")
-        if beating is not None:
-            beating.set()
+        if stop_extension is not None:
+            stop_extension()
         change_feed.close_all()
 
         # Stop scheduler
@@ -275,7 +267,8 @@ app.include_router(custom_node_mounts_router, prefix="/custom-node-mounts", tags
 app.include_router(community_nodes_router, prefix="/community_nodes", tags=["community_nodes"])
 app.include_router(community_github_router, prefix="/community_nodes/github", tags=["community_nodes"])
 app.include_router(hub_client_router, prefix="/hub_client", tags=["hub_client"])
-app.include_router(hub_dispatch_router, prefix="/hub", tags=["hub_client"])
+for _extension_router, _extension_prefix in server_extension.call("routers", "core", default=()):
+    app.include_router(_extension_router, prefix=_extension_prefix, tags=["server_extension"])
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(lsp_router, tags=["lsp"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
@@ -342,70 +335,28 @@ def signal_handler(signum, frame):
         _stop_server(server_instance)
 
 
-def _join_hub(port: int | None = None, host: str | None = None) -> None:
-    """Join the hub ``--join`` names for this core and its worker before serving on ``host`` and ``port``.
-
-    With no token, nothing. One join registers the pair as one node: the name is ``--name``, else the machine's, and
-    the addresses are the settings' ``join_addresses``: ``--url`` and ``--worker-url``, else this machine's full name
-    on core's port (with a warning when core binds a loopback address, which only this machine reaches) and on the
-    worker port the settings hold, plain ``http``. An app
-    that serves the browser editor, or mounts its worker, says on which path (``app.state``'s ``editor_path`` and
-    ``worker_path``, set by the pip server), and the join gives the hub the editor's address and that worker's beside
-    core's. A core that joined already makes no request (``shared.hub_node``). The token leaves this process's
-    environment first, so no run or worker that core starts later reads ``FLOWFILE_HUB_JOIN_TOKEN`` without the hub
-    given as ``--hub``, or joins with it again.
-    """
-    if not JOIN_TOKEN:
-        return
-    os.environ.pop("FLOWFILE_HUB_JOIN_TOKEN", None)
-    core_url, worker_url, ui_url = join_addresses(
-        port or settings.SERVER_PORT,
-        host,
-        worker_path=getattr(app.state, "worker_path", None),
-        editor_path=getattr(app.state, "editor_path", None),
-    )
-    hub_node.join_at_start(
-        JOIN_HUB_URL,
-        JOIN_TOKEN,
-        name=JOIN_NODE_NAME or hub_node.default_name(),
-        worker_url=worker_url,
-        core_url=core_url,
-        ui_url=ui_url,
-    )
-
-
 def listen(host: str, port: int) -> socket.socket | None:
-    """The socket a core that joins a hub serves on, bound before the join; ``None`` without a join token.
-
-    Without a join token uvicorn binds the port, as it always has. With one, a core that cannot serve never spends
-    it: it serves on ``port``, the one it was started with (``--port``, ``CORE_PORT``, or one a caller of ``run``
-    names, else the default), or exits with code 1 saying that port is in use (``hub_node.serving_socket``). That
-    line, and the join's, are logged as the server logs once it serves (the lifespan's ``basicConfig``), from here on:
-    ``flowfile run ui`` and ``run core`` configure no logging before then, and a record at INFO with no handler is
-    dropped.
-    """
-    if not JOIN_TOKEN:
-        return None
-    logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
-    return hub_node.serving_socket(host, port)
+    """The socket this core serves on when its extension binds one before serving; ``None`` otherwise, and uvicorn
+    binds the port as it always has."""
+    return server_extension.call("bind", "core", host, port)
 
 
 def run(host: str = None, port: int = None, sock: socket.socket | None = None):
     """Runs the FastAPI application using Uvicorn.
 
     This function configures and starts the Uvicorn server, setting up
-    signal handlers to ensure a graceful shutdown. A core started with a join
-    token binds its socket first (``listen``, or ``sock`` when the caller bound
-    it), then joins its hub for itself and its worker on the port it serves on
-    (``_join_hub``), and serves on that socket: one that cannot bind exits with
-    code 1 before any request to the hub, one the hub refuses with code 2 before
-    it serves. It then marks the process as serving (``registry.mark_serving``),
-    so its compute is never the worker embedded in it.
+    signal handlers to ensure a graceful shutdown. A storage dir marked for a
+    server extension is served only with it loaded (``require_marked``). An
+    extension may bind the socket first (``listen``, or ``sock`` when the
+    caller bound it) and take a last step before requests are taken
+    (``before_serving``); the server then serves on that socket. It then marks
+    the process as serving (``registry.mark_serving``), so its compute is never
+    the worker embedded in it.
 
     Args:
         host: The host to bind the server to. Defaults to `SERVER_HOST` from settings.
         port: The port to bind the server to. Defaults to `SERVER_PORT` from settings.
-        sock: A socket already bound for a join, which the server is handed.
+        sock: A socket already bound, which the server is handed.
     """
     global server_instance, serving_port
 
@@ -413,10 +364,11 @@ def run(host: str = None, port: int = None, sock: socket.socket | None = None):
         host = SERVER_HOST
     if port is None:
         port = SERVER_PORT
+    server_extension.require_marked()
     if sock is None:
         sock = listen(host, port)
     try:
-        _join_hub(port, host)
+        server_extension.call("before_serving", "core", host, port, app)
     except BaseException:
         if sock is not None:
             sock.close()

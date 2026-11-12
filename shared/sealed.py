@@ -1,9 +1,10 @@
-"""Credentials an issuer seals to this server: opened here, with the server's own key, and nowhere else.
+"""Credentials an issuer seals to the servers of a run: carried here unopened, opened only by the server they name.
 
 A server with a master key of its own cannot open another core's ``$ffsec$`` ciphertext, so an issuer seals each
-credential to each server that runs a step with it: a JWE (ECDH-ES over X25519, A256GCM; RFC 7518 §4.6) around a JWS
-the issuer signed for ``node:<name>``. A run carries the whole map of server name to token (``sealed``) and each
-process opens only its own server's entry. The module that knows the issuer sets ``server`` and ``sealer``.
+credential to each server that runs a step with it. A run carries the whole map of server name to token (``sealed``)
+and each process opens only its own server's entry. What opens an entry is the server's extension
+(``shared.server_extension``, ``open_sealed``): the keys and the issuer's check are that server's, never Flowfile's, so
+a machine with no extension carries these and opens none.
 """
 
 from __future__ import annotations
@@ -11,29 +12,20 @@ from __future__ import annotations
 import base64
 import json
 import os
-import struct
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
+from shared import server_extension
 from shared.cloud_credential_provider import CredentialResolutionError, split_credentials
 
 if TYPE_CHECKING:
     import polars as pl
 
-ALG = "ECDH-ES"
-ENC = "A256GCM"
-KEY_BITS = 256
 SIGNED_CLAIMS = ["iss", "aud", "iat", "exp"]
 REQUIRED_CLAIMS = [*SIGNED_CLAIMS, "storage_options"]
 SECRET_CLAIMS = [*SIGNED_CLAIMS, "kind", "name", "value"]
 CONNECTION_CLAIMS = [*SIGNED_CLAIMS, "kind", "connection_kind", "name", "settings"]
 SEALED_SECRET_PREFIX = "$ffseal$1$"
-
-
-server: Callable[[], tuple[str | None, Any, str | None, str | None, bool]] | None = None
-"""This server as its issuer knows it: its name there, its keys (``enc_kid``, ``agree``), where the issuer's keys are,
-the ``iss`` to expect, and whether it joined the issuer with keys of its own."""
-sealer = "issuer"
 
 
 def b64url(data: bytes) -> str:
@@ -50,72 +42,16 @@ class SealedCredentialRefused(CredentialResolutionError):
     """A sealed credential this server cannot open; ``reason`` names why, never the token or what it holds."""
 
     def __init__(self, reason: str):
+        sealer = server_extension.word("sealer", "issuer")
         super().__init__(f"Could not open the credential the {sealer} sealed to this server: {reason}")
         self.reason = reason
 
 
-def _content_key(shared_secret: bytes) -> bytes:
-    """The A256GCM key ECDH-ES derives from ``shared_secret``: Concat KDF over SHA-256, RFC 7518 §4.6.2."""
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.concatkdf import ConcatKDFHash
-
-    def counted(data: bytes) -> bytes:
-        return struct.pack(">I", len(data)) + data
-
-    other_info = counted(ENC.encode("ascii")) + counted(b"") + counted(b"") + struct.pack(">I", KEY_BITS)
-    return ConcatKDFHash(algorithm=hashes.SHA256(), length=KEY_BITS // 8, otherinfo=other_info).derive(shared_secret)
-
-
-def _decrypt(token: str, keys: Any) -> str:
-    """The plaintext of the JWE ``token`` sealed to ``keys``' ``enc`` key.
-
-    ``cryptography`` is imported at use: every spawned worker child imports this module and most open nothing.
-    """
-    from cryptography.exceptions import InvalidTag
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-    parts = token.split(".") if isinstance(token, str) else []
-    if len(parts) != 5:
-        raise SealedCredentialRefused("it is not a sealed token")
-    protected, encrypted_key, iv, ciphertext, tag = parts
-    try:
-        header = json.loads(unb64url(protected))
-        epk = header["epk"]
-        peer = unb64url(epk["x"])
-        iv_bytes, sealed = unb64url(iv), unb64url(ciphertext) + unb64url(tag)
-    except (ValueError, TypeError, KeyError):
-        raise SealedCredentialRefused("its header does not read") from None
-    if header.get("alg") != ALG or header.get("enc") != ENC or encrypted_key:
-        raise SealedCredentialRefused(f"it is sealed as {header.get('alg')}/{header.get('enc')}, not {ALG}/{ENC}")
-    if header.get("zip") is not None or header.get("crit") is not None:
-        raise SealedCredentialRefused("its header asks for what this node does not do")
-    if header.get("kid") != keys.enc_kid:
-        raise SealedCredentialRefused("it is sealed to another key than this node's")
-    if not (isinstance(epk, dict) and epk.get("kty") == "OKP" and epk.get("crv") == "X25519" and len(peer) == 32):
-        raise SealedCredentialRefused("its ephemeral key is not an X25519 key")
-    try:
-        return AESGCM(_content_key(keys.agree(peer))).decrypt(iv_bytes, sealed, protected.encode()).decode("utf-8")
-    except (InvalidTag, ValueError):
-        raise SealedCredentialRefused("it does not decrypt with this node's key") from None
-
-
 def _claims(sealed: Mapping[str, str], required: list[str]) -> dict[str, Any]:
-    """The claims of this server's entry of ``sealed``: decrypted with its key, verified against its issuer's keys."""
-    from shared.issuer_tokens import TokenRefused, decode
-
-    if server is None:
+    """The claims of this server's entry of ``sealed``, opened and verified by the server's extension."""
+    if not server_extension.defines("open_sealed"):
         raise SealedCredentialRefused("nothing here says who seals to this server")
-    name, keys, jwks_url, issuer, _ = server()
-    token = sealed.get(name) if name else None
-    if token is None:
-        names = ", ".join(sorted(sealed)) or "no server"
-        raise SealedCredentialRefused(f"the {sealer} sealed it to {names}, not to this server ({name or 'no name'})")
-    if not jwks_url or keys is None:
-        raise SealedCredentialRefused(f"this server has not joined a {sealer} with keys of its own")
-    try:
-        return decode(_decrypt(token, keys), jwks_url, f"node:{name}", issuer, required)
-    except TokenRefused as refused:
-        raise SealedCredentialRefused(refused.reason) from None
+    return server_extension.call("open_sealed", sealed, required)
 
 
 def _open(sealed: Mapping[str, str]) -> tuple[dict[str, str], int]:
@@ -199,7 +135,7 @@ def open_secret(value: str) -> str:
 
 def can_open() -> bool:
     """Whether this process opens what an issuer seals to its server: it joined one with keys of its own."""
-    return server is not None and server()[4]
+    return bool(server_extension.call("can_open_sealed", default=False))
 
 
 def sealed_storage_options(sealed: Mapping[str, str]) -> dict[str, str]:

@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 import polars as pl
 from pydantic import BaseModel, ValidationError
 
-from flowfile_core.auth import issuer_accounts
 from flowfile_core.catalog.exceptions import CdcCursorNotFoundError, TableNotFoundError
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, resolve_for_table
 from flowfile_core.catalog.text_utils import plain_reference, reads_other
 from flowfile_core.configs.settings import is_server_mode
+from shared import server_extension
 
 if TYPE_CHECKING:
     from flowfile_core.database.models import CatalogTable
@@ -197,13 +197,14 @@ def save_flow(user_id: int | None, flow) -> str | None:
 
 def has_its_record_here(executed_on: str | None) -> bool:
     """Whether a remote catalog's record of a run names this install, by the name it joined with, as where it ran."""
-    return executed_on is not None and executed_on == issuer_accounts.joined_name()
+    joined = server_extension.joined()
+    return executed_on is not None and joined is not None and executed_on == joined.name
 
 
 def merged_tree(user_id: int, local: list[NamespaceTree]) -> list[NamespaceTree]:
     """The catalog tree ``user_id`` reads: this install's catalogs ``local`` first, then the remote catalogs'."""
     listed = _remote.tree(user_id) if _remote is not None else []
-    joined = issuer_accounts.joined_with_keys() is not None
+    joined = server_extension.joined() is not None
     if not listed and not joined:
         return local
     return [_marked(node, place=own_place(), offered=not joined) for node in local] + listed
