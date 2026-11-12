@@ -59,7 +59,7 @@ from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
 from flowfile_core.project import manifest, projection, repository
 from flowfile_core.project.manifest_entries import CloudConnectionEntry, DatabaseConnectionEntry, SchemaColumn
 from flowfile_core.project.models import KeptResources, SetupResult
-from flowfile_core.project.normalize import dump_yaml, safe_stem, write_yaml
+from flowfile_core.project.normalize import atomic_write, dump_yaml, safe_stem, write_yaml
 from flowfile_core.project.projection import _CLOUD_PLAIN_FIELDS, _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
 from flowfile_core.project.secrets_resolver import load_dotenv, placeholder_name, resolve
 from flowfile_core.schemas.catalog_schema import DashboardLayout, NotebookCellModel
@@ -403,13 +403,14 @@ def _resolve_flow_uuid_to_reg_id(flow_uuid: str | None, owner_id: int) -> int | 
         return reg.id if reg else None
 
 
-def _resolve_table_path(pointer: dict, root: Path) -> str | None:
+def _resolve_table_path(pointer: dict, root: Path, *, namespace_id: int | None = None) -> str | None:
     """Rebuild a physical table's data path from its portable pointer. A managed table re-points to
     its dir under catalog_tables_directory (the pointer name is reduced to a single basename and the
     result is asserted to stay under the managed dir — a traversal/absolute name is skip+logged so a
     crafted tables.yaml can never drive a write outside the managed dir). External paths are
-    accepted verbatim only when they stay under the user's data roots / the project root, else
-    skip+logged. ``None`` when there is no pointer."""
+    accepted verbatim only when they stay under the user's data roots / the project root, or under
+    the object storage the table's catalog is configured with (``namespace_id``), else skip+logged.
+    ``None`` when there is no pointer."""
     if pointer.get("type") == "managed" and pointer.get("name"):
         resolved = storage.catalog_tables_directory / Path(pointer["name"]).name
         if not _is_managed_table_path(str(resolved)):
@@ -418,11 +419,31 @@ def _resolve_table_path(pointer: dict, root: Path) -> str | None:
         return str(resolved)
     if pointer.get("type") == "external":
         path = pointer.get("path")
-        if path and _external_path_allowed(path, root):
+        # A URI read as a local path resolves under the working directory, so the catalog alone decides it.
+        if path and "://" in path:
+            allowed = _under_catalog_storage(path, namespace_id)
+        else:
+            allowed = bool(path) and _external_path_allowed(path, root)
+        if allowed:
             return path
         logger.warning("Project import: external table pointer %r escapes the allowed data roots; skipping", path)
         return None
     return None
+
+
+def _under_catalog_storage(path: str, namespace_id: int | None) -> bool:
+    """Whether ``path`` lies under the object-storage base of the namespace's catalog. Reads where
+    the catalog keeps its tables, never a credential."""
+    from flowfile_core.catalog.storage_backend import locate_for_namespace
+
+    try:
+        target = locate_for_namespace(namespace_id)
+    except ValueError:
+        return False
+    if not target.is_cloud:
+        return False
+    base = target.base.rstrip("/")
+    return path.startswith(base + "/") and len(path) > len(base) + 1
 
 
 def _external_path_allowed(path: str, root: Path) -> bool:
@@ -430,6 +451,16 @@ def _external_path_allowed(path: str, root: Path) -> bool:
     root (a crafted external pointer with ``../`` / an absolute path is rejected)."""
     bases = [str(storage.user_data_directory), str(storage.flows_directory), str(storage.outputs_directory), str(root)]
     return any(_is_contained(base, path) for base in bases)
+
+
+def _lineage_outside_project(db, table: CatalogTable | None, owner_id: int) -> bool:
+    """Whether a table's producing registration is one the export leaves out of the files (another
+    owner's, or one ``projection.exportable`` rejects), so a file naming no producer says nothing
+    about it."""
+    if table is None or table.source_registration_id is None:
+        return False
+    reg = db.get(FlowRegistration, table.source_registration_id)
+    return reg is not None and (reg.owner_id != owner_id or not projection.exportable(reg.flow_path))
 
 
 def _materialize_empty_delta(path: str, schema: list[dict]) -> None:
@@ -484,15 +515,20 @@ def _import_tables(root: Path, owner_id: int) -> set[int]:
             else:
                 table.table_type = "physical"
                 pointer = entry.get("pointer") or {}
-                resolved = _resolve_table_path(pointer, root)
+                resolved = _resolve_table_path(pointer, root, namespace_id=ns_id)
                 # Rebuild a real, empty Delta table from the stored schema when the managed data is
                 # absent on this machine (never overwrite existing data; never write external paths).
                 if resolved and pointer.get("type") == "managed" and schema and not table_exists(resolved):
                     _after_commit(_materialize_empty_delta, resolved, schema)
                     table.row_count = 0
                     table.size_bytes = 0
-                table.file_path = resolved
-                table.source_registration_id = _resolve_flow_uuid_to_reg_id(entry.get("source_flow_uuid"), owner_id)
+                if resolved is not None or existing is None:
+                    table.file_path = resolved
+            source_flow_uuid = entry.get("source_flow_uuid")
+            if source_flow_uuid:
+                table.source_registration_id = _resolve_flow_uuid_to_reg_id(source_flow_uuid, owner_id)
+            elif not _lineage_outside_project(db, existing, owner_id):
+                table.source_registration_id = None
             if existing is None:
                 repo.create_table(table)
             else:
@@ -545,13 +581,14 @@ def _import_artifacts(root: Path, owner_id: int) -> set[int]:
     return kept
 
 
-def _import_kernels(root: Path, owner_id: int) -> set[str]:
+def _import_kernels(root: Path, owner_id: int, ids_used: dict[str, str] | None = None) -> set[str]:
     """Recreate the owner's kernel definitions from kernels.yaml; return the kept ids.
 
     Upserts the Kernel config row by its stable id (only the definition — flavour, requested
     packages, resource limits). The derived image is not baked and no container is started: an
     imported kernel comes up STOPPED and is launched on demand, exactly like a freshly-created one.
-    ``resolved_packages`` stays empty until the kernel is next baked on this machine."""
+    ``resolved_packages`` stays empty until the kernel is next baked on this machine. ``ids_used``
+    receives ``{id in the file: id stored}``, so a notebook follows a kernel whose id was re-minted."""
     kept: set[str] = set()
     kernel_entries = _read_yaml(manifest.kernels_manifest_path(root)).get("kernels", []) or []
     _assert_within_cap(kernel_entries, _MAX_KERNELS, "kernels")
@@ -559,7 +596,8 @@ def _import_kernels(root: Path, owner_id: int) -> set[str]:
         name = entry.get("name")
         if not name:
             continue
-        kernel_id = entry.get("id") or str(uuid.uuid4())
+        file_id = entry.get("id")
+        kernel_id = file_id or str(uuid.uuid4())
         with get_db_context() as db:
             existing = repository.owned_or_none(db, Kernel, "user_id", owner_id, id=kernel_id)
             if existing is None and db.query(Kernel).filter(Kernel.id == kernel_id).first() is not None:
@@ -578,6 +616,8 @@ def _import_kernels(root: Path, owner_id: int) -> set[str]:
                 db.add(kernel)
             db.commit()
             kept.add(kernel_id)
+        if ids_used is not None and file_id:
+            ids_used[file_id] = kernel_id
     return kept
 
 
@@ -654,12 +694,19 @@ def _localize_layout(layout: dict, owner_id: int) -> dict:
     return out
 
 
+def _stored_layout(layout_json: str | None) -> dict | None:
+    try:
+        return json.loads(layout_json) if layout_json else None
+    except ValueError:
+        return None
+
+
 def _import_dashboards(root: Path, owner_id: int) -> set[str]:
     """Recreate the owner's dashboards from dashboards.yaml; return the kept dashboard_uuids.
 
     Runs after visualizations so each tile's ``viz_uuid`` resolves to a local viz id. Upserts by
-    dashboard_uuid; the localized layout is re-validated through ``DashboardLayout`` so it is stored
-    in the same canonical shape the app writes (keeping the round-trip byte-identical)."""
+    dashboard_uuid; the localized layout is validated through ``DashboardLayout`` and stored with the
+    keys the file holds, so a row written before a field existed exports the same file again."""
     kept: set[str] = set()
     dashboard_entries = _read_yaml(manifest.dashboards_manifest_path(root)).get("dashboards", []) or []
     _assert_within_cap(dashboard_entries, _MAX_DASHBOARDS, "dashboards")
@@ -683,13 +730,15 @@ def _import_dashboards(root: Path, owner_id: int) -> set[str]:
             dashboard.name = name
             dashboard.description = entry.get("description")
             dashboard.namespace_id = ns_id
-            dashboard.layout_json = layout.model_dump_json()
+            layout_json = layout.model_dump_json(exclude_unset=True)
             # layout_version is a server-owned write counter (CAS token), unrelated to the
-            # layout's grid.version: keep it monotonic on upsert, start fresh rows at 1.
-            if existing is not None:
-                dashboard.layout_version = (existing.layout_version or 1) + 1
-            else:
+            # layout's grid.version: it moves only when the layout did, and starts fresh rows at 1.
+            if existing is None:
                 dashboard.layout_version = 1
+                dashboard.layout_json = layout_json
+            elif _stored_layout(existing.layout_json) != json.loads(layout_json):
+                dashboard.layout_version = (existing.layout_version or 1) + 1
+                dashboard.layout_json = layout_json
             dashboard.created_by = owner_id
             if existing is None:
                 db.add(dashboard)
@@ -698,7 +747,7 @@ def _import_dashboards(root: Path, owner_id: int) -> set[str]:
     return kept
 
 
-def _import_notebooks(root: Path, owner_id: int) -> set[str]:
+def _import_notebooks(root: Path, owner_id: int, kernel_ids: dict[str, str] | None = None) -> set[str]:
     """Recreate the owner's notebooks from notebooks/*.notebook.yaml; return the kept notebook_uuids.
 
     Upserts by notebook_uuid (mint a fresh one on a cross-owner collision, like visualizations). The
@@ -715,6 +764,8 @@ def _import_notebooks(root: Path, owner_id: int) -> set[str]:
         if not name:
             continue
         notebook_uuid = data.get("notebook_uuid") or str(uuid.uuid4())
+        default_kernel_id = data.get("default_kernel_id")
+        default_kernel_id = (kernel_ids or {}).get(default_kernel_id, default_kernel_id)
         # Mint a fresh uuid for a malformed value: notebook_store derives the content-file path via
         # uuid.UUID(), so a non-UUID string (hand-edit / merge corruption / crafted file) would raise
         # there and abort the whole import. Validate up front to keep import always-completing.
@@ -747,7 +798,7 @@ def _import_notebooks(root: Path, owner_id: int) -> set[str]:
             nb.name = name
             nb.description = data.get("description")
             nb.namespace_id = ns_id
-            nb.default_kernel_id = data.get("default_kernel_id")
+            nb.default_kernel_id = default_kernel_id
             nb.owner_id = owner_id
             if existing is None:
                 db.add(nb)
@@ -765,7 +816,7 @@ def _import_notebooks(root: Path, owner_id: int) -> set[str]:
             name=name,
             description=data.get("description"),
             namespace_name=ns_name,
-            default_kernel_id=data.get("default_kernel_id"),
+            default_kernel_id=default_kernel_id,
             cells=cells,
         )
         kept.add(notebook_uuid)
@@ -780,6 +831,15 @@ def _check_flow_loads(data: dict, owner_id: int, flowfile_name: str) -> None:
         path.write_text(dump_yaml(data), encoding="utf-8")
         with ephemeral_flow_graph(path, owner_id):
             pass
+
+
+def _write_runtime_flow(path: Path, data: dict) -> None:
+    """Write a flow's runtime file in the format its path names: a flow registered from a ``.json``
+    path stays JSON. ``flow_uuid``, ``catalog_name`` and ``namespace`` are ignored by the loader."""
+    if path.suffix.lower() == ".json":
+        atomic_write(path, json.dumps(data, indent=2, ensure_ascii=False))
+    else:
+        write_yaml(path, data)
 
 
 def _import_flow(data: dict, owner_id: int) -> str | None:
@@ -816,7 +876,7 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
             )
         if _after_commit_queue.get() is not None:  # loaded now otherwise, which is the same check
             _check_flow_loads(data, owner_id, flowfile_name)
-        _after_commit(write_yaml, runtime_path, data)  # flow_uuid / catalog_name / namespace ignored by the loader
+        _after_commit(_write_runtime_flow, runtime_path, data)
         # Load (with owner_id so cloud connections resolve) but don't open an editor session: project
         # import must not auto-open flows on the canvas. The user opens a flow explicitly via /import_flow/.
         _after_commit(flow_file_handler.import_flow, runtime_path, user_id=owner_id, register_session=False)
@@ -1557,7 +1617,10 @@ def _do_import_project_inner(root: Path, owner_id: int, prune: bool = False) -> 
         if track_data_artifacts and manifest.models_manifest_path(root).exists()
         else None
     )
-    kept_kernel_ids = _import_kernels(root, owner_id) if manifest.kernels_manifest_path(root).exists() else None
+    kernel_ids_used: dict[str, str] = {}
+    kept_kernel_ids = (
+        _import_kernels(root, owner_id, kernel_ids_used) if manifest.kernels_manifest_path(root).exists() else None
+    )
     # Visualizations after tables (source re-links by name); dashboards after visualizations
     # (tiles re-link by viz_uuid).
     kept_viz_uuids = (
@@ -1566,7 +1629,7 @@ def _do_import_project_inner(root: Path, owner_id: int, prune: bool = False) -> 
     kept_dashboard_uuids = (
         _import_dashboards(root, owner_id) if manifest.dashboards_manifest_path(root).exists() else None
     )
-    kept_notebook_uuids = _import_notebooks(root, owner_id)
+    kept_notebook_uuids = _import_notebooks(root, owner_id, kernel_ids_used)
     if not any(manifest.notebooks_dir(root).glob("*.notebook.yaml")):
         kept_notebook_uuids = None
 

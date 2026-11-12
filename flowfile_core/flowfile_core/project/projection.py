@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 
 import yaml
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from flowfile_core.catalog.services import notebook_store
@@ -46,7 +47,6 @@ _CLOUD_SECRETS = [
     ("azure_sas_token", "azure_sas_token_id"),
     ("gcs_service_account_key", "gcs_service_account_key_id"),
 ]
-_CLOUD_SECRET_FK_COLUMNS = [fk for _, fk in _CLOUD_SECRETS]
 _PROJECTABLE_SCHEDULE_TYPES = ("interval", "cron")
 
 # Non-secret cloud-connection fields that round-trip verbatim (projection reads them off the ORM
@@ -314,20 +314,24 @@ def project_schedules_for_registration(
 
 
 def regenerate_secret_manifest(db: Session, root: Path, owner_id: int) -> None:
-    """secrets.yaml lists only standalone secrets; connection secrets are implied by
-    the connection files (and recreated by their store functions on import)."""
+    """secrets.yaml lists the owner's standalone secrets: those no row refers to through a foreign key
+    to ``secrets.id`` and that no feature keeps under a name of its own. A connection's secrets are
+    implied by its file (and recreated by its store function on import); a Kafka, Google Analytics or
+    AI-provider key, OAuth settings and the GitHub publish token belong to features with no file."""
+    from flowfile_core.configs.app_settings import _OAUTH_KEYS
+    from flowfile_core.database.models import Base
+    from flowfile_core.routes.community_github import GITHUB_PUBLISH_LOGIN_KEY, GITHUB_PUBLISH_TOKEN_KEY
+
     linked: set[int] = set()
-    for (sid,) in db.query(DatabaseConnection.password_id).filter(DatabaseConnection.user_id == owner_id):
-        if sid:
-            linked.add(sid)
-    for row in db.query(*[getattr(CloudStorageConnection, fk) for fk in _CLOUD_SECRET_FK_COLUMNS]).filter(
-        CloudStorageConnection.user_id == owner_id
-    ):
-        linked.update(sid for sid in row if sid)
+    for table in Base.metadata.tables.values():
+        for column in table.columns:
+            if any(fk.column.table.name == Secret.__tablename__ for fk in column.foreign_keys):
+                linked.update(sid for (sid,) in db.execute(select(column).where(column.isnot(None))))
+    feature_names = {*_OAUTH_KEYS, GITHUB_PUBLISH_TOKEN_KEY, GITHUB_PUBLISH_LOGIN_KEY}
     q = db.query(Secret.name).filter(Secret.user_id == owner_id)
     if linked:
         q = q.filter(~Secret.id.in_(linked))
-    standalone = sorted({name for (name,) in q})
+    standalone = sorted({name for (name,) in q} - feature_names)
     write_yaml(manifest.secrets_manifest_path(root), {"required_secrets": standalone})
 
 
@@ -414,7 +418,8 @@ def _table_entry(db: Session, table: CatalogTable) -> dict:
         entry["pointer"] = _table_pointer(table)
     if table.source_registration_id:
         reg = db.get(FlowRegistration, table.source_registration_id)
-        if reg is not None:
+        # A producer outside the project (another owner's, a run snapshot) is never named by the files.
+        if reg is not None and reg.owner_id == table.owner_id and exportable(reg.flow_path):
             entry["source_flow_uuid"] = reg.flow_uuid
     return entry
 

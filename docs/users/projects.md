@@ -31,8 +31,8 @@ A project folder holds YAML mirrors of your resources:
 | `connections/database/`, `connections/cloud/` | One `.yaml` per connection (no credentials). |
 | `schedules/` | One `.yaml` per flow, listing its interval and cron schedules, each with an `id`. |
 | `notebooks/` | One `.notebook.yaml` per notebook. |
-| `secrets.yaml` | The names of secrets that must be supplied (no values). |
-| `namespaces.yaml`, `tables.yaml`, `models.yaml`, `kernels.yaml`, `visualizations.yaml`, `dashboards.yaml` | Catalog metadata manifests. |
+| `secrets.yaml` | The names of the secrets you created on the Secrets page (no values). Secrets a feature keeps for itself, such as an AI provider key, a Kafka connection's password or the GitHub publish token, are not listed. |
+| `namespaces.yaml`, `tables.yaml`, `models.yaml`, `kernels.yaml`, `visualizations.yaml`, `dashboards.yaml` | Catalog metadata manifests. `tables.yaml` names a table's producing flow only when that flow is in the project. |
 | `.gitignore` | Guards against committing secrets and local data. |
 
 ### Tracking data artifacts

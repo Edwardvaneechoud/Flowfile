@@ -102,7 +102,9 @@ def normalize_flow_data(data: dict, flow_uuid: str, catalog_name: str, namespace
     ``namespace`` (``{"catalog", "schema"}`` names — portable across installs) is injected at a
     fixed position so the importer can restore the flow's catalog placement; omitted when None.
     Catalog-writer/model nodes additionally have their install-local ``namespace_id`` dropped when a
-    portable ``namespace_full_name`` is present (the runtime resolves the name).
+    portable ``namespace_full_name`` is present (the runtime resolves the name). The three head keys
+    an import wrote into the runtime file are dropped first, so the registration's name and namespace
+    win over them.
     """
     data = dict(data)
     data["flowfile_id"] = deterministic_flow_id(flow_uuid)
@@ -110,6 +112,8 @@ def normalize_flow_data(data: dict, flow_uuid: str, catalog_name: str, namespace
     if isinstance(settings, dict):
         settings["source_registration_id"] = None
     _strip_node_namespace_ids(data)
+    for key in ("flow_uuid", "catalog_name", "namespace"):
+        data.pop(key, None)
     head: dict = {"flow_uuid": flow_uuid, "catalog_name": catalog_name}
     if namespace is not None:
         head["namespace"] = namespace

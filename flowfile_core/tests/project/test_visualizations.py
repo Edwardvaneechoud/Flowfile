@@ -244,7 +244,8 @@ def test_kpi_tile_round_trips_and_relinks(tmp_path):
 
 
 def test_reimport_preserves_dashboard_layout_version_monotonicity(tmp_path):
-    """The server-owned write counter (CAS token) must never rewind on a project re-import."""
+    """The server-owned write counter (CAS token) never rewinds on a project re-import, and an
+    unchanged layout leaves it where it is."""
     from flowfile_core.catalog import CatalogService
     from flowfile_core.project.importer import import_project
     from flowfile_core.schemas.catalog_schema import DashboardUpdate
@@ -264,7 +265,7 @@ def test_reimport_preserves_dashboard_layout_version_monotonicity(tmp_path):
         with get_db_context() as db:
             row = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
             assert row is not None
-            assert row.layout_version > bumped.layout_version
+            assert row.layout_version == bumped.layout_version
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)
