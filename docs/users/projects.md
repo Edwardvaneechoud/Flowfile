@@ -29,7 +29,7 @@ A project folder holds YAML mirrors of your resources:
 | `project.yaml` | Project manifest — name, id, format version, data-tracking toggle. |
 | `flows/` | One `.flow.yaml` per registered flow. |
 | `connections/database/`, `connections/cloud/` | One `.yaml` per connection (no credentials). |
-| `schedules/` | One `.yaml` per schedule. |
+| `schedules/` | One `.yaml` per flow, listing its interval and cron schedules, each with an `id`. |
 | `notebooks/` | One `.notebook.yaml` per notebook. |
 | `secrets.yaml` | The names of secrets that must be supplied (no values). |
 | `namespaces.yaml`, `tables.yaml`, `models.yaml`, `kernels.yaml`, `visualizations.yaml`, `dashboards.yaml` | Catalog metadata manifests. |
@@ -55,6 +55,8 @@ Files in the folder that Flowfile did not write, such as a `README.md` or a `.DS
 
 !!! warning "Restore and reload rebuild from the files"
     Restoring a version and reloading from disk both reset your resources to match the folder, removing any resource of a kind the files list that is not among them. A kind the folder has no file for is left alone: restoring a version without `kernels.yaml`, or with nothing under `connections/` or `notebooks/`, keeps your kernels, connections or notebooks, and a version without any flow file keeps your flows. A flow Flowfile cannot write into the folder (one whose file is missing, a `.flowfile` flow, a kernel's scratch flow) is never removed. Before either one, Flowfile compares your resources with the last version and names what it would lose, including changes made without touching the folder (a flow saved to the catalog, a quick-created flow). **Keep a recovery point and continue** saves them first: a restore records them as commits in the history, a reload as a recovery ref (`refs/flowfile/recovery/...`) that leaves the history as it was. A reload of files you edited by hand, with nothing unsaved in your resources, needs no confirmation. On a SQLite catalog (the default) a snapshot of the catalog database is also written to `db_backups/` first; a PostgreSQL catalog gets no snapshot, so the recovery point is the only copy. A version never holds stored passwords, only their names.
+
+    A schedule whose `id` is in the file is updated in place by an open, restore or reload, so it keeps its notification rules and when it last ran; a schedule file saved before schedules had ids gets them on the next save.
 
     Every file is checked before anything changes. If one cannot be read (invalid YAML, or content of the wrong shape, such as a connection file missing its name), open, restore and reload stop with an error naming that file, and your folder and resources stay exactly as they were.
 

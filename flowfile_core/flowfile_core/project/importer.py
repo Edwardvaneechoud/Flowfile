@@ -27,6 +27,7 @@ from flowfile_core.catalog.delta_utils import table_exists
 from flowfile_core.catalog.exceptions import NamespaceExistsError, NamespaceNotEmptyError
 from flowfile_core.catalog.services import notebook_store
 from flowfile_core.catalog.services.tables import _is_managed_table_path
+from flowfile_core.catalog.validators import validate_schedule_create
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogDashboard,
@@ -824,46 +825,105 @@ def _import_schedules(data: dict, owner_id: int) -> int:
                 f"exceeding the {_MAX_SCHEDULES_PER_FLOW}-entry cap. Import aborted."
             )
         service = CatalogService(SQLAlchemyCatalogRepository(db))
-        # The schedule file is the source of truth for this flow's interval/cron schedules, so
-        # replace them wholesale. A name-based upsert duplicated nameless schedules on every
-        # open/restore/reload (they can't be matched by name).
-        for s in (
+        rows = (
             db.query(FlowSchedule)
             .filter(
                 FlowSchedule.registration_id == reg.id,
                 FlowSchedule.schedule_type.in_(_PROJECTABLE_SCHEDULE_TYPES),
             )
+            .order_by(FlowSchedule.id.asc())
             .all()
-        ):
-            service.delete_schedule(s.id)
+        )
+        by_uuid = {r.schedule_uuid: r for r in rows}
+        entries = [sd for sd in schedules if sd.get("schedule_type") in _PROJECTABLE_SCHEDULE_TYPES]
+        matched: dict[int, FlowSchedule] = {}
+        seen_ids: set[str] = set()
+        with_ids: list[dict] = []
+        for sd in entries:
+            sid = sd.get("id")
+            if sid is None or sid in seen_ids:
+                continue
+            seen_ids.add(sid)
+            with_ids.append(sd)
+            if sid in by_uuid:
+                matched[id(sd)] = by_uuid[sid]
+        claimed = {r.id for r in matched.values()}
+        seen_sigs: set[tuple] = set()
+        to_apply: list[dict] = list(with_ids)
+        for sd in entries:
+            if sd.get("id") is not None:
+                continue
+            sig = _schedule_signature(sd)
+            if sig in seen_sigs:  # collapse already-duplicated entries so existing dupes self-heal
+                continue
+            seen_sigs.add(sig)
+            to_apply.append(sd)
+            row = next((r for r in rows if r.id not in claimed and _schedule_signature(r) == sig), None)
+            if row is not None:
+                matched[id(sd)] = row
+                claimed.add(row.id)
+        for row in rows:
+            if row.id not in claimed:
+                service.delete_schedule(row.id)
         count = 0
-        seen: set[tuple] = set()
-        for sd in schedules:
-            if sd.get("schedule_type") not in _PROJECTABLE_SCHEDULE_TYPES:
-                continue
-            sig = (
-                sd.get("schedule_type"),
-                sd.get("interval_seconds"),
-                sd.get("cron_expression"),
-                sd.get("cron_timezone"),
-                sd.get("name"),
-            )
-            if sig in seen:  # collapse already-duplicated entries so existing dupes self-heal
-                continue
-            seen.add(sig)
-            service.create_schedule(
-                registration_id=reg.id,
-                owner_id=owner_id,
-                schedule_type=sd["schedule_type"],
-                interval_seconds=sd.get("interval_seconds"),
-                cron_expression=sd.get("cron_expression"),
-                cron_timezone=sd.get("cron_timezone"),
-                enabled=sd.get("enabled", True),
-                name=sd.get("name"),
-                description=sd.get("description"),
-            )
+        for sd in to_apply:
+            row = matched.get(id(sd))
+            if row is not None:
+                _update_schedule_in_place(db, row, sd)
+            else:
+                created = service.create_schedule(
+                    registration_id=reg.id,
+                    owner_id=owner_id,
+                    schedule_type=sd["schedule_type"],
+                    interval_seconds=sd.get("interval_seconds"),
+                    cron_expression=sd.get("cron_expression"),
+                    cron_timezone=sd.get("cron_timezone"),
+                    enabled=sd.get("enabled", True),
+                    name=sd.get("name"),
+                    description=sd.get("description"),
+                )
+                sid = sd.get("id")
+                if sid is not None and db.query(FlowSchedule).filter(FlowSchedule.schedule_uuid == sid).first() is None:
+                    db.query(FlowSchedule).filter(FlowSchedule.id == created.id).update({"schedule_uuid": sid})
+                    db.commit()
+                elif sid is not None:
+                    logger.warning("Project import: schedule id %s held by another schedule; minting a fresh id", sid)
             count += 1
     return count
+
+
+def _schedule_signature(s) -> tuple:
+    """What an entry without an ``id`` (a file written before schedules had one) is matched on."""
+    get = s.get if isinstance(s, dict) else lambda k: getattr(s, k)
+    return (
+        get("schedule_type"),
+        get("interval_seconds"),
+        get("cron_expression"),
+        get("cron_timezone"),
+        get("name"),
+    )
+
+
+def _update_schedule_in_place(db, row: FlowSchedule, sd: dict) -> None:
+    """Set a schedule's definition from its file entry, keeping the row, its run state and the
+    notification rules and trigger rows that point at it."""
+    validate_schedule_create(
+        schedule_type=sd["schedule_type"],
+        interval_seconds=sd.get("interval_seconds"),
+        trigger_table_id=None,
+        trigger_table_ids=None,
+        table_exists=lambda _table_id: False,
+        cron_expression=sd.get("cron_expression"),
+        cron_timezone=sd.get("cron_timezone"),
+    )
+    row.schedule_type = sd["schedule_type"]
+    row.interval_seconds = sd.get("interval_seconds")
+    row.cron_expression = sd.get("cron_expression")
+    row.cron_timezone = sd.get("cron_timezone")
+    row.enabled = sd.get("enabled", True)
+    row.name = sd.get("name")
+    row.description = sd.get("description")
+    db.commit()
 
 
 def _prune_owned(db, column, owner_filter, kept: set | None, delete_fn, label: str) -> None:
@@ -1310,6 +1370,8 @@ def _validate_project_file(rel: str, kind: str, text: str) -> None:
     elif kind == "schedule":
         _check_file(rel, _is_text(data.get("flow_uuid")), "has no string 'flow_uuid'")
         _check_file(rel, _is_mapping_list(data.get("schedules")), "must list its 'schedules' as mappings")
+        for i, entry in enumerate(data.get("schedules") or []):
+            _check_file(rel, _optional(entry.get("id"), str), f"has a schedule {i + 1} whose 'id' is not text")
     elif kind == "notebook":
         _check_file(rel, _is_text(data.get("name")), "has no 'name'")
         _check_file(rel, _optional(data.get("namespace"), dict), "has a 'namespace' that is not a mapping")

@@ -277,6 +277,7 @@ def remove_connection(root: Path, kind: str, name: str) -> None:
 
 def _schedule_dict(s: FlowSchedule) -> dict:
     return {
+        "id": s.schedule_uuid,
         "name": s.name,
         "enabled": s.enabled,
         "schedule_type": s.schedule_type,
