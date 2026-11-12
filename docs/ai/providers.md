@@ -14,7 +14,7 @@ Default models below reflect the provider classes as of 2026-10.
 | Provider | Default model | Tools | Streaming | Key env var | Notes |
 |----------|---------------|:-----:|:---------:|-------------|-------|
 | **Anthropic** | `claude-sonnet-5-5` | ✓ | ✓ | `ANTHROPIC_API_KEY` | Sonnet 5.5 for `explain` / `docgen` / `lineage`; Haiku 4.5 for the fast surfaces (Cmd+K, ghost-node, autocomplete, `agent_staged`); Opus 4.7 for `agent_complex`. |
-| **OpenAI** | `gpt-4.1-mini` | ✓ | ✓ | `OPENAI_API_KEY` | Mini tier for the cheap surfaces; full `gpt-4.1` for `explain` / `agent_complex` / `docgen`. Strict structured outputs supported via litellm. |
+| **OpenAI** | `gpt-6-luna` | ✓ | ✓ | `OPENAI_API_KEY` | Used for all surfaces with reasoning effort `none` for Chat Completions tool use. Strict structured outputs supported via litellm. |
 | **Google (Gemini)** | `gemini-2.5-flash` | ✓ | ✓ | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Free tier ~250–1000 req/day, no card required. Pro for `agent_complex`. |
 | **Groq** | `qwen/qwen3-32b` | ✓ | ✓ | `GROQ_API_KEY` | Fast inference; free tier is ~30 RPM. |
 | **OpenRouter** | `qwen/qwen3.6-35b-a3b` | ✓ | ✓ | `OPENROUTER_API_KEY` | One key routing to many hosted models. `agent_staged` also defaults to `qwen/qwen3.6-35b-a3b` (billed, cheap); the Claude surfaces mirror the direct Anthropic defaults. |

@@ -70,6 +70,10 @@ class ResultMissing(ComputeError):
     """A result the compute no longer has."""
 
 
+RESULT_GONE = "The cached result is no longer available. Run the flow again."
+"""What a read outside a run answers when the result it reads is gone (``FlowNode.result_is_gone``)."""
+
+
 class PlanRejected(ComputeError):
     """A plan the compute could not load."""
 
