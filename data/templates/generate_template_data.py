@@ -516,6 +516,64 @@ def generate_customer_segments():
     )
 
 
+def generate_bill_of_materials():
+    """A multi-level bicycle-factory BOM plus purchase prices for the explode-hierarchy demo.
+
+    Three finished bikes share sub-assemblies (wheels, hubs, a wiring harness used both
+    directly and inside the battery pack) and parts that sit at several depths (screws,
+    bearings, aluminium), so a one-level join under-counts and only the transitive closure
+    gives the right totals. Hand-written, no RNG.
+    """
+    bom = {
+        "city_bike": [
+            ("frame_steel", 1), ("wheel_assembly_26", 2), ("drivetrain_3spd", 1),
+            ("handlebar_assembly", 1), ("saddle", 1), ("fender_set", 1), ("screw_m5", 8),
+        ],
+        "road_bike": [
+            ("frame_carbon", 1), ("wheel_assembly_28", 2), ("drivetrain_22spd", 1),
+            ("handlebar_assembly", 1), ("saddle", 1), ("screw_m5", 6),
+        ],
+        "e_bike": [
+            ("frame_steel", 1), ("wheel_assembly_28", 2), ("drivetrain_3spd", 1),
+            ("handlebar_assembly", 1), ("saddle", 1), ("motor_unit", 1), ("battery_pack", 1),
+            ("wiring_harness", 1), ("screw_m5", 12),
+        ],
+        "frame_steel": [("steel_tube", 4.5), ("weld_wire", 0.3), ("paint", 0.5), ("screw_m5", 4)],
+        "frame_carbon": [("carbon_sheet", 1.2), ("resin", 0.8), ("paint", 0.3), ("screw_m5", 2)],
+        "wheel_assembly_26": [("rim_26", 1), ("hub", 1), ("spoke", 32), ("tyre_26", 1), ("inner_tube_26", 1)],
+        "wheel_assembly_28": [("rim_28", 1), ("hub", 1), ("spoke", 28), ("tyre_28", 1), ("inner_tube_28", 1)],
+        "rim_26": [("aluminium", 0.6)],
+        "rim_28": [("aluminium", 0.5)],
+        "hub": [("bearing", 2), ("axle", 1), ("screw_m5", 2)],
+        "drivetrain_3spd": [("chain", 1), ("crankset", 1), ("hub_gear_3spd", 1), ("pedal", 2)],
+        "drivetrain_22spd": [
+            ("chain", 1), ("crankset", 1), ("derailleur", 2), ("cassette", 1), ("shifter", 2), ("pedal", 2),
+        ],
+        "crankset": [("aluminium", 0.4), ("bearing", 2), ("screw_m5", 4)],
+        "handlebar_assembly": [("steel_tube", 0.7), ("grip", 2), ("brake_lever", 2), ("screw_m5", 4)],
+        "fender_set": [("steel_sheet", 0.4), ("screw_m5", 4)],
+        "motor_unit": [("copper_wire", 0.8), ("magnet", 12), ("bearing", 2), ("motor_housing", 1), ("screw_m5", 6)],
+        "battery_pack": [("battery_cell", 40), ("bms_board", 1), ("battery_casing", 1), ("wiring_harness", 1)],
+        "wiring_harness": [("copper_wire", 0.2), ("connector", 6)],
+    }
+    rows = [[assembly, component, qty] for assembly, lines in bom.items() for component, qty in lines]
+    write_csv("bom_lines.csv", ["assembly", "component", "qty_per"], rows)
+
+    part_costs = [
+        ("steel_tube", "m", 6.40), ("weld_wire", "kg", 9.80), ("paint", "l", 14.50), ("screw_m5", "pcs", 0.06),
+        ("carbon_sheet", "m2", 92.00), ("resin", "kg", 31.00), ("spoke", "pcs", 0.35),
+        ("tyre_26", "pcs", 17.50), ("inner_tube_26", "pcs", 4.20), ("tyre_28", "pcs", 24.00),
+        ("inner_tube_28", "pcs", 4.90), ("aluminium", "kg", 3.10), ("bearing", "pcs", 2.75),
+        ("axle", "pcs", 5.60), ("chain", "pcs", 11.90), ("hub_gear_3spd", "pcs", 58.00), ("pedal", "pcs", 7.25),
+        ("derailleur", "pcs", 46.00), ("cassette", "pcs", 39.00), ("shifter", "pcs", 28.50),
+        ("grip", "pcs", 3.40), ("brake_lever", "pcs", 9.90), ("saddle", "pcs", 22.00),
+        ("steel_sheet", "m2", 12.30), ("copper_wire", "kg", 10.80), ("magnet", "pcs", 1.95),
+        ("motor_housing", "pcs", 34.00), ("battery_cell", "pcs", 3.15), ("bms_board", "pcs", 27.00),
+        ("battery_casing", "pcs", 19.50), ("connector", "pcs", 0.85),
+    ]
+    write_csv("part_costs.csv", ["part", "unit", "unit_cost"], [list(row) for row in part_costs])
+
+
 if __name__ == "__main__":
     print("Generating template data files...")
     generate_sales_data()
@@ -531,4 +589,5 @@ if __name__ == "__main__":
     generate_customer_churn()
     generate_supermarket_sales()
     generate_customer_segments()
+    generate_bill_of_materials()
     print("Done!")
