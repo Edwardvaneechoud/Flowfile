@@ -56,7 +56,16 @@
             <template v-else>
               <strong>{{ state.org_name ?? state.hub_url }}</strong>
               <p>
-                Connected to <code>{{ state.hub_url }}</code> as the device
+                Connected to
+                <a
+                  v-if="state.hub_url"
+                  :href="state.hub_url"
+                  class="hub-card__link"
+                  data-testid="hub-url-link"
+                  @click.prevent="openHub(state.hub_url)"
+                  ><code>{{ state.hub_url }}</code></a
+                >
+                as the device
                 <code>{{ state.device_name }}</code
                 >.
               </p>
@@ -146,6 +155,7 @@ import { computed, onMounted, reactive, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import ComputeCard from "./ComputeCard.vue";
+import { desktop } from "../../../lib/desktop";
 import { useHubConnectionStore } from "../../stores/hub-connection-store";
 import type { StatusSummary } from "../../components/settings/handshakeStatus";
 
@@ -165,6 +175,10 @@ const summary = computed<StatusSummary | null>(() => {
   if (!state.value.reachable) return { tone: "warning", label: "Hub not answering" };
   return { tone: "success", label: "Connected" };
 });
+
+function openHub(url: string) {
+  void desktop.openExternal(url);
+}
 
 const expiresLabel = computed(() =>
   state.value?.expires_at ? new Date(state.value.expires_at).toLocaleString() : "—",
@@ -207,6 +221,10 @@ onMounted(() => {
 
 <style scoped src="./computeSettings.css"></style>
 <style scoped>
+.hub-card__link {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
 .compute-card__banner {
   margin-bottom: var(--spacing-3);
 }
