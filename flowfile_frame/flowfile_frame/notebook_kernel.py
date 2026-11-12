@@ -108,12 +108,14 @@ def _remove(paths: Iterable[str]) -> None:
             os.remove(path)
 
 
-def _post_core(route: str, body: dict[str, Any], what: str) -> dict[str, Any]:
+def _post_core(
+    route: str, body: dict[str, Any], what: str, *, headers: dict[str, str] | None = None
+) -> dict[str, Any]:
     """POST ``body`` to core's ``route`` as this kernel; a failure is a ``NativeNodeError`` about ``what``."""
     import httpx
 
     url = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578").rstrip("/")
-    headers = {
+    auth_headers = {
         name: value
         for name, value in (
             ("X-Internal-Token", os.environ.get("FLOWFILE_INTERNAL_TOKEN")),
@@ -121,11 +123,12 @@ def _post_core(route: str, body: dict[str, Any], what: str) -> dict[str, Any]:
         )
         if value
     }
+    auth_headers.update(headers or {})
     try:
         response = httpx.post(
             f"{url}{route}",
             json=body,
-            headers=headers,
+            headers=auth_headers,
             timeout=httpx.Timeout(None, connect=10.0),
         )
     except httpx.HTTPError as exc:
@@ -149,9 +152,9 @@ def post_node_run(body: dict[str, Any]) -> dict[str, Any]:
     return _post_core("/notebook/session/node_run", body, f"node {body['node']['id']}'s run")
 
 
-def post_lookup(body: dict[str, Any]) -> dict[str, Any]:
+def post_lookup(body: dict[str, Any], *, headers: dict[str, str] | None = None) -> dict[str, Any]:
     """Ask core for a catalog metadata lookup (``POST /notebook/session/lookup``) as this kernel."""
-    return _post_core("/notebook/session/lookup", body, f"the {body['kind']} lookup")
+    return _post_core("/notebook/session/lookup", body, f"the {body['kind']} lookup", headers=headers)
 
 
 transport: Callable[[dict[str, Any]], dict[str, Any]] = post_node_result

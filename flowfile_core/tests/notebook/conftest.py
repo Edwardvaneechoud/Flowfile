@@ -389,6 +389,7 @@ class KernelSimManager:
         self.lookups: list[dict] = []
         self.namespaces: dict[int, dict] = {}
         self._docker_network = None
+        self._active_execs = {}
 
     def to_kernel_path(self, local_path):
         return local_path
@@ -420,7 +421,18 @@ class KernelSimManager:
         from flowfile_core.notebook import lookup
 
         self.lookups.append(body)
-        return self._as_owner(lookup.answer_request, lookup.LookupRequest.model_validate(body))
+        return self._as_owner(
+            lookup.answer_request, lookup.LookupRequest.model_validate(body), self._active_exec_token
+        )
+
+    async def get_kernel(self, kernel_id):
+        return self.get_kernel_sync(kernel_id)
+
+    def resolve_node_paths(self, request):
+        from flowfile_core.kernel.manager import KernelManager
+
+        self._shared_volume = self.shared_volume_path
+        KernelManager.resolve_node_paths(self, request)
 
     def get_kernel_sync(self, kernel_id):
         return self.kernel if kernel_id == self.kernel.id else None
@@ -431,8 +443,13 @@ class KernelSimManager:
     def interrupt_execution_sync(self, kernel_id, exec_token=None):
         return False
 
+    async def execute(self, kernel_id, request):
+        return self.execute_sync(kernel_id, request)
+
     def execute_sync(self, kernel_id, request, flow_logger=None, cancel_event=None):
         self.requests.append(request)
+        self._active_exec_token = request.exec_token
+        self._active_execs[kernel_id] = request.exec_token
         stdout, stderr, failure = io.StringIO(), io.StringIO(), []
 
         def run():
@@ -441,13 +458,21 @@ class KernelSimManager:
                 with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                     namespace = self.namespaces.setdefault(request.flow_id, {})
                     namespace["__name__"] = "__main__"
-                    exec(request.code, namespace)
+                    if request.flow_id < 0:
+                        from flowfile_frame import _metadata, notebook_kernel
+
+                        metadata_context = _metadata.installed(request.flow_id, notebook_kernel.lookup_transport)
+                    else:
+                        metadata_context = contextlib.nullcontext()
+                    with metadata_context:
+                        exec(request.code, namespace)
             except BaseException as exc:
                 failure.append(f"{type(exc).__name__}: {exc}")
 
         thread = threading.Thread(target=contextvars.copy_context().run, args=(run,))
         thread.start()
         thread.join()
+        self._active_execs.pop(kernel_id, None)
         error = failure[0] if failure else None
         return ExecuteResult(success=error is None, stdout=stdout.getvalue(), stderr=stderr.getvalue(), error=error)
 
@@ -502,6 +527,7 @@ def _forget_kernel_sim() -> None:
     for flow_id in list(notebook_kernel._SESSIONS):
         notebook_kernel._close(flow_id)
     kernel_runner._sessions.clear()
+    kernel_runner._catalog_executions.clear()
     kernel_runner._verified.clear()
     kernel_runner._fingerprints.clear()
     kernel_runner._schemas_sent.clear()

@@ -159,6 +159,63 @@ def _table_rows(result: dict) -> list:
     return tables[0]["data"]
 
 
+@pytest.fixture
+def catalog_cell_table():
+    """Seed real core-owned catalog data using the public frame API."""
+    import flowfile as ff
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+    from flowfile_core.catalog.service import CatalogService
+    from flowfile_core.database.connection import get_db_context
+
+    schema = ff.get_catalog("General").get_schema("default")
+    name = "notebook_cell_read_885"
+    schema.write_table(ff.from_dict({"id": [1, 2], "amount": [10, 20]}), name, write_mode="overwrite")
+    table_id = next(table.id for table in schema.list_tables() if table.name == name)
+    try:
+        yield name
+    finally:
+        with get_db_context() as db:
+            CatalogService(SQLAlchemyCatalogRepository(db)).delete_table(table_id, delete_file=True)
+
+
+@pytest.mark.parametrize("namespace_id", [-123, -1_500_000_123])
+def test_catalog_page_cells_read_core_metadata_without_a_local_database(
+    catalog_cell_table, notebook_kernel, client_as, namespace_id
+):
+    """Saved and unsaved Catalog notebooks use ordinary cells, not a canvas session."""
+    from flowfile_core.notebook import kernel_runner
+
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": namespace_id, "node_id": 1}
+    code = (
+        "import flowfile as ff\n"
+        "print('catalogs', sorted(c.name for c in ff.list_catalogs()))\n"
+        "schema = ff.get_catalog('General').get_schema('default')\n"
+        "print('schema', schema.name)\n"
+        f"print('rows', schema.read_table({catalog_cell_table!r}).collect().to_dicts())\n"
+        "print('sql', ff.read_catalog_sql("
+        f"'SELECT SUM(amount) AS total FROM {catalog_cell_table}').collect().to_dicts())\n"
+    )
+    result = client.post(f"/kernels/{KERNEL_ID}/execute_cell", json={**key, "code": code})
+    assert result.status_code == 200, result.text
+    assert result.json()["success"], result.text
+    assert "General" in result.json()["stdout"] and "schema default" in result.json()["stdout"]
+    assert "rows [{'id': 1, 'amount': 10}, {'id': 2, 'amount': 20}]" in result.json()["stdout"]
+    assert "sql [{'total': 30}]" in result.json()["stdout"]
+    assert not kernel_runner._catalog_executions
+    database = f"{_kernel_storage()}/database/flowfile_catalog.db"
+    assert not _in_kernel(database)
+
+    failed = client.post(
+        f"/kernels/{KERNEL_ID}/execute_cell", json={**key, "code": "raise ValueError('cell failed')"}
+    )
+    assert failed.status_code == 200 and not failed.json()["success"], failed.text
+    assert not kernel_runner._catalog_executions
+    repeated = client.post(f"/kernels/{KERNEL_ID}/execute_cell", json={**key, "code": code})
+    assert repeated.status_code == 200 and repeated.json()["success"], repeated.text
+    assert not _in_kernel(database)
+
+
 def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client_as):
     client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
     key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}

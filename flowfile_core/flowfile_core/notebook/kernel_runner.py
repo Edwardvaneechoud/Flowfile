@@ -37,6 +37,9 @@ SNIPPET = "from flowfile_frame import notebook_kernel as _nb\n_nb.handle({reques
 
 _lock = threading.Lock()
 _running: dict[tuple[str, int], str] = {}
+# Ordinary Catalog-page cells use execute_cell rather than the canvas session runner. Their
+# metadata callbacks are authorized only while this exact server-minted execution is active.
+_catalog_executions: dict[tuple[str, int], set[str]] = {}
 _sessions: dict[int, dict[str, str | None]] = {}
 _verified: set[tuple[str, str | None]] = set()
 _fingerprints: dict[tuple[str, int], str] = {}
@@ -515,6 +518,22 @@ def _bound_kernel(kernel_id: str, user, flow_id: int):
     if not open_here:
         raise HTTPException(403, f"Kernel '{kernel_id}' has no notebook session open for flow {flow_id}")
     manager = _manager()
+    if manager.get_kernel_owner(kernel_id) != user.id:
+        raise HTTPException(403, "Not authorized to access this kernel")
+    return manager
+
+
+def _bound_catalog_execution(kernel_id: str, user, flow_id: int, exec_token: str):
+    """Authorize metadata for an owned kernel's currently executing Catalog-page cell."""
+    if not kernel_sessions_allowed(user):
+        raise HTTPException(403, DISABLED_DETAIL)
+    with _lock:
+        active = exec_token in _catalog_executions.get((kernel_id, flow_id), set())
+    if not exec_token or not active:
+        raise HTTPException(403, "No matching Catalog notebook cell is executing")
+    manager = _manager()
+    if getattr(manager, "_active_execs", {}).get(kernel_id) != exec_token:
+        raise HTTPException(403, "No matching Catalog notebook cell is executing")
     if manager.get_kernel_owner(kernel_id) != user.id:
         raise HTTPException(403, "Not authorized to access this kernel")
     return manager

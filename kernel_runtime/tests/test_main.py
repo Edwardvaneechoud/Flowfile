@@ -41,6 +41,26 @@ class TestExecuteEndpoint:
         assert "hello" in data["stdout"]
         assert data["error"] is None
 
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_negative_id_node_does_not_require_notebook_package(self, client: TestClient, monkeypatch, dry_run):
+        """Negative IDs also belong to ordinary nodes, including Designer dry runs."""
+        import sys
+
+        monkeypatch.setitem(sys.modules, "flowfile_frame", None)
+        data = client.post(
+            "/execute",
+            json={
+                "node_id": 1,
+                "code": 'print("ordinary node")',
+                "flow_id": -1,
+                "input_paths": {},
+                "output_dir": "",
+                "dry_run": dry_run,
+            },
+        ).json()
+        assert data["success"] is True, data["error"]
+        assert "ordinary node" in data["stdout"]
+
     def test_syntax_error(self, client: TestClient):
         resp = client.post(
             "/execute",

@@ -170,17 +170,30 @@ def answer(kind: str, args: dict[str, Any], user_id: int) -> Any:
         raise ValueError(f"Lookup {kind!r} cannot read its arguments: {exc}") from exc
 
 
-def answer_request(kernel_id: str, user, body: LookupRequest) -> dict[str, Any]:
+def answer_request(kernel_id: str, user, body: LookupRequest, exec_token: str | None = None) -> dict[str, Any]:
     """``{"result": answer}`` for the flow's session on ``kernel_id`` (``kernel_runner._bound_kernel``: the owner,
     while the kernel holds the session or runs a call for the flow; the flow itself need not be open)."""
     from fastapi import HTTPException
 
     from flowfile_core.notebook import kernel_runner, validate
 
-    kernel_runner._bound_kernel(kernel_id, user, body.flow_id)
+    if body.flow_id < 0:
+        manager = kernel_runner._bound_catalog_execution(kernel_id, user, body.flow_id, exec_token or "")
+    else:
+        manager = kernel_runner._bound_kernel(kernel_id, user, body.flow_id)
     if len(json.dumps(body.args, default=str)) > validate.MAX_PAYLOAD_BYTES:
         raise HTTPException(422, f"The lookup's arguments exceed {validate.MAX_PAYLOAD_BYTES} bytes")
     try:
-        return {"result": answer(body.kind, body.args, user.id)}
+        result = answer(body.kind, body.args, user.id)
+        # Catalog cells read mounted tables directly; canvas sessions resolve their
+        # rows through core instead and must retain core's paths.
+        if body.flow_id < 0:
+            if body.kind == "catalog_table" and result.get("file_path"):
+                result["file_path"] = manager.to_kernel_path(result["file_path"])
+            elif body.kind == "catalog_sql_tables":
+                result["table_paths"] = {
+                    name: manager.to_kernel_path(path) for name, path in result["table_paths"].items()
+                }
+        return {"result": result}
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
