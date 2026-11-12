@@ -208,14 +208,34 @@ describe("restoreVersion", () => {
     store.activeProject = PROJECT;
 
     await store.restoreVersion("deadbeef", "rollback");
-    expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback");
+    expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback", false);
     expect(mocks.warning).toHaveBeenCalled();
     expect(mocks.getActive).toHaveBeenCalled();
     expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
   });
+
+  it("sends force when the caller keeps a recovery point", async () => {
+    mocks.restore.mockResolvedValue({ imported: {}, placeholder_secrets: [] });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.restoreVersion("deadbeef", "rollback", true);
+    expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback", true);
+  });
 });
 
 describe("reloadFromDisk", () => {
+  it("sends force when the caller keeps a recovery point", async () => {
+    mocks.reload.mockResolvedValue({ imported: {}, placeholder_secrets: [] });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.reloadFromDisk(true);
+    expect(mocks.reload).toHaveBeenCalledWith(true);
+  });
+
   it("rebuilds from disk and reconciles status", async () => {
     mocks.reload.mockResolvedValue({
       imported: { flows: 2, connections: 1, schedules: 0 },

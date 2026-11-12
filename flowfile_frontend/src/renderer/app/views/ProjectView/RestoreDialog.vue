@@ -22,6 +22,11 @@
 
       <div v-if="loadingChanges" class="restore-loading">Checking what will change…</div>
 
+      <div v-else-if="unsaved" class="restore-changes">
+        <p class="restore-changes__caption">{{ unsaved.message }}</p>
+        <ChangeList :changes="unsaved.changes" />
+      </div>
+
       <template v-else>
         <div v-if="changes.length" class="restore-changes">
           <p class="restore-changes__caption">
@@ -49,7 +54,7 @@
         :disabled="loadingChanges || !version"
         @click="confirm"
       >
-        Restore
+        {{ unsaved ? "Keep a recovery point and continue" : "Restore" }}
       </el-button>
     </template>
   </el-dialog>
@@ -59,6 +64,7 @@
 import { ref, watch } from "vue";
 import { ElMessage, ElNotification } from "element-plus";
 import ChangeList from "./ChangeList.vue";
+import { ProjectUnsavedChanges } from "./unsavedChanges";
 import { useProjectStore } from "../../stores/project-store";
 import type { ProjectVersion, ProjectVersionChange } from "../../types";
 
@@ -72,6 +78,7 @@ const store = useProjectStore();
 const changes = ref<ProjectVersionChange[]>([]);
 const loadingChanges = ref(false);
 const restoring = ref(false);
+const unsaved = ref<ProjectUnsavedChanges | null>(null);
 
 watch(
   () => props.modelValue,
@@ -79,6 +86,7 @@ watch(
     if (!open || !props.version) return;
     loadingChanges.value = true;
     changes.value = [];
+    unsaved.value = null;
     try {
       changes.value = await store.loadVersionChanges(props.version.sha);
     } catch (e: any) {
@@ -93,7 +101,7 @@ const confirm = async () => {
   if (!props.version) return;
   restoring.value = true;
   try {
-    await store.restoreVersion(props.version.sha, props.version.message);
+    await store.restoreVersion(props.version.sha, props.version.message, unsaved.value !== null);
     ElNotification({
       title: "Version restored",
       message: "Reopen any flows you had open to see the restored version.",
@@ -104,6 +112,10 @@ const confirm = async () => {
     emit("restored");
     close();
   } catch (e: any) {
+    if (e instanceof ProjectUnsavedChanges) {
+      unsaved.value = e;
+      return;
+    }
     ElMessage.error(e?.message || "Could not restore version");
   } finally {
     restoring.value = false;
@@ -116,6 +128,7 @@ const onVisibility = (v: boolean) => {
 const close = () => emit("update:modelValue", false);
 const onClosed = () => {
   changes.value = [];
+  unsaved.value = null;
 };
 </script>
 

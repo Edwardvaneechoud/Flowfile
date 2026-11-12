@@ -80,8 +80,9 @@ def test_version_lifecycle_via_routes(tmp_path):
         assert client.get("/project/active").json()["dirty"] is False
         assert client.get("/project/versions").json()["versions"][0]["message"].startswith("Restore")
 
-        # Reload accepts on-disk state and returns the same import shape.
-        reloaded = client.post("/project/reload")
+        # The restore keeps ROUTE_SECRET_2, which version a lacks, so the reload needs force.
+        assert client.post("/project/reload").status_code == 409
+        reloaded = client.post("/project/reload", json={"force": True})
         assert reloaded.status_code == 200
         assert set(reloaded.json()) == {"imported", "placeholder_secrets", "prune_errors", "recovery_sha"}
 
@@ -92,8 +93,9 @@ def test_version_lifecycle_via_routes(tmp_path):
 
 
 def test_restore_on_dirty_tree_409s_without_force(tmp_path):
-    """M-C1: restore/reload reset the tree and hard-prune the DB, destroying uncommitted work. A dirty
-    tree must be 409'd (not silently discarded) unless the caller passes force=true."""
+    """M-C1: a restore resets the tree and hard-prunes the DB, so a dirty tree must be 409'd (not
+    silently discarded) unless the caller passes force=true. A reload applies the hand edit instead,
+    so it needs no force when the database holds nothing unsaved."""
     root = tmp_path / "proj"
     project_sync.close_project(OWNER)
     try:
@@ -112,11 +114,14 @@ def test_restore_on_dirty_tree_409s_without_force(tmp_path):
         assert client.get("/project/active").json()["dirty"] is True
         blocked = client.post("/project/restore", json={"sha": version_v1})
         assert blocked.status_code == 409
+        detail = blocked.json()["detail"]
+        assert detail["code"] == "UNSAVED_CHANGES"
+        assert [c["path"] for c in detail["changes"]] == ["secrets.yaml"]
         # The edit is untouched (nothing destroyed).
         assert secrets_file.read_text(encoding="utf-8") == edited
 
-        # reload is guarded the same way.
-        assert client.post("/project/reload", json={"force": False}).status_code == 409
+        # A reload applies the hand edit; with nothing unsaved in the database it needs no force.
+        assert client.post("/project/reload", json={"force": False}).status_code == 200
         assert secrets_file.read_text(encoding="utf-8") == edited
     finally:
         project_sync.close_project(OWNER)

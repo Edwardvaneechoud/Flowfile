@@ -9,6 +9,7 @@ import type {
   ProjectVersionChange,
   SaveVersionResult,
 } from "../types";
+import { unsavedChangesFrom } from "../views/ProjectView/unsavedChanges";
 
 /** Raised when a Phase-2 route isn't deployed yet, so the store can hide its UI. */
 export class ProjectFeatureUnavailable extends Error {}
@@ -100,14 +101,15 @@ export class ProjectApi {
     }
   }
 
-  /** Restore the project files to a version and rebuild the environment. */
-  static async restore(sha: string, label?: string): Promise<ImportResult> {
+  /** Restore the project files to a version and rebuild the environment. `force` keeps a
+   * recovery point of unsaved changes first; without it they raise ProjectUnsavedChanges. */
+  static async restore(sha: string, label?: string, force = false): Promise<ImportResult> {
     try {
-      const res = await axios.post<ImportResult>("/project/restore", { sha, label });
+      const res = await axios.post<ImportResult>("/project/restore", { sha, label, force });
       return res.data;
     } catch (error: any) {
       if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
-      throw new Error(detail(error, "Failed to restore version"));
+      throw unsavedChangesFrom(error) ?? new Error(detail(error, "Failed to restore version"));
     }
   }
 
@@ -148,14 +150,15 @@ export class ProjectApi {
     }
   }
 
-  /** Accept external (on-disk) changes by rebuilding from files. */
-  static async reload(): Promise<ImportResult> {
+  /** Accept external (on-disk) changes by rebuilding from files. `force` keeps a recovery point of
+   * unsaved database changes first; without it they raise ProjectUnsavedChanges. */
+  static async reload(force = false): Promise<ImportResult> {
     try {
-      const res = await axios.post<ImportResult>("/project/reload", {});
+      const res = await axios.post<ImportResult>("/project/reload", { force });
       return res.data;
     } catch (error: any) {
       if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
-      throw new Error(detail(error, "Failed to reload project"));
+      throw unsavedChangesFrom(error) ?? new Error(detail(error, "Failed to reload project"));
     }
   }
 

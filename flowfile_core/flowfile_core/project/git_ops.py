@@ -9,12 +9,14 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
+from filelock import FileLock
+
 from flowfile_core.project import manifest
 
 logger = logging.getLogger(__name__)
 
 try:
-    from git import Repo
+    from git import Commit, Repo
 
     _GIT_AVAILABLE = True
 except Exception:  # pragma: no cover - import guard
@@ -46,6 +48,38 @@ def repo_lock(root: Path):
         yield
     finally:
         lock.release()
+
+
+_file_locks: dict[str, FileLock] = {}
+
+
+def _file_lock_for(root: Path) -> FileLock | None:
+    git_dir = Path(root).resolve() / ".git"
+    if not git_dir.is_dir():
+        return None
+    key = str(git_dir)
+    with _repo_locks_guard:
+        lock = _file_locks.get(key)
+        if lock is None:
+            lock = FileLock(str(git_dir / "flowfile.lock"))
+            _file_locks[key] = lock
+        return lock
+
+
+@contextmanager
+def project_lock(root: Path):
+    """``repo_lock`` plus a file lock at ``.git/flowfile.lock``, so a save, open, restore or reload in
+    another process waits for this one instead of losing a race on ``index.lock`` or a file.
+
+    The file lock is one object per root and counts re-entries, so nesting in one thread is safe. A
+    folder with no ``.git`` (git unavailable) gets the thread lock only."""
+    with repo_lock(root):
+        file_lock = _file_lock_for(root)
+        if file_lock is None:
+            yield
+            return
+        with file_lock:
+            yield
 
 
 # sha validation
@@ -195,6 +229,67 @@ def restore(root: Path, sha: str) -> None:
     if is_repo(root):
         with repo_lock(root):
             Repo(str(root)).git.read_tree("-u", "--reset", sha)
+
+
+def _folder_git(repo, folder: Path, *args: str) -> str:
+    """Run git against ``folder`` as the work tree with an index of its own beside it
+    (``.<name>.index``), so the project's real index and working tree are never touched."""
+    folder = Path(folder)
+    index = folder.parent / f".{folder.name}.index"
+    return repo.git.execute(
+        ["git", f"--work-tree={folder}", *args],
+        env={"GIT_INDEX_FILE": str(index)},
+        strip_newline_in_stdout=False,
+    )
+
+
+def seed_folder(root: Path, folder: Path, sha: str = "HEAD") -> bool:
+    """Write ``sha``'s files into ``folder`` (created if missing) through its own index.
+
+    Returns ``False`` when there is no repo or no such commit, leaving ``folder`` empty."""
+    Path(folder).mkdir(parents=True, exist_ok=True)
+    if not is_repo(root):
+        return False
+    repo = Repo(str(root))
+    if sha == "HEAD":
+        if not repo.head.is_valid():
+            return False
+    else:
+        _require_hex_sha(sha)
+    _folder_git(repo, folder, "read-tree", "-u", "--reset", sha)
+    return True
+
+
+def diff_against(root: Path, folder: Path, sha: str = "HEAD") -> list[dict]:
+    """Name-status rows of the managed files in a seeded ``folder`` against ``sha``'s tree.
+
+    Every file in the folder is staged into its own index first, so new files count as added and
+    removed ones as deleted; only the managed pathspecs are reported."""
+    if sha != "HEAD":
+        _require_hex_sha(sha)
+    repo = Repo(str(root))
+    _folder_git(repo, folder, "add", "-A", "--", ".")
+    out = _folder_git(
+        repo, folder, "diff", "--cached", "--no-renames", "--name-status", "-z", sha, "--", *_managed_pathspecs()
+    )
+    fields = [f for f in out.split("\0") if f]
+    return [{"status": fields[i], "path": fields[i + 1]} for i in range(0, len(fields) - 1, 2)]
+
+
+def commit_folder(root: Path, folder: Path, message: str, ref: str) -> str | None:
+    """Commit a seeded ``folder``'s files on top of HEAD and point ``ref`` at the commit.
+
+    ``ref`` is ``HEAD`` (the branch moves, so the commit is part of the history) or a ref of its own
+    such as ``refs/flowfile/recovery/<stamp>`` (the branch stays where it is). The project's index and
+    working tree are left as they were. ``None`` when the folder holds exactly HEAD's tree."""
+    repo = Repo(str(root))
+    _folder_git(repo, folder, "add", "-A", "--", ".")
+    tree_sha = _folder_git(repo, folder, "write-tree").strip()
+    if tree_sha == repo.head.commit.tree.hexsha:
+        return None
+    commit = Commit.create_from_tree(repo, repo.tree(tree_sha), message, parent_commits=[repo.head.commit], head=False)
+    repo.git.update_ref(ref, commit.hexsha)
+    return commit.hexsha
 
 
 def _parse_name_status(out: str) -> list[dict]:

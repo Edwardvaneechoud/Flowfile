@@ -10,16 +10,20 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import tempfile
 import threading
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
 
 from flowfile_core import __version__
 from flowfile_core.configs import settings
-from flowfile_core.database.connection import get_db_context
+from flowfile_core.database import backup
+from flowfile_core.database.connection import get_database_path, get_db_context
 from flowfile_core.database.models import FlowRegistration
 from flowfile_core.fileExplorer.funcs import _is_contained, validate_path_under_cwd
 from flowfile_core.project import git_ops, projection, repository
@@ -124,6 +128,32 @@ def _friendly_changes(raw: list[dict]) -> list[dict]:
     return out
 
 
+def _named_changes(raw: list[dict]) -> list[dict]:
+    """``_friendly_changes`` without ``project.yaml`` and ``.gitignore``, which name no object."""
+    return _friendly_changes([r for r in raw if r["path"] not in (MANIFEST_NAME, ".gitignore")])
+
+
+def _unsaved_detail(action: str, changes: list[dict]) -> dict:
+    """The 409 body of a restore or reload that would lose what the last version does not hold."""
+    if get_database_path() is not None:
+        net = "A snapshot of the catalog database is also written to db_backups/ first."
+    else:
+        net = (
+            "This catalog database is not snapshotted: the recovery point is the only copy, "
+            "and it holds definitions, not stored passwords."
+        )
+    message = (
+        f"{len(changes)} change(s) are not in the last version; a {action} may lose them. "
+        f"Save a version first, or keep a recovery point and continue. {net}"
+    )
+    return {
+        "code": "UNSAVED_CHANGES",
+        "message": message,
+        "changes": changes,
+        "database_snapshot": get_database_path() is not None,
+    }
+
+
 class ProjectSyncService:
     def __init__(self) -> None:
         self._by_owner: dict[int, ActiveProject] | None = None  # None = not loaded yet
@@ -211,7 +241,8 @@ class ProjectSyncService:
         if proj is None:
             return
         try:
-            projection.remove_flow(proj.root, projection.flow_index(proj.root), flow_uuid=flow_uuid)
+            with git_ops.repo_lock(proj.root):
+                projection.remove_flow(proj.root, projection.flow_index(proj.root), flow_uuid=flow_uuid)
             self._mark_projection(proj.owner_id, failed=False)
         except Exception:
             self._mark_projection(proj.owner_id, failed=True)
@@ -351,20 +382,21 @@ class ProjectSyncService:
         m = read_manifest(root)
         if m is None:
             raise FileNotFoundError(f"No Flowfile project found at the requested path (missing {MANIFEST_NAME})")
-        write_gitignore(root)
-        with get_db_context() as db:
-            row = repository.upsert_active(db, m.name, str(root), owner_id, m.track_data_artifacts)
-            project = ActiveProject(row.id, m.name, root, owner_id, m.track_data_artifacts)
-        with self._cache_lock:
-            self._load()[owner_id] = project
-        return project, import_project(root, owner_id)
+        with git_ops.project_lock(root):
+            write_gitignore(root)
+            with get_db_context() as db:
+                row = repository.upsert_active(db, m.name, str(root), owner_id, m.track_data_artifacts)
+                project = ActiveProject(row.id, m.name, root, owner_id, m.track_data_artifacts)
+            with self._cache_lock:
+                self._load()[owner_id] = project
+            return project, import_project(root, owner_id)
 
     def save_version(self, user_id: int, message: str) -> str | None:
         proj = self.get_active_project(user_id)
         if proj is None:
             raise NoActiveProjectError("No active project")
-        with git_ops.repo_lock(proj.root):
-            git_ops.init(proj.root)  # heal a folder created while git was unavailable; no-op otherwise
+        git_ops.init(proj.root)  # heal a folder created while git was unavailable; no-op otherwise
+        with git_ops.project_lock(proj.root):
             with get_db_context() as db:
                 projection.project_all(db, proj.root, proj.owner_id)
             sha = git_ops.commit_all(proj.root, message)
@@ -387,43 +419,79 @@ class ProjectSyncService:
             repository.set_track_data_artifacts(db, proj.id, m.track_data_artifacts)
         proj.track_data_artifacts = m.track_data_artifacts
 
-    def _autosave_before_reset(self, proj: ActiveProject, force: bool, action: str) -> str | None:
-        """Recovery point before a destructive reset/prune. Holds the caller's ``repo_lock``.
+    def _guard_before_apply(self, proj: ActiveProject, force: bool, action: str) -> str | None:
+        """Name what a restore or reload would lose, and keep it first when ``force`` is set.
 
-        ``restore``/``reload`` reset the working tree and hard-prune the DB to match the files, so any
-        uncommitted work is gone afterwards. To never silently destroy work: when the tree is
-        dirty and ``force`` is not set → 409 so the user explicitly confirms; otherwise snapshot the
-        current state into git history first (always recoverable) and return its sha."""
-        if not git_ops.is_dirty(proj.root):
-            return None
-        if not force:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Project has uncommitted changes that {action} would discard. "
-                    "Save a version first, or retry with force=true to autosave and continue."
-                ),
-            )
-        return git_ops.commit_all(proj.root, f"Autosave before {action}")
+        The database is exported to a temp folder and compared with the last version, so a change
+        no hook wrote to the folder is seen too. A restore also refuses a dirty folder, since its
+        ``read-tree --reset`` discards hand edits; a reload applies them, so it refuses only unsaved
+        database changes. With ``force`` a restore autosaves the folder and commits the export on the
+        branch, and a reload commits the export under ``refs/flowfile/recovery/`` with the branch
+        left alone. Returns the sha of the last recovery commit, if any. Holds the caller's lock."""
+        dirty = action == "restore" and git_ops.is_dirty(proj.root)
+        with tempfile.TemporaryDirectory(prefix="flowfile-project-") as tmp:
+            folder = Path(tmp) / "tree"
+            changes = self._database_changes(proj, folder)
+            if not changes and not dirty:
+                return None
+            if not force:
+                listed = {c["path"] for c in changes}
+                if dirty:
+                    folder_rows = [r for r in git_ops.uncommitted_changes(proj.root) if r["path"] not in listed]
+                    changes += _named_changes(folder_rows)
+                raise HTTPException(status_code=409, detail=_unsaved_detail(action, changes))
+            recovery_sha = git_ops.commit_all(proj.root, "Autosave before restore") if dirty else None
+            if changes:
+                if action == "restore":
+                    recovery_sha = git_ops.commit_folder(proj.root, folder, "Database before restore", "HEAD") or (
+                        recovery_sha
+                    )
+                else:
+                    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                    recovery_sha = git_ops.commit_folder(
+                        proj.root, folder, "Database before reload", f"refs/flowfile/recovery/{stamp}"
+                    )
+            return recovery_sha
+
+    def _database_changes(self, proj: ActiveProject, folder: Path) -> list[dict]:
+        """Export the database into ``folder`` (seeded with the last version's files, so same-named
+        flows keep the file names that version gave them) and name what differs from that version."""
+        if not git_ops.seed_folder(proj.root, folder):
+            return []
+        manifest_file = proj.root / MANIFEST_NAME
+        if manifest_file.exists():
+            shutil.copyfile(manifest_file, folder / MANIFEST_NAME)
+        with get_db_context() as db:
+            projection.project_all(db, folder, proj.owner_id)
+        return _named_changes(git_ops.diff_against(proj.root, folder))
+
+    @staticmethod
+    def _snapshot_database() -> None:
+        """Snapshot a SQLite catalog before a pruning import; a server catalog has no file to copy."""
+        db_path = get_database_path()
+        if db_path is not None:
+            backup.create_snapshot(db_path, "pre_apply")
 
     def restore_version(self, user_id: int, sha: str, label: str | None = None, force: bool = False) -> SetupResult:
         """Reset files to ``sha``, rebuild + prune the DB to match, and record it as a new version.
 
         Restore is one complete action: the working tree is reset to ``sha`` (deletions included),
         the DB is rebuilt and pruned to match, and a "Restore: …" commit is made so history stays
-        clean with no dangling unsaved state. Uncommitted work is never silently lost: a dirty tree
-        is 409'd unless ``force``, and on ``force`` it is autosaved into history first.
+        clean with no dangling unsaved state. Unsaved work is never silently lost: a dirty tree or a
+        database that differs from the last version is 409'd unless ``force``, and on ``force`` both
+        are committed into history first (``_guard_before_apply``).
         """
         proj = self.get_active_project(user_id)
         if proj is None:
             raise NoActiveProjectError("No active project")
-        with git_ops.repo_lock(proj.root):
+        with git_ops.project_lock(proj.root):
             # Check the target tree before the autosave, the file reset or the DB rebuild, so a bad
             # target aborts with nothing changed, history included.
             preflight_import_caps(proj.root, sha)
             preflight_import_files(proj.root, sha)
-            recovery_sha = self._autosave_before_reset(proj, force, "restore")
+            recovery_sha = self._guard_before_apply(proj, force, "restore")
             git_ops.restore(proj.root, sha)
+            self._snapshot_database()
             result = import_project(proj.root, proj.owner_id, prune=True)
             self._sync_track_setting_from_manifest(proj)
             message = f"Restore: {label}" if label else f"Restore version {sha[:8]}"
@@ -436,16 +504,18 @@ class ProjectSyncService:
     def reload_from_disk(self, user_id: int, force: bool = False) -> SetupResult:
         """Accept on-disk (external) changes by rebuilding + pruning the DB to match the files.
 
-        Uncommitted work is never silently lost: a dirty tree is 409'd unless ``force``, and on
-        ``force`` it is autosaved into git history before the prune so it stays recoverable."""
+        A dirty tree is what gets applied, so it needs no ``force``. A database that differs from the
+        last version is 409'd unless ``force``, and on ``force`` its export is kept under
+        ``refs/flowfile/recovery/`` before the prune, with the branch left alone."""
         proj = self.get_active_project(user_id)
         if proj is None:
             raise NoActiveProjectError("No active project")
-        with git_ops.repo_lock(proj.root):
-            # Check the working tree before the autosave or the DB rebuild, so a bad file aborts cleanly.
+        with git_ops.project_lock(proj.root):
+            # Check the working tree before the recovery point or the DB rebuild, so a bad file aborts cleanly.
             preflight_import_caps_worktree(proj.root)
             preflight_import_files_worktree(proj.root)
-            recovery_sha = self._autosave_before_reset(proj, force, "reload")
+            recovery_sha = self._guard_before_apply(proj, force, "reload")
+            self._snapshot_database()
             result = import_project(proj.root, proj.owner_id, prune=True)
             self._sync_track_setting_from_manifest(proj)
         result.recovery_sha = recovery_sha
@@ -488,13 +558,14 @@ class ProjectSyncService:
         m = read_manifest(proj.root)
         if m is None:
             raise NoActiveProjectError("No active project")
-        m.track_data_artifacts = track_data_artifacts
-        write_manifest(proj.root, m)
-        with get_db_context() as db:
-            repository.set_track_data_artifacts(db, proj.id, track_data_artifacts)
-        proj.track_data_artifacts = track_data_artifacts
-        with get_db_context() as db:
-            projection.project_all(db, proj.root, proj.owner_id)
+        with git_ops.repo_lock(proj.root):
+            m.track_data_artifacts = track_data_artifacts
+            write_manifest(proj.root, m)
+            with get_db_context() as db:
+                repository.set_track_data_artifacts(db, proj.id, track_data_artifacts)
+            proj.track_data_artifacts = track_data_artifacts
+            with get_db_context() as db:
+                projection.project_all(db, proj.root, proj.owner_id)
         return track_data_artifacts
 
     def has_uncommitted_changes(self, user_id: int) -> bool:

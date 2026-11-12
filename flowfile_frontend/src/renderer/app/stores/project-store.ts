@@ -199,8 +199,8 @@ export const useProjectStore = defineStore("project", {
       }
     },
 
-    async restoreVersion(sha: string, label?: string): Promise<void> {
-      const res = await ProjectApi.restore(sha, label);
+    async restoreVersion(sha: string, label?: string, force = false): Promise<void> {
+      const res = await ProjectApi.restore(sha, label, force);
       this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
       warnPruneErrors(res);
       // Import no longer auto-opens flows; clear the active flow so a stale/pruned tab can't
@@ -210,9 +210,9 @@ export const useProjectStore = defineStore("project", {
       this.loadVersions().catch(() => undefined);
     },
 
-    async reloadFromDisk(): Promise<ImportResult> {
+    async reloadFromDisk(force = false): Promise<ImportResult> {
       try {
-        const res = await ProjectApi.reload();
+        const res = await ProjectApi.reload(force);
         this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
         warnPruneErrors(res);
         useFlowStore().setFlowId(-1);

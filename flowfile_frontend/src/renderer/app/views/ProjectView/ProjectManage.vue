@@ -197,6 +197,7 @@ import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import SaveVersionForm from "../../components/project/SaveVersionForm.vue";
 import ChangeList from "./ChangeList.vue";
+import { ProjectUnsavedChanges } from "./unsavedChanges";
 import ProjectVersionHistory from "./ProjectVersionHistory.vue";
 import ProjectSettingsDialog from "./ProjectSettingsDialog.vue";
 import { useProjectStore } from "../../stores/project-store";
@@ -246,25 +247,38 @@ watch(() => store.status, loadUnsaved);
 const goToSecrets = () => router.push({ name: "connections", query: { tab: "secrets" } });
 
 const handleReload = async () => {
-  if (store.status === "unsaved") {
-    try {
-      await ElMessageBox.confirm(
-        "Reloading replaces your current unsaved changes with what's on disk. Continue?",
-        "Reload project",
-        { confirmButtonText: "Reload", cancelButtonText: "Cancel", type: "warning" },
-      );
-    } catch {
-      return;
-    }
-  }
   reloading.value = true;
   try {
     await store.reloadFromDisk();
     ElMessage.success("Project reloaded from disk");
   } catch (e: any) {
-    ElMessage.error(e?.message || "Could not reload project");
+    if (e instanceof ProjectUnsavedChanges) {
+      await reloadKeepingRecoveryPoint(e);
+    } else {
+      ElMessage.error(e?.message || "Could not reload project");
+    }
   } finally {
     reloading.value = false;
+  }
+};
+
+const reloadKeepingRecoveryPoint = async (unsaved: ProjectUnsavedChanges) => {
+  const lines = unsaved.changes.map((c) => `${c.kind} “${c.label}”`).join("\n");
+  try {
+    await ElMessageBox.confirm(`${unsaved.message}\n\n${lines}`, "Unsaved changes", {
+      confirmButtonText: "Keep a recovery point and continue",
+      cancelButtonText: "Cancel",
+      type: "warning",
+      customStyle: { whiteSpace: "pre-line" },
+    });
+  } catch {
+    return;
+  }
+  try {
+    await store.reloadFromDisk(true);
+    ElMessage.success("Project reloaded from disk");
+  } catch (e: any) {
+    ElMessage.error(e?.message || "Could not reload project");
   }
 };
 

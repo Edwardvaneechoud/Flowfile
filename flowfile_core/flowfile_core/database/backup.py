@@ -130,10 +130,12 @@ def snapshot_database(db_path: Path, from_revision: str | None, to_revision: str
     return _write_snapshot(db_path, f"{_safe_revision(from_revision)}-to-{_safe_revision(to_revision)}")
 
 
-def create_snapshot(db_path: Path, reason: Literal["manual", "pre_update"]) -> Path | None:
-    """Snapshot *db_path* on demand. Same retention and best-effort contract as a migration snapshot."""
+def create_snapshot(db_path: Path, reason: Literal["manual", "pre_update", "pre_apply"]) -> Path | None:
+    """Snapshot *db_path* on demand. Same retention and best-effort contract as a migration snapshot.
+
+    ``pre_apply`` is taken before a project restore or reload rebuilds and prunes the catalog."""
     # literal tags, not a transform of the request value: the file name never derives from user input
-    tag = "pre-update" if reason == "pre_update" else "manual"
+    tag = {"pre_update": "pre-update", "pre_apply": "pre-apply"}.get(reason, "manual")
     return _write_snapshot(db_path, tag)
 
 
@@ -146,6 +148,8 @@ def _name_pattern(stem: str, suffix: str) -> re.Pattern[str]:
 def _parse_tag(tag: str) -> tuple[str, str | None, str | None] | None:
     if tag == "pre-update":
         return "pre_update", None, None
+    if tag == "pre-apply":
+        return "pre_apply", None, None
     if tag == "manual":
         return "manual", None, None
     revisions = re.fullmatch(r"(.+)-to-(.+)", tag)
