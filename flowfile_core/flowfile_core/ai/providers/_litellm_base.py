@@ -61,6 +61,10 @@ class LiteLLMKwargs(TypedDict, total=False):
     messages: list[dict[str, Any]]
     tools: list[dict[str, Any]]
     max_tokens: int
+    max_completion_tokens: int
+    reasoning_effort: str
+    custom_llm_provider: str
+    allowed_openai_params: list[str]
     api_key: str
     api_base: str
     stream: bool
