@@ -429,6 +429,13 @@ def _make_flow_in_namespace(
         return reg.flow_uuid, sch.id, cat.id
 
 
+def _unlink_projected_flow(root: Path, flow_uuid: str) -> None:
+    """Drop one flow's projected file, as a version without that flow (but with others) would look."""
+    for p in (root / "flows").glob("*.flow.yaml"):
+        if (yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("flow_uuid") == flow_uuid:
+            p.unlink()
+
+
 def _cleanup_custom_namespaces(catalog_names: list[str]) -> None:
     with get_db_context() as db:
         for cat_name in catalog_names:
@@ -515,14 +522,15 @@ def test_namespaced_flow_projection_round_trips_byte_identical(tmp_path):
 def test_reload_prunes_emptied_custom_namespace(tmp_path):
     project_sync.close_project(OWNER)
     flow_uuid, _, _ = _make_flow_in_namespace(tmp_path, "del_flow", "DelCat", "DelSchema")
+    # A version that keeps another flow: a flows folder with no file at all is not pruned.
+    keep_uuid = _make_flow_named(tmp_path, "del_keep_flow", "del_keep_flow", flow_id=424243)
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Del Test", OWNER)
         assert (root / "flows" / "del_flow.flow.yaml").exists()
 
         # Simulate restoring a version that no longer has the flow or its custom namespace.
-        for p in (root / "flows").glob("*.flow.yaml"):
-            p.unlink()
+        _unlink_projected_flow(root, flow_uuid)
         from flowfile_core.project.normalize import write_yaml
 
         write_yaml(root / "namespaces.yaml", {"namespaces": []})
@@ -537,8 +545,10 @@ def test_reload_prunes_emptied_custom_namespace(tmp_path):
             general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
             assert general is not None
             assert db.query(CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first() is not None
+            assert db.query(FlowRegistration).filter_by(flow_uuid=keep_uuid).first() is not None
     finally:
         _delete_flow(flow_uuid)
+        _delete_flow(keep_uuid)
         _cleanup_custom_namespaces(["DelCat"])
         project_sync.close_project(OWNER)
 
@@ -1135,12 +1145,13 @@ def test_prune_removes_flow_with_its_artifact(tmp_path):
     flow_uuid, schema_id, _ = _make_flow_in_namespace(tmp_path, f"ord_flow_{uuid4().hex[:6]}", "OrdCat", "OrdSchema")
     _, table_dir = _make_table(name, namespace_id=schema_id)
     _make_artifact(model, _reg_id(flow_uuid))
+    # A version that keeps another flow: a flows folder with no file at all is not pruned.
+    keep_uuid = _make_flow_named(tmp_path, "ord_keep_flow", "ord_keep_flow", flow_id=424243)
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Ord Test", OWNER)
-        # Restore to an empty version: flow + its artifact + table + custom namespace all removed.
-        for p in (root / "flows").glob("*.flow.yaml"):
-            p.unlink()
+        # Restore to a version without the flow: flow + its artifact + table + custom namespace removed.
+        _unlink_projected_flow(root, flow_uuid)
         write_yaml(root / "tables.yaml", {"tables": []})
         write_yaml(root / "models.yaml", {"models": []})
         write_yaml(root / "namespaces.yaml", {"namespaces": []})
@@ -1158,6 +1169,7 @@ def test_prune_removes_flow_with_its_artifact(tmp_path):
         _delete_tables_by_name(name)
         _delete_artifacts(model)
         _delete_flow(flow_uuid)
+        _delete_flow(keep_uuid)
         _cleanup_custom_namespaces(["OrdCat"])
         project_sync.close_project(OWNER)
 

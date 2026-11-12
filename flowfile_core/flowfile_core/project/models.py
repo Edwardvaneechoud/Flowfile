@@ -22,19 +22,21 @@ class NoActiveProjectError(RuntimeError):
 @dataclass
 class KeptResources:
     """The resources still present in the project files after an import — everything else of the
-    owner's is pruned. A ``None`` set means that category isn't tracked by this project and is left
-    alone entirely (never pruned)."""
+    owner's is pruned. A ``None`` set means the files say nothing about that category (the project
+    does not track it, or the imported tree has no file of that kind: no root manifest, or no file
+    in its folder), so it is left alone entirely (never pruned). An empty set still prunes the whole
+    category."""
 
-    flow_uuids: set[str]
-    db_connections: set[str]
-    cloud_connections: set[str]
-    namespace_ids: set[int]
+    flow_uuids: set[str] | None
+    db_connections: set[str] | None
+    cloud_connections: set[str] | None
+    namespace_ids: set[int] | None
     table_ids: set[int] | None
     artifact_ids: set[int] | None
-    kernel_ids: set[str]
-    viz_uuids: set[str]
-    dashboard_uuids: set[str]
-    notebook_uuids: set[str]
+    kernel_ids: set[str] | None
+    viz_uuids: set[str] | None
+    dashboard_uuids: set[str] | None
+    notebook_uuids: set[str] | None
 
 
 @dataclass

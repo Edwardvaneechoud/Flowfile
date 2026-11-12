@@ -23,7 +23,13 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRegistration
 from flowfile_core.fileExplorer.funcs import _is_contained, validate_path_under_cwd
 from flowfile_core.project import git_ops, projection, repository
-from flowfile_core.project.importer import import_project, preflight_import_caps, preflight_import_caps_worktree
+from flowfile_core.project.importer import (
+    import_project,
+    preflight_import_caps,
+    preflight_import_caps_worktree,
+    preflight_import_files,
+    preflight_import_files_worktree,
+)
 from flowfile_core.project.manifest import (
     MANIFEST_NAME,
     ROOT_MANIFESTS,
@@ -337,6 +343,9 @@ class ProjectSyncService:
     def open_project(self, folder_path: str, owner_id: int) -> tuple[ActiveProject, SetupResult]:
         root = _confine_project_root(folder_path, owner_id)
         _assert_not_foreign_owned(root, owner_id)
+        # Check sizes, then every file, before .gitignore or the database is touched.
+        preflight_import_caps_worktree(root)
+        preflight_import_files_worktree(root)
         m = read_manifest(root)
         if m is None:
             raise FileNotFoundError(f"No Flowfile project found at the requested path (missing {MANIFEST_NAME})")
@@ -407,10 +416,11 @@ class ProjectSyncService:
         if proj is None:
             raise NoActiveProjectError("No active project")
         with git_ops.repo_lock(proj.root):
-            recovery_sha = self._autosave_before_reset(proj, force, "restore")
-            # Cap-check the target tree before resetting files or rebuilding the DB, so a breach
-            # aborts cleanly instead of leaving files at sha with a half-rebuilt DB.
+            # Check the target tree before the autosave, the file reset or the DB rebuild, so a bad
+            # target aborts with nothing changed, history included.
             preflight_import_caps(proj.root, sha)
+            preflight_import_files(proj.root, sha)
+            recovery_sha = self._autosave_before_reset(proj, force, "restore")
             git_ops.restore(proj.root, sha)
             result = import_project(proj.root, proj.owner_id, prune=True)
             self._sync_track_setting_from_manifest(proj)
@@ -430,9 +440,10 @@ class ProjectSyncService:
         if proj is None:
             raise NoActiveProjectError("No active project")
         with git_ops.repo_lock(proj.root):
-            recovery_sha = self._autosave_before_reset(proj, force, "reload")
-            # Cap-check the working tree before the rebuild mutates the DB, so a breach aborts cleanly.
+            # Check the working tree before the autosave or the DB rebuild, so a bad file aborts cleanly.
             preflight_import_caps_worktree(proj.root)
+            preflight_import_files_worktree(proj.root)
+            recovery_sha = self._autosave_before_reset(proj, force, "reload")
             result = import_project(proj.root, proj.owner_id, prune=True)
             self._sync_track_setting_from_manifest(proj)
         result.recovery_sha = recovery_sha

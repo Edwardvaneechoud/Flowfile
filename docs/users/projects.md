@@ -52,7 +52,9 @@ Project actions live on the Project Tracking page: **Settings → Workspace → 
 ![The Project Tracking page: the active project path, its version history, and the save, restore, and stop-tracking controls.](../assets/images/guides/projects/projects-panel.png)
 
 !!! warning "Restore and reload rebuild from the files"
-    Restoring a version and reloading from disk both reset your resources to match the folder, pruning anything not present in the files. If you have unsaved changes, Flowfile stops and asks you to confirm; when you force the action it first autosaves your current state into git history so nothing is silently lost.
+    Restoring a version and reloading from disk both reset your resources to match the folder, removing any resource of a kind the files list that is not among them. A kind the folder has no file for is left alone: restoring a version without `kernels.yaml`, or with nothing under `connections/` or `notebooks/`, keeps your kernels, connections or notebooks, and a version without any flow file keeps your flows. A flow Flowfile cannot write into the folder (one whose file is missing, a `.flowfile` flow, a kernel's scratch flow) is never removed. If you have unsaved changes, Flowfile stops and asks you to confirm; when you force the action it first autosaves your current state into git history so nothing is silently lost.
+
+    Every file is checked before anything changes. If one cannot be read (invalid YAML, or content of the wrong shape, such as a connection file missing its name), open, restore and reload stop with an error naming that file, and your folder and resources stay exactly as they were.
 
 ## Working with projects from the command line
 

@@ -78,10 +78,22 @@ def _secret_name(db: Session, secret_id: int | None) -> str | None:
 # --- flows -------------------------------------------------------------------
 
 
-def _load_flow_data(flow_path: str) -> dict | None:
+def exportable(flow_path: str | None) -> bool:
+    """Whether a registration's flow file can be projected into the project.
+
+    The export and the importer's prune share this one condition: a registration the export skips
+    (no file on disk, a ``.flowfile`` pickle, a kernel scratch flow's ``<kernel:id>`` pseudo-path) is
+    never in the files, so a restore or reload must leave it alone rather than read it as removed."""
+    if not flow_path:
+        return False
     p = Path(flow_path)
-    if not p.exists() or p.suffix.lower() not in (".yaml", ".yml", ".json"):
+    return p.suffix.lower() in (".yaml", ".yml", ".json") and p.exists()
+
+
+def _load_flow_data(flow_path: str) -> dict | None:
+    if not exportable(flow_path):
         return None
+    p = Path(flow_path)
     text = p.read_text(encoding="utf-8")
     return json.loads(text) if p.suffix.lower() == ".json" else yaml.safe_load(text)
 

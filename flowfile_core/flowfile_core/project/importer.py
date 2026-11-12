@@ -53,11 +53,11 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_cloud_connection,
     update_database_connection,
 )
-from flowfile_core.project import manifest, repository
+from flowfile_core.project import manifest, projection, repository
 from flowfile_core.project.manifest_entries import CloudConnectionEntry, DatabaseConnectionEntry, SchemaColumn
 from flowfile_core.project.models import KeptResources, SetupResult
 from flowfile_core.project.normalize import safe_stem, write_yaml
-from flowfile_core.project.projection import _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
+from flowfile_core.project.projection import _CLOUD_PLAIN_FIELDS, _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
 from flowfile_core.project.secrets_resolver import load_dotenv, placeholder_name, resolve
 from flowfile_core.schemas.catalog_schema import DashboardLayout, NotebookCellModel
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
@@ -76,6 +76,12 @@ logger = logging.getLogger(__name__)
 class ImportTooLargeError(ValueError):
     """A project manifest exceeds a size/entry cap (router → 413). Subclasses ``ValueError`` so
     existing ``except ValueError`` paths keep working."""
+
+
+class ProjectFileError(ValueError):
+    """A project file cannot be read or does not have the shape its kind needs (router → 422). Raised
+    by the preflight before anything is written; the message names the file by its repo-relative path
+    and never repeats its content beyond the YAML parser's own short problem description."""
 
 
 # Process-wide per-flow_uuid lock. The flows directory is shared across tenants in docker, so two
@@ -860,9 +866,11 @@ def _import_schedules(data: dict, owner_id: int) -> int:
     return count
 
 
-def _prune_owned(db, column, owner_filter, kept: set, delete_fn, label: str) -> None:
+def _prune_owned(db, column, owner_filter, kept: set | None, delete_fn, label: str) -> None:
     """Run ``delete_fn(db, value)`` for every value of ``column`` matching ``owner_filter`` that is
-    not in ``kept`` (best-effort per row; failures are logged and skipped)."""
+    not in ``kept`` (best-effort per row; failures are logged and skipped). ``None`` prunes nothing."""
+    if kept is None:
+        return
     q = db.query(column).filter(owner_filter)
     if kept:
         q = q.filter(~column.in_(kept))
@@ -880,10 +888,11 @@ def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> N
     intended set. Order matters: models and tables are pruned before flows (a flow can't be deleted
     while it still owns artifacts), and namespaces last (so emptied custom ones become deletable).
     Pruning never removes data — table data is kept (``delete_file=False``) and a model is soft-deleted
-    so its blob survives. A ``None`` kept-set means that category isn't tracked by this project, so it
-    is left entirely alone (never pruned). Best-effort per resource: failures are logged, recorded on
-    ``result.prune_errors`` (so the endpoint reports an incomplete prune instead of a silent success),
-    and skipped.
+    so its blob survives. A ``None`` kept-set means the files say nothing about that category (not
+    tracked, or no file of that kind in the tree), so it is left entirely alone (never pruned); a flow
+    registration the export cannot write is never pruned either. Best-effort per resource: failures
+    are logged, recorded on ``result.prune_errors`` (so the endpoint reports an incomplete prune
+    instead of a silent success), and skipped.
     """
     # Kernels are independent of the catalog graph, so order is free. Delete only the config row
     # (the running container, if any, is dropped by the manager reconcile that follows the import).
@@ -897,30 +906,35 @@ def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> N
     # (see auth/sharing.py:373-374), so orphaned resource_grants rows would survive and could
     # re-attach to a future resource that reuses the freed rowid.
     with get_db_context() as db:
-        dq = db.query(CatalogDashboard.id).filter(CatalogDashboard.created_by == owner_id)
-        if kept.dashboard_uuids:
-            dq = dq.filter(~CatalogDashboard.dashboard_uuid.in_(kept.dashboard_uuids))
-        for (dash_id,) in dq.all():
-            sharing.delete_grants_for_resource(db, "dashboard", dash_id)
-            db.query(CatalogDashboard).filter_by(id=dash_id).delete()
-        vq = db.query(CatalogVisualization.id).filter(CatalogVisualization.created_by == owner_id)
-        if kept.viz_uuids:
-            vq = vq.filter(~CatalogVisualization.viz_uuid.in_(kept.viz_uuids))
-        for (viz_id,) in vq.all():
-            sharing.delete_grants_for_resource(db, "visualization", viz_id)
-            db.query(CatalogVisualization).filter_by(id=viz_id).delete()
+        if kept.dashboard_uuids is not None:
+            dq = db.query(CatalogDashboard.id).filter(CatalogDashboard.created_by == owner_id)
+            if kept.dashboard_uuids:
+                dq = dq.filter(~CatalogDashboard.dashboard_uuid.in_(kept.dashboard_uuids))
+            for (dash_id,) in dq.all():
+                sharing.delete_grants_for_resource(db, "dashboard", dash_id)
+                db.query(CatalogDashboard).filter_by(id=dash_id).delete()
+        if kept.viz_uuids is not None:
+            vq = db.query(CatalogVisualization.id).filter(CatalogVisualization.created_by == owner_id)
+            if kept.viz_uuids:
+                vq = vq.filter(~CatalogVisualization.viz_uuid.in_(kept.viz_uuids))
+            for (viz_id,) in vq.all():
+                sharing.delete_grants_for_resource(db, "visualization", viz_id)
+                db.query(CatalogVisualization).filter_by(id=viz_id).delete()
         db.commit()
     # Notebooks (independent of the catalog graph). Clean grants explicitly (bulk delete bypasses the
     # ORM after_delete backstop) and drop the on-disk content file so a pruned notebook leaves nothing.
-    with get_db_context() as db:
-        nq = db.query(CatalogNotebook.id, CatalogNotebook.notebook_uuid).filter(CatalogNotebook.owner_id == owner_id)
-        if kept.notebook_uuids:
-            nq = nq.filter(~CatalogNotebook.notebook_uuid.in_(kept.notebook_uuids))
-        for nb_id, nb_uuid in nq.all():
-            sharing.delete_grants_for_resource(db, "catalog_notebook", nb_id)
-            db.query(CatalogNotebook).filter_by(id=nb_id).delete()
-            notebook_store.delete_notebook_file(owner_id, nb_uuid)
-        db.commit()
+    if kept.notebook_uuids is not None:
+        with get_db_context() as db:
+            nq = db.query(CatalogNotebook.id, CatalogNotebook.notebook_uuid).filter(
+                CatalogNotebook.owner_id == owner_id
+            )
+            if kept.notebook_uuids:
+                nq = nq.filter(~CatalogNotebook.notebook_uuid.in_(kept.notebook_uuids))
+            for nb_id, nb_uuid in nq.all():
+                sharing.delete_grants_for_resource(db, "catalog_notebook", nb_id)
+                db.query(CatalogNotebook).filter_by(id=nb_id).delete()
+                notebook_store.delete_notebook_file(owner_id, nb_uuid)
+            db.commit()
     # Models first (soft-delete, keep the blob): a kept flow's pruned artifact just goes inactive.
     # A pruned flow's still-active artifacts are NOT touched here (delete_flow can't drop them — it
     # raises FlowHasArtifactsError); they are soft-deleted in the flow-prune branch below regardless
@@ -953,7 +967,11 @@ def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> N
         fq = db.query(FlowRegistration).filter(FlowRegistration.owner_id == owner_id)
         if kept.flow_uuids:
             fq = fq.filter(~FlowRegistration.flow_uuid.in_(kept.flow_uuids))
-        for reg in fq.all():
+        regs = [] if kept.flow_uuids is None else fq.all()
+        for reg in regs:
+            # A registration the export never writes (no file, .flowfile, kernel scratch) isn't in the files.
+            if not projection.exportable(reg.flow_path):
+                continue
             # Read attributes into locals before delete_flow expires/detaches the ORM row.
             reg_flow_path = reg.flow_path
             reg_flow_uuid = reg.flow_uuid
@@ -996,6 +1014,8 @@ def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> N
         )
     # Namespaces last: flows were pruned above, so an emptied custom schema is now deletable. Delete
     # schemas (level 1) before catalogs (level 0); seeded is_public namespaces are excluded entirely.
+    if kept.namespace_ids is None:
+        return
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
         nq = db.query(CatalogNamespace.id, CatalogNamespace.level).filter(
@@ -1138,6 +1158,228 @@ def preflight_import_caps_worktree(root: Path) -> None:
             )
 
 
+_LIST_MANIFESTS = {
+    "namespaces": ("namespaces", "catalog"),
+    "tables": ("tables", "name"),
+    "models": ("models", "name"),
+    "kernels": ("kernels", "name"),
+    "visualizations": ("visualizations", "name"),
+    "dashboards": ("dashboards", "name"),
+}
+
+
+def _file_kind(rel: str) -> str | None:
+    """The kind of a repo-relative path the importer reads, or ``None`` for a file it never reads
+    (the same globs ``_do_import_project_inner`` uses: one level deep, by suffix)."""
+    parts = rel.split("/")
+    if len(parts) == 1:
+        if rel == manifest.MANIFEST_NAME:
+            return "project"
+        stem = rel[: -len(".yaml")] if rel.endswith(".yaml") else None
+        return stem if stem in manifest.ROOT_MANIFESTS else None
+    if len(parts) == 2:
+        folder, name = parts
+        if folder == "flows" and name.endswith(".flow.yaml"):
+            return "flow"
+        if folder == "schedules" and name.endswith(".yaml"):
+            return "schedule"
+        if folder == "notebooks" and name.endswith(".notebook.yaml"):
+            return "notebook"
+    if (
+        len(parts) == 3
+        and parts[0] == "connections"
+        and parts[1] in ("database", "cloud")
+        and parts[2].endswith(".yaml")
+    ):
+        return f"{parts[1]}_connection"
+    return None
+
+
+def _yaml_problem(e: yaml.YAMLError) -> str:
+    problem = getattr(e, "problem", None) or "the file could not be parsed"
+    mark = getattr(e, "problem_mark", None)
+    return f"{problem} (line {mark.line + 1})" if mark is not None else problem
+
+
+def _invalid_fields(e: ValidationError) -> str:
+    """The failing field locations of a validation error, never its input values (which may hold a
+    host, a user name or a secret placeholder)."""
+    locs = sorted({".".join(str(p) for p in err["loc"]) or "<root>" for err in e.errors()})
+    return ", ".join(locs)
+
+
+def _is_mapping_list(value) -> bool:
+    return value is None or (isinstance(value, list) and all(isinstance(v, dict) for v in value))
+
+
+def _is_text(value) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _optional(value, kind: type) -> bool:
+    return value is None or isinstance(value, kind)
+
+
+def _check_file(rel: str, ok: bool, problem: str) -> None:
+    if not ok:
+        raise ProjectFileError(f"Project file {rel!r} {problem}. Nothing was changed.")
+
+
+def _parse_project_file(rel: str, text: str) -> dict:
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise ProjectFileError(
+            f"Project file {rel!r} is not valid YAML: {_yaml_problem(e)}. Nothing was changed."
+        ) from None
+    if data is None:
+        return {}
+    _check_file(rel, isinstance(data, dict), f"must hold a mapping at the top level, not a {type(data).__name__}")
+    return data
+
+
+def _dashboard_layout_shape(layout: dict) -> dict:
+    """A layout with its portable references replaced by unresolved local ids, the shape
+    ``_localize_layout`` hands to ``DashboardLayout`` (a reference that does not resolve is ``None``)."""
+    out = copy.deepcopy(layout)
+    for key, portable, local in (("tiles", "viz_uuid", "viz_id"), ("filters", "datasource", "datasource_id")):
+        items = out.get(key)
+        for item in items if isinstance(items, list) else []:
+            if isinstance(item, dict) and portable in item:
+                item.pop(portable)
+                item[local] = None
+    return out
+
+
+def _validate_manifest_entries(rel: str, stem: str, data: dict) -> None:
+    key, name_key = _LIST_MANIFESTS[stem]
+    entries = data.get(key)
+    _check_file(rel, _is_mapping_list(entries), f"must list its {key} as mappings under {key!r}")
+    for i, entry in enumerate(entries or []):
+        where = f"entry {i + 1} of {key!r}"
+        _check_file(rel, _is_text(entry.get(name_key)), f"{where} has no {name_key!r}")
+        _check_file(rel, _optional(entry.get("namespace"), dict), f"{where} has a 'namespace' that is not a mapping")
+        if stem == "namespaces":
+            schemas = entry.get("schemas")
+            _check_file(rel, _is_mapping_list(schemas), f"{where} must list its 'schemas' as mappings")
+            for schema in schemas or []:
+                _check_file(rel, _is_text(schema.get("name")), f"{where} has a schema with no 'name'")
+        elif stem == "tables":
+            _check_file(
+                rel, _is_mapping_list(entry.get("schema")), f"{where} must list its 'schema' columns as mappings"
+            )
+            _check_file(rel, _optional(entry.get("pointer"), dict), f"{where} has a 'pointer' that is not a mapping")
+            _check_file(
+                rel,
+                _optional(entry.get("partition_columns"), list),
+                f"{where} has 'partition_columns' that is not a list",
+            )
+        elif stem == "models":
+            _check_file(rel, isinstance(entry.get("version"), int), f"{where} has no integer 'version'")
+            _check_file(rel, _optional(entry.get("tags"), list), f"{where} has 'tags' that is not a list")
+        elif stem == "kernels":
+            _check_file(rel, _optional(entry.get("packages"), list), f"{where} has 'packages' that is not a list")
+        elif stem == "visualizations":
+            _check_file(
+                rel, _optional(entry.get("source_table"), dict), f"{where} has a 'source_table' that is not a mapping"
+            )
+        elif stem == "dashboards":
+            layout = entry.get("layout")
+            _check_file(rel, _optional(layout, dict), f"{where} has a 'layout' that is not a mapping")
+            try:
+                DashboardLayout.model_validate(_dashboard_layout_shape(layout or {}))
+            except ValidationError as e:
+                _check_file(rel, False, f"{where} has an invalid layout ({_invalid_fields(e)})")
+
+
+def _validate_project_file(rel: str, kind: str, text: str) -> None:
+    """Raise ``ProjectFileError`` when one file's content would make the import skip an entry as if it
+    were absent, or raise half-way through."""
+    data = _parse_project_file(rel, text)
+    if kind == "secrets":
+        names = data.get("required_secrets")
+        ok = names is None or (isinstance(names, list) and all(_is_text(n) for n in names))
+        _check_file(rel, ok, "must list 'required_secrets' as names")
+    elif kind in _LIST_MANIFESTS:
+        _validate_manifest_entries(rel, kind, data)
+    elif kind == "flow":
+        _check_file(rel, _is_text(data.get("flow_uuid")), "has no string 'flow_uuid'")
+        _check_file(rel, _optional(data.get("namespace"), dict), "has a 'namespace' that is not a mapping")
+        for field_name in ("flowfile_name", "catalog_name"):
+            _check_file(rel, _optional(data.get(field_name), str), f"has a {field_name!r} that is not text")
+    elif kind == "schedule":
+        _check_file(rel, _is_text(data.get("flow_uuid")), "has no string 'flow_uuid'")
+        _check_file(rel, _is_mapping_list(data.get("schedules")), "must list its 'schedules' as mappings")
+    elif kind == "notebook":
+        _check_file(rel, _is_text(data.get("name")), "has no 'name'")
+        _check_file(rel, _optional(data.get("namespace"), dict), "has a 'namespace' that is not a mapping")
+        cells = data.get("cells")
+        _check_file(rel, _is_mapping_list(cells), "must list its 'cells' as mappings")
+        for i, cell in enumerate(cells or []):
+            try:
+                NotebookCellModel.model_validate(cell)
+            except ValidationError as e:
+                _check_file(rel, False, f"has an invalid cell {i + 1} ({_invalid_fields(e)})")
+    elif kind in ("database_connection", "cloud_connection"):
+        try:
+            if kind == "database_connection":
+                DatabaseConnectionEntry.model_validate(data)
+            else:
+                entry = CloudConnectionEntry.model_validate(data)
+                FullCloudStorageConnection(
+                    connection_name=entry.connection_name,
+                    storage_type=entry.storage_type,
+                    auth_method=entry.auth_method,
+                    **{f: getattr(entry, f) for f in _CLOUD_PLAIN_FIELDS},
+                )
+        except ValidationError as e:
+            _check_file(rel, False, f"is not a valid connection ({_invalid_fields(e)})")
+
+
+def _validate_project_files(read_text, rels: list[str]) -> None:
+    """Validate every file the import reads, ``read_text(rel)`` giving its text. The tables and models
+    manifests are skipped when the tree's own project.yaml opts out of tracking them, as the import does."""
+    kinds = {rel: kind for rel in rels if (kind := _file_kind(rel)) is not None}
+    texts: dict[str, str] = {}
+    for rel in sorted(kinds):
+        try:
+            texts[rel] = read_text(rel)
+        except UnicodeDecodeError:
+            raise ProjectFileError(f"Project file {rel!r} is not UTF-8 text. Nothing was changed.") from None
+    project = (
+        _parse_project_file(manifest.MANIFEST_NAME, texts[manifest.MANIFEST_NAME])
+        if manifest.MANIFEST_NAME in texts
+        else {}
+    )
+    tracks_data = project.get("track_data_artifacts", True)
+    for rel in sorted(kinds):
+        if kinds[rel] in ("tables", "models") and not tracks_data:
+            continue
+        _validate_project_file(rel, kinds[rel], texts[rel])
+
+
+def preflight_import_files(root: Path, sha: str) -> None:
+    """Read and validate every managed file of the tree at ``sha`` before a restore writes anything,
+    so an unreadable or malformed file aborts it with the folder and the database untouched."""
+    from flowfile_core.project import git_ops
+
+    rels = list(git_ops.tree_blob_sizes(root, sha))
+    _validate_project_files(lambda rel: git_ops.read_blob(root, sha, rel) or "", rels)
+
+
+def preflight_import_files_worktree(root: Path) -> None:
+    """Read and validate every managed file of the working tree before open or reload touches the
+    database, so an unreadable or malformed file aborts it with nothing changed."""
+    paths = [manifest.manifest_path(root)] + [root / f"{stem}.yaml" for stem in manifest.ROOT_MANIFESTS]
+    paths += manifest.flows_dir(root).glob("*.flow.yaml")
+    paths += manifest.schedules_dir(root).glob("*.yaml")
+    paths += manifest.connections_dir(root, "database").glob("*.yaml")
+    paths += manifest.connections_dir(root, "cloud").glob("*.yaml")
+    paths += manifest.notebooks_dir(root).glob("*.notebook.yaml")
+    rels = [p.relative_to(root).as_posix() for p in paths if p.is_file()]
+    _validate_project_files(lambda rel: (root / rel).read_text(encoding="utf-8"), rels)
+
+
 def _do_import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResult:
     token = _ns_resolve_cache.set({})
     try:
@@ -1169,6 +1411,8 @@ def _do_import_project_inner(root: Path, owner_id: int, prune: bool = False) -> 
             kept_cloud.add(name)
 
     kept_namespace_ids = _import_namespaces(root, owner_id)
+    if not manifest.namespaces_manifest_path(root).exists():
+        kept_namespace_ids = None
 
     flow_files = sorted(manifest.flows_dir(root).glob("*.flow.yaml"))
     _assert_within_cap(flow_files, _MAX_FLOWS, "flows")
@@ -1189,22 +1433,38 @@ def _do_import_project_inner(root: Path, owner_id: int, prune: bool = False) -> 
     # project opts out of tracking them, skip import and signal prune to leave them alone (None).
     m = manifest.read_manifest(root)
     track_data_artifacts = m is None or m.track_data_artifacts
-    kept_table_ids = _import_tables(root, owner_id) if track_data_artifacts else None
-    kept_artifact_ids = _import_artifacts(root, owner_id) if track_data_artifacts else None
-    kept_kernel_ids = _import_kernels(root, owner_id)
+    # A root manifest absent from the tree says nothing about its kind: None, so prune leaves it alone.
+    kept_table_ids = (
+        _import_tables(root, owner_id)
+        if track_data_artifacts and manifest.tables_manifest_path(root).exists()
+        else None
+    )
+    kept_artifact_ids = (
+        _import_artifacts(root, owner_id)
+        if track_data_artifacts and manifest.models_manifest_path(root).exists()
+        else None
+    )
+    kept_kernel_ids = _import_kernels(root, owner_id) if manifest.kernels_manifest_path(root).exists() else None
     # Visualizations after tables (source re-links by name); dashboards after visualizations
     # (tiles re-link by viz_uuid).
-    kept_viz_uuids = _import_visualizations(root, owner_id)
-    kept_dashboard_uuids = _import_dashboards(root, owner_id)
+    kept_viz_uuids = (
+        _import_visualizations(root, owner_id) if manifest.visualizations_manifest_path(root).exists() else None
+    )
+    kept_dashboard_uuids = (
+        _import_dashboards(root, owner_id) if manifest.dashboards_manifest_path(root).exists() else None
+    )
     kept_notebook_uuids = _import_notebooks(root, owner_id)
+    if not any(manifest.notebooks_dir(root).glob("*.notebook.yaml")):
+        kept_notebook_uuids = None
 
     if prune:
         _prune_removed(
             owner_id,
+            # A folder with no file of its kind says nothing about it, so that kind is not pruned.
             KeptResources(
-                flow_uuids=kept_flow_uuids,
-                db_connections=kept_db,
-                cloud_connections=kept_cloud,
+                flow_uuids=kept_flow_uuids if flow_files else None,
+                db_connections=kept_db if db_files else None,
+                cloud_connections=kept_cloud if cloud_files else None,
                 namespace_ids=kept_namespace_ids,
                 table_ids=kept_table_ids,
                 artifact_ids=kept_artifact_ids,

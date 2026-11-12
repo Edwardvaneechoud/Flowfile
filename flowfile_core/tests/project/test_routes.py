@@ -154,30 +154,35 @@ def test_restore_prunes_added_flow_and_diff_lists_it(tmp_path):
     from flowfile_core.flowfile.handler import FlowfileHandler
     from flowfile_core.schemas import input_schema, schemas
 
+    def _register_flow(flow_id: int, name: str) -> str:
+        handler = FlowfileHandler()
+        handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name=name, path="."))
+        graph = handler.get_flow(flow_id)
+        graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+        graph.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow_id, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"a": 1}])
+            )
+        )
+        flow_path = str(tmp_path / f"{name}.flow.yaml")
+        graph.save_flow(flow_path)
+        auto_register_flow(flow_path, name, OWNER)
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
+            assert reg is not None
+            return reg.flow_uuid
+
     root = tmp_path / "proj"
     project_sync.close_project(OWNER)
-    flow_uuid = None
+    flow_uuid = keep_uuid = None
     try:
+        # The older version holds another flow: a version with no flow file at all prunes no flow.
+        keep_uuid = _register_flow(636364, "keeper")
         assert client.post("/project/init", json={"folder_path": str(root), "name": "Prune"}).status_code == 201
         empty_sha = client.get("/project/versions").json()["versions"][0]["sha"]
 
         # Build a real flow, then project + commit it as a new version.
-        handler = FlowfileHandler()
-        handler.register_flow(schemas.FlowSettings(flow_id=636363, name="demo", path="."))
-        graph = handler.get_flow(636363)
-        graph.add_node_promise(input_schema.NodePromise(flow_id=636363, node_id=1, node_type="manual_input"))
-        graph.add_manual_input(
-            input_schema.NodeManualInput(
-                flow_id=636363, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"a": 1}])
-            )
-        )
-        flow_path = str(tmp_path / "demo.flow.yaml")
-        graph.save_flow(flow_path)
-        auto_register_flow(flow_path, "demo", OWNER)
-        with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
-            assert reg is not None
-            flow_uuid = reg.flow_uuid
+        flow_uuid = _register_flow(636363, "demo")
 
         assert client.post("/project/versions", json={"message": "add demo"}).json()["sha"]
         assert list(root.glob("flows/demo*.flow.yaml")), "flow should be projected into the project"
@@ -199,16 +204,18 @@ def test_restore_prunes_added_flow_and_diff_lists_it(tmp_path):
         assert restored.status_code == 200
         with get_db_context() as db:
             assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None
+            assert db.query(FlowRegistration).filter_by(flow_uuid=keep_uuid).first() is not None
         assert not list(root.glob("flows/demo*.flow.yaml")), "flow file should be gone after restore"
+        assert list(root.glob("flows/keeper*.flow.yaml")), "the version's own flow stays"
         assert client.get("/project/active").json()["dirty"] is False
         assert client.get("/project/versions").json()["versions"][0]["message"].startswith("Restore")
     finally:
         project_sync.close_project(OWNER)
-        if flow_uuid is not None:
-            with get_db_context() as db:
-                for reg in db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).all():
+        with get_db_context() as db:
+            for uuid_ in (flow_uuid, keep_uuid):
+                for reg in db.query(FlowRegistration).filter_by(flow_uuid=uuid_).all():
                     db.delete(reg)
-                db.commit()
+            db.commit()
 
 
 def test_deleting_a_flow_shows_as_a_project_change(tmp_path):

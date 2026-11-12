@@ -157,6 +157,8 @@ def test_prune_removes_absent_notebook(tmp_path):
     project_sync.close_project(OWNER)
     _clear_notebooks()
     _, nuuid = _make_notebook("prune-nb", cells=_CELLS)
+    # A version that keeps another notebook: a notebooks folder with no file at all is not pruned.
+    _, keep_uuid = _make_notebook("keep-nb", cells=_CELLS)
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Prune NB", OWNER)
@@ -168,6 +170,7 @@ def test_prune_removes_absent_notebook(tmp_path):
 
         with get_db_context() as db:
             assert db.query(CatalogNotebook).filter_by(notebook_uuid=nuuid).first() is None
+            assert db.query(CatalogNotebook).filter_by(notebook_uuid=keep_uuid).first() is not None
         assert notebook_store.read_notebook_cells(OWNER, nuuid) == []  # content file gone
     finally:
         _clear_notebooks()
