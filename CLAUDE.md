@@ -380,7 +380,7 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 | `npm-publish-wasm.yml` | Git tags `wasm-v*` | Publish `flowfile-editor` WASM package to npm |
 | `claude.yml` | `@claude` mention in issues / PR comments / reviews | Claude Code agent responds on GitHub |
 | `claude-pr-review.yml` | PR opened/synchronize/ready/reopened (skips drafts) | Automated Claude PR review |
-| `test-catalog-databases.yml` | Push to `main` / all PRs | Catalog DB portability against a `postgres:16` service |
+| `test-catalog-databases.yml` | Push to `main` / all PRs | Catalog DB portability against a `postgres:16` service, and the project suite on Postgres |
 | `mirror-test-images.yml` | Manual dispatch | Mirror a digest-pinned test-fixture image (MinIO) into GHCR |
 | `codeql.yaml` | Weekly cron + manual | Legacy advanced CodeQL scan (broken config reference — see note above) |
 

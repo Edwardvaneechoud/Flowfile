@@ -652,10 +652,11 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
         ]
         secret_ids_to_delete = [id for id in secret_ids_to_delete if id is not None]
 
-        if secret_ids_to_delete:
-            db.query(Secret).filter(Secret.id.in_(secret_ids_to_delete)).delete(synchronize_session=False)
-
         sharing.delete_grants_for_resource(db, "cloud_connection", db_connection.id)
         db.delete(db_connection)
+        # The row references its secrets, so it goes first where foreign keys are enforced.
+        db.flush()
+        if secret_ids_to_delete:
+            db.query(Secret).filter(Secret.id.in_(secret_ids_to_delete)).delete(synchronize_session=False)
         db.commit()
         _project_sync_connection("cloud", connection_name, user_id, deleted=True)
