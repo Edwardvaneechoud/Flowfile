@@ -258,18 +258,28 @@ Fetches JSON from an HTTP endpoint. Supports `GET` and `POST`, custom headers an
 | **Bearer token** | Sends the secret as an `Authorization: Bearer <token>` header. |
 | **Basic** | HTTP Basic authentication with a username and a secret password. |
 
-**More pages**
+**Pagination**
 
-| How this API pages | Description |
+| Type | Description |
 |---|---|
-| **It doesn't: one request** | A single request. Default. |
-| **Next-page token (cursor)** | Follows a cursor read from the response body (dot-path; `data.-1._id` is the `_id` of the last record) or a response header, sent back as a query parameter or, for `POST`, as a field of the JSON body. Stops at an empty page or a cursor the API already gave. See [Cursor paging](../../connect/apis.md#cursor-paging). |
+| **None** | A single request. Default. |
+| **Cursor (next-page token)** | Follows a cursor read from the response body (dot-path; `data.-1._id` is the `_id` of the last record) or a response header, sent back as a query parameter or, for `POST`, as a field of the JSON body. Stops at an empty page or a cursor the API already gave. See [Cursor paging](../../connect/apis.md#cursor-paging). |
 | **Page number** | Increments a page parameter (default `page`) from a configurable first page (default `1`). |
 | **Offset and limit** | Increments an offset parameter (default `offset`) by the page size, passed via a limit parameter (default `limit`, default `100`). |
 
-The **Advanced** section holds the limits. Paginated reads are bounded by **Max pages** (default `1000`) and an optional **Max records** cap, with an optional wait between pages. **Timeout** defaults to 30 seconds and **Max retries** to `3`.
+With **Cursor (next-page token)**, **Token location** and **Token path** say where each response holds the token, and **Send as** and **Parameter name** (**Field name** for a JSON body field) say where the next request carries it. The info icon beside a field's label shows what the field expects.
+
+![The Pagination section with Type set to Cursor (next-page token): Token location is Response body, Token path is cursor, Send as is Query parameter and Parameter name is cursor. The line below reads: sent as cursor=‹token› in the URL.](../../../assets/images/guides/nodes/rest-api-pagination.png){ width="594" }
+
+The **Advanced** section holds the limits. Paginated reads are bounded by **Max pages** (default `1000`) and an optional **Max records** cap, with an optional wait between pages. **Timeout** defaults to 30 seconds and **Max retries** to `3`. With a next-page token, **Initial token** starts the read at a token you already hold; empty sends the first request without one.
+
+![The Advanced section unfolded: Max pages 1000, Max records unlimited, Wait between pages 0, Timeout 30 seconds, Max retries 3, and an empty Initial token.](../../../assets/images/guides/nodes/rest-api-advanced.png){ width="594" }
 
 **Test request** sends one request and shows what came back: the status, the response as a tree, and the columns. Click a list in the tree to read its items as rows. On a node's first test the list of records is picked for you when the record path is empty, and when the response holds a next-page token the node offers **Read all pages**. **Show request** shows the request exactly as it was sent, with the secret replaced by its name, and **Copy as cURL** copies it as a command. Skip the test and the columns are found on the first run instead.
+
+The **Columns** list groups the flattened columns by the parts of their names: `post.author.handle` and `post.author.did` sit under `post`, then `author`. A group starts folded and shows how many columns it holds; click it to open it, or use **Unfold all** and **Fold all** for every group at once. Folding changes the list only, never the columns the node outputs.
+
+![The Columns list of 537 columns with the group post unfolded to uri, cid and the group author, which is unfolded to did, handle, displayName and avatar; folded groups such as associated show their number of columns.](../../../assets/images/guides/nodes/rest-api-columns.png){ width="594" }
 
 A run writes one line per page to the flow's log (the request, the status, the time it took and the records it held) and then why it stopped. A request that fails names the request, the status and the API's own answer. See [Debugging a request](../../connect/apis.md#debugging-a-request).
 

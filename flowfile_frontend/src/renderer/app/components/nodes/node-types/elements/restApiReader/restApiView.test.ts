@@ -5,6 +5,7 @@ import {
   detectedCursorPath,
   guessCursorParam,
   limitsSummary,
+  nextRequestExample,
   defaultOpenPaths,
   responseLine,
   showSecret,
@@ -209,6 +210,20 @@ describe("paging detection", () => {
     expect(guessCursorParam("paging.after")).toBe("after");
     expect(guessCursorParam("next")).toBe("cursor");
     expect(guessCursorParam("data.-1._id")).toBe("_id");
+  });
+
+  it("shows what each next request carries for the token", () => {
+    expect(nextRequestExample("cursor", false)).toEqual({
+      code: "cursor=‹token›",
+      place: "the URL",
+    });
+    expect(nextRequestExample("data_id", true)).toEqual({
+      code: '"data_id": ‹token›',
+      place: "the JSON body",
+    });
+    expect(nextRequestExample("page.after", true)?.code).toBe('"page": {"after": ‹token›}');
+    expect(nextRequestExample("page.after", false)?.code).toBe("page.after=‹token›");
+    expect(nextRequestExample("  ", false)).toBeNull();
   });
 
   it("offers a field of the response, never one of a record", () => {

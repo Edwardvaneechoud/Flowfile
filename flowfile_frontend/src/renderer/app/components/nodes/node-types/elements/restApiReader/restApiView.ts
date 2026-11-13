@@ -258,6 +258,125 @@ export const guessCursorParam = (path: string): string => {
   return stripped === key ? key : stripped.charAt(0).toLowerCase() + stripped.slice(1);
 };
 
+export const TOKEN_PLACEHOLDER = "‹token›";
+
+/** What each request after the first carries for a token sent as *name*; a dotted body field nests, as the engine does. */
+export const nextRequestExample = (
+  name: string,
+  inBody: boolean,
+): { code: string; place: string } | null => {
+  const parts = name
+    .trim()
+    .split(".")
+    .filter((part) => part);
+  if (!parts.length) return null;
+  if (!inBody) return { code: `${name.trim()}=${TOKEN_PLACEHOLDER}`, place: "the URL" };
+  const leaf = parts.pop();
+  const nested = parts.reduceRight(
+    (inner, key) => `"${key}": {${inner}}`,
+    `"${leaf}": ${TOKEN_PLACEHOLDER}`,
+  );
+  return { code: nested, place: "the JSON body" };
+};
+
+export interface FieldHelp {
+  text: string;
+  example?: { label: string; sample?: string; options?: boolean; rows: [string, string][] };
+}
+
+const SAMPLE_RESPONSE = `{
+  "data": {
+    "items": [{ "id": 1 }, { "id": 2 }]
+  },
+  "next": "abc"
+}`;
+
+/** The context a field's info icon shows on hover. */
+export const FIELD_HELP = {
+  secret: { text: "A stored secret. The flow saves its name, never its value." },
+  recordPath: {
+    text: "Dot-path to the list of records in the JSON response. A number picks a list item. Empty uses the whole response. After a test request, click a list in the response to fill it in.",
+    example: {
+      label: "Example response",
+      sample: SAMPLE_RESPONSE,
+      rows: [["data.items", '[{ "id": 1 }, { "id": 2 }]']],
+    },
+  },
+  paginationType: {
+    text: "How the API splits a result over several requests. None sends one request. Cursor sends the token of each response with the next request, until a page is empty, a response has no token or a token repeats. Page number and Offset and limit count up a query parameter.",
+    example: {
+      label: "Second request",
+      options: true,
+      rows: [
+        ["Cursor", "?cursor=abc"],
+        ["Page number", "?page=2"],
+        ["Offset and limit", "?offset=100&limit=100"],
+      ],
+    },
+  },
+  tokenLocation: {
+    text: "Where a response holds the token for the next page: a field of its JSON body or a response header.",
+    example: {
+      label: "Example",
+      options: true,
+      rows: [
+        ["Response body", '{ "next": "abc" }'],
+        ["Response header", "X-Next-Cursor: abc"],
+      ],
+    },
+  },
+  tokenPath: {
+    text: "Dot-path to the token in the response body. A negative number counts from the end of a list. After a test request, click a value in the response to fill it in.",
+    example: {
+      label: "Example response",
+      sample: SAMPLE_RESPONSE,
+      rows: [
+        ["next", '"abc"'],
+        ["data.items.-1.id", "2"],
+      ],
+    },
+  },
+  tokenHeader: {
+    text: "Name of the response header that holds the token.",
+    example: {
+      label: "Example response header",
+      sample: "X-Next-Cursor: abc",
+      rows: [["X-Next-Cursor", "abc"]],
+    },
+  },
+  sendAs: {
+    text: "Where the next request carries the token. A JSON body field needs the method POST.",
+    example: {
+      label: "Next request",
+      options: true,
+      rows: [
+        ["Query parameter", "GET /items?cursor=abc"],
+        ["JSON body field", '{ "cursor": "abc" }'],
+      ],
+    },
+  },
+  tokenParameter: {
+    text: "Name of the query parameter the API expects the token in. The API's documentation gives it.",
+    example: { label: "Next request", rows: [["cursor", "GET /items?cursor=abc"]] },
+  },
+  tokenField: {
+    text: "Name of the body field the API expects the token in. The API's documentation gives it. A dotted name places it in a nested object.",
+    example: {
+      label: "Next request body",
+      rows: [
+        ["cursor", '{ "cursor": "abc" }'],
+        ["page.after", '{ "page": { "after": "abc" } }'],
+      ],
+    },
+  },
+  maxRetries: {
+    text: "How often a request is sent again after a host that does not answer, a 5xx status or a 429. Any other 4xx fails at once.",
+  },
+  initialToken: {
+    text: "Token sent with the first request. Empty sends the first request without one.",
+  },
+} satisfies Record<string, FieldHelp>;
+
 /** The cursor path Guided offers to follow: a field of the response itself, never one of a record. */
 export const detectedCursorPath = (paths: string[]): string | null =>
   paths.find((path) => !/(^|\.)-?\d+\./.test(path)) ?? null;

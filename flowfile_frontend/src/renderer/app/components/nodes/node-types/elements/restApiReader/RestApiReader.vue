@@ -130,7 +130,10 @@
         </template>
 
         <div v-if="settings.auth.auth_type !== 'none'" class="form-group">
-          <label for="rest-secret">{{ secretLabel }}</label>
+          <div class="field-label">
+            <label for="rest-secret">{{ secretLabel }}</label>
+            <field-info :help="FIELD_HELP.secret" />
+          </div>
           <el-select
             id="rest-secret"
             v-model="settings.auth.secret_name"
@@ -145,16 +148,11 @@
             </el-option>
           </el-select>
           <div class="helper-text">
-            <i class="fa-solid fa-info-circle"></i>
             <span v-if="!secretsLoading && secrets.length === 0">
-              No secrets yet —
-              <a class="hint-link" @click="openSecretsManager">create one</a> in the Secrets
-              manager, then reselect here.
+              No secrets yet.
+              <a class="hint-link" @click="openSecretsManager">Create one</a>, then select it here.
             </span>
-            <span v-else>
-              Reusable secret holding the {{ secretLabel.toLowerCase() }}.
-              <a class="hint-link" @click="openSecretsManager">Manage secrets</a>.
-            </span>
+            <a v-else class="hint-link" @click="openSecretsManager">Manage secrets</a>
           </div>
         </div>
       </section>
@@ -202,27 +200,23 @@
             <i class="fa-solid fa-info-circle"></i>
             <span>{{
               detectedRecords
-                ? "Detected the list of records. Click another list to use it instead."
-                : "Click a list to read its items as rows."
+                ? "Record list detected. Click another list to change it."
+                : "Click a list to use it as the record path."
             }}</span>
           </div>
         </template>
         <div class="form-group">
-          <label for="rest-record-path">Record path</label>
+          <div class="field-label">
+            <label for="rest-record-path">Record path</label>
+            <field-info :help="FIELD_HELP.recordPath" />
+          </div>
           <input
             id="rest-record-path"
             v-model="settings.record_path"
             type="text"
             class="form-control"
-            placeholder="data.items (leave empty for the whole response)"
+            placeholder="data.items"
           />
-          <div v-if="!sample?.response_tree" class="helper-text">
-            <i class="fa-solid fa-info-circle"></i>
-            <span
-              >Where the list of records is in the JSON response. Test the request to pick it from
-              the response instead of typing it.</span
-            >
-          </div>
           <div
             v-if="!sample?.response_tree && recordSuggestions.length"
             class="path-suggestions"
@@ -243,14 +237,14 @@
       </section>
 
       <section class="reader-section" data-testid="rest-section-pagination">
-        <h4 class="reader-section-title">More pages</h4>
+        <h4 class="reader-section-title">Pagination</h4>
         <div
           v-if="settings.pagination.pagination_type === 'none' && detectedCursor"
           class="detected-paging"
           data-testid="rest-detected-paging"
         >
           <span
-            >This response has a next-page token at <code>{{ detectedCursor }}</code
+            >Next-page token found at <code>{{ detectedCursor }}</code
             >.</span
           >
           <button type="button" class="add-btn" @click="followCursor(detectedCursor)">
@@ -259,16 +253,19 @@
         </div>
 
         <div class="form-group">
-          <label for="rest-pagination-type">How this API pages</label>
+          <div class="field-label">
+            <label for="rest-pagination-type">Type</label>
+            <field-info :help="FIELD_HELP.paginationType" />
+          </div>
           <select
             id="rest-pagination-type"
             v-model="settings.pagination.pagination_type"
             class="form-control"
           >
-            <option value="none">It doesn't: one request</option>
-            <option value="cursor">Next-page token (cursor)</option>
-            <option value="page">Page number (?page=2)</option>
-            <option value="offset">Offset and limit (?offset=100)</option>
+            <option value="none">None</option>
+            <option value="cursor">Cursor (next-page token)</option>
+            <option value="page">Page number</option>
+            <option value="offset">Offset and limit</option>
           </select>
         </div>
 
@@ -312,26 +309,35 @@
         </template>
 
         <template v-if="settings.pagination.pagination_type === 'cursor'">
-          <label class="group-label">The next-page token is in</label>
           <div class="form-row">
             <div class="form-group half">
+              <div class="field-label">
+                <label for="rest-cursor-location">Token location</label>
+                <field-info :help="FIELD_HELP.tokenLocation" />
+              </div>
               <select
                 id="rest-cursor-location"
                 v-model="settings.pagination.cursor_location"
                 class="form-control"
-                aria-label="Where the next-page token is"
               >
                 <option value="body">Response body</option>
                 <option value="header">Response header</option>
               </select>
             </div>
             <div class="form-group half">
+              <div class="field-label">
+                <label for="rest-cursor-path">{{
+                  cursorFromBody ? "Token path" : "Header name"
+                }}</label>
+                <field-info
+                  :help="cursorFromBody ? FIELD_HELP.tokenPath : FIELD_HELP.tokenHeader"
+                />
+              </div>
               <input
                 id="rest-cursor-path"
                 v-model="settings.pagination.cursor_response_path"
                 type="text"
                 class="form-control"
-                :aria-label="cursorFromBody ? 'Path to the token' : 'Header name'"
                 :placeholder="cursorFromBody ? 'meta.next_cursor' : 'X-Next-Cursor'"
               />
             </div>
@@ -342,11 +348,7 @@
             data-testid="cursor-path-missing"
           >
             <i class="fa-solid fa-triangle-exclamation"></i>
-            <span
-              >Needed to read past the first page.{{
-                sample ? " Pick it in the response above." : " Test the request to pick it."
-              }}</span
-            >
+            <span>Required for pages after the first.</span>
           </div>
           <div
             v-if="cursorFromBody && cursorSuggestions.length"
@@ -365,36 +367,56 @@
             </button>
           </div>
 
-          <label class="group-label">Send it back as</label>
           <div class="form-row">
-            <div v-if="settings.method === 'POST'" class="form-group half">
-              <select
-                id="rest-cursor-send"
-                v-model="settings.pagination.cursor_request_location"
-                class="form-control"
-                aria-label="How the token is sent"
-              >
+            <div class="form-group half">
+              <div class="field-label">
+                <label for="rest-cursor-send">Send as</label>
+                <field-info :help="FIELD_HELP.sendAs" />
+              </div>
+              <select id="rest-cursor-send" v-model="cursorSendLocation" class="form-control">
                 <option value="query">Query parameter</option>
-                <option value="body">Field in JSON body</option>
+                <option value="body" :disabled="settings.method !== 'POST'">
+                  {{
+                    settings.method === "POST" ? "JSON body field" : "JSON body field (POST only)"
+                  }}
+                </option>
               </select>
             </div>
             <div class="form-group half">
+              <div class="field-label">
+                <label for="rest-cursor-param">{{
+                  cursorInBody ? "Field name" : "Parameter name"
+                }}</label>
+                <field-info
+                  :help="cursorInBody ? FIELD_HELP.tokenField : FIELD_HELP.tokenParameter"
+                />
+              </div>
               <input
                 id="rest-cursor-param"
                 v-model="settings.pagination.cursor_param"
                 type="text"
                 class="form-control"
-                :aria-label="cursorInBody ? 'Body field' : 'Query parameter name'"
                 :placeholder="cursorInBody ? 'data_id' : 'cursor'"
               />
             </div>
           </div>
-          <div class="helper-text cursor-hint">
-            <i class="fa-solid fa-info-circle"></i>
+          <div
+            v-if="tokenExample"
+            class="helper-text cursor-hint token-example"
+            data-testid="rest-cursor-example"
+          >
+            <i class="fa-solid fa-arrow-right"></i>
             <span
-              >The API's documentation names this {{ cursorInBody ? "field" : "parameter" }}.
-              Reading stops at an empty page, or when the API sends a token it already gave.</span
+              >Sent as <code>{{ tokenExample.code }}</code> in {{ tokenExample.place }}.</span
             >
+          </div>
+          <div
+            v-else
+            class="helper-text helper-text-warning cursor-hint"
+            data-testid="cursor-param-missing"
+          >
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span>Required to send the token.</span>
           </div>
         </template>
       </section>
@@ -450,8 +472,12 @@
             />
           </div>
           <div class="form-group half">
-            <label>Max retries</label>
+            <div class="field-label">
+              <label for="rest-max-retries">Max retries</label>
+              <field-info :help="FIELD_HELP.maxRetries" />
+            </div>
             <input
+              id="rest-max-retries"
               v-model.number="settings.max_retries"
               type="number"
               class="form-control"
@@ -460,13 +486,16 @@
           </div>
         </div>
         <div v-if="settings.pagination.pagination_type === 'cursor'" class="form-group">
-          <label for="rest-initial-cursor">Token the first request sends</label>
+          <div class="field-label">
+            <label for="rest-initial-cursor">Initial token</label>
+            <field-info :help="FIELD_HELP.initialToken" />
+          </div>
           <input
             id="rest-initial-cursor"
             v-model="settings.pagination.initial_cursor"
             type="text"
             class="form-control"
-            placeholder="no token"
+            placeholder="none"
           />
         </div>
       </CollapsibleSection>
@@ -534,12 +563,15 @@ import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { createNodeRestApiReader } from "./utils";
 import RequestTrace from "./RequestTrace.vue";
 import ResponseTree from "./ResponseTree.vue";
+import FieldInfo from "./FieldInfo.vue";
 import {
+  FIELD_HELP,
   columnGroupPaths,
   columnRows,
   detectedCursorPath,
   guessCursorParam,
   limitsSummary,
+  nextRequestExample,
   testErrorText,
   type SampleDebug,
 } from "./restApiView";
@@ -599,6 +631,16 @@ const cursorFromBody = computed(
   () =>
     settings.value.pagination.pagination_type === "cursor" &&
     settings.value.pagination.cursor_location === "body",
+);
+/** A GET shows the token as a query parameter and keeps the stored choice for a switch back to POST. */
+const cursorSendLocation = computed({
+  get: () => (cursorInBody.value ? "body" : "query"),
+  set: (value: "query" | "body") => {
+    settings.value.pagination.cursor_request_location = value;
+  },
+});
+const tokenExample = computed(() =>
+  nextRequestExample(settings.value.pagination.cursor_param, cursorInBody.value),
 );
 
 const columnCount = computed(() => nodeRestApi.value?.fields?.length ?? 0);
@@ -686,8 +728,7 @@ const DEFAULTS = createNodeRestApiReader(0, 0).rest_api_settings;
 
 const testHint = computed(() => {
   if (sampling.value) return "Sending one request...";
-  if (sample.value || sampleError.value) return "Sends one request; nothing is saved by testing.";
-  return "Send one request to see what the API returns.";
+  return "Sends one request. Nothing is saved.";
 });
 
 const addHeader = () => headerPairs.value.push({ key: "", value: "" });
@@ -919,6 +960,17 @@ defineExpose({
   font-weight: 500;
 }
 
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+}
+
+.form-group .field-label label {
+  margin-bottom: 0;
+}
+
 .tree-hint {
   margin: 4px 0 12px;
 }
@@ -1047,6 +1099,13 @@ defineExpose({
 
 .helper-text code {
   font-family: var(--font-family-mono, monospace);
+}
+
+.token-example code {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--color-background-hover);
+  color: var(--color-text-primary);
 }
 
 .path-suggestions {
