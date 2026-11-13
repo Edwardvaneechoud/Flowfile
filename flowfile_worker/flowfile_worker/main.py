@@ -148,9 +148,9 @@ def signal_handler(signum, frame):
 def run(host: str = None, port: int = None):
     """Run the FastAPI app with graceful shutdown.
 
-    A storage dir marked for a server extension is served only with it loaded (``require_marked``). An extension may
-    bind the socket first (``bind``) and take a last step before requests are taken (``before_serving``); the worker
-    then serves on that socket. Otherwise uvicorn binds the port, as it always has.
+    A storage dir marked for a server extension is served only with it loaded (``require_marked``). An extension
+    takes a last step before requests are taken (``before_serving``); when it answers a socket it bound, the worker
+    serves on that socket. Otherwise uvicorn binds the port, as it always has.
     Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
     """
     global server_instance, serving_port
@@ -161,13 +161,7 @@ def run(host: str = None, port: int = None):
         port = SERVICE_PORT
 
     server_extension.require_marked()
-    sock = server_extension.call("bind", "worker", host, port)
-    try:
-        server_extension.call("before_serving", "worker", host, port, app)
-    except BaseException:
-        if sock is not None:
-            sock.close()
-        raise
+    sock = server_extension.call("before_serving", "worker", host, port, app)
 
     from connectorx import __version__ as connectorx_version
 

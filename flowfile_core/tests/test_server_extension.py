@@ -2,6 +2,7 @@
 around serving; with none it answers as a Flowfile on its own does."""
 
 import asyncio
+import importlib
 import os
 import socket
 import subprocess
@@ -19,6 +20,55 @@ from shared.server_extension import Identity
 from shared.tests import toy_server_extension as toy
 
 TOY = "shared.tests.toy_server_extension"
+RELIED_ON = {
+    "flowfile_core.auth.jwt": ("create_access_token", "create_refresh_token", "invalidate_user_cache"),
+    "flowfile_core.auth.models": ("Token",),
+    "flowfile_core.auth.password": ("get_password_hash",),
+    "flowfile_core.auth.sharing": ("INTERNAL_SERVICE_USERNAME",),
+    "flowfile_core.catalog": ("SQLAlchemyCatalogRepository",),
+    "flowfile_core.catalog.services.runs": ("FlowRunService",),
+    "flowfile_core.configs": ("logger",),
+    "flowfile_core.configs.flow_logger": ("get_flow_log_file",),
+    "flowfile_core.configs.settings": ("SERVER_HOST", "SERVER_PORT", "WORKER_PORT"),
+    "flowfile_core.database.connection": ("engine", "get_db", "get_db_context"),
+    "flowfile_core.database.models": ("Base", "FlowRun", "User"),
+    "flowfile_core.flowfile.manage.ephemeral_graph": ("ephemeral_flow_graph",),
+    "flowfile_core.hub_client.client": (
+        "HubRefused",
+        "HubUnreachable",
+        "HubVersionRefused",
+        "checkout",
+        "http_client",
+    ),
+    "flowfile_core.hub_client.exchange_store": ("store_for_run",),
+    "flowfile_core.hub_client.node_addresses": ("sync_for",),
+    "flowfile_core.hub_client.node_tokens": ("acting_for",),
+    "flowfile_core.hub_client.report": ("build_run_report", "hub_flow_uuid", "hub_target", "post_run_report"),
+    "flowfile_core.hub_client.session": (
+        "access_token",
+        "clear",
+        "load",
+        "refresh_delegation",
+        "save_delegation",
+    ),
+    "flowfile_core.schemas.schemas": ("FlowfileData", "HubOrigin"),
+    "flowfile_worker.configs": ("SERVICE_HOST", "SERVICE_PORT"),
+    "shared._version": ("get_version",),
+    "shared.net": ("is_loopback_host",),
+    "shared.run_logs": ("HUB_RUN_LOG_PREFIX", "run_log_path"),
+    "shared.sealed": ("SealedCredentialRefused", "b64url", "unb64url"),
+    "shared.server_extension": ("Identity", "MARKER_FILE", "Refused", "mark_storage_dir"),
+    "shared.storage_config": ("storage",),
+}
+"""The names a server's extension is known to use, by module. Renaming one stops that server, so it fails here first;
+an extension's own tests keep this list complete."""
+
+
+@pytest.mark.parametrize("module", sorted(RELIED_ON))
+def test_the_names_a_server_s_extension_relies_on_are_there(module):
+    loaded = importlib.import_module(module)
+
+    assert [name for name in RELIED_ON[module] if not hasattr(loaded, name)] == []
 
 
 def test_people_sign_in_with_a_password_unless_the_extension_says_how(monkeypatch):
@@ -72,14 +122,13 @@ def stubbed_server(monkeypatch):
     return served
 
 
-def test_core_serves_on_the_socket_its_extension_bound_after_its_last_step(monkeypatch, stubbed_server):
+def test_core_serves_on_the_socket_its_extension_s_last_step_answers(monkeypatch, stubbed_server):
     bound = socket.socket()
     bound.bind(("127.0.0.1", 0))
     port = bound.getsockname()[1]
     steps = []
     extension = SimpleNamespace(
-        bind=lambda service, host, port: steps.append(("bind", service, host, port)) or bound,
-        before_serving=lambda service, host, port, app: steps.append(("before_serving", service, host, port, app)),
+        before_serving=lambda service, host, port, app: steps.append((service, host, port, app)) or bound
     )
     toy.use(monkeypatch, extension)
 
@@ -88,41 +137,30 @@ def test_core_serves_on_the_socket_its_extension_bound_after_its_last_step(monke
 
         ((config, sockets),) = stubbed_server
         assert sockets == [bound]
-    assert steps == [
-        ("bind", "core", "127.0.0.1", port),
-        ("before_serving", "core", "127.0.0.1", port, core_main.app),
-    ]
+    assert steps == [("core", "127.0.0.1", port, core_main.app)]
     assert core_main.serving_port is None
 
 
-def test_a_socket_the_caller_bound_is_not_bound_again(monkeypatch, stubbed_server):
-    bound = socket.socket()
-    bound.bind(("127.0.0.1", 0))
-    asked = []
-    toy.use(monkeypatch, SimpleNamespace(bind=lambda *args: asked.append(args)))
+def test_without_a_socket_from_its_extension_uvicorn_binds_core_s_port_as_it_always_has(monkeypatch, stubbed_server):
+    toy.use(monkeypatch, SimpleNamespace(before_serving=lambda service, host, port, app: None))
 
-    with bound:
-        core_main.run(host="127.0.0.1", port=bound.getsockname()[1], sock=bound)
+    core_main.run(host="127.0.0.1", port=64002)
 
-    assert asked == []
-    assert stubbed_server[0][1] == [bound]
+    ((config, sockets),) = stubbed_server
+    assert (config.host, config.port, sockets) == ("127.0.0.1", 64002, None)
 
 
-def test_a_last_step_that_stops_core_closes_the_socket_and_serves_nothing(monkeypatch, stubbed_server):
-    bound = socket.socket()
-    bound.bind(("127.0.0.1", 0))
-
+def test_a_last_step_that_stops_core_serves_nothing(monkeypatch, stubbed_server):
     def refuse(service, host, port, app):
         raise SystemExit(2)
 
-    toy.use(monkeypatch, SimpleNamespace(bind=lambda service, host, port: bound, before_serving=refuse))
+    toy.use(monkeypatch, SimpleNamespace(before_serving=refuse))
 
     with pytest.raises(SystemExit) as stopped:
-        core_main.run(host="127.0.0.1", port=bound.getsockname()[1])
+        core_main.run(host="127.0.0.1", port=64002)
 
     assert stopped.value.code == 2
     assert stubbed_server == []
-    assert bound.fileno() == -1
 
 
 def test_a_storage_dir_marked_for_another_extension_is_not_served(monkeypatch, stubbed_server, tmp_path):

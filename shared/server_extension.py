@@ -9,8 +9,8 @@ The module defines the hooks it needs and no others (``HOOKS``):
 
 - ``before_import(service)``: before ``service`` (``core`` or ``worker``) reads its storage dir, in a main process.
 - ``add_arguments(parser)``: its flags on a command-line parser that refuses unknown ones.
-- ``bind(service, host, port)``: the bound socket to serve on, or ``None``.
-- ``before_serving(service, host, port, app)``: the last step before the server takes requests.
+- ``before_serving(service, host, port, app)``: the last step before the server takes requests; it answers the
+  socket to serve on when it bound one, else ``None``, and closes that socket itself when it stops the start.
 - ``serving(service, port, app)``: starts what runs while serving and answers a callable that stops it, or ``None``.
 - ``routers(service)``: ``(router, prefix)`` pairs to mount.
 - ``identity()``: this server as a controller knows it, an ``Identity``, or ``None``.
@@ -44,7 +44,6 @@ HOOKS = frozenset(
     {
         "before_import",
         "add_arguments",
-        "bind",
         "before_serving",
         "serving",
         "routers",

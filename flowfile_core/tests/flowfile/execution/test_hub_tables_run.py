@@ -11,10 +11,13 @@ import pytest
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.execution.payloads import CatalogTableIdentity, DeltaWritePayload, unpack
 from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.hub_client import client, session
+from flowfile_core.hub_client import vend as vend_holder
 from flowfile_core.hub_client.client import HubRefused
 from flowfile_core.hub_client.report import build_run_report
 from flowfile_core.schemas import input_schema
@@ -475,6 +478,26 @@ def test_fetch_data_after_a_development_run_asks_the_hub_nothing(connected, carr
 
     assert [(row.node_id, row.success) for row in fetch_info.node_step_result] == [(2, True)]
     assert len(connected.vend_calls) == 1
+
+
+def test_a_fetch_whose_placement_fails_after_its_vend_keeps_nothing_of_the_vend(connected, monkeypatch, flag):
+    graph = make_graph(8731 + 100 * flag, execution_location="local", execution_mode="Performance")
+    add_hub_reader(graph, 1, connected)
+    add_sort_on(graph, 2, 1, "id")
+
+    def unreachable(self, execution_plan, exchange_run):
+        raise ComputeUnavailable("Connection refused")
+
+    monkeypatch.setattr(FlowGraph, "_place_run", unreachable)
+
+    with pytest.raises(ComputeUnavailable):
+        graph.trigger_fetch_node(2)
+
+    [vend] = connected.vend_calls
+    assert vend_holder.held(vend["run_id"]) is None, "the fetch's credential is forgotten with the fetch"
+    assert graph.catalog_run_id is None
+    assert graph.run_grant is None
+    assert graph.flow_settings.is_running is False
 
 
 @pytest.mark.parametrize("mode", ["Performance", "Development"])

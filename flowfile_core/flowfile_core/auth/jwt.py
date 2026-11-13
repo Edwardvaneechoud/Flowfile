@@ -220,18 +220,6 @@ def invalidate_user_cache(username: str | None = None) -> None:
             _user_cache.pop(username, None)
 
 
-def _user_from_row(row: db_models.User) -> User:
-    return User(
-        username=row.username,
-        id=row.id,
-        email=row.email,
-        full_name=row.full_name,
-        disabled=row.disabled,
-        is_admin=row.is_admin,
-        must_change_password=row.must_change_password,
-    )
-
-
 def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPException) -> User:
     """Token subject → ``User``.
 
@@ -252,7 +240,15 @@ def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPE
         row = db.query(db_models.User).filter(db_models.User.username == username).first()
         if row is None:
             raise credentials_exception
-        user = _user_from_row(row)
+        user = User(
+            username=row.username,
+            id=row.id,
+            email=row.email,
+            full_name=row.full_name,
+            disabled=row.disabled,
+            is_admin=row.is_admin,
+            must_change_password=row.must_change_password,
+        )
         with _user_cache_lock:
             _user_cache[username] = (now + USER_CACHE_TTL_SECONDS, user)
     if user.disabled:

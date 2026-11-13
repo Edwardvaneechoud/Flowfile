@@ -10,9 +10,7 @@ restored after the test.
 """
 
 import os
-import socket
 import sys
-from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -102,7 +100,7 @@ def served(monkeypatch) -> dict:
     """Runs ``start_server`` up to uvicorn: the app it extends and the host and port it hands core's ``run``."""
     seen: dict = {"app": FastAPI()}
     monkeypatch.setattr(core_main, "app", seen["app"])
-    monkeypatch.setattr(core_main, "run", lambda host, port, sock=None: seen.update(host=host, port=port, sock=sock))
+    monkeypatch.setattr(core_main, "run", lambda host, port: seen.update(host=host, port=port))
     monkeypatch.setattr(settings.OFFLOAD_TO_WORKER, "value", settings.OFFLOAD_TO_WORKER.value)
     monkeypatch.setattr(settings.SINGLE_FILE_MODE, "value", settings.SINGLE_FILE_MODE.value)
     monkeypatch.setattr(settings, "WORKER_URL", settings.WORKER_URL)
@@ -169,7 +167,7 @@ def test_a_server_without_the_editor_s_files_marks_no_editor(served, tmp_path, m
 
     web.start_server(open_browser=False)
 
-    assert (served["host"], served["port"], served["sock"]) == ("127.0.0.1", 63578, None)
+    assert (served["host"], served["port"]) == ("127.0.0.1", 63578)
     assert not hasattr(served["app"].state, "editor_path")
     assert served["app"].state.worker_path == "/worker"
 
@@ -185,35 +183,3 @@ def test_the_editor_is_served_at_ui_slash_and_never_a_file_outside_its_folder(se
     for path in (f"/ui/{editor_files / 'secret.txt'}", "/ui/..%2Fsecret.txt", "/ui/%2Fetc%2Fhosts"):
         response = client.get(path, follow_redirects=False)
         assert (response.status_code, response.text) == (200, "<html>editor</html>"), path
-
-
-def test_a_server_whose_extension_binds_first_is_handed_that_socket(served, monkeypatch):
-    bound = socket.socket()
-    bound.bind(("127.0.0.1", 0))
-    port = bound.getsockname()[1]
-    asked = []
-    toy.use(monkeypatch, SimpleNamespace(bind=lambda service, host, port: asked.append((service, host, port)) or bound))
-
-    web.start_server(port=port, open_browser=False)
-
-    with served["sock"] as sock:
-        assert sock is bound
-    assert asked == [("core", "127.0.0.1", port)]
-    assert (served["host"], served["port"]) == ("127.0.0.1", port)
-    assert settings.WORKER_URL == f"http://127.0.0.1:{port}/worker"
-
-
-def test_a_server_whose_extension_cannot_bind_stops_before_anything_is_set_up(served, monkeypatch):
-    def refuse(service, host, port):
-        raise SystemExit(1)
-
-    toy.use(monkeypatch, SimpleNamespace(bind=refuse))
-    worker_url = settings.WORKER_URL
-
-    with pytest.raises(SystemExit) as exited:
-        web.start_server(port=8080, open_browser=False)
-
-    assert exited.value.code == 1
-    assert "host" not in served
-    assert settings.WORKER_URL == worker_url
-    assert not hasattr(served["app"].state, "worker_path")

@@ -263,6 +263,23 @@ class CatalogService:
             return
         self._require_manage("catalog_table", table_id)
 
+    def _require_commit_cdc_cursor(self, table_id: int, consumer_key: str, cursor) -> None:
+        """Who may advance ``cursor`` (``None`` for one this commit creates), beyond reading its table.
+
+        A named cursor is shared by every reader of the table. A flow's cursor (``flow:<flow_uuid>:node:<id>``) is
+        advanced by whoever may use that flow, since a flow has one cursor whoever runs it; that of a flow this
+        catalog does not hold by its owner. Whoever manages the table advances any, as they may reset it.
+        """
+        if not self._restricted or remote_of(table_id) is not None or not consumer_key.startswith("flow:"):
+            return
+        flow = self.repo.get_flow_by_uuid(consumer_key.split(":")[1])
+        if flow is not None:
+            allowed = self.access.can_use("flow", flow.id)
+        else:
+            allowed = cursor is None or cursor.owner_id in (None, self.access.user_id)
+        if not allowed and not self.access.can_manage("catalog_table", table_id):
+            raise NotAuthorizedError(self.access.user_id or -1, "advance this flow's change cursor")
+
     def _require_use_visualization(self, viz_id: int) -> None:
         """Viz read: creator, a use/manage grant, or read on its parent table."""
         if not self._restricted:
@@ -1272,11 +1289,13 @@ class CatalogService:
         """Record a consumer's read of the table's changes up to ``commit.last_version``, as a run's reader does.
 
         ``owner_id`` owns a cursor this commit creates, or one nobody owns yet; a cursor that has an owner keeps it,
-        so a commit never hands the caller the owner's right to reset or delete it.
+        so a commit never hands the caller the owner's right to reset or delete it. A flow's cursor takes more than
+        reading the table (``_require_commit_cdc_cursor``).
         """
         self.get_table(table_id)
         fields = commit.model_dump(exclude={"consumer_key", "last_version"})
         existing = self.repo.get_cdc_cursor(table_id, commit.consumer_key)
+        self._require_commit_cdc_cursor(table_id, commit.consumer_key, existing)
         owner = owner_id if existing is None or existing.owner_id is None else None
         cursor = self.repo.upsert_cdc_cursor(
             table_id, commit.consumer_key, commit.last_version, owner_id=owner, **fields

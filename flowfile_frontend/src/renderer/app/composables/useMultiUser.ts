@@ -14,8 +14,7 @@ export function useMultiUser() {
   async function refresh(): Promise<boolean> {
     try {
       const status = await setupService.getSetupStatus();
-      // A server's page (a hub's own page answers `server`) is multi-user too: its catalog is shared, and who
-      // may manage it shows.
+      // A server's page is multi-user too: its catalog is shared, and who may manage it shows.
       isMultiUser.value = status.mode === "docker" || status.mode === "server";
       projectsEnabled.value = status.projects_enabled ?? false;
       projectsConfined.value = status.projects_confined ?? false;

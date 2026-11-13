@@ -1,6 +1,6 @@
-"""The worker asks its server's extension at five points and nowhere else: who else may call it, what runs while it
-serves, the socket it serves on, the last step before it serves, and what opens a sealed credential. A spawned child
-loads the extension only when it opens one."""
+"""The worker asks its server's extension at four points and nowhere else: who else may call it, what runs while it
+serves, the last step before it serves, which may answer the socket to serve on, and what opens a sealed credential.
+A spawned child loads the extension only when it opens one."""
 
 import multiprocessing
 import socket
@@ -74,14 +74,13 @@ def stubbed_server(monkeypatch):
     return served
 
 
-def test_the_worker_serves_on_the_socket_its_extension_bound_after_its_last_step(monkeypatch, stubbed_server):
+def test_the_worker_serves_on_the_socket_its_extension_s_last_step_answers(monkeypatch, stubbed_server):
     bound = socket.socket()
     bound.bind(("127.0.0.1", 0))
     port = bound.getsockname()[1]
     steps = []
     extension = SimpleNamespace(
-        bind=lambda service, host, port: steps.append(("bind", service, host, port)) or bound,
-        before_serving=lambda service, host, port, app: steps.append(("before_serving", service, host, port)),
+        before_serving=lambda service, host, port, app: steps.append((service, host, port, app)) or bound
     )
     toy.use(monkeypatch, extension)
 
@@ -90,24 +89,20 @@ def test_the_worker_serves_on_the_socket_its_extension_bound_after_its_last_step
 
         ((config, sockets),) = stubbed_server
         assert sockets == [bound]
-    assert steps == [("bind", "worker", "127.0.0.1", port), ("before_serving", "worker", "127.0.0.1", port)]
+    assert steps == [("worker", "127.0.0.1", port, main.app)]
 
 
-def test_a_last_step_that_stops_the_worker_closes_the_socket_and_serves_nothing(monkeypatch, stubbed_server):
-    bound = socket.socket()
-    bound.bind(("127.0.0.1", 0))
-
+def test_a_last_step_that_stops_the_worker_serves_nothing(monkeypatch, stubbed_server):
     def refuse(service, host, port, app):
         raise SystemExit(2)
 
-    toy.use(monkeypatch, SimpleNamespace(bind=lambda service, host, port: bound, before_serving=refuse))
+    toy.use(monkeypatch, SimpleNamespace(before_serving=refuse))
 
     with pytest.raises(SystemExit) as stopped:
-        main.run(host="127.0.0.1", port=bound.getsockname()[1])
+        main.run(host="127.0.0.1", port=64001)
 
     assert stopped.value.code == 2
     assert stubbed_server == []
-    assert bound.fileno() == -1
 
 
 def test_without_an_extension_uvicorn_binds_the_port_as_it_always_has(monkeypatch, stubbed_server):

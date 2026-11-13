@@ -73,11 +73,6 @@ def _eligible_connections() -> list[str]:
         return sorted({name for (name,) in rows.all()})
 
 
-def _hub_store(user: User) -> ExchangeConfig | None:
-    """The store this machine's hub sets, asked with the admin's hub session."""
-    return hub_store(user.id)
-
-
 def _state(hub: ExchangeConfig | None = None) -> ExchangeStoreState:
     stored = exchange_config.saved()
     effective = exchange_config.effective_store(stored, hub)
@@ -110,7 +105,7 @@ def _state(hub: ExchangeConfig | None = None) -> ExchangeStoreState:
 @router.get("/exchange_store", response_model=ExchangeStoreState, tags=["system"])
 def get_exchange_store(current_user: User = Depends(get_current_admin_user)) -> ExchangeStoreState:
     """The exchange store as a run uses it now. Admin-only."""
-    return _state(_hub_store(current_user))
+    return _state(hub_store(current_user.id))
 
 
 @router.post("/exchange_store", response_model=ExchangeStoreState, tags=["system"])
@@ -149,4 +144,4 @@ def set_exchange_store(
         exchange_config.save(config)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Could not save the exchange store: {e}") from e
-    return _state(_hub_store(current_user))
+    return _state(hub_store(current_user.id))

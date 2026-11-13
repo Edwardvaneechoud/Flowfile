@@ -4,6 +4,7 @@ import polars as pl
 import pytest
 
 from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import get_db_context
 
 
 @pytest.fixture
@@ -145,6 +146,82 @@ def test_a_commit_that_creates_a_cursor_makes_the_caller_its_owner(users, client
     assert committed.status_code == 200, committed.text
     assert committed.json()["owner_id"] == users["bob"].id
     assert bob.delete(f"/catalog/tables/{alice_table}/cdc/cursors/name:bobs_cursor").status_code == 204
+
+
+@pytest.fixture
+def alice_flow_cursor(users, resource_factory, alice_table) -> tuple[int, str]:
+    """A flow alice registered in a private schema, and its reader's cursor on her table: ``(flow id, key)``."""
+    catalog_id = resource_factory(
+        db_models.CatalogNamespace, name="AliceFlowCat", parent_id=None, level=0, owner_id=users["alice"].id
+    )
+    schema_id = resource_factory(
+        db_models.CatalogNamespace, name="alice_flow_schema", parent_id=catalog_id, level=1, owner_id=users["alice"].id
+    )
+    flow_uuid = "0b7d1c1e-5f43-4a55-9a0e-1c7a51f0c0de"
+    flow_id = resource_factory(
+        db_models.FlowRegistration,
+        name="alice_cdc_flow",
+        flow_path="/tmp/alice_cdc_flow.flowfile",
+        flow_uuid=flow_uuid,
+        namespace_id=schema_id,
+        owner_id=users["alice"].id,
+    )
+    key = f"flow:{flow_uuid}:node:3"
+    resource_factory(
+        db_models.CatalogCdcCursor, table_id=alice_table, consumer_key=key, owner_id=users["alice"].id, last_version=0
+    )
+    return flow_id, key
+
+
+def _position(table_id: int, key: str) -> int:
+    with get_db_context() as db:
+        return db.query(db_models.CatalogCdcCursor).filter_by(table_id=table_id, consumer_key=key).one().last_version
+
+
+def test_a_reader_of_the_table_may_not_advance_the_cursor_of_a_flow_they_cannot_use(
+    users, client_for, alice_table, alice_flow_cursor, team, grant_factory
+):
+    """An advanced cursor makes the flow's next run skip the changes in between, so it takes the flow, not the table."""
+    _, key = alice_flow_cursor
+    grant_factory("catalog_table", alice_table, team, permission="use", granted_by=users["alice"].id)
+    bob = client_for("bob")
+
+    refused = bob.post(f"/catalog/tables/{alice_table}/cdc/cursors", json={"consumer_key": key, "last_version": 1})
+
+    assert refused.status_code == 403, refused.text
+    assert _position(alice_table, key) == 0
+
+
+def test_whoever_may_use_a_flow_advances_its_cursor(
+    users, client_for, alice_table, alice_flow_cursor, team, grant_factory
+):
+    """A flow has one cursor whoever runs it: another person's run advances it and leaves it its owner."""
+    flow_id, key = alice_flow_cursor
+    grant_factory("catalog_table", alice_table, team, permission="use", granted_by=users["alice"].id)
+    grant_factory("flow", flow_id, team, permission="use", granted_by=users["alice"].id)
+    bob = client_for("bob")
+
+    committed = bob.post(f"/catalog/tables/{alice_table}/cdc/cursors", json={"consumer_key": key, "last_version": 1})
+
+    assert committed.status_code == 200, committed.text
+    assert (committed.json()["last_version"], committed.json()["owner_id"]) == (1, users["alice"].id)
+
+
+def test_the_cursor_of_a_flow_this_catalog_does_not_hold_is_advanced_by_its_owner_or_a_manager_of_the_table(
+    users, client_for, alice_table, group_factory, grant_factory
+):
+    readers = group_factory("cdc-readers", users["admin"].id, {users["bob"].id: "member", users["carol"].id: "member"})
+    grant_factory("catalog_table", alice_table, readers, permission="use", granted_by=users["alice"].id)
+    key = "flow:5e1f3c52-6d0b-4c57-8d0a-3a1b7b6f2d11:node:1"
+    route = f"/catalog/tables/{alice_table}/cdc/cursors"
+    bob, carol, alice = client_for("bob"), client_for("carol"), client_for("alice")
+
+    assert bob.post(route, json={"consumer_key": key, "last_version": 0}).json()["owner_id"] == users["bob"].id
+    assert carol.post(route, json={"consumer_key": key, "last_version": 1}).status_code == 403
+    assert _position(alice_table, key) == 0
+    assert bob.post(route, json={"consumer_key": key, "last_version": 1}).status_code == 200
+    assert alice.post(route, json={"consumer_key": key, "last_version": 2}).json()["owner_id"] == users["bob"].id
+    assert bob.delete(f"{route}/{key}").status_code == 204
 
 
 def test_manage_grantee_may_delete_any_cursor(

@@ -54,11 +54,11 @@ def test_a_process_that_names_no_extension_imports_none(tmp_path):
 
 def test_the_named_module_is_imported_on_the_first_call_and_asked_from_then_on(unloaded, monkeypatch):
     monkeypatch.setenv(server_extension.VARIABLE, TOY)
-    toy.answers["bind"] = "a socket"
+    toy.answers["before_serving"] = "a socket"
 
-    assert server_extension.call("bind", "core", "127.0.0.1", 8080) == "a socket"
+    assert server_extension.call("before_serving", "core", "127.0.0.1", 8080, None) == "a socket"
     assert server_extension.load() is toy
-    assert toy.calls == [("bind", "core", "127.0.0.1", 8080)]
+    assert toy.calls == [("before_serving", "core", "127.0.0.1", 8080)]
     assert server_extension.word("sealer", "issuer") == "toy"
 
 

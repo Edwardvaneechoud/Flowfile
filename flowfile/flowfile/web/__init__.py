@@ -167,8 +167,7 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     It sets single-file mode: flows compute on the worker embedded in this process. ``run`` marks the
     process as serving, so the worker's jobs run in its pool or a child, never in the serving process.
     ``FLOWFILE_WORKER_POOL_SIZE`` sizes the pool. ``host`` and ``port`` are where it serves; a
-    server bound to every address (``0.0.0.0``) is reached from this machine on the loopback address. A server whose
-    extension binds its socket first (core's ``listen``) does so here, before anything else is set up.
+    server bound to every address (``0.0.0.0``) is reached from this machine on the loopback address.
 
     A host other machines reach needs ``FLOWFILE_MODE=docker``, where everyone signs in with a password; in the
     default mode, where the editor signs in whoever reaches it as this machine's administrator, any host but a
@@ -190,9 +189,8 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
         raise SystemExit(2)
 
     from flowfile_core.main import app as core_app
-    from flowfile_core.main import listen, run
+    from flowfile_core.main import run
 
-    sock = listen(host, port)
     local = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     settings.OFFLOAD_TO_WORKER.value = True
     settings.SINGLE_FILE_MODE.value = True
@@ -210,4 +208,4 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     print(f"    API Docs: http://{local}:{port}/docs")
     print("=" * 60 + "\n")
 
-    run(host=host, port=port, sock=sock)
+    run(host=host, port=port)

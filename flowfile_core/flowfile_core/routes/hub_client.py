@@ -261,15 +261,6 @@ def _label(node) -> str:
         return node.node_type
 
 
-@router.get("/flows", summary="The hub's flows")
-def hub_flows(namespace_id: int | None = None, current_user=Depends(get_current_active_user)) -> list[dict]:
-    hub_url, token = _hub(current_user)
-    try:
-        return client.list_flows(hub_url, token, namespace_id)
-    except (HubUnreachable, HubRefused, HubVersionRefused) as e:
-        raise _hub_error(e) from e
-
-
 @router.get("/flows/{flow_uuid}/versions", summary="A hub flow's versions")
 def hub_flow_versions(flow_uuid: str, current_user=Depends(get_current_active_user)) -> list[dict]:
     hub_url, token = _hub(current_user)

@@ -371,16 +371,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.badge {
-  background-color: var(--color-accent-subtle);
-  color: var(--color-accent);
-  border-radius: var(--border-radius-full);
-  padding: var(--spacing-1) var(--spacing-3);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  margin-left: var(--spacing-2);
-}
-
 /* Intro / landing screen */
 .secrets-intro {
   max-width: 760px;

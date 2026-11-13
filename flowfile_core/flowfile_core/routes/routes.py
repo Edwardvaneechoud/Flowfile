@@ -92,7 +92,6 @@ from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.errors import RESULT_GONE
 from flowfile_core.flowfile.execution.payloads import FileWritePayload, RestApiReadPayload, op_payload
-from flowfile_core.flowfile.execution.placement import SingleBackendPolicy, unmoved_without_store
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
     get_formula_chain_check,
@@ -121,7 +120,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
-from flowfile_core.hub_client.exchange_store import hub_store
+from flowfile_core.hub_client.exchange_store import store_for_run
 from flowfile_core.hub_client.report import build_run_report, hub_flow_uuid, hub_target, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
 from flowfile_core.notebook.kernel_runner import close_flow_sessions, lineage_commits
@@ -384,9 +383,9 @@ def _editor_call_for(user_id: int) -> Iterator[None]:
 def _fetch_for(user_id: int, flow, node_id: int, **kwargs) -> None:
     """``flow.trigger_fetch_node`` for ``user_id``: on a server joined with keys of its own, a server of the hub takes
     that person's run token (``acting_for``). The fetch takes the hub's exchange store as a run does
-    (``_hub_store_for``)."""
+    (``store_for_run``)."""
     try:
-        flow.hub_exchange_store = _hub_store_for(flow, user_id)
+        flow.hub_exchange_store = store_for_run(flow, user_id)
     except BaseException:
         flow.hub_exchange_store = None
         flow.release_run()
@@ -530,21 +529,6 @@ def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tu
     return reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml
 
 
-def _hub_store_for(flow, user_id: int | None):
-    """The hub's exchange store for a run of ``flow`` on a machine signed in to a hub, when one could apply.
-
-    A flow that runs whole on this machine's own worker, and that uses no connection or secret of the hub, crosses
-    nothing, so the hub is not asked for it. A flow set to another backend, or with a step set to one, may cross: a
-    step that backend cannot run, such as a read of a file on this machine, moves back here through the store.
-    """
-    run_backend_id = current_context(flow).backend_id
-    elsewhere = run_backend_id.startswith(compute_registry.CONFIGURED_WORKER_PREFIX)
-    if not elsewhere and not unmoved_without_store(flow.nodes, SingleBackendPolicy(run_backend_id)):
-        if not flow.uses_hub_secrets():
-            return None
-    return hub_store(user_id)
-
-
 def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
     """Run a flow (only ``node_ids`` when given) and persist the run record to the database.
 
@@ -563,7 +547,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
 
     On a machine signed in to a hub the run takes the exchange store the hub sets, asked once before the run with the
     user's hub session and only for a flow with a node set to another backend than the run's or a step on a hub
-    connection or secret, the cases a store changes (``_hub_store_for``), and holds it until the run ends. The run is
+    connection or secret, the cases a store changes (``store_for_run``), and holds it until the run ends. The run is
     the user's (``acting_for``), so each call to a server of the hub carries the run token minted with
     that user's own sign-in through the hub.
     """
@@ -571,7 +555,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
         reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
         # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
         commit_sources = node_ids is None or lineage_commits(flow, node_ids)
-        flow.hub_exchange_store = _hub_store_for(flow, user_id)
+        flow.hub_exchange_store = store_for_run(flow, user_id)
     except BaseException:
         flow.hub_exchange_store = None
         flow.release_run()
@@ -2916,9 +2900,9 @@ def get_flow_placement(flow_id: int, current_user=Depends(get_current_active_use
     because theirs cannot run them, and the nodes no backend can run. Runs nothing and changes nothing.
 
     On a server joined with keys of its own the preview takes the exchange store the hub sets, asked as a run of the
-    caller asks it (``_hub_store_for``), so a node a run would carry through that store is not shown refused."""
+    caller asks it (``store_for_run``), so a node a run would carry through that store is not shown refused."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
-    placement = flow.preview_placement(hub_store=_hub_store_for(flow, current_user.id))
+    placement = flow.preview_placement(hub_store=store_for_run(flow, current_user.id))
     if placement is None:
         return output_model.PlacementPreview(available=False)
     return output_model.PlacementPreview(

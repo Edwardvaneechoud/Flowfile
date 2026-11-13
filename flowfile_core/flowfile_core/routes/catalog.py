@@ -1196,7 +1196,11 @@ def commit_table_cdc_cursor(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Advance one consumer's cursor after a run that read its changes, as that run's reader. Requires use."""
+    """Advance one consumer's cursor after a run that read its changes, as that run's reader.
+
+    Requires use of the table; a flow's cursor also use of that flow, or for a flow this catalog does not hold cursor
+    ownership, or manage on the table.
+    """
     return service.commit_table_cdc_cursor(table_id, body, owner_id=current_user.id)
 
 

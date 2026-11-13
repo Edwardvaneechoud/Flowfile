@@ -554,6 +554,7 @@ class ExecutionMixin(GraphMixinBase):
                 raise
         except BaseException:
             # The node left between the route's check and this task, or placing it failed: release the slot.
+            self._end_remote_run(exchange_run)
             self.release_run()
             self._end_exchange_run(exchange_run)
             raise

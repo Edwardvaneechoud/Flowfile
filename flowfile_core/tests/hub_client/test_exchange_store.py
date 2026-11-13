@@ -115,7 +115,7 @@ def test_a_run_that_raises_leaves_no_hub_store_on_the_flow(run_rows, monkeypatch
     graph = create_test_graph(flow_id=8544)
     held: list = []
     vended = ExchangeConfig(uri=HUB_STORE["uri"], connection="org exchange", vended_for=1)
-    monkeypatch.setattr(routes, "_hub_store_for", lambda flow, user_id: vended)
+    monkeypatch.setattr(routes, "store_for_run", lambda flow, user_id: vended)
 
     def run_graph(**_):
         held.append(graph.hub_exchange_store)
@@ -211,19 +211,17 @@ def test_a_run_asks_for_the_store_only_for_a_flow_with_a_node_set_elsewhere(sign
     graph = create_test_graph(flow_id=8401, execution_location="local")
     add_test_manual_input(graph, [{"id": 1}], node_id=1)
 
-    assert routes._hub_store_for(graph, 1) is None
+    assert hub_exchange_store.store_for_run(graph, 1) is None
     assert signed_in.calls == []
 
     graph.get_node(1).setting_input.execution_location = "worker:elsewhere"
-    assert routes._hub_store_for(graph, 1).vended_for == 1
+    assert hub_exchange_store.store_for_run(graph, 1).vended_for == 1
 
 
 def test_the_exchange_card_shows_the_hubs_store_as_the_hubs(signed_in):
-    from types import SimpleNamespace
-
     from flowfile_core.routes import system_exchange
 
-    state = system_exchange._state(system_exchange._hub_store(SimpleNamespace(id=1)))
+    state = system_exchange._state(system_exchange.hub_store(1))
 
     assert (state.source, state.uri) == ("hub", HUB_STORE["uri"])
     assert "vended" not in state.model_dump()

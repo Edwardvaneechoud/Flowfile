@@ -5,7 +5,6 @@ import asyncio
 import logging
 import os
 import signal
-import socket
 import sys
 import threading
 from contextlib import asynccontextmanager
@@ -335,28 +334,21 @@ def signal_handler(signum, frame):
         _stop_server(server_instance)
 
 
-def listen(host: str, port: int) -> socket.socket | None:
-    """The socket this core serves on when its extension binds one before serving; ``None`` otherwise, and uvicorn
-    binds the port as it always has."""
-    return server_extension.call("bind", "core", host, port)
-
-
-def run(host: str = None, port: int = None, sock: socket.socket | None = None):
+def run(host: str = None, port: int = None):
     """Runs the FastAPI application using Uvicorn.
 
     This function configures and starts the Uvicorn server, setting up
     signal handlers to ensure a graceful shutdown. A storage dir marked for a
     server extension is served only with it loaded (``require_marked``). An
-    extension may bind the socket first (``listen``, or ``sock`` when the
-    caller bound it) and take a last step before requests are taken
-    (``before_serving``); the server then serves on that socket. It then marks
+    extension takes a last step before requests are taken
+    (``before_serving``); when it answers a socket it bound, the server serves
+    on that socket, else uvicorn binds the port as it always has. It then marks
     the process as serving (``registry.mark_serving``), so its compute is never
     the worker embedded in it.
 
     Args:
         host: The host to bind the server to. Defaults to `SERVER_HOST` from settings.
         port: The port to bind the server to. Defaults to `SERVER_PORT` from settings.
-        sock: A socket already bound, which the server is handed.
     """
     global server_instance, serving_port
 
@@ -365,14 +357,7 @@ def run(host: str = None, port: int = None, sock: socket.socket | None = None):
     if port is None:
         port = SERVER_PORT
     server_extension.require_marked()
-    if sock is None:
-        sock = listen(host, port)
-    try:
-        server_extension.call("before_serving", "core", host, port, app)
-    except BaseException:
-        if sock is not None:
-            sock.close()
-        raise
+    sock = server_extension.call("before_serving", "core", host, port, app)
     compute_registry.mark_serving()
     print(f"Starting server on {host}:{port}")
     print(

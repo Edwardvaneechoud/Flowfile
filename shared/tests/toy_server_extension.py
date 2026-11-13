@@ -32,12 +32,8 @@ def add_arguments(parser):
     _called("add_arguments")
 
 
-def bind(service, host, port):
-    return _called("bind", service, host, port)
-
-
 def before_serving(service, host, port, app):
-    _called("before_serving", service, host, port)
+    return _called("before_serving", service, host, port)
 
 
 def serving(service, port, app):

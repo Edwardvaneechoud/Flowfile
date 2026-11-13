@@ -35,7 +35,7 @@ describe("useMultiUser", () => {
     expect(gitAvailable.value).toBe(true);
   });
 
-  it("treats a server's page (a hub's own page answers `server`) as multi-user", async () => {
+  it("treats a server's page as multi-user", async () => {
     mocks.getSetupStatus.mockResolvedValue({
       mode: "server",
       projects_enabled: false,

@@ -39,7 +39,8 @@ _module_http: httpx.Client | None = None
 _module_http_lock = threading.Lock()
 
 
-def _http(http: httpx.Client | None) -> httpx.Client:
+def http_client(http: httpx.Client | None = None) -> httpx.Client:
+    """``http`` when given, else the one client this process keeps for its hub."""
     if http is not None:
         return http
     global _module_http
@@ -72,7 +73,7 @@ def _detail(resp: httpx.Response) -> str:
 
 def _answered(method: str, url: str, path: str, http: httpx.Client | None, **kwargs) -> httpx.Response:
     try:
-        resp = _http(http).request(method, f"{url.rstrip('/')}{path}", **kwargs)
+        resp = http_client(http).request(method, f"{url.rstrip('/')}{path}", **kwargs)
     except httpx.RequestError as e:
         raise HubUnreachable(f"Could not reach the hub at {url}.") from e
     logger.info("hub %s %s -> %s", method, path, resp.status_code)
@@ -267,13 +268,6 @@ def get_exchange_store(url: str, access_token: str, *, http: httpx.Client | None
     ):
         raise HubRefused(200, f"{url} did not answer /hub/exchange-store as a Flowfile hub does.")
     return body
-
-
-def list_flows(
-    url: str, access_token: str, namespace_id: int | None = None, *, http: httpx.Client | None = None
-) -> list:
-    params = {"namespace_id": namespace_id} if namespace_id is not None else None
-    return _request_list("GET", url, "/hub/flows", http, params=params, headers=_bearer(access_token))
 
 
 def list_versions(url: str, access_token: str, flow_uuid: str, *, http: httpx.Client | None = None) -> list:
