@@ -1383,6 +1383,42 @@ def add_catalog_key_column_task(
             raise
 
 
+def restore_catalog_version_task(
+    table_path: str,
+    version: int,
+    expected_version: int | None,
+    commit_metadata: dict[str, str] | None,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    storage_options: dict | None = None,
+):
+    """Subprocess task: restore a Delta catalog table to an earlier version."""
+    try:
+        from shared.delta_utils import DeltaEditError, DeltaEditStaleError, restore_delta_version
+
+        try:
+            result = restore_delta_version(
+                table_path,
+                version,
+                expected_version=expected_version,
+                storage_options=storage_options,
+                commit_metadata=commit_metadata,
+            )
+        except DeltaEditStaleError as e:
+            raise ValueError(f"STALE_WRITE:{e.expected}:{e.current}") from e
+        except DeltaEditError as e:
+            raise ValueError(f"EDIT_INVALID:{e}") from e
+        queue.put(result)
+        with progress.get_lock():
+            progress.value = 100
+    except BaseException as e:
+        # The route parses these sentinels by prefix, so no class name is stamped here.
+        record_task_failure_text(error_message, progress, str(e), limit=1024)
+        if not isinstance(e, Exception):
+            raise
+
+
 def execute_sql_query(
     query: str,
     tables: dict[str, str],

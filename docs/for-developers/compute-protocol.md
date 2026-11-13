@@ -58,7 +58,7 @@ Invariant 1 binds a core that serves: the desktop sidecar, the Docker image, the
 `ComputeBackend` is a `runtime_checkable` `Protocol` in `flowfile_core/flowfile_core/flowfile/execution/protocol.py`. `Capabilities` and `PROTOCOL_VERSION` live in `shared/compute_protocol.py`, which core and the worker both import.
 
 ```python
-PROTOCOL_VERSION = 2                         # the worker contract: everything core and a worker exchange
+PROTOCOL_VERSION = 3                         # the worker contract: everything core and a worker exchange
 
 class ComputeBackend(Protocol):
     id: str                                  # "local", "worker", "worker:team"

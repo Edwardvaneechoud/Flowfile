@@ -391,6 +391,107 @@ class TestTableEditsApi:
         assert response.status_code == 404
 
 
+def _overwrite_table(table_id: int, df: pl.DataFrame) -> None:
+    with get_db_context() as db:
+        path = db.get(CatalogTable, table_id).file_path
+    df.write_delta(path, mode="overwrite", delta_write_options={"schema_mode": "overwrite"})
+
+
+class TestRestoreTableVersionService:
+    def test_restores_data_and_refreshes_the_record(self, tmp_path):
+        table_id = _make_delta_table(tmp_path)
+        _overwrite_table(table_id, pl.DataFrame({"id": [9], "extra": [1.0]}))
+        with _service() as svc:
+            response = svc.restore_table_version(table_id, 0, expected_version=1, restored_by="tester")
+        assert response.restored_version == 0
+        assert response.new_version == 2
+        assert [c.name for c in response.table.schema_columns] == ["id", "text"]
+        with get_db_context() as db:
+            table = db.get(CatalogTable, table_id)
+            assert table.row_count == 3
+            out = pl.read_delta(table.file_path).sort("id")
+        assert out["text"].to_list() == ["a", "b", "c"]
+
+    def test_stale_version_raises_stale_write(self, tmp_path):
+        table_id = _make_delta_table(tmp_path)
+        _overwrite_table(table_id, pl.DataFrame({"id": [9]}))
+        with _service() as svc, pytest.raises(StaleWriteError):
+            svc.restore_table_version(table_id, 0, expected_version=0)
+
+    def test_scd2_table_allowed(self, tmp_path):
+        table_id = _make_delta_table(tmp_path, scd2_config=json.dumps({"business_keys": ["id"]}))
+        _overwrite_table(table_id, pl.DataFrame({"id": [9], "text": ["z"]}))
+        with _service() as svc:
+            response = svc.restore_table_version(table_id, 0)
+        assert response.table.row_count == 3
+
+    def test_virtual_table_rejected(self, tmp_path):
+        table_id = _make_delta_table(tmp_path, table_type="virtual", file_path=None, storage_format=None)
+        with _service() as svc, pytest.raises(ValueError, match="virtual"):
+            svc.restore_table_version(table_id, 0)
+
+    def test_below_the_change_feed_floor_rejected(self, tmp_path):
+        from shared.delta_utils import enable_change_data_feed
+
+        table_id = _make_delta_table(tmp_path)
+        with get_db_context() as db:
+            table = db.get(CatalogTable, table_id)
+            floor = enable_change_data_feed(table.file_path)
+            table.cdc_enabled = True
+            table.cdc_enabled_version = floor
+            db.commit()
+        _overwrite_table(table_id, pl.DataFrame({"id": [9], "text": ["z"]}))
+        with _service() as svc, pytest.raises(ValueError, match="change feed"):
+            svc.restore_table_version(table_id, floor - 1)
+        with _service() as svc:
+            response = svc.restore_table_version(table_id, floor)
+        assert response.table.row_count == 3
+
+
+class TestRestoreTableVersionApi:
+    def test_restore_endpoint(self, client, tmp_path):
+        table_id = _make_delta_table(tmp_path)
+        assert client.post(f"/catalog/tables/{table_id}/favorite").status_code == 201
+        _overwrite_table(table_id, pl.DataFrame({"id": [9]}))
+        response = client.post(f"/catalog/tables/{table_id}/restore", json={"version": 0, "expected_version": 1})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["restored_version"] == 0
+        assert body["new_version"] == 2
+        assert body["table"]["row_count"] == 3
+        assert body["table"]["is_favorite"] is True
+        history = client.get(f"/catalog/tables/{table_id}/history").json()
+        assert history["current_version"] == 2
+        assert history["history"][0]["operation"] == "RESTORE"
+
+    def test_stale_write_409(self, client, tmp_path):
+        table_id = _make_delta_table(tmp_path)
+        _overwrite_table(table_id, pl.DataFrame({"id": [9]}))
+        response = client.post(f"/catalog/tables/{table_id}/restore", json={"version": 0, "expected_version": 0})
+        assert response.status_code == 409
+        assert response.json()["detail"]["current"] == 1
+
+    @pytest.mark.parametrize("version", [0, 7])
+    def test_current_or_unknown_version_422(self, client, tmp_path, version):
+        table_id = _make_delta_table(tmp_path)
+        response = client.post(f"/catalog/tables/{table_id}/restore", json={"version": version})
+        assert response.status_code == 422
+
+    def test_negative_version_rejected_by_the_schema(self, client, tmp_path):
+        table_id = _make_delta_table(tmp_path)
+        response = client.post(f"/catalog/tables/{table_id}/restore", json={"version": -1})
+        assert response.status_code == 422
+
+    def test_missing_table_404(self, client):
+        response = client.post("/catalog/tables/999999/restore", json={"version": 0})
+        assert response.status_code == 404
+
+    def test_requires_auth(self, tmp_path):
+        table_id = _make_delta_table(tmp_path)
+        response = TestClient(main.app).post(f"/catalog/tables/{table_id}/restore", json={"version": 0})
+        assert response.status_code == 401
+
+
 class TestPredictionTableAssociation:
     """PUT /catalog/tables/{id} maintains the labelled-table -> prediction-table link."""
 

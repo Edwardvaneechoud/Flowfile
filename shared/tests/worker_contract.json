@@ -1,5 +1,5 @@
 {
-  "protocol_version": 2,
+  "protocol_version": 3,
   "entries": {
     "catalog cloud_storage_connections": "d07b34d88d5d98f4dcefc5379e59f4654fa069a22f353e0d23453d3c802192e9",
     "operation cloud_write": "017af5dd5184f5a1babe678a90ea46c34a51c9846b1c4a37601767d832b3d777",
@@ -54,6 +54,7 @@
     "route POST /catalog/delta_version_preview": "6e7083d74c896045b5f7c805095875e7895f601aeeb6635690948218b1146d1c",
     "route POST /catalog/materialize": "e17f453f02d007be03c3645f6b0d287ce92550b92c6c09d4be4b84a51497d1a9",
     "route POST /catalog/optimize": "9afb921f082a749d97b916d44bd680ee4cacd2e7eead25898df215f9268dc4d3",
+    "route POST /catalog/restore_version": "b04472ab75972ba3bcf5cb980ef1d46d1306437948a05cd8951bcaba96d3ea0c",
     "route POST /catalog/sql_query": "74a5afa9059dd770978b6914a8884fde03c912d1a0e9c95016b09064ad40abd6",
     "route POST /catalog/table_metadata": "0490ee09677865aef9a46c05adf77821cf50f3bc7209f8ea00eb56c735eb3448",
     "route POST /catalog/vacuum": "0f3240ccd47976621b9cefc83a4b82c51a1ecbab5af290599ef85ac146e5e1cf",
