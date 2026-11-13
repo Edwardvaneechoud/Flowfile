@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -377,7 +378,26 @@ async def execute_cell(kernel_id: str, request: ExecuteRequest, current_user=Dep
         request.interactive = True
         request.exec_token = ""  # server-minted; a client must not address another cell
         manager.resolve_node_paths(request)
-        return await manager.execute(kernel_id, request)
+        # Negative flow ids are the Catalog-page notebook namespaces. Bind their lookup
+        # callbacks to the token KernelManager will carry through this execution.
+        from flowfile_core.notebook import kernel_runner
+
+        catalog_execution = request.flow_id < 0
+        if catalog_execution:
+            request.exec_token = uuid.uuid4().hex
+            key = (kernel_id, request.flow_id)
+            with kernel_runner._lock:
+                kernel_runner._catalog_executions.setdefault(key, set()).add(request.exec_token)
+        try:
+            return await manager.execute(kernel_id, request)
+        finally:
+            if catalog_execution:
+                with kernel_runner._lock:
+                    tokens = kernel_runner._catalog_executions.get(key)
+                    if tokens is not None:
+                        tokens.discard(request.exec_token)
+                        if not tokens:
+                            kernel_runner._catalog_executions.pop(key, None)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

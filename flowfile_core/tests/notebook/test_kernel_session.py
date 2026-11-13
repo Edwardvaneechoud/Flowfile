@@ -79,6 +79,22 @@ def test_a_cell_with_an_import_and_a_loop_runs_in_the_session(orders_flow, clien
     assert "last" in {frame["name"] for frame in schemas["dataframes"]}
 
 
+def test_catalog_page_execute_cell_routes_metadata_through_core(client, kernel_sim):
+    """Ordinary catalog notebook cells have no canvas session to authorize metadata lookups."""
+    namespace_id = -987654321
+    response = client.post(
+        f"/kernels/{kernel_sim.kernel.id}/execute_cell",
+        json={
+            "node_id": 1,
+            "flow_id": namespace_id,
+            "code": "from flowfile_frame import _metadata; _metadata.namespaces(None)",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["success"], response.json()
+    assert any(call["flow_id"] == namespace_id and call["kind"] == "namespaces" for call in kernel_sim.lookups)
+
+
 def test_execute_opens_the_session_and_reports_a_failing_line(orders_flow, client, kernel_sim):
     result = _execute(client, orders_flow, kernel_sim, "x = 1\nraise ValueError('boom')")
     assert not result["success"]

@@ -112,6 +112,7 @@ def _set_context(
     source_registration_id: int | None = None,
     log_callback_url: str = "",
     internal_token: str | None = None,
+    exec_token: str = "",
     interactive: bool = False,
     available_artifacts: dict[str, int] | None = None,
     dry_run: bool = False,
@@ -126,6 +127,7 @@ def _set_context(
             "source_registration_id": source_registration_id,
             "log_callback_url": log_callback_url,
             "internal_token": internal_token,
+            "exec_token": exec_token,
             "interactive": interactive,
             "available_artifacts": available_artifacts,
             "dry_run": dry_run,
@@ -346,6 +348,9 @@ def _get_internal_auth_headers() -> dict[str, str]:
         token = ctx.get("internal_token")
         if token:
             headers["X-Internal-Token"] = token
+        exec_token = ctx.get("exec_token")
+        if exec_token:
+            headers["X-Execution-Token"] = exec_token
     except LookupError:
         pass
     # Fall back to env var (set at container creation time)

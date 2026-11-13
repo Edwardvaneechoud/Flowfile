@@ -210,6 +210,7 @@ def notebook_node_run(
 def notebook_session_lookup(
     body: lookup.LookupRequest,
     x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
+    x_execution_token: str | None = Header(None, alias="X-Execution-Token"),
     current_user=Depends(get_user_or_internal_service),
 ) -> dict:
     """Answer a catalog metadata lookup for the notebook session on the calling kernel: ``{"result"}``.
@@ -219,4 +220,4 @@ def notebook_session_lookup(
     """
     if not x_kernel_id:
         raise HTTPException(status_code=403, detail="Only a notebook kernel can ask for a lookup")
-    return lookup.answer_request(x_kernel_id, current_user, body)
+    return lookup.answer_request(x_kernel_id, current_user, body, x_execution_token)
