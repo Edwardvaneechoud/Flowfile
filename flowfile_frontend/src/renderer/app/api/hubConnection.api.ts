@@ -19,6 +19,8 @@ export interface HubConnection {
   account: string | null;
   /** This server joined its hub with keys of its own: it belongs to that hub, named by `hub_url`. */
   joined: boolean;
+  /** On a joined server, the name its hub knows it by; null anywhere else. */
+  server_name: string | null;
   /** On a joined server, the organisation's storage root as the hub shows it; null when not known. */
   organisation_storage: string | null;
 }

@@ -62,6 +62,7 @@ class HubConnection(BaseModel):
     error: str | None = None
     account: str | None = None
     joined: bool = False
+    server_name: str | None = None
     organisation_storage: str | None = None
 
 
@@ -122,7 +123,7 @@ def get_connection(current_user=Depends(get_current_active_user)) -> HubConnecti
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         connection = _connection(stored, error=str(e), account=account)
     if node is not None:
-        connection.hub_url, connection.joined = hub_url, True
+        connection.hub_url, connection.joined, connection.server_name = hub_url, True, node.name
         connection.organisation_storage = info.get("organisation_storage") if info else None
     return connection
 

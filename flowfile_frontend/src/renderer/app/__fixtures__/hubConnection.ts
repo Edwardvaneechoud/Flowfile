@@ -12,6 +12,7 @@ export const none: HubConnection = {
   error: null,
   account: null,
   joined: false,
+  server_name: null,
   organisation_storage: null,
 };
 
