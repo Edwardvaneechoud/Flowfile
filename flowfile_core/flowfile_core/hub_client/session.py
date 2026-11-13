@@ -15,7 +15,7 @@ import uuid
 
 import jwt
 
-from flowfile_core.auth import secrets
+from flowfile_core.auth import secrets, sharing
 from flowfile_core.configs import logger
 from flowfile_core.hub_client import client
 from shared import server_extension
@@ -51,6 +51,10 @@ def account(stored: dict) -> str | None:
 
 
 def load(user_id: int) -> dict | None:
+    """``user_id``'s stored connection; ``None`` without one, and for the internal service user, who borrows a
+    person's id and has no sign-in of its own (``sharing.acts_for_no_person``)."""
+    if sharing.acts_for_no_person():
+        return None
     raw = secrets.get_password(SERVICE, _key(user_id))
     if not raw:
         return None
@@ -144,6 +148,8 @@ def access_token(user_id: int) -> str | None:
     A refused refresh leaves a desktop connection as it was; a delegation answered ``invalid_grant`` is cleared,
     node tokens included, before the refusal is raised.
     """
+    if sharing.acts_for_no_person():
+        return None
     try:
         with _lock:
             cached = _access_tokens.get(user_id)

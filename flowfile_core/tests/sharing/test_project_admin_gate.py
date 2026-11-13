@@ -52,6 +52,19 @@ class TestProjectAdminGate:
         finally:
             s.FLOWFILE_ENABLE_PROJECTS.set(False)
 
+    def test_a_server_run_by_hand_is_gated_like_docker(self, monkeypatch):
+        monkeypatch.setattr(s, "FLOWFILE_MODE", "server")
+        s.FLOWFILE_ENABLE_PROJECTS.set(False)
+        try:
+            with pytest.raises(HTTPException) as hidden:
+                require_projects_enabled()
+            with pytest.raises(HTTPException) as refused:
+                require_projects_admin(_NON_ADMIN)
+            assert hidden.value.status_code == refused.value.status_code == 404
+            require_projects_admin(_ADMIN)
+        finally:
+            s.FLOWFILE_ENABLE_PROJECTS.set(False)
+
     def test_electron_non_admin_is_unrestricted(self, monkeypatch):
         monkeypatch.setattr(s, "FLOWFILE_MODE", "electron")
         require_projects_enabled()  # must not raise

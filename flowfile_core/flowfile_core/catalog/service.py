@@ -1269,11 +1269,17 @@ class CatalogService:
     def commit_table_cdc_cursor(
         self, table_id: int, commit: CdcCursorCommitRequest, owner_id: int | None
     ) -> CdcCursorOut:
-        """Record a consumer's read of the table's changes up to ``commit.last_version``, as a run's reader does."""
+        """Record a consumer's read of the table's changes up to ``commit.last_version``, as a run's reader does.
+
+        ``owner_id`` owns a cursor this commit creates, or one nobody owns yet; a cursor that has an owner keeps it,
+        so a commit never hands the caller the owner's right to reset or delete it.
+        """
         self.get_table(table_id)
         fields = commit.model_dump(exclude={"consumer_key", "last_version"})
+        existing = self.repo.get_cdc_cursor(table_id, commit.consumer_key)
+        owner = owner_id if existing is None or existing.owner_id is None else None
         cursor = self.repo.upsert_cdc_cursor(
-            table_id, commit.consumer_key, commit.last_version, owner_id=owner_id, **fields
+            table_id, commit.consumer_key, commit.last_version, owner_id=owner, **fields
         )
         return CdcCursorOut.model_validate(cursor)
 

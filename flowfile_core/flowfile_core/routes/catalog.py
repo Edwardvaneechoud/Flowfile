@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service, kernel_owner_id
+from flowfile_core.auth.sharing import note_principal
 from flowfile_core.catalog import (
     KEEP_PREDICTION,
     AmbiguousTableError,
@@ -218,9 +219,11 @@ async def _remote_rows(
 ) -> None:
     """Every route of this router goes through ``relay_remote``, so a remote table, flow or namespace has the detail,
     run history, rename, delete and schedules a local one has, answered by its catalog as the signed-in person. Left
-    to the handlers here: the routes that read a table's data (``_READ_HERE``) and a kernel's lookups."""
+    to the handlers here: the routes that read a table's data (``_READ_HERE``), a kernel's lookups, and a caller
+    holding only the internal token, who is no person a remote catalog knows (``note_principal``)."""
     read_here = request.url.path.endswith(_READ_HERE)
-    if kernel_owner is None and not getattr(current_user, "disabled", False) and not read_here:
+    a_person = not note_principal(current_user) and kernel_owner is None
+    if a_person and not getattr(current_user, "disabled", False) and not read_here:
         await relay_remote(request, current_user.id, "/catalog")
 
 

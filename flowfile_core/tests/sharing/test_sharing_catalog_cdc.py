@@ -110,6 +110,43 @@ def test_use_grantee_may_not_delete_another_users_cursor(
     assert bob.delete(f"/catalog/tables/{alice_table}/cdc/cursors/name:alices_cursor").status_code == 403
 
 
+def test_a_commit_by_another_reader_leaves_the_cursor_its_owner(
+    users, client_for, alice_table, team, grant_factory, resource_factory
+):
+    """A reader's run may advance a shared cursor; it does not become the one who may reset or delete it."""
+    grant_factory("catalog_table", alice_table, team, permission="use", granted_by=users["alice"].id)
+    resource_factory(
+        db_models.CatalogCdcCursor,
+        table_id=alice_table,
+        consumer_key="name:alices_cursor",
+        owner_id=users["alice"].id,
+        last_version=0,
+    )
+    bob = client_for("bob")
+
+    committed = bob.post(
+        f"/catalog/tables/{alice_table}/cdc/cursors", json={"consumer_key": "name:alices_cursor", "last_version": 1}
+    )
+
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["last_version"] == 1
+    assert committed.json()["owner_id"] == users["alice"].id
+    assert bob.delete(f"/catalog/tables/{alice_table}/cdc/cursors/name:alices_cursor").status_code == 403
+
+
+def test_a_commit_that_creates_a_cursor_makes_the_caller_its_owner(users, client_for, alice_table, team, grant_factory):
+    grant_factory("catalog_table", alice_table, team, permission="use", granted_by=users["alice"].id)
+    bob = client_for("bob")
+
+    committed = bob.post(
+        f"/catalog/tables/{alice_table}/cdc/cursors", json={"consumer_key": "name:bobs_cursor", "last_version": 1}
+    )
+
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["owner_id"] == users["bob"].id
+    assert bob.delete(f"/catalog/tables/{alice_table}/cdc/cursors/name:bobs_cursor").status_code == 204
+
+
 def test_manage_grantee_may_delete_any_cursor(
     users, client_for, alice_table, team, grant_factory, resource_factory
 ):

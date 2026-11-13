@@ -195,3 +195,21 @@ def test_a_notebook_kernel_walks_to_a_hub_table_and_finds_it_a_view(hub, kernel_
     assert listed["id"] == named["id"] == in_schema["table"]["id"] == -hub.orders["id"]
     assert listed["table_type"] == named["table_type"] == "virtual"
     assert hub.fake.vend_calls == []
+
+
+def test_a_caller_with_only_the_internal_token_reaches_no_row_of_the_hub(hub):
+    """With no kernel id the caller is the internal service user, who carries user 1's id and is no person."""
+    service = TestClient(main.app)
+    service.headers = {"X-Internal-Token": get_internal_token()}
+    table_id = -hub.orders["id"]
+    asked = len(hub.fake.calls)
+
+    answers = [
+        service.get(f"/catalog/tables/{table_id}"),
+        service.put(f"/catalog/tables/{table_id}", json={"name": "taken"}),
+        service.delete(f"/catalog/tables/{table_id}"),
+        service.post(f"/catalog/tables/{table_id}/materialize"),
+    ]
+
+    assert all(answer.status_code >= 400 for answer in answers), [answer.status_code for answer in answers]
+    assert hub.fake.calls[asked:] == [] and hub.fake.vend_calls == []

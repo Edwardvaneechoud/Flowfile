@@ -121,7 +121,7 @@ def get_master_key() -> str:
     Get the master encryption key.
 
     If in TEST_MODE, returns a test key.
-    If running in Docker, retrieves the key from Docker secrets or environment.
+    On a multi-user server (docker or server mode), retrieves the key from Docker secrets or environment.
     Otherwise, retrieves the key from secure storage.
 
     Returns:
@@ -134,7 +134,7 @@ def get_master_key() -> str:
     if TEST_MODE:
         return b"06t640eu3AG2FmglZS0n0zrEdqadoT7lYDwgSmKyxE4=".decode()
 
-    if os.environ.get("FLOWFILE_MODE") == "docker":
+    if os.environ.get("FLOWFILE_MODE") in ("docker", "server"):
         key = get_docker_secret_key()
         if key is None:
             raise RuntimeError(

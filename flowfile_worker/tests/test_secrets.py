@@ -62,6 +62,23 @@ class TestGetMasterKey:
         assert len(key) > 0
 
 
+class TestGetMasterKeyOnAServer:
+    """Outside TEST_MODE a multi-user server reads the configured key, as core does in both server modes."""
+
+    @pytest.mark.parametrize("mode", ["docker", "server"])
+    def test_reads_the_configured_key(self, monkeypatch, mode):
+        from cryptography.fernet import Fernet
+
+        import flowfile_worker.secrets as worker_secrets
+
+        key = Fernet.generate_key().decode()
+        monkeypatch.setattr(worker_secrets, "TEST_MODE", False)
+        monkeypatch.setenv("FLOWFILE_MODE", mode)
+        monkeypatch.setenv("FLOWFILE_MASTER_KEY", key)
+
+        assert get_master_key() == key
+
+
 class TestGetDockerSecretKey:
     """Test get_docker_secret_key function."""
 

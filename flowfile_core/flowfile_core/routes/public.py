@@ -59,7 +59,7 @@ async def get_setup_status():
         setup_required=not master_key_ok,
         master_key_configured=master_key_ok,
         mode=mode,
-        projects_enabled=(not settings.is_docker_mode()) or bool(settings.FLOWFILE_ENABLE_PROJECTS),
+        projects_enabled=settings.FLOWFILE_MODE not in ("docker", "server") or bool(settings.FLOWFILE_ENABLE_PROJECTS),
         projects_confined=not settings.is_electron_mode(),
         git_available=git_available(),
         version=get_version(),
