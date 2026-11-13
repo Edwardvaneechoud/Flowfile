@@ -342,7 +342,7 @@ def minio_over_tls(tmp_path_factory):
 def test_a_model_published_to_minio_is_applied_from_the_catalog_with_no_shared_disk(
     tmp_path, minio_over_tls, minio_prefix
 ):
-    """Both services trust the forwarder's certificate: core's boto3 finalises the version, the worker moves the bytes."""
+    """Both services trust the forwarder's certificate: core's boto3 finalises the version,git  the worker moves the bytes."""
     endpoint, certificate = minio_over_tls
     prefix = f"{minio_prefix}/"
     store = {

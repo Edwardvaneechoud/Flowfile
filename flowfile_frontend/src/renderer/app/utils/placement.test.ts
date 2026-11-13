@@ -29,6 +29,12 @@ const row = (overrides: Partial<NodeResult>): NodeResult => ({
 });
 
 describe("nodePlacementNote", () => {
+  it("shows no badge while a backend's capabilities are unchecked", () => {
+    expect(
+      nodePlacementNote(preview({ fallbacks: [], unchecked_backend_ids: ["worker:polars"] }), 2),
+    ).toBeNull();
+  });
+
   it("says in one sentence where a moved node runs, and adds what its backend lacks for the drawer", () => {
     const text =
       'Runs on the default worker, because backend "worker:polars" doesn\'t support this node.';

@@ -24,6 +24,10 @@ class NodeResult(BaseModel):
     success: bool | None = None
     # A deliberate skip (a closed gate upstream) carries success=True, so a gated run stays green.
     skipped: bool = False
+    cancelled: bool = Field(
+        default=False,
+        description="A cancel stopped the node before it reported an outcome of its own; success is None.",
+    )
     error: str = ""
     compute_error: str | None = Field(
         default=None,
@@ -62,6 +66,12 @@ class NodeResult(BaseModel):
         self.run_time_ms = int((self.end_timestamp - self.start_timestamp) * 1000)
         self.is_running = False
 
+    def stop(self) -> None:
+        """Close this result out as stopped by a cancel: no outcome, and marked so a reader can tell why."""
+        self.success = None
+        self.cancelled = True
+        self.is_running = False
+
 
 class RunInformation(BaseModel):
     """Contains summary information about a complete FlowGraph execution."""
@@ -70,6 +80,13 @@ class RunInformation(BaseModel):
     start_time: datetime | None = Field(default_factory=datetime.now)
     end_time: datetime | None = None
     success: bool | None = None
+    cancelled: bool = Field(
+        default=False,
+        description=(
+            "A cancel stopped the run before every node ran and no node failed on its own; success is False. A node "
+            "the cancel stopped is marked cancelled, and one that failed before the cancel keeps the run failed."
+        ),
+    )
     is_running: bool = False
     execution_mode: str | None = None
     nodes_completed: int = 0
@@ -110,6 +127,8 @@ class PlacementPreview(BaseModel):
     """
 
     available: bool
+    cached_node_ids: list[int] = Field(default_factory=list)
+    unchecked_backend_ids: list[str] = Field(default_factory=list)
     assignment: dict[int, str] = Field(default_factory=dict, description="Node id -> the backend that would run it.")
     fallbacks: list[PlacementFallback] = Field(default_factory=list)
     refusals: list[PlacementRefusal] = Field(default_factory=list)

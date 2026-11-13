@@ -129,14 +129,21 @@ def test_a_retrain_releases_the_model_it_replaces(flow):
     assert backend.exists(second) is True
 
 
-def test_an_apply_whose_model_is_gone_asks_for_the_train_node_again(flow):
+def test_a_train_node_whose_model_is_gone_fits_it_again_or_the_apply_asks_for_it(flow):
+    """With the protocol on the next run refits the missing model; with it off the apply fails, naming the node."""
     assert flow.run_graph().success
     model = flow.get_node(2).results.model_ref
-    registry.backend(model.backend_id).release(model)
+    backend = registry.backend(model.backend_id)
+    backend.release(model)
 
     _apply(flow, 3, output_column="scored")
     run = flow.run_graph()
 
+    if settings.FLOWFILE_COMPUTE_PROTOCOL:
+        assert run.success, _failures(run)
+        assert backend.exists(flow.get_node(2).results.model_ref) is True
+        assert _predictions(flow, 3, "scored") == [row["y"] for row in ROWS]
+        return
     assert run.success is False
     failures = _failures(run)
     assert list(failures) == [3], failures

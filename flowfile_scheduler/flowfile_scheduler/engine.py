@@ -28,7 +28,7 @@ from flowfile_scheduler.models import (
 )
 from shared.database import create_catalog_engine
 from shared.notifications.processor import process_pending_notifications
-from shared.run_completion import reap_orphaned_runs
+from shared.run_completion import reap_orphaned_runs, terminate_pid
 from shared.run_logs import cleanup_old_logs
 from shared.storage_config import get_database_url
 
@@ -543,6 +543,10 @@ class FlowScheduler:
 
         run.pid = pid
         db.commit()
+        db.refresh(run)
+        if run.ended_at is not None:
+            # Cancelled while it was starting: that cancel saw no pid to signal.
+            logger.info("Run %s was cancelled while starting: %s", run.id, terminate_pid(pid))
         return LaunchOutcome.LAUNCHED
 
     def _spawn_flow(self, flow_path: str, run_id: int) -> int | None:

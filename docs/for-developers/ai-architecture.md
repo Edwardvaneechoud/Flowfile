@@ -231,7 +231,7 @@ Per-vendor subclasses override class-level fields:
 | Class | `name` | `model_prefix` | `default_model` | Notable surface defaults |
 |-------|--------|----------------|-----------------|--------------------------|
 | `AnthropicProvider` | `anthropic` | `anthropic/` | `claude-sonnet-5-5` | Sonnet 5.5 for `explain` / `docgen` / `lineage`; Haiku 4.5 for Cmd+K / ghost / autocomplete / agent_staged; Opus 4.7 for `agent_complex` |
-| `OpenAIProvider` | `openai` | `""` | `gpt-4.1-mini` | `gpt-4.1` for `explain` / `agent_complex` / `docgen` / `lineage` |
+| `OpenAIProvider` | `openai` | `""` | `gpt-6-luna` | All surfaces; `reasoning_effort="none"` for Chat Completions tool use |
 | `GoogleProvider` | `google` | `gemini/` | `gemini-2.5-flash` | `gemini-2.5-pro` for `agent_complex` |
 | `GroqProvider` | `groq` | `groq/` | `qwen/qwen3-32b` | `qwen/qwen3-coder-30b-a3b-instruct` for most surfaces (ghost / explain / agent_* / docgen / lineage / …); `qwen/qwen3-32b` for `cmd_k` |
 | `OpenRouterProvider` | `openrouter` | `openrouter/` | `qwen/qwen3.6-35b-a3b` | same for `agent_staged`; `anthropic/claude-sonnet-5.5` / `claude-haiku-4.5` / `claude-opus-4.7` mirror the Anthropic adapter |

@@ -21,7 +21,7 @@ from flowfile_core.flowfile.execution.context import (
     current_context,
     use_context,
 )
-from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, TaskFailed
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, ResultMissing, TaskFailed
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
     JobHandle,
@@ -241,6 +241,8 @@ class FlowNode:
     _executor: NodeExecutor | None
     _execution_state: NodeExecutionState
     _execution_lock: threading.RLock  # guards concurrent get_resulting_data
+    _recompute_lock: threading.Lock
+    _recompute_count: int
     _state_needs_reset: bool
     # invoked by run_graph() once all downstream dependents finish; e.g. Kafka commits offsets on success
     _on_flow_complete: Callable[[bool], None] | None
@@ -353,6 +355,8 @@ class FlowNode:
         self._executor = None
         self._execution_state = NodeExecutionState()
         self._execution_lock = threading.RLock()
+        self._recompute_lock = threading.Lock()
+        self._recompute_count = 0
         self._state_needs_reset = False
         self._on_flow_complete = None
         self._skipped_input_ids_this_run = frozenset()
@@ -1724,12 +1728,66 @@ class FlowNode:
         self.results.job_handle = None
         self._release_or_drop(ref)
 
+    def held_refs(self) -> list[ResultRef]:
+        """Every result this node holds: its own, the outputs stored beside it and its operation's outputs."""
+        refs = [self.results.result_ref, *self._stored_outputs.values(), *self._operation_refs.values()]
+        return [ref for ref in refs if ref is not None]
+
+    def result_is_missing(self) -> bool:
+        """True when any result this node holds is gone from where it was kept (``NodeResults.artifact_is_missing``)."""
+        if self.results.artifact_is_missing():
+            return True
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            return False
+        return any(
+            not registry.backend(ref.backend_id).exists(ref)
+            for ref in [*self._stored_outputs.values(), *self._operation_refs.values()]
+        )
+
+    def result_is_gone(self) -> bool:
+        """True when a result a read of this node touches is gone: its own, or one its deferred plan scans.
+
+        Asked by the reads outside a run (a preview, column statistics, an export, a chart) after one failed. A sink
+        also answers for the node it previews, whose result its statistics and export read. A backend that cannot
+        answer counts as not gone, so the read's own error stands.
+        """
+        try:
+            if self.result_is_missing():
+                return True
+            sink = self._sink_source()
+        except (ComputeError, ColumnStatsUnavailable):
+            return False
+        ref = self.results.result_ref
+        if ref is not None and ref.state == "deferred":
+            upstream = self.all_inputs
+        else:
+            upstream = [sink[0]] if sink else []
+        return any(node.result_is_gone() for node in upstream)
+
     def held_result(self, backend_id: str) -> ResultRef | None:
         """The result this node holds on backend ``backend_id`` under its current hash, else ``None``."""
         ref = self.results.result_ref
         if ref is None or ref.backend_id != backend_id or ref.result_id != self.hash:
             return None
         return ref
+
+    def is_cached_on(self, backend_id: str) -> bool:
+        """Whether a cache-eligible node holds current materialised rows on ``backend_id``.
+
+        Output nodes, subflow calls and formula gates always run, regardless of stored rows.
+        This advisory check does not perform source-freshness I/O or guarantee execution-time reuse.
+        """
+        if (
+            self.node_template.node_group == "output"
+            or self.node_type == "run_flow"
+            or (self.node_type == "gate" and self.executor._gate_routes_on_formula())
+        ):
+            return False
+        ref = self.results.result_ref
+        return bool(
+            self.node_settings.cache_results and ref is not None and ref.state == "materialised"
+            and self.held_result(backend_id) is not None
+        )
 
     def result_backend(self, handle: str = DEFAULT_OUTPUT_HANDLE) -> ComputeBackend | None:
         """The backend that holds the result of output ``handle``, else ``None``; a plan over it runs there."""
@@ -1966,7 +2024,14 @@ class FlowNode:
         (``_operation_refs``, by output name), released with its result. A deferred one stays the caller's to
         release, since the engine built over it holds its plan. A stored output replaced under the same name by
         another id (a random split or database read rerun) is released first. Failures follow ``run_operation``.
+
+        With the protocol on, an input this node holds on ``backend`` is checked first (``exists``), as a submit's
+        inputs are; one that is gone is ``ResultMissing`` before anything runs.
         """
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            for ref in self._input_refs(backend.id):
+                if not backend.exists(ref):
+                    raise ResultMissing(f"Backend {backend.id!r} no longer holds input result {ref.result_id!r}")
         self._submit_in_flight = JobHandle(backend.id, job_id)
         try:
             result = run_operation(backend, op, payload)
@@ -1983,14 +2048,14 @@ class FlowNode:
         return result
 
     def _input_refs(self, backend_id: str) -> list[ResultRef]:
-        """The results this node's upstream nodes hold on backend ``backend_id``; one holding none is left out.
-
-        An input that crossed to this node from another backend (``_boundary_inputs``) counts by its import.
+        """Every table result this node's upstream nodes hold on backend ``backend_id`` (``held_refs``), so a node with
+        any output gone is a missing input before anything runs; a blob is no input to a plan (an apply names its
+        model). An input that crossed from another backend (``_boundary_inputs``) counts by its import.
         """
         refs: dict[str, ResultRef] = {}
-        held = [node.results.result_ref for node in self.all_inputs]
+        held = [ref for node in self.all_inputs for ref in node.held_refs()]
         for ref in [*held, *(edge.ref for edge in self._boundary_inputs.values())]:
-            if ref is not None and ref.backend_id == backend_id:
+            if ref is not None and ref.backend_id == backend_id and ref.kind != "blob":
                 refs[ref.result_id] = ref
         return list(refs.values())
 
@@ -2101,6 +2166,7 @@ class FlowNode:
         unreachable: Exception | None = None,
         running: Collection[int | str] | None = None,
         preview: bool | None = None,
+        recompute: bool = False,
     ) -> None:
         """Execute the node based on its current state and settings.
 
@@ -2120,6 +2186,8 @@ class FlowNode:
             running: The ids of the nodes the run executes, among which the hints count this node's consumers
                 (``executor.hints_for``); ``None`` counts every consumer.
             preview: Fill the 100-row grid; ``None`` means ``not performance_mode``.
+            recompute: The node is run again under its current hash because its result went missing; the
+                nodes below keep theirs unless its results come back under other ids.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -2135,6 +2203,7 @@ class FlowNode:
             unreachable=unreachable,
             running=running,
             preview=preview,
+            recompute=recompute,
         )
 
     def needs_reset(self) -> bool:
@@ -2515,13 +2584,19 @@ class FlowNode:
                 if settings.FLOWFILE_COMPUTE_PROTOCOL and ref is not None:
                     cached = self.results.example_data_generator
                     output = self.held_output(output_handle) if output_handle != DEFAULT_OUTPUT_HANDLE else None
-                    if output_handle == DEFAULT_OUTPUT_HANDLE and cached is not None:
-                        table = cached()
-                    elif output is not None:
-                        table = _arrow_table(registry.backend(output.backend_id).sample(output, 100))
-                    else:
-                        table = head_rows(registry.backend(ref.backend_id), engine.data_frame, 100)
-                    data = table.to_pylist()
+                    try:
+                        if output_handle == DEFAULT_OUTPUT_HANDLE and cached is not None:
+                            table = cached()
+                        elif output is not None:
+                            table = _arrow_table(registry.backend(output.backend_id).sample(output, 100))
+                        else:
+                            table = head_rows(registry.backend(ref.backend_id), engine.data_frame, 100)
+                        data = table.to_pylist()
+                    except ComputeError:
+                        if not self.result_is_gone():
+                            raise
+                        # No rows: the grid then offers Fetch data, which recomputes what is gone.
+                        data = None
                 else:
                     preview_df = engine.data_frame.head(100)
                     if isinstance(preview_df, pl.LazyFrame):
@@ -2531,12 +2606,12 @@ class FlowNode:
                 return TableExample(
                     node_id=self.node_id,
                     name=str(self.node_id),
-                    number_of_records=self._preview_record_count(engine, len(data)),
+                    number_of_records=None if data is None else self._preview_record_count(engine, len(data)),
                     number_of_columns=len(schema),
                     table_schema=schema,
                     columns=[c.name for c in schema],
-                    data=data,
-                    has_example_data=True,
+                    data=data or [],
+                    has_example_data=data is not None,
                     has_run_with_current_setup=self.node_stats.has_run_with_current_setup,
                 )
 

@@ -82,7 +82,10 @@ export interface PlacementRefusal {
 }
 
 export interface PlacementPreview {
+  /** Backends needing a live check, including cached negative verdicts. */
+  unchecked_backend_ids?: string[];
   available: boolean;
+  cached_node_ids?: number[];
   assignment: Record<number, string>;
   fallbacks: PlacementFallback[];
   refusals: PlacementRefusal[];
@@ -96,6 +99,8 @@ export interface RunInformation {
   start_time: string | null; // datetime in ISO format; null when the flow never ran
   end_time: string | null; // datetime in ISO format
   success: boolean | null; // null while the flow is still running
+  // A cancel stopped the run and no node failed on its own; read with success false. Absent from an older core.
+  cancelled?: boolean;
   is_running: boolean;
   execution_mode: ExecutionMode | null;
   nodes_completed: number;

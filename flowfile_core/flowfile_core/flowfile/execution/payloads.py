@@ -128,10 +128,13 @@ class RestApiReadPayload(OperationPayload):
     Attributes:
         settings: The node's ``NodeRestApiReader``; its ``rest_api_settings`` name the request and how to page.
         encrypted_secret: The auth secret as stored; ``None`` when the request carries none.
+        sample_size: Set for a test request: one page of at most this many records, whose ``metadata`` also
+            describes the first response. ``None`` for a run.
     """
 
     settings: input_schema.NodeRestApiReader
     encrypted_secret: str | None
+    sample_size: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

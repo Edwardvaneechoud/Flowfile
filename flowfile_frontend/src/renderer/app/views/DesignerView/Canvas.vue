@@ -1388,6 +1388,7 @@ onMounted(() => {
       if (!running && wasRunning) {
         flowStore.fetchArtifacts();
         flowStore.fetchSettingsValidation();
+        flowStore.fetchPlacement();
       }
     },
   );
@@ -1504,6 +1505,7 @@ defineExpose({
         :default-viewport="{ zoom: 1 }"
         :zoom-on-double-click="false"
         :multi-selection-key-code="null"
+        :delete-key-code="['Backspace', 'Delete']"
         :is-valid-connection="isValidConnection"
         @edge-update="onEdgeUpdate"
         @edge-mouse-enter="onEdgeMouseEnter"

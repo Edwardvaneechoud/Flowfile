@@ -254,6 +254,8 @@ class FlowRun(Base):
     started_at = Column(DateTime, nullable=False)
     ended_at = Column(DateTime, nullable=True)
     success = Column(Boolean, nullable=True)
+    # Stopped on purpose before it finished; only read with success False, which a cancelled run keeps.
+    cancelled = Column(Boolean, nullable=False, default=False, server_default=sa.false())
     nodes_completed = Column(Integer, default=0)
     number_of_nodes = Column(Integer, default=0)
     duration_seconds = Column(Float, nullable=True)
