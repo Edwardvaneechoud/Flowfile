@@ -18,6 +18,7 @@ since ``flow_graph``, ``subflow``, the catalog storage backend, the prechecks an
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any
@@ -32,6 +33,23 @@ metadata_lookup: ContextVar[Lookup | None] = ContextVar("metadata_lookup", defau
 A notebook kernel session sets it for each op; core's own contexts never do, so there the database is read
 as always. Set only in the context that reads through it, like ``flow_graph.placement_check``.
 """
+
+
+def current_lookup() -> Lookup | None:
+    """How this context answers a catalog metadata lookup: the session's hook, else core for any other code in a
+    kernel, else ``None`` (read the database).
+
+    A kernel container (``FLOWFILE_KERNEL_ID`` set) holds no catalog database, so flowfile running there outside a
+    notebook session (a Catalog-page notebook cell, a Python Script node) asks core too
+    (``flowfile_frame._metadata.kernel_lookup``). Every read that would open the database asks this function.
+    """
+    hook = metadata_lookup.get()
+    if hook is not None or not os.environ.get("FLOWFILE_KERNEL_ID"):
+        return hook
+    from flowfile_frame._metadata import kernel_lookup
+
+    return kernel_lookup
+
 
 PRECHECKED_SETTINGS: tuple[str, ...] = (
     "NodeCloudStorageReader",
@@ -69,9 +87,12 @@ The last four read the host's filesystem, which the kernel mounts nothing of: a 
 
 
 class LookupRequest(BaseModel):
-    """Body of ``POST /notebook/session/lookup``: the session's flow, the kind and its arguments."""
+    """Body of ``POST /notebook/session/lookup``: the session's flow, the kind and its arguments.
 
-    flow_id: int
+    ``flow_id`` is ``None`` when the kernel asks outside a notebook session (:func:`current_lookup`).
+    """
+
+    flow_id: int | None = None
     kind: str = Field(pattern=r"^[a-z_]{1,40}$")
     args: dict[str, Any] = Field(default_factory=dict)
 
@@ -170,17 +191,38 @@ def answer(kind: str, args: dict[str, Any], user_id: int) -> Any:
         raise ValueError(f"Lookup {kind!r} cannot read its arguments: {exc}") from exc
 
 
+def _with_kernel_paths(kind: str, result: Any, to_kernel_path: Callable[[str], str]) -> Any:
+    """``result`` with its catalog table paths as the kernel sees them (its ``/catalog_tables`` mount)."""
+    if kind == "catalog_table" and result.get("file_path"):
+        return {**result, "file_path": to_kernel_path(result["file_path"])}
+    if kind == "catalog_sql_tables":
+        paths = {name: to_kernel_path(path) for name, path in result["table_paths"].items()}
+        return {**result, "table_paths": paths}
+    return result
+
+
 def answer_request(kernel_id: str, user, body: LookupRequest) -> dict[str, Any]:
-    """``{"result": answer}`` for the flow's session on ``kernel_id`` (``kernel_runner._bound_kernel``: the owner,
-    while the kernel holds the session or runs a call for the flow; the flow itself need not be open)."""
+    """``{"result": answer}`` for ``kernel_id``, as its owner.
+
+    With a ``flow_id`` the kernel must hold that flow's session or run a call for it
+    (``kernel_runner._bound_kernel``; the flow itself need not be open), and core's paths are answered as they
+    are, since core reads a session's catalog tables. Without one (``current_lookup`` outside a session) the owner
+    check is enough (``kernel_runner._owned_kernel``), and table paths are the kernel's, which reads them itself.
+    """
     from fastapi import HTTPException
 
     from flowfile_core.notebook import kernel_runner, validate
 
-    kernel_runner._bound_kernel(kernel_id, user, body.flow_id)
+    if body.flow_id is None:
+        manager = kernel_runner._owned_kernel(kernel_id, user)
+    else:
+        kernel_runner._bound_kernel(kernel_id, user, body.flow_id)
     if len(json.dumps(body.args, default=str)) > validate.MAX_PAYLOAD_BYTES:
         raise HTTPException(422, f"The lookup's arguments exceed {validate.MAX_PAYLOAD_BYTES} bytes")
     try:
-        return {"result": answer(body.kind, body.args, user.id)}
+        result = answer(body.kind, body.args, user.id)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if body.flow_id is None:
+        result = _with_kernel_paths(body.kind, result, manager.to_kernel_path)
+    return {"result": result}

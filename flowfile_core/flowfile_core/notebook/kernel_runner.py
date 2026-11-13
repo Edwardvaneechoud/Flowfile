@@ -505,19 +505,27 @@ def _write_result(flow, node_id: int, data, path: str) -> None:
         raise HTTPException(422, f"Could not hand node {node_id}'s rows to the kernel: {exc}") from exc
 
 
+def _owned_kernel(kernel_id: str, user):
+    """The manager behind a kernel's own call back, for the kernel's owner where kernel sessions are allowed: 403
+    otherwise. Enough for a lookup made outside a notebook session (``notebook.lookup.current_lookup``)."""
+    if not kernel_sessions_allowed(user):
+        raise HTTPException(403, DISABLED_DETAIL)
+    manager = _manager()
+    if manager.get_kernel_owner(kernel_id) != user.id:
+        raise HTTPException(403, "Not authorized to access this kernel")
+    return manager
+
+
 def _bound_kernel(kernel_id: str, user, flow_id: int):
-    """The manager behind a kernel's own call back, for the kernel's owner while the kernel holds the flow's session
-    or runs a call for it (a push's clean run): 403 otherwise. A lookup (``notebook.lookup``) needs no more."""
+    """:func:`_owned_kernel` while the kernel holds the flow's session or runs a call for it (a push's clean run):
+    403 otherwise. A lookup a session makes (``notebook.lookup``) needs no more."""
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     with _lock:
         open_here = kernel_id in _sessions.get(flow_id, {}) or (kernel_id, flow_id) in _running
     if not open_here:
         raise HTTPException(403, f"Kernel '{kernel_id}' has no notebook session open for flow {flow_id}")
-    manager = _manager()
-    if manager.get_kernel_owner(kernel_id) != user.id:
-        raise HTTPException(403, "Not authorized to access this kernel")
-    return manager
+    return _owned_kernel(kernel_id, user)
 
 
 def _bound_flow(kernel_id: str, user, flow_id: int):

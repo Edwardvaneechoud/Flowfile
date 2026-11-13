@@ -36,7 +36,7 @@ from flowfile_core.flowfile.param_types import (
     stringify_param_value,
 )
 from flowfile_core.flowfile.utils import create_unique_id
-from flowfile_core.notebook.lookup import metadata_lookup
+from flowfile_core.notebook.lookup import current_lookup
 from flowfile_core.schemas import input_schema
 
 if TYPE_CHECKING:
@@ -173,7 +173,7 @@ def local_registration(ref: input_schema.SubflowReference, user_id: int | None) 
 
 def _registration(ref: input_schema.SubflowReference, user_id: int | None) -> dict[str, Any]:
     """:func:`local_registration`, or core's answer in a notebook kernel session (``metadata_lookup`` set)."""
-    remote = metadata_lookup.get()
+    remote = current_lookup()
     if remote is None:
         return local_registration(ref, user_id)
     answer = remote("flow_registration", ref.model_dump(mode="json"))

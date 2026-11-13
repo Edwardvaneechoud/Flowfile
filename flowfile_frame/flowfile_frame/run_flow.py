@@ -37,7 +37,7 @@ from flowfile_core.flowfile.flow_node.input_handles import input_handle
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_core.flowfile.param_types import coerce_param_value
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
-from flowfile_core.notebook.lookup import metadata_lookup
+from flowfile_core.notebook.lookup import current_lookup
 from flowfile_core.schemas import input_schema
 from flowfile_frame import _metadata
 from flowfile_frame._identity import current_user_id
@@ -542,7 +542,7 @@ def _interface(ref: FlowRef) -> subflow.SubflowInterface:
 def _check_flow_file(ref: FlowRef) -> None:
     """``NativeNodeError`` unless ``ref``'s flow file is an absolute path to an existing file; in a notebook kernel
     session core checks it when it reads the interface (:func:`_interface`)."""
-    if metadata_lookup.get() is not None:
+    if current_lookup() is not None:
         _interface(ref)
         return
     path = Path(ref.flow_path)

@@ -19,7 +19,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection_schema
 from flowfile_core.flowfile.execution.protocol import CredentialRef
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
-from flowfile_core.notebook.lookup import metadata_lookup
+from flowfile_core.notebook.lookup import current_lookup
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
 from shared.cloud_credential_provider import CredentialRefProvider
 from shared.cloud_storage.uri import CLOUD_URI_SCHEMES as _CLOUD_URI_SCHEMES
@@ -187,7 +187,7 @@ def resolve_for_namespace(namespace_id: int | None, *, db: Session | None = None
         return _local_target()
     if db is not None:
         return _resolve_in_session(db, namespace_id)
-    remote = metadata_lookup.get()
+    remote = current_lookup()
     if remote is not None:
         answer = remote("catalog_storage", {"namespace_id": namespace_id})
         if "error" in answer:

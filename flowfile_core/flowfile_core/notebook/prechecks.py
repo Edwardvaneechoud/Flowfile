@@ -19,7 +19,7 @@ from flowfile_core.auth import sharing
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager import db_connections
 from flowfile_core.kafka.connection_manager import get_kafka_connection, get_kafka_connection_by_name
-from flowfile_core.notebook.lookup import PRECHECKED_SETTINGS, metadata_lookup
+from flowfile_core.notebook.lookup import PRECHECKED_SETTINGS, current_lookup
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageSettings
 from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
@@ -29,7 +29,7 @@ from shared.db_dialects import get_dialect_or_generic
 
 def placement_refusal(settings: Any, user_id: int | None) -> str | None:
     """Why ``settings`` may not be placed for ``user_id``, in the canvas's words; ``None`` when it may."""
-    remote = metadata_lookup.get()
+    remote = current_lookup()
     if remote is not None and type(settings).__name__ in PRECHECKED_SETTINGS:
         return remote(
             "placement_refusal",

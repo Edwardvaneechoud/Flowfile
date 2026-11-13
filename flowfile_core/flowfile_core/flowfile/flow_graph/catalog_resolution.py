@@ -20,7 +20,7 @@ from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_graph._root import root
-from flowfile_core.notebook.lookup import metadata_lookup
+from flowfile_core.notebook.lookup import current_lookup
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.catalog_schema import scd2_system_columns_missing
 
@@ -125,7 +125,7 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
     executing ``user_id`` may read, mirroring ``CatalogService.execute_sql_query``;
     a query referencing an inaccessible table simply finds it unregistered.
     """
-    remote = metadata_lookup.get()
+    remote = current_lookup()
     if remote is not None:
         answer = remote("catalog_sql_tables", {"node_id": node_id})
         return CatalogSqlTables(
@@ -226,7 +226,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     In a notebook kernel session (``metadata_lookup`` set) core answers from the same function, without the
     table's plan: the kernel opens no database connection and a virtual read is held there.
     """
-    remote = metadata_lookup.get()
+    remote = current_lookup()
     if remote is not None:
         return CatalogTableInfo(
             **remote(

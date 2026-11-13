@@ -7,7 +7,8 @@ Outside a kernel session it opens the catalog database or the file, as the frame
 ``flowfile_core.notebook.lookup.metadata_lookup`` is set for the op (:func:`installed`) and the function asks
 core instead (:class:`SessionLookup`), so the kernel opens no database connection and no secret, not even a
 ciphertext, reaches it. Core answers a kind by calling the ``local_*`` twin of the same function, so both
-paths compute the same thing.
+paths compute the same thing. Any other code in a kernel container (a Catalog-page notebook cell) asks core
+too, without a flow (:func:`kernel_lookup`, chosen by ``lookup.current_lookup``).
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from pydantic import BaseModel
 
-from flowfile_core.notebook.lookup import metadata_lookup
+from flowfile_core.notebook.lookup import current_lookup, metadata_lookup
 from flowfile_core.schemas.catalog_schema import CatalogTableOut
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionInterface
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
@@ -105,8 +106,20 @@ def dumped(value: Any) -> Any:
     return value
 
 
+def kernel_lookup(kind: str, args: dict[str, Any]) -> Any:
+    """Core's answer to a lookup made in a kernel outside a notebook session (``lookup.current_lookup``).
+
+    The kernel asks as itself, with no flow, and its catalog engine refuses every connection from here on, so
+    a read that has no lookup fails with a sentence that names the functions to use. Nothing is memoised.
+    """
+    from flowfile_frame import notebook_kernel
+
+    notebook_kernel._refuse_database()
+    return notebook_kernel.lookup_transport({"flow_id": None, "kind": kind, "args": args})["result"]
+
+
 def _ask(kind: str, **args: Any) -> tuple[bool, Any]:
-    hook = metadata_lookup.get()
+    hook = current_lookup()
     if hook is None:
         return False, None
     return True, hook(kind, args)
