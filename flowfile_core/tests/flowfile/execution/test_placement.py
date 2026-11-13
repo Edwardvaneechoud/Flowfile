@@ -63,7 +63,9 @@ from tests.flowfile.execution.graph_helpers import (
     add_promise,
     code_flow,
     connect,
+    input_then_sort,
     make_graph,
+    ranks,
 )
 from tests.hub_client import conftest as hub_conftest
 from tests.test_catalog_cloud_virtual import _create_cloud_schema, _ensure_connection
@@ -825,6 +827,27 @@ def test_a_version_mismatch_refuses_every_node_of_the_backend_before_any_starts(
         assert result.compute_error == "Refusal"
     assert run_info.success is False
     assert backend.work == []
+
+
+def test_a_run_and_a_fetch_follow_the_remotes_servers_before_they_ask_it_for_anything(protocol_on, monkeypatch):
+    """What a vend is sealed to is read from the rows the remote fills, so they are followed first, once per run."""
+    graph = input_then_sort(make_graph(7391, execution_location="local"), ranks(3), "rank")
+    order: list[str] = []
+    asked = graph._start_remote_run
+    monkeypatch.setattr(registry.remote_servers, "refresh", lambda backend_ids: order.append("servers"))
+    monkeypatch.setattr(
+        graph, "_start_remote_run", lambda nodes, run: order.append("credentials") or asked(nodes, run)
+    )
+    monkeypatch.setattr(graph, "_vend_for_fetch", lambda node, run: order.append("credentials"))
+    try:
+        assert graph.run_graph().success is True
+        assert order == ["servers", "credentials"]
+
+        order.clear()
+        graph.trigger_fetch_node(2)
+        assert order == ["servers", "credentials"]
+    finally:
+        graph.close_flow()
 
 
 def test_a_run_on_local_in_a_process_that_serves_is_refused_before_local_is_made(protocol_on, declare, monkeypatch):

@@ -268,6 +268,15 @@ def _unsealed_crossing(
     return None
 
 
+def _not_a_hub_server(backend_id: str) -> str:
+    """The refusal of a run on a remote's server that would hand its credentials to a backend the remote does not
+    list."""
+    return (
+        f'The hub seals this run\'s credentials to the servers it runs on, and backend "{backend_id}" is '
+        "not one of the hub's servers; run the flow on a server of the hub"
+    )
+
+
 def _may_cross(policy: MixedPlacementPolicy | SingleBackendPolicy, nodes: list[FlowNode]) -> bool:
     """Whether an input of ``nodes`` may cross backends: only under the mixed policy, counting its fallback."""
     if not isinstance(policy, MixedPlacementPolicy):
@@ -536,6 +545,7 @@ class ExecutionMixin(GraphMixinBase):
             inputs = dict.fromkeys(source for source, _ in flow_node._slot_input_pairs() if source is not None)
             stage = ExecutionStage(nodes=[*inputs, flow_node])
             try:
+                self._follow_remote_servers(stage.nodes, exchange_run)
                 run_refusal = self._signed_out_refusal(stage.nodes, exchange_run) or self._vend_for_fetch(
                     flow_node, exchange_run
                 )
@@ -1211,7 +1221,7 @@ class ExecutionMixin(GraphMixinBase):
         named = dict.fromkeys(policy.backend_for(node) for node in nodes)
         if isinstance(policy, MixedPlacementPolicy) and nodes:
             named.setdefault(fallback_id)
-        registry.remote_servers.refresh(named)
+        self._follow_remote_servers(nodes, exchange_run)
         for backend_id in named:
             if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
                 continue
@@ -1700,6 +1710,7 @@ class ExecutionMixin(GraphMixinBase):
                 )
 
                 self.known_rows_out = {}
+                self._follow_remote_servers(run_nodes, exchange_run)
                 run_refusal = self._signed_out_refusal(run_nodes, exchange_run) or self._start_remote_run(
                     run_nodes, exchange_run
                 )
@@ -1777,6 +1788,21 @@ class ExecutionMixin(GraphMixinBase):
         policy = MixedPlacementPolicy(run_backend_id, fallback_id=registry.fallback_backend_id())
         return replace(policy, moved=self._moved(exchange_run, policy))
 
+    def _follow_remote_servers(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> None:
+        """Make the remote's server rows follow its list (``registry.remote_servers.refresh``), once per run.
+
+        Called before the run asks the remote for anything: what a vend is sealed to and whom a token is minted for
+        are read from these rows, so a row written only when the run is placed would come after both.
+        """
+        if exchange_run.servers_followed or not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            return
+        exchange_run.servers_followed = True
+        policy = self._run_policy(exchange_run)
+        named = dict.fromkeys(policy.backend_for(node) for node in nodes)
+        if isinstance(policy, MixedPlacementPolicy) and nodes:
+            named.setdefault(registry.fallback_backend_id())
+        registry.remote_servers.refresh(named)
+
     def _remote_steps(
         self, nodes: list[FlowNode], exchange_run: ExchangeRun
     ) -> dict[FlowNode, tuple[list[str], list[tuple[str, str]]]]:
@@ -1845,10 +1871,14 @@ class ExecutionMixin(GraphMixinBase):
         steps = [node for node in steps if node not in hub_nodes]
         run_backends = dict.fromkeys(policy.backend_for(node) for node in nodes)
         exchange = bool(settings.FLOWFILE_COMPUTE_PROTOCOL and exchange_run.vended() and _may_cross(policy, nodes))
-        on_other_server = any(
-            policy.backend_for(node).startswith(registry.CONFIGURED_WORKER_PREFIX) and self._on_hub_server(node, policy)
-            for node in hub_nodes
-        )
+        here_is_hub_server = registry.server_name(registry.WORKER_BACKEND_ID) is not None
+        placed = dict.fromkeys(policy.backend_for(node) for node in hub_nodes)
+        rows = [backend_id for backend_id in placed if backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX)]
+        if here_is_hub_server:
+            for backend_id in rows:
+                if registry.server_name(backend_id) is None:
+                    raise LookupError(_not_a_hub_server(backend_id))
+        on_other_server = any(registry.server_name(backend_id) is not None for backend_id in rows)
         crosses_hub = exchange and any(registry.server_name(backend_id) is not None for backend_id in run_backends)
         if not steps and not on_other_server and not crosses_hub:
             return (), exchange, []
@@ -1858,17 +1888,13 @@ class ExecutionMixin(GraphMixinBase):
             backends.update(run_backends)
             backends.update(dict.fromkeys(b for b in (policy.fallback_id, registry.WORKER_BACKEND_ID) if b))
             sealed_nodes = list(nodes)
-        here_is_hub_server = registry.server_name(registry.WORKER_BACKEND_ID) is not None
         targets = []
         for backend_id in backends:
             name = registry.server_name(backend_id)
             if name is not None:
                 targets.append(name)
             elif here_is_hub_server:
-                raise LookupError(
-                    f'The hub seals this run\'s credentials to the servers it runs on, and backend "{backend_id}" is '
-                    "not one of the hub's servers; run the flow on a server of the hub"
-                )
+                raise LookupError(_not_a_hub_server(backend_id))
         return tuple(dict.fromkeys(targets)), exchange, sealed_nodes
 
     def _start_remote_run(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> list[tuple[FlowNode, str]] | None:

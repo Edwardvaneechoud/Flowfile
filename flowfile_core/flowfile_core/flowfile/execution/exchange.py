@@ -95,6 +95,7 @@ class ExchangeRun:
         self.remote_steps: dict | None = None
         self.moved: dict | None = None
         self.unmoved: str | None = None
+        self.servers_followed = False
         self._store: ExchangeStore | None = None
 
     def vended(self) -> bool:
