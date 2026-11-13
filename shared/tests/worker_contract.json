@@ -1,5 +1,5 @@
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "entries": {
     "catalog cloud_storage_connections": "d07b34d88d5d98f4dcefc5379e59f4654fa069a22f353e0d23453d3c802192e9",
     "operation cloud_write": "017af5dd5184f5a1babe678a90ea46c34a51c9846b1c4a37601767d832b3d777",
@@ -15,7 +15,7 @@
     "operation ml_train": "92fab89e5f999e5934af3815577154b7d3f72128366658d84f4de5aed0465158",
     "operation polars_code": "aba18e5cf40e9386e17ae72a01260818b12f8e7a43c34988f9a2224e0bffa300",
     "operation random_split": "a6e9d1c4a279140190607114431e49ff6a1c8014f105e1c4b3af0a96c12ff4dd",
-    "operation rest_api_read": "bf66f15a41a66afa4bdbb2623f69954e55eba64a2b13843c391b5fd099e6f8f8",
+    "operation rest_api_read": "b6fdf0716e1418e0d22180286932fd5d8cdb7dd1d4e1ea6e0d99dbaa651a90c6",
     "operation sql_query": "3e956aac0b1d12764524183f882fa771395a4996b8d056e72afa116e51ee35f7",
     "operation task:calculate_number_of_records": "6101690c9787c615a286039fa6fdcb94265c136e32c8bc2662efb1eb7c71f589",
     "operation task:calculate_schema": "6101690c9787c615a286039fa6fdcb94265c136e32c8bc2662efb1eb7c71f589",
@@ -70,7 +70,7 @@
     "route POST /store_database_write_result/": "37265cf000cd7af919b7e4414c1b2151beadcfe06240f94e0c4a640e9afac072",
     "route POST /store_google_analytics_read_result": "806f15e984df4c43d64a6cec57b74986ef8339338d98228fa86b09e1b0281a76",
     "route POST /store_kafka_read_result": "8a628f23f260e74fa6b4bec7e3be064d242f8677111a2d8d92ff7b633d8c22a2",
-    "route POST /store_rest_api_read_result": "9975049c92161e252ec58740a310d808b13ef1953cf1fe2d7db94c479ae3b095",
+    "route POST /store_rest_api_read_result": "0f0bad91cd64fdec6330edd240e69cc86cb6dcb762a7d128f0e09c2fd9e681d7",
     "route POST /store_sample/": "6c1e087886fa59aba2b72ff6d8167f5cd2ea469cb7553d5e628ae10b078421a9",
     "route POST /submit_query/": "6c1e087886fa59aba2b72ff6d8167f5cd2ea469cb7553d5e628ae10b078421a9",
     "route POST /train_ml_model": "f9676b29f1c45ea323e1e905ae13f722093cd18f7ddb0ed601e040de14ab5704",

@@ -90,6 +90,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import RESULT_GONE
 from flowfile_core.flowfile.execution.payloads import FileWritePayload, RestApiReadPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
@@ -516,10 +517,12 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                     success=run_info.success,
                     nodes_completed=run_info.nodes_completed,
                     node_results_json=node_results,
+                    cancelled=run_info.cancelled,
                 )
 
             logger.info(
                 f"Flow '{flow_name}' run completed: success={run_info.success}, "
+                f"cancelled={run_info.cancelled}, "
                 f"nodes={run_info.nodes_completed}/{run_info.number_of_nodes}"
             )
         else:
@@ -539,6 +542,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                     run_type="in_designer_run",
                     node_results_json=node_results,
                     flow_snapshot=snapshot_yaml,
+                    cancelled=run_info.cancelled,
                 )
     except Exception as exc:
         logger.error(
@@ -1861,9 +1865,19 @@ def require_node_id_free(flow, node_id: int) -> None:
 
 
 class RestApiSampleResponse(BaseModel):
-    """Inferred output columns from a REST API sample fetch."""
+    """Inferred output columns from a REST API sample fetch, and what the request sent and got back.
+
+    ``trace`` is each request as sent, its secret masked, with the status, timing and record count it got;
+    ``response_tree`` and ``response_text`` are the first response's shape and the start of its JSON. All four
+    are ``None`` with ``FLOWFILE_COMPUTE_PROTOCOL`` off.
+    """
 
     fields: list[input_schema.MinimalFieldInfo]
+    suggested_paths: dict[str, list[str]] | None = None
+    trace: list[dict[str, Any]] | None = None
+    response_tree: dict[str, Any] | None = None
+    response_text: str | None = None
+    response_truncated: bool = False
 
 
 @router.post("/rest_api/sample", tags=["editor"], response_model=RestApiSampleResponse)
@@ -1896,9 +1910,10 @@ def fetch_rest_api_sample(
     auth.secret = None
 
     sample_size = max(1, sample_size)
+    debug: dict[str, Any] = {}
     try:
         if FLOWFILE_COMPUTE_PROTOCOL:
-            sample_df = _rest_api_sample_rows(node, secret_encrypted, sample_size)
+            sample_df, debug = _rest_api_sample_rows(node, secret_encrypted, sample_size)
         else:
             worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
             fetcher = ExternalRestApiFetcher(
@@ -1913,23 +1928,25 @@ def fetch_rest_api_sample(
     live = flow.get_node(node.node_id)
     if live is not None and isinstance(live.setting_input, input_schema.NodeRestApiReader):
         live.setting_input.fields = fields
-    return RestApiSampleResponse(fields=fields)
+    return RestApiSampleResponse(fields=fields, **debug)
 
 
 def _rest_api_sample_rows(
     node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
-) -> pl.DataFrame:
-    """The first page of *node*'s request (at most *sample_size* records), read on the worker backend and released."""
-    settings = node.rest_api_settings
-    one_page = settings.pagination.model_copy(update={"max_pages": 1, "max_records": sample_size})
-    capped = node.model_copy(update={"rest_api_settings": settings.model_copy(update={"pagination": one_page})})
+) -> tuple[pl.DataFrame, dict[str, Any]]:
+    """The first page of *node*'s request (at most *sample_size* records) from the worker, and the op's metadata."""
     read = RestApiReadPayload(
-        flow_id=node.flow_id, node_id=node.node_id, settings=capped, encrypted_secret=secret_encrypted
+        flow_id=node.flow_id,
+        node_id=node.node_id,
+        settings=node,
+        encrypted_secret=secret_encrypted,
+        sample_size=sample_size,
     )
     backend = compute_registry.backend(compute_registry.WORKER_BACKEND_ID)
-    ref = backend.run_op(OperationKind.rest_api_read, op_payload(read)).refs["result"]
+    result = backend.run_op(OperationKind.rest_api_read, op_payload(read))
+    ref = result.refs["result"]
     try:
-        return pl.read_ipc_stream(backend.sample(ref, sample_size))
+        return pl.read_ipc_stream(backend.sample(ref, sample_size)), result.metadata
     finally:
         backend.release(ref)
 
@@ -2217,11 +2234,13 @@ def get_node_column_stats(
     try:
         return node.get_column_stats(column_name, output_handle=output_handle)
     except ColumnStatsUnavailable as e:
-        raise HTTPException(409, str(e)) from None
+        raise HTTPException(409, RESULT_GONE if node.result_is_gone() else str(e)) from None
     except ColumnNotFoundError:
         raise HTTPException(404, f"Column '{column_name}' not found in the node result") from None
     except Exception as e:
         logger.error(f"Failed to compute column stats for node {node_id}, column '{column_name}': {e}")
+        if node.result_is_gone():
+            raise HTTPException(409, RESULT_GONE) from None
         raise HTTPException(422, "Could not compute column statistics") from e
 
 
@@ -2254,7 +2273,7 @@ def export_node_data(
         try:
             schema = data.collect_schema()
         except Exception:
-            raise HTTPException(409, "The cached result is no longer available. Run the flow again.") from None
+            raise HTTPException(409, RESULT_GONE) from None
     if any(dtype.is_nested() for dtype in schema.dtypes()):
         raise HTTPException(422, "CSV cannot hold list or struct columns.")
     n = min(limit, 100_000 // max(len(schema), 1)) if file_format == "tsv" else limit
@@ -2278,6 +2297,8 @@ def export_node_data(
     except Exception as e:
         path.unlink(missing_ok=True)
         logger.error(f"Failed to export data for node {node_id}: {e}")
+        if node.result_is_gone():
+            raise HTTPException(409, RESULT_GONE) from None
         raise HTTPException(422, "Could not export the data") from e
     return FileResponse(
         path,

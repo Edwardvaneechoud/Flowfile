@@ -9,6 +9,8 @@ malformed schedules.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import datetime, timezone
 
 import pytest
@@ -269,3 +271,28 @@ def test_cron_spring_forward_fires_once(sched, monkeypatch):
     _set_now(monkeypatch, datetime(2026, 3, 29, 1, 30, 0, tzinfo=timezone.utc))
     assert _run_tick(sched) == 0
     assert len(_runs(sched, reg_id)) == 1
+
+
+def test_a_run_cancelled_while_it_starts_is_stopped(sched, monkeypatch):
+    """A cancel recorded before the run's pid is saved signals nothing, so the launch stops the child itself."""
+    reg_id = _seed(sched, last_triggered_at=datetime(2026, 5, 25, 10, 0, 0))
+    _set_now(monkeypatch, datetime(2026, 5, 25, 10, 16, 0, tzinfo=timezone.utc))
+    children: list[subprocess.Popen] = []
+
+    def spawn_then_cancel(flow_path: str, run_id: int) -> int:
+        children.append(subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"]))
+        with sched._session_factory() as db:
+            run = db.get(FlowRun, run_id)
+            run.ended_at, run.success, run.cancelled = datetime(2026, 5, 25, 10, 16, 1), False, True
+            db.commit()
+        return children[0].pid
+
+    monkeypatch.setattr(sched, "_spawn_flow", spawn_then_cancel)
+    try:
+        assert _run_tick(sched) == 1
+        assert children[0].wait(timeout=30) != 0
+    finally:
+        children[0].kill()
+
+    (run,) = _runs(sched, reg_id)
+    assert (run.success, run.cancelled, run.pid) == (False, True, children[0].pid)

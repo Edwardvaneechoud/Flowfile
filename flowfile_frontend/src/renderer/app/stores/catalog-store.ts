@@ -50,6 +50,7 @@ interface CatalogState {
   runsTotalSuccess: number;
   runsTotalFailed: number;
   runsTotalRunning: number;
+  runsTotalCancelled: number;
   runsPage: number;
   runsPageSize: number;
   runsTriggerFilter: string | null;
@@ -89,6 +90,7 @@ interface CatalogState {
   scheduleRunsTotalSuccess: number;
   scheduleRunsTotalFailed: number;
   scheduleRunsTotalRunning: number;
+  scheduleRunsTotalCancelled: number;
   scheduleRunsPage: number;
   scheduleRunsTriggerFilter: string | null;
   activeRuns: ActiveFlowRun[];
@@ -148,6 +150,7 @@ export const useCatalogStore = defineStore("catalog", {
     runsTotalSuccess: 0,
     runsTotalFailed: 0,
     runsTotalRunning: 0,
+    runsTotalCancelled: 0,
     runsPage: 1,
     runsPageSize: 25,
     runsTriggerFilter: null,
@@ -187,6 +190,7 @@ export const useCatalogStore = defineStore("catalog", {
     scheduleRunsTotalSuccess: 0,
     scheduleRunsTotalFailed: 0,
     scheduleRunsTotalRunning: 0,
+    scheduleRunsTotalCancelled: 0,
     scheduleRunsPage: 1,
     scheduleRunsTriggerFilter: null,
     activeRuns: [],
@@ -310,6 +314,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.runsTotalSuccess = result.total_success;
       this.runsTotalFailed = result.total_failed;
       this.runsTotalRunning = result.total_running;
+      this.runsTotalCancelled = result.total_cancelled ?? 0;
     },
 
     setRunsPage(page: number, registrationId?: number | null) {
@@ -871,6 +876,7 @@ export const useCatalogStore = defineStore("catalog", {
         this.scheduleRunsTotalSuccess = result.total_success;
         this.scheduleRunsTotalFailed = result.total_failed;
         this.scheduleRunsTotalRunning = result.total_running;
+        this.scheduleRunsTotalCancelled = result.total_cancelled ?? 0;
       } catch (e: any) {
         this.error = e?.message ?? "Failed to load schedule runs";
       }
@@ -895,6 +901,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.scheduleRunsTotalSuccess = 0;
       this.scheduleRunsTotalFailed = 0;
       this.scheduleRunsTotalRunning = 0;
+      this.scheduleRunsTotalCancelled = 0;
       this.scheduleRunsPage = 1;
       this.scheduleRunsTriggerFilter = null;
     },

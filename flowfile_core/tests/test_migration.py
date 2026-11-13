@@ -1214,3 +1214,52 @@ class TestKernelMountedFoldersDropped:
 
         command.downgrade(_get_alembic_config(), "034")
         assert "mounted_folders" in self._columns(db_path, "kernels")
+
+
+class TestFlowRunsCancelled:
+    """039 adds ``flow_runs.cancelled``: a run recorded before it, failed ones included, is not a cancelled run."""
+
+    @staticmethod
+    def _runs(db_path: Path) -> dict[str, tuple]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT flow_name, success, cancelled FROM flow_runs")).all()
+        engine.dispose()
+        return {name: (success, cancelled) for name, success, cancelled in rows}
+
+    @staticmethod
+    def _columns(db_path: Path) -> set[str]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        names = {c["name"] for c in inspect(engine).get_columns("flow_runs")}
+        engine.dispose()
+        return names
+
+    def test_runs_recorded_at_038_stay_as_they_were_and_a_downgrade_drops_the_column(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "038")
+        assert "cancelled" not in self._columns(db_path)
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            for name, success in (("failed", 0), ("succeeded", 1), ("running", None)):
+                conn.execute(
+                    text(
+                        "INSERT INTO flow_runs (flow_name, user_id, started_at, success, run_type) "
+                        "VALUES (:name, 1, '2026-11-01 10:00:00', :success, 'manual')"
+                    ),
+                    {"name": name, "success": success},
+                )
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        assert self._runs(db_path) == {"failed": (0, 0), "succeeded": (1, 0), "running": (None, 0)}
+
+        command.downgrade(_get_alembic_config(), "038")
+        assert "cancelled" not in self._columns(db_path)
+        command.upgrade(_get_alembic_config(), "039")
+        assert self._runs(db_path) == {"failed": (0, 0), "succeeded": (1, 0), "running": (None, 0)}
