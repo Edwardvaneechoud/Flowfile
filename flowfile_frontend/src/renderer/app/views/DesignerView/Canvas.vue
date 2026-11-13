@@ -399,10 +399,14 @@ const emit = defineEmits<{
   (e: "new"): void;
   (e: "openSettings"): void;
   (e: "open"): void;
+  (e: "undo"): void;
+  (e: "redo"): void;
 }>();
 
 useFlowHotkeys({
   flowId: () => flowStore.flowId,
+  undo: () => emit("undo"),
+  redo: () => emit("redo"),
   selectAll: () => addSelectedNodes(instance.getNodes.value),
   newFlow: () => emit("new"),
   save: () => emit("save", flowStore.flowId),
