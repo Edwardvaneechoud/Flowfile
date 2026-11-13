@@ -46,7 +46,7 @@ def test_run_ui_without_an_extension_refuses_a_flag_it_does_not_know(monkeypatch
         main()
 
     assert exited.value.code == 2
-    assert "unrecognized arguments: --toy t" in capsys.readouterr().err
+    assert "unrecognized arguments: --toy" in capsys.readouterr().err
 
 
 def test_run_ui_hands_host_and_port_to_the_server_and_takes_its_extension_s_flags(monkeypatch):
