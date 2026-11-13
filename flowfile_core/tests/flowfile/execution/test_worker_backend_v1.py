@@ -81,13 +81,7 @@ from flowfile_core.schemas.input_schema import (
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared import compute_protocol as wire
-from shared.compute_protocol import (
-    PROTOCOL_VERSION,
-    PROTOCOL_VERSION_HEADER,
-    WorkerLocation,
-    file_uri,
-    local_capabilities,
-)
+from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER, WorkerLocation, file_uri, local_capabilities
 from shared.storage_config import storage
 from tests.flowfile.execution.conftest import fuzzy_settings, serve
 from tests.flowfile.execution.graph_helpers import input_then_sort, make_graph, ranks

@@ -842,9 +842,21 @@ def google_analytics_read(settings: GoogleAnalyticsReadSettings, job_id: str) ->
 
 @_claimed
 def rest_api_read(settings: RestApiReadSettings, job_id: str) -> OpOutputs:
-    """Fetch from a REST API in a child as job *job_id* and hold the rows as ``result``."""
-    kwargs = {"settings": settings}
-    return _read(job_id, read_rest_api, kwargs, settings.flowfile_flow_id, settings.flowfile_node_id)
+    """Fetch from a REST API in a child as job *job_id* and hold the rows as ``result``.
+
+    The ``metadata`` is the ``trace`` (each request as sent, secrets masked, and what came back) and, for a test
+    request (settings with a ``sample_size``), the first response's ``suggested_paths``, ``response_tree`` and
+    ``response_text``.
+    """
+    flow_id, node_id = settings.flowfile_flow_id, settings.flowfile_node_id
+    (result_id,) = _op_outputs(job_id, 1)
+    path = _output_file(flow_id, result_id)
+    sidecar = Path(f"{path}.debug.json")
+    kwargs = {"settings": settings, "debug_file": str(sidecar)}
+    ref = _read_into(job_id, result_id, path, read_rest_api, kwargs, flow_id, node_id, also_written=(str(sidecar),))
+    metadata = json.loads(sidecar.read_text()) if sidecar.is_file() else {}
+    sidecar.unlink(missing_ok=True)
+    return OpOutputs(outputs={"result": ref}, metadata=metadata)
 
 
 @_claimed

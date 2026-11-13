@@ -1371,6 +1371,7 @@ export interface RestApiPaginationSettings {
   page_param: string;
   start_page: number;
   cursor_param: string;
+  cursor_request_location: "query" | "body";
   cursor_location: "body" | "header";
   cursor_response_path: string;
   initial_cursor: string;

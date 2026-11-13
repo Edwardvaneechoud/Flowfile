@@ -61,7 +61,6 @@ client = TestClient(main.app, headers=V1_HEADERS)
 token_only = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
 
 FLOW_ID = 4242
-FOREIGN_VERSION = str(PROTOCOL_VERSION + 1)
 NODE_ID = 7
 GEOARROW_WKB = pl.Extension("geoarrow.wkb", pl.Binary, "{}")
 BLOB = bytes(range(256)) * 64
@@ -208,11 +207,11 @@ def _submit(result_id: str, plan: pl.LazyFrame, **hints) -> SubmitResult:
 
 def test_the_token_is_checked_before_the_version():
     unsigned = TestClient(main.app)
-    assert unsigned.get("/v1/capabilities", headers={PROTOCOL_VERSION_HEADER: FOREIGN_VERSION}).status_code == 401
+    assert unsigned.get("/v1/capabilities", headers={PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION + 1)}).status_code == 401
     assert unsigned.get("/v1/capabilities").status_code == 401
 
 
-@pytest.mark.parametrize("sent", [FOREIGN_VERSION, None], ids=["foreign", "missing"])
+@pytest.mark.parametrize("sent", [str(PROTOCOL_VERSION + 1), None], ids=["foreign", "missing"])
 @pytest.mark.parametrize(("method", "path"), ROUTES, ids=[f"{m} {p}" for m, p in ROUTES])
 def test_every_route_answers_426_to_a_foreign_or_missing_version(method, path, sent):
     headers = {PROTOCOL_VERSION_HEADER: sent} if sent is not None else {}
@@ -1080,7 +1079,7 @@ def test_a_websocket_submit_streams_progress_then_the_result_with_its_sample(hel
     assert client.head(f"/v1/results/{result_id}").status_code == 200
 
 
-@pytest.mark.parametrize("sent", [FOREIGN_VERSION, None], ids=["foreign", "missing"])
+@pytest.mark.parametrize("sent", [str(PROTOCOL_VERSION + 1), None], ids=["foreign", "missing"])
 def test_the_websocket_submit_is_denied_426_before_accepting(sent):
     headers = {PROTOCOL_VERSION_HEADER: sent} if sent is not None else {}
 
@@ -1096,7 +1095,7 @@ def test_the_websocket_submit_is_denied_426_before_accepting(sent):
 
 @pytest.mark.parametrize("token", [None, "not-the-token"], ids=["missing", "wrong"])
 def test_the_websocket_submit_closes_1008_on_a_bad_token_before_the_version_is_checked(token):
-    headers = {PROTOCOL_VERSION_HEADER: FOREIGN_VERSION}
+    headers = {PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION + 1)}
     if token is not None:
         headers["X-Flowfile-Internal"] = token
 

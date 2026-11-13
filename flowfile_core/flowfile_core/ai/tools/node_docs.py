@@ -1193,8 +1193,10 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "array), 'Headers' / 'Query parameters', an 'Authentication' type (None / API "
         "key / Bearer / Basic) backed by a reusable secret from the Secrets manager, "
         "and a 'Pagination' strategy (Offset / Page / Cursor); 'Fetch sample' previews "
-        "the columns. Pitfalls: the credential is a named secret (not typed inline), "
-        "JSON only, and set 'Record path' (e.g. data.items) for nested payloads."
+        "the columns. A cursor path can index lists (data.-1._id = last record's _id) "
+        "and, for POST, 'Send cursor as' a JSON body field (keyset paging). Pitfalls: "
+        "the credential is a named secret (not typed inline), JSON only, and set "
+        "'Record path' (e.g. data.items) for nested payloads."
     ),
     "external_source": (
         "Settings panel: depends on the connector — each external "

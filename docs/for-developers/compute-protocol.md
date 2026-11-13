@@ -169,7 +169,7 @@ The worker materialises when `must_materialise or (wide and (preview_rows is not
 
 | Kind | Returns |
 |---|---|
-| `database_read`, `kafka_read`, `google_analytics_read`, `rest_api_read`, `file_read` | one reference; `kafka_read` adds its offsets as `metadata` |
+| `database_read`, `kafka_read`, `google_analytics_read`, `rest_api_read`, `file_read` | one reference; `kafka_read` adds its offsets as `metadata`, `rest_api_read` the requests it sent (`trace`, secrets masked) and, for a read with a `sample_size`, its first response's `suggested_paths`, `response_tree` and `response_text` |
 | `fuzzy_join`, `ml_apply` | one reference |
 | `polars_code`, `sql_query` | one reference, its schema from running the code on the backend |
 | `random_split` | one reference per split |
@@ -294,6 +294,8 @@ A refusal is a `VersionMismatch`, raised before the backend is sent any work and
 - A capabilities answer this release cannot read is a `VersionMismatch` when it carries an `app_version` (a worker of another release). Without one, the URL is not a Flowfile worker.
 
 Core and a worker of different app releases work together while they speak one contract. Workers upgrade when the number changes, and when Polars does.
+
+Version 2 added `cursor_request_location` to the REST API read's `PaginationConfig` (the `rest_api_read` operation and `POST /store_rest_api_read_result`), so a version 1 worker is refused by a version 2 core and the other way round.
 
 The worker serves its capabilities at `GET /capabilities` and `GET /v1/capabilities`. `POST /shutdown` takes the internal token like every other route; without it, the worker answers only a loopback peer while the desktop shell supervises it (`FLOWFILE_SUPERVISOR_PID`).
 
