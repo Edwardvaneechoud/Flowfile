@@ -89,6 +89,7 @@ def build_rest_api_worker_settings(
         page_param=p.page_param,
         start_page=p.start_page,
         cursor_param=p.cursor_param,
+        cursor_request_location=p.cursor_request_location,
         cursor_location=p.cursor_location,
         cursor_response_path=p.cursor_response_path,
         initial_cursor=p.initial_cursor,

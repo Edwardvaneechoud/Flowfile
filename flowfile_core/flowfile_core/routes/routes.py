@@ -1865,9 +1865,19 @@ def require_node_id_free(flow, node_id: int) -> None:
 
 
 class RestApiSampleResponse(BaseModel):
-    """Inferred output columns from a REST API sample fetch."""
+    """Inferred output columns from a REST API sample fetch, and what the request sent and got back.
+
+    ``trace`` is each request as sent, its secret masked, with the status, timing and record count it got;
+    ``response_tree`` and ``response_text`` are the first response's shape and the start of its JSON. All four
+    are ``None`` with ``FLOWFILE_COMPUTE_PROTOCOL`` off.
+    """
 
     fields: list[input_schema.MinimalFieldInfo]
+    suggested_paths: dict[str, list[str]] | None = None
+    trace: list[dict[str, Any]] | None = None
+    response_tree: dict[str, Any] | None = None
+    response_text: str | None = None
+    response_truncated: bool = False
 
 
 @router.post("/rest_api/sample", tags=["editor"], response_model=RestApiSampleResponse)
@@ -1900,9 +1910,10 @@ def fetch_rest_api_sample(
     auth.secret = None
 
     sample_size = max(1, sample_size)
+    debug: dict[str, Any] = {}
     try:
         if FLOWFILE_COMPUTE_PROTOCOL:
-            sample_df = _rest_api_sample_rows(node, secret_encrypted, sample_size)
+            sample_df, debug = _rest_api_sample_rows(node, secret_encrypted, sample_size)
         else:
             worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
             fetcher = ExternalRestApiFetcher(
@@ -1917,23 +1928,25 @@ def fetch_rest_api_sample(
     live = flow.get_node(node.node_id)
     if live is not None and isinstance(live.setting_input, input_schema.NodeRestApiReader):
         live.setting_input.fields = fields
-    return RestApiSampleResponse(fields=fields)
+    return RestApiSampleResponse(fields=fields, **debug)
 
 
 def _rest_api_sample_rows(
     node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
-) -> pl.DataFrame:
-    """The first page of *node*'s request (at most *sample_size* records), read on the worker backend and released."""
-    settings = node.rest_api_settings
-    one_page = settings.pagination.model_copy(update={"max_pages": 1, "max_records": sample_size})
-    capped = node.model_copy(update={"rest_api_settings": settings.model_copy(update={"pagination": one_page})})
+) -> tuple[pl.DataFrame, dict[str, Any]]:
+    """The first page of *node*'s request (at most *sample_size* records) from the worker, and the op's metadata."""
     read = RestApiReadPayload(
-        flow_id=node.flow_id, node_id=node.node_id, settings=capped, encrypted_secret=secret_encrypted
+        flow_id=node.flow_id,
+        node_id=node.node_id,
+        settings=node,
+        encrypted_secret=secret_encrypted,
+        sample_size=sample_size,
     )
     backend = compute_registry.backend(compute_registry.WORKER_BACKEND_ID)
-    ref = backend.run_op(OperationKind.rest_api_read, op_payload(read)).refs["result"]
+    result = backend.run_op(OperationKind.rest_api_read, op_payload(read))
+    ref = result.refs["result"]
     try:
-        return pl.read_ipc_stream(backend.sample(ref, sample_size))
+        return pl.read_ipc_stream(backend.sample(ref, sample_size)), result.metadata
     finally:
         backend.release(ref)
 
