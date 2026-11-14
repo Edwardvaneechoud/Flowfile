@@ -62,8 +62,22 @@
       </div>
     </div>
 
-    <!-- Node Results -->
-    <div v-if="nodeResults.length > 0" class="section">
+    <!-- Node Results: held in place while the detail is on its way -->
+    <div
+      v-if="detailPending && run.number_of_nodes > 0"
+      class="section"
+      data-testid="run-detail-pending"
+    >
+      <h3>Node Results</h3>
+      <div class="skeleton-list" aria-busy="true">
+        <div
+          v-for="i in Math.min(run.number_of_nodes, 5)"
+          :key="i"
+          class="skeleton-block skeleton-row"
+        ></div>
+      </div>
+    </div>
+    <div v-else-if="nodeResults.length > 0" class="section">
       <h3>Node Results</h3>
       <div class="table-wrapper">
         <table class="styled-table results-table">
@@ -137,7 +151,7 @@
         <a
           v-if="logElsewhere"
           class="btn btn-primary btn-sm"
-          :href="run.log_url ?? undefined"
+          :href="detail?.log_url ?? undefined"
           target="_blank"
           rel="noopener"
         >
@@ -145,7 +159,7 @@
           Open the log on {{ run.executed_on ?? "the server that ran it" }}
         </a>
         <button
-          v-else-if="!logContent && !loadingLog"
+          v-else-if="!logContent && !loadingLog && !detailPending"
           class="btn btn-primary btn-sm"
           @click="loadLog"
         >
@@ -158,7 +172,7 @@
 The log is kept where the run happened; open it there with your sign-in.</pre
         >
       </div>
-      <div v-else-if="loadingLog" class="log-viewer">
+      <div v-else-if="loadingLog || detailPending" class="log-viewer">
         <pre class="snapshot-code">Loading...</pre>
       </div>
       <div v-else-if="logContent !== null" class="log-viewer">
@@ -167,7 +181,7 @@ The log is kept where the run happened; open it there with your sign-in.</pre
     </div>
 
     <!-- Flow Version Snapshot -->
-    <div v-if="run.flow_snapshot" class="section">
+    <div v-if="detail?.flow_snapshot" class="section">
       <div class="snapshot-header">
         <h3>
           <i class="fa-solid fa-code-branch"></i>
@@ -182,6 +196,15 @@ The log is kept where the run happened; open it there with your sign-in.</pre
         <pre class="snapshot-code">{{ formattedSnapshot }}</pre>
       </div>
     </div>
+    <div v-else-if="detailPending && run.has_snapshot" class="section">
+      <div class="snapshot-header">
+        <h3>
+          <i class="fa-solid fa-code-branch"></i>
+          Flow Version at Run Time
+        </h3>
+      </div>
+      <div class="skeleton-block snapshot-pending" aria-busy="true"></div>
+    </div>
   </div>
 </template>
 
@@ -191,7 +214,7 @@ import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useHubConnectionStore } from "../../stores/hub-connection-store";
-import type { FlowRunDetail } from "../../types";
+import type { FlowRun, FlowRunDetail } from "../../types";
 import {
   NODE_OUTCOME_BADGE,
   NODE_OUTCOME_LABEL,
@@ -220,8 +243,14 @@ async function copyError(text: string) {
 const catalogStore = useCatalogStore();
 
 const props = defineProps<{
-  run: FlowRunDetail;
+  /** The run's detail, or its list row while `detailPending` (the detail is still on its way). */
+  run: FlowRun | FlowRunDetail;
+  detailPending?: boolean;
 }>();
+
+const detail = computed<FlowRunDetail | null>(() =>
+  props.detailPending ? null : (props.run as FlowRunDetail),
+);
 
 defineEmits(["close", "openSnapshot", "viewFlow", "viewScheduleRuns"]);
 
@@ -237,7 +266,7 @@ const logRunHere = computed<number | null>(() => {
   const here = hub.connection?.server_name;
   return named && here && named[1] === here ? Number(named[2]) : null;
 });
-const logElsewhere = computed(() => !!props.run.log_url && logRunHere.value === null);
+const logElsewhere = computed(() => !!detail.value?.log_url && logRunHere.value === null);
 
 async function loadLog() {
   loadingLog.value = true;
@@ -250,12 +279,12 @@ async function loadLog() {
   }
 }
 
-// Auto-load log when viewing a scheduled run
+// Auto-load log when viewing a scheduled run; where it lives is known once the detail arrived
 watch(
-  [() => props.run.id, logElsewhere],
+  [() => props.run.id, logElsewhere, () => props.detailPending],
   () => {
     logContent.value = null;
-    if (props.run.has_log && !logElsewhere.value) {
+    if (props.run.has_log && !props.detailPending && !logElsewhere.value) {
       loadLog();
     }
   },
@@ -288,20 +317,21 @@ const statusClass = computed(() => RUN_OUTCOME_TEXT[outcome.value]);
 const statusText = computed(() => RUN_OUTCOME_LABEL[outcome.value]);
 
 const nodeResults = computed<NodeResultData[]>(() => {
-  if (!props.run.node_results_json) return [];
+  if (!detail.value?.node_results_json) return [];
   try {
-    return JSON.parse(props.run.node_results_json);
+    return JSON.parse(detail.value.node_results_json);
   } catch {
     return [];
   }
 });
 
 const formattedSnapshot = computed(() => {
-  if (!props.run.flow_snapshot) return "";
+  const snapshot = detail.value?.flow_snapshot;
+  if (!snapshot) return "";
   try {
-    return JSON.stringify(JSON.parse(props.run.flow_snapshot), null, 2);
+    return JSON.stringify(JSON.parse(snapshot), null, 2);
   } catch {
-    return props.run.flow_snapshot;
+    return snapshot;
   }
 });
 </script>
@@ -466,6 +496,10 @@ const formattedSnapshot = computed(() => {
 }
 
 /* Snapshot Viewer */
+.snapshot-pending {
+  height: 240px;
+}
+
 .snapshot-viewer {
   background: var(--color-background-secondary);
   border: 1px solid var(--color-border-light);

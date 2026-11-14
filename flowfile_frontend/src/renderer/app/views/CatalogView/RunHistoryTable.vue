@@ -5,28 +5,40 @@
       <div class="summary-card">
         <i class="fa-solid fa-clock-rotate-left summary-icon"></i>
         <div class="summary-info">
-          <span class="summary-value">{{ total }}</span>
+          <span class="summary-value">
+            <span v-if="listPending" class="skeleton-value"></span>
+            <template v-else>{{ total }}</template>
+          </span>
           <span class="summary-label">Total</span>
         </div>
       </div>
       <div class="summary-card">
         <i class="fa-solid fa-circle-check summary-icon success-icon"></i>
         <div class="summary-info">
-          <span class="summary-value">{{ totalSuccess }}</span>
+          <span class="summary-value">
+            <span v-if="listPending" class="skeleton-value"></span>
+            <template v-else>{{ totalSuccess }}</template>
+          </span>
           <span class="summary-label">Successful</span>
         </div>
       </div>
       <div class="summary-card">
         <i class="fa-solid fa-circle-xmark summary-icon failure-icon"></i>
         <div class="summary-info">
-          <span class="summary-value">{{ totalFailed }}</span>
+          <span class="summary-value">
+            <span v-if="listPending" class="skeleton-value"></span>
+            <template v-else>{{ totalFailed }}</template>
+          </span>
           <span class="summary-label">Failed</span>
         </div>
       </div>
       <div class="summary-card">
         <i class="fa-solid fa-spinner summary-icon running-icon"></i>
         <div class="summary-info">
-          <span class="summary-value">{{ totalRunning }}</span>
+          <span class="summary-value">
+            <span v-if="listPending" class="skeleton-value"></span>
+            <template v-else>{{ totalRunning }}</template>
+          </span>
           <span class="summary-label">Running</span>
         </div>
       </div>
@@ -76,15 +88,24 @@
       />
     </div>
 
+    <div v-if="listPending && listError !== null" class="overview-error" role="alert">
+      <span>Couldn't load runs: {{ listError }}</span>
+      <button class="btn btn-secondary btn-sm" @click="retryList">Retry</button>
+    </div>
     <!-- Empty state -->
-    <div v-if="runs.length === 0" class="empty-state">
+    <div v-else-if="!listPending && runs.length === 0" class="empty-state">
       <i class="fa-solid fa-clock-rotate-left empty-icon"></i>
       <h3>No runs recorded yet</h3>
       <p>Run a registered flow to see its execution history here.</p>
     </div>
 
-    <!-- Runs table -->
-    <div v-else class="runs-table">
+    <!-- Runs table; while pending it holds placeholder rows in the same frame -->
+    <div
+      v-else
+      class="runs-table"
+      :aria-busy="listPending"
+      :data-testid="listPending ? 'runs-pending' : undefined"
+    >
       <div class="table-header">
         <span class="col-status">Status</span>
         <span class="col-flow">Flow</span>
@@ -96,6 +117,12 @@
         <span class="col-version">Version</span>
         <span class="col-actions"></span>
       </div>
+      <template v-if="listPending">
+        <div v-for="i in pendingRowCount" :key="`pending-${i}`" class="table-row pending-row">
+          <span class="skeleton-block pending-cell"></span>
+          <span class="skeleton-block pending-cell pending-cell--wide"></span>
+        </div>
+      </template>
       <div v-for="run in runs" :key="run.id" class="table-row">
         <div class="col-status">
           <span class="status-badge" :class="runStatusClass(run)">
@@ -164,8 +191,12 @@
       </div>
     </div>
 
+    <div v-if="listPending && pendingExpandable" class="expand-bar" aria-hidden="true">
+      <button class="expand-btn pending-expand" tabindex="-1" disabled>Show all runs</button>
+    </div>
+
     <!-- Expand / Collapse toggle -->
-    <div v-if="collapsible && allRuns.length > COLLAPSED_LIMIT" class="expand-bar">
+    <div v-if="collapsible && !listPending && allRuns.length > COLLAPSED_LIMIT" class="expand-bar">
       <button class="expand-btn" @click="expanded = !expanded">
         <i :class="expanded ? 'fa-solid fa-chevron-up' : 'fa-solid fa-chevron-down'" />
         {{ expanded ? "Show less" : `Show all ${total} runs` }}
@@ -240,39 +271,113 @@ watch(searchText, (val) => {
 });
 
 const isScheduleMode = computed(() => props.scheduleId !== undefined);
+// A flow page reads its own slice, so it never shows the global page or another flow's runs.
+const isFlowMode = computed(() => !isScheduleMode.value && props.registrationId !== undefined);
 
-const allRuns = computed(() =>
-  isScheduleMode.value ? catalogStore.scheduleRuns : catalogStore.runs,
+const flowPage = computed(() =>
+  isFlowMode.value && catalogStore.flowRunsFlowId === props.registrationId
+    ? catalogStore.flowRunsData
+    : null,
 );
+
+const allRuns = computed(() => {
+  if (isScheduleMode.value) return catalogStore.scheduleRuns;
+  if (isFlowMode.value) return flowPage.value?.items ?? [];
+  return catalogStore.runs;
+});
 
 const isCollapsed = computed(() => props.collapsible && !expanded.value);
 
-const runs = computed(() =>
-  isCollapsed.value ? allRuns.value.slice(0, COLLAPSED_LIMIT) : allRuns.value,
+// Not loaded is not empty: the global page waits on the overview, a flow's or schedule's on its own load.
+const listPending = computed(() => {
+  if (isScheduleMode.value) return catalogStore.scheduleRunsScheduleId !== props.scheduleId;
+  if (isFlowMode.value) return flowPage.value === null;
+  return allRuns.value.length === 0 && !catalogStore.overviewLoaded;
+});
+
+// A flow's own run count sizes its placeholder, so the sections below it stay put when the runs land.
+const expectedRuns = computed((): number | null =>
+  isFlowMode.value
+    ? (catalogStore.allFlows.find((f) => f.id === props.registrationId)?.run_count ?? null)
+    : null,
 );
+const pendingRowCount = computed(() => {
+  const cap = isCollapsed.value ? COLLAPSED_LIMIT : catalogStore.runsPageSize;
+  return Math.max(1, Math.min(expectedRuns.value ?? COLLAPSED_LIMIT, cap));
+});
+const pendingExpandable = computed(
+  () => !!props.collapsible && (expectedRuns.value ?? 0) > COLLAPSED_LIMIT,
+);
+
+const listError = computed((): string | null => {
+  if (isScheduleMode.value) return catalogStore.scheduleRunsError;
+  if (isFlowMode.value) return catalogStore.flowRunsError;
+  return catalogStore.overviewFailed ? catalogStore.overviewError : null;
+});
+
+function retryList() {
+  if (isScheduleMode.value) catalogStore.loadScheduleRuns(props.scheduleId!);
+  else if (isFlowMode.value) catalogStore.loadFlowRuns(props.registrationId!);
+  else catalogStore.initialize(true);
+}
+
+/** The value for the mode shown: a schedule's, the flow page's, or the global page's. */
+function byMode<T>(schedule: T, flow: T, global: T): T {
+  if (isScheduleMode.value) return schedule;
+  return isFlowMode.value ? flow : global;
+}
+
+const runs = computed(() => {
+  if (listPending.value) return [];
+  return isCollapsed.value ? allRuns.value.slice(0, COLLAPSED_LIMIT) : allRuns.value;
+});
 const total = computed(() =>
-  isScheduleMode.value ? catalogStore.scheduleRunsTotal : catalogStore.runsTotal,
+  byMode(catalogStore.scheduleRunsTotal, flowPage.value?.total ?? 0, catalogStore.runsTotal),
 );
 const totalSuccess = computed(() =>
-  isScheduleMode.value ? catalogStore.scheduleRunsTotalSuccess : catalogStore.runsTotalSuccess,
+  byMode(
+    catalogStore.scheduleRunsTotalSuccess,
+    flowPage.value?.total_success ?? 0,
+    catalogStore.runsTotalSuccess,
+  ),
 );
 const totalFailed = computed(() =>
-  isScheduleMode.value ? catalogStore.scheduleRunsTotalFailed : catalogStore.runsTotalFailed,
+  byMode(
+    catalogStore.scheduleRunsTotalFailed,
+    flowPage.value?.total_failed ?? 0,
+    catalogStore.runsTotalFailed,
+  ),
 );
 const totalRunning = computed(() =>
-  isScheduleMode.value ? catalogStore.scheduleRunsTotalRunning : catalogStore.runsTotalRunning,
+  byMode(
+    catalogStore.scheduleRunsTotalRunning,
+    flowPage.value?.total_running ?? 0,
+    catalogStore.runsTotalRunning,
+  ),
 );
 const totalCancelled = computed(() =>
-  isScheduleMode.value ? catalogStore.scheduleRunsTotalCancelled : catalogStore.runsTotalCancelled,
+  byMode(
+    catalogStore.scheduleRunsTotalCancelled,
+    flowPage.value?.total_cancelled ?? 0,
+    catalogStore.runsTotalCancelled,
+  ),
 );
 const page = computed(() =>
-  isScheduleMode.value ? catalogStore.scheduleRunsPage : catalogStore.runsPage,
+  byMode(catalogStore.scheduleRunsPage, catalogStore.flowRunsPage, catalogStore.runsPage),
 );
 const totalPages = computed(() =>
-  isScheduleMode.value ? catalogStore.scheduleRunsTotalPages : catalogStore.runsTotalPages,
+  byMode(
+    catalogStore.scheduleRunsTotalPages,
+    Math.max(1, Math.ceil(total.value / catalogStore.runsPageSize)),
+    catalogStore.runsTotalPages,
+  ),
 );
 const triggerFilter = computed(() =>
-  isScheduleMode.value ? catalogStore.scheduleRunsTriggerFilter : catalogStore.runsTriggerFilter,
+  byMode(
+    catalogStore.scheduleRunsTriggerFilter,
+    catalogStore.flowRunsTriggerFilter,
+    catalogStore.runsTriggerFilter,
+  ),
 );
 /** A run a hub sent to a server: a filter only where a hub's catalog shows or such a run is listed. */
 const showDispatched = computed(
@@ -285,6 +390,8 @@ const showDispatched = computed(
 function handleFilterChange(value: string | null) {
   if (isScheduleMode.value) {
     catalogStore.setScheduleTriggerFilter(value, props.scheduleId!);
+  } else if (isFlowMode.value) {
+    catalogStore.setFlowRunsTriggerFilter(value, props.registrationId!);
   } else {
     catalogStore.setTriggerFilter(value);
   }
@@ -293,8 +400,10 @@ function handleFilterChange(value: string | null) {
 function goToPage(p: number) {
   if (isScheduleMode.value) {
     catalogStore.setScheduleRunsPage(p, props.scheduleId!);
+  } else if (isFlowMode.value) {
+    catalogStore.setFlowRunsPage(p, props.registrationId!);
   } else {
-    catalogStore.setRunsPage(p, props.registrationId);
+    catalogStore.setRunsPage(p);
   }
 }
 
@@ -396,6 +505,23 @@ function runStatusIcon(run: FlowRun): string {
 }
 
 /* Expand / Collapse */
+.pending-row {
+  min-height: 49px;
+}
+
+.pending-cell {
+  height: 14px;
+  width: 64px;
+}
+
+.pending-cell--wide {
+  width: 55%;
+}
+
+.pending-expand {
+  visibility: hidden;
+}
+
 .expand-bar {
   display: flex;
   justify-content: center;

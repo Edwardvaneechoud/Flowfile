@@ -296,9 +296,13 @@
           {{ table.read_by_flows.length }} flow{{ table.read_by_flows.length !== 1 ? "s" : "" }}
         </span>
       </div>
-      <div v-if="tableHistory" class="meta-card">
+      <div v-if="isPhysical" class="meta-card" data-testid="table-version">
         <span class="meta-label">Version</span>
-        <span class="meta-value">{{ tableHistory.current_version }}</span>
+        <span v-if="tableHistory" class="meta-value">{{ tableHistory.current_version }}</span>
+        <span v-else-if="loadingTableHistory" class="meta-value">
+          <span class="skeleton-bar skeleton-inline" aria-hidden="true"></span>
+        </span>
+        <span v-else class="meta-value">--</span>
       </div>
     </div>
 
@@ -315,7 +319,7 @@
     </div>
 
     <!-- Version History (physical tables only) -->
-    <div v-if="showVersionHistory" class="section">
+    <div v-if="isPhysical" class="section" data-testid="version-history">
       <div class="section-header">
         <h3>Version History</h3>
         <div class="section-header-actions">
@@ -326,7 +330,6 @@
             >may be stale</span
           >
           <el-button
-            v-if="hasHistory"
             text
             size="small"
             :loading="loadingTableHistory"
@@ -389,7 +392,33 @@
           </tbody>
         </table>
       </div>
-      <div v-else class="loading-state">Loading version history…</div>
+      <div
+        v-else-if="loadingTableHistory"
+        class="version-table-wrapper skeleton-wrapper"
+        aria-busy="true"
+        aria-label="Loading version history"
+        data-testid="history-skeleton"
+      >
+        <table class="styled-table version-table">
+          <thead>
+            <tr>
+              <th>Version</th>
+              <th>Timestamp</th>
+              <th>Operation</th>
+              <th>Parameters</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="n in HISTORY_SKELETON_ROWS" :key="n">
+              <td v-for="c in 5" :key="c"><span class="skeleton-bar"></span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="history-empty" data-testid="history-empty">
+        No version history available for this table.
+      </p>
     </div>
 
     <!-- Read by Flows Modal -->
@@ -449,7 +478,16 @@
       </div>
       <div class="section-header">
         <h3>Data Preview</h3>
-        <span v-if="preview" class="preview-info">
+        <span
+          v-if="loadingPreview"
+          class="preview-info preview-loading"
+          role="status"
+          data-testid="preview-loading"
+        >
+          <i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i>
+          {{ preview ? "Refreshing…" : "Loading preview…" }}
+        </span>
+        <span v-else-if="preview" class="preview-info">
           Showing {{ preview.rows.length }} of {{ preview.total_rows }} rows
         </span>
         <button
@@ -463,7 +501,33 @@
           Edit data
         </button>
       </div>
-      <div v-if="loadingPreview" class="loading-state">Loading preview...</div>
+      <div
+        v-if="loadingPreview && !preview"
+        class="preview-table-wrapper skeleton-wrapper"
+        aria-busy="true"
+        aria-label="Loading preview"
+        data-testid="preview-skeleton"
+      >
+        <table class="styled-table preview-table">
+          <thead>
+            <tr>
+              <th v-for="col in skeletonColumns" :key="col.key">
+                <div class="col-header">
+                  <span class="col-header-name">{{ col.name }}</span>
+                  <span class="col-header-type">{{ col.dtype }}</span>
+                </div>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="n in skeletonRowCount" :key="n">
+              <td v-for="col in skeletonColumns" :key="col.key">
+                <span class="skeleton-bar"></span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <div v-else-if="previewError" class="preview-error">
         <i class="fa-solid fa-triangle-exclamation"></i>
         <div class="preview-error-body">
@@ -478,7 +542,13 @@
           </button>
         </div>
       </div>
-      <div v-else-if="preview && preview.rows.length > 0" class="preview-table-wrapper">
+      <div
+        v-else-if="preview && preview.rows.length > 0"
+        class="preview-table-wrapper refreshable"
+        :class="{ 'is-refreshing': loadingPreview }"
+        :aria-busy="loadingPreview"
+        data-testid="preview-table"
+      >
         <table class="styled-table preview-table">
           <thead>
             <tr>
@@ -504,7 +574,9 @@
       <div v-else-if="table.is_remote_storage && !preview" class="empty-state">
         <el-button size="small" type="primary" @click="emit('loadPreview')">Load preview</el-button>
       </div>
-      <div v-else class="empty-state">No data to preview.</div>
+      <div v-else class="empty-state refreshable" :class="{ 'is-refreshing': loadingPreview }">
+        No data to preview.
+      </div>
     </div>
 
     <!-- Visualizations -->
@@ -574,12 +646,27 @@ const hubProducer = computed(
   () => props.table.producer_registration_name ?? props.table.source_registration_name ?? null,
 );
 
+const isPhysical = computed(() => props.table.table_type !== "virtual");
+
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
 
-// Show the Version History section when there's history (cached or freshly loaded) or while it loads.
-const showVersionHistory = computed(
-  () => props.table.table_type !== "virtual" && (!!hasHistory.value || props.loadingTableHistory),
-);
+const HISTORY_SKELETON_ROWS = 4;
+// Enough placeholder rows to fill the preview's 500px cap; a smaller table gets its own count.
+const PREVIEW_SKELETON_MAX_ROWS = 15;
+
+const skeletonColumns = computed(() => {
+  const columns = props.table.schema_columns ?? [];
+  if (columns.length > 0) {
+    return columns.map((col, i) => ({ key: `${i}:${col.name}`, name: col.name, dtype: col.dtype }));
+  }
+  return Array.from({ length: 4 }, (_, i) => ({ key: String(i), name: " ", dtype: " " }));
+});
+
+const skeletonRowCount = computed(() => {
+  if (!props.table.file_exists) return 1;
+  const rows = props.table.row_count ?? PREVIEW_SKELETON_MAX_ROWS;
+  return Math.min(Math.max(rows, 1), PREVIEW_SKELETON_MAX_ROWS);
+});
 
 const historyStale = computed(() => !!hasHistory.value && props.tableHistoryStale);
 
@@ -1352,11 +1439,64 @@ function formatCell(value: any): string {
 }
 
 /* ========== States ========== */
-.loading-state {
-  padding: var(--spacing-6);
-  text-align: center;
-  color: var(--color-text-muted);
+.history-empty {
+  margin: 0;
+  padding: var(--spacing-2) 0;
   font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.preview-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.skeleton-wrapper {
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.skeleton-bar {
+  display: inline-block;
+  width: 72px;
+  max-width: 100%;
+  height: 0.75em;
+  vertical-align: middle;
+  border-radius: var(--border-radius-sm, 4px);
+  background: color-mix(in srgb, var(--color-text-muted) 18%, transparent);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.skeleton-inline {
+  width: 2.5em;
+  height: 0.9em;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.refreshable {
+  transition: opacity 150ms ease;
+}
+
+/* Delayed so a fast reload never flashes the dim. */
+.refreshable.is-refreshing {
+  opacity: 0.55;
+  transition: opacity 150ms ease 150ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-bar {
+    animation: none;
+  }
 }
 
 /* ========== SQL Definition ========== */

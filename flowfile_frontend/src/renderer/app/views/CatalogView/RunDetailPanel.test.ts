@@ -89,4 +89,17 @@ describe("RunDetailPanel", () => {
       expect(nodeBadges()[1]).toEqual({ label: "Failed", classes: ["failure"] });
     }
   });
+
+  it("shows a run from its list row at once, holding the detail's sections until it lands", () => {
+    const detail: Partial<FlowRunDetail> = run({ has_snapshot: true, has_log: true });
+    delete detail.flow_snapshot;
+    delete detail.node_results_json;
+    mounted = mount(RunDetailPanel, { run: detail, detailPending: true });
+
+    expect(mounted.text()).toContain("Run #7");
+    expect(status().textContent).toBe("Failed");
+    expect(mounted.el.querySelector('[data-testid="run-detail-pending"]')).not.toBeNull();
+    expect(mounted.el.querySelector(".snapshot-pending")).not.toBeNull();
+    expect(mounted.text()).not.toContain("View log");
+  });
 });

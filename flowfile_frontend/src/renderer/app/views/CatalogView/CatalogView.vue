@@ -20,6 +20,11 @@
             <i :class="tab.icon"></i>
             <span class="tab-label">{{ tab.label }}</span>
             <span v-if="tab.badge !== null" class="tab-badge">{{ tab.badge }}</span>
+            <span
+              v-else-if="tab.badgePending"
+              class="tab-badge tab-badge--pending"
+              aria-hidden="true"
+            ></span>
           </button>
         </div>
       </template>
@@ -117,7 +122,14 @@
               <span>Show unavailable</span>
             </label>
           </div>
-          <div v-if="catalogStore.loading" class="loading-state">Loading...</div>
+          <div
+            v-if="!catalogStore.treeLoaded && catalogStore.overviewFailed"
+            class="overview-error"
+          >
+            <span>Couldn't load catalogs.</span>
+            <button class="btn btn-secondary btn-sm" @click="retryOverview">Retry</button>
+          </div>
+          <div v-else-if="!catalogStore.treeLoaded" class="loading-state">Loading...</div>
           <div v-else-if="catalogStore.tree.length === 0" class="empty-state">
             <p>No catalogs yet.</p>
             <button class="btn btn-primary btn-sm" @click="showCreateNamespace = true">
@@ -188,15 +200,41 @@
       <div class="catalog-detail">
         <!-- Nested page (dashboards); first so a lingering selection can't shadow it -->
         <router-view v-if="nestedPageTab" />
-        <!-- Run detail view -->
+        <!-- A URL naming a selection waits for the overview rather than painting the tab's default panel first -->
+        <div v-else-if="selectionAwaitsOverview" data-testid="detail-pending">
+          <div v-if="catalogStore.overviewFailed" class="overview-error" role="alert">
+            <span>Couldn't load the catalog: {{ catalogStore.overviewError }}</span>
+            <button class="btn btn-secondary btn-sm" @click="retryOverview">Retry</button>
+          </div>
+          <div v-else class="loading-state">Loading...</div>
+        </div>
+        <!-- Run detail view: shown from the run's list row until its detail arrives -->
         <RunDetailPanel
-          v-else-if="catalogStore.selectedRunDetail"
-          :run="catalogStore.selectedRunDetail"
+          v-else-if="catalogStore.selectedRun"
+          :run="catalogStore.selectedRun"
+          :detail-pending="!catalogStore.selectedRunDetail"
           @close="handleCloseDetail"
           @open-snapshot="openRunSnapshot($event)"
           @view-flow="navigateToFlow($event)"
           @view-schedule-runs="navigateToScheduleRuns"
         />
+        <!-- A selected run or schedule nothing loaded describes yet -->
+        <div v-else-if="pendingDetail" class="detail-pending" data-testid="detail-item-pending">
+          <div class="detail-pending-header">
+            <button class="back-btn" @click="handleCloseDetail">
+              <i class="fa-solid fa-arrow-left"></i> Back
+            </button>
+            <h2>{{ pendingDetail.title }}</h2>
+          </div>
+          <div v-if="pendingDetail.error" class="overview-error" role="alert">
+            <span>Couldn't load this {{ pendingDetail.kind }}: {{ pendingDetail.error }}</span>
+            <button class="btn btn-secondary btn-sm" @click="pendingDetail.retry()">Retry</button>
+          </div>
+          <div v-else class="skeleton-list" aria-busy="true">
+            <div class="skeleton-block detail-pending-meta"></div>
+            <div v-for="i in 4" :key="i" class="skeleton-block skeleton-row"></div>
+          </div>
+        </div>
         <!-- Schedule detail view -->
         <ScheduleDetailPanel
           v-else-if="catalogStore.selectedSchedule"
@@ -316,8 +354,17 @@
         <!-- Favorites list -->
         <div v-else-if="catalogStore.activeTab === 'favorites'" class="favorites-panel">
           <h2>Favorites</h2>
+          <template v-if="catalogStore.favorites.length === 0 && !catalogStore.overviewLoaded">
+            <div v-if="catalogStore.overviewFailed" class="overview-error" role="alert">
+              <span>Couldn't load favorites: {{ catalogStore.overviewError }}</span>
+              <button class="btn btn-secondary btn-sm" @click="retryOverview">Retry</button>
+            </div>
+            <div v-else class="skeleton-list" aria-busy="true">
+              <div v-for="i in 3" :key="i" class="skeleton-block skeleton-row"></div>
+            </div>
+          </template>
           <EmptyState
-            v-if="catalogStore.favorites.length === 0"
+            v-else-if="catalogStore.favorites.length === 0"
             icon="fa-solid fa-star"
             title="No favorites yet"
             description="Star flows from the catalog tree to see them here."
@@ -734,6 +781,11 @@ const tabs = computed(() => {
         : tab.key === "schedules"
           ? schedulesBadge(catalogStore.stats !== null, catalogStore.schedules)
           : null,
+    // Holds the badge's width until the count lands, so neighbouring tabs don't shift.
+    badgePending:
+      (tab.key === "favorites" || tab.key === "schedules") &&
+      catalogStore.stats === null &&
+      !catalogStore.overviewFailed,
   }));
 });
 
@@ -951,6 +1003,8 @@ const defaultNamespaceId = computed(() => catalogStore.defaultNamespaceId);
 
 // Polling
 let pollInterval: ReturnType<typeof setInterval> | null = null;
+let routeAwaitsOverview = false;
+let unmounted = false;
 const refreshing = ref(false);
 
 async function pollActiveRuns() {
@@ -961,7 +1015,7 @@ async function pollActiveRuns() {
   // When runs finish, refresh related data
   if (hadActiveRuns && !hasActiveRuns) {
     const loads: Promise<void>[] = [
-      catalogStore.loadRuns(catalogStore.selectedFlowId),
+      catalogStore.refreshRuns(),
       catalogStore.loadSchedules(),
       catalogStore.loadStats(),
     ];
@@ -976,9 +1030,13 @@ async function pollActiveRuns() {
 async function refreshAll() {
   refreshing.value = true;
   try {
+    if (!catalogStore.overviewLoaded) {
+      await catalogStore.initialize(true);
+      return;
+    }
     await Promise.all([
       catalogStore.loadActiveRuns(),
-      catalogStore.loadRuns(catalogStore.selectedFlowId),
+      catalogStore.refreshRuns(),
       catalogStore.loadSchedules(),
       catalogStore.loadStats(),
       catalogStore.loadTree(),
@@ -1720,7 +1778,7 @@ async function handleRunNow(scheduleId: number) {
     await CatalogApi.triggerScheduleNow(scheduleId);
     await Promise.all([
       catalogStore.loadActiveRuns(),
-      catalogStore.loadRuns(catalogStore.selectedFlowId),
+      catalogStore.refreshRuns(),
       catalogStore.loadSchedules(),
     ]);
   } catch (e: any) {
@@ -1768,7 +1826,7 @@ async function handleCancelScheduleRun(schedule: FlowSchedule) {
     await Promise.all([
       catalogStore.loadActiveRuns(),
       catalogStore.loadSchedules(),
-      catalogStore.loadRuns(catalogStore.selectedFlowId),
+      catalogStore.refreshRuns(),
       catalogStore.loadStats(),
     ]);
     ElMessage.success("Run cancelled");
@@ -1827,7 +1885,7 @@ async function handleRunNowFromDetail(scheduleId: number) {
 async function handleRunFlow(flowId: number) {
   try {
     await CatalogApi.runFlow(flowId);
-    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(flowId)]);
+    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.refreshRuns()]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to trigger run");
   }
@@ -1841,7 +1899,7 @@ async function handleCancelFlowRun(flowId: number) {
     }
     await Promise.all([
       catalogStore.loadActiveRuns(),
-      catalogStore.loadRuns(flowId),
+      catalogStore.refreshRuns(),
       catalogStore.loadStats(),
     ]);
     ElMessage.success("Run cancelled");
@@ -1855,6 +1913,46 @@ async function handleCancelFlowRun(flowId: number) {
 function routeTab(): CatalogTab {
   return nestedPageTab.value ?? ((route.query.tab as CatalogTab) || "runs");
 }
+
+const SELECTION_QUERY_KEYS = [
+  "flowId",
+  "tableId",
+  "artifactId",
+  "scheduleId",
+  "namespaceId",
+  "runId",
+] as const;
+
+const selectionAwaitsOverview = computed(
+  () => !catalogStore.overviewLoaded && SELECTION_QUERY_KEYS.some((key) => !!route.query[key]),
+);
+
+function retryOverview() {
+  void catalogStore.initialize(true);
+}
+
+// The run branch renders first, so a selected run takes this pane before a schedule does.
+const pendingDetail = computed(() => {
+  const runId = catalogStore.selectedRunId;
+  if (runId !== null) {
+    return {
+      kind: "run",
+      title: `Run #${runId}`,
+      error: catalogStore.runDetailError,
+      retry: () => catalogStore.loadRunDetail(runId),
+    };
+  }
+  const scheduleId = catalogStore.selectedScheduleId;
+  if (scheduleId !== null && !catalogStore.selectedSchedule) {
+    return {
+      kind: "schedule",
+      title: "Schedule",
+      error: catalogStore.scheduleDetailError,
+      retry: () => catalogStore.loadScheduleDetail(scheduleId),
+    };
+  }
+  return null;
+});
 
 function applyRouteToStore() {
   // A nested page owns its own state; only its tab is pinned.
@@ -1878,7 +1976,6 @@ function applyRouteToStore() {
     if (tab === "favorites") catalogStore.loadFavorites();
     else if (tab === "runs" && !flowId) catalogStore.loadRuns();
     else if (tab === "schedules") catalogStore.loadSchedules();
-    else if (tab === "catalog") catalogStore.loadTree();
   }
 
   // Namespace (catalog) settings is exclusive with all other selections; selectNamespace
@@ -1893,7 +1990,7 @@ function applyRouteToStore() {
   if (tableId !== null) {
     if (tableId !== catalogStore.selectedTableId) catalogStore.selectTable(tableId);
     if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
-    if (catalogStore.selectedSchedule) catalogStore.clearScheduleSelection();
+    if (catalogStore.selectedScheduleId !== null) catalogStore.clearScheduleSelection();
   } else if (scheduleId !== null) {
     if (scheduleId !== catalogStore.selectedScheduleId) catalogStore.selectSchedule(scheduleId);
     if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
@@ -1909,7 +2006,7 @@ function applyRouteToStore() {
     // Clear table, artifact, and schedule if not in URL
     if (catalogStore.selectedTable) catalogStore.clearTableSelection();
     if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
-    if (catalogStore.selectedSchedule) catalogStore.clearScheduleSelection();
+    if (catalogStore.selectedScheduleId !== null) catalogStore.clearScheduleSelection();
 
     // Flow selection (set manually to avoid selectFlow clearing run detail)
     if (flowId !== null) {
@@ -1918,9 +2015,7 @@ function applyRouteToStore() {
         catalogStore.clearTableSelection();
         catalogStore.clearArtifactSelection();
         catalogStore.clearScheduleSelection();
-        catalogStore.loadRuns(flowId);
-        catalogStore.loadFlowArtifacts(flowId);
-        catalogStore.loadFlowSchedules(flowId);
+        catalogStore.loadFlowDetail(flowId);
       }
     } else if (catalogStore.selectedFlowId !== null) {
       catalogStore.selectedFlowId = null;
@@ -1930,9 +2025,8 @@ function applyRouteToStore() {
   // Run detail can coexist with any selection (schedule, flow, etc.)
   if (runId !== null) {
     if (runId !== catalogStore.selectedRunId) catalogStore.loadRunDetail(runId);
-  } else if (catalogStore.selectedRunDetail) {
-    catalogStore.selectedRunId = null;
-    catalogStore.selectedRunDetail = null;
+  } else if (catalogStore.selectedRunId !== null) {
+    catalogStore.clearRunSelection();
   }
 
   // Deep link from the Kafka sync flow: open the schedule modal preselected to
@@ -1955,16 +2049,29 @@ watch(
   },
 );
 
+// Selections resolve against the tree, so after a failed first load they are restored once a retry lands.
+watch(
+  () => catalogStore.overviewLoaded,
+  (loaded) => {
+    if (!loaded || !routeAwaitsOverview) return;
+    routeAwaitsOverview = false;
+    applyRouteToStore();
+  },
+);
+
 onMounted(async () => {
   // Pin the route's tab before the overview loads, or the store's previous (or default)
   // tab renders first and the page visibly jumps once the data arrives.
   catalogStore.activeTab = routeTab();
   await catalogStore.initialize();
-  applyRouteToStore(); // Restore selections from URL after data is loaded
+  if (unmounted) return;
   pollInterval = setInterval(pollActiveRuns, 20_000);
+  if (catalogStore.overviewLoaded) applyRouteToStore();
+  else routeAwaitsOverview = true;
 });
 
 onUnmounted(() => {
+  unmounted = true;
   if (pollInterval !== null) {
     clearInterval(pollInterval);
     pollInterval = null;
@@ -2721,6 +2828,84 @@ onUnmounted(() => {
 .catalog-view .info-card .demo-card-btn {
   margin-top: var(--spacing-3);
 }
+
+/* Overview placeholders, shown before the first overview lands */
+.catalog-view .skeleton-block {
+  border-radius: var(--border-radius-md);
+  background: color-mix(in srgb, var(--color-text-muted) 12%, transparent);
+  animation: catalog-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.catalog-view .skeleton-value {
+  display: inline-block;
+  width: 2.5em;
+  height: 1em;
+  vertical-align: middle;
+  border-radius: var(--border-radius-sm, 4px);
+  background: color-mix(in srgb, var(--color-text-muted) 18%, transparent);
+  animation: catalog-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.catalog-view .skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.catalog-view .skeleton-row {
+  height: 36px;
+}
+
+.catalog-view .overview-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-3);
+  padding: var(--spacing-5) var(--spacing-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.catalog-view .detail-pending {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.catalog-view .detail-pending-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-5);
+}
+
+.catalog-view .detail-pending-header h2 {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+}
+
+.catalog-view .detail-pending-meta {
+  height: 140px;
+}
+
+@keyframes catalog-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .catalog-view .skeleton-block,
+  .catalog-view .skeleton-value {
+    animation: none;
+  }
+}
 </style>
 
 <style scoped>
@@ -2776,6 +2961,11 @@ onUnmounted(() => {
   min-width: 18px;
   text-align: center;
   line-height: 18px;
+}
+
+.tab-badge--pending {
+  height: 18px;
+  background: color-mix(in srgb, var(--color-text-muted) 18%, transparent);
 }
 
 .tab-group-divider {
