@@ -470,6 +470,17 @@ export interface CatalogTableKeyColumnResponse {
   new_version: number | null;
 }
 
+export interface CatalogTableRestoreRequest {
+  version: number;
+  expected_version?: number | null;
+}
+
+export interface CatalogTableRestoreResponse {
+  table: CatalogTable;
+  restored_version: number;
+  new_version: number | null;
+}
+
 /** Structured detail of the 409 the edits endpoint returns when the table moved. */
 export interface StaleWriteDetail {
   error: "stale_write";

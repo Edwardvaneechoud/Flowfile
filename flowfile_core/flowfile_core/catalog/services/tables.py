@@ -61,6 +61,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_apply_table_edits,
     trigger_optimize_catalog_table,
     trigger_read_table_metadata,
+    trigger_restore_version,
     trigger_vacuum_catalog_table,
 )
 from flowfile_core.schemas.catalog_schema import (
@@ -937,11 +938,11 @@ class TableService:
             raise ValueError(f"Table '{table.name}' is virtual and has no Delta storage to maintain")
         if _is_cloud_uri(table.file_path):
             if getattr(table, "storage_format", "delta") != "delta":
-                raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be optimized or vacuumed")
+                raise ValueError(f"Table '{table.name}' is not a Delta table")
             return table.file_path
         path = Path(table.file_path)
         if table.storage_format != "delta" or is_legacy_parquet(path) or not is_delta_table(path):
-            raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be optimized or vacuumed")
+            raise ValueError(f"Table '{table.name}' is not a Delta table")
         return str(path)
 
     def _update_table_size(self, table: CatalogTable, size_bytes: int | None, user_id: int | None = None) -> None:
@@ -1396,6 +1397,86 @@ class TableService:
             raise
 
         return self._record_edit(table, data_path, target, user_id, result), result
+
+    def restore_table_version(
+        self,
+        table_id: int,
+        version: int,
+        expected_version: int | None = None,
+        restored_by: str | None = None,
+    ) -> tuple[CatalogTableOut, dict]:
+        """Restore a Delta catalog table to an earlier version with one ``RESTORE`` commit.
+
+        A change-tracked table cannot go below the version its feed was enabled at: the restore
+        brings back that version's table properties, which would switch the feed off under every
+        cursor. The refresh runs through ``overwrite_table_data``, so table-trigger schedules fire.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        data_path = self._require_delta_table_path(table)
+        if table.cdc_enabled and table.cdc_enabled_version is not None and version < table.cdc_enabled_version:
+            raise ValueError(
+                f"Table '{table.name}' tracks changes since version {table.cdc_enabled_version}; "
+                f"restoring version {version} would turn its change feed off"
+            )
+
+        is_cloud = _is_cloud_uri(data_path)
+        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
+        commit_metadata = {"flowfile_operation": "catalog_table_restore"}
+        if restored_by:
+            commit_metadata["flowfile_user"] = restored_by
+
+        # The gate of apply_table_edits: bare directory names are unambiguous only for managed tables.
+        offload = uses_worker() and (is_cloud or _is_managed_table_path(data_path))
+
+        try:
+            if offload:
+                result = trigger_restore_version(
+                    _catalog_table_dir_name(data_path),
+                    table_id,
+                    version,
+                    expected_version=expected_version,
+                    commit_metadata=commit_metadata,
+                    storage=target.to_worker_payload() if target else None,
+                    worker_url=registry.worker_url(),
+                )
+            else:
+                from shared.delta_utils import DeltaEditError, DeltaEditStaleError, restore_delta_version
+
+                try:
+                    result = restore_delta_version(
+                        data_path,
+                        version,
+                        expected_version=expected_version,
+                        storage_options=(target.storage_options or None) if target else None,
+                        commit_metadata=commit_metadata,
+                    )
+                except DeltaEditStaleError as e:
+                    raise StaleWriteError("catalog_table", table_id, expected=e.expected, current=e.current) from e
+                except DeltaEditError as e:
+                    raise ValueError(str(e)) from e
+        except (StaleWriteError, ValueError):
+            raise
+        except Exception:
+            # As in apply_table_edits: a response lost after the commit would leave schema_json stale.
+            try:
+                self.overwrite_table_data(table_id, table_path=data_path, storage_format="delta")
+            except Exception:
+                logger.warning("Post-failure metadata refresh failed for table %s", table_id, exc_info=True)
+            raise
+
+        schema_list = result.get("column_schema") or result.get("schema") or []
+        table_out = self.overwrite_table_data(
+            table_id,
+            table_path=data_path,
+            storage_format="delta",
+            schema=schema_list,
+            row_count=result.get("row_count"),
+            column_count=result.get("column_count"),
+            size_bytes=result.get("size_bytes"),
+        )
+        return table_out, result
 
     # Path resolution
 

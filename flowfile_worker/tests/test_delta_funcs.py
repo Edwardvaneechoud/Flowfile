@@ -670,6 +670,40 @@ class TestWorkerRoutes:
         resp = worker_client.post("/catalog/optimize", json={"table_path": "../escape"})
         assert resp.status_code == 400
 
+    def test_restore_version_route(self, worker_client, versioned_delta):
+        resp = worker_client.post(
+            "/catalog/restore_version",
+            json={
+                "table_path": "versioned",
+                "version": 0,
+                "expected_version": 1,
+                "commit_metadata": {"flowfile_operation": "catalog_table_restore"},
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["restored_version"] == 0
+        assert data["new_version"] == 2
+        assert data["row_count"] == 1
+        assert pl.read_delta(str(versioned_delta))["v"].to_list() == [1]
+
+    def test_restore_version_route_stale_409(self, worker_client, versioned_delta):
+        resp = worker_client.post(
+            "/catalog/restore_version",
+            json={"table_path": "versioned", "version": 0, "expected_version": 0},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == {"error_type": "stale_write", "expected": 0, "current": 1}
+
+    def test_restore_version_route_invalid_422(self, worker_client, versioned_delta):
+        resp = worker_client.post("/catalog/restore_version", json={"table_path": "versioned", "version": 1})
+        assert resp.status_code == 422
+        assert "already the current" in resp.json()["detail"]["message"]
+
+    def test_restore_version_route_path_traversal(self, worker_client):
+        resp = worker_client.post("/catalog/restore_version", json={"table_path": "../escape", "version": 0})
+        assert resp.status_code == 400
+
     def test_vacuum_route_path_traversal(self, worker_client):
         resp = worker_client.post("/catalog/vacuum", json={"table_path": "../escape"})
         assert resp.status_code == 400

@@ -293,6 +293,7 @@
           @load-preview="catalogStore.loadSelectedPreview()"
           @refresh-history="catalogStore.refreshTableHistory()"
           @edits-saved="catalogStore.handleTableEdited($event)"
+          @restore-version="handleRestoreVersion($event)"
           @create-viz="openCreateViz($event)"
         />
         <!-- Flow detail view; a hub flow's is the same page with its versions and their Open on it -->
@@ -1046,6 +1047,28 @@ async function refreshAll() {
     ]);
   } finally {
     refreshing.value = false;
+  }
+}
+
+async function handleRestoreVersion(version: number) {
+  const table = catalogStore.selectedTable;
+  if (!table) return;
+  try {
+    const result = await catalogStore.restoreTableVersion(table.id, version);
+    ElMessage.success(
+      result.new_version !== null
+        ? `Restored version ${version} as version ${result.new_version}`
+        : `Restored version ${version}`,
+    );
+  } catch (e: any) {
+    if (e?.response?.status === 409) {
+      ElMessage.error("The table changed since you loaded it. Refresh and try again.");
+      return;
+    }
+    const detail = e?.response?.data?.detail;
+    ElMessage.error(
+      (typeof detail === "string" ? detail : detail?.message) ?? "Could not restore the version",
+    );
   }
 }
 
