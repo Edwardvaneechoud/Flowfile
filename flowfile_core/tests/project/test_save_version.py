@@ -96,6 +96,7 @@ def test_the_export_reads_each_flow_file_at_most_twice(tmp_path, monkeypatch):
     root = tmp_path / "proj"
     root.mkdir()
     created: list[int] = []
+    uuids: set[str] = set()
     with get_db_context() as db:
         for i in range(40):
             if i % 2:
@@ -107,6 +108,8 @@ def test_the_export_reads_each_flow_file_at_most_twice(tmp_path, monkeypatch):
             db.add(reg)
             db.flush()
             created.append(reg.id)
+            if not i % 2:
+                uuids.add(reg.flow_uuid)
         db.commit()
 
     reads: Counter = Counter()
@@ -131,7 +134,10 @@ def test_the_export_reads_each_flow_file_at_most_twice(tmp_path, monkeypatch):
             worst = max(ours.values())
             print(f"{label}: {len(ours)} flow files read, at most {worst} times each")
             assert worst <= 2, f"{label}: {[(str(p), n) for p, n in ours.items() if n > 2]}"
-        assert len(list((root / "flows").glob("flow_*.flow.yaml"))) == 20
+        held = {
+            yaml.safe_load(p.read_text(encoding="utf-8"))["flow_uuid"] for p in (root / "flows").glob("*.flow.yaml")
+        }
+        assert uuids <= held
     finally:
         monkeypatch.undo()
         with get_db_context() as db:
