@@ -332,6 +332,8 @@ def uncommitted(current_user=Depends(get_current_active_user)) -> ChangesOut:
         changes = project_sync.unsaved_changes(current_user.id)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return ChangesOut(changes=changes)
 
 

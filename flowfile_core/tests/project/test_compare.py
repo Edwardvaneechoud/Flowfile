@@ -91,6 +91,28 @@ def test_a_comment_in_a_root_file_is_no_change():
     assert kinds.compare(TREE, tree) == []
 
 
+@pytest.mark.parametrize("path", ["flows/flow_b.flow.yaml", "connections/database/kinds_db.yaml"])
+def test_a_comment_or_key_order_in_a_folder_file_is_no_change(path):
+    data = yaml.safe_load(TREE[path])
+    reordered = dict(reversed(list(data.items())))
+    tree = {**TREE, path: "# by hand\n" + yaml.safe_dump(reordered, sort_keys=False)}
+    assert kinds.compare(TREE, tree) == []
+    field = SPECS[kinds.kind_for_path(path)[0].name][3]
+    tree[path] = yaml.safe_dump({**reordered, field: "changed"}, sort_keys=False)
+    assert [(c.kind, c.change) for c in kinds.compare(TREE, tree)] == [(kinds.kind_for_path(path)[0].name, "modified")]
+
+
+def test_strict_refuses_a_kind_whose_files_do_not_parse():
+    data = yaml.safe_load(TREE["kernels.yaml"])
+    data["kernels"][0]["id"] = ["not", "a", "key"]
+    tree = {**TREE, "kernels.yaml": yaml.safe_dump(data, sort_keys=False)}
+    assert [(c.kind, c.change, c.path) for c in kinds.compare(TREE, tree)] == [
+        ("kernels", "modified", "kernels.yaml")
+    ]
+    with pytest.raises(ValueError, match="kernels"):
+        kinds.compare(TREE, tree, strict=True)
+
+
 def test_schedules_without_an_id_differing_only_in_backend_are_two_entries():
     data = yaml.safe_load(TREE["schedules/flow_a.yaml"])
     data["schedules"][0].pop("id")

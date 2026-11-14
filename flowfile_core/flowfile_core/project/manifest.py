@@ -123,10 +123,15 @@ def parse_manifest(data: dict, default_name: str) -> ProjectManifest:
 
 
 def read_manifest(root: Path) -> ProjectManifest | None:
+    """The folder's manifest, ``None`` without one; a file that cannot be read is a ``ValueError``."""
     p = manifest_path(root)
     if not p.exists():
         return None
-    return parse_manifest(yaml.safe_load(p.read_text(encoding="utf-8")) or {}, root.name)
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ValueError(f"{MANIFEST_NAME} is not valid YAML. Nothing was changed.") from e
+    return parse_manifest(data or {}, root.name)
 
 
 def kinds_to_save(m: ProjectManifest) -> list[str]:

@@ -288,11 +288,20 @@ def test_a_hand_edit_blocks_a_save_until_it_is_applied_or_overwritten(tmp_path):
 
     try:
         assert client.post("/project/init", json={"folder_path": str(root), "name": "Edits"}).status_code == 201
+        data = yaml.safe_load(flow_file.read_text(encoding="utf-8"))
+        flow_file.write_text("# a note\n" + yaml.safe_dump(data, sort_keys=True), encoding="utf-8")
+        assert client.get("/project/active").json()["external_edits"] is False
+        assert client.post("/project/versions", json={"message": "comment only"}).status_code == 200
+
         edit("Edited by hand")
         assert client.get("/project/active").json()["external_edits"] is True
 
+        manifest = root / "project.yaml"
+        manifest.write_text("# by hand\n" + manifest.read_text(encoding="utf-8"), encoding="utf-8")
+        manifest_bytes = manifest.read_bytes()
         refused = client.post("/project/versions", json={"message": "refused"})
         assert refused.status_code == 409
+        assert manifest.read_bytes() == manifest_bytes
         assert refused.json()["detail"]["code"] == "FOLDER_EDITED"
         assert f"flows/{stem}.flow.yaml" in {c["path"] for c in refused.json()["detail"]["changes"]}
         assert client.post("/project/versions", json={"message": "overwrite", "overwrite": True}).status_code == 200
@@ -308,3 +317,25 @@ def test_a_hand_edit_blocks_a_save_until_it_is_applied_or_overwritten(tmp_path):
         with get_db_context() as db:
             db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).delete()
             db.commit()
+
+
+@pytest.mark.parametrize(
+    "manifest", ["name: [\n", "project_format: 99\nname: Broken\n"], ids=["not yaml", "newer format"]
+)
+def test_status_answers_when_project_yaml_cannot_be_read(tmp_path, manifest):
+    if not git_ops.git_available():
+        pytest.skip("git not available")
+    owner = 1
+    client = TestClient(main.app)
+    client.headers = {"Authorization": f"Bearer {client.post('/auth/token').json()['access_token']}"}
+    project_sync.close_project(owner)
+    root = tmp_path / "project"
+    try:
+        assert client.post("/project/init", json={"folder_path": str(root), "name": "Broken"}).status_code == 201
+        (root / "project.yaml").write_text(manifest, encoding="utf-8")
+        active = client.get("/project/active")
+        assert active.status_code == 200, active.text
+        assert active.json()["external_edits"] is True
+        assert client.get("/project/uncommitted").status_code == 422
+    finally:
+        project_sync.close_project(owner)

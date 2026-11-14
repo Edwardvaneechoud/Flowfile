@@ -137,7 +137,7 @@ def _plan_changes(root: Path, owner_id: int, sha: str | None) -> list[kinds.Chan
             held = {owned[0].name for owned in map(kinds.kind_for_path, target) if owned is not None}
             listed = [name for name in listed if name in held]
     snapshot = _snapshot(root, owner_id, [k.name for k in kinds.registered()] if listed is None else listed)
-    return kinds.compare(snapshot, target, kinds=listed)
+    return kinds.compare(snapshot, target, kinds=listed, strict=True)
 
 
 def _change_rows(changes: list[kinds.Change]) -> list[dict]:
@@ -233,14 +233,21 @@ class ProjectSyncService:
             return []
         try:
             changed = {c.path for c in _plan_changes(proj.root, proj.owner_id, None)}
-        except (OSError, ValueError):
+        except (OSError, ValueError, yaml.YAMLError):
             return rows
         return [r for r in rows if r["path"] in changed]
 
     def external_edits(self, user_id: int) -> bool:
-        """True when the folder holds edits of files a kind owns that were not applied to the database."""
+        """True when the folder holds edits of files a kind owns that were not applied to the database, or a
+        ``project.yaml`` that cannot be read, so a reload names what is wrong with it."""
         proj = self.get_active_project(user_id)
-        return proj is not None and bool(self._unapplied_edits(proj))
+        if proj is None:
+            return False
+        try:
+            read_manifest(proj.root)
+        except ValueError:
+            return True
+        return bool(self._unapplied_edits(proj))
 
     # --- lifecycle (explicit user actions via /project router + CLI) ----------
 
@@ -299,9 +306,7 @@ class ProjectSyncService:
         git_ops.init(proj.root)  # heal a folder created while git was unavailable; no-op otherwise
         with git_ops.project_lock(proj.root):
             m = read_manifest(proj.root)
-            if m is not None:
-                _save_manifest(proj.root, m)
-            snapshot = _snapshot(proj.root, proj.owner_id)
+            snapshot = _snapshot(proj.root, proj.owner_id, None if m is None else kinds_to_save(m))
             edits = self._unapplied_edits(proj)
             if edits and not overwrite:
                 refusal = (
@@ -312,6 +317,8 @@ class ProjectSyncService:
                     status_code=409,
                     detail={"code": "FOLDER_EDITED", "message": refusal, "changes": _named_changes(edits)},
                 )
+            if m is not None:
+                _save_manifest(proj.root, m)
             kinds.write_tree(proj.root, snapshot)
             sha = git_ops.commit_all(proj.root, message)
             with get_db_context() as db:
@@ -403,8 +410,8 @@ class ProjectSyncService:
             # target aborts with nothing changed, history included.
             preflight_import_caps(proj.root, sha)
             preflight_import_files(proj.root, sha)
-            recovery_sha = self._guard_before_apply(proj, force, "restore")
             removed = [c for c in _plan_changes(proj.root, proj.owner_id, sha) if c.change == "removed"]
+            recovery_sha = self._guard_before_apply(proj, force, "restore")
             git_ops.restore(proj.root, sha)
             self._snapshot_database()
             result = import_project(proj.root, proj.owner_id, removed)
@@ -430,8 +437,8 @@ class ProjectSyncService:
             # Check the working tree before the recovery point or the DB rebuild, so a bad file aborts cleanly.
             preflight_import_caps_worktree(proj.root)
             preflight_import_files_worktree(proj.root)
-            recovery_sha = self._guard_before_apply(proj, force, "reload")
             removed = [c for c in _plan_changes(proj.root, proj.owner_id, None) if c.change == "removed"]
+            recovery_sha = self._guard_before_apply(proj, force, "reload")
             self._snapshot_database()
             result = import_project(proj.root, proj.owner_id, removed)
             self._sync_track_setting_from_manifest(proj)
@@ -511,7 +518,10 @@ class ProjectSyncService:
         proj = self.get_active_project(user_id)
         if proj is None:
             return False
-        return bool(self.unsaved_changes(user_id))
+        try:
+            return bool(self.unsaved_changes(user_id))
+        except ValueError:
+            return False
 
     def has_external_changes(self, user_id: int) -> bool:
         proj = self.get_active_project(user_id)

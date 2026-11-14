@@ -8,7 +8,7 @@ A project is a git folder holding the definitions of the resources you own. When
 
 Your Flowfile database stays the source of truth at runtime. The project folder holds a copy of their definitions:
 
-- **Export (database → files)** happens when you save a version. What is unsaved is read when you ask, by comparing your resources with the last version. If the folder holds edits that were not applied, a save asks you to **Apply** them first (a reload) or **Overwrite** them with your resources.
+- **Export (database → files)** happens when you save a version. What is unsaved is read when you ask, by comparing your resources with the last version. If the folder holds edits that were not applied, a save asks you to **Apply** them first (a reload that makes Flowfile match the folder, then saves) or **Overwrite** them with your resources. Applying replaces changes you made in Flowfile since the last version, so when there are any it lists them and asks again; it keeps a recovery point of them first.
 - **Import (files → database)** happens only at explicit moments: when you open a project, reload it from disk, or restore an older version.
 
 !!! info "Not in Flowfile Lite"

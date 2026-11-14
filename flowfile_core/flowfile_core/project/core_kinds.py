@@ -41,6 +41,14 @@ def _canonical(value) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
 
+def _same_yaml(a: str, b: str) -> bool:
+    """Whether two texts parse to the same value; ``False`` when either does not parse."""
+    try:
+        return _load(a) == _load(b)
+    except Exception:
+        return False
+
+
 def _ns(entry: dict) -> tuple:
     namespace = entry.get("namespace") or {}
     return namespace.get("catalog"), namespace.get("schema")
@@ -143,6 +151,7 @@ register(
         entries=_file_entries("connection_name"),
         delete_label="its stored password is not in any version",
         delete=importer._delete_database_connection,
+        same=_same_yaml,
     )
 )
 register(
@@ -156,6 +165,7 @@ register(
         entries=_file_entries("connection_name"),
         delete_label="its stored password is not in any version",
         delete=importer._delete_cloud_connection,
+        same=_same_yaml,
     )
 )
 register(
@@ -182,6 +192,7 @@ register(
         entries=_flow_entries,
         delete_label="its flow file is removed",
         delete=importer._delete_flow,
+        same=_same_yaml,
     )
 )
 register(
@@ -283,5 +294,6 @@ register(
         entries=_file_entries("notebook_uuid", "name"),
         delete_label="its content file is removed",
         delete=importer._delete_notebook,
+        same=_same_yaml,
     )
 )

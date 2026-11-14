@@ -13,6 +13,7 @@ A kind is a `kinds.Kind`, a frozen dataclass:
 | `paths` | One-level patterns of the files it owns, such as `widgets/*.yaml` or `widgets.yaml`. |
 | `export(ctx)` | The kind's files as `{path: text}`, read from the database through `ctx.db` for `ctx.owner_id`. The same database must always give the same text. |
 | `entries(files)` | Splits the kind's files into objects, `{key: Entry(label, path, text)}`; two entries are the same object when their keys are equal and unchanged when their texts are. |
+| `same(a, b)` | Optional: whether two entry texts that differ still hold the same object, such as a file that only gained a comment. Called only when the texts differ. |
 | `delete(ctx, keys)` | Deletes the objects of those keys from the database. |
 | `delete_label` | What a preview says a delete does. With none, removals are not reported. |
 | `apply(ctx, entries)` | Writes the objects `entries` returned for the kind's files into the database, adding and changing rows. Deletes go through `delete`, so `apply` never removes an object. |

@@ -23,6 +23,7 @@ import { ref, computed } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { ProjectFolderEdited } from "../../api/project.api";
 import { useProjectStore } from "../../stores/project-store";
+import { ProjectUnsavedChanges } from "../../views/ProjectView/unsavedChanges";
 
 withDefaults(
   defineProps<{
@@ -59,7 +60,7 @@ const askApplyOrOverwrite = async (edited: ProjectFolderEdited): Promise<FolderC
   const lines = edited.changes.map((c) => `${c.kind} “${c.label}”`).join("\n");
   try {
     await ElMessageBox.confirm(
-      `${edited.message}\n\n${lines}\n\nApply brings those changes in before saving; Overwrite saves over them.`,
+      `${edited.message}\n\n${lines}\n\nApply makes Flowfile match the folder's files, then saves. Overwrite saves what Flowfile holds over those files.`,
       "Files changed outside Flowfile",
       {
         confirmButtonText: "Apply and save",
@@ -75,6 +76,39 @@ const askApplyOrOverwrite = async (edited: ProjectFolderEdited): Promise<FolderC
   }
 };
 
+const confirmReplaceUnsaved = async (unsaved: ProjectUnsavedChanges): Promise<boolean> => {
+  const lines = unsaved.changes.map((c) => `${c.kind} “${c.label}”`).join("\n");
+  const snapshot = unsaved.databaseSnapshot
+    ? "A snapshot of the catalog database is also written to db_backups/ first."
+    : "This catalog database is not snapshotted: the recovery point is the only copy, and it holds definitions, not stored passwords.";
+  try {
+    await ElMessageBox.confirm(
+      `Applying the folder replaces these unsaved changes:\n\n${lines}\n\nA recovery point of them is kept first. ${snapshot}\n\nTo keep them instead, cancel and choose Overwrite.`,
+      "Unsaved changes",
+      {
+        confirmButtonText: "Keep a recovery point and apply",
+        cancelButtonText: "Cancel",
+        type: "warning",
+        customStyle: { whiteSpace: "pre-line" },
+      },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const applyFolderAndSave = async (text: string) => {
+  try {
+    await store.reloadFromDisk();
+  } catch (e) {
+    if (!(e instanceof ProjectUnsavedChanges)) throw e;
+    if (!(await confirmReplaceUnsaved(e))) return;
+    await store.reloadFromDisk(true);
+  }
+  await save(text);
+};
+
 const onSave = async () => {
   const text = message.value.trim() || "Update";
   try {
@@ -88,8 +122,7 @@ const onSave = async () => {
     if (!choice) return;
     try {
       if (choice === "apply") {
-        await store.reloadFromDisk();
-        await save(text);
+        await applyFolderAndSave(text);
       } else {
         await save(text, true);
       }
