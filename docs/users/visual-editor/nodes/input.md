@@ -138,6 +138,7 @@ Loads data from a database table or a custom SQL query. Supports PostgreSQL, MyS
 
 | Setting | Description |
 |---|---|
+| **Database** | Snowflake connections only: the database to read from. Empty uses the connection's default database. With a database set, choose a schema too; the node reads `database.schema.table`. |
 | **Schema** | Database schema to query, e.g. `public`. |
 | **Table** | Table to read from. |
 | **Custom SQL** | Write a query instead of reading a whole table. |

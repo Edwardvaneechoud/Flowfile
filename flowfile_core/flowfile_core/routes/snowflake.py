@@ -5,11 +5,12 @@ secret of a connection being edited) and answers the session's user, role, wareh
 warehouses, databases and roles on offer, which the connection form turns into dropdowns.
 
 The browser sign-in is Snowflake's built-in OAuth client for local applications (authorization code + PKCE,
-``shared.snowflake_auth``). ``/oauth/start`` records a pending sign-in (``snowflake_signin``) and answers the
-Snowflake page to open; Snowflake sends the browser to ``/oauth/callback`` on core's own loopback port, which has
-no Flowfile session and trusts only its signed ``state``; the form polls ``/oauth/status/{flow_id}`` and then saves
-the connection with the sign-in's id, which claims the refresh token. The sign-in exists only where core runs on
-the user's own machine (``sharing.browser_sign_in_allowed``): the client's redirect must be a loopback address.
+``shared.snowflake_auth``). ``/oauth/start`` opens a one-shot listener on ``127.0.0.1`` and a free port, records a
+pending sign-in and answers the Snowflake page to open (``snowflake_callback``); Snowflake sends the browser back to
+that listener, not to core's app, because the client accepts only ``http://127.0.0.1:<port>`` with no path. The
+form polls ``/oauth/status/{flow_id}`` and then saves the connection with the sign-in's id, which claims the
+refresh token. The sign-in exists only where core runs on the user's own machine (``sharing.browser_sign_in_allowed``):
+the redirect must reach the user's own loopback address.
 
 No route here answers 401 for a Snowflake problem: the frontend reads 401 as an expired Flowfile session.
 Failures are 422 with a plain string ``detail``.
@@ -17,21 +18,15 @@ Failures are 422 with a plain string ``detail``.
 
 from __future__ import annotations
 
-import html
-import time
 from typing import Any, Literal
 
-import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import HTMLResponse
-from jwt import PyJWTError
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
-from flowfile_core.auth.jwt import get_current_active_user, get_jwt_secret
-from flowfile_core.configs import logger, settings
-from flowfile_core.configs.settings import ALGORITHM
+from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import Secret
 from flowfile_core.flowfile.database_connection_manager import snowflake_signin
@@ -42,19 +37,14 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     prepare_snowflake_connection,
     snowflake_unavailable_message,
 )
+from flowfile_core.flowfile.database_connection_manager.snowflake_callback import begin_sign_in, session_out
 from flowfile_core.schemas.input_schema import FullDatabaseConnection
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
 from shared.db_dialects import get_dialect
-from shared.snowflake_auth import AUTH_OAUTH, SnowflakeAuthError, authorize_url, exchange_code, new_pkce_pair
+from shared.snowflake_auth import AUTH_OAUTH, SnowflakeAuthError
 from shared.snowflake_auth import normalize_account as _normalize_account
 
 router = APIRouter()
-
-_STATE_TYPE = "snowflake_oauth_state"
-_NO_REFRESH_TOKEN = (
-    "This Snowflake account does not issue refresh tokens for the built-in sign-in, so Flowfile cannot keep the "
-    "connection. Use an access token or a key-pair."
-)
 
 
 class SnowflakeDiscoverRequest(BaseModel):
@@ -100,39 +90,6 @@ class SnowflakeOAuthStatus(BaseModel):
     databases: list[str] = []
 
 
-def _redirect_uri() -> str:
-    # The desktop shell port-scans, so the live port, never a literal.
-    return f"http://127.0.0.1:{settings.SERVER_PORT}/snowflake/oauth/callback"
-
-
-def _sign_state(flow_id: str) -> str:
-    payload = {"type": _STATE_TYPE, "flow_id": flow_id, "exp": int(time.time()) + snowflake_signin.TTL_SECONDS}
-    return jwt.encode(payload, get_jwt_secret(), algorithm=ALGORITHM)
-
-
-def _verify_state(state: str) -> dict:
-    try:
-        payload = jwt.decode(state, get_jwt_secret(), algorithms=[ALGORITHM])
-    except PyJWTError as e:
-        raise ValueError(
-            f"This sign-in link is not valid any more ({type(e).__name__}). Start again in Flowfile."
-        ) from e
-    if payload.get("type") != _STATE_TYPE or not payload.get("flow_id"):
-        raise ValueError("This sign-in link was not made by Flowfile. Start again in Flowfile.")
-    return payload
-
-
-def _page(ok: bool, message: str, status_code: int = 200) -> HTMLResponse:
-    title = "Signed in to Snowflake" if ok else "Snowflake sign-in failed"
-    body = f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>{html.escape(title)}</title></head>
-<body style="font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem; margin: 0 auto;">
-<h3>{html.escape(title)}</h3>
-<p>{html.escape(message)}</p>
-</body></html>"""
-    return HTMLResponse(body, status_code=status_code)
-
-
 def _require_driver() -> None:
     message = snowflake_unavailable_message()
     if message:
@@ -146,19 +103,6 @@ def _blank_to_none(value: str | None) -> str | None:
 
 def _discover(uri: str) -> dict[str, Any]:
     return get_dialect(SNOWFLAKE).discover(uri)
-
-
-def _session_out(host: str, info: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "account_host": host,
-        "username": info.get("user") or None,
-        "role": info.get("role") or None,
-        "warehouse": info.get("warehouse") or None,
-        "database": info.get("database") or None,
-        "warehouses": list(info.get("warehouses") or []),
-        "databases": list(info.get("databases") or []),
-        "roles": list(info.get("roles") or []),
-    }
 
 
 def _stored_target(db: Session, current_user, name: str | None) -> tuple[str, str, str, str | None, str | None] | None:
@@ -222,7 +166,7 @@ def discover(
         uri = get_dialect(SNOWFLAKE).build_uri(
             host=host, username=username or None, password=secret, auth=method, role=role
         )
-        return _session_out(host, _discover(uri))
+        return session_out(host, _discover(uri))
     except ImportError:
         raise HTTPException(
             422, snowflake_unavailable_message() or "The Snowflake driver could not be loaded."
@@ -243,91 +187,11 @@ def oauth_start(body: SnowflakeOAuthStartRequest, current_user=Depends(get_curre
         host = _normalize_account(body.account)
     except SnowflakeAuthError as e:
         raise HTTPException(422, str(e)) from None
-    role = _blank_to_none(body.role)
-    pkce = new_pkce_pair()
-    redirect_uri = _redirect_uri()
-    flow = snowflake_signin.start(
-        user_id=current_user.id, host=host, role=role, verifier=pkce.verifier, redirect_uri=redirect_uri
-    )
-    url = authorize_url(
-        host, redirect_uri=redirect_uri, state=_sign_state(flow.flow_id), code_challenge=pkce.challenge, role=role
-    )
-    return {"auth_url": url, "flow_id": flow.flow_id}
-
-
-@router.get("/oauth/callback", response_class=HTMLResponse)
-def oauth_callback(
-    code: str | None = Query(None),
-    state: str | None = Query(None),
-    error: str | None = Query(None),
-) -> HTMLResponse:
-    """Where Snowflake sends the browser after the sign-in; trusted only through the signed ``state``.
-
-    Exchanges the code for the tokens, then describes the session (a failure there does not fail the sign-in) and
-    answers a page saying the tab can be closed. A sign-in that already finished is never overwritten.
-    """
-    if not state:
-        return _page(False, "The sign-in link is incomplete. Start again in Flowfile.", 400)
     try:
-        flow_id = _verify_state(state)["flow_id"]
-    except ValueError as e:
-        return _page(False, str(e), 400)
-    flow = snowflake_signin.begin_exchange(flow_id)
-    if flow is None:
-        current = snowflake_signin.get(flow_id)
-        if current is None:
-            return _page(False, "This sign-in has expired. Start again in Flowfile.", 400)
-        if current.status == "ok":
-            return _page(True, "Signed in to Snowflake. You can close this tab and return to Flowfile.")
-        return _page(False, current.message or "This sign-in is already being completed.")
-    if error:
-        message = (
-            "The sign-in was cancelled in Snowflake. Start again in Flowfile."
-            if error == "access_denied"
-            else f"Snowflake did not complete the sign-in ({error})."
-        )
-        snowflake_signin.finish(flow_id, status="error", message=message)
-        return _page(False, message)
-    if not code:
-        message = "Snowflake returned no sign-in code. Start again in Flowfile."
-        snowflake_signin.finish(flow_id, status="error", message=message)
-        return _page(False, message)
-    try:
-        tokens = exchange_code(flow.host, code=code, verifier=flow.verifier, redirect_uri=flow.redirect_uri)
+        auth_url, flow_id = begin_sign_in(user_id=current_user.id, host=host, role=_blank_to_none(body.role))
     except SnowflakeAuthError as e:
-        snowflake_signin.finish(flow_id, status="error", message=str(e))
-        return _page(False, str(e))
-    if not tokens.refresh_token:
-        snowflake_signin.finish(flow_id, status="error", message=_NO_REFRESH_TOKEN)
-        return _page(False, _NO_REFRESH_TOKEN)
-
-    session: dict[str, Any] = {}
-    message = None
-    try:
-        uri = get_dialect(SNOWFLAKE).build_uri(
-            host=flow.host,
-            username=tokens.username or None,
-            password=tokens.refresh_token,
-            auth=AUTH_OAUTH,
-            role=flow.role,
-        )
-        session = _session_out(flow.host, _discover(uri))
-    except ImportError:
-        message = snowflake_unavailable_message()
-    except ValueError as e:
-        message = f"Signed in, but the warehouses and databases could not be listed: {e}"
-    except Exception as e:
-        message = f"Signed in, but the warehouses and databases could not be listed ({type(e).__name__})."
-    snowflake_signin.finish(
-        flow_id,
-        status="ok",
-        message=message,
-        refresh_token=tokens.refresh_token,
-        access_token=tokens.access_token,
-        username=session.get("username") or tokens.username,
-        session=session,
-    )
-    return _page(True, "Signed in to Snowflake. You can close this tab and return to Flowfile.")
+        raise HTTPException(422, str(e)) from None
+    return {"auth_url": auth_url, "flow_id": flow_id}
 
 
 @router.get("/oauth/status/{flow_id}", response_model=SnowflakeOAuthStatus)

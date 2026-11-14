@@ -66,9 +66,7 @@
                 <SharedBadge :access="connection.access" />
               </div>
               <div v-if="connection.databaseType === SNOWFLAKE" class="connection-details">
-                <span>{{
-                  connection.database ? connection.database : "No database specified"
-                }}</span>
+                <span>{{ snowflakeDatabaseLabel(connection.database) }}</span>
                 <span class="separator">•</span>
                 <span>{{ accountLabel(connection.host) }}</span>
                 <span v-if="connection.username"> · {{ connection.username }}</span>
@@ -203,7 +201,13 @@ import {
   deleteDatabaseConnectionApi,
   testDatabaseConnectionApi,
 } from "./api";
-import { SNOWFLAKE, accountLabel, methodLabel, testSuccessText } from "./snowflakeConnection";
+import {
+  SNOWFLAKE,
+  accountLabel,
+  methodLabel,
+  snowflakeDatabaseLabel,
+  testSuccessText,
+} from "./snowflakeConnection";
 import { FullDatabaseConnectionInterface, FullDatabaseConnection } from "./databaseConnectionTypes";
 import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
 import { useDbDialects } from "../../composables/useDbDialects";

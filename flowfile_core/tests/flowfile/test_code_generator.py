@@ -4482,6 +4482,72 @@ def test_database_writer_reference_mode_code_generation():
     assert "import flowfile as ff" in converter.imports
 
 
+def _database_export_lines(settings) -> list[str]:
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    converter = FlowGraphToPolarsConverter(create_basic_flow())
+    if isinstance(settings, input_schema.NodeDatabaseWriter):
+        converter._handle_database_writer(settings, "df_2", {"main": "df_1"})
+    else:
+        converter._handle_database_reader(settings, "df_1", {})
+    return converter.code_lines
+
+
+def test_database_reader_export_names_the_database_only_when_set():
+    def reader(**extra):
+        return input_schema.NodeDatabaseReader(
+            flow_id=1,
+            node_id=1,
+            database_settings=input_schema.DatabaseSettings(
+                connection_mode="reference", database_connection_name="sf", query_mode="table", **extra
+            ),
+        )
+
+    plain = _database_export_lines(reader(table_name="CUSTOMER", schema_name="TPCH_SF100"))
+    assert plain == [
+        "df_1 = ff.read_database(",
+        '    "sf",',
+        '    table_name="CUSTOMER",',
+        '    schema_name="TPCH_SF100",',
+        ").data",
+        "",
+    ]
+    with_database = _database_export_lines(
+        reader(table_name="CUSTOMER", schema_name="TPCH_SF100", database_name="SNOWFLAKE_SAMPLE_DATA")
+    )
+    assert with_database == [*plain[:4], '    database_name="SNOWFLAKE_SAMPLE_DATA",', *plain[4:]]
+
+    query = input_schema.NodeDatabaseReader(
+        flow_id=1,
+        node_id=1,
+        database_settings=input_schema.DatabaseSettings(
+            connection_mode="reference",
+            database_connection_name="sf",
+            query_mode="query",
+            query="SELECT 1",
+            database_name="SALES",
+        ),
+    )
+    assert '    database_name="SALES",' in _database_export_lines(query)
+
+
+def test_database_writer_export_names_the_database_only_when_set():
+    def writer(**extra):
+        return input_schema.NodeDatabaseWriter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            database_write_settings=input_schema.DatabaseWriteSettings(
+                connection_mode="reference", database_connection_name="sf", table_name="T", schema_name="S", **extra
+            ),
+        )
+
+    plain = _database_export_lines(writer())
+    assert not any("database_name" in line for line in plain)
+    with_database = _database_export_lines(writer(database_name="ANALYTICS"))
+    assert with_database == [*plain[:5], '    database_name="ANALYTICS",', *plain[5:]]
+
+
 def test_database_writer_inline_mode_adds_to_unsupported():
     """Test that database writer with inline mode is added to unsupported nodes."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter

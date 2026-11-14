@@ -14,8 +14,10 @@ import {
   nextPollDelayMs,
   previewAccount,
   selectOptions,
+  sessionDefaults,
   signInDeadline,
   signInStatusText,
+  snowflakeDatabaseLabel,
   snowflakeResetFields,
   storedSignInStillValid,
   testSuccessText,
@@ -82,7 +84,7 @@ describe("labels", () => {
   });
 
   it("names and describes each method", () => {
-    expect(methodLabel("oauth")).toBe("Sign in with Snowflake");
+    expect(methodLabel("oauth")).toBe("Browser sign-in");
     expect(methodLabel("access_token")).toBe("Access token");
     expect(methodLabel("key_pair")).toBe("Key-pair");
     for (const method of ["oauth", "access_token", "key_pair"]) {
@@ -256,6 +258,20 @@ describe("helpers", () => {
     expect(selectOptions(["A", "B"], "B")).toEqual(["A", "B"]);
     expect(selectOptions(["A"], "MINE")).toEqual(["MINE", "A"]);
     expect(selectOptions([], null)).toEqual([]);
+  });
+
+  it("fills in the session's warehouse but never its database", () => {
+    const session = { warehouse: "WH", database: "DB" };
+    expect(sessionDefaults({ warehouse: null }, session)).toEqual({ warehouse: "WH" });
+    expect(sessionDefaults({ warehouse: "MINE" }, session)).toEqual({});
+    expect(sessionDefaults({ warehouse: null }, { warehouse: null })).toEqual({});
+  });
+
+  it("shows a connection without a default database as reaching all databases", () => {
+    expect(snowflakeDatabaseLabel("ANALYTICS")).toBe("ANALYTICS");
+    expect(snowflakeDatabaseLabel("")).toBe("all databases");
+    expect(snowflakeDatabaseLabel(null)).toBe("all databases");
+    expect(snowflakeDatabaseLabel(undefined)).toBe("all databases");
   });
 
   it("words a successful test", () => {

@@ -1115,7 +1115,9 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "connection, write a SQL query. Pitfall: don't confuse with "
         "'SQL Query' — that runs Polars SQL against upstream nodes; "
         "this issues a real network query against a remote database "
-        "via the saved connection."
+        "via the saved connection. A Snowflake connection also shows a "
+        "'Database' dropdown above 'Schema' (setting database_name); "
+        "empty means the connection's default database."
     ),
     "database_writer": (
         "Settings panel: 'Connection', 'Table' (target), and a 'Mode' "
@@ -1125,7 +1127,9 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "connection, target table=clean_orders, mode=replace. Pitfall: "
         "'replace' drops the existing table — make sure the column "
         "schema upstream matches the target's expected types, casting "
-        "upstream with 'Formula' or 'Select data' if needed."
+        "upstream with 'Formula' or 'Select data' if needed. A Snowflake "
+        "connection also shows a 'Database' dropdown (setting "
+        "database_name); a database needs a schema too."
     ),
     "cloud_storage_reader": (
         "Settings panel: a 'Cloud connection' dropdown (S3 / GCS / Azure), "

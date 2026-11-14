@@ -21,17 +21,22 @@
     </div>
 
     <div class="form-field">
-      <span class="form-label">Sign-in method</span>
-      <el-radio-group v-model="selectedMethod" class="method-group">
-        <el-radio-button
+      <label for="snowflake-method" class="form-label">Sign-in method</label>
+      <select
+        id="snowflake-method"
+        v-model="selectedMethod"
+        data-testid="snowflake-method"
+        class="form-input"
+      >
+        <option
           v-for="method in authMethods"
           :key="method"
           :value="method"
           :data-testid="`snowflake-method-${method}`"
         >
           {{ methodLabel(method) }}
-        </el-radio-button>
-      </el-radio-group>
+        </option>
+      </select>
       <div class="form-hint">{{ methodDescription(connection.authMethod) }}</div>
     </div>
 
@@ -236,7 +241,7 @@
     </div>
 
     <div class="form-field">
-      <label class="form-label">Database</label>
+      <label class="form-label">Default database (optional)</label>
       <el-select
         v-model="connection.database"
         data-testid="snowflake-database"
@@ -245,18 +250,22 @@
         allow-create
         default-first-option
         clearable
-        placeholder="Choose or type a database"
+        placeholder="None: choose the database in each node"
         no-data-text="Sign in to list your databases, or type a name"
       >
         <el-option v-for="name in databaseChoices" :key="name" :label="name" :value="name" />
       </el-select>
+      <div class="form-hint" data-testid="snowflake-database-hint">
+        This connection can reach every database your role may use. The default is only what a node
+        starts on.
+      </div>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
-import { ElOption, ElRadioButton, ElRadioGroup, ElSelect } from "element-plus";
+import { ElOption, ElSelect } from "element-plus";
 
 import { desktop } from "../../../lib/desktop";
 import { docsUrl } from "../../lib/docsLinks";
@@ -277,6 +286,7 @@ import {
   nextPollDelayMs,
   previewAccount,
   selectOptions,
+  sessionDefaults,
   signInDeadline,
   signInStatusText,
   storedSignInStillValid,
@@ -339,12 +349,7 @@ function applySession(session: {
 }) {
   warehouseOptions.value = session.warehouses;
   databaseOptions.value = session.databases;
-  if (!connection.value.warehouse && session.warehouse) {
-    connection.value.warehouse = session.warehouse;
-  }
-  if (!connection.value.database && session.database) {
-    connection.value.database = session.database;
-  }
+  Object.assign(connection.value, sessionDefaults(connection.value, session));
 }
 
 watch(
@@ -596,10 +601,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-2);
-}
-
-.method-group {
-  flex-wrap: wrap;
 }
 
 .identity-row,

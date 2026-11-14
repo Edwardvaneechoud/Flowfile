@@ -65,6 +65,7 @@ Writes the incoming table to a database table: PostgreSQL, MySQL, SQLite, DuckDB
 
 | Setting | Description |
 |---|---|
+| **Database** | Snowflake connections only: the database to write to. Empty uses the connection's default database. With a database set, choose a schema too; the target is `database.schema.table`. |
 | **Schema** | Target schema, e.g. `public`. |
 | **Table** | Target table name. |
 | **Write Mode** | **Append** adds rows to the existing table, **Replace** drops and recreates it with the new data, **Fail** errors if the table already exists. |

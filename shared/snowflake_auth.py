@@ -8,9 +8,9 @@ short-lived access token a session needs.
 
 The OAuth client is Snowflake's built-in public client for local applications
 (``SNOWFLAKE$LOCAL_APPLICATION``): no admin setup, PKCE required, and a redirect
-that must be a loopback address, so the browser sign-in only works where core
-runs on the user's own machine. Its client id and secret are both
-``LOCAL_APPLICATION`` when sent as HTTP Basic credentials.
+that must be ``http://127.0.0.1:<port>`` with no path, so the browser sign-in
+only works where core runs on the user's own machine. Its client id and secret
+are both ``LOCAL_APPLICATION`` when sent as HTTP Basic credentials.
 
 Module level stays stdlib-only: every worker child imports the dialect registry,
 which imports this module. ``cryptography`` and ``httpx`` are imported at use.
@@ -201,7 +201,11 @@ def role_scope(role: str | None) -> str:
 
 
 def authorize_url(host: str, *, redirect_uri: str, state: str, code_challenge: str, role: str | None = None) -> str:
-    """The Snowflake page a browser opens to sign the user in."""
+    """The Snowflake page a browser opens to sign the user in.
+
+    Verified against the built-in client: ``redirect_uri`` must be ``http://127.0.0.1`` with any port and an empty
+    path; a path (even one the docs show) or ``localhost`` is refused as a mismatch with the registered client.
+    """
     params = {
         "client_id": OAUTH_CLIENT_ID,
         "response_type": "code",

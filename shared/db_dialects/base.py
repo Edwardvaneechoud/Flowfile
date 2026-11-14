@@ -17,6 +17,10 @@ Contract notes:
 - ``auth_methods``, ``saved_connection_only``, ``with_credentials`` and
   ``session_info`` exist for dialects whose login is not a host/user/password
   triple (Snowflake); their base values change nothing for the others.
+- ``browses_databases`` / ``list_databases`` are for a dialect whose one login
+  reaches many databases (Snowflake): the connection's database is then only a
+  default, and a node may name another. The base answers one database per
+  connection.
 """
 
 from __future__ import annotations
@@ -48,6 +52,7 @@ class DbDialect:
     install_hint: ClassVar[str | None] = None
     auth_methods: ClassVar[tuple[str, ...]] = ()
     saved_connection_only: ClassVar[bool] = False
+    browses_databases: ClassVar[bool] = False
 
     @property
     def uri_scheme(self) -> str:
@@ -151,6 +156,17 @@ class DbDialect:
 
     def query_schema(self, uri: str, query: str) -> pl.Schema | None:
         """Fast schema for an arbitrary query without executing it; None = generic path."""
+        return None
+
+    def checked_database(self, name: str) -> str:
+        """A database name a node picked, checked as one identifier before it goes into a URI.
+
+        Only a dialect that browses databases accepts one; the base refuses.
+        """
+        raise ValueError(f"A {self.display_name} connection has one database; a node cannot pick another.")
+
+    def list_databases(self, uri: str) -> list[str] | None:
+        """Database names a node may pick; None = this dialect has one database per connection."""
         return None
 
     def list_schemas(self, uri: str) -> list[str] | None:

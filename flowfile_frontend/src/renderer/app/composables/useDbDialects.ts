@@ -33,6 +33,9 @@ export function useDbDialects() {
   const isSavedConnectionOnly = (databaseType?: string): boolean =>
     findDialect(databaseType)?.saved_connection_only ?? false;
 
+  const browsesDatabases = (databaseType?: string): boolean =>
+    findDialect(databaseType)?.browses_databases === true;
+
   return {
     dialects,
     findDialect,
@@ -40,5 +43,6 @@ export function useDbDialects() {
     defaultPort,
     authMethods,
     isSavedConnectionOnly,
+    browsesDatabases,
   };
 }

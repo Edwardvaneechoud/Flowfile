@@ -2,7 +2,7 @@ import axios from "axios";
 import type { DatabaseSettings, DatabaseWriteSettings } from "../../../baseNode/nodeInput";
 
 /**
- * Build a DatabaseSettings-shaped payload suitable for the /db_schemas and /db_tables endpoints.
+ * Build a DatabaseSettings-shaped payload for /db_databases, /db_schemas and /db_tables.
  * Works with both DatabaseSettings (reader) and DatabaseWriteSettings (writer).
  */
 function buildBrowsePayload(
@@ -12,6 +12,7 @@ function buildBrowsePayload(
     connection_mode: settings.connection_mode,
     database_connection: settings.database_connection,
     database_connection_name: settings.database_connection_name,
+    database_name: settings.database_name || undefined,
     schema_name: settings.schema_name,
     query_mode: "table",
   };
@@ -24,7 +25,22 @@ function buildBrowsePayload(
 }
 
 /**
- * Fetch available schema names for a database connection.
+ * Fetch the databases a node may pick on a connection; empty for a dialect with one database.
+ */
+export const fetchDbDatabases = async (
+  settings: DatabaseSettings | DatabaseWriteSettings,
+): Promise<string[]> => {
+  const payload = {
+    ...buildBrowsePayload(settings),
+    database_name: undefined,
+    schema_name: undefined,
+  };
+  const response = await axios.post<string[]>("/db_databases", payload);
+  return response.data;
+};
+
+/**
+ * Fetch available schema names for a database connection (of its database_name when set).
  */
 export const fetchDbSchemas = async (
   settings: DatabaseSettings | DatabaseWriteSettings,

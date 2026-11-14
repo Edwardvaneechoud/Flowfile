@@ -76,6 +76,7 @@ _PLAIN_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 _PLAIN_UPPER_IDENTIFIER = re.compile(r"^[A-Z_][A-Z0-9_$]*$")
 _IDENTIFIER_PART = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")'
 _IDENTIFIER_PATH = re.compile(rf"^{_IDENTIFIER_PART}(?:\.{_IDENTIFIER_PART})*$")
+_IDENTIFIER = re.compile(rf"^{_IDENTIFIER_PART}$")
 
 # Snowflake's reserved keywords: unquoted, these cannot name a column or table.
 _RESERVED = frozenset(
@@ -278,6 +279,17 @@ def _split_table_name(table_name: str) -> list[str]:
     return [ddl_identifier(p) for p in parts]
 
 
+def checked_identifier(name: str, what: str = "identifier") -> str:
+    """One identifier, plain or double-quoted, as given; anything else (a dot outside quotes, a space) is refused.
+
+    ``what`` names the identifier in the error ("database", "schema").
+    """
+    value = (name or "").strip()
+    if not _IDENTIFIER.match(value):
+        raise ValueError(f"'{name}' is not a Snowflake {what} name; use one name, in double quotes if it needs them.")
+    return value
+
+
 def _checked_path(name: str) -> str:
     """An identifier path from browsing or a user, refused when it is anything but dotted identifiers."""
     value = (name or "").strip()
@@ -377,6 +389,7 @@ class SnowflakeDialect(DbDialect):
     install_hint: ClassVar[str | None] = 'pip install "flowfile[snowflake]"'
     auth_methods: ClassVar[tuple[str, ...]] = AUTH_METHODS
     saved_connection_only: ClassVar[bool] = True
+    browses_databases: ClassVar[bool] = True
 
     def is_available(self) -> bool:
         try:
@@ -506,11 +519,30 @@ class SnowflakeDialect(DbDialect):
         qualified = f"{schema_name}.{table_name}" if schema_name else table_name
         return self.query_schema(uri, f"SELECT * FROM {qualified}")
 
+    def checked_database(self, name: str) -> str:
+        return checked_identifier(name, "database")
+
+    def list_databases(self, uri: str) -> list[str]:
+        """The databases the session's role may see, each usable verbatim in a dotted path, sorted ignoring case."""
+        with self._cursor(uri) as cursor:
+            rows = _rows_by_name(cursor, "SHOW DATABASES")
+        return [quote_identifier(name) for name in sorted((str(row["name"]) for row in rows), key=str.lower)]
+
     def list_schemas(self, uri: str) -> list[str]:
+        """The schemas of the URI's database; with no database in the URI, every schema as ``DATABASE.SCHEMA``.
+
+        A database the URI names that the session does not land in (it does not exist, or the role may
+        not use it) is an error rather than a silent fall back to the whole account.
+        """
+        database = _parse_uri(uri).database
         with self._cursor(uri) as cursor:
             if _current_database(cursor):
                 rows = _rows_by_name(cursor, "SHOW SCHEMAS IN DATABASE")
                 return [quote_identifier(row["name"]) for row in rows]
+            if database:
+                raise SnowflakeError(
+                    f"Database {database} does not exist, or the role on this connection cannot use it."
+                )
             rows = _rows_by_name(cursor, "SHOW SCHEMAS IN ACCOUNT")
             return [f"{quote_identifier(row['database_name'])}.{quote_identifier(row['name'])}" for row in rows]
 

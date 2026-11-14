@@ -12,7 +12,9 @@ import datetime as dt
 import hashlib
 import json
 import threading
+from contextlib import contextmanager
 from decimal import Decimal
+from typing import NamedTuple
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -33,6 +35,7 @@ from shared.db_dialects.snowflake import (
     _parse_uri,
     _put_url,
     _translated,
+    checked_identifier,
     ddl_identifier,
     polars_dtype,
     quote_identifier,
@@ -93,6 +96,17 @@ def test_base_hooks_are_no_ops_for_other_dialects():
         other = get_dialect(name)
         assert other.with_credentials("x://u@h/d", "secret") == "x://u@h/d"
         assert other.session_info("x://u@h/d") is None
+        assert other.browses_databases is False
+        assert other.list_databases("x://u@h/d") is None
+        with pytest.raises(ValueError, match="one database"):
+            other.checked_database("OTHER")
+
+
+def test_catalog_entry_says_which_dialects_browse_databases():
+    by_name = {info.name: info for info in dialect_catalog()}
+    assert dialect.browses_databases is True
+    assert by_name["snowflake"].browses_databases is True
+    assert all(not info.browses_databases for name, info in by_name.items() if name != "snowflake")
 
 
 @pytest.mark.parametrize(
@@ -591,6 +605,127 @@ def test_translated_block_wraps_driver_errors_only():
     with pytest.raises(KeyError):
         with _translated("tok"):
             raise KeyError("x")
+
+
+class _Column(NamedTuple):
+    name: str
+
+
+class _FakeCursor:
+    """Answers the statements the browse hooks run: ``SELECT CURRENT_DATABASE()`` and SHOW listings."""
+
+    def __init__(self, current_database: str | None, shows: dict[str, list[dict]]):
+        self.current_database = current_database
+        self.shows = shows
+        self.executed: list[str] = []
+        self.description: list[_Column] = []
+        self._rows: list[tuple] = []
+
+    def execute(self, sql: str) -> None:
+        self.executed.append(sql)
+        if sql == "SELECT CURRENT_DATABASE()":
+            self.description = [_Column("CURRENT_DATABASE()")]
+            self._rows = [(self.current_database,)]
+            return
+        rows = self.shows[sql]
+        columns = list(rows[0]) if rows else ["name"]
+        self.description = [_Column(c) for c in columns]
+        self._rows = [tuple(row[c] for c in columns) for row in rows]
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+@pytest.fixture
+def fake_session(monkeypatch):
+    """Points the dialect's cursor at a ``_FakeCursor`` and records the URI each session was opened with."""
+    opened: list[str] = []
+
+    def install(current_database: str | None, shows: dict[str, list[dict]]) -> _FakeCursor:
+        cursor = _FakeCursor(current_database, shows)
+
+        @contextmanager
+        def fake_cursor(self, uri):
+            opened.append(uri)
+            yield cursor
+
+        monkeypatch.setattr(SnowflakeDialect, "_cursor", fake_cursor)
+        return cursor
+
+    install.opened = opened
+    return install
+
+
+def test_list_databases_quotes_and_sorts_ignoring_case(fake_session):
+    cursor = fake_session(
+        None,
+        {
+            "SHOW DATABASES": [
+                {"created_on": "x", "name": "SALES", "owner": "R"},
+                {"created_on": "x", "name": "analytics_dev", "owner": "R"},
+                {"created_on": "x", "name": "My.DB", "owner": "R"},
+                {"created_on": "x", "name": "ANALYTICS", "owner": "R"},
+            ]
+        },
+    )
+    assert dialect.list_databases("snowflake://u:t@h:443") == ["ANALYTICS", '"analytics_dev"', '"My.DB"', "SALES"]
+    assert cursor.executed == ["SHOW DATABASES"]
+
+
+def test_list_schemas_of_the_uri_database_are_plain(fake_session):
+    fake_session("SALES", {"SHOW SCHEMAS IN DATABASE": [{"name": "PUBLIC"}, {"name": "raw"}]})
+    assert dialect.list_schemas("snowflake://u:t@h:443/SALES") == ["PUBLIC", '"raw"']
+
+
+def test_list_schemas_without_a_database_are_qualified(fake_session):
+    fake_session(
+        None,
+        {
+            "SHOW SCHEMAS IN ACCOUNT": [
+                {"database_name": "SALES", "name": "PUBLIC"},
+                {"database_name": "HR", "name": "X"},
+            ]
+        },
+    )
+    assert dialect.list_schemas("snowflake://u:t@h:443") == ["SALES.PUBLIC", "HR.X"]
+
+
+def test_list_schemas_of_a_database_the_session_cannot_use_is_an_error(fake_session):
+    cursor = fake_session(None, {})
+    with pytest.raises(SnowflakeError, match="Database NOPE does not exist"):
+        dialect.list_schemas("snowflake://u:t@h:443/NOPE")
+    assert cursor.executed == ["SELECT CURRENT_DATABASE()"]
+
+
+def test_a_database_qualified_schema_lists_and_reads_that_schema(fake_session, monkeypatch):
+    cursor = fake_session("ANALYTICS", {"SHOW TERSE OBJECTS IN SCHEMA SALES.PUBLIC": [{"name": "ORDERS"}]})
+    assert dialect.list_tables("snowflake://u:t@h:443/ANALYTICS", "SALES.PUBLIC") == ["ORDERS"]
+    assert cursor.executed == ["SHOW TERSE OBJECTS IN SCHEMA SALES.PUBLIC"]
+
+    described: list[str] = []
+    monkeypatch.setattr(SnowflakeDialect, "query_schema", lambda self, uri, query: described.append(query))
+    dialect.table_schema("snowflake://u:t@h:443/ANALYTICS", "ORDERS", "SALES.PUBLIC")
+    dialect.table_schema("snowflake://u:t@h:443/ANALYTICS", "SALES.PUBLIC.ORDERS", None)
+    assert described == ["SELECT * FROM SALES.PUBLIC.ORDERS", "SELECT * FROM SALES.PUBLIC.ORDERS"]
+
+
+@pytest.mark.parametrize(
+    "name", ["ANALYTICS", "analytics_dev", "DB$1", '"My.DB"', '"has space"', '"quo""te"', " SALES "]
+)
+def test_checked_identifier_accepts_one_name(name):
+    assert checked_identifier(name, "database") == name.strip()
+    assert dialect.checked_database(name) == name.strip()
+
+
+@pytest.mark.parametrize(
+    "name", ["", "  ", "A.B", "has space", "a/b", 'x"y', '"open', '"a"b"', "1ST", "A;DROP", "DB?x=1", "a#b"]
+)
+def test_checked_identifier_refuses_anything_else(name):
+    with pytest.raises(ValueError, match="not a Snowflake database name"):
+        checked_identifier(name, "database")
 
 
 class _TokenStub:

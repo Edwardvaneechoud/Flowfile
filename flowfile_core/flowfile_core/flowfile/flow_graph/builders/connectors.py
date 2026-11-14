@@ -42,6 +42,7 @@ from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     SqlSource,
+    qualified_schema,
 )
 from flowfile_core.kafka.connection_manager import (
     build_consumer_config,
@@ -188,11 +189,9 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 lambda: _resolve_database_credentials(database_settings, node_database_writer.user_id),
             )
             df.lazy = True
-            table_name = (
-                database_settings.schema_name + "." + database_settings.table_name
-                if database_settings.schema_name
-                else database_settings.table_name
-            )
+            schema_path = qualified_schema(database_settings.database_name, database_settings.schema_name)
+            table = database_settings.table_name
+            table_name = f"{schema_path}.{table}" if schema_path else table
             write = DatabaseWritePayload(
                 plan=df.data_frame,
                 settings=node_database_writer,
@@ -287,6 +286,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 schema_name=database_settings.schema_name,
                 fields=node_database_reader.fields,
                 database_type=database_connection.database_type,
+                database_name=database_settings.database_name,
             )
             return sql_source.get_schema()
 

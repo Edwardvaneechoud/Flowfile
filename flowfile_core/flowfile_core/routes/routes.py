@@ -122,6 +122,7 @@ from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     connection_uri,
     create_sql_source_from_db_settings,
+    list_db_databases,
     list_db_schemas,
     list_db_tables,
 )
@@ -3280,11 +3281,25 @@ async def validate_db_settings(
         raise HTTPException(status_code=422, detail=str(e)) from e
 
 
+@router.post("/db_databases", tags=["db_connections"], response_model=list[str])
+async def get_db_databases(
+    database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
+) -> list[str]:
+    """Returns the databases a node may pick on this connection; empty for a dialect with one database."""
+    try:
+        return list_db_databases(database_settings, user_id=current_user.id)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
 @router.post("/db_schemas", tags=["db_connections"], response_model=list[str])
 async def get_db_schemas(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ) -> list[str]:
-    """Returns available schema names for the given database connection."""
+    """Returns available schema names for the given database connection.
+
+    With ``database_name`` set, a dialect that browses databases (Snowflake) lists that database's schemas.
+    """
     try:
         return list_db_schemas(database_settings, user_id=current_user.id)
     except Exception as e:
@@ -3300,6 +3315,7 @@ async def get_db_tables(
     When schema_name is provided, returns plain table names.
     When schema_name is not provided, returns schema-qualified names (schema.table) across all
     accessible schemas (skipping any that the user cannot read).
+    With database_name set, the schema is browsed as database.schema.
     """
     try:
         return list_db_tables(database_settings, user_id=current_user.id)

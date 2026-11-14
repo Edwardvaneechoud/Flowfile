@@ -50,9 +50,8 @@
                   :key="conn.connectionName"
                   :value="conn.connectionName"
                 >
-                  {{ conn.connectionName }} ({{ conn.databaseType }} - {{ conn.database }}){{
-                    conn.source === "hub" ? " · from your hub" : ""
-                  }}
+                  {{ databaseChoice.optionLabel(conn)
+                  }}{{ conn.source === "hub" ? " · from your hub" : "" }}
                 </option>
               </select>
             </div>
@@ -63,6 +62,43 @@
       <!-- Table Settings -->
       <div class="listbox-wrapper">
         <h4 class="section-subtitle">Table Settings</h4>
+        <div v-if="databaseChoice.showDatabase.value" class="form-group">
+          <label for="database-name">Database</label>
+          <div class="input-with-fetch">
+            <el-select
+              v-model="nodeData.database_write_settings.database_name"
+              data-testid="db-database-select"
+              filterable
+              allow-create
+              clearable
+              default-first-option
+              :placeholder="databaseChoice.placeholder.value"
+              class="flex-input"
+              @change="databaseChoice.handleDatabaseChange"
+            >
+              <el-option
+                v-for="d in databaseChoice.availableDatabases.value"
+                :key="d"
+                :label="d"
+                :value="d"
+              />
+            </el-select>
+            <button
+              type="button"
+              class="btn-fetch-icon"
+              :disabled="databaseChoice.databasesAreLoading.value"
+              title="Refresh databases"
+              @click="databaseChoice.fetchDatabases()"
+            >
+              <i
+                v-if="databaseChoice.databasesAreLoading.value"
+                class="fa-solid fa-spinner fa-spin"
+              ></i>
+              <i v-else class="fa-solid fa-refresh"></i>
+            </button>
+          </div>
+          <p v-if="databaseNameError" class="field-error">{{ databaseNameError }}</p>
+        </div>
         <div class="form-row">
           <div class="form-group half">
             <label for="schema-name">Schema</label>
@@ -93,6 +129,9 @@
               </button>
             </div>
             <p v-if="schemaNameError" class="field-error">{{ schemaNameError }}</p>
+            <p v-else-if="databaseChoice.schemaError.value" class="field-error">
+              {{ databaseChoice.schemaError.value }}
+            </p>
           </div>
 
           <div class="form-group half">
@@ -175,6 +214,7 @@ import { FullDatabaseConnectionInterface } from "../../../../../views/DatabaseVi
 import { ElMessage, ElOption, ElRadio, ElSelect } from "element-plus";
 import DatabaseConnectionSettings from "../databaseReader/DatabaseConnectionSettings.vue";
 import { fetchDbSchemas, fetchDbTables } from "../databaseReader/api";
+import { useDatabaseChoice } from "../databaseReader/useDatabaseChoice";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 interface Props {
@@ -196,6 +236,19 @@ const tablesAreLoading = ref(false);
 const schemaSelectRef = ref();
 const tableSelectRef = ref();
 
+const databaseChoice = useDatabaseChoice({
+  settings: () => nodeData.value?.database_write_settings,
+  connections: connectionInterfaces,
+  reload: () => {
+    resetFields();
+    handleFetchSchemas(true);
+    handleFetchTables(true);
+  },
+});
+
+const databaseNameError = computed(() =>
+  validateSqlIdentifier(nodeData.value?.database_write_settings?.database_name),
+);
 const schemaNameError = computed(() =>
   validateSqlIdentifier(nodeData.value?.database_write_settings?.schema_name),
 );
@@ -214,7 +267,11 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
       ElMessage.error("Table name is required");
       return false;
     }
-    const identifierError = tableNameError.value || schemaNameError.value;
+    const identifierError =
+      tableNameError.value ||
+      schemaNameError.value ||
+      databaseNameError.value ||
+      databaseChoice.schemaError.value;
     if (identifierError) {
       ElMessage.error(identifierError);
       return false;
@@ -236,6 +293,7 @@ const loadNodeData = async (nodeId: number) => {
       nodeData.value = hasValidSetup
         ? fetchedNodeData.setting_input
         : createNodeDatabaseWriter(nodeStore.flow_id, nodeId);
+      databaseChoice.syncDatabase();
       dataLoaded.value = true;
     }
   } catch (error) {
@@ -305,11 +363,7 @@ const handleFetchTables = async (silent = false) => {
 const handleTableSelect = (value: string) => {
   if (!nodeData.value) return;
   // When no schema was selected, tables come as "schema.table" — split them
-  if (value && value.includes(".") && !nodeData.value.database_write_settings.schema_name) {
-    const dotIndex = value.indexOf(".");
-    nodeData.value.database_write_settings.schema_name = value.substring(0, dotIndex);
-    nodeData.value.database_write_settings.table_name = value.substring(dotIndex + 1);
-  }
+  if (value) databaseChoice.applyTableReference(value);
 };
 
 // Auto-fetch schemas/tables when connection details change.

@@ -1,7 +1,8 @@
 """The Snowflake browser sign-in and discover routes, against a real local HTTP server standing in for Snowflake.
 
 Snowflake's token endpoint is a ``ThreadingHTTPServer`` on a free port (``snowflake_auth._base_url`` points there);
-``SnowflakeDialect.discover`` is replaced because no account or connector is available to the suite.
+the browser's return is a real GET to the sign-in's own loopback listener, at the ``redirect_uri`` of the authorize
+URL. ``SnowflakeDialect.discover`` is replaced because no account is available to the suite.
 """
 
 import base64
@@ -13,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -22,7 +24,6 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.auth.jwt import get_jwt_secret
-from flowfile_core.configs import settings
 from flowfile_core.configs.settings import ALGORITHM
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import Secret
@@ -143,13 +144,26 @@ def _start(role: str | None = "ANALYST", account: str = ACCOUNT) -> tuple[str, d
     return body["flow_id"], query
 
 
-def _callback(**params):
-    return client.get("/snowflake/oauth/callback", params=params)
+def _callback(query: dict, path: str = "/", **params) -> httpx.Response:
+    """What the browser does when Snowflake redirects it: a GET to the sign-in's own listener."""
+    return httpx.get(query["redirect_uri"] + path, params=params, timeout=10)
+
+
+def _refused(query: dict, within: float = 3.0) -> bool:
+    """Whether the sign-in's listener stops accepting connections within ``within`` seconds."""
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        try:
+            httpx.get(query["redirect_uri"] + "/favicon.ico", timeout=1)
+        except httpx.ConnectError:
+            return True
+        time.sleep(0.05)
+    return False
 
 
 def _signed_in(role: str | None = "ANALYST") -> str:
     flow_id, query = _start(role)
-    response = _callback(code="the-code", state=query["state"])
+    response = _callback(query, code="the-code", state=query["state"])
     assert response.status_code == 200, response.text
     assert client.get(f"/snowflake/oauth/status/{flow_id}").json()["status"] == "ok"
     return flow_id
@@ -177,12 +191,14 @@ def _stored() -> tuple[str, str]:
         return row.username, decrypt_secret(secret.encrypted_value).get_secret_value()
 
 
-def test_start_answers_the_authorize_url_with_the_live_port(stub, monkeypatch):
-    monkeypatch.setattr(settings, "SERVER_PORT", 51234)
+def test_start_opens_a_loopback_listener_for_the_redirect(stub):
     flow_id, query = _start()
     assert query["client_id"] == "LOCAL_APPLICATION"
     assert query["response_type"] == "code"
-    assert query["redirect_uri"] == "http://127.0.0.1:51234/snowflake/oauth/callback"
+    redirect = urlsplit(query["redirect_uri"])
+    assert (redirect.scheme, redirect.hostname, redirect.path, redirect.query) == ("http", "127.0.0.1", "", "")
+    assert redirect.port and query["redirect_uri"] == f"http://127.0.0.1:{redirect.port}"
+    assert snowflake_signin.get(flow_id).redirect_uri == query["redirect_uri"]
     assert query["scope"] == "refresh_token session:role:ANALYST"
     assert query["code_challenge_method"] == "S256"
     flow = snowflake_signin.get(flow_id)
@@ -203,26 +219,53 @@ def test_start_answers_the_authorize_url_with_the_live_port(stub, monkeypatch):
         "warehouses": [],
         "databases": [],
     }
+    other_id, other = _start()
+    assert other["redirect_uri"] != query["redirect_uri"], "each sign-in has a listener of its own"
+
+
+def test_core_has_no_callback_route():
+    from fastapi.routing import iter_route_contexts
+
+    paths = {route.path for route in iter_route_contexts(main.app.routes)}
+    assert "/snowflake/oauth/callback" not in paths
+    assert "/snowflake/oauth/start" in paths
 
 
 def test_start_refuses_a_bad_account(stub):
     response = client.post("/snowflake/oauth/start", json={"account": "https://evil.example.com/x"})
     assert response.status_code == 422
     assert "is not a Snowflake account" in response.json()["detail"]
+    assert snowflake_signin._closers == {}, "no listener is opened for a refused start"
+
+
+def test_a_failed_bind_is_a_422(stub, monkeypatch):
+    from flowfile_core.flowfile.database_connection_manager import snowflake_callback
+
+    def refuse(*args, **kwargs):
+        raise OSError("no ports")
+
+    monkeypatch.setattr(snowflake_callback._ListenerServer, "__init__", refuse)
+    response = client.post("/snowflake/oauth/start", json={"account": ACCOUNT})
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Flowfile could not open a local port for the Snowflake sign-in (OSError). Try again."
+    )
 
 
 def test_sign_in_then_save_stores_the_refresh_token_once(stub, discovered):
     flow_id, query = _start()
-    response = _callback(code="the-code", state=query["state"])
+    response = _callback(query, code="the-code", state=query["state"])
     assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
     assert "Signed in to Snowflake. You can close this tab and return to Flowfile." in response.text
+    assert _refused(query), "the listener closes once it has handled the callback"
 
     (request,) = stub.requests
     assert request["path"] == "/oauth/token-request"
     assert request["form"] == {
         "grant_type": "authorization_code",
         "code": "the-code",
-        "redirect_uri": f"http://127.0.0.1:{settings.SERVER_PORT}/snowflake/oauth/callback",
+        "redirect_uri": query["redirect_uri"],
         "code_verifier": snowflake_signin.get(flow_id).verifier,
     }
     (uri,) = discovered
@@ -255,6 +298,16 @@ def test_sign_in_then_save_stores_the_refresh_token_once(stub, discovered):
     assert again.status_code == 422
     assert again.json()["detail"] == "This Snowflake sign-in has expired. Sign in again."
     assert client.get(f"/snowflake/oauth/status/{flow_id}").status_code == 404
+
+
+def test_a_stray_request_does_not_consume_the_sign_in(stub, discovered):
+    flow_id, query = _start()
+    for path, params in (("/favicon.ico", {}), ("/", {}), ("/", {"code": "c"}), ("/", {"state": query["state"]})):
+        assert _callback(query, path, **params).status_code == 404
+    assert client.get(f"/snowflake/oauth/status/{flow_id}").json()["status"] == "pending"
+    assert stub.requests == []
+    assert _callback(query, code="the-code", state=query["state"]).status_code == 200
+    assert client.get(f"/snowflake/oauth/status/{flow_id}").json()["status"] == "ok"
 
 
 def test_a_sign_in_for_another_account_or_role_is_not_claimed(stub, discovered):
@@ -300,52 +353,62 @@ def _state(**claims) -> str:
     return jwt.encode(payload, get_jwt_secret(), algorithm=ALGORITHM)
 
 
-def test_a_bad_state_is_refused_with_a_page(stub):
+def test_a_bad_state_is_refused_with_a_page_and_keeps_the_listener(stub, discovered):
     flow_id, query = _start()
+    other_id, _ = _start()
     tampered = query["state"][:-2] + ("AA" if not query["state"].endswith("AA") else "BB")
     cases = {
         "tampered": tampered,
         "expired": _state(flow_id=flow_id, exp=int(time.time()) - 5),
         "wrong type": _state(flow_id=flow_id, type="ga_oauth_state"),
         "no flow": _state(),
+        "another sign-in": _state(flow_id=other_id),
     }
     for label, state in cases.items():
-        response = _callback(code="c", state=state)
+        response = _callback(query, code="c", state=state)
         assert response.status_code == 400, label
         assert response.headers["content-type"].startswith("text/html")
         assert "Snowflake sign-in failed" in response.text
-    assert _callback(code="c").status_code == 400
     assert stub.requests == [], "no code was exchanged"
-    assert client.get(f"/snowflake/oauth/status/{flow_id}").json()["status"] == "pending"
+    for flow in (flow_id, other_id):
+        assert client.get(f"/snowflake/oauth/status/{flow}").json()["status"] == "pending"
+    assert _callback(query, code="the-code", state=query["state"]).status_code == 200
 
 
 def test_a_denied_sign_in_is_an_error_and_is_not_overwritten(stub, discovered):
+    from flowfile_core.flowfile.database_connection_manager.snowflake_callback import complete_sign_in
+
     flow_id, query = _start()
-    response = _callback(error="access_denied", state=query["state"])
+    response = _callback(query, error="access_denied", state=query["state"])
     assert response.status_code == 200
     assert "The sign-in was cancelled in Snowflake." in response.text
     status = client.get(f"/snowflake/oauth/status/{flow_id}").json()
     assert status["status"] == "error"
     assert status["message"] == "The sign-in was cancelled in Snowflake. Start again in Flowfile."
+    assert _refused(query)
 
-    _callback(code="late-code", state=query["state"])
+    late = complete_sign_in("late-code", query["state"], None)
+    assert late.ok is False and late.finished is True
     assert stub.requests == []
     assert client.get(f"/snowflake/oauth/status/{flow_id}").json()["status"] == "error"
 
 
 def test_the_callback_escapes_what_it_echoes(stub):
     flow_id, query = _start()
-    response = _callback(error="<script>alert(1)</script>", state=query["state"])
+    response = _callback(query, error="<script>alert(1)</script>", state=query["state"])
     assert "<script>alert(1)</script>" not in response.text
     assert "&lt;script&gt;" in response.text
 
 
 def test_a_finished_sign_in_is_not_overwritten_by_a_second_callback(stub, discovered):
+    from flowfile_core.flowfile.database_connection_manager.snowflake_callback import complete_sign_in
+
     flow_id, query = _start()
-    _callback(code="the-code", state=query["state"])
+    _callback(query, code="the-code", state=query["state"])
+    assert _refused(query), "a second callback cannot even reach the closed listener"
     stub.body = {"error": "invalid_grant", "message": "Code already used"}
-    second = _callback(code="the-code", state=query["state"])
-    assert second.status_code == 200 and "Signed in to Snowflake" in second.text
+    second = complete_sign_in("the-code", query["state"], None)
+    assert (second.ok, second.status_code, second.finished) == (True, 200, True)
     assert len(stub.requests) == 1
     assert client.get(f"/snowflake/oauth/status/{flow_id}").json()["status"] == "ok"
 
@@ -353,7 +416,7 @@ def test_a_finished_sign_in_is_not_overwritten_by_a_second_callback(stub, discov
 def test_no_refresh_token_is_an_error(stub, discovered):
     stub.body = {"access_token": "acc-1", "expires_in": 600, "username": "ME"}
     flow_id, query = _start()
-    response = _callback(code="c", state=query["state"])
+    response = _callback(query, code="c", state=query["state"])
     assert "does not issue refresh tokens" in response.text
     status = client.get(f"/snowflake/oauth/status/{flow_id}").json()
     assert status["status"] == "error"
@@ -369,7 +432,7 @@ def test_invalid_client_is_reported_in_plain_words(stub):
     stub.status = 400
     stub.body = {"error": "invalid_client", "message": "Client not found"}
     flow_id, query = _start()
-    response = _callback(code="c", state=query["state"])
+    response = _callback(query, code="c", state=query["state"])
     assert response.status_code == 200
     status = client.get(f"/snowflake/oauth/status/{flow_id}").json()
     assert status["status"] == "error"
@@ -383,7 +446,7 @@ def test_a_discover_failure_does_not_fail_the_sign_in(stub, monkeypatch):
 
     monkeypatch.setattr(SnowflakeDialect, "discover", discover)
     flow_id, query = _start()
-    _callback(code="c", state=query["state"])
+    _callback(query, code="c", state=query["state"])
     status = client.get(f"/snowflake/oauth/status/{flow_id}").json()
     assert status["status"] == "ok"
     assert status["username"] == "ME@EXAMPLE.COM"
@@ -392,14 +455,29 @@ def test_a_discover_failure_does_not_fail_the_sign_in(stub, monkeypatch):
     assert _save(oauth_flow_id=flow_id).status_code == 200
 
 
-def test_sign_ins_expire(stub, discovered, monkeypatch):
+def test_an_expired_sign_in_closes_its_listener(stub, discovered, monkeypatch):
     flow_id, query = _start()
+    assert _callback(query, "/favicon.ico").status_code == 404, "listening before expiry"
     real_now = snowflake_signin._now
     monkeypatch.setattr(snowflake_signin, "_now", lambda: real_now() + snowflake_signin.TTL_SECONDS + 1)
+    assert _refused(query), "the listener notices the expiry on its own"
     assert client.get(f"/snowflake/oauth/status/{flow_id}").status_code == 404
-    response = _callback(code="c", state=query["state"])
-    assert response.status_code == 400 and "expired" in response.text
     assert stub.requests == []
+
+
+def test_forget_all_and_claim_close_listeners(stub, discovered):
+    _, first = _start()
+    _, second = _start()
+    snowflake_signin.forget_all()
+    assert _refused(first) and _refused(second)
+    assert snowflake_signin._closers == {}
+
+    flow_id, query = _start()
+    claimed = _save(oauth_flow_id=flow_id)
+    assert claimed.status_code == 422, "not signed in yet"
+    assert _callback(query, "/favicon.ico").status_code == 404, "a refused claim leaves the listener open"
+    snowflake_signin.forget(flow_id)
+    assert _refused(query)
 
 
 def test_browser_sign_in_is_refused_on_a_multi_user_server(monkeypatch):
@@ -410,6 +488,7 @@ def test_browser_sign_in_is_refused_on_a_multi_user_server(monkeypatch):
         with pytest.raises(HTTPException) as caught:
             snowflake_routes.oauth_start(body, current_user=user)
         assert caught.value.status_code == 404
+        assert snowflake_signin._closers == {}, "no listener is opened on a multi-user server"
 
         from flowfile_core.routes.routes import DatabaseConnectionInput, _snowflake_save_inputs
 
@@ -423,7 +502,10 @@ def test_browser_sign_in_is_refused_on_a_multi_user_server(monkeypatch):
         assert caught.value.status_code == 422
     monkeypatch.setenv("FLOWFILE_MODE", "package")
     monkeypatch.setenv("JWT_SECRET_KEY", "package-mode-test-secret")
-    assert snowflake_routes.oauth_start(body, current_user=user)["flow_id"]
+    try:
+        assert snowflake_routes.oauth_start(body, current_user=user)["flow_id"]
+    finally:
+        snowflake_signin.forget_all()
 
 
 # ---------- POST /snowflake/discover ----------

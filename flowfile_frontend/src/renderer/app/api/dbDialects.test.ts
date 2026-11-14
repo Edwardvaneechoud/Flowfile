@@ -33,7 +33,7 @@ describe("getDbDialects", () => {
     ];
     mockedGet.mockResolvedValueOnce({ data: fetched });
     expect(await getDbDialects()).toEqual([
-      { ...fetched[0], auth_methods: [], saved_connection_only: false },
+      { ...fetched[0], auth_methods: [], saved_connection_only: false, browses_databases: false },
     ]);
     expect(mockedGet).toHaveBeenCalledTimes(2);
   });
@@ -98,9 +98,33 @@ describe("getDbDialects", () => {
       available: true,
       auth_methods: ["access_token", "key_pair"],
       saved_connection_only: true,
+      browses_databases: true,
     };
     mockedGet.mockResolvedValue({ data: [snowflake] });
     expect(await getDbDialects()).toEqual([snowflake]);
+  });
+
+  it("reads a missing browses_databases from an older core as false", async () => {
+    const { getDbDialects } = await loadModule();
+    const older = {
+      name: "snowflake",
+      display_name: "Snowflake",
+      file_based: false,
+      default_port: 443,
+      supports_ssl: false,
+      available: true,
+      auth_methods: ["access_token"],
+      saved_connection_only: true,
+    };
+    mockedGet.mockResolvedValue({ data: [older] });
+    expect((await getDbDialects())[0].browses_databases).toBe(false);
+  });
+
+  it("marks only Snowflake as browsing databases in the fallback list", async () => {
+    const { FALLBACK_DIALECTS } = await loadModule();
+    expect(
+      FALLBACK_DIALECTS.filter((dialect) => dialect.browses_databases).map((d) => d.name),
+    ).toEqual(["snowflake"]);
   });
 
   it("offers every Snowflake sign-in method in the fallback list", async () => {

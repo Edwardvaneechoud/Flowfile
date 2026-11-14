@@ -2885,6 +2885,7 @@ class FlowFrame:
         schema_name: str | None = None,
         if_exists: Literal["append", "replace", "fail"] = "append",
         description: str | None = None,
+        database_name: str | None = None,
     ) -> FlowFrame:
         """Write the data frame to a database using a stored connection.
 
@@ -2894,6 +2895,12 @@ class FlowFrame:
             schema_name: Database schema name (e.g., 'public' for PostgreSQL).
             if_exists: What to do if the table already exists.
             description: Optional description for this operation.
+            database_name: Database to write to, for a connection that reaches several
+                (Snowflake, SQL Server). Unset, the connection's default database. Set, the
+                target is ``database_name.schema_name.table_name`` and a schema is required.
+
+        Example:
+            >>> frame.write_database("sf", "CUSTOMER_COPY", schema_name="PUBLIC", database_name="ANALYTICS")
 
         Returns:
             FlowFrame: A new child data frame representing the written data.
@@ -2908,6 +2915,7 @@ class FlowFrame:
             schema_name=schema_name,
             if_exists=if_exists,
             description=description,
+            database_name=database_name,
         )
         return self._create_child_frame(new_node_id)
 

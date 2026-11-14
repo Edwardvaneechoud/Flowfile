@@ -45,9 +45,8 @@
                   :key="conn.connectionName"
                   :value="conn.connectionName"
                 >
-                  {{ conn.connectionName }} ({{ conn.databaseType }} - {{ conn.database }}){{
-                    conn.source === "hub" ? " · from your hub" : ""
-                  }}
+                  {{ databaseChoice.optionLabel(conn)
+                  }}{{ conn.source === "hub" ? " · from your hub" : "" }}
                 </option>
               </select>
             </div>
@@ -76,6 +75,42 @@
           class="query-section"
         >
           <h4 class="section-subtitle">Table Selection</h4>
+          <div v-if="databaseChoice.showDatabase.value" class="form-group">
+            <label for="database-name">Database</label>
+            <div class="input-with-fetch">
+              <el-select
+                v-model="nodeDatabaseReader.database_settings.database_name"
+                data-testid="db-database-select"
+                filterable
+                allow-create
+                clearable
+                default-first-option
+                :placeholder="databaseChoice.placeholder.value"
+                class="flex-input"
+                @change="databaseChoice.handleDatabaseChange"
+              >
+                <el-option
+                  v-for="d in databaseChoice.availableDatabases.value"
+                  :key="d"
+                  :label="d"
+                  :value="d"
+                />
+              </el-select>
+              <button
+                type="button"
+                class="btn-fetch-icon"
+                :disabled="databaseChoice.databasesAreLoading.value"
+                title="Refresh databases"
+                @click="databaseChoice.fetchDatabases()"
+              >
+                <i
+                  v-if="databaseChoice.databasesAreLoading.value"
+                  class="fa-solid fa-spinner fa-spin"
+                ></i>
+                <i v-else class="fa-solid fa-refresh"></i>
+              </button>
+            </div>
+          </div>
           <div class="form-row">
             <div class="form-group half">
               <label for="schema-name">Schema</label>
@@ -105,6 +140,9 @@
                   <i v-else class="fa-solid fa-refresh"></i>
                 </button>
               </div>
+              <p v-if="databaseChoice.schemaError.value" class="field-error">
+                {{ databaseChoice.schemaError.value }}
+              </p>
             </div>
 
             <div class="form-group half">
@@ -197,6 +235,7 @@ import DatabaseConnectionSettings from "./DatabaseConnectionSettings.vue";
 import SqlQueryComponent from "./SQLQueryComponent.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { fetchDbSchemas, fetchDbTables } from "./api";
+import { useDatabaseChoice } from "./useDatabaseChoice";
 import axios from "axios";
 
 interface Props {
@@ -245,6 +284,16 @@ const tablesAreLoading = ref(false);
 const schemaSelectRef = ref();
 const tableSelectRef = ref();
 
+const databaseChoice = useDatabaseChoice({
+  settings: () => nodeDatabaseReader.value?.database_settings,
+  connections: connectionInterfaces,
+  reload: () => {
+    resetFields();
+    handleFetchSchemas(true);
+    handleFetchTables(true);
+  },
+});
+
 const handleQueryModeChange = (event: Event) => {
   const target = event.target as HTMLSelectElement;
   const selectedMode = target.value;
@@ -272,6 +321,7 @@ const loadNodeData = async (nodeId: number) => {
       nodeDatabaseReader.value = hasValidSetup
         ? nodeData.setting_input
         : createNodeDatabaseReader(nodeStore.flow_id, nodeId);
+      databaseChoice.syncDatabase();
       dataLoaded.value = true;
     }
   } catch (error) {
@@ -356,11 +406,7 @@ const handleFetchTables = async (silent = false) => {
 const handleTableSelect = (value: string) => {
   if (!nodeDatabaseReader.value) return;
   // When no schema was selected, tables come as "schema.table" — split them
-  if (value && value.includes(".") && !nodeDatabaseReader.value.database_settings.schema_name) {
-    const dotIndex = value.indexOf(".");
-    nodeDatabaseReader.value.database_settings.schema_name = value.substring(0, dotIndex);
-    nodeDatabaseReader.value.database_settings.table_name = value.substring(dotIndex + 1);
-  }
+  if (value) databaseChoice.applyTableReference(value);
   if (nodeDatabaseReader.value) {
     nodeDatabaseReader.value.fields = [];
   }
@@ -465,6 +511,12 @@ defineExpose({
   font-family: var(--font-family-base);
   max-width: 100%;
   color: var(--color-text-primary);
+}
+
+.field-error {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.75rem;
+  color: var(--color-danger, #f56c6c);
 }
 
 .section-subtitle {

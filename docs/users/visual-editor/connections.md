@@ -83,7 +83,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 ### Snowflake { #snowflake }
 
 A Snowflake connection replaces Host, Port, Password and SSL with its own fields: an account, a sign-in
-method, and the warehouse and database to use. A connection holds one credential (a token, a key or a
+method, a warehouse and an optional default database. A connection holds one credential (a token, a key or a
 browser sign-in) and stores it encrypted like any other password.
 
 **Account.** Enter the account identifier (`myorg-myaccount`), its host
@@ -94,20 +94,21 @@ resolved to under the field.
 
 | Method | Available in | Use it for |
 |---|---|---|
-| **Sign in with Snowflake** | Desktop app and local installs | Your own account. Opens your browser; your Snowflake password never passes through Flowfile. |
+| **Browser sign-in** | Desktop app and local installs | Your own account. Opens your browser; your Snowflake password never passes through Flowfile. |
 | **Access token** | Every install | A personal account on a server, or when browser sign-in is turned off for your account. |
 | **Key-pair** | Every install | Service users and scheduled flows. |
 
-=== "Sign in with Snowflake"
+=== "Browser sign-in"
 
-    Click **Sign in with Snowflake**, sign in in the browser tab that opens, and return to the form. It then
-    shows who you are signed in as and fills the warehouse and database lists.
+    Pick **Browser sign-in** under **Sign-in method**, click **Sign in with Snowflake**, sign in in the browser
+    tab that opens, and return to the form. It then shows who you are signed in as and fills the warehouse and
+    database lists.
 
     - The sign-in belongs to you: a browser-signed-in connection cannot be shared with a group.
     - It is bound to one role. Set **Role** before signing in (empty uses your default role); changing the role
       means signing in again.
-    - Snowflake blocks `ACCOUNTADMIN`, `SECURITYADMIN` and other administrator roles for this kind of sign-in.
-      If your default role is one of them, set a non-admin default role in Snowflake or enter one in **Role**.
+    - Prefer a role with only the access your flows need over an administrator role such as `ACCOUNTADMIN`:
+      every flow that uses the connection runs with that role.
     - When Snowflake's sign-in expires, using the connection reports it; edit the connection and sign in again.
     - It uses Snowflake's built-in sign-in for local applications. If an administrator has turned that off for
       the account, the form says so; use an access token or a key-pair instead.
@@ -145,10 +146,15 @@ resolved to under the field.
 With an access token or a key-pair, **Connect** signs in with what you entered and fills the warehouse and
 database lists.
 
-**Warehouse, database and role.** **Warehouse** and **Database** are lists filled from your session; you can
-also type a name. Empty fields use the user's defaults in Snowflake. A query needs a warehouse, so set one when
-the user has no default. Writing needs a database, either on the connection or in a `database.schema.table`
-name.
+**Warehouse, database and role.** **Warehouse** and **Default database (optional)** are lists filled from your
+session; you can also type a name. An empty warehouse or role uses the user's defaults in Snowflake. A query
+needs a warehouse, so set one when the user has no default.
+
+A connection reaches every database its role may use; the default database is only what a node starts on, and
+the form leaves it empty unless you choose one. Each **Read from Database** and **Write to Database** node picks
+its own database in a **Database** dropdown above **Schema**; left empty, the node uses the connection's default
+database (or, with none, lists every database's schemas). A node with a database needs a schema too, and reads or
+writes `database.schema.table`. Writing needs a database, either on the node or on the connection.
 
 **Test.** Each saved connection has a **Test** button in the list. It signs in and reports the user, role,
 warehouse and database the session got, or a plain reason it failed: no warehouse, a role that is not granted,

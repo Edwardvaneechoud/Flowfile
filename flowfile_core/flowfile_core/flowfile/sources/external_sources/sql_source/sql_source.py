@@ -24,6 +24,20 @@ from shared.sql_validation import UnsafeSQLError, validate_sql_query
 
 QueryMode = Literal["table", "query"]
 
+MISSING_SCHEMA_MESSAGE = "Choose a schema when a database is set."
+
+
+def qualified_schema(database_name: str | None, schema_name: str | None) -> str | None:
+    """The schema path a table lives under: ``database.schema`` when a database is set, else the schema as given.
+
+    Concatenated verbatim, like ``schema.table`` always was; a database without a schema is refused.
+    """
+    if database_name:
+        if not schema_name:
+            raise ValueError(MISSING_SCHEMA_MESSAGE)
+        return f"{database_name}.{schema_name}"
+    return schema_name or None
+
 
 def validate_sql_identifier(identifier: str, identifier_type: str = "identifier") -> None:
     """Validate that a SQL identifier (table name, schema name) is safe.
@@ -105,6 +119,8 @@ class BaseSqlSource:
     table_name: str | None = None
     query: str | None = None
     schema_name: str | None = None
+    database_name: str | None = None
+    schema_path: str | None = None
     query_mode: QueryMode = "table"
     schema: list[FlowfileColumn] | None = None
 
@@ -115,6 +131,7 @@ class BaseSqlSource:
         schema_name: str = None,
         fields: list[MinimalFieldInfo] | None = None,
         database_type: str | None = None,
+        database_name: str | None = None,
     ):
         """
         Initialize a BaseSqlSource object.
@@ -126,6 +143,8 @@ class BaseSqlSource:
             fields: Optional list of field information
             database_type: Optional dialect name; drives per-dialect SQL (limit clause)
                 and the fast-schema hooks. None falls back to generic behavior.
+            database_name: Optional database the table is in; table mode then reads
+                ``database.schema.table`` and needs a schema. Query mode ignores it.
         """
         self.database_type = database_type
         self.dialect: DbDialect = get_dialect_or_generic(database_type or "generic")
@@ -146,14 +165,18 @@ class BaseSqlSource:
             self.query_mode = "table"
             self.table_name = table_name
             self.schema_name = schema_name
+            self.database_name = database_name or None
 
             # Validate identifiers to prevent SQL injection
             validate_sql_identifier(table_name, "table name")
             if schema_name is not None and schema_name != "":
                 validate_sql_identifier(schema_name, "schema name")
+            if self.database_name:
+                validate_sql_identifier(self.database_name, "database name")
+            self.schema_path = qualified_schema(self.database_name, schema_name)
 
-            if schema_name is not None and schema_name != "":
-                self.query = f"SELECT * FROM {schema_name}.{table_name}"
+            if self.schema_path:
+                self.query = f"SELECT * FROM {self.schema_path}.{table_name}"
             else:
                 self.query = f"SELECT * FROM {table_name}"
 
@@ -202,6 +225,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         fields: list[MinimalFieldInfo] | None = None,
         cancel_check: Callable[[], bool] | None = None,
         database_type: str | None = None,
+        database_name: str | None = None,
     ):
         if database_type is None and connection_string and "://" in connection_string:
             # URIs built by construct_sql_uri carry the database_type as their scheme.
@@ -213,6 +237,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
             schema_name=schema_name,
             fields=fields,
             database_type=database_type,
+            database_name=database_name,
         )
 
         self.connection_string = connection_string
@@ -232,8 +257,8 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
             engine = create_engine(get_sqlalchemy_uri(self.connection_string))
             if self.query_mode == "table":
                 try:
-                    if self.schema_name is not None:
-                        self._get_columns_from_table_and_schema(engine, self.table_name, self.schema_name)
+                    if self.schema_path is not None:
+                        self._get_columns_from_table_and_schema(engine, self.table_name, self.schema_path)
                     if self.table_name is not None:
                         self._get_columns_from_table(engine, self.table_name)
                 except Exception as e:
@@ -294,7 +319,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         """Schema via the dialect's fast hooks; None = use the SQLAlchemy inspection path."""
         schema = None
         if self.query_mode == "table":
-            schema = self.dialect.table_schema(self.connection_string, self.table_name, self.schema_name)
+            schema = self.dialect.table_schema(self.connection_string, self.table_name, self.schema_path)
         if schema is None:
             schema = self.dialect.query_schema(self.connection_string, self.query)
         if schema is None:
@@ -316,8 +341,8 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
 
         if self.query_mode == "table":
             try:
-                if self.schema_name is not None:
-                    return self._get_columns_from_table_and_schema(engine, self.table_name, self.schema_name)
+                if self.schema_path is not None:
+                    return self._get_columns_from_table_and_schema(engine, self.table_name, self.schema_path)
                 if self.table_name is not None:
                     return self._get_columns_from_table(engine, self.table_name)
             except Exception as e:
@@ -430,15 +455,19 @@ class ResolvedConnection(NamedTuple):
     database_type: str
 
 
-def connection_uri(database_connection, password) -> str:
-    """The URI of a connection given its decrypted password (a ``SecretStr``, a string or None)."""
+def connection_uri(database_connection, password, database: str | None = None) -> str:
+    """The URI of a connection given its decrypted password (a ``SecretStr``, a string or None).
+
+    ``database``, when given, takes the place of the connection's own database (a node that picked
+    another database on a dialect that browses databases); the caller has validated it.
+    """
     if isinstance(password, str):
         password = SecretStr(password)
     return construct_sql_uri(
         database_type=database_connection.database_type,
         host=database_connection.host,
         port=database_connection.port,
-        database=database_connection.database,
+        database=database or database_connection.database,
         username=database_connection.username,
         password=password,
         ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
@@ -447,8 +476,13 @@ def connection_uri(database_connection, password) -> str:
     )
 
 
-def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> ResolvedConnection:
-    """Resolve DatabaseSettings into a connection URI + dialect, handling inline/reference mode."""
+def _resolve_connection(
+    database_settings: DatabaseSettings, user_id: int, database: str | None = None
+) -> ResolvedConnection:
+    """Resolve DatabaseSettings into a connection URI + dialect, handling inline/reference mode.
+
+    ``database`` replaces the connection's database in the URI; see ``connection_uri``.
+    """
     database_connection = database_settings.database_connection
 
     if database_settings.connection_mode == "inline":
@@ -479,7 +513,7 @@ def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> Re
         encrypted_secret = database_connection.password.get_secret_value()
         password = decrypt_secret(encrypted_secret)
 
-    uri = connection_uri(database_connection, password)
+    uri = connection_uri(database_connection, password, database=database)
     return ResolvedConnection(uri=uri, database_type=database_connection.database_type)
 
 
@@ -502,13 +536,38 @@ def create_sql_source_from_db_settings(database_settings: DatabaseSettings, user
         table_name=database_settings.table_name,
         schema_name=database_settings.schema_name,
         database_type=resolved.database_type,
+        database_name=database_settings.database_name,
     )
 
 
-def list_db_schemas(database_settings: DatabaseSettings, user_id: int) -> list[str]:
-    """Schema names for connection browsing; dialect fast path, else SQLAlchemy inspection."""
+def _resolve_for_browsing(database_settings: DatabaseSettings, user_id: int) -> tuple[ResolvedConnection, DbDialect]:
+    """The connection to browse, opened on the node's ``database_name`` for a dialect that browses databases.
+
+    The name goes into the URI path, so the dialect checks it as one identifier first. A dialect with one
+    database per connection keeps its own URI; the name then only qualifies schema paths.
+    """
     resolved = _resolve_connection(database_settings, user_id)
-    schemas = get_dialect_or_generic(resolved.database_type).list_schemas(resolved.uri)
+    dialect = get_dialect_or_generic(resolved.database_type)
+    database = database_settings.database_name
+    if database and dialect.browses_databases:
+        resolved = _resolve_connection(database_settings, user_id, database=dialect.checked_database(database))
+    return resolved, dialect
+
+
+def list_db_databases(database_settings: DatabaseSettings, user_id: int) -> list[str]:
+    """Database names a node may pick; empty for a dialect with one database per connection."""
+    resolved = _resolve_connection(database_settings, user_id)
+    databases = get_dialect_or_generic(resolved.database_type).list_databases(resolved.uri)
+    return list(databases) if databases is not None else []
+
+
+def list_db_schemas(database_settings: DatabaseSettings, user_id: int) -> list[str]:
+    """Schema names for connection browsing; dialect fast path, else SQLAlchemy inspection.
+
+    With ``database_name`` set on a dialect that browses databases, the schemas are that database's.
+    """
+    resolved, dialect = _resolve_for_browsing(database_settings, user_id)
+    schemas = dialect.list_schemas(resolved.uri)
     if schemas is not None:
         return sorted(schemas)
     engine = create_engine(get_sqlalchemy_uri(resolved.uri))
@@ -522,11 +581,14 @@ def list_db_tables(database_settings: DatabaseSettings, user_id: int) -> list[st
     """Table names for browsing; plain names for an explicit schema, else schema-qualified.
 
     Mirrors the historical /db_tables behavior: when no schema is given, tables from every
-    accessible schema are returned as ``schema.table``, skipping unreadable schemas.
+    accessible schema are returned as ``schema.table``, skipping unreadable schemas. With
+    ``database_name`` set, an explicit schema is browsed as ``database.schema``.
     """
-    resolved = _resolve_connection(database_settings, user_id)
+    resolved, dialect = _resolve_for_browsing(database_settings, user_id)
     schema = database_settings.schema_name if database_settings.schema_name else None
-    tables = get_dialect_or_generic(resolved.database_type).list_tables(resolved.uri, schema)
+    if schema and database_settings.database_name:
+        schema = qualified_schema(database_settings.database_name, schema)
+    tables = dialect.list_tables(resolved.uri, schema)
     if tables is not None:
         return sorted(tables)
     engine = create_engine(get_sqlalchemy_uri(resolved.uri))

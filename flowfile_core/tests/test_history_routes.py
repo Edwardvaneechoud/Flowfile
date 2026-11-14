@@ -340,6 +340,7 @@ NON_GRAPH_ROUTES = {
     "/custom_functions/formula_chain_check",
     "/custom_functions/formula_chain_instant_result",
     "/validate_db_settings",
+    "/db_databases",
     "/db_schemas",
     "/db_tables",
     "/templates/{template_id}/create",

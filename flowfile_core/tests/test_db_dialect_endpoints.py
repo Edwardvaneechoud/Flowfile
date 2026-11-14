@@ -613,3 +613,113 @@ def test_connection_test_snowflake_failure_is_a_200(snowflake_available, monkeyp
     monkeypatch.setattr(SnowflakeDialect, "is_available", lambda self: False)
     result = client.post("/db_connection_lib/test", json={"connection_name": SF_NAME}).json()
     assert result["success"] is False and "flowfile[snowflake]" in result["message"]
+
+
+# ---------- Picking a database in a node ----------
+
+
+def _sf_reference_settings(**overrides) -> dict:
+    return {"connection_mode": "reference", "database_connection_name": SF_NAME, "query_mode": "table"} | overrides
+
+
+def test_db_dialects_says_which_dialects_browse_databases():
+    by_name = {d["name"]: d for d in client.get("/db_dialects").json()}
+    assert by_name["snowflake"]["browses_databases"] is True
+    assert all(d["browses_databases"] is False for name, d in by_name.items() if name != "snowflake")
+
+
+def test_db_databases_and_database_name_for_a_single_database_dialect(tmp_path):
+    db_path = str(tmp_path / "one.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE movies (id INTEGER)")
+    conn.commit()
+    conn.close()
+
+    response = client.post("/db_databases", json=_browse_settings("sqlite", db_path))
+    assert response.status_code == 200, response.text
+    assert response.json() == []
+
+    plain = client.post("/db_schemas", json=_browse_settings("sqlite", db_path))
+    with_database = client.post("/db_schemas", json=_browse_settings("sqlite", db_path) | {"database_name": "OTHER"})
+    assert plain.status_code == with_database.status_code == 200, with_database.text
+    assert with_database.json() == plain.json()
+
+    # SQLite reads the database name as a schema path: database "main" + schema "main" is not one, so it fails
+    # at the database rather than reading the default database's table.
+    settings = _browse_settings("sqlite", db_path) | {"database_name": "main", "schema_name": "main"}
+    assert client.post("/db_tables", json=settings).status_code == 422
+
+
+def test_db_databases_schemas_and_tables_honour_database_name(snowflake_available, monkeypatch):
+    seen: list[tuple] = []
+
+    def list_databases(self, uri):
+        seen.append(("databases", uri))
+        return ["ANALYTICS", "SALES"]
+
+    def list_schemas(self, uri):
+        seen.append(("schemas", uri))
+        return ["RAW", "PUBLIC"]
+
+    def list_tables(self, uri, schema_name):
+        seen.append(("tables", uri, schema_name))
+        return ["ORDERS"]
+
+    monkeypatch.setattr(SnowflakeDialect, "list_databases", list_databases)
+    monkeypatch.setattr(SnowflakeDialect, "list_schemas", list_schemas)
+    monkeypatch.setattr(SnowflakeDialect, "list_tables", list_tables)
+    assert client.post("/db_connection_lib", json=_sf_body()).status_code == 200
+
+    response = client.post("/db_databases", json=_sf_reference_settings())
+    assert response.status_code == 200, response.text
+    assert response.json() == ["ANALYTICS", "SALES"]
+    assert client.post("/db_schemas", json=_sf_reference_settings()).status_code == 200
+    response = client.post("/db_schemas", json=_sf_reference_settings(database_name="SALES"))
+    assert response.status_code == 200, response.text
+    assert response.json() == ["PUBLIC", "RAW"]
+    response = client.post("/db_tables", json=_sf_reference_settings(database_name="SALES", schema_name="PUBLIC"))
+    assert response.status_code == 200, response.text
+    assert response.json() == ["ORDERS"]
+    assert client.post("/db_tables", json=_sf_reference_settings(schema_name="PUBLIC")).status_code == 200
+
+    def uri(database: str) -> str:
+        return (
+            f"snowflake://ME%40EXAMPLE.COM:pat-token-123@myorg-myaccount.snowflakecomputing.com:443/{database}"
+            "?auth=access_token&role=ANALYST&warehouse=COMPUTE_WH"
+        )
+
+    assert seen == [
+        ("databases", uri("ANALYTICS")),
+        ("schemas", uri("ANALYTICS")),
+        ("schemas", uri("SALES")),
+        ("tables", uri("SALES"), "SALES.PUBLIC"),
+        ("tables", uri("ANALYTICS"), "PUBLIC"),
+    ]
+
+
+@pytest.mark.parametrize("database_name", ["SALES.PUBLIC", "a.b"])
+def test_a_dotted_database_name_never_reaches_the_snowflake_uri(snowflake_available, monkeypatch, database_name):
+    monkeypatch.setattr(SnowflakeDialect, "list_schemas", lambda self, uri: pytest.fail(f"listed {uri}"))
+    assert client.post("/db_connection_lib", json=_sf_body()).status_code == 200
+    response = client.post("/db_schemas", json=_sf_reference_settings(database_name=database_name))
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"].startswith(f"'{database_name}' is not a Snowflake database name")
+
+
+@pytest.mark.parametrize("database_name", ["a/b", "x?y=1", "has space", '"My DB"', "1ST"])
+def test_a_database_name_that_is_no_identifier_is_refused_by_the_settings(snowflake_available, database_name):
+    response = client.post("/db_schemas", json=_sf_reference_settings(database_name=database_name))
+    assert response.status_code == 422, response.text
+
+
+def test_db_databases_failure_is_a_422_with_a_string_detail(snowflake_available, monkeypatch):
+    from shared.db_dialects.snowflake import SnowflakeError
+
+    def list_databases(self, uri):
+        raise SnowflakeError("No warehouse is selected.")
+
+    monkeypatch.setattr(SnowflakeDialect, "list_databases", list_databases)
+    assert client.post("/db_connection_lib", json=_sf_body()).status_code == 200
+    response = client.post("/db_databases", json=_sf_reference_settings())
+    assert response.status_code == 422
+    assert response.json() == {"detail": "No warehouse is selected."}

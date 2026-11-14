@@ -8,6 +8,7 @@ export const createNodeDatabaseWriter = (flowId: number, nodeId: number): NodeDa
   const databaseWriteSettings: DatabaseWriteSettings = {
     if_exists: "replace",
     connection_mode: "reference",
+    database_name: undefined,
     schema_name: undefined,
     table_name: undefined,
     database_connection: {

@@ -292,6 +292,9 @@ df.write_database(
 - `connection_name`: Name of the stored database connection (required)
 - `table_name`: Name of the table to write to (required)
 - `schema_name`: Database schema name (e.g., `"public"`, `"dbo"` on SQL Server, `"PUBLIC"` on Snowflake)
+- `database_name`: Database to write to, for a connection that reaches several (Snowflake, SQL Server). Unset,
+  the connection's default database; set, the target is `database_name.schema_name.table_name` and a schema is
+  required
 - `if_exists`: What to do if the table exists: `"append"`, `"replace"`, or `"fail"` (default: `"append"`)
 - `description`: Optional description for this operation
 
@@ -307,7 +310,9 @@ Returns a new child `FlowFrame`.
     A write to a `database_type="snowflake"` connection uploads the rows to a temporary stage and
     copies them into the table, so the connection's role needs `CREATE STAGE` on the schema.
     Unquoted names are upper-cased by Snowflake (`order_id` becomes `ORDER_ID`), and
-    `if_exists="replace"` recreates the table. See [Snowflake connections](../../visual-editor/connections.md#snowflake).
+    `if_exists="replace"` recreates the table. A connection without a default database needs
+    `database_name=` (for example `df.write_database("snowflake-sales", "ORDERS_COPY", schema_name="PUBLIC",
+    database_name="ANALYTICS")`). See [Snowflake connections](../../visual-editor/connections.md#snowflake).
 
 ## Write Modes
 

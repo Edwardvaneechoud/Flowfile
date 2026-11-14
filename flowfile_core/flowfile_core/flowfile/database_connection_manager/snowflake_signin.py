@@ -1,10 +1,13 @@
 """Pending Snowflake browser sign-ins, held in this process until a connection is saved with one.
 
 A sign-in starts in core (``/snowflake/oauth/start``), finishes when Snowflake redirects the browser to the
-unauthenticated callback, and is claimed once by the save of a connection (``oauth_flow_id``). Between those steps
-the PKCE verifier and, after the callback, the tokens live only here: in memory, keyed by a random id, behind one
-lock, for at most ``TTL_SECONDS``. Nothing is written to disk, so a sign-in dies with the process; the user signs in
-again. The verifier and the tokens never appear in a URL or a response.
+sign-in's own loopback listener (``snowflake_callback``), and is claimed once by the save of a connection
+(``oauth_flow_id``). Between those steps the PKCE verifier and, after the callback, the tokens live only here: in
+memory, keyed by a random id, behind one lock, for at most ``TTL_SECONDS``. Nothing is written to disk, so a sign-in
+dies with the process; the user signs in again. The verifier and the tokens never appear in a URL or a response.
+
+Each sign-in may carry a ``closer`` (its listener's ``close``), called whenever the sign-in leaves the table:
+expired, claimed or forgotten. Closers run after the lock is released, so a closer may itself read the table.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import secrets
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -50,17 +54,42 @@ class SignIn:
 
 
 _flows: dict[str, SignIn] = {}
+_closers: dict[str, Callable[[], None]] = {}
 _lock = threading.Lock()
 
 
-def _purge_locked() -> None:
+def _drop_locked(flow_id: str) -> list[Callable[[], None]]:
+    _flows.pop(flow_id, None)
+    closer = _closers.pop(flow_id, None)
+    return [closer] if closer else []
+
+
+def _purge_locked() -> list[Callable[[], None]]:
     cutoff = _now() - TTL_SECONDS
+    closers: list[Callable[[], None]] = []
     for flow_id in [k for k, v in _flows.items() if v.created <= cutoff]:
-        del _flows[flow_id]
+        closers += _drop_locked(flow_id)
+    return closers
 
 
-def start(*, user_id: int, host: str, role: str | None, verifier: str, redirect_uri: str) -> SignIn:
-    """Record a new pending sign-in and return it (its ``flow_id`` is random)."""
+def _run(closers: list[Callable[[], None]]) -> None:
+    for close in closers:
+        try:
+            close()
+        except Exception:
+            pass
+
+
+def start(
+    *,
+    user_id: int,
+    host: str,
+    role: str | None,
+    verifier: str,
+    redirect_uri: str,
+    closer: Callable[[], None] | None = None,
+) -> SignIn:
+    """Record a new pending sign-in and return it (its ``flow_id`` is random); ``closer`` runs when it leaves."""
     flow = SignIn(
         flow_id=secrets.token_urlsafe(24),
         user_id=user_id,
@@ -71,17 +100,22 @@ def start(*, user_id: int, host: str, role: str | None, verifier: str, redirect_
         created=_now(),
     )
     with _lock:
-        _purge_locked()
+        expired = _purge_locked()
         _flows[flow.flow_id] = flow
+        if closer is not None:
+            _closers[flow.flow_id] = closer
+    _run(expired)
     return replace(flow)
 
 
 def get(flow_id: str) -> SignIn | None:
     """A copy of the sign-in, or None when it is unknown or expired."""
     with _lock:
-        _purge_locked()
+        expired = _purge_locked()
         flow = _flows.get(flow_id)
-        return replace(flow) if flow is not None else None
+        found = replace(flow) if flow is not None else None
+    _run(expired)
+    return found
 
 
 def get_for_user(flow_id: str, user_id: int) -> SignIn | None:
@@ -96,12 +130,14 @@ def begin_exchange(flow_id: str) -> SignIn | None:
     The one gate a callback passes, so a second callback for the same sign-in never overwrites the first.
     """
     with _lock:
-        _purge_locked()
+        expired = _purge_locked()
         flow = _flows.get(flow_id)
-        if flow is None or flow.status != "pending":
-            return None
-        flow.status = "exchanging"
-        return replace(flow)
+        taken = None
+        if flow is not None and flow.status == "pending":
+            flow.status = "exchanging"
+            taken = replace(flow)
+    _run(expired)
+    return taken
 
 
 def finish(flow_id: str, *, status: Literal["ok", "error"], message: str | None = None, **values: Any) -> None:
@@ -124,20 +160,36 @@ def claim(flow_id: str, *, user_id: int, host: str, role: str | None) -> SignIn:
     ``SnowflakeAuthError`` with the reason otherwise, and then leaves the sign-in where it was.
     """
     with _lock:
-        _purge_locked()
+        closers = _purge_locked()
         flow = _flows.get(flow_id)
+        problem = None
         if flow is None or flow.user_id != user_id:
-            raise SnowflakeAuthError(_EXPIRED)
-        if flow.status != "ok":
-            raise SnowflakeAuthError("The Snowflake sign-in has not finished. Complete it in your browser first.")
-        if flow.host != host or (flow.role or None) != (role or None):
-            raise SnowflakeAuthError(
+            problem = _EXPIRED
+        elif flow.status != "ok":
+            problem = "The Snowflake sign-in has not finished. Complete it in your browser first."
+        elif flow.host != host or (flow.role or None) != (role or None):
+            problem = (
                 "The account or role changed after you signed in, so the sign-in no longer applies. Sign in again."
             )
-        del _flows[flow_id]
-        return flow
+        else:
+            closers += _drop_locked(flow_id)
+    _run(closers)
+    if problem:
+        raise SnowflakeAuthError(problem)
+    return flow
+
+
+def forget(flow_id: str) -> None:
+    """Drop one sign-in (closing its listener)."""
+    with _lock:
+        closers = _drop_locked(flow_id)
+    _run(closers)
 
 
 def forget_all() -> None:
+    """Drop every sign-in and close every listener (tests, shutdown)."""
     with _lock:
+        closers = list(_closers.values())
         _flows.clear()
+        _closers.clear()
+    _run(closers)

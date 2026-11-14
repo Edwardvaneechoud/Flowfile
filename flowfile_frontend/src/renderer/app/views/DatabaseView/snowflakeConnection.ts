@@ -92,7 +92,7 @@ export function accountLabel(host?: string | null): string {
 }
 
 const METHOD_LABELS: Record<SnowflakeAuthMethod, string> = {
-  oauth: "Sign in with Snowflake",
+  oauth: "Browser sign-in",
   access_token: "Access token",
   key_pair: "Key-pair",
 };
@@ -241,6 +241,24 @@ export function snowflakeResetFields(): Partial<FullDatabaseConnection> {
     privateKeyPassphrase: null,
     oauthFlowId: null,
   };
+}
+
+/**
+ * What a sign-in or Connect result fills in on the form: the session's warehouse when none is
+ * chosen. The database is never filled in: it is only the default a node starts on, and a
+ * connection reaches every database the role may use.
+ */
+export function sessionDefaults(
+  connection: Pick<FullDatabaseConnection, "warehouse">,
+  session: { warehouse: string | null },
+): Partial<FullDatabaseConnection> {
+  if (!connection.warehouse && session.warehouse) return { warehouse: session.warehouse };
+  return {};
+}
+
+/** The database shown for a Snowflake connection in the list: its default, else "all databases". */
+export function snowflakeDatabaseLabel(database?: string | null): string {
+  return (database ?? "").trim() || "all databases";
 }
 
 /** Options for a warehouse/database select: the session's list plus the current value. */

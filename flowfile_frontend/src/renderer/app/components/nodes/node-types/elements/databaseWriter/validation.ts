@@ -3,7 +3,7 @@
 const SQL_IDENTIFIER_PART = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 /**
- * Validate a SQL identifier (table or schema name), allowing dotted
+ * Validate a SQL identifier (table, schema or database name), allowing dotted
  * "schema.table" notation. Returns an error message string, or null when valid
  * (empty/unset is treated as valid here — required-ness is handled separately).
  */
