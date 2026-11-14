@@ -1619,6 +1619,25 @@ def _report_reserved(root: Path, listed: list[str]) -> None:
                             _not_applied(p.relative_to(root).as_posix())
 
 
+def _apply_kind(root: Path, owner_id: int, kind: kinds.Kind, by_kind: dict[str, int]) -> None:
+    """Apply a kind the importer has no code for through its own ``apply``, in the import's transaction."""
+    files = {
+        rel: (root / rel).read_text(encoding="utf-8")
+        for rel in kinds.owned_paths(root)
+        if kinds.kind_for_path(rel)[0].name == kind.name
+    }
+    if not files:
+        return
+    entries = kind.entries(files)
+    with get_db_context() as db:
+        try:
+            kind.apply(kinds.ExportContext(db=db, owner_id=owner_id), entries)
+            db.commit()
+        except Exception as e:
+            raise ValueError(f"Could not apply {kind.label}: {e}") from e
+    by_kind[kind.name] = len(entries)
+
+
 def _do_import_project_inner(root: Path, owner_id: int, removed=(), result: SetupResult | None = None) -> SetupResult:
     dotenv = load_dotenv(root)
     result = result if result is not None else SetupResult()
@@ -1635,86 +1654,90 @@ def _do_import_project_inner(root: Path, owner_id: int, removed=(), result: Setu
     def folder_files(name: str, folder: Path, pattern: str) -> list[Path]:
         return sorted(folder.glob(pattern)) if name in listed else []
 
-    if root_file("secrets", manifest.secrets_manifest_path(root)):
-        by_kind["secrets"] = _import_standalone_secrets(root, owner_id, dotenv, result)
+    scheduled_flows: set = set()
+    kernel_ids_used: dict[str, str] = {}
 
-    db_files = folder_files("database_connection", manifest.connections_dir(root, "database"), "*.yaml")
-    _assert_within_cap(db_files, _MAX_CONNECTIONS, "database connections")
-    kept_db: set[str] = set()
-    for f in db_files:
-        data = _read_yaml(f)
-        if not _applies(f.relative_to(root).as_posix(), data):
-            continue
-        name = _import_db_connection(data, owner_id, dotenv, result)
-        if name:
-            kept_db.add(name)
-    if db_files:
-        by_kind["database_connection"] = len(kept_db)
+    def secrets() -> None:
+        if root_file("secrets", manifest.secrets_manifest_path(root)):
+            by_kind["secrets"] = _import_standalone_secrets(root, owner_id, dotenv, result)
 
-    cloud_files = folder_files("cloud_connection", manifest.connections_dir(root, "cloud"), "*.yaml")
-    _assert_within_cap(cloud_files, _MAX_CONNECTIONS, "cloud connections")
-    kept_cloud: set[str] = set()
-    for f in cloud_files:
-        data = _read_yaml(f)
-        if not _applies(f.relative_to(root).as_posix(), data):
-            continue
-        name = _import_cloud_connection(data, owner_id, dotenv, result)
-        if name:
-            kept_cloud.add(name)
-    if cloud_files:
-        by_kind["cloud_connection"] = len(kept_cloud)
+    def connections(name: str, kind: str, run) -> None:
+        files = folder_files(name, manifest.connections_dir(root, kind), "*.yaml")
+        _assert_within_cap(files, _MAX_CONNECTIONS, f"{kind} connections")
+        kept: set[str] = set()
+        for f in files:
+            data = _read_yaml(f)
+            if not _applies(f.relative_to(root).as_posix(), data):
+                continue
+            imported = run(data, owner_id, dotenv, result)
+            if imported:
+                kept.add(imported)
+        if files:
+            by_kind[name] = len(kept)
 
-    kept_namespace_ids = None
-    if root_file("namespaces", manifest.namespaces_manifest_path(root)):
-        kept_namespace_ids = _import_namespaces(root, owner_id)
-        by_kind["namespaces"] = len(kept_namespace_ids)
+    def flows() -> None:
+        flow_files = folder_files("flow", manifest.flows_dir(root), "*.flow.yaml")
+        _assert_within_cap(flow_files, _MAX_FLOWS, "flows")
+        for f in flow_files:
+            data = _read_yaml(f)
+            if _applies(f.relative_to(root).as_posix(), data) and _import_flow(data, owner_id) is not None:
+                result.imported_flows += 1
+        if flow_files:
+            by_kind["flow"] = result.imported_flows
 
-    flow_files = folder_files("flow", manifest.flows_dir(root), "*.flow.yaml")
-    _assert_within_cap(flow_files, _MAX_FLOWS, "flows")
-    kept_flow_uuids: set[str] = set()
-    for f in flow_files:
-        data = _read_yaml(f)
-        if not _applies(f.relative_to(root).as_posix(), data):
-            continue
-        effective_uuid = _import_flow(data, owner_id)
-        if effective_uuid is not None:
-            result.imported_flows += 1
-            kept_flow_uuids.add(effective_uuid)
-    if flow_files:
-        by_kind["flow"] = result.imported_flows
+    def schedules() -> None:
+        schedule_files = folder_files("schedule", manifest.schedules_dir(root), "*.yaml")
+        _assert_within_cap(schedule_files, _MAX_FLOWS, "schedules")
+        for f in schedule_files:
+            data = _read_yaml(f)
+            if _applies(f.relative_to(root).as_posix(), data):
+                result.imported_schedules += _import_schedules(data, owner_id)
+                scheduled_flows.add(data.get("flow_uuid"))
+        if schedule_files:
+            by_kind["schedule"] = result.imported_schedules
 
-    schedule_files = folder_files("schedule", manifest.schedules_dir(root), "*.yaml")
-    _assert_within_cap(schedule_files, _MAX_FLOWS, "schedules")
-    scheduled_flows = set()
-    for f in schedule_files:
-        data = _read_yaml(f)
-        if _applies(f.relative_to(root).as_posix(), data):
-            result.imported_schedules += _import_schedules(data, owner_id)
-            scheduled_flows.add(data.get("flow_uuid"))
-    if schedule_files:
-        by_kind["schedule"] = result.imported_schedules
-
-    # After flows, so namespace and lineage resolve.
     def root_kind(name: str, path: Path, run) -> None:
         if root_file(name, path):
             by_kind[name] = len(run())
 
-    root_kind("tables", manifest.tables_manifest_path(root), lambda: _import_tables(root, owner_id))
-    root_kind("models", manifest.models_manifest_path(root), lambda: _import_artifacts(root, owner_id))
-    kernel_ids_used: dict[str, str] = {}
-    root_kind("kernels", manifest.kernels_manifest_path(root), lambda: _import_kernels(root, owner_id, kernel_ids_used))
-    # Visualizations after tables (source re-links by name); dashboards after visualizations
-    # (tiles re-link by viz_uuid).
-    root_kind(
-        "visualizations",
-        manifest.visualizations_manifest_path(root),
-        lambda: _import_visualizations(root, owner_id),
-    )
-    root_kind("dashboards", manifest.dashboards_manifest_path(root), lambda: _import_dashboards(root, owner_id))
-    kept_notebook_uuids = None
-    if folder_files("notebook", manifest.notebooks_dir(root), "*.notebook.yaml"):
-        kept_notebook_uuids = _import_notebooks(root, owner_id, kernel_ids_used)
-        by_kind["notebook"] = len(kept_notebook_uuids)
+    def notebooks() -> None:
+        if folder_files("notebook", manifest.notebooks_dir(root), "*.notebook.yaml"):
+            by_kind["notebook"] = len(_import_notebooks(root, owner_id, kernel_ids_used))
+
+    blocks = {
+        "secrets": secrets,
+        "database_connection": lambda: connections("database_connection", "database", _import_db_connection),
+        "cloud_connection": lambda: connections("cloud_connection", "cloud", _import_cloud_connection),
+        "namespaces": lambda: root_kind(
+            "namespaces", manifest.namespaces_manifest_path(root), lambda: _import_namespaces(root, owner_id)
+        ),
+        "flow": flows,
+        "schedule": schedules,
+        "tables": lambda: root_kind(
+            "tables", manifest.tables_manifest_path(root), lambda: _import_tables(root, owner_id)
+        ),
+        "models": lambda: root_kind(
+            "models", manifest.models_manifest_path(root), lambda: _import_artifacts(root, owner_id)
+        ),
+        "kernels": lambda: root_kind(
+            "kernels", manifest.kernels_manifest_path(root), lambda: _import_kernels(root, owner_id, kernel_ids_used)
+        ),
+        "visualizations": lambda: root_kind(
+            "visualizations",
+            manifest.visualizations_manifest_path(root),
+            lambda: _import_visualizations(root, owner_id),
+        ),
+        "dashboards": lambda: root_kind(
+            "dashboards", manifest.dashboards_manifest_path(root), lambda: _import_dashboards(root, owner_id)
+        ),
+        "notebook": notebooks,
+    }
+    for kind in kinds.ordered():
+        block = blocks.get(kind.name)
+        if block is not None:
+            block()
+        elif kind.name in listed and kind.entries is not None and kind.apply is not None:
+            _apply_kind(root, owner_id, kind, by_kind)
 
     # A flow's schedule file that is present was reconciled by its import; an entry without an id has another key.
     _delete_removed(owner_id, [c for c in removed if not (c.kind == "schedule" and c.key[0] in scheduled_flows)])

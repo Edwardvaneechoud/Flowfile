@@ -238,6 +238,7 @@ nav:
     - Compute Protocol: for-developers/compute-protocol.md
     - Internal API Reference: for-developers/python-api-reference.md
     - Catalog Architecture: for-developers/catalog-architecture.md
+    - Project Kinds: for-developers/project-kinds.md
     - Kernel Architecture: for-developers/kernel-architecture.md
     - AI Integration Architecture: for-developers/ai-architecture.md
     - Visualizations & Graphic Walker: for-developers/visualizations.md

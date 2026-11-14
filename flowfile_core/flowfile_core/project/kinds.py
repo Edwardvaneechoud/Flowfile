@@ -6,11 +6,14 @@ used to be listed by hand in several modules (the managed files git stages, the 
 the change-summary labels, the files a full export writes and sweeps) is derived from here.
 
 The module stays import-light: core's kinds live in ``core_kinds`` and are imported on the first call that
-needs the registry, so ``manifest`` and ``git_ops`` can use it without importing the export code.
+needs the registry, so ``manifest`` and ``git_ops`` can use it without importing the export code. A package adds a
+kind through the ``flowfile.project_kinds`` entry-point group.
 """
 
 from __future__ import annotations
 
+import importlib.metadata
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,19 +52,22 @@ class Entry:
 class Kind:
     """``entries(files) -> {key: Entry}`` splits the kind's files into objects; ``delete_label`` is what a preview
     says a delete does, ``None`` for a kind that is never deleted, whose removals are then not reported;
-    ``delete(ctx, keys)`` deletes the objects of those ``entries`` keys from the database."""
+    ``delete(ctx, keys)`` deletes the objects of those ``entries`` keys from the database. ``before`` names kinds
+    that come after this one; ``apply(ctx, entries)`` writes a kind the importer has no code for."""
 
     name: str
     label: str
     paths: tuple[str, ...]
     export: Callable[[ExportContext], dict[str, str]]
     after: tuple[str, ...] = ()
+    before: tuple[str, ...] = ()
     cap: int | None = None
     entries_key: str | None = None
     tracked_by_data_flag: bool = False
     entries: Callable[[dict[str, str]], dict[object, Entry]] | None = None
     delete_label: str | None = None
     delete: Callable[[ExportContext, list], None] | None = None
+    apply: Callable[[ExportContext, dict], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -74,7 +80,10 @@ class Change:
     consequence: str | None = None
 
 
+ENTRY_POINT_GROUP = "flowfile.project_kinds"
+logger = logging.getLogger(__name__)
 _KINDS: dict[str, Kind] = {}
+_REJECTED: dict[str, str] = {}
 _core_loaded = False
 
 
@@ -82,13 +91,53 @@ def register(kind: Kind) -> None:
     _KINDS[kind.name] = kind
 
 
+def _refusal(kind: Kind) -> str | None:
+    """Why a package's kind cannot join the registry, or ``None`` when it can."""
+    if kind.name in _KINDS:
+        return f"the name {kind.name!r} is already registered"
+    for other in _KINDS.values():
+        for p in kind.paths:
+            for q in other.paths:
+                if _stem(p, q) is not None or _stem(q, p) is not None:
+                    return f"its path {p!r} clashes with {q!r} of kind {other.name!r}"
+    try:
+        _order([*_KINDS.values(), kind])
+    except ValueError as e:
+        return str(e)
+    return None
+
+
+def _scan_entry_points() -> None:
+    for entry_point in importlib.metadata.entry_points(group=ENTRY_POINT_GROUP):
+        try:
+            kind = entry_point.load()
+        except Exception as e:
+            kind, reason = None, f"it did not load: {e}"
+        else:
+            reason = _refusal(kind) if isinstance(kind, Kind) else "it is not a Kind"
+        name = kind.name if isinstance(kind, Kind) else entry_point.name
+        if reason is None:
+            register(kind)
+        else:
+            logger.warning("Project kind %r from %r is not registered: %s", name, entry_point.value, reason)
+            _REJECTED[name] = reason
+
+
 def registered() -> list[Kind]:
+    """Core's kinds, then those the ``flowfile.project_kinds`` entry points add, scanned on the first call."""
     global _core_loaded
     if not _core_loaded:
         from flowfile_core.project import core_kinds  # noqa: F401
 
         _core_loaded = True
+        _scan_entry_points()
     return list(_KINDS.values())
+
+
+def rejected() -> dict[str, str]:
+    """The kinds a package offered that were left out, each with its reason."""
+    registered()
+    return dict(_REJECTED)
 
 
 def get(name: str) -> Kind:
@@ -99,14 +148,24 @@ def get(name: str) -> Kind:
 
 
 def ordered() -> list[Kind]:
-    """The kinds in registration order, each moved after the kinds its ``after`` names."""
-    pending = registered()
+    """The kinds in registration order, each moved after the kinds its ``after`` names and before those its
+    ``before`` names."""
+    return _order(registered())
+
+
+def _order(pending: list[Kind]) -> list[Kind]:
+    pending = list(pending)
     names = {k.name for k in pending}
+    after = {k.name: set(k.after) for k in pending}
+    for kind in pending:
+        for b in kind.before:
+            if b in after:
+                after[b].add(kind.name)
     placed: list[Kind] = []
     done: set[str] = set()
     while pending:
         for kind in pending:
-            if all(a in done or a not in names for a in kind.after):
+            if all(a in done or a not in names for a in after[kind.name]):
                 placed.append(kind)
                 done.add(kind.name)
                 pending.remove(kind)
