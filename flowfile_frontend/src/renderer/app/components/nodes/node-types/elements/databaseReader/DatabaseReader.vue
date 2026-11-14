@@ -109,6 +109,7 @@
                 <i v-else class="fa-solid fa-refresh"></i>
               </button>
             </div>
+            <p v-if="databaseNameError" class="field-error">{{ databaseNameError }}</p>
           </div>
           <div class="form-row">
             <div class="form-group half">
@@ -146,8 +147,15 @@
                   <i v-else class="fa-solid fa-refresh"></i>
                 </button>
               </div>
-              <p v-if="databaseChoice.schemaError.value" class="field-error">
-                {{ databaseChoice.schemaError.value }}
+              <p v-if="schemaNameError" class="field-error">{{ schemaNameError }}</p>
+              <p
+                v-else-if="databaseChoice.schemaNotice.value"
+                :class="
+                  databaseChoice.schemaNotice.value.tone === 'error' ? 'field-error' : 'field-hint'
+                "
+                data-testid="db-schema-notice"
+              >
+                {{ databaseChoice.schemaNotice.value.text }}
               </p>
             </div>
 
@@ -187,6 +195,7 @@
                   <i v-else class="fa-solid fa-refresh"></i>
                 </button>
               </div>
+              <p v-if="tableNameError" class="field-error">{{ tableNameError }}</p>
             </div>
           </div>
         </div>
@@ -233,7 +242,7 @@
 //   - Schema/table fetch logic (~lines 321-348) → useDatabaseSchema composable
 //   - Inline connection mode toggle + watcher (~lines 199-241, 375-398) is duplicated in Writer
 import { CodeLoader } from "vue-content-loader";
-import { ref, onMounted, watch } from "vue";
+import { computed, ref, onMounted, watch } from "vue";
 import {
   NodeDatabaseReader,
   ConnectionModeOption,
@@ -278,6 +287,7 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
     if (!nodeDatabaseReader.value || !nodeDatabaseReader.value.database_settings) {
       return false;
     }
+    databaseChoice.markAttempted();
     if (nodeDatabaseReader.value.database_settings.connection_mode === "reference") {
       nodeDatabaseReader.value.database_settings.database_connection = undefined;
     } else {
@@ -298,6 +308,16 @@ const databaseChoice = useDatabaseChoice({
   connections: connectionInterfaces,
   onDatabaseChange: () => resetFields(),
 });
+
+const databaseNameError = computed(() =>
+  databaseChoice.identifierError(nodeDatabaseReader.value?.database_settings?.database_name),
+);
+const schemaNameError = computed(() =>
+  databaseChoice.identifierError(nodeDatabaseReader.value?.database_settings?.schema_name),
+);
+const tableNameError = computed(() =>
+  databaseChoice.identifierError(nodeDatabaseReader.value?.database_settings?.table_name),
+);
 
 const handleQueryModeChange = (event: Event) => {
   const target = event.target as HTMLSelectElement;
@@ -419,6 +439,7 @@ const validateDatabaseSettings = async () => {
   }
   validationError.value = null;
   validationSuccess.value = null;
+  databaseChoice.markAttempted();
   isValidating.value = true;
 
   resetFields();
@@ -480,6 +501,12 @@ defineExpose({
   margin: 0.25rem 0 0 0;
   font-size: 0.75rem;
   color: var(--color-danger, #f56c6c);
+}
+
+.field-hint {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
 }
 
 .section-subtitle {

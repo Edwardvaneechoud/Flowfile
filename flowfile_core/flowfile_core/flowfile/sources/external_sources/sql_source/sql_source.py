@@ -58,9 +58,7 @@ def validate_sql_identifier(
         raise UnsafeSQLError(str(e)) from None
 
 
-def qualified_table(
-    dialect: DbDialect, database_name: str | None, schema_name: str | None, table_name: str
-) -> str:
+def qualified_table(dialect: DbDialect, database_name: str | None, schema_name: str | None, table_name: str) -> str:
     """``database.schema.table`` (or the parts set) after each was checked against ``dialect``'s identifier rule."""
     validate_sql_identifier(table_name, "table name", dialect)
     if schema_name:

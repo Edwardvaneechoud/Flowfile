@@ -13,6 +13,8 @@ export interface DbDialectInfo {
   saved_connection_only: boolean;
   // One login reaches many databases, so a node may pick one (Snowflake); absent from an older core.
   browses_databases?: boolean;
+  // Names may hold $ or be double-quoted (Snowflake); absent from an older core.
+  quoted_identifiers?: boolean;
   // How to install a missing driver; absent from an older core.
   install_hint?: string | null;
 }
@@ -90,6 +92,7 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     auth_methods: ["oauth", "access_token", "key_pair"],
     saved_connection_only: true,
     browses_databases: true,
+    quoted_identifiers: true,
   },
 ];
 
@@ -99,6 +102,7 @@ const withDefaults = (dialect: DbDialectInfo): DbDialectInfo => ({
   auth_methods: Array.isArray(dialect.auth_methods) ? dialect.auth_methods : [],
   saved_connection_only: dialect.saved_connection_only === true,
   browses_databases: dialect.browses_databases === true,
+  quoted_identifiers: dialect.quoted_identifiers === true,
 });
 
 let catalogPromise: Promise<DbDialectInfo[]> | null = null;

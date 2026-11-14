@@ -33,7 +33,13 @@ describe("getDbDialects", () => {
     ];
     mockedGet.mockResolvedValueOnce({ data: fetched });
     expect(await getDbDialects()).toEqual([
-      { ...fetched[0], auth_methods: [], saved_connection_only: false, browses_databases: false },
+      {
+        ...fetched[0],
+        auth_methods: [],
+        saved_connection_only: false,
+        browses_databases: false,
+        quoted_identifiers: false,
+      },
     ]);
     expect(mockedGet).toHaveBeenCalledTimes(2);
   });
@@ -99,6 +105,7 @@ describe("getDbDialects", () => {
       auth_methods: ["access_token", "key_pair"],
       saved_connection_only: true,
       browses_databases: true,
+      quoted_identifiers: true,
     };
     mockedGet.mockResolvedValue({ data: [snowflake] });
     expect(await getDbDialects()).toEqual([snowflake]);
@@ -118,6 +125,14 @@ describe("getDbDialects", () => {
     };
     mockedGet.mockResolvedValue({ data: [older] });
     expect((await getDbDialects())[0].browses_databases).toBe(false);
+    expect((await getDbDialects())[0].quoted_identifiers).toBe(false);
+  });
+
+  it("marks only Snowflake as taking quoted names in the fallback list", async () => {
+    const { FALLBACK_DIALECTS } = await loadModule();
+    expect(
+      FALLBACK_DIALECTS.filter((dialect) => dialect.quoted_identifiers).map((d) => d.name),
+    ).toEqual(["snowflake"]);
   });
 
   it("marks only Snowflake as browsing databases in the fallback list", async () => {

@@ -1,4 +1,4 @@
-import { computed, reactive, watch, type Ref } from "vue";
+import { computed, reactive, ref, watch, type Ref } from "vue";
 import { ElMessage } from "element-plus";
 
 import type { DatabaseSettings, DatabaseWriteSettings } from "../../../baseNode/nodeInput";
@@ -10,11 +10,13 @@ import {
   databaseChanged,
   databasePlaceholder,
   missingSchemaError,
+  missingSchemaNotice,
   shouldLoadTables,
   splitTableReference,
   tablesEmptyText,
 } from "./databaseChoice";
 import { createLatestLoader, type ListState } from "./latestLoader";
+import { validateSqlIdentifier } from "../databaseWriter/validation";
 
 /**
  * The Database, Schema and Table lists of the database reader and writer drawers, written once for both.
@@ -30,7 +32,7 @@ export function useDatabaseChoice(options: {
   // Drawer-side reset run when the database changes, before the lists reload.
   onDatabaseChange?: () => void;
 }) {
-  const { browsesDatabases } = useDbDialects();
+  const { browsesDatabases, quotedIdentifiers } = useDbDialects();
   const databases = reactive<ListState<string>>({ options: [], loading: false });
   const schemas = reactive<ListState<string>>({ options: [], loading: false });
   const tables = reactive<ListState<string>>({ options: [], loading: false });
@@ -38,6 +40,8 @@ export function useDatabaseChoice(options: {
   const schemaLoader = createLatestLoader(schemas);
   const tableLoader = createLatestLoader(tables);
   let previousDatabase: string | null | undefined;
+  // Set once the user applied or validated with a database but no schema; reset by a new node or database.
+  const attempted = ref(false);
 
   const selectedConnection = computed(() => {
     const name = options.settings()?.database_connection_name;
@@ -67,6 +71,27 @@ export function useDatabaseChoice(options: {
     const settings = options.settings();
     return missingSchemaError(settings?.database_name, settings?.schema_name);
   });
+
+  const schemaNotice = computed(() => {
+    const settings = options.settings();
+    return missingSchemaNotice(settings?.database_name, settings?.schema_name, attempted.value);
+  });
+
+  /** An apply or validate was tried: a missing schema now reads as an error, not a hint. */
+  const markAttempted = () => {
+    attempted.value = true;
+  };
+
+  // Names may hold $ or be double-quoted only on a saved connection whose dialect takes them (Snowflake).
+  const quoted = computed(
+    () =>
+      options.settings()?.connection_mode === "reference" &&
+      quotedIdentifiers(selectedConnection.value?.databaseType),
+  );
+
+  /** A database, schema or table name checked with the selected connection's dialect rule. */
+  const identifierError = (value?: string | null): string | null =>
+    validateSqlIdentifier(value, { quoted: quoted.value });
 
   const tablesNoDataText = computed(() =>
     tablesEmptyText(browsing.value, options.settings()?.schema_name),
@@ -118,6 +143,7 @@ export function useDatabaseChoice(options: {
   /** Remember what the loaded node names, so the next change knows what it replaced. */
   const syncDatabase = () => {
     previousDatabase = options.settings()?.database_name;
+    attempted.value = false;
   };
 
   const handleDatabaseChange = () => {
@@ -129,6 +155,7 @@ export function useDatabaseChoice(options: {
       settings.table_name = undefined;
     }
     previousDatabase = settings.database_name;
+    attempted.value = false;
     clearLists();
     options.onDatabaseChange?.();
     loadSchemas(true);
@@ -187,6 +214,9 @@ export function useDatabaseChoice(options: {
     showDatabase,
     placeholder,
     schemaError,
+    schemaNotice,
+    markAttempted,
+    identifierError,
     tablesNoDataText,
     fetchDatabases,
     loadSchemas,

@@ -36,6 +36,9 @@ export function useDbDialects() {
   const browsesDatabases = (databaseType?: string): boolean =>
     findDialect(databaseType)?.browses_databases === true;
 
+  const quotedIdentifiers = (databaseType?: string): boolean =>
+    findDialect(databaseType)?.quoted_identifiers === true;
+
   return {
     dialects,
     findDialect,
@@ -44,5 +47,6 @@ export function useDbDialects() {
     authMethods,
     isSavedConnectionOnly,
     browsesDatabases,
+    quotedIdentifiers,
   };
 }

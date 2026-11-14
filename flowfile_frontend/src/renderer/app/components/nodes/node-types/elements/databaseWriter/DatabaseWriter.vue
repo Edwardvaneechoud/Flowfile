@@ -135,8 +135,14 @@
               </button>
             </div>
             <p v-if="schemaNameError" class="field-error">{{ schemaNameError }}</p>
-            <p v-else-if="databaseChoice.schemaError.value" class="field-error">
-              {{ databaseChoice.schemaError.value }}
+            <p
+              v-else-if="databaseChoice.schemaNotice.value"
+              :class="
+                databaseChoice.schemaNotice.value.tone === 'error' ? 'field-error' : 'field-hint'
+              "
+              data-testid="db-schema-notice"
+            >
+              {{ databaseChoice.schemaNotice.value.text }}
             </p>
           </div>
 
@@ -220,7 +226,6 @@ import {
   ConnectionModeOption,
 } from "../../../baseNode/nodeInput";
 import { createNodeDatabaseWriter } from "./utils";
-import { validateSqlIdentifier } from "./validation";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { fetchDatabaseConnectionsInterfaces } from "../../../../../views/DatabaseView/api";
@@ -251,13 +256,13 @@ const databaseChoice = useDatabaseChoice({
 });
 
 const databaseNameError = computed(() =>
-  validateSqlIdentifier(nodeData.value?.database_write_settings?.database_name),
+  databaseChoice.identifierError(nodeData.value?.database_write_settings?.database_name),
 );
 const schemaNameError = computed(() =>
-  validateSqlIdentifier(nodeData.value?.database_write_settings?.schema_name),
+  databaseChoice.identifierError(nodeData.value?.database_write_settings?.schema_name),
 );
 const tableNameError = computed(() =>
-  validateSqlIdentifier(nodeData.value?.database_write_settings?.table_name),
+  databaseChoice.identifierError(nodeData.value?.database_write_settings?.table_name),
 );
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
@@ -267,6 +272,7 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
       return false;
     }
     const writeSettings = nodeData.value.database_write_settings;
+    databaseChoice.markAttempted();
     if (!writeSettings.table_name) {
       ElMessage.error("Table name is required");
       return false;
@@ -406,6 +412,12 @@ defineExpose({
   margin: 0.25rem 0 0 0;
   font-size: 0.75rem;
   color: var(--color-danger, #f56c6c);
+}
+
+.field-hint {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
 }
 
 .form-row {

@@ -27,6 +27,24 @@ export function missingSchemaError(
   return normalizeDatabase(database) && !(schema ?? "").trim() ? MISSING_SCHEMA_MESSAGE : null;
 }
 
+export interface FieldNotice {
+  text: string;
+  tone: "hint" | "error";
+}
+
+/**
+ * The missing-schema line under Schema: a neutral hint while the user is still choosing, an error once they
+ * tried to apply or validate with the schema still missing.
+ */
+export function missingSchemaNotice(
+  database: string | null | undefined,
+  schema: string | null | undefined,
+  attempted: boolean,
+): FieldNotice | null {
+  const text = missingSchemaError(database, schema);
+  return text ? { text, tone: attempted ? "error" : "hint" } : null;
+}
+
 export const CHOOSE_SCHEMA_FIRST = "Choose a schema first";
 
 /**
@@ -44,6 +62,15 @@ export function tablesEmptyText(browsesDatabases: boolean, schema?: string | nul
   return shouldLoadTables(browsesDatabases, schema) ? "No data" : CHOOSE_SCHEMA_FIRST;
 }
 
+const IDENTIFIER_PART = String.raw`(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")`;
+const IDENTIFIER_PATH = new RegExp(`^${IDENTIFIER_PART}(?:\\.${IDENTIFIER_PART})*$`);
+
+/** The parts of a dotted name, split on the dots outside double quotes; null when it is not one. */
+export function identifierParts(value: string): string[] | null {
+  if (!IDENTIFIER_PATH.test(value)) return null;
+  return value.match(new RegExp(IDENTIFIER_PART, "g"));
+}
+
 export interface TableReference {
   database?: string;
   schema: string;
@@ -54,7 +81,8 @@ export interface TableReference {
  * Split a qualified name typed or picked in the Table field while no schema is chosen.
  *
  * Every dialect splits `schema.table` at its first dot, as the drawers always did. A dialect that
- * browses databases also takes `database.schema.table`. Anything else is left as typed (null).
+ * browses databases also takes `database.schema.table`, split on the dots outside double quotes, so
+ * `"my.db"."My Schema".T` keeps its quoted parts. Anything else is left as typed (null).
  */
 export function splitTableReference(
   value: string | null | undefined,
@@ -62,8 +90,8 @@ export function splitTableReference(
 ): TableReference | null {
   if (!value || !value.includes(".")) return null;
   if (browsesDatabases) {
-    const parts = value.split(".");
-    if (parts.some((part) => !part)) return null;
+    const parts = identifierParts(value);
+    if (!parts) return null;
     if (parts.length === 3) return { database: parts[0], schema: parts[1], table: parts[2] };
     if (parts.length === 2) return { schema: parts[0], table: parts[1] };
     return null;

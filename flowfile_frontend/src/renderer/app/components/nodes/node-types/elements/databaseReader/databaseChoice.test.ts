@@ -7,8 +7,10 @@ import {
   databaseChanged,
   databasePlaceholder,
   missingSchemaError,
+  missingSchemaNotice,
   normalizeDatabase,
   shouldLoadTables,
+  identifierParts,
   splitTableReference,
   tablesEmptyText,
 } from "./databaseChoice";
@@ -93,5 +95,33 @@ describe("databaseChoice", () => {
     expect(tablesEmptyText(true, null)).toBe(CHOOSE_SCHEMA_FIRST);
     expect(tablesEmptyText(true, "PUBLIC")).toBe("No data");
     expect(tablesEmptyText(false, undefined)).toBe("No data");
+  });
+
+  it("shows the missing schema as a hint until an apply or validate tried without one", () => {
+    expect(missingSchemaNotice("SALES", "", false)).toEqual({
+      text: MISSING_SCHEMA_MESSAGE,
+      tone: "hint",
+    });
+    expect(missingSchemaNotice("SALES", undefined, true)).toEqual({
+      text: MISSING_SCHEMA_MESSAGE,
+      tone: "error",
+    });
+    expect(missingSchemaNotice("SALES", "PUBLIC", true)).toBeNull();
+    expect(missingSchemaNotice(null, "", true)).toBeNull();
+  });
+
+  it("splits a quoted name on the dots outside the quotes", () => {
+    expect(identifierParts('"my.db"."My Schema".T')).toEqual(['"my.db"', '"My Schema"', "T"]);
+    expect(identifierParts('"open.T')).toBeNull();
+    expect(splitTableReference('"USER$evaneechoud"."Raw".orders', true)).toEqual({
+      database: '"USER$evaneechoud"',
+      schema: '"Raw"',
+      table: "orders",
+    });
+    expect(splitTableReference('"my.db"."My Schema"', true)).toEqual({
+      schema: '"my.db"',
+      table: '"My Schema"',
+    });
+    expect(splitTableReference('a"b.c', true)).toBeNull();
   });
 });
