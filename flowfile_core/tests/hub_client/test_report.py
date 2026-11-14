@@ -190,7 +190,7 @@ class TestBuildRunReport:
         assert built["success"] is False
         writer = next(node for node in built["nodes"] if node["node_id"] == 2)
         assert writer["success"] is False
-        assert "table name" in writer["error"]
+        assert writer["error"] == "ValueError"
         assert built["outputs"] == []
 
     def test_a_flow_that_came_from_a_hub_reports_the_version_it_ran(self):

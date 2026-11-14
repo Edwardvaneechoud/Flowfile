@@ -75,6 +75,13 @@ def _rows_out(flow, node) -> int | None:
     return engine.known_record_count() if engine is not None else None
 
 
+def _error_class(node, result) -> str | None:
+    """What failed the node, by class name: an error's text can quote row values, which a report never carries."""
+    if not result.error:
+        return None
+    return result.compute_error or getattr(node, "_last_exception_class", None) or "Error"
+
+
 def _hub_table_ids(user_id: int, names: set[str]) -> tuple[dict[str, int], dict[str, int]]:
     """The hub's namespace ids by ``catalog.schema`` and table ids by qualified name among ``names``; a hub that does
     not answer costs one warning and names nothing."""
@@ -99,11 +106,14 @@ def hub_flow_uuid(flow, hub_url: str) -> str | None:
     return origin.flow_uuid
 
 
-def build_run_report(flow, run_info: RunInformation, flow_uuid: str, run_row_id: int | None = None) -> dict:
+def build_run_report(
+    flow, run_info: RunInformation, flow_uuid: str, run_row_id: int | None = None, user_id: int | None = None
+) -> dict:
     """The one write of the hub's record of a finished run.
 
-    ``inputs`` and ``outputs`` are the hub tables the successful catalog readers and writers used. The run id is the
-    vend's for a run that vended, the hub's for a run it dispatched, else a new one.
+    ``inputs`` and ``outputs`` are the hub tables the successful catalog readers and writers used, their ids read
+    from the hub as ``user_id``, the person the run is reported for. The run id is the vend's for a run that vended,
+    the hub's for a run it dispatched, else a new one.
     """
     nodes, readers, writers = [], [], []
     for result in run_info.node_step_result or []:
@@ -118,7 +128,7 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str, run_row_id:
                 "skipped": result.skipped,
                 "duration_seconds": result.run_time_ms / 1000 if result.run_time_ms >= 0 else None,
                 "rows_out": _rows_out(flow, node),
-                "error": result.error or None,
+                "error": _error_class(node, result),
             }
         )
         if not result.success or result.skipped:
@@ -135,7 +145,10 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str, run_row_id:
     named = {reader.catalog_full_table_name for reader in readers}
     named |= {f"{w.catalog_write_settings.namespace_full_name}.{w.catalog_write_settings.table_name}" for w in writers}
     steps = readers + writers
-    namespace_ids, table_ids = _hub_table_ids(steps[0].user_id or 1, named) if steps else ({}, {})
+    namespace_ids, table_ids = {}, {}
+    if steps:
+        asked_as = user_id if user_id is not None else steps[0].user_id or 1
+        namespace_ids, table_ids = _hub_table_ids(asked_as, named)
     inputs, outputs = [], []
     for reader in readers:
         namespace_id = namespace_ids.get(reader.hub_namespace_name)

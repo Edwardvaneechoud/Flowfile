@@ -458,3 +458,11 @@ def _drop(backend: ComputeBackend) -> None:
     with _lock:
         if _verdicts.get(id(backend), (None,))[0] is backend:
             del _verdicts[id(backend)]
+
+
+def forget(backend: ComputeBackend) -> None:
+    """Keep nothing of *backend*, an instance its registry made anew."""
+    with _lock:
+        for kept in (_verdicts, _flights):
+            if kept.get(id(backend), (None,))[0] is backend:
+                del kept[id(backend)]

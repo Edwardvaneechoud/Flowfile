@@ -20,7 +20,9 @@ SCHEDULED = "Scheduled runs can't use the hub's servers yet"
 _MARGIN_SECONDS = 60
 
 _tokens: dict[tuple[int, int], tuple[str, float | None]] = {}
-_lock = threading.RLock()  # a refresh inside token_for that ends the session clears these tokens
+_minting: dict[tuple[int, int], threading.Lock] = {}
+_cleared: dict[int, int] = {}
+_lock = threading.RLock()  # guards the three above; never held while the hub is asked
 
 
 class SignedOut(registry.Refused):
@@ -48,15 +50,30 @@ def signed_out(node_name: str) -> str:
 def token_for(user_id: int, node_id: int, node_name: str, *, through_hub: bool = False) -> str:
     """A cached or newly minted ``run`` token for the hub node ``node_id``; with ``through_hub`` only a sign-in through
     the hub mints one. Every failure is a ``LookupError`` sentence (``SignedOut`` with ``through_hub``)."""
+    key = (user_id, node_id)
     with _lock:
-        cached = _tokens.get((user_id, node_id))
-        if cached is not None:
-            token, exp = cached
-            if exp is not None and exp - time.time() > _MARGIN_SECONDS:
-                return token
+        token = _cached(key)
+        if token is not None:
+            return token
+        minting = _minting.setdefault(key, threading.Lock())
+    with minting:
+        with _lock:
+            token, cleared = _cached(key), _cleared.get(user_id, 0)
+        if token is not None:
+            return token
         token = _mint(user_id, node_id, node_name, through_hub)
-        _tokens[(user_id, node_id)] = (token, session._expiry(token))
+        with _lock:
+            # A session cleared while the hub was asked keeps no token minted from it.
+            if _cleared.get(user_id, 0) == cleared:
+                _tokens[key] = (token, session._expiry(token))
         return token
+
+
+def _cached(key: tuple[int, int]) -> str | None:
+    cached = _tokens.get(key)
+    if cached is not None and cached[1] is not None and cached[1] - time.time() > _MARGIN_SECONDS:
+        return cached[0]
+    return None
 
 
 def server_token(name: str, account_user_id: int, remote_id: int, through_hub: bool) -> str:
@@ -97,6 +114,7 @@ registry.remote_servers.token, registry.remote_servers.run_refused = server_toke
 
 def clear(user_id: int) -> None:
     with _lock:
+        _cleared[user_id] = _cleared.get(user_id, 0) + 1
         for key in [key for key in _tokens if key[0] == user_id]:
             del _tokens[key]
 

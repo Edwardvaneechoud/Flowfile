@@ -473,6 +473,27 @@ def test_cloud_table_visualization_is_a_plan_source_without_secrets():
     assert b"minioadmin" not in base64.b64decode(worker_source["plan_bytes"])
 
 
+def test_a_sql_visual_does_not_read_a_cloud_table_its_caller_may_not_read(monkeypatch):
+    """The SQL editor's rule: a person without a grant on a table cannot name it in a visual's query either."""
+    from types import SimpleNamespace
+
+    from flowfile_core.catalog.access import AccessResolver
+    from flowfile_core.schemas.catalog_schema import VizSourceDescriptor
+
+    _ensure_connection()
+    cat_id = _create_catalog(storage_uri="s3://flowfile-test/vizsql", storage_connection_name=_CONNECTION_NAME)
+    name = f"t_{uuid.uuid4().hex[:8]}"
+    _add_physical_table(cat_id, f"s3://flowfile-test/vizsql/{name}", name=name)
+    source = VizSourceDescriptor(source_type="sql", sql_query=f"SELECT * FROM {name}")
+    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    stranger = SimpleNamespace(id=999_998, username="viz_stranger", is_admin=False)
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db), access=AccessResolver(db, stranger))
+        assert name in svc._virtual_tables._object_storage_tables(None, set())
+        worker_source = svc._visualizations._resolve_source_for_worker(source, user_id=stranger.id)
+    assert worker_source["kind"] != "plan"
+
+
 # ---- Real S3 round-trip (against the already-running MinIO mock) ------------ #
 
 

@@ -25,6 +25,14 @@ _REFRESH_MARGIN_SECONDS = 60
 
 _access_tokens: dict[int, tuple[str, float | None]] = {}
 _lock = threading.Lock()
+_user_locks: dict[int, threading.RLock] = {}
+
+
+def _one_at_a_time(user_id: int) -> threading.RLock:
+    """``user_id``'s own lock: one refresh, save or clear of their session at a time, so nobody else waits for the hub
+    call a refresh makes. ``_lock`` guards the store's writes and the cache, and is never held across that call."""
+    with _lock:
+        return _user_locks.setdefault(user_id, threading.RLock())
 
 
 def _key(user_id: int) -> str:
@@ -74,7 +82,7 @@ def save(user_id: int, session: dict) -> None:
         "device_name": session.get("device_name"),
         "org_name": session.get("org_name"),
     }
-    with _lock:
+    with _one_at_a_time(user_id), _lock:
         _access_tokens.pop(user_id, None)
         secrets.set_password(SERVICE, _key(user_id), json.dumps(stored))
     _forget_node_tokens(user_id)
@@ -93,7 +101,7 @@ def save_delegation(user_id: int, hub_url: str, granted) -> str:
         "refresh_expires_at": now + granted.refresh_expires_in,
         "sid": sid,
     }
-    with _lock:
+    with _one_at_a_time(user_id), _lock:
         secrets.set_password(SERVICE, _key(user_id), json.dumps(stored))
         _access_tokens[user_id] = (granted.access_token, now + granted.expires_in)
     _forget_node_tokens(user_id)
@@ -102,7 +110,7 @@ def save_delegation(user_id: int, hub_url: str, granted) -> str:
 
 def clear(user_id: int) -> None:
     """Forget the connection and its node tokens on this machine; the hub is not told."""
-    with _lock:
+    with _one_at_a_time(user_id), _lock:
         _access_tokens.pop(user_id, None)
         secrets.delete_password(SERVICE, _key(user_id))
     _forget_node_tokens(user_id)
@@ -119,7 +127,7 @@ def _ended(refused: client.HubRefused) -> bool:
 
 
 def _refresh_delegation(user_id: int, stored: dict):
-    """Refresh with ``_lock`` held, through the server's extension, which signs the request as this server.
+    """Refresh with the user's lock held, through the server's extension, which signs the request as this server.
     ``invalid_grant`` removes the session before re-raising; a server that cannot sign for itself raises ``HubRefused``
     (401) and keeps it."""
     try:
@@ -128,8 +136,9 @@ def _refresh_delegation(user_id: int, stored: dict):
         granted = server_extension.call("refresh_delegation", stored["hub_url"], stored["refresh_token"])
     except client.HubRefused as e:
         if _ended(e):
-            _access_tokens.pop(user_id, None)
-            secrets.delete_password(SERVICE, _key(user_id))
+            with _lock:
+                _access_tokens.pop(user_id, None)
+                secrets.delete_password(SERVICE, _key(user_id))
         raise
     except LookupError as e:
         logger.warning("The sign-in through the hub of user %s could not be refreshed: %s", user_id, e)
@@ -137,8 +146,9 @@ def _refresh_delegation(user_id: int, stored: dict):
     now = time.time()
     stored["refresh_token"] = granted.refresh_token
     stored["refresh_expires_at"] = now + granted.refresh_expires_in
-    secrets.set_password(SERVICE, _key(user_id), json.dumps(stored))
-    _access_tokens[user_id] = (granted.access_token, now + granted.expires_in)
+    with _lock:
+        secrets.set_password(SERVICE, _key(user_id), json.dumps(stored))
+        _access_tokens[user_id] = (granted.access_token, now + granted.expires_in)
     return granted
 
 
@@ -151,7 +161,7 @@ def access_token(user_id: int) -> str | None:
     if sharing.acts_for_no_person():
         return None
     try:
-        with _lock:
+        with _one_at_a_time(user_id):
             cached = _access_tokens.get(user_id)
             if cached is not None:
                 token, exp = cached
@@ -166,8 +176,9 @@ def access_token(user_id: int) -> str | None:
             tokens = client.refresh(session["hub_url"], session["refresh_token"])
             session["refresh_token"] = tokens["refresh_token"]
             session["refresh_expires_at"] = _expiry(tokens["refresh_token"])
-            secrets.set_password(SERVICE, _key(user_id), json.dumps(session))
-            _access_tokens[user_id] = (tokens["access_token"], _expiry(tokens["access_token"]))
+            with _lock:
+                secrets.set_password(SERVICE, _key(user_id), json.dumps(session))
+                _access_tokens[user_id] = (tokens["access_token"], _expiry(tokens["access_token"]))
             return tokens["access_token"]
     except client.HubRefused as e:
         if _ended(e):
@@ -196,7 +207,7 @@ def refresh_delegation(user_id: int, sid: str | None):
     """Refresh the sign-in ``sid`` at the hub now, whatever is cached; ``None``, nothing asked, when the kept sign-in
     is not ``sid``. Raises as ``access_token`` does."""
     try:
-        with _lock:
+        with _one_at_a_time(user_id):
             stored = load(user_id)
             if stored is None or stored.get("kind") != "delegation" or sid is None or stored.get("sid") != sid:
                 return None

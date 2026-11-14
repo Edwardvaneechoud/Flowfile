@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
 from sqlalchemy.exc import IntegrityError
@@ -65,6 +66,9 @@ from flowfile_core.schemas.catalog_schema import (
     VizSourceDescriptor,
 )
 from shared.storage_config import storage
+
+if TYPE_CHECKING:
+    from flowfile_core.catalog.access import AccessResolver
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
@@ -132,12 +136,14 @@ class VisualizationService:
         tables: TableService,
         virtual_tables: VirtualTableService,
         sql: SqlService,
+        access: AccessResolver | None = None,
     ) -> None:
         self.repo = repo
         self._namespaces = namespaces
         self._tables = tables
         self._virtual_tables = virtual_tables
         self._sql = sql
+        self._access = access
         self._facade = None  # set by CatalogService.__init__ via bind_facade()
 
     def bind_facade(self, facade) -> None:
@@ -545,23 +551,32 @@ class VisualizationService:
 
         if not source.sql_query:
             raise ValueError("sql_query is required when source_type='sql'")
-        return self._build_sql_worker_source(source.sql_query, user_id=user_id)
+        restricted = self._access is not None and self._access.restricted
+        accessible = self._access.accessible_ids("catalog_table") if restricted else None
+        return self._build_sql_worker_source(source.sql_query, user_id=user_id, accessible_table_ids=accessible)
 
     @staticmethod
     def _table_plan(table: CatalogTable, user_id: int | None) -> pl.LazyFrame:
         [target] = row_targets([table], user_id, "visual")
         return scan_object_storage_table(table, target, user_id, table.name)
 
-    def _sql_plan(self, sql_query: str, user_id: int | None, own: set[str]) -> pl.LazyFrame | None:
+    def _sql_plan(
+        self, sql_query: str, user_id: int | None, own: set[str], accessible_table_ids: set[int] | None
+    ) -> pl.LazyFrame | None:
         try:
-            planned = self._virtual_tables.object_storage_plan(sql_query, user_id, own, purpose="visual")
+            planned = self._virtual_tables.object_storage_plan(
+                sql_query, user_id, own, accessible_table_ids, purpose="visual"
+            )
         except pl.exceptions.PolarsError as e:
             raise ValueError(friendly_relation_error(str(e), sql_query)) from e
         return planned[0] if planned is not None else None
 
-    def _build_sql_worker_source(self, sql_query: str, user_id: int | None) -> dict:
+    def _build_sql_worker_source(
+        self, sql_query: str, user_id: int | None, accessible_table_ids: set[int] | None = None
+    ) -> dict:
         """Build a worker SQL source spec mirroring ``execute_sql_query``'s setup; a query that names tables on
-        object storage, this catalog's or a remote catalog's, becomes a plan source instead (``_kept_plan_source``)."""
+        object storage, this catalog's or a remote catalog's, becomes a plan source instead (``_kept_plan_source``).
+        ``accessible_table_ids`` limits this catalog's object-storage tables to those the caller may read."""
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
             validate_sql_query,
@@ -574,7 +589,9 @@ class VisualizationService:
 
         delta_map, virtual_map = self._virtual_tables.resolve_all_queryable_tables()
         own = {*delta_map, *virtual_map}
-        on_storage = _kept_plan_source(user_id, sql_query, lambda: self._sql_plan(sql_query, user_id, own))
+        on_storage = _kept_plan_source(
+            user_id, sql_query, lambda: self._sql_plan(sql_query, user_id, own, accessible_table_ids)
+        )
         if on_storage is not None:
             return on_storage
         rewritten = rewrite_qualified_references(sql_query, own)

@@ -36,8 +36,8 @@ import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from functools import partial
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 from flowfile_core.configs import settings
@@ -122,9 +122,11 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
     if hub_row is not None:
         through_hub = server_extension.joined() is not None
         token = hub_token or _hub_token(backend_id, *hub_row, through_hub=through_hub)
-        _hub_rows[backend_id] = hub_row
+        with _lock:
+            _hub_rows[backend_id] = hub_row
+            if through_hub:
+                _through_hub.add(backend_id)
         if through_hub:
-            _through_hub.add(backend_id)
             token_source = partial(_hub_token, backend_id, *hub_row, through_hub=True)
     else:
         try:
@@ -177,23 +179,35 @@ _BUILTIN: dict[str, BackendFactory] = {
 """Backend id -> factory of the backends core ships; each imports its backend's module on first use."""
 
 _lock = threading.RLock()
+_making: dict[str, threading.RLock] = {}
 _factories: dict[str, BackendFactory] = {}
 _instances: dict[str, ComputeBackend] = {}
 _hub_rows: dict[str, tuple[int, int]] = {}
 _through_hub: set[str] = set()
 _acting: ContextVar[int | None] = ContextVar("acting_user", default=None)
 _scheduled: ContextVar[bool] = ContextVar("scheduled_run", default=False)
-remote_servers = SimpleNamespace(
-    refresh=lambda backend_ids: None,
-    sync=lambda user_id: [],
-    server_for=lambda user_id: None,
-    run_refused=lambda on_servers: None,
-)
-"""What the remote that fills ``compute_backends`` rows answers, each set by its client at import: ``token(name,
-account_user_id, remote_id, through)`` a call's token for its server ``name``; ``refresh(backend_ids)`` makes the rows
-follow its list before a run is placed; ``sync(user_id)`` makes them follow ``user_id``'s list before they are listed,
-answering the ids it wrote; ``server_for(user_id)`` the backend id of the server a moved step goes to;
-``run_refused(on_servers)`` the run's nodes on its servers that it mints no token for, each with its sentence."""
+
+
+def _no_token(name: str, account_user_id: int, remote_id: int, through: bool) -> str:
+    raise LookupError(f"nothing here mints a token for the server {name!r}")
+
+
+@dataclass
+class RemoteServers:
+    """What the remote that fills ``compute_backends`` rows answers, each set by its client at import: ``token(name,
+    account_user_id, remote_id, through)`` a call's token for its server ``name``; ``refresh(backend_ids)`` makes the
+    rows follow its list before a run is placed; ``sync(user_id)`` makes them follow ``user_id``'s list before they
+    are listed, answering the ids it wrote; ``server_for(user_id)`` the backend id of the server a moved step goes to;
+    ``run_refused(on_servers)`` the run's nodes on its servers that it mints no token for, each with its sentence."""
+
+    token: Callable[[str, int, int, bool], str] = _no_token
+    refresh: Callable[[dict], None] = lambda backend_ids: None
+    sync: Callable[[int], list[str]] = lambda user_id: []
+    server_for: Callable[[int], str | None] = lambda user_id: None
+    run_refused: Callable[[Callable], list | None] = lambda on_servers: None
+
+
+remote_servers = RemoteServers()
 _entry_points_scanned = False
 _default_override: str | None = None
 _serving = False
@@ -262,7 +276,8 @@ def backend(backend_id: str) -> ComputeBackend:
     """The process's instance of ``backend_id``, made by its factory on first use.
 
     A ``worker:`` id with no factory is made from its ``compute_backends`` row, and made again when its minted token
-    was replaced (``_replacement_token``).
+    was replaced (``_replacement_token``). A remote-filled row's token is asked of its remote, so a ``worker:`` id is
+    made by one thread at a time outside the registry's lock: no other backend's lookup waits for that answer.
 
     Raises:
         LookupError: No factory is known for ``backend_id`` (the message lists the known ids), or a ``worker:`` id
@@ -270,30 +285,44 @@ def backend(backend_id: str) -> ComputeBackend:
     """
     with _lock:
         instance = _instances.get(backend_id)
-        if instance is not None:
-            replacement = _replacement_token(backend_id, instance)
-            if replacement is None:
-                return instance
-            instance = _instances[backend_id] = _configured_worker_backend(backend_id, replacement)
+        if instance is None:
+            if backend_id not in _factories and backend_id in _BUILTIN:
+                _factories[backend_id] = _BUILTIN[backend_id]
+            _scan_entry_points()
+            factory = _factories.get(backend_id)
+            if factory is not None:
+                instance = _instances[backend_id] = factory()
+            elif not backend_id.startswith(CONFIGURED_WORKER_PREFIX):
+                known = ", ".join(repr(known_id) for known_id in sorted(_factories.keys() | _BUILTIN.keys())) or "none"
+                raise LookupError(f"Unknown compute backend {backend_id!r}; known backends: {known}")
+        if instance is not None and backend_id not in _hub_rows:
             return instance
-        if backend_id not in _factories and backend_id in _BUILTIN:
-            _factories[backend_id] = _BUILTIN[backend_id]
-        _scan_entry_points()
-        factory = _factories.get(backend_id)
-        if factory is not None:
-            instance = factory()
-        elif backend_id.startswith(CONFIGURED_WORKER_PREFIX):
-            instance = _configured_worker_backend(backend_id)
-        else:
-            known = ", ".join(repr(known_id) for known_id in sorted(_factories.keys() | _BUILTIN.keys())) or "none"
-            raise LookupError(f"Unknown compute backend {backend_id!r}; known backends: {known}")
-        _instances[backend_id] = instance
-        return instance
+        making = _making.setdefault(backend_id, threading.RLock())
+    with making:
+        with _lock:
+            instance = _instances.get(backend_id)
+        replacement = _replacement_token(backend_id, instance) if instance is not None else None
+        if instance is not None and replacement is None:
+            return instance
+        made = _configured_worker_backend(backend_id, replacement)
+        with _lock:
+            _instances[backend_id] = made
+        if instance is not None:
+            _forget_handshake(instance)
+        return made
+
+
+def _forget_handshake(replaced: ComputeBackend) -> None:
+    from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+
+    handshake.forget(replaced)
 
 
 def forget(backend_id: str) -> None:
     """Drop the process's instance of ``backend_id``; the next lookup makes it again, or fails once its row is gone."""
     with _lock:
+        making = _making.setdefault(backend_id, threading.RLock())
+    with making, _lock:
         _instances.pop(backend_id, None)
         _hub_rows.pop(backend_id, None)
         _through_hub.discard(backend_id)

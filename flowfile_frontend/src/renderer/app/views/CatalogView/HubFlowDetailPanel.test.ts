@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 // The panel of a flow published on the hub: its versions as the hub lists them, the newest picked, Open emitting the
 // picked version, and the hub's refusal shown when the versions cannot be read.
+import { defineComponent, h, ref } from "vue";
 import { describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { flow, ns } from "../../__fixtures__/catalogTree";
@@ -80,6 +81,33 @@ describe("HubFlowDetailPanel", () => {
     await settle();
     (host.querySelector("[data-testid='hub-flow-open']") as HTMLButtonElement).click();
     expect(opened).toHaveBeenLastCalledWith(1);
+  });
+
+  it("drops the versions of a flow that is no longer the one shown", async () => {
+    const answers: Record<string, (listed: typeof versions) => void> = {};
+    mocks.listHubFlowVersions.mockImplementation(
+      (uuid: string) => new Promise((resolve) => (answers[uuid] = resolve)),
+    );
+    const shown = ref(hubFlow);
+    const opened = vi.fn();
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const host = await mountIn(
+      defineComponent(() => () => h(HubFlowDetailPanel, { flow: shown.value, onOpen: opened })),
+      { pinia },
+    );
+
+    shown.value = { ...hubFlow, id: -21, flow_uuid: "u-2" };
+    await settle();
+    answers["u-2"]([{ ...versions[1], version: 5 }]);
+    await settle();
+    answers["u-1"](versions);
+    await settle();
+
+    const rows = Array.from(host.querySelectorAll("[data-testid='hub-flow-versions'] li"));
+    expect(rows.map((row) => row.querySelector(".version-number")?.textContent)).toEqual(["v5"]);
+    (host.querySelector("[data-testid='hub-flow-open']") as HTMLButtonElement).click();
+    expect(opened).toHaveBeenCalledWith(5);
   });
 
   it("shows the refusal when the versions cannot be read, and offers no Open", async () => {

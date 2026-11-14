@@ -480,9 +480,22 @@ def test_run_history_and_the_runs_under_way_hold_the_hubs_runs_marked_as_the_hub
     assert {run["id"] for run in overview["runs"]["items"] if run["id"] < 0} == {-5, -6}
 
 
+def test_run_history_pages_past_one_window_of_the_hubs_runs(connected, hub):
+    flow = hub.seed_flow(_seed(hub)["raw"], "orders-clean")
+    for _ in range(520):
+        hub.seed_run(flow)
+    only_the_hubs = {"search": "no run of this machine is named so"}
+    first = connected.get("/catalog/runs", params={"limit": 500, "offset": 0, **only_the_hubs}).json()
+    second = connected.get("/catalog/runs", params={"limit": 50, "offset": 500, **only_the_hubs}).json()
+    assert (first["total"], second["total"]) == (520, 520)
+    assert (len(first["items"]), len(second["items"])) == (500, 20)
+    assert len({run["id"] for run in first["items"] + second["items"]}) == 520
+
+
 def test_a_run_the_hub_sent_here_is_under_way_once_as_the_hubs_row_and_in_run_history_as_this_servers(connected, hub):
     """The server that executes a run the hub sent keeps its own record of it, under the hub's run id: the runs under
     way list the hub's row, whose Cancel stops the run, and Run History this server's record, whose log is here."""
+    before = connected.get("/catalog/runs", params={"limit": 500}).json()
     flow = hub.seed_flow(_seed(hub)["raw"], "orders-clean")
     sent = hub.seed_run(flow, ended=False, remote_run_id="r-sent")
     with get_db_context() as db:
@@ -499,8 +512,10 @@ def test_a_run_the_hub_sent_here_is_under_way_once_as_the_hubs_row_and_in_run_hi
     for active in (connected.get("/catalog/active-runs").json(), connected.get("/catalog/overview").json()["active_runs"]):
         of_the_run = [run["id"] for run in active if run.get("remote_run_id") == "r-sent"]
         assert of_the_run == [-sent["id"]] and here not in [run["id"] for run in active]
-    history = connected.get("/catalog/runs", params={"limit": 500}).json()["items"]
-    assert [run["id"] for run in history if run["remote_run_id"] == "r-sent"] == [here]
+    history = connected.get("/catalog/runs", params={"limit": 500}).json()
+    assert [run["id"] for run in history["items"] if run["remote_run_id"] == "r-sent"] == [here]
+    counted = ("total", "total_running", "total_success", "total_failed")
+    assert [history[key] - before[key] for key in counted] == [1, 1, 0, 0]
 
 
 def test_a_hub_flow_is_favourited_and_unfavourited_on_the_hub(connected, hub):

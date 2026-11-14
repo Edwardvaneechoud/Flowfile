@@ -184,7 +184,7 @@ class CatalogService:
 
         self._previews = TablePreviewService(repo, self._tables, self._virtual_tables)
         self._visualizations = VisualizationService(
-            repo, self._namespaces, self._tables, self._virtual_tables, self._sql
+            repo, self._namespaces, self._tables, self._virtual_tables, self._sql, access=access
         )
         # Bound to the facade, so tests that patch its methods reach these sub-services.
         self._visualizations.bind_facade(self)

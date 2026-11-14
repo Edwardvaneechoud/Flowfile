@@ -11,6 +11,7 @@ restored after the test.
 
 import os
 import sys
+from urllib.parse import urlsplit
 
 import pytest
 from fastapi import FastAPI
@@ -160,6 +161,7 @@ def test_the_default_mode_serves_a_loopback_host(host, served, monkeypatch):
     web.start_server(host=host, port=8080, open_browser=False)
 
     assert (served["host"], served["port"]) == (host, 8080)
+    assert urlsplit(settings.WORKER_URL).port == 8080
 
 
 def test_a_server_without_the_editor_s_files_marks_no_editor(served, tmp_path, monkeypatch):

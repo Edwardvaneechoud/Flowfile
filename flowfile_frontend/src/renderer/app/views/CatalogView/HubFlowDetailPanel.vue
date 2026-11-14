@@ -72,19 +72,25 @@ const home = computed(() => {
   return schema ? `On ${where}, in ${schema}` : `On ${where}`;
 });
 
+let loadSeq = 0;
+
 async function load(flowUuid: string | null | undefined) {
+  const seq = ++loadSeq;
   versions.value = [];
   selectedVersion.value = null;
   error.value = "";
+  loading.value = Boolean(flowUuid);
   if (!flowUuid) return;
-  loading.value = true;
   try {
-    versions.value = await listHubFlowVersions(flowUuid);
-    selectedVersion.value = versions.value[0]?.version ?? null;
+    const listed = await listHubFlowVersions(flowUuid);
+    // The panel serves every hub flow picked, so an answer for a flow no longer shown is dropped.
+    if (seq !== loadSeq) return;
+    versions.value = listed;
+    selectedVersion.value = listed[0]?.version ?? null;
   } catch (err) {
-    error.value = detailOf(err, "Couldn't list the flow's versions.");
+    if (seq === loadSeq) error.value = detailOf(err, "Couldn't list the flow's versions.");
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
   }
 }
 

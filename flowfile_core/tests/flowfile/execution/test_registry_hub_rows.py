@@ -1,6 +1,8 @@
 """A ``compute_backends`` row filled from a hub makes a ``WorkerBackend`` that signs with the token the hub mints for
 its node, through the row's user's hub session; without that session the lookup says to connect to the hub again."""
 
+import threading
+
 import pytest
 
 from flowfile_core.database.connection import get_db_context
@@ -82,6 +84,31 @@ def test_a_token_replaced_near_expiry_makes_the_backend_again_with_the_new_one(h
     assert second.token != first.token
     assert second.url == first.url
     assert len(connected.minted) == 2
+
+
+def test_a_token_the_hub_is_slow_to_mint_holds_up_no_other_lookup(hub_row, connected, monkeypatch):
+    asked, answer = threading.Event(), threading.Event()
+    mint = node_tokens._mint
+
+    def slow_mint(*args):
+        asked.set()
+        assert answer.wait(10)
+        return mint(*args)
+
+    monkeypatch.setattr(node_tokens, "_mint", slow_mint)
+    minting = threading.Thread(target=registry.backend, args=("worker:team",))
+    minting.start()
+    try:
+        assert asked.wait(10)
+        others = threading.Thread(target=lambda: (registry.hub_server("worker:other"), node_tokens.clear(USER_ID + 1)))
+        others.start()
+        others.join(2)
+        assert not others.is_alive()
+    finally:
+        answer.set()
+        minting.join(10)
+    assert isinstance(registry.backend("worker:team"), WorkerBackend)
+    assert len(connected.minted) == 1
 
 
 def test_without_a_hub_session_the_lookup_says_to_connect_to_the_hub_again(hub_row, hub):

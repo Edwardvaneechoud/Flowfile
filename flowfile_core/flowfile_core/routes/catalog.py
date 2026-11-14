@@ -667,7 +667,30 @@ def list_flow_artifacts(
 
 
 _RUNS_WINDOW = 500
-"""The most runs one list request reads of each catalog, the route's own cap."""
+"""The most runs one request reads of a remote catalog, its list route's own cap."""
+
+
+def _remote_runs(user_id: int | None, run_type, search: str | None, wanted: int) -> PaginatedFlowRuns | None:
+    """A remote catalog's newest ``wanted`` runs with its counts, a window per request; ``None`` when none answers."""
+    first: PaginatedFlowRuns | None = None
+    items: list = []
+    while len(items) < wanted:
+        asked = {
+            "limit": min(wanted - len(items), _RUNS_WINDOW),
+            "offset": len(items),
+            "run_type": run_type,
+            "search": search,
+        }
+        params = {key: value for key, value in asked.items() if value is not None}
+        try:
+            page = PaginatedFlowRuns.model_validate(table_sources.remote_answer(user_id, "/catalog/runs", params))
+        except ValidationError:
+            break
+        first = first or page
+        items += page.items
+        if len(page.items) < asked["limit"]:
+            break
+    return first.model_copy(update={"items": items}) if first is not None else None
 
 
 def _all_runs(
@@ -677,28 +700,24 @@ def _all_runs(
 
     Each catalog is asked for its newest ``offset + limit`` runs and the page is cut from the two together. A run a
     remote catalog records as executed here (``table_sources.has_its_record_here``), or under a run id a local
-    record carries, is this install's own record and listed once. With no remote catalog answering, the page is
-    this install's as it was.
+    record carries, is this install's own record: listed once and counted once among the runs read. With no remote
+    catalog answering, the page is this install's as it was.
     """
-    window = min(offset + limit, _RUNS_WINDOW)
-    asked = {"limit": window, "offset": 0, "run_type": run_type, "search": search}
-    params = {key: value for key, value in asked.items() if value is not None}
-    try:
-        page = PaginatedFlowRuns.model_validate(table_sources.remote_answer(user_id, "/catalog/runs", params))
-    except ValidationError:
+    page = _remote_runs(user_id, run_type, search, offset + limit)
+    if page is None:
         return service.list_runs(run_type=run_type, limit=limit, offset=offset, search=search)
-    local = service.list_runs(run_type=run_type, limit=window, offset=0, search=search)
+    local = service.list_runs(run_type=run_type, limit=offset + limit, offset=0, search=search)
     own_ids = {run.remote_run_id for run in local.items if run.remote_run_id}
-    theirs = [
-        run
-        for run in page.items
-        if not table_sources.has_its_record_here(run.executed_on) and run.remote_run_id not in own_ids
-    ]
+    theirs, twice = [], []
+    for run in page.items:
+        here = table_sources.has_its_record_here(run.executed_on) or run.remote_run_id in own_ids
+        (twice if here else theirs).append(run)
     items, merged = [*local.items, *theirs], local.model_copy()
-    merged.total += page.total - (len(page.items) - len(theirs))
-    merged.total_success += page.total_success
-    merged.total_failed += page.total_failed
-    merged.total_running += page.total_running
+    merged.total += page.total - len(twice)
+    merged.total_success += page.total_success - sum(run.success is True for run in twice)
+    merged.total_failed += page.total_failed - sum(run.success is False and not run.cancelled for run in twice)
+    merged.total_cancelled += page.total_cancelled - sum(run.success is False and run.cancelled for run in twice)
+    merged.total_running += page.total_running - sum(run.success is None for run in twice)
     items.sort(key=lambda run: run.started_at.replace(tzinfo=None), reverse=True)
     merged.items = items[offset : offset + limit]
     return merged

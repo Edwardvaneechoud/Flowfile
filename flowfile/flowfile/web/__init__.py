@@ -192,6 +192,8 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     from flowfile_core.main import run
 
     local = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    if ":" in local and not local.startswith("["):
+        local = f"[{local}]"
     settings.OFFLOAD_TO_WORKER.value = True
     settings.SINGLE_FILE_MODE.value = True
     settings.WORKER_URL = f"http://{local}:{port}/worker"

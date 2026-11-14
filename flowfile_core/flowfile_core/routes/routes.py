@@ -636,7 +636,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
         logger.debug(f"Run {core_run_id} of flow '{flow_name}' not reported to the hub: no registration")
         return
     try:
-        report = build_run_report(flow, run_info, flow_uuid, run_row_id=core_run_id)
+        report = build_run_report(flow, run_info, flow_uuid, run_row_id=core_run_id, user_id=user_id)
     except Exception as exc:
         logger.warning(f"Could not build the hub report for run {core_run_id} of flow '{flow_name}': {exc}")
         return

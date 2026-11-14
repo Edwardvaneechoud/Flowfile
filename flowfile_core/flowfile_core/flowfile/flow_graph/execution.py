@@ -1829,7 +1829,7 @@ class ExecutionMixin(GraphMixinBase):
                 try:
                     names, refs = run_secrets.provider_secret_names(node), run_secrets.connections_for(node)
                 except Exception as e:
-                    logger.debug(f"Could not read the hub secrets of node {node.node_id}: {e}")
+                    logger.warning(f"Could not read the hub secrets of node {node.node_id}: {e}")
                     continue
                 if names or refs:
                     found[node.node_id] = (names, refs)
