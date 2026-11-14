@@ -340,7 +340,7 @@
           </el-button>
         </div>
       </div>
-      <div v-if="hasHistory" class="version-table-wrapper">
+      <div v-if="hasHistory" class="version-table-wrapper" :style="historyHeldStyle">
         <table class="styled-table version-table">
           <thead>
             <tr>
@@ -402,6 +402,7 @@
       </div>
       <div
         v-else-if="loadingTableHistory"
+        ref="historySkeleton"
         class="version-table-wrapper skeleton-wrapper"
         aria-busy="true"
         aria-label="Loading version history"
@@ -418,13 +419,13 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="n in HISTORY_SKELETON_ROWS" :key="n">
+            <tr v-for="n in historySkeletonRows" :key="n">
               <td v-for="c in 5" :key="c"><span class="skeleton-bar"></span></td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p v-else class="history-empty" data-testid="history-empty">
+      <p v-else class="history-empty" :style="historyHeldStyle" data-testid="history-empty">
         No version history available for this table.
       </p>
     </div>
@@ -626,6 +627,7 @@ import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { isHubRow } from "./hubRows";
+import { recallHistoryRows, rememberHistoryRows } from "./tableHistoryRows";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
@@ -669,7 +671,48 @@ const isPhysical = computed(() => props.table.table_type !== "virtual");
 
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
 
-const HISTORY_SKELETON_ROWS = 4;
+// Seven placeholder rows fill the version list's 240px cap.
+const HISTORY_SKELETON_MAX_ROWS = 7;
+
+// The count this table listed last time; a table never loaded here reserves the full list.
+const historySkeletonRows = computed(() => {
+  const remembered = recallHistoryRows(props.table.id);
+  return Math.min(Math.max(remembered ?? HISTORY_SKELETON_MAX_ROWS, 1), HISTORY_SKELETON_MAX_ROWS);
+});
+
+const historySkeleton = ref<HTMLElement | null>(null);
+const historyHeldHeight = ref<number | null>(null);
+
+// Whatever replaces the placeholder keeps its height, so nothing below it moves.
+const historyHeldStyle = computed(() =>
+  historyHeldHeight.value ? { minHeight: `${historyHeldHeight.value}px` } : undefined,
+);
+
+watch(
+  () => props.loadingTableHistory,
+  (loading, wasLoading) => {
+    if (wasLoading && !loading && historySkeleton.value) {
+      historyHeldHeight.value = historySkeleton.value.offsetHeight;
+    }
+  },
+);
+
+watch(
+  () => props.tableHistory,
+  (history) => {
+    if (history) rememberHistoryRows(props.table.id, history.history.length);
+  },
+  { immediate: true },
+);
+
+// Declared after the watchers above so a switch to another table ends up released.
+watch(
+  () => props.table.id,
+  () => {
+    historyHeldHeight.value = null;
+  },
+);
+
 // Enough placeholder rows to fill the preview's 500px cap; a smaller table gets its own count.
 const PREVIEW_SKELETON_MAX_ROWS = 15;
 

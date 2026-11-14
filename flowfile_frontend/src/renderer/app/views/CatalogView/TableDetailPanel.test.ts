@@ -2,7 +2,7 @@
 // The table panel for a hub table: no Hub badge, and no "Read by" card, whose flow ids are the hub's and would open a
 // local flow of the same id; a local table keeps both as before.
 import { defineComponent, h, reactive, type FunctionalComponent } from "vue";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { table } from "../../__fixtures__/catalogTree";
 import { element, mountIn, settle, text } from "../../__fixtures__/mount";
 import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../../types";
@@ -30,6 +30,7 @@ vi.mock("./TableEditorDialog.vue", () => ({ default: { render: () => null } }));
 vi.mock("../../components/sharing/ShareDialog.vue", () => ({ default: { render: () => null } }));
 
 import TableDetailPanel from "./TableDetailPanel.vue";
+import { recallHistoryRows } from "./tableHistoryRows";
 
 const stubs: Record<string, FunctionalComponent> = {
   "el-tooltip": (_, { slots }) => h("span", slots.default?.()),
@@ -73,6 +74,15 @@ const metaLabels = () =>
   Array.from(host.querySelectorAll(".meta-label")).map((el) => el.textContent?.trim());
 
 describe("TableDetailPanel", () => {
+  // The node runtime under happy-dom has no localStorage of its own.
+  beforeEach(() => {
+    const data = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => void data.set(key, value),
+    });
+  });
+
   it("shows a local table its Read by card, and a hub table none, whose flows are the hub's", async () => {
     await mount(localTable);
     expect(metaLabels()).toContain("Read by");
@@ -166,7 +176,7 @@ describe("TableDetailPanel", () => {
       const pendingTitles = sectionTitles();
       expect(pendingTitles).toEqual(["Version History", "Schema", "Data Preview"]);
       expect(q("table-version")?.querySelector(".skeleton-inline")).not.toBeNull();
-      expect(q("history-skeleton")?.querySelectorAll("tbody tr")).toHaveLength(4);
+      expect(q("history-skeleton")?.querySelectorAll("tbody tr")).toHaveLength(7);
       const skeleton = q("preview-skeleton");
       expect(
         Array.from(skeleton?.querySelectorAll("thead .col-header-name") ?? []).map(text),
@@ -187,6 +197,17 @@ describe("TableDetailPanel", () => {
       expect(q("history-skeleton")).toBeNull();
       expect(host.querySelectorAll(".version-row")).toHaveLength(2);
       expect(text(q("table-version")?.querySelector(".meta-value") ?? null)).toBe("2");
+    });
+
+    it("sizes the Version History placeholder to the count the table listed last time", async () => {
+      const state = await mountLive(physical, { loadingTableHistory: true });
+      Object.assign(state, { tableHistory: history, loadingTableHistory: false });
+      await settle();
+      expect(recallHistoryRows(physical.id)).toBe(2);
+      host.remove();
+
+      await mountLive(physical, { loadingTableHistory: true });
+      expect(q("history-skeleton")?.querySelectorAll("tbody tr")).toHaveLength(2);
     });
 
     it("keeps the Version History section, as one line, for a table whose history is empty", async () => {

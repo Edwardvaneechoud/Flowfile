@@ -725,6 +725,7 @@ import {
   catalogTabsInSection,
   schedulesBadge,
 } from "./catalogTabs";
+import { catalogTabLocation, lastCatalogQueryByTab } from "./catalogLastLocation";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   ArtifactVersionInfo,
@@ -1116,8 +1117,10 @@ async function handleRemoveDemoData() {
 
 // --- Route-based navigation ---
 
+// Another tab reopens where it was left; the tab already shown goes back to its root.
 function handleTabClick(tab: CatalogTab) {
-  router.push({ name: "catalog", query: { tab } });
+  const query = catalogTabLocation(tab, catalogStore.activeTab, lastCatalogQueryByTab.value);
+  router.push({ name: "catalog", query });
 }
 
 function selectFlow(flowId: number) {

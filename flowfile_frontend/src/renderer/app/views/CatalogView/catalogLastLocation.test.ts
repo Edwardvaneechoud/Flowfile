@@ -6,9 +6,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  LAST_BY_TAB_KEY,
   LAST_LOCATION_KEY,
+  catalogTabLocation,
   isSameLocation,
+  loadCatalogLocationsByTab,
   loadLastCatalogLocation,
+  persistCatalogLocationsByTab,
   persistLastCatalogLocation,
   sanitizeCatalogQuery,
 } from "./catalogLastLocation";
@@ -177,5 +181,63 @@ describe("isSameLocation", () => {
 
   it("treats a missing previous value as different", () => {
     expect(isSameLocation(null, { tab: "catalog" })).toBe(false);
+  });
+});
+
+describe("loadCatalogLocationsByTab / persistCatalogLocationsByTab", () => {
+  it("round-trips where each tab was left", () => {
+    const storage = makeStorage();
+    const byTab = { catalog: { tab: "catalog", tableId: "9" }, runs: { tab: "runs", runId: "4" } };
+    persistCatalogLocationsByTab(byTab, storage);
+    expect(loadCatalogLocationsByTab(storage)).toEqual(byTab);
+  });
+
+  it("returns nothing when nothing is stored, storage is missing or the entry is corrupt", () => {
+    expect(loadCatalogLocationsByTab(makeStorage())).toEqual({});
+    expect(loadCatalogLocationsByTab(null)).toEqual({});
+    const storage = makeStorage();
+    storage.setItem(LAST_BY_TAB_KEY, "{not json");
+    expect(loadCatalogLocationsByTab(storage)).toEqual({});
+    storage.setItem(LAST_BY_TAB_KEY, "[]");
+    expect(loadCatalogLocationsByTab(storage)).toEqual({});
+  });
+
+  it("re-validates each entry and drops one filed under another tab", () => {
+    const storage = makeStorage();
+    storage.setItem(
+      LAST_BY_TAB_KEY,
+      JSON.stringify({
+        catalog: { tab: "catalog", tableId: "12", evil: "x" },
+        runs: { tab: "catalog", tableId: "3" },
+        nonsense: { tab: "nonsense" },
+        sql: "sql",
+      }),
+    );
+    expect(loadCatalogLocationsByTab(storage)).toEqual({
+      catalog: { tab: "catalog", tableId: "12" },
+    });
+  });
+});
+
+describe("catalogTabLocation", () => {
+  const byTab = { catalog: { tab: "catalog", flowId: "7" } };
+
+  it("reopens a tab where it was left when coming from another tab or page", () => {
+    expect(catalogTabLocation("catalog", "notebook", byTab)).toEqual({
+      tab: "catalog",
+      flowId: "7",
+    });
+    expect(catalogTabLocation("catalog", undefined, byTab)).toEqual({
+      tab: "catalog",
+      flowId: "7",
+    });
+  });
+
+  it("goes to the tab's root when that tab is already shown", () => {
+    expect(catalogTabLocation("catalog", "catalog", byTab)).toEqual({ tab: "catalog" });
+  });
+
+  it("goes to the root of a tab nothing is remembered for", () => {
+    expect(catalogTabLocation("sql", "catalog", byTab)).toEqual({ tab: "sql" });
   });
 });

@@ -7,6 +7,7 @@ import { ref } from "vue";
 import { CATALOG_TAB_KEYS } from "./catalogTabs";
 
 export const LAST_LOCATION_KEY = "flowfile.catalog.lastLocation.v1";
+export const LAST_BY_TAB_KEY = "flowfile.catalog.lastLocationByTab.v1";
 
 export type CatalogLocation = Record<string, string>;
 
@@ -114,12 +115,68 @@ export const isSameLocation = (a: CatalogLocation | null, b: CatalogLocation): b
   return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
 };
 
-// Module singleton so the sidebar's `items` computed re-resolves when this changes.
+export type CatalogLocationsByTab = Record<string, CatalogLocation>;
+
+/** Where each tab was left, re-validated like the single location; an entry filed under another tab is dropped. */
+export const loadCatalogLocationsByTab = (storage?: StorageLike | null): CatalogLocationsByTab => {
+  const store = resolveStorage(storage);
+  if (!store) return {};
+
+  let parsed: unknown;
+  try {
+    const raw = store.getItem(LAST_BY_TAB_KEY);
+    if (raw === null) return {};
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+
+  const byTab: CatalogLocationsByTab = {};
+  for (const [tab, raw] of Object.entries(parsed as Record<string, unknown>)) {
+    const location = sanitizeCatalogQuery(raw);
+    if (location && location.tab === tab) byTab[tab] = location;
+  }
+  return byTab;
+};
+
+export const persistCatalogLocationsByTab = (
+  byTab: CatalogLocationsByTab,
+  storage?: StorageLike | null,
+): void => {
+  const store = resolveStorage(storage);
+  if (!store) return;
+
+  try {
+    store.setItem(LAST_BY_TAB_KEY, JSON.stringify(byTab));
+  } catch {
+    // QuotaExceededError or storage disabled — the in-memory ref still works this session.
+  }
+};
+
+/**
+ * Where a switch to `tab` lands: where that tab was left (its open table, flow, run…), or its
+ * root when nothing is remembered or `tab` is the tab already shown, so clicking the active tab
+ * still closes what is open on it.
+ */
+export const catalogTabLocation = (
+  tab: string,
+  currentTab: string | null | undefined,
+  byTab: CatalogLocationsByTab,
+): CatalogLocation => (tab === currentTab ? { tab } : (byTab[tab] ?? { tab }));
+
+// Module singletons so the sidebar's `items` computed re-resolves when these change.
 export const lastCatalogQuery = ref<CatalogLocation | null>(loadLastCatalogLocation());
+export const lastCatalogQueryByTab = ref<CatalogLocationsByTab>(loadCatalogLocationsByTab());
 
 export const rememberCatalogLocation = (query: unknown): void => {
   const location = sanitizeCatalogQuery(query);
-  if (!location || isSameLocation(lastCatalogQuery.value, location)) return;
+  if (!location) return;
+  if (!isSameLocation(lastCatalogQueryByTab.value[location.tab] ?? null, location)) {
+    lastCatalogQueryByTab.value = { ...lastCatalogQueryByTab.value, [location.tab]: location };
+    persistCatalogLocationsByTab(lastCatalogQueryByTab.value);
+  }
+  if (isSameLocation(lastCatalogQuery.value, location)) return;
   lastCatalogQuery.value = location;
   persistLastCatalogLocation(location);
 };
