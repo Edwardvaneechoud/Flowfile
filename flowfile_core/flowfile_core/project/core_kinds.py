@@ -91,7 +91,7 @@ def _namespace_entries(files: dict[str, str]) -> dict:
     return out
 
 
-def _file_entries(field: str, label_field: str | None = None):
+def _per_file_entries(field: str, label_field: str | None = None):
     """Entries of a folder kind: one per file, keyed by ``field`` of the file, compared by the file's text."""
 
     def entries(files: dict[str, str]) -> dict:
@@ -148,7 +148,7 @@ register(
         lambda ctx: projection.export_connections(ctx.db, ctx.owner_id, "database"),
         after=("secrets",),
         cap=importer._MAX_CONNECTIONS,
-        entries=_file_entries("connection_name"),
+        entries=_per_file_entries("connection_name"),
         delete_label="its stored password is not in any version",
         delete=importer._delete_database_connection,
         same=_same_yaml,
@@ -162,7 +162,7 @@ register(
         lambda ctx: projection.export_connections(ctx.db, ctx.owner_id, "cloud"),
         after=("secrets",),
         cap=importer._MAX_CONNECTIONS,
-        entries=_file_entries("connection_name"),
+        entries=_per_file_entries("connection_name"),
         delete_label="its stored password is not in any version",
         delete=importer._delete_cloud_connection,
         same=_same_yaml,
@@ -291,7 +291,7 @@ register(
         lambda ctx: projection.export_notebooks(ctx.db, ctx.owner_id),
         after=("namespaces", "kernels"),
         cap=importer._MAX_NOTEBOOKS,
-        entries=_file_entries("notebook_uuid", "name"),
+        entries=_per_file_entries("notebook_uuid", "name"),
         delete_label="its content file is removed",
         delete=importer._delete_notebook,
         same=_same_yaml,

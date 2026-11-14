@@ -211,9 +211,8 @@ def test_prune_removes_flow_with_artifact_when_tracking_off(tmp_path):
             if (yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("flow_uuid") == flow_uuid:
                 p.unlink()
 
-        result = project_sync.reload_from_disk(OWNER, force=True)
+        project_sync.reload_from_disk(OWNER, force=True)
 
-        assert result.prune_errors == [], "the flow delete must not silently fail"
         with get_db_context() as db:
             assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None, (
                 "pruned flow must be removed, not left as a ghost"

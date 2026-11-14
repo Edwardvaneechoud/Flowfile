@@ -3,7 +3,8 @@
 A dummy kind with a table of its own, offered through a patched entry-point scan, is ordered between the two core
 kinds it names, exported and staged by a save, previewed, applied and deleted by a reload on the every-kind install,
 and passes ``assert_kind_round_trips``. A kind closing an order cycle and one claiming a core kind's file are
-rejected with core's kinds still working, and a failing apply rolls the whole reload back.
+rejected with core's kinds still working, and a failing apply rolls the whole reload back. Every registered kind
+has an import step or its own ``apply``, so none is skipped by an import.
 """
 
 import dataclasses
@@ -17,7 +18,7 @@ import yaml
 
 from flowfile_core.database.connection import engine, get_db_context
 from flowfile_core.database.models import DatabaseConnection, FlowRegistration
-from flowfile_core.project import git_ops, kinds, project_sync, service
+from flowfile_core.project import git_ops, importer, kinds, project_sync, service
 from flowfile_core.project.manifest import read_manifest
 from flowfile_core.project.normalize import dump_yaml
 from flowfile_core.project.testing import assert_kind_round_trips
@@ -136,6 +137,13 @@ def test_a_package_kind_is_ordered_between_the_kinds_it_names(widgets):
     names = [k.name for k in kinds.ordered()]
     assert names.index("namespaces") < names.index("widget") < names.index("flow")
     assert "widget" not in kinds.rejected()
+
+
+def test_every_kind_has_an_import_step_or_its_own_apply(widgets):
+    names = [k.name for k in kinds.ordered()]
+    assert "widget" in names and set(importer._IMPORT_STEPS) <= set(names)
+    for kind in kinds.ordered():
+        assert kind.name in importer._IMPORT_STEPS or (kind.entries is not None and kind.apply is not None), kind.name
 
 
 def test_a_package_kind_is_saved_previewed_applied_and_deleted(tmp_path, every_kind, widgets):  # noqa: F811

@@ -23,14 +23,9 @@ const mocks = vi.hoisted(() => {
     plan: vi.fn(),
     setSecrets: vi.fn(),
     close: vi.fn(),
-    warning: vi.fn(),
     setFlowId: vi.fn(),
   };
 });
-
-vi.mock("element-plus", () => ({
-  ElMessage: { warning: mocks.warning },
-}));
 
 // Mock the flow store: the real module pulls in the `../api` barrel (axios.config),
 // which reaches DOM globals at import time and would crash under the node env.
@@ -200,11 +195,10 @@ describe("openProject", () => {
 });
 
 describe("restoreVersion", () => {
-  it("warns on prune errors and refreshes status", async () => {
+  it("refreshes status after a restore", async () => {
     mocks.restore.mockResolvedValue({
       imported: { flows: 0, connections: 0, schedules: 0 },
       placeholder_secrets: [],
-      prune_errors: ["table x"],
     });
     mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
     const store = useProjectStore();
@@ -212,7 +206,6 @@ describe("restoreVersion", () => {
 
     await store.restoreVersion("deadbeef", "rollback");
     expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback", false);
-    expect(mocks.warning).toHaveBeenCalled();
     expect(mocks.getActive).toHaveBeenCalled();
     expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
   });

@@ -33,7 +33,6 @@ from flowfile_core.database.models import (
     Kernel,
     Secret,
 )
-from flowfile_core.project import manifest
 from flowfile_core.project.normalize import (
     dump_yaml,
     normalize_flow_data,
@@ -117,40 +116,6 @@ def _name_stem(name: str | None) -> str:
     if name.endswith(".flow"):
         name = name[: -len(".flow")]
     return safe_stem(name)
-
-
-FlowIndex = dict[str, list[Path]]
-
-
-def _file_flow_uuid(path: Path) -> str | None:
-    """The ``flow_uuid`` a projected flow file carries, read from its first line.
-
-    The exporter writes ``flow_uuid`` first (``normalize_flow_data`` puts it at the head and
-    ``dump_yaml`` keeps key order), so one line is enough; a file written another way is parsed whole."""
-    try:
-        with path.open(encoding="utf-8") as f:
-            first = f.readline()
-        if first.startswith("flow_uuid:"):
-            value = (yaml.safe_load(first) or {}).get("flow_uuid")
-        else:
-            value = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("flow_uuid")
-    except Exception:
-        return None
-    return value if isinstance(value, str) else None
-
-
-def flow_index(root: Path) -> FlowIndex:
-    """``{flow_uuid: [paths]}`` of the files in ``flows/``, built once per operation.
-
-    One read of each file's first line replaces the sweep each lookup used to make. A uuid maps to a
-    list because a rename leaves the old file beside the new one until it is removed; the file the
-    flow is projected to comes first."""
-    index: FlowIndex = {}
-    for p in sorted(manifest.flows_dir(root).glob("*.flow.yaml")):
-        flow_uuid = _file_flow_uuid(p)
-        if flow_uuid is not None:
-            index.setdefault(flow_uuid, []).append(p)
-    return index
 
 
 def _namespace_path(db: Session, namespace_id: int | None) -> dict | None:

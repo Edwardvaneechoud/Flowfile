@@ -27,14 +27,13 @@ from flowfile_core.project.normalize import atomic_write
 class ExportContext:
     """What a kind's export reads: the session, the project's owner and the kinds the project lists.
 
-    ``kinds`` of ``None`` exports every registered kind. ``scope`` is carried for the kinds and read by none of
-    core's. ``memo`` is shared by the kinds of one snapshot, so the schedule kind reuses the flow kind's file
-    names."""
+    ``kinds`` of ``None`` exports every registered kind. ``memo`` lives as long as the context: the kinds of one
+    snapshot share it, so the schedule kind reuses the flow kind's file names, and the deletes of one kind share
+    what they looked up."""
 
     db: Session
     owner_id: int
     kinds: frozenset[str] | None = None
-    scope: object = None
     memo: dict = field(default_factory=dict)
 
 
@@ -265,10 +264,10 @@ def compare(a: dict[str, str], b: dict[str, str], *, kinds=None, strict=False) -
     return changes
 
 
-def owned_paths(root: Path) -> list[str]:
-    """The repo-relative paths on disk that a registered pattern matches."""
+def kind_files(root: Path, kind: Kind) -> list[str]:
+    """The repo-relative paths on disk that one kind's patterns match, sorted."""
     out: list[str] = []
-    for pattern in managed_patterns():
+    for pattern in kind.paths:
         folder, _, name = pattern.rpartition("/")
         if "*" not in name:
             if (root / pattern).is_file():
@@ -276,8 +275,13 @@ def owned_paths(root: Path) -> list[str]:
             continue
         d = root / folder
         if d.is_dir():
-            out += sorted(p.relative_to(root).as_posix() for p in d.glob(name) if p.is_file())
-    return out
+            out += [p.relative_to(root).as_posix() for p in d.glob(name) if p.is_file()]
+    return sorted(out)
+
+
+def owned_paths(root: Path) -> list[str]:
+    """The repo-relative paths on disk that a registered pattern matches, kind by kind."""
+    return [rel for kind in ordered() for rel in kind_files(root, kind)]
 
 
 def read_tree(root: Path) -> dict[str, str]:

@@ -1,18 +1,9 @@
 // Project store — git-versioning lifecycle and the always-on sync status.
 // Fully optional: with no active project everything is a cheap no-op and the UI hides.
-import { ElMessage } from "element-plus";
 import { defineStore } from "pinia";
 import { ProjectApi, ProjectFeatureUnavailable } from "../api/project.api";
 import type { ImportResult, ProjectInfo, ProjectVersion, ProjectVersionChange } from "../types";
 import { useFlowStore } from "./flow-store";
-
-function warnPruneErrors(res: ImportResult): void {
-  if (res.prune_errors?.length) {
-    ElMessage.warning(
-      `Some resources could not be removed during sync: ${res.prune_errors.join(", ")}`,
-    );
-  }
-}
 
 export type ProjectStatus = "none" | "external" | "unsaved" | "clean";
 
@@ -169,16 +160,6 @@ export const useProjectStore = defineStore("project", {
       }
     },
 
-    /** Preview what restoring a version would change. [] when the feature isn't available. */
-    async loadVersionChanges(sha: string): Promise<ProjectVersionChange[]> {
-      try {
-        return await ProjectApi.getVersionChanges(sha);
-      } catch (e: any) {
-        if (e instanceof ProjectFeatureUnavailable) return [];
-        throw e;
-      }
-    },
-
     /** What a restore of `sha`, or a reload without one, would change, per object. [] when unavailable. */
     async loadPlan(sha?: string): Promise<ProjectVersionChange[]> {
       try {
@@ -212,7 +193,6 @@ export const useProjectStore = defineStore("project", {
     async restoreVersion(sha: string, label?: string, force = false): Promise<void> {
       const res = await ProjectApi.restore(sha, label, force);
       this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
-      warnPruneErrors(res);
       // Import no longer auto-opens flows; clear the active flow so a stale/pruned tab can't
       // 404-loop and the canvas shows the empty state (matches the "Reopen any flows" prompt).
       useFlowStore().setFlowId(-1);
@@ -224,7 +204,6 @@ export const useProjectStore = defineStore("project", {
       try {
         const res = await ProjectApi.reload(force);
         this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
-        warnPruneErrors(res);
         useFlowStore().setFlowId(-1);
         await this.refreshActive();
         return res;

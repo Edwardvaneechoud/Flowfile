@@ -47,7 +47,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_database_connection,
 )
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.project import git_ops, importer, manifest, project_sync, projection
+from flowfile_core.project import git_ops, importer, manifest, project_sync
 from flowfile_core.project.importer import import_project
 from flowfile_core.project.service import write_export
 from flowfile_core.schemas import input_schema, schemas
@@ -425,7 +425,11 @@ def test_an_imported_flow_renamed_and_moved_exports_its_new_name(tmp_path):
             reg.namespace_id = schema_id
             db.commit()
         _export(root)
-        path = projection.flow_index(root)[flow_uuid][0]
+        [path] = [
+            p
+            for p in (root / "flows").glob("*.flow.yaml")
+            if yaml.safe_load(p.read_text(encoding="utf-8").splitlines()[0]) == {"flow_uuid": flow_uuid}
+        ]
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert data["catalog_name"] == f"new_name_{tag}"
         assert data["namespace"] == {"catalog": f"FidCat_{tag}", "schema": f"FidSchema_{tag}"}

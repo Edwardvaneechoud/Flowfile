@@ -200,6 +200,25 @@ def test_the_cli_prints_the_plan_and_applies_it(tmp_path, capsys):
 
 
 
+def test_the_cli_plan_of_a_malformed_sha_exits_1_with_one_line(tmp_path, capsys):
+    from flowfile.__main__ import _run_project_command
+
+    root = tmp_path / "proj"
+    project_sync.close_project(1)
+    try:
+        project_sync.init_project(str(root), "cli", 1)
+        capsys.readouterr()
+        with pytest.raises(SystemExit) as caught:
+            _run_project_command("plan", "not-a-sha")
+        assert caught.value.code == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert len(captured.err.strip().splitlines()) == 1
+        assert "Traceback" not in captured.err
+    finally:
+        project_sync.close_project(1)
+
+
 def test_a_removed_schedule_file_removes_its_schedules(tmp_path, every_kind):  # noqa: F811
     root = tmp_path / "proj"
     project_sync.init_project(str(root), "apply", every_kind)

@@ -3,8 +3,9 @@
 Real git, a temp folder and the test catalog database: a flow written with no hook leaves the folder
 clean, yet a restore or reload answers 409 naming it, and with ``force`` its file is kept in a
 recovery commit (restore) or a recovery ref (reload). A hand edit with nothing unsaved in the
-database reloads without ``force``. A SQLite catalog is snapshotted before a pruning import, a server
-catalog is not, and two processes saving the same folder at once both succeed.
+database reloads without ``force``, and a comment committed by hand is no unsaved change, as status
+says. A SQLite catalog is snapshotted before a pruning import, a server catalog is not, and two
+processes saving the same folder at once both succeed.
 """
 
 import os
@@ -157,6 +158,19 @@ def test_a_hand_edit_with_a_clean_database_reloads_without_force(project):
         with get_db_context() as db:
             db.query(Secret).filter_by(user_id=OWNER, name="GUARD_HAND_EDIT").delete()
             db.commit()
+
+
+def test_a_comment_committed_by_hand_in_a_root_manifest_is_no_unsaved_change(project):
+    root, _ = project
+    secrets_file = root / "secrets.yaml"
+    assert secrets_file.exists()
+    secrets_file.write_text("# kept by hand\n" + secrets_file.read_text(encoding="utf-8"), encoding="utf-8")
+    sha = git_ops.commit_all(root, "a comment by hand")
+    assert sha is not None
+    assert project_sync.unsaved_changes(OWNER) == []
+
+    result = project_sync.restore_version(OWNER, sha)
+    assert result.recovery_sha is None
 
 
 def test_a_pruning_import_snapshots_a_sqlite_catalog_only(project, monkeypatch):

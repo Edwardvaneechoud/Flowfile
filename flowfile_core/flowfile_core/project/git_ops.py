@@ -285,22 +285,6 @@ def seed_folder(root: Path, folder: Path, sha: str = "HEAD") -> bool:
     return True
 
 
-def diff_against(root: Path, folder: Path, sha: str = "HEAD") -> list[dict]:
-    """Name-status rows of the managed files in a seeded ``folder`` against ``sha``'s tree.
-
-    Every file in the folder is staged into its own index first, so new files count as added and
-    removed ones as deleted; only the managed pathspecs are reported."""
-    if sha != "HEAD":
-        _require_hex_sha(sha)
-    repo = Repo(str(root))
-    _folder_git(repo, folder, "add", "-A", "--", ".")
-    out = _folder_git(
-        repo, folder, "diff", "--cached", "--no-renames", "--name-status", "-z", sha, "--", *_managed_pathspecs()
-    )
-    fields = [f for f in out.split("\0") if f]
-    return [{"status": fields[i], "path": fields[i + 1]} for i in range(0, len(fields) - 1, 2)]
-
-
 def commit_folder(root: Path, folder: Path, message: str, ref: str) -> str | None:
     """Commit a seeded ``folder``'s files on top of HEAD and point ``ref`` at the commit.
 

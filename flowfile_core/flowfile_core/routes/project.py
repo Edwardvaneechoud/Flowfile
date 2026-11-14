@@ -127,7 +127,6 @@ class ImportedCounts(BaseModel):
 class SetupResultOut(BaseModel):
     imported: ImportedCounts
     placeholder_secrets: list[str]
-    prune_errors: list[str]
     unknown_kinds: list[str] = []
     not_applied: list[str] = []
     recovery_sha: str | None = None
@@ -300,18 +299,6 @@ def restore_version(req: RestoreRequest, current_user=Depends(get_current_active
 
 
 _SHA_PATH = FPath(..., pattern=r"^[0-9a-fA-F]{7,40}$")
-
-
-@router.get("/versions/{sha}/changes", response_model=ChangesOut)
-def version_changes(
-    sha: str = _SHA_PATH,
-    current_user=Depends(get_current_active_user),
-) -> ChangesOut:
-    try:
-        changes = project_sync.changes_for_version(current_user.id, sha)
-    except NoActiveProjectError as e:
-        raise _no_active_project(e) from e
-    return ChangesOut(changes=changes)
 
 
 @router.get("/versions/{sha}/diff", response_model=ChangesOut)

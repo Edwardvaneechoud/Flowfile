@@ -146,6 +146,12 @@ def _change_rows(changes: list[kinds.Change]) -> list[dict]:
     ]
 
 
+def _unsaved_rows(proj: ActiveProject) -> list[dict]:
+    """``compare(HEAD tree, snapshot)`` as rows: what the database holds that the last version does not."""
+    head = git_ops.read_tree_at(proj.root, "HEAD")
+    return _change_rows(kinds.compare(head, _snapshot(proj.root, proj.owner_id)))
+
+
 def _assert_not_foreign_owned(root: Path, owner_id: int) -> None:
     """In multi-tenant mode, reject opening/initing a folder whose existing WorkspaceProject is owned
     by another user (closes cross-tenant project takeover / metadata import). Electron is unconfined."""
@@ -343,47 +349,41 @@ class ProjectSyncService:
     def _guard_before_apply(self, proj: ActiveProject, force: bool, action: str) -> str | None:
         """Name what a restore or reload would lose, and keep it first when ``force`` is set.
 
-        The database is exported to a temp folder and compared with the last version, so every
-        database change is seen. A restore also refuses a dirty folder, since its
-        ``read-tree --reset`` discards hand edits; a reload applies them, so it refuses only unsaved
-        database changes. With ``force`` a restore autosaves the folder and commits the export on the
-        branch, and a reload commits the export under ``refs/flowfile/recovery/`` with the branch
+        Database changes are what status reports (``_unsaved_rows``); a repository with no commit yet has none. A
+        restore also refuses a dirty folder, since its ``read-tree --reset`` discards hand edits; a reload applies
+        them, so it refuses only unsaved database changes. With ``force`` a restore autosaves the folder and commits
+        the export on the branch, and a reload commits the export under ``refs/flowfile/recovery/`` with the branch
         left alone. Returns the sha of the last recovery commit, if any. Holds the caller's lock."""
         dirty = action == "restore" and git_ops.is_dirty(proj.root)
+        changes = _unsaved_rows(proj) if git_ops.head_sha(proj.root) else []
+        if not changes and not dirty:
+            return None
+        if not force:
+            if dirty:
+                listed = {c["path"] for c in changes}
+                folder_rows = [r for r in git_ops.uncommitted_changes(proj.root) if r["path"] not in listed]
+                changes += _named_changes(folder_rows)
+            raise HTTPException(status_code=409, detail=_unsaved_detail(action, changes))
+        recovery_sha = git_ops.commit_all(proj.root, "Autosave before restore") if dirty else None
+        if changes:
+            if action == "restore":
+                recovery_sha = self._commit_export(proj, "Database before restore", "HEAD") or recovery_sha
+            else:
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                recovery_sha = self._commit_export(proj, "Database before reload", f"refs/flowfile/recovery/{stamp}")
+        return recovery_sha
+
+    @staticmethod
+    def _commit_export(proj: ActiveProject, message: str, ref: str) -> str | None:
+        """Commit the database's export on top of HEAD under ``ref``, built in a temp folder seeded with HEAD."""
         with tempfile.TemporaryDirectory(prefix="flowfile-project-") as tmp:
             folder = Path(tmp) / "tree"
-            changes = self._database_changes(proj, folder)
-            if not changes and not dirty:
-                return None
-            if not force:
-                listed = {c["path"] for c in changes}
-                if dirty:
-                    folder_rows = [r for r in git_ops.uncommitted_changes(proj.root) if r["path"] not in listed]
-                    changes += _named_changes(folder_rows)
-                raise HTTPException(status_code=409, detail=_unsaved_detail(action, changes))
-            recovery_sha = git_ops.commit_all(proj.root, "Autosave before restore") if dirty else None
-            if changes:
-                if action == "restore":
-                    recovery_sha = git_ops.commit_folder(proj.root, folder, "Database before restore", "HEAD") or (
-                        recovery_sha
-                    )
-                else:
-                    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-                    recovery_sha = git_ops.commit_folder(
-                        proj.root, folder, "Database before reload", f"refs/flowfile/recovery/{stamp}"
-                    )
-            return recovery_sha
-
-    def _database_changes(self, proj: ActiveProject, folder: Path) -> list[dict]:
-        """Export the database into ``folder`` (seeded with the last version's files, so same-named
-        flows keep the file names that version gave them) and name what differs from that version."""
-        if not git_ops.seed_folder(proj.root, folder):
-            return []
-        manifest_file = proj.root / MANIFEST_NAME
-        if manifest_file.exists():
-            shutil.copyfile(manifest_file, folder / MANIFEST_NAME)
-        write_export(folder, proj.owner_id)
-        return _named_changes(git_ops.diff_against(proj.root, folder))
+            git_ops.seed_folder(proj.root, folder)
+            manifest_file = proj.root / MANIFEST_NAME
+            if manifest_file.exists():
+                shutil.copyfile(manifest_file, folder / MANIFEST_NAME)
+            write_export(folder, proj.owner_id)
+            return git_ops.commit_folder(proj.root, folder, message, ref)
 
     @staticmethod
     def _snapshot_database() -> None:
@@ -445,13 +445,6 @@ class ProjectSyncService:
         result.recovery_sha = recovery_sha
         return result
 
-    def changes_for_version(self, user_id: int, sha: str) -> list[dict]:
-        """Friendly summary of what restoring ``sha`` would change vs the latest saved version."""
-        proj = self.get_active_project(user_id)
-        if proj is None:
-            raise NoActiveProjectError("No active project")
-        return _friendly_changes(git_ops.diff_name_status(proj.root, "HEAD", sha))
-
     def version_diff(self, user_id: int, sha: str) -> list[dict]:
         """Friendly changelog of what a specific version changed vs the one before it."""
         proj = self.get_active_project(user_id)
@@ -469,8 +462,7 @@ class ProjectSyncService:
             raise NoActiveProjectError("No active project")
         if not git_ops.is_repo(proj.root):
             return []
-        head = git_ops.read_tree_at(proj.root, "HEAD")
-        return _change_rows(kinds.compare(head, _snapshot(proj.root, proj.owner_id)))
+        return _unsaved_rows(proj)
 
     def plan(self, user_id: int, sha: str | None = None) -> list[dict]:
         """What a restore of ``sha``, or a reload of the folder when ``sha`` is ``None``, would create, change and

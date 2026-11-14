@@ -79,7 +79,6 @@ def test_version_lifecycle_via_routes(tmp_path):
         assert set(restored.json()) == {
             "imported",
             "placeholder_secrets",
-            "prune_errors",
             "recovery_sha",
             "unknown_kinds",
             "not_applied",
@@ -95,7 +94,6 @@ def test_version_lifecycle_via_routes(tmp_path):
         assert set(reloaded.json()) == {
             "imported",
             "placeholder_secrets",
-            "prune_errors",
             "recovery_sha",
             "unknown_kinds",
             "not_applied",
@@ -212,13 +210,6 @@ def test_restore_prunes_added_flow_and_diff_lists_it(tmp_path):
         add_demo_sha = client.get("/project/versions").json()["versions"][0]["sha"]
         version_diff = client.get(f"/project/versions/{add_demo_sha}/diff").json()["changes"]
         assert any(c["change"] == "added" and c["kind"] == "flow" for c in version_diff), version_diff
-
-        # The diff preview for the empty version lists the flow as a removal.
-        changes = client.get(f"/project/versions/{empty_sha}/changes").json()["changes"]
-        assert any(
-            c["change"] == "removed" and c["kind"] == "flow" and c["label"].startswith("demo")
-            for c in changes
-        ), changes
 
         # Restore the empty version: the flow is pruned from the DB and the files; auto-committed.
         restored = client.post("/project/restore", json={"sha": empty_sha, "label": "empty"})

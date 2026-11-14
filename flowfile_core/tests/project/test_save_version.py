@@ -3,8 +3,7 @@ number of times.
 
 Files Flowfile did not write (``.DS_Store``, a README) are not unsaved changes and never reach a
 commit or the object store, so a save with nothing managed to record answers ``sha: null`` and the
-status reads clean. The export builds one ``{flow_uuid: paths}`` index of ``flows/`` per call, so
-a registration with no flow file costs a lookup instead of a sweep of every flow file.
+status reads clean.
 """
 
 import pathlib
@@ -19,7 +18,7 @@ from git import Repo
 from flowfile_core import main
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRegistration
-from flowfile_core.project import git_ops, project_sync, projection
+from flowfile_core.project import git_ops, project_sync
 from flowfile_core.project.service import write_export
 
 OWNER = 1
@@ -160,7 +159,9 @@ def test_flows_whose_names_differ_in_case_keep_a_file_each(tmp_path):
     try:
         for label in ("first", "second"):
             write_export(root, OWNER)
-            held = {projection._file_flow_uuid(p) for p in (root / "flows").glob("*.flow.yaml")}
+            held = {
+                yaml.safe_load(p.read_text(encoding="utf-8"))["flow_uuid"] for p in (root / "flows").glob("*.flow.yaml")
+            }
             assert set(uuids) <= held, f"{label} pass: {sorted(p.name for p in (root / 'flows').iterdir())}"
     finally:
         with get_db_context() as db:

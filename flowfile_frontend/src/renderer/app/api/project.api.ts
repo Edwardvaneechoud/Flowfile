@@ -130,19 +130,6 @@ export class ProjectApi {
     }
   }
 
-  /** Friendly summary of what restoring a version would change (vs the latest saved version). */
-  static async getVersionChanges(sha: string): Promise<ProjectVersionChange[]> {
-    try {
-      const res = await axios.get<{ changes: ProjectVersionChange[] }>(
-        `/project/versions/${sha}/changes`,
-      );
-      return res.data.changes ?? [];
-    } catch (error: any) {
-      if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
-      throw new Error(detail(error, "Failed to load changes"));
-    }
-  }
-
   /** What a restore of `sha`, or a reload of the folder without one, would create, change and remove. */
   static async plan(sha?: string): Promise<ProjectVersionChange[]> {
     try {
