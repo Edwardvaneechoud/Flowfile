@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     updateSettings: vi.fn(),
     restore: vi.fn(),
     reload: vi.fn(),
+    plan: vi.fn(),
     setSecrets: vi.fn(),
     close: vi.fn(),
     warning: vi.fn(),
@@ -48,6 +49,7 @@ vi.mock("../api/project.api", () => ({
     updateSettings: mocks.updateSettings,
     restore: mocks.restore,
     reload: mocks.reload,
+    plan: mocks.plan,
     setSecrets: mocks.setSecrets,
     close: mocks.close,
   },
@@ -259,6 +261,15 @@ describe("reloadFromDisk", () => {
 
     await expect(store.reloadFromDisk()).rejects.toBeInstanceOf(mocks.ProjectFeatureUnavailable);
     expect(store.reloadAvailable).toBe(false);
+  });
+});
+
+describe("loadPlan", () => {
+  it("asks for the plan of the sha and returns its rows", async () => {
+    const rows = [{ change: "removed", kind: "flow", label: "a", path: "flows/a.flow.yaml" }];
+    mocks.plan.mockResolvedValue(rows);
+    expect(await useProjectStore().loadPlan("abc123")).toEqual(rows);
+    expect(mocks.plan).toHaveBeenCalledWith("abc123");
   });
 });
 

@@ -15,6 +15,7 @@ import yaml
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import Kernel
 from flowfile_core.project import project_sync, projection
+from flowfile_core.project.service import write_export
 
 OWNER = 1
 
@@ -93,14 +94,12 @@ def test_kernel_projection_deterministic_and_bake_free(tmp_path):
         assert "custom_image" not in entry  # omitted when unset
 
         kernels_bytes = (root / "kernels.yaml").read_bytes()
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "kernels.yaml").read_bytes() == kernels_bytes, "re-projection must be byte-identical"
 
         # project -> import -> project must round-trip byte-identically.
         import_project(root, OWNER)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "kernels.yaml").read_bytes() == kernels_bytes, "project->import->project must round-trip"
     finally:
         _delete_all_kernels()

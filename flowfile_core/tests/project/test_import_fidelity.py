@@ -49,6 +49,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.project import git_ops, importer, manifest, project_sync, projection
 from flowfile_core.project.importer import import_project
+from flowfile_core.project.service import write_export
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.schemas.input_schema import FullDatabaseConnection
@@ -120,8 +121,7 @@ def _snapshot(root: Path) -> dict[str, bytes]:
 
 
 def _export(root: Path) -> dict[str, bytes]:
-    with get_db_context() as db:
-        projection.project_all(db, root, OWNER)
+    write_export(root, OWNER)
     return _snapshot(root)
 
 
@@ -368,7 +368,7 @@ def test_every_kind_imports_twice_without_a_change(tmp_path):
         exported = _snapshot(root)
         before = _dump()
         for _ in range(2):
-            import_project(root, OWNER, prune=True)
+            import_project(root, OWNER)
             assert _dump() == before
             assert _export(root) == exported
         with get_db_context() as db:
@@ -382,7 +382,7 @@ def test_every_kind_imports_twice_without_a_change(tmp_path):
         assert "kpi" not in board["layout"]["tiles"][0]
         board["layout"]["tiles"][0]["w"] = 6
         manifest.dashboards_manifest_path(root).write_text(yaml.safe_dump(dashboards), encoding="utf-8")
-        import_project(root, OWNER, prune=True)
+        import_project(root, OWNER)
         with get_db_context() as db:
             assert db.get(CatalogDashboard, dashboard_id).layout_version == 4
     finally:
@@ -398,7 +398,7 @@ def test_a_flow_registered_from_a_json_path_stays_json(tmp_path):
         project_sync.close_project(OWNER)
         runtime = Path(_reg(flow_uuid).flow_path)
         assert runtime.suffix == ".json"
-        import_project(root, OWNER, prune=True)
+        import_project(root, OWNER)
         data = json.loads(runtime.read_text(encoding="utf-8"))
         assert data["flow_uuid"] == flow_uuid
         handler = FlowfileHandler()
@@ -471,7 +471,7 @@ def test_table_lineage_and_pointers_through_a_reload(tmp_path):
             db.query(CatalogTable).filter_by(name=f"view_{tag}").update({"source_registration_id": None})
             db.commit()
 
-        import_project(root, OWNER, prune=True)
+        import_project(root, OWNER)
         assert _table_row(f"snapped_{tag}").source_registration_id == snapshot.id
         assert _table_row(f"view_{tag}").source_registration_id == reg.id
         assert _table_row(f"pointer_{tag}").file_path == kept_path
@@ -610,7 +610,7 @@ def test_a_table_on_object_storage_keeps_its_pointer_through_a_reload(tmp_path, 
         project_sync.init_project(str(root), "Cloud", OWNER)
         project_sync.close_project(OWNER)
         assert _tables_yaml(root)[f"cloud_table_{tag}"]["pointer"] == {"type": "external", "path": dest}
-        import_project(root, OWNER, prune=True)
+        import_project(root, OWNER)
         assert _table_row(f"cloud_table_{tag}").file_path == dest
         assert pl.scan_delta(dest, storage_options=target.storage_options).collect().height == 3
         assert importer._resolve_table_path({"type": "external", "path": outside}, root, namespace_id=cat_id) is None

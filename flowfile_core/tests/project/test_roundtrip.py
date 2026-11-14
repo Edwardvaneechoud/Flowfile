@@ -30,6 +30,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.project import project_sync, projection
+from flowfile_core.project.service import write_export
 from flowfile_core.schemas import input_schema, schemas
 from shared.storage_config import storage
 
@@ -130,8 +131,7 @@ def test_projection_is_deterministic_and_secret_free(tmp_path, monkeypatch):
         project_sync.init_project(str(root), "Det Test", OWNER)
 
         snap1 = _snapshot(root)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert _snapshot(root) == snap1, "re-projecting unchanged DB must be byte-identical"
 
         conn_text = (root / "connections" / "database" / f"{conn}.yaml").read_text(encoding="utf-8")
@@ -146,8 +146,7 @@ def test_projection_is_deterministic_and_secret_free(tmp_path, monkeypatch):
         from flowfile_core.project.importer import import_project
 
         import_project(root, OWNER)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert _snapshot(root) == snap1, "project->import->project must round-trip"
     finally:
         _cleanup([conn], [flow_uuid])
@@ -503,15 +502,13 @@ def test_namespaced_flow_projection_round_trips_byte_identical(tmp_path):
     try:
         project_sync.init_project(str(root), "Det NS Test", OWNER)
         snap1 = snap()
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert snap() == snap1, "re-projecting an unchanged namespaced flow must be byte-identical"
 
         from flowfile_core.project.importer import import_project
 
         import_project(root, OWNER)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert snap() == snap1, "project->import->project must round-trip with a namespaced flow"
     finally:
         _delete_flow(flow_uuid)
@@ -618,8 +615,7 @@ def test_public_namespace_recreated_on_import(tmp_path):
             for nm in ("DemoCat", "demo_schema"):
                 db.query(CatalogNamespace).filter_by(name=nm).first().is_public = True
             db.commit()
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         cats = {c["catalog"]: c for c in yaml.safe_load((root / "namespaces.yaml").read_text(encoding="utf-8"))["namespaces"]}
         assert cats["DemoCat"]["is_public"] is True
 
@@ -946,8 +942,7 @@ def test_table_projection_deterministic_and_stub_free(tmp_path):
         assert "row_count" not in entry and "size_bytes" not in entry and "file_path" not in entry
 
         snap1 = _snapshot(root)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert _snapshot(root) == snap1, "re-projecting an unchanged table must be byte-identical"
     finally:
         _delete_tables_by_name(name)
@@ -1273,8 +1268,7 @@ def test_flow_writer_projects_portable_namespace(tmp_path):
             assert ws["namespace_id"] is None
 
         snap1 = _snapshot(root)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert _snapshot(root) == snap1, "re-projection with a writer node must be byte-identical"
     finally:
         _delete_flow(flow_uuid)
@@ -1369,14 +1363,13 @@ def test_a_schedule_s_backend_round_trips_and_an_unset_one_writes_no_key(tmp_pat
             reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
             db.query(FlowSchedule).filter_by(registration_id=reg.id).one().backend = "worker:team"
             db.commit()
-            projection.project_all(db, root, OWNER)
+            write_export(root, OWNER)
         assert yaml.safe_load(schedule_file.read_text())["schedules"][0]["backend"] == "worker:team"
         snap = _snapshot(root)
 
         import_project(root, OWNER)
         assert _schedule_backends(flow_uuid) == ["worker:team"]
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert _snapshot(root) == snap
     finally:
         _cleanup([], [flow_uuid])

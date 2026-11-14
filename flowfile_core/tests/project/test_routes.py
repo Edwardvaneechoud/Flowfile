@@ -84,11 +84,12 @@ def test_version_lifecycle_via_routes(tmp_path):
             "unknown_kinds",
             "not_applied",
         }
-        assert client.get("/project/active").json()["dirty"] is True  # ROUTE_SECRET_2 stays in the database
-        assert client.get("/project/versions").json()["versions"][0]["message"].startswith("Restore")
+        assert client.get("/project/active").json()["dirty"] is False  # the restore commit is the export after it
+        # A standalone secret is never deleted, so the export after the restore is version b and no version is added.
+        assert client.get("/project/versions").json()["versions"][0]["message"] == "version b"
 
-        # The restore keeps ROUTE_SECRET_2, which version a lacks, so the reload needs force.
-        assert client.post("/project/reload").status_code == 409
+        # The restore commit holds ROUTE_SECRET_2, which stays in the database, so the reload needs no force.
+        assert client.post("/project/reload").status_code == 200
         reloaded = client.post("/project/reload", json={"force": True})
         assert reloaded.status_code == 200
         assert set(reloaded.json()) == {
@@ -114,7 +115,7 @@ def test_restore_on_dirty_tree_409s_without_force(tmp_path):
     project_sync.close_project(OWNER)
     try:
         assert client.post("/project/init", json={"folder_path": str(root), "name": "Dirty"}).status_code == 201
-        # Use a standalone secret to create a managed diff that persists through project_all.
+        # Use a standalone secret to create a managed diff that persists through the export.
         client.post("/project/secrets", json={"secrets": [{"name": "DIRTY_SECRET_V1", "value": "v1"}]})
         assert client.post("/project/versions", json={"message": "v1"}).json()["sha"]
         version_v1 = client.get("/project/versions").json()["versions"][0]["sha"]

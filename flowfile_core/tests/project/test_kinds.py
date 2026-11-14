@@ -1,7 +1,7 @@
 """The kinds a project holds are one registry, and the export it drives is the tree the export wrote before.
 
 An install holding every kind, with fixed names and identifiers, is built for a user of its own. Its tree, as
-``projection.project_all`` wrote it into an empty folder before the registry existed, is the fixture
+the export wrote it into an empty folder before the registry existed, is the fixture
 ``fixtures/every_kind_tree.json``: the export writes it byte for byte, ``kinds.snapshot`` returns it without the
 disk, and a second export over it changes nothing. The values the registry now derives (the managed pathspecs,
 the change-summary labels, the caps, the importer's file kinds) are pinned to what they were, and a file in a
@@ -38,7 +38,8 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_cloud_connection,
     store_database_connection,
 )
-from flowfile_core.project import git_ops, importer, projection
+from flowfile_core.project import git_ops, importer
+from flowfile_core.project.service import write_export
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.schemas.input_schema import FullDatabaseConnection
 from flowfile_core.secret_manager.secret_manager import SecretInput, store_secret
@@ -278,8 +279,7 @@ def _on_disk(root: Path) -> dict[str, str]:
 
 
 def _project_all(root: Path, owner_id: int) -> dict[str, str]:
-    with get_db_context() as db:
-        projection.project_all(db, root, owner_id)
+    write_export(root, owner_id)
     return _on_disk(root)
 
 

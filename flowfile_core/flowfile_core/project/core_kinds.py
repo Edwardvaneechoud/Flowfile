@@ -142,6 +142,7 @@ register(
         cap=importer._MAX_CONNECTIONS,
         entries=_file_entries("connection_name"),
         delete_label="its stored password is not in any version",
+        delete=importer._delete_database_connection,
     )
 )
 register(
@@ -154,6 +155,7 @@ register(
         cap=importer._MAX_CONNECTIONS,
         entries=_file_entries("connection_name"),
         delete_label="its stored password is not in any version",
+        delete=importer._delete_cloud_connection,
     )
 )
 register(
@@ -166,6 +168,7 @@ register(
         entries_key="namespaces",
         entries=_namespace_entries,
         delete_label="it is deleted once empty",
+        delete=importer._delete_namespaces,
     )
 )
 register(
@@ -178,6 +181,7 @@ register(
         cap=importer._MAX_FLOWS,
         entries=_flow_entries,
         delete_label="its flow file is removed",
+        delete=importer._delete_flow,
     )
 )
 register(
@@ -190,6 +194,7 @@ register(
         cap=importer._MAX_FLOWS,
         entries=_schedule_entries,
         delete_label="it no longer runs",
+        delete=importer._delete_schedule,
     )
 )
 register(
@@ -204,6 +209,7 @@ register(
         tracked_by_data_flag=True,
         entries=_list_entries("tables", lambda e: (*_ns(e), e.get("name")), lambda e: _dotted(*_ns(e), e.get("name"))),
         delete_label="its data stays on disk",
+        delete=importer._delete_tables,
     )
 )
 register(
@@ -222,6 +228,7 @@ register(
             lambda e: f"{_dotted(*_ns(e), e.get('name'))} v{e.get('version')}",
         ),
         delete_label="its file stays; the version is marked deleted",
+        delete=importer._delete_models,
     )
 )
 register(
@@ -234,6 +241,7 @@ register(
         entries_key="kernels",
         entries=_list_entries("kernels", lambda e: e.get("id"), lambda e: str(e.get("name") or e.get("id"))),
         delete_label="its configuration is deleted",
+        delete=importer._delete_kernels,
     )
 )
 register(
@@ -247,6 +255,7 @@ register(
         entries_key="visualizations",
         entries=_list_entries("visualizations", lambda e: e.get("viz_uuid"), lambda e: str(e.get("name"))),
         delete_label="the chart is deleted",
+        delete=importer._delete_visualizations,
     )
 )
 register(
@@ -260,6 +269,7 @@ register(
         entries_key="dashboards",
         entries=_list_entries("dashboards", lambda e: e.get("dashboard_uuid"), lambda e: str(e.get("name"))),
         delete_label="the dashboard is deleted",
+        delete=importer._delete_dashboards,
     )
 )
 register(
@@ -272,5 +282,6 @@ register(
         cap=importer._MAX_NOTEBOOKS,
         entries=_file_entries("notebook_uuid", "name"),
         delete_label="its content file is removed",
+        delete=importer._delete_notebook,
     )
 )

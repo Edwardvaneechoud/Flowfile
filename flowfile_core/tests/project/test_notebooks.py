@@ -16,6 +16,7 @@ from flowfile_core.catalog.services import notebook_store
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogNamespace, CatalogNotebook
 from flowfile_core.project import project_sync, projection
+from flowfile_core.project.service import write_export
 from flowfile_core.schemas.catalog_schema import NotebookCellModel
 
 OWNER = 1
@@ -105,8 +106,7 @@ def test_notebook_round_trips_byte_identical(tmp_path):
         assert entry["cells"][1]["metadata"] == {"max_rows": 100}
 
         nb_bytes = (root / "notebooks" / "explore-orders.notebook.yaml").read_bytes()
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "notebooks" / "explore-orders.notebook.yaml").read_bytes() == nb_bytes, "re-projection must be byte-identical"
 
         # project -> import -> project must round-trip; upsert by notebook_uuid must not duplicate.
@@ -120,8 +120,7 @@ def test_notebook_round_trips_byte_identical(tmp_path):
             assert rows[0].name == "explore-orders"
         # Cells survive the round-trip intact.
         assert notebook_store.read_notebook_cells(OWNER, nuuid) == _CELLS
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "notebooks" / "explore-orders.notebook.yaml").read_bytes() == nb_bytes, "project->import->project must round-trip"
     finally:
         _clear_notebooks()

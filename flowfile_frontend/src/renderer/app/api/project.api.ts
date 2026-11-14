@@ -126,6 +126,20 @@ export class ProjectApi {
     }
   }
 
+  /** What a restore of `sha`, or a reload of the folder without one, would create, change and remove. */
+  static async plan(sha?: string): Promise<ProjectVersionChange[]> {
+    try {
+      const res = await axios.post<{ changes: ProjectVersionChange[] }>(
+        "/project/plan",
+        sha ? { sha } : {},
+      );
+      return res.data.changes ?? [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
+      throw new Error(detail(error, "Failed to load the plan"));
+    }
+  }
+
   /** Friendly changelog of what a specific version changed (vs the version before it). */
   static async getVersionDiff(sha: string): Promise<ProjectVersionChange[]> {
     try {

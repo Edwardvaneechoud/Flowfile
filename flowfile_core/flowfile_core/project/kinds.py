@@ -48,7 +48,8 @@ class Entry:
 @dataclass(frozen=True)
 class Kind:
     """``entries(files) -> {key: Entry}`` splits the kind's files into objects; ``delete_label`` is what a preview
-    says a delete does, ``None`` for a kind that is never deleted, whose removals are then not reported."""
+    says a delete does, ``None`` for a kind that is never deleted, whose removals are then not reported;
+    ``delete(ctx, keys)`` deletes the objects of those ``entries`` keys from the database."""
 
     name: str
     label: str
@@ -60,6 +61,7 @@ class Kind:
     tracked_by_data_flag: bool = False
     entries: Callable[[dict[str, str]], dict[object, Entry]] | None = None
     delete_label: str | None = None
+    delete: Callable[[ExportContext, list], None] | None = None
 
 
 @dataclass(frozen=True)

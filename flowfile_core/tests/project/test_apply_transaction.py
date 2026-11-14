@@ -144,14 +144,14 @@ def test_a_failing_reload_changes_no_row_and_no_file(tmp_path, monkeypatch):
         flow_bytes, nb_bytes = runtime_flow.read_bytes(), nb_content.read_bytes()
         pruned_nb_bytes = pruned_nb_content.read_bytes()
         before = _dump()
-        prune = importer._prune_removed
+        delete = importer._delete_removed
 
-        def prune_then_fail(*args, **kwargs):
-            prune(*args, **kwargs)
-            raise RuntimeError("the prune failed")
+        def delete_then_fail(*args, **kwargs):
+            delete(*args, **kwargs)
+            raise RuntimeError("the delete failed")
 
-        monkeypatch.setattr(importer, "_prune_removed", prune_then_fail)
-        with pytest.raises(RuntimeError, match="the prune failed"):
+        monkeypatch.setattr(importer, "_delete_removed", delete_then_fail)
+        with pytest.raises(RuntimeError, match="the delete failed"):
             project_sync.reload_from_disk(OWNER)
 
         assert _dump() == before

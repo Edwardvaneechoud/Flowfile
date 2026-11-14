@@ -1,8 +1,8 @@
 """Restore and reload never remove what the files do not describe, and never half-apply a bad tree.
 
 Three rules, each proven against real git and the test database: a flow registration the export
-cannot write (no file, a kernel scratch flow) is never pruned; a kind the imported tree has no file
-for is never pruned (an empty manifest still is); and every file is validated before the first
+cannot write (no file, a kernel scratch flow) is never pruned; a kind the version does not list is
+never pruned (an empty manifest still is); and every file is validated before the first
 write, so a malformed tree answers 422 with the folder and the database unchanged.
 """
 
@@ -39,7 +39,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_database_connection,
 )
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.project import git_ops, project_sync
+from flowfile_core.project import git_ops, manifest, project_sync
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 
@@ -242,8 +242,8 @@ def test_unexportable_registrations_survive_restore_and_reload(tmp_path):
 
 
 def test_restore_of_a_version_without_those_files_keeps_kernels_connections_and_notebooks(tmp_path):
-    """An older version with no kernels.yaml and nothing under connections/ or notebooks/ says nothing
-    about those kinds, so restoring it keeps every kernel, connection (with its secret) and notebook."""
+    """An older version that does not list kernels, connections or notebooks, and holds none of their files, says
+    nothing about those kinds, so restoring it keeps every kernel, connection (with its secret) and notebook."""
     project_sync.close_project(OWNER)
     root = tmp_path / "project"
     db_name, cloud_name = f"rs_db_{uuid4().hex[:6]}", f"rs_cloud_{uuid4().hex[:6]}"
@@ -264,6 +264,9 @@ def test_restore_of_a_version_without_those_files_keeps_kernels_connections_and_
         (root / "kernels.yaml").unlink()
         shutil.rmtree(root / "connections")
         shutil.rmtree(root / "notebooks")
+        m = manifest.read_manifest(root)
+        m.kinds = [k for k in m.kinds if k not in ("kernels", "database_connection", "cloud_connection", "notebook")]
+        manifest.write_manifest(root, m)
         old_sha = git_ops.commit_all(root, "an older version without kernels, connections or notebooks")
         assert old_sha is not None
         project_sync.save_version(OWNER, "everything again")

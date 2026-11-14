@@ -1265,6 +1265,7 @@ class TestH8_PruneGrantCleanup:
     def test_prune_viz_cleans_grants(self, tmp_path, users, group_factory, grant_factory):
         # Finding H8: grants must not survive a prune of their resource.
         from flowfile_core.auth import sharing
+        from flowfile_core.project import kinds
         from flowfile_core.project.importer import import_project
 
         alice_id = users["alice"].id
@@ -1288,7 +1289,7 @@ class TestH8_PruneGrantCleanup:
         project_sync.close_project(alice_id)
 
         try:
-            import_project(root, alice_id, prune=True)
+            import_project(root, alice_id, [kinds.Change("visualizations", a_vuuid, "removed", "", "")])
 
             # The viz should be gone.
             with get_db_context() as db:

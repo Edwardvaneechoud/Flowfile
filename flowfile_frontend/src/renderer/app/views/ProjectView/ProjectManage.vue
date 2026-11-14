@@ -249,6 +249,24 @@ const goToSecrets = () => router.push({ name: "connections", query: { tab: "secr
 const handleReload = async () => {
   reloading.value = true;
   try {
+    const plan = await store.loadPlan();
+    if (plan.length) {
+      const lines = plan
+        .map(
+          (c) => `${c.change} ${c.kind} “${c.label}”${c.consequence ? `: ${c.consequence}` : ""}`,
+        )
+        .join("\n");
+      try {
+        await ElMessageBox.confirm(lines, "Reload applies these changes", {
+          confirmButtonText: "Reload",
+          cancelButtonText: "Cancel",
+          type: "warning",
+          customStyle: { whiteSpace: "pre-line" },
+        });
+      } catch {
+        return;
+      }
+    }
     await store.reloadFromDisk();
     ElMessage.success("Project reloaded from disk");
   } catch (e: any) {

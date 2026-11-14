@@ -33,7 +33,7 @@ from flowfile_core.database.models import (
     Kernel,
     Secret,
 )
-from flowfile_core.project import kinds, manifest
+from flowfile_core.project import manifest
 from flowfile_core.project.normalize import (
     atomic_write,
     dump_yaml,
@@ -862,15 +862,3 @@ def prune_orphan_notebooks(root: Path, written: set[Path]) -> None:
     for p in d.glob("*.notebook.yaml"):
         if p not in written:
             p.unlink(missing_ok=True)
-
-
-# --- full projection ---------------------------------------------------------
-
-
-def project_all(db: Session, root: Path, owner_id: int) -> None:
-    """Write the registry's snapshot into ``root`` and remove the owned files it does not hold.
-
-    Only the kinds ``project.yaml`` lists are exported; without one, every registered kind is."""
-    m = manifest.read_manifest(root)
-    ctx = kinds.ExportContext(db=db, owner_id=owner_id, kinds=None if m is None else frozenset(m.kinds))
-    kinds.write_tree(root, kinds.snapshot(ctx))

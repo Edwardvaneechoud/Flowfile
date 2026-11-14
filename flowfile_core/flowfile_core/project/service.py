@@ -106,12 +106,42 @@ def _classify_path(path: str) -> tuple[str, str]:
     return "settings", path.split("/")[-1]
 
 
-def _snapshot(root: Path, owner_id: int) -> dict[str, str]:
-    """The export of the kinds the folder's ``project.yaml`` lists (every kind without one), nothing written."""
-    m = read_manifest(root)
+def _snapshot(root: Path, owner_id: int, listed=None) -> dict[str, str]:
+    """The export of the ``listed`` kinds when given, else of those the folder's ``project.yaml`` lists (every kind
+    without one), nothing written."""
+    if listed is None:
+        m = read_manifest(root)
+        listed = None if m is None else m.kinds
     with get_db_context() as db:
-        ctx = kinds.ExportContext(db=db, owner_id=owner_id, kinds=None if m is None else frozenset(m.kinds))
+        ctx = kinds.ExportContext(db=db, owner_id=owner_id, kinds=None if listed is None else frozenset(listed))
         return kinds.snapshot(ctx)
+
+
+def write_export(root: Path, owner_id: int) -> None:
+    """Write the export of the kinds the folder lists into ``root``, removing the owned files it does not hold."""
+    kinds.write_tree(root, _snapshot(root, owner_id))
+
+
+def _plan_changes(root: Path, owner_id: int, sha: str | None) -> list[kinds.Change]:
+    """``compare(snapshot, target)`` for the tree at ``sha``, or the folder when ``None``, over the kinds the
+    target lists, the snapshot exporting those same kinds, so a kind the folder no longer lists is compared too.
+    A target without a ``kinds`` list is compared over the kinds it holds a file for."""
+    if sha is None:
+        target = kinds.read_tree(root)
+        manifest_file = root / MANIFEST_NAME
+        manifest_text = manifest_file.read_text(encoding="utf-8") if manifest_file.is_file() else None
+    else:
+        target = git_ops.read_tree_at(root, sha)
+        manifest_text = target.get(MANIFEST_NAME)
+    listed = None
+    if manifest_text is not None:
+        data = yaml.safe_load(manifest_text) or {}
+        listed = parse_manifest(data, root.name).kinds
+        if "kinds" not in data:  # a version from before the list: a kind it has no file for is left alone
+            held = {owned[0].name for owned in map(kinds.kind_for_path, target) if owned is not None}
+            listed = [name for name in listed if name in held]
+    snapshot = _snapshot(root, owner_id, [k.name for k in kinds.registered()] if listed is None else listed)
+    return kinds.compare(snapshot, target, kinds=listed)
 
 
 def _change_rows(changes: list[kinds.Change]) -> list[dict]:
@@ -381,7 +411,7 @@ class ProjectSyncService:
             with get_db_context() as db:
                 row = repository.upsert_active(db, m.name, str(root), owner_id, m.track_data_artifacts)
                 project = ActiveProject(row.id, m.name, root, owner_id, m.track_data_artifacts)
-                projection.project_all(db, root, owner_id)
+            write_export(root, owner_id)
             sha = git_ops.commit_all(root, "Initialize Flowfile project")
             with get_db_context() as db:
                 repository.set_head_sha(db, project.id, sha or git_ops.head_sha(root))
@@ -416,8 +446,7 @@ class ProjectSyncService:
             m = read_manifest(proj.root)
             if m is not None:
                 _save_manifest(proj.root, m)
-            with get_db_context() as db:
-                projection.project_all(db, proj.root, proj.owner_id)
+            write_export(proj.root, proj.owner_id)
             sha = git_ops.commit_all(proj.root, message)
             with get_db_context() as db:
                 repository.set_head_sha(db, proj.id, sha or git_ops.head_sha(proj.root))
@@ -480,8 +509,7 @@ class ProjectSyncService:
         manifest_file = proj.root / MANIFEST_NAME
         if manifest_file.exists():
             shutil.copyfile(manifest_file, folder / MANIFEST_NAME)
-        with get_db_context() as db:
-            projection.project_all(db, folder, proj.owner_id)
+        write_export(folder, proj.owner_id)
         return _named_changes(git_ops.diff_against(proj.root, folder))
 
     @staticmethod
@@ -492,10 +520,11 @@ class ProjectSyncService:
             backup.create_snapshot(db_path, "pre_apply")
 
     def restore_version(self, user_id: int, sha: str, label: str | None = None, force: bool = False) -> SetupResult:
-        """Reset files to ``sha``, rebuild + prune the DB to match, and record it as a new version.
+        """Reset files to ``sha``, apply its plan to the DB, and record the export after it as a new version.
 
         Restore is one complete action: the working tree is reset to ``sha`` (deletions included),
-        the DB is rebuilt and pruned to match, and a "Restore: …" commit is made so history stays
+        the DB imports it and deletes exactly the plan's removals (``_plan_changes``, computed before
+        the reset), and the export after the apply is committed as "Restore: …", so history stays
         clean with no dangling unsaved state. Unsaved work is never silently lost: a dirty tree or a
         database that differs from the last version is 409'd unless ``force``, and on ``force`` both
         are committed into history first (``_guard_before_apply``).
@@ -509,10 +538,12 @@ class ProjectSyncService:
             preflight_import_caps(proj.root, sha)
             preflight_import_files(proj.root, sha)
             recovery_sha = self._guard_before_apply(proj, force, "restore")
+            removed = [c for c in _plan_changes(proj.root, proj.owner_id, sha) if c.change == "removed"]
             git_ops.restore(proj.root, sha)
             self._snapshot_database()
-            result = import_project(proj.root, proj.owner_id, prune=True)
+            result = import_project(proj.root, proj.owner_id, removed)
             self._sync_track_setting_from_manifest(proj)
+            write_export(proj.root, proj.owner_id)
             message = f"Restore: {label}" if label else f"Restore version {sha[:8]}"
             new_sha = git_ops.commit_all(proj.root, message)
             with get_db_context() as db:
@@ -521,11 +552,11 @@ class ProjectSyncService:
         return result
 
     def reload_from_disk(self, user_id: int, force: bool = False) -> SetupResult:
-        """Accept on-disk (external) changes by rebuilding + pruning the DB to match the files.
+        """Accept on-disk (external) changes by applying the folder's plan to the DB; no export is written.
 
         A dirty tree is what gets applied, so it needs no ``force``. A database that differs from the
         last version is 409'd unless ``force``, and on ``force`` its export is kept under
-        ``refs/flowfile/recovery/`` before the prune, with the branch left alone."""
+        ``refs/flowfile/recovery/`` before the apply, with the branch left alone."""
         proj = self.get_active_project(user_id)
         if proj is None:
             raise NoActiveProjectError("No active project")
@@ -534,8 +565,9 @@ class ProjectSyncService:
             preflight_import_caps_worktree(proj.root)
             preflight_import_files_worktree(proj.root)
             recovery_sha = self._guard_before_apply(proj, force, "reload")
+            removed = [c for c in _plan_changes(proj.root, proj.owner_id, None) if c.change == "removed"]
             self._snapshot_database()
-            result = import_project(proj.root, proj.owner_id, prune=True)
+            result = import_project(proj.root, proj.owner_id, removed)
             self._sync_track_setting_from_manifest(proj)
         result.recovery_sha = recovery_sha
         return result
@@ -579,18 +611,10 @@ class ProjectSyncService:
             if sha is None:
                 preflight_import_caps_worktree(root)
                 preflight_import_files_worktree(root)
-                target = kinds.read_tree(root)
-                manifest_file = root / MANIFEST_NAME
-                manifest_text = manifest_file.read_text(encoding="utf-8") if manifest_file.is_file() else None
             else:
                 preflight_import_caps(root, sha)
                 preflight_import_files(root, sha)
-                target = git_ops.read_tree_at(root, sha)
-                manifest_text = target.get(MANIFEST_NAME)
-            listed = None
-            if manifest_text is not None:
-                listed = parse_manifest(yaml.safe_load(manifest_text) or {}, root.name).kinds
-            changes = kinds.compare(_snapshot(root, proj.owner_id), target, kinds=listed)
+            changes = _plan_changes(root, proj.owner_id, sha)
         return [{**row, "consequence": c.consequence} for row, c in zip(_change_rows(changes), changes, strict=True)]
 
     def close_project(self, owner_id: int) -> None:
@@ -615,8 +639,7 @@ class ProjectSyncService:
             with get_db_context() as db:
                 repository.set_track_data_artifacts(db, proj.id, track_data_artifacts)
             proj.track_data_artifacts = track_data_artifacts
-            with get_db_context() as db:
-                projection.project_all(db, proj.root, proj.owner_id)
+            write_export(proj.root, proj.owner_id)
         return track_data_artifacts
 
     def has_uncommitted_changes(self, user_id: int) -> bool:

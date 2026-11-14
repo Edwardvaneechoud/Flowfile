@@ -203,7 +203,7 @@ def test_a_kind_the_version_leaves_out_is_neither_imported_nor_pruned(tmp_path, 
     restored = project_sync.restore_version(every_kind, without_kernels, force=True)
     assert _kernel_ids(every_kind) == {KERNEL_ID}
     assert "kernels" not in restored.by_kind
-    assert (root / "kernels.yaml").read_text(encoding="utf-8") == "kernels: []\n"
+    assert not (root / "kernels.yaml").exists()  # the restore commits the export, which leaves an unlisted kind out
 
     reloaded = project_sync.reload_from_disk(every_kind, force=True)
     assert _kernel_ids(every_kind) == {KERNEL_ID}

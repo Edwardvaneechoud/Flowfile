@@ -27,6 +27,7 @@ from flowfile_core.project.manifest import (
     tables_manifest_path,
     write_manifest,
 )
+from flowfile_core.project.service import write_export
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +381,7 @@ class TestRoundTripWithPathSecurity:
     def test_clean_project_round_trips_despite_path_security(self, tmp_path, monkeypatch):
         # Invariant: the path-security changes must not break a legitimate single-user round-trip.
         from flowfile_core.configs import settings
-        from flowfile_core.project import project_sync, projection
+        from flowfile_core.project import project_sync
         from flowfile_core.database.connection import get_db_context
         from flowfile_core.project.importer import import_project
 
@@ -398,8 +399,7 @@ class TestRoundTripWithPathSecurity:
                 if p.is_file() and not p.name.startswith("."):
                     snap1[str(p.relative_to(root))] = p.read_bytes()
 
-            with get_db_context() as db:
-                projection.project_all(db, root, owner_id)
+            write_export(root, owner_id)
 
             snap2: dict[str, bytes] = {}
             for p in sorted(root.rglob("*")):
@@ -409,8 +409,7 @@ class TestRoundTripWithPathSecurity:
             assert snap1 == snap2, "Re-projecting an unchanged project must be byte-identical!"
 
             import_project(root, owner_id)
-            with get_db_context() as db:
-                projection.project_all(db, root, owner_id)
+            write_export(root, owner_id)
 
             snap3: dict[str, bytes] = {}
             for p in sorted(root.rglob("*")):

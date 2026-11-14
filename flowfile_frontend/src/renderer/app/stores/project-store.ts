@@ -20,7 +20,7 @@ interface ProjectState {
   activeProject: ProjectInfo | null;
   hasExternalChanges: boolean; // git HEAD differs from last synced (files changed outside)
   projectionFailed: boolean; // last DB→files sync hook errored — folder may have drifted from the DB
-  dirty: boolean; // authoritative: working tree has uncommitted changes
+  dirty: boolean; // authoritative: the database differs from the last version
   hasUnsavedChanges: boolean; // optimistic: set instantly on a local save, reconciled by refresh
   placeholderSecrets: string[];
   featureUnavailable: boolean; // /project router gated off (404)
@@ -173,6 +173,16 @@ export const useProjectStore = defineStore("project", {
     async loadVersionChanges(sha: string): Promise<ProjectVersionChange[]> {
       try {
         return await ProjectApi.getVersionChanges(sha);
+      } catch (e: any) {
+        if (e instanceof ProjectFeatureUnavailable) return [];
+        throw e;
+      }
+    },
+
+    /** What a restore of `sha`, or a reload without one, would change, per object. [] when unavailable. */
+    async loadPlan(sha?: string): Promise<ProjectVersionChange[]> {
+      try {
+        return await ProjectApi.plan(sha);
       } catch (e: any) {
         if (e instanceof ProjectFeatureUnavailable) return [];
         throw e;

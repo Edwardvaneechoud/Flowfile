@@ -356,7 +356,7 @@ def _run_import_command(
 
 
 def _run_project_command(action: str | None, arg: str | None) -> None:
-    """Headless project init/open/save — the proof that build-from-scratch works without the UI."""
+    """Headless project init/open/save/plan/apply — the proof that build-from-scratch works without the UI."""
     from fastapi import HTTPException
 
     from flowfile_core.auth.utils import get_local_user_id
@@ -395,8 +395,22 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
             sys.exit(1)
         sha = project_sync.save_version(owner_id, arg)
         print(f"Saved version {sha[:8] if sha else '(no changes)'}")
+    elif action == "plan":
+        if not arg:
+            print("Usage: flowfile project plan <sha|.>", file=sys.stderr)
+            sys.exit(1)
+        for c in project_sync.plan(owner_id, None if arg == "." else arg):
+            line = f'{c["change"]} {c["kind"]} "{c["label"]}"'
+            print(f"{line}: {c['consequence']}" if c["consequence"] else line)
+    elif action == "apply":
+        try:
+            result = project_sync.reload_from_disk(owner_id)
+        except HTTPException as e:
+            print(e.detail["message"] if isinstance(e.detail, dict) else e.detail, file=sys.stderr)
+            sys.exit(1)
+        print(f"Imported: {', '.join(f'{k}={n}' for k, n in result.by_kind.items()) or 'nothing'}")
     else:
-        print("Usage: flowfile project {init|open|save} <folder-or-message>", file=sys.stderr)
+        print("Usage: flowfile project {init|open|save|plan|apply} <folder-message-or-sha>", file=sys.stderr)
         sys.exit(1)
 
 
@@ -430,8 +444,9 @@ def main():
     parser.add_argument(
         "component",
         nargs="?",
-        choices=["ui", "core", "worker", "flow", "init", "open", "save", "yxdb", "alteryx"],
-        help="Component to run, project sub-command (init/open/save), convert format (yxdb) or import format (alteryx)",
+        choices=["ui", "core", "worker", "flow", "init", "open", "save", "plan", "apply", "yxdb", "alteryx"],
+        help="Component to run, project sub-command (init/open/save/plan/apply), convert format (yxdb) or import "
+        "format (alteryx)",
     )
     parser.add_argument(
         "file_path", nargs="?", help="Flow file path, project folder, version message, or file/dir to convert"

@@ -1,10 +1,11 @@
 <template>
   <ul class="change-list">
-    <li v-for="c in changes" :key="c.path" class="change" :class="`change--${c.change}`">
+    <li v-for="(c, i) in changes" :key="i" class="change" :class="`change--${c.change}`">
       <i :class="iconFor(c.change)"></i>
       <span class="change__text">
         <strong>{{ c.kind }}</strong> “{{ c.label }}”
         <span class="change__verb">{{ verbFor(c.change) }}</span>
+        <span v-if="c.consequence" class="change__verb">: {{ c.consequence }}</span>
       </span>
     </li>
   </ul>

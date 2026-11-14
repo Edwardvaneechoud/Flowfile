@@ -47,6 +47,7 @@ export interface ProjectVersionChange {
   kind: string; // "flow" | "database connection" | "cloud connection" | "schedule" | "settings"
   label: string;
   path: string;
+  consequence?: string | null;
 }
 
 export interface PlaceholderSecretInput {

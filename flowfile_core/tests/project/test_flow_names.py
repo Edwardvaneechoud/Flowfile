@@ -27,7 +27,8 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
-from flowfile_core.project import git_ops, project_sync, projection
+from flowfile_core.project import git_ops, project_sync
+from flowfile_core.project.service import write_export
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.schemas.input_schema import FullDatabaseConnection
@@ -302,8 +303,7 @@ def test_export_names_every_reference_and_carries_no_secret_or_row_id(tmp_path):
             "name": f"child_{tag}",
         }
 
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert _snapshot(root) == tree, "a second export changed a file"
     finally:
         project_sync.close_project(OWNER)

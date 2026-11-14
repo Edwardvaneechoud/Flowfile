@@ -88,7 +88,7 @@ watch(
     changes.value = [];
     unsaved.value = null;
     try {
-      changes.value = await store.loadVersionChanges(props.version.sha);
+      changes.value = await store.loadPlan(props.version.sha);
     } catch (e: any) {
       ElMessage.error(e?.message || "Could not load changes");
     } finally {

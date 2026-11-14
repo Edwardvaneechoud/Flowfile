@@ -17,6 +17,7 @@ from flowfile_core.catalog import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogDashboard, CatalogTable, CatalogVisualization
 from flowfile_core.project import project_sync, projection
+from flowfile_core.project.service import write_export
 from flowfile_core.schemas.catalog_schema import DashboardKpi, DashboardLayout, DashboardTile
 
 OWNER = 1
@@ -119,8 +120,7 @@ def test_sql_visualization_round_trips_byte_identical(tmp_path):
         assert "thumbnail_data_url" not in entry and "source_table" not in entry
 
         viz_bytes = (root / "visualizations.yaml").read_bytes()
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "visualizations.yaml").read_bytes() == viz_bytes, "re-projection must be byte-identical"
 
         # project -> import -> project must round-trip; upsert by viz_uuid must not duplicate.
@@ -132,8 +132,7 @@ def test_sql_visualization_round_trips_byte_identical(tmp_path):
             rows = db.query(CatalogVisualization).filter_by(created_by=OWNER).all()
             assert len(rows) == 1 and rows[0].viz_uuid == vuuid
             assert rows[0].sql_query == "SELECT region, sales FROM s" and rows[0].source_type == "sql"
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "visualizations.yaml").read_bytes() == viz_bytes, "project->import->project must round-trip"
     finally:
         _clear_viz_dashboards()
@@ -198,8 +197,7 @@ def test_dashboard_round_trips_and_relinks_tiles(tmp_path):
             assert new_viz is not None and dashboard is not None
             stored_tile = json.loads(dashboard.layout_json)["tiles"][0]
             assert stored_tile["viz_id"] == new_viz.id and "viz_uuid" not in stored_tile
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "dashboard must round-trip byte-identically"
     finally:
         _clear_viz_dashboards()
@@ -235,8 +233,7 @@ def test_kpi_tile_round_trips_and_relinks(tmp_path):
             assert stored_tile["viz_id"] == new_viz.id and "viz_uuid" not in stored_tile
             assert stored_tile["type"] == "kpi"
             assert DashboardKpi.model_validate(stored_tile["kpi"]) == kpi
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "KPI dashboard must round-trip byte-identically"
     finally:
         _clear_viz_dashboards()

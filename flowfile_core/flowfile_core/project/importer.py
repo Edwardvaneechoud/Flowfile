@@ -36,8 +36,6 @@ from flowfile_core.database.models import (
     CatalogNotebook,
     CatalogTable,
     CatalogVisualization,
-    CloudStorageConnection,
-    DatabaseConnection,
     FlowRegistration,
     FlowSchedule,
     GlobalArtifact,
@@ -59,7 +57,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
 from flowfile_core.project import kinds, manifest, projection, repository
 from flowfile_core.project.manifest_entries import CloudConnectionEntry, DatabaseConnectionEntry, SchemaColumn
-from flowfile_core.project.models import KeptResources, SetupResult
+from flowfile_core.project.models import SetupResult
 from flowfile_core.project.normalize import atomic_write, dump_yaml, safe_stem, write_yaml
 from flowfile_core.project.projection import _CLOUD_PLAIN_FIELDS, _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
 from flowfile_core.project.secrets_resolver import load_dotenv, placeholder_name, resolve
@@ -359,6 +357,13 @@ def _resolve_namespace(
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
+    def _described(service, row) -> int:
+        """An existing namespace of the importing owner takes the file's description."""
+        if create and row.owner_id == owner_id and (row.description or None) != (description or None):
+            row.description = description
+            service.repo.update_namespace(row)
+        return row.id
+
     def _resolve() -> int | None:
         with get_db_context() as db:
             service = CatalogService(SQLAlchemyCatalogRepository(db))
@@ -377,7 +382,7 @@ def _resolve_namespace(
                 if catalog is None:
                     return None
             if not schema_name:
-                return catalog.id
+                return _described(service, catalog)
             schema = service.repo.get_namespace_by_name(schema_name, catalog.id, owner_id=owner_id, include_public=True)
             if schema is None:
                 if not create:
@@ -389,7 +394,7 @@ def _resolve_namespace(
                 schema = _create_namespace(service, schema_name, owner_id, catalog.id, description, is_public)
                 if schema is None:
                     return None
-            return schema.id
+            return _described(service, schema)
 
     result = _resolve()
     if cache is not None:
@@ -399,7 +404,7 @@ def _resolve_namespace(
 
 def _import_namespaces(root: Path, owner_id: int) -> set[int]:
     """Recreate the owner's namespaces from namespaces.yaml (nested ``catalog -> schemas``); return
-    the set of ids that must survive a prune. Every namespace is get-or-created: the always-seeded
+    the ids it resolved. Every namespace is get-or-created: the always-seeded
     system namespaces resolve in place, while project-specific ones (custom catalogs/schemas and
     demo-seeded ``is_public`` ones the seeder didn't create on this machine) are recreated, preserving
     ``is_public`` so flows/tables can attach to their real schema."""
@@ -1098,172 +1103,159 @@ def _update_schedule_in_place(db, row: FlowSchedule, sd: dict) -> None:
     db.commit()
 
 
-def _prune_owned(db, column, owner_filter, kept: set | None, delete_fn, label: str) -> None:
-    """Run ``delete_fn(db, value)`` for every value of ``column`` matching ``owner_filter`` that is
-    not in ``kept`` (best-effort per row; failures are logged and skipped). ``None`` prunes nothing."""
-    if kept is None:
-        return
-    q = db.query(column).filter(owner_filter)
-    if kept:
-        q = q.filter(~column.in_(kept))
-    for (value,) in q.all():
+def _owner_reg(db, owner_id: int, flow_uuid) -> FlowRegistration | None:
+    return db.query(FlowRegistration).filter_by(owner_id=owner_id, flow_uuid=flow_uuid).first()
+
+
+def _delete_database_connection(ctx: kinds.ExportContext, keys: list) -> None:
+    for name in keys:
+        delete_database_connection(ctx.db, name, ctx.owner_id)
+
+
+def _delete_cloud_connection(ctx: kinds.ExportContext, keys: list) -> None:
+    for name in keys:
+        delete_cloud_connection(ctx.db, name, ctx.owner_id)
+
+
+def _delete_namespaces(ctx: kinds.ExportContext, keys: list) -> None:
+    """Schemas before catalogs, public (seeded) ones never; a namespace still holding tables or flows stays."""
+    wanted = set(keys)
+    rows = (
+        ctx.db.query(CatalogNamespace)
+        .filter(CatalogNamespace.owner_id == ctx.owner_id, CatalogNamespace.is_public.is_(False))
+        .all()
+    )
+    found = []
+    for ns in rows:
+        parent = ctx.db.get(CatalogNamespace, ns.parent_id) if ns.parent_id is not None else None
+        key = (parent.name if parent else ns.name, ns.name) if ns.parent_id is not None else (ns.name,)
+        if key in wanted:
+            found.append((ns.level or 0, ns.id))
+    service = CatalogService(SQLAlchemyCatalogRepository(ctx.db))
+    for _level, ns_id in sorted(found, reverse=True):
         try:
-            delete_fn(db, value)
-        except Exception:
-            logger.warning("Project prune: could not remove %s %s", label, value, exc_info=True)
+            service.delete_namespace(ns_id)
+        except NamespaceNotEmptyError:
+            logger.info("Project apply: namespace %s still has tables/flows; skipping", ns_id)
 
 
-def _prune_removed(owner_id: int, kept: KeptResources, result: SetupResult) -> None:
-    """Delete the owner's resources that are no longer present in the project files.
+def _delete_flow(ctx: kinds.ExportContext, keys: list) -> None:
+    """A flow with its schedules, its artifacts soft-deleted first (``delete_flow`` refuses a flow owning
+    active ones); its file and the handler's copy go after the commit."""
+    db = ctx.db
+    service = CatalogService(SQLAlchemyCatalogRepository(db))
+    for flow_uuid in keys:
+        reg = _owner_reg(db, ctx.owner_id, flow_uuid)
+        if reg is None or not projection.exportable(reg.flow_path):
+            continue
+        reg_id, reg_flow_path = reg.id, reg.flow_path
+        db.query(GlobalArtifact).filter(
+            GlobalArtifact.source_registration_id == reg_id, GlobalArtifact.status == "active"
+        ).update({"status": "deleted"}, synchronize_session=False)
+        db.commit()
+        for s in service.list_schedules(registration_id=reg_id):
+            service.delete_schedule(s.id)
+        service.delete_flow(reg_id, delete_file=False)
+        if service.repo.count_flows_by_path(reg_flow_path) == 0:
+            _after_commit(Path(reg_flow_path).unlink, missing_ok=True)
+        _after_commit(flow_file_handler.evict_flow_by_path, reg_flow_path)
 
-    A project mirrors the owner's whole environment, so on restore/reload the files are the complete
-    intended set. Order matters: models and tables are pruned before flows (a flow can't be deleted
-    while it still owns artifacts), and namespaces last (so emptied custom ones become deletable).
-    Pruning never removes data — table data is kept (``delete_file=False``) and a model is soft-deleted
-    so its blob survives. A ``None`` kept-set means the files say nothing about that category (not
-    tracked, or no file of that kind in the tree), so it is left entirely alone (never pruned); a flow
-    registration the export cannot write is never pruned either. Best-effort per resource: failures
-    are logged, recorded on ``result.prune_errors`` (so the endpoint reports an incomplete prune
-    instead of a silent success), and skipped.
-    """
-    # Kernels are independent of the catalog graph, so order is free. Delete only the config row
-    # (the running container, if any, is dropped by the manager reconcile that follows the import).
+
+def _delete_schedule(ctx: kinds.ExportContext, keys: list) -> None:
+    service = CatalogService(SQLAlchemyCatalogRepository(ctx.db))
+    for flow_uuid, ident in keys:
+        reg = _owner_reg(ctx.db, ctx.owner_id, flow_uuid)
+        if reg is None:
+            continue
+        for s in ctx.db.query(FlowSchedule).filter_by(registration_id=reg.id).all():
+            if (s.schedule_uuid == ident) if isinstance(ident, str) else (_schedule_signature(s) == tuple(ident)):
+                service.delete_schedule(s.id)
+
+
+def _ns_key(db, namespace_id) -> tuple:
+    path = projection._namespace_path(db, namespace_id) or {}
+    return path.get("catalog"), path.get("schema")
+
+
+def _delete_tables(ctx: kinds.ExportContext, keys: list) -> None:
+    """The row only, its data kept; a flow-produced virtual table is never in the files, so never deleted."""
+    wanted = set(keys)
+    service = CatalogService(SQLAlchemyCatalogRepository(ctx.db))
+    for table in ctx.db.query(CatalogTable).filter(CatalogTable.owner_id == ctx.owner_id).all():
+        if table.table_type == "virtual" and not table.sql_query:
+            continue
+        if (*_ns_key(ctx.db, table.namespace_id), table.name) in wanted:
+            service.delete_table(table.id, delete_file=False)
+
+
+def _delete_models(ctx: kinds.ExportContext, keys: list) -> None:
+    """Soft-deleted: the version is marked deleted and its file stays."""
+    wanted = set(keys)
+    rows = ctx.db.query(GlobalArtifact).filter(
+        GlobalArtifact.owner_id == ctx.owner_id, GlobalArtifact.status == "active"
+    )
+    for a in rows.all():
+        if (*_ns_key(ctx.db, a.namespace_id), a.name, a.version) in wanted:
+            a.status = "deleted"
+    ctx.db.commit()
+
+
+def _delete_kernels(ctx: kinds.ExportContext, keys: list) -> None:
+    """The configuration row; a running container is dropped by the kernel reconcile after the commit."""
     from flowfile_core.kernel.persistence import delete_kernel
 
-    with get_db_context() as db:
-        _prune_owned(db, Kernel.id, Kernel.user_id == owner_id, kept.kernel_ids, delete_kernel, "kernel")
-    # Dashboards then visualizations (tiles reference viz by value, not FK, so order is free). The
-    # GraphicWalker spec is the whole artifact — there is no separate blob to preserve.
-    # Grants must be cleaned explicitly: bulk Query.delete() bypasses the ORM after_delete backstop
-    # (see auth/sharing.py:373-374), so orphaned resource_grants rows would survive and could
-    # re-attach to a future resource that reuses the freed rowid.
-    with get_db_context() as db:
-        if kept.dashboard_uuids is not None:
-            dq = db.query(CatalogDashboard.id).filter(CatalogDashboard.created_by == owner_id)
-            if kept.dashboard_uuids:
-                dq = dq.filter(~CatalogDashboard.dashboard_uuid.in_(kept.dashboard_uuids))
-            for (dash_id,) in dq.all():
-                sharing.delete_grants_for_resource(db, "dashboard", dash_id)
-                db.query(CatalogDashboard).filter_by(id=dash_id).delete()
-        if kept.viz_uuids is not None:
-            vq = db.query(CatalogVisualization.id).filter(CatalogVisualization.created_by == owner_id)
-            if kept.viz_uuids:
-                vq = vq.filter(~CatalogVisualization.viz_uuid.in_(kept.viz_uuids))
-            for (viz_id,) in vq.all():
-                sharing.delete_grants_for_resource(db, "visualization", viz_id)
-                db.query(CatalogVisualization).filter_by(id=viz_id).delete()
-        db.commit()
-    # Notebooks (independent of the catalog graph). Clean grants explicitly (bulk delete bypasses the
-    # ORM after_delete backstop) and drop the on-disk content file so a pruned notebook leaves nothing.
-    if kept.notebook_uuids is not None:
+    for kernel_id in keys:
+        if ctx.db.query(Kernel.id).filter(Kernel.id == kernel_id, Kernel.user_id == ctx.owner_id).first():
+            delete_kernel(ctx.db, kernel_id)
+
+
+def _delete_visualizations(ctx: kinds.ExportContext, keys: list) -> None:
+    """Grants go explicitly: a bulk delete skips the ORM backstop, and a freed rowid could take them over."""
+    for (viz_id,) in ctx.db.query(CatalogVisualization.id).filter(
+        CatalogVisualization.created_by == ctx.owner_id, CatalogVisualization.viz_uuid.in_(keys)
+    ):
+        sharing.delete_grants_for_resource(ctx.db, "visualization", viz_id)
+        ctx.db.query(CatalogVisualization).filter_by(id=viz_id).delete()
+    ctx.db.commit()
+
+
+def _delete_dashboards(ctx: kinds.ExportContext, keys: list) -> None:
+    for (dash_id,) in ctx.db.query(CatalogDashboard.id).filter(
+        CatalogDashboard.created_by == ctx.owner_id, CatalogDashboard.dashboard_uuid.in_(keys)
+    ):
+        sharing.delete_grants_for_resource(ctx.db, "dashboard", dash_id)
+        ctx.db.query(CatalogDashboard).filter_by(id=dash_id).delete()
+    ctx.db.commit()
+
+
+def _delete_notebook(ctx: kinds.ExportContext, keys: list) -> None:
+    for nb_id, nb_uuid in ctx.db.query(CatalogNotebook.id, CatalogNotebook.notebook_uuid).filter(
+        CatalogNotebook.owner_id == ctx.owner_id, CatalogNotebook.notebook_uuid.in_(keys)
+    ):
+        sharing.delete_grants_for_resource(ctx.db, "catalog_notebook", nb_id)
+        ctx.db.query(CatalogNotebook).filter_by(id=nb_id).delete()
+        _after_commit(notebook_store.delete_notebook_file, ctx.owner_id, nb_uuid)
+    ctx.db.commit()
+
+
+def _delete_removed(owner_id: int, removed) -> None:
+    """Delete what the comparison found removed, each kind's keys through its ``delete``, in reverse kind order
+    (models and tables before flows, namespaces after them), a longer key first, so a schema goes before its
+    catalog. A delete that fails raises, naming the kind and the object, so the apply rolls back whole."""
+    by_kind: dict[str, list] = {}
+    for change in removed:
+        by_kind.setdefault(change.kind, []).append(change)
+    for kind in reversed(kinds.ordered()):
+        changes = by_kind.get(kind.name)
+        if not changes or kind.delete is None:
+            continue
         with get_db_context() as db:
-            nq = db.query(CatalogNotebook.id, CatalogNotebook.notebook_uuid).filter(
-                CatalogNotebook.owner_id == owner_id
-            )
-            if kept.notebook_uuids:
-                nq = nq.filter(~CatalogNotebook.notebook_uuid.in_(kept.notebook_uuids))
-            for nb_id, nb_uuid in nq.all():
-                sharing.delete_grants_for_resource(db, "catalog_notebook", nb_id)
-                db.query(CatalogNotebook).filter_by(id=nb_id).delete()
-                _after_commit(notebook_store.delete_notebook_file, owner_id, nb_uuid)
-            db.commit()
-    # Models first (soft-delete, keep the blob): a kept flow's pruned artifact just goes inactive.
-    # A pruned flow's still-active artifacts are NOT touched here (delete_flow can't drop them — it
-    # raises FlowHasArtifactsError); they are soft-deleted in the flow-prune branch below regardless
-    # of this toggle, so the flow delete succeeds. None = not tracked here, leave them all.
-    if kept.artifact_ids is not None:
-        with get_db_context() as db:
-            q = db.query(GlobalArtifact).filter(
-                GlobalArtifact.owner_id == owner_id, GlobalArtifact.status == "active"
-            )
-            if kept.artifact_ids:
-                q = q.filter(~GlobalArtifact.id.in_(kept.artifact_ids))
-            q.update({"status": "deleted"}, synchronize_session=False)
-            db.commit()
-    # Tables before flows (keep the data); skip flow-virtual tables (not projected, not ours to prune).
-    if kept.table_ids is not None:
-        with get_db_context() as db:
-            service = CatalogService(SQLAlchemyCatalogRepository(db))
-            q = db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id)
-            if kept.table_ids:
-                q = q.filter(~CatalogTable.id.in_(kept.table_ids))
-            for table in q.all():
-                if table.table_type == "virtual" and not table.sql_query:
-                    continue
+            ctx = kinds.ExportContext(db=db, owner_id=owner_id)
+            for c in sorted(changes, key=lambda c: -len(c.key) if isinstance(c.key, tuple) else 0):
                 try:
-                    service.delete_table(table.id, delete_file=False)
-                except Exception:
-                    logger.warning("Project prune: could not remove table %s", table.name, exc_info=True)
-    with get_db_context() as db:
-        service = CatalogService(SQLAlchemyCatalogRepository(db))
-        fq = db.query(FlowRegistration).filter(FlowRegistration.owner_id == owner_id)
-        if kept.flow_uuids:
-            fq = fq.filter(~FlowRegistration.flow_uuid.in_(kept.flow_uuids))
-        regs = [] if kept.flow_uuids is None else fq.all()
-        for reg in regs:
-            # A registration the export never writes (no file, .flowfile, kernel scratch) isn't in the files.
-            if not projection.exportable(reg.flow_path):
-                continue
-            # Read attributes into locals before delete_flow expires/detaches the ORM row.
-            reg_flow_path = reg.flow_path
-            reg_flow_uuid = reg.flow_uuid
-            # A pruned flow must be fully removed even when this project doesn't track artifacts
-            # (kept_artifact_ids is None, so the soft-delete pass above was skipped). Release the
-            # flow's still-active artifacts here regardless of the toggle, otherwise delete_flow
-            # raises FlowHasArtifactsError and the flow survives in DB+disk as a resurrectable ghost.
-            db.query(GlobalArtifact).filter(
-                GlobalArtifact.source_registration_id == reg.id,
-                GlobalArtifact.status == "active",
-            ).update({"status": "deleted"}, synchronize_session=False)
-            db.commit()
-            try:
-                for s in service.list_schedules(registration_id=reg.id):
-                    service.delete_schedule(s.id)
-                service.delete_flow(reg.id, delete_file=False)
-                if service.repo.count_flows_by_path(reg_flow_path) == 0:
-                    _after_commit(Path(reg_flow_path).unlink, missing_ok=True)
-                # Evict from the in-memory handler too (catalog delete only touches DB+disk), so a
-                # flow open before a restore can't ghost in _flows / a user session after pruning.
-                _after_commit(flow_file_handler.evict_flow_by_path, reg_flow_path)
-            except Exception:
-                logger.warning("Project prune: could not remove flow %s", reg_flow_uuid, exc_info=True)
-                result.prune_errors.append(f"flow:{reg_flow_uuid}")
-    with get_db_context() as db:
-        _prune_owned(
-            db,
-            DatabaseConnection.connection_name,
-            DatabaseConnection.user_id == owner_id,
-            kept.db_connections,
-            lambda d, name: delete_database_connection(d, name, owner_id),
-            "db conn",
-        )
-    with get_db_context() as db:
-        _prune_owned(
-            db,
-            CloudStorageConnection.connection_name,
-            CloudStorageConnection.user_id == owner_id,
-            kept.cloud_connections,
-            lambda d, name: delete_cloud_connection(d, name, owner_id),
-            "cloud conn",
-        )
-    # Namespaces last: flows were pruned above, so an emptied custom schema is now deletable. Delete
-    # schemas (level 1) before catalogs (level 0); seeded is_public namespaces are excluded entirely.
-    if kept.namespace_ids is None:
-        return
-    with get_db_context() as db:
-        service = CatalogService(SQLAlchemyCatalogRepository(db))
-        nq = db.query(CatalogNamespace.id, CatalogNamespace.level).filter(
-            CatalogNamespace.owner_id == owner_id, CatalogNamespace.is_public.is_(False)
-        )
-        if kept.namespace_ids:
-            nq = nq.filter(~CatalogNamespace.id.in_(kept.namespace_ids))
-        for ns_id, _level in sorted(nq.all(), key=lambda r: -(r[1] or 0)):
-            try:
-                service.delete_namespace(ns_id)
-            except NamespaceNotEmptyError:
-                logger.info("Project prune: namespace %s still has tables/flows; skipping", ns_id)
-            except Exception:
-                logger.warning("Project prune: could not delete namespace %s", ns_id, exc_info=True)
+                    kind.delete(ctx, [c.key])
+                except Exception as e:
+                    raise ValueError(f'Could not delete {kind.label} "{c.label}": {e}') from e
 
 
 def _reconcile_kernel_manager(owner_id: int) -> None:
@@ -1283,13 +1275,13 @@ def _reconcile_kernel_manager(owner_id: int) -> None:
         logger.debug("Kernel manager reconcile after import skipped", exc_info=True)
 
 
-def import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResult:
+def import_project(root: Path, owner_id: int, removed=()) -> SetupResult:
     """Rebuild this install's environment from the project folder. Always completes.
 
     Projection is suppressed for the whole rebuild: importing flows/tables/etc. would otherwise fire
     the DB→file hooks and regenerate the manifests from the half-built DB, wiping the very files being
-    read. With ``prune=True`` (restore / reload) resources absent from the files are removed so the DB
-    matches the files exactly; ``prune=False`` (open) is additive.
+    read. ``removed`` is the ``removed`` rows of ``kinds.compare(snapshot, target)`` (restore / reload): those
+    objects are deleted after every kind's import, and nothing else is; open passes none and is additive.
 
     The database changes are one transaction (``apply_transaction``): a failure anywhere rolls all of
     them back. Flow, notebook and empty-table files, the flow handler's loads and evictions and the
@@ -1302,7 +1294,7 @@ def import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResul
         token = _after_commit_queue.set(queue)
         try:
             with apply_transaction():
-                result = _do_import_project(root, owner_id, prune)
+                result = _do_import_project(root, owner_id, removed)
         finally:
             _after_commit_queue.reset(token)
         _run_after_commit(queue)
@@ -1605,12 +1597,12 @@ def _owner_username(owner_id: int) -> str | None:
         return user.username if user is not None else None
 
 
-def _do_import_project(root: Path, owner_id: int, prune: bool = False) -> SetupResult:
+def _do_import_project(root: Path, owner_id: int, removed=()) -> SetupResult:
     result = SetupResult()
     token = _ns_resolve_cache.set({})
     owner_token = _import_owner.set((_owner_username(owner_id), result.not_applied))
     try:
-        return _do_import_project_inner(root, owner_id, prune, result)
+        return _do_import_project_inner(root, owner_id, removed, result)
     finally:
         _import_owner.reset(owner_token)
         _ns_resolve_cache.reset(token)
@@ -1632,9 +1624,7 @@ def _report_reserved(root: Path, listed: list[str]) -> None:
                             _not_applied(p.relative_to(root).as_posix())
 
 
-def _do_import_project_inner(
-    root: Path, owner_id: int, prune: bool = False, result: SetupResult | None = None
-) -> SetupResult:
+def _do_import_project_inner(root: Path, owner_id: int, removed=(), result: SetupResult | None = None) -> SetupResult:
     dotenv = load_dotenv(root)
     result = result if result is not None else SetupResult()
     m = manifest.read_manifest(root)
@@ -1700,62 +1690,39 @@ def _do_import_project_inner(
 
     schedule_files = folder_files("schedule", manifest.schedules_dir(root), "*.yaml")
     _assert_within_cap(schedule_files, _MAX_FLOWS, "schedules")
+    scheduled_flows = set()
     for f in schedule_files:
         data = _read_yaml(f)
         if _applies(f.relative_to(root).as_posix(), data):
             result.imported_schedules += _import_schedules(data, owner_id)
+            scheduled_flows.add(data.get("flow_uuid"))
     if schedule_files:
         by_kind["schedule"] = result.imported_schedules
 
-    # After flows, so namespace and lineage resolve; an unlisted or absent manifest yields None.
-    def root_kind(name: str, path: Path, run) -> set | None:
-        if not root_file(name, path):
-            return None
-        kept = run()
-        by_kind[name] = len(kept)
-        return kept
+    # After flows, so namespace and lineage resolve.
+    def root_kind(name: str, path: Path, run) -> None:
+        if root_file(name, path):
+            by_kind[name] = len(run())
 
-    kept_table_ids = root_kind("tables", manifest.tables_manifest_path(root), lambda: _import_tables(root, owner_id))
-    kept_artifact_ids = root_kind(
-        "models", manifest.models_manifest_path(root), lambda: _import_artifacts(root, owner_id)
-    )
+    root_kind("tables", manifest.tables_manifest_path(root), lambda: _import_tables(root, owner_id))
+    root_kind("models", manifest.models_manifest_path(root), lambda: _import_artifacts(root, owner_id))
     kernel_ids_used: dict[str, str] = {}
-    kept_kernel_ids = root_kind(
-        "kernels", manifest.kernels_manifest_path(root), lambda: _import_kernels(root, owner_id, kernel_ids_used)
-    )
+    root_kind("kernels", manifest.kernels_manifest_path(root), lambda: _import_kernels(root, owner_id, kernel_ids_used))
     # Visualizations after tables (source re-links by name); dashboards after visualizations
     # (tiles re-link by viz_uuid).
-    kept_viz_uuids = root_kind(
+    root_kind(
         "visualizations",
         manifest.visualizations_manifest_path(root),
         lambda: _import_visualizations(root, owner_id),
     )
-    kept_dashboard_uuids = root_kind(
-        "dashboards", manifest.dashboards_manifest_path(root), lambda: _import_dashboards(root, owner_id)
-    )
+    root_kind("dashboards", manifest.dashboards_manifest_path(root), lambda: _import_dashboards(root, owner_id))
     kept_notebook_uuids = None
     if folder_files("notebook", manifest.notebooks_dir(root), "*.notebook.yaml"):
         kept_notebook_uuids = _import_notebooks(root, owner_id, kernel_ids_used)
         by_kind["notebook"] = len(kept_notebook_uuids)
 
-    if prune:
-        _prune_removed(
-            owner_id,
-            # A folder with no file of its kind says nothing about it, so that kind is not pruned.
-            KeptResources(
-                flow_uuids=kept_flow_uuids if flow_files else None,
-                db_connections=kept_db if db_files else None,
-                cloud_connections=kept_cloud if cloud_files else None,
-                namespace_ids=kept_namespace_ids,
-                table_ids=kept_table_ids,
-                artifact_ids=kept_artifact_ids,
-                kernel_ids=kept_kernel_ids,
-                viz_uuids=kept_viz_uuids,
-                dashboard_uuids=kept_dashboard_uuids,
-                notebook_uuids=kept_notebook_uuids,
-            ),
-            result,
-        )
+    # A flow's schedule file that is present was reconciled by its import; an entry without an id has another key.
+    _delete_removed(owner_id, [c for c in removed if not (c.kind == "schedule" and c.key[0] in scheduled_flows)])
 
     _after_commit(_reconcile_kernel_manager, owner_id)
 
