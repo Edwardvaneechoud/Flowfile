@@ -1388,6 +1388,7 @@ onMounted(() => {
       if (!running && wasRunning) {
         flowStore.fetchArtifacts();
         flowStore.fetchSettingsValidation();
+        flowStore.fetchPlacement();
       }
     },
   );

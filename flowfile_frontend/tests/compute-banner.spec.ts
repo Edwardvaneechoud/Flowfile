@@ -1,6 +1,15 @@
 import { test, expect } from "@playwright/test";
 
-import { API_URL, authHeaders, closeFlow, createFlow, getAuthToken } from "./helpers/api";
+import {
+  API_URL,
+  authHeaders,
+  closeFlow,
+  createFlow,
+  getAuthToken,
+  lastRunStart,
+  nodeResult,
+  waitForRun,
+} from "./helpers/api";
 import { clickRun, openFlow } from "./helpers/canvas";
 
 /**
@@ -58,5 +67,55 @@ test.describe("Compute error banner", () => {
     await expect(banner).toBeVisible({ timeout: 30_000 });
     await expect(banner).toContainText("This flow cannot run on its compute backend");
     await expect(banner).toContainText('cannot run on backend "worker:e2e-missing"');
+  });
+
+  test("a refused flow runs after its backend configuration is corrected", async ({
+    page,
+    request,
+  }) => {
+    await openFlow(page, token, flowId, flowName);
+    const node = page.locator('.vue-flow__node[data-id="1"]');
+    const badge = node.getByTestId("placement-badge");
+    await expect(badge).toHaveText("can't run", { timeout: 15_000 });
+
+    const previousStart = await lastRunStart(request, token, flowId);
+    await clickRun(page);
+    const refusedRun = await waitForRun(request, token, flowId, previousStart);
+    expect(refusedRun.success).toBe(false);
+    await expect(page.locator(".compute-error-banner")).toContainText("worker:e2e-missing");
+
+    const headers = authHeaders(token);
+    const settings = await request.get(`${API_URL}/flow_settings?flow_id=${flowId}`, { headers });
+    expect(settings.ok()).toBe(true);
+    const corrected = await request.post(`${API_URL}/flow_settings`, {
+      headers,
+      data: { ...(await settings.json()), execution_location: "auto" },
+    });
+    expect(corrected.ok()).toBe(true);
+
+    // Observe this flow's real preview, not another tab's placement or a fabricated response.
+    const preview = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname.endsWith("/flow/placement") &&
+        url.searchParams.get("flow_id") === String(flowId) &&
+        url.searchParams.get("probe") === "false"
+      );
+    });
+    await page.reload();
+    await expect(page.locator(".flow-tab.active")).toContainText(flowName);
+    const response = await preview;
+    expect(response.ok()).toBe(true);
+    const placement = await response.json();
+    expect(placement.available).toBe(true);
+    expect(placement.assignment["1"]).toBe("worker");
+    expect(placement.refusals).toEqual([]);
+    await expect(badge).toHaveCount(0);
+
+    await clickRun(page);
+    const recoveredRun = await waitForRun(request, token, flowId, refusedRun.start_time);
+    expect(recoveredRun.success).toBe(true);
+    expect(nodeResult(recoveredRun, "1")?.success).toBe(true);
+    await expect(page.locator(".compute-error-banner")).toHaveCount(0);
   });
 });

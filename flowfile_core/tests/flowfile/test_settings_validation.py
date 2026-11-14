@@ -600,13 +600,48 @@ def _get_test_client():
     return client
 
 
+@pytest.mark.parametrize("validation_enabled", [True, False])
+def test_endpoint_reports_a_cached_node_after_a_real_run(validation_enabled):
+    from flowfile_core import flow_file_handler
+
+    client = _get_test_client()
+    flow_id = 9872
+    if flow_file_handler.get_flow(flow_id) is not None:
+        flow_file_handler.delete_flow(flow_id)
+    flow_file_handler.register_flow(
+        schemas.FlowSettings(
+            flow_id=flow_id, name="sv_cached", path=".", execution_location="local",
+            validate_settings=validation_enabled,
+        ),
+        user_id=1,
+    )
+    try:
+        graph = flow_file_handler.get_flow(flow_id)
+        add_manual_input(graph, BASE_DATA, node_id=1)
+        graph.get_node(1).node_settings.cache_results = True
+
+        def cached_nodes():
+            response = client.get("/flow/placement", params={"flow_id": flow_id})
+            assert response.status_code == 200
+            return response.json()["cached_node_ids"]
+
+        assert cached_nodes() == []
+        assert graph.run_graph().success
+        assert cached_nodes() == [1]
+
+        graph.flow_settings = graph.flow_settings.model_copy(update={"execution_location": "worker"})
+        assert cached_nodes() == []
+    finally:
+        flow_file_handler.delete_flow(flow_id)
+
+
 def test_endpoint_unknown_flow_returns_404():
     client = _get_test_client()
     response = client.get("/flow/settings_validation", params={"flow_id": 999999})
     assert response.status_code == 404
 
 
-def test_endpoint_response_shape():
+def test_endpoint_response_shape(monkeypatch):
     from flowfile_core import flow_file_handler
 
     client = _get_test_client()
@@ -619,6 +654,11 @@ def test_endpoint_response_shape():
     add_promise(graph, "group_by", 2)
     connect(graph, 1, 2)
     add_group_by(graph, 2, [("gone", "groupby")])
+
+    def placement_must_not_run():
+        raise AssertionError("Static validation must not compute placement")
+
+    monkeypatch.setattr(graph, "preview_placement", placement_must_not_run)
     try:
         response = client.get("/flow/settings_validation", params={"flow_id": flow_id})
         assert response.status_code == 200
@@ -872,13 +912,22 @@ def cloud_writer_graph(graph: FlowGraph | None = None, **overrides) -> FlowGraph
 
 
 def cloud_reader_graph(resource_path: str) -> FlowGraph:
-    graph = create_graph()
-    add_promise(graph, "cloud_storage_reader", 1)
-    graph.add_cloud_storage_reader(input_schema.NodeCloudStorageReader.model_validate({
-        "flow_id": graph.flow_id, "node_id": 1, "user_id": 1,
-        "cloud_storage_settings": {"resource_path": resource_path, "file_format": "parquet", "auth_mode": "aws-cli"},
-    }))
-    return graph
+    from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
+
+    # These are static path-validation fixtures, not reads of a real S3 object.
+    token = schema_prefetch_blocked.set(True)
+    try:
+        graph = create_graph()
+        add_promise(graph, "cloud_storage_reader", 1)
+        graph.add_cloud_storage_reader(input_schema.NodeCloudStorageReader.model_validate({
+            "flow_id": graph.flow_id, "node_id": 1, "user_id": 1,
+            "cloud_storage_settings": {
+                "resource_path": resource_path, "file_format": "parquet", "auth_mode": "aws-cli",
+            },
+        }))
+        return graph
+    finally:
+        schema_prefetch_blocked.reset(token)
 
 
 def test_user_cloud_writer_without_a_path_warns():
