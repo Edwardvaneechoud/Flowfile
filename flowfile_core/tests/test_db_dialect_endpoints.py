@@ -703,13 +703,51 @@ def test_a_dotted_database_name_never_reaches_the_snowflake_uri(snowflake_availa
     assert client.post("/db_connection_lib", json=_sf_body()).status_code == 200
     response = client.post("/db_schemas", json=_sf_reference_settings(database_name=database_name))
     assert response.status_code == 422, response.text
-    assert response.json()["detail"].startswith(f"'{database_name}' is not a Snowflake database name")
+    assert "Invalid SQL identifier" in str(response.json()["detail"])
 
 
-@pytest.mark.parametrize("database_name", ["a/b", "x?y=1", "has space", '"My DB"', "1ST"])
+@pytest.mark.parametrize("database_name", ["a/b", "x?y=1", "has space", '"open', "1ST", 'a"b'])
 def test_a_database_name_that_is_no_identifier_is_refused_by_the_settings(snowflake_available, database_name):
     response = client.post("/db_schemas", json=_sf_reference_settings(database_name=database_name))
     assert response.status_code == 422, response.text
+
+
+def test_db_dialects_says_which_dialects_take_quoted_names():
+    by_name = {d["name"]: d for d in client.get("/db_dialects").json()}
+    assert by_name["snowflake"]["quoted_identifiers"] is True
+    assert all(d["quoted_identifiers"] is False for name, d in by_name.items() if name != "snowflake")
+
+
+def test_quoted_snowflake_names_reach_the_uri_and_the_schema_path_as_given(snowflake_available, monkeypatch):
+    seen: list[tuple] = []
+    monkeypatch.setattr(
+        SnowflakeDialect, "list_schemas", lambda self, uri: seen.append(("schemas", uri)) or ['"My Schema"']
+    )
+    monkeypatch.setattr(
+        SnowflakeDialect, "list_tables", lambda self, uri, schema: seen.append(("tables", uri, schema)) or ["T"]
+    )
+    assert client.post("/db_connection_lib", json=_sf_body()).status_code == 200
+    database = '"USER$evaneechoud"'
+    response = client.post("/db_schemas", json=_sf_reference_settings(database_name=database))
+    assert response.status_code == 200, response.text
+    settings = _sf_reference_settings(database_name=database, schema_name='"My Schema"')
+    response = client.post("/db_tables", json=settings)
+    assert response.status_code == 200, response.text
+    path = "/%22USER%24evaneechoud%22?"
+    assert seen[0][0] == "schemas" and path in seen[0][1]
+    assert seen[1][0] == "tables" and path in seen[1][1]
+    assert seen[1][2] == '"USER$evaneechoud"."My Schema"'
+
+
+@pytest.mark.parametrize("schema_name", ['"main"', "ma$in"])
+def test_a_quoted_schema_is_refused_for_a_dialect_that_does_not_take_one(tmp_path, schema_name):
+    db_path = str(tmp_path / "plain.db")
+    sqlite3.connect(db_path).close()
+    response = client.post("/db_tables", json=_browse_settings("sqlite", db_path) | {"schema_name": schema_name})
+    assert response.status_code == 422, response.text
+    assert response.json() == {
+        "detail": f"Invalid SQL identifier: '{schema_name}'. Only letters, numbers, and underscores are allowed."
+    }
 
 
 def test_db_databases_failure_is_a_422_with_a_string_detail(snowflake_available, monkeypatch):

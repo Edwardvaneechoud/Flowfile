@@ -864,3 +864,132 @@ def test_unreachable_host(monkeypatch):
     snowflake_auth.forget_access_tokens()
     with pytest.raises(SnowflakeAuthError, match="Could not reach Snowflake at acct.snowflakecomputing.com"):
         snowflake_auth.access_token_for("acct.snowflakecomputing.com", "r")
+
+
+def test_ddl_identifier_requotes_a_name_that_only_looks_quoted():
+    hostile = '"a" NUMBER); DROP TABLE t; --"'
+    assert ddl_identifier(hostile) == '"' + hostile.replace('"', '""') + '"'
+    assert ddl_identifier('"a"b"') == '"""a""b"""'
+    assert ddl_identifier('"ok ""name"""') == '"ok ""name"""'
+
+
+def test_a_quoted_database_round_trips_through_the_uri_and_reaches_connect(monkeypatch):
+    uri = dialect.build_uri(
+        host="myorg-acct.snowflakecomputing.com",
+        port=443,
+        username="me",
+        database='"USER$evaneechoud"',
+        warehouse='"my_wh"',
+        auth=AUTH_ACCESS_TOKEN,
+    )
+    target = _parse_uri(dialect.with_credentials(uri, "tok"))
+    assert (target.database, target.warehouse, target.secret) == ('"USER$evaneechoud"', '"my_wh"', "tok")
+    assert construct_sql_uri(database_type="snowflake", url=uri, password="tok") == dialect.with_credentials(uri, "tok")
+
+    seen: dict = {}
+
+    class _Connector:
+        @staticmethod
+        def connect(**kwargs):
+            seen.update(kwargs)
+            return object()
+
+    monkeypatch.setattr("shared.db_dialects.snowflake._import_connector", lambda: _Connector)
+    dialect._connect(dialect.with_credentials(uri, "tok"))
+    assert seen["database"] == '"USER$evaneechoud"'
+    assert seen["warehouse"] == '"my_wh"'
+
+
+def test_tables_of_a_quoted_schema_path_are_listed_with_the_path_as_given(fake_session):
+    cursor = fake_session(None, {'SHOW TERSE OBJECTS IN SCHEMA "DB"."My Schema"': [{"name": "orders"}]})
+    assert dialect.list_tables("snowflake://u:t@h:443", '"DB"."My Schema"') == ['"orders"']
+    with pytest.raises(ValueError, match="not a Snowflake schema name"):
+        dialect.list_tables("snowflake://u:t@h:443", '"DB".x; DROP TABLE t')
+    assert cursor.executed == ['SHOW TERSE OBJECTS IN SCHEMA "DB"."My Schema"']
+
+
+class _RecordingCursor:
+    def __init__(self):
+        self.executed: list[str] = []
+
+    def execute(self, sql: str) -> None:
+        self.executed.append(sql)
+
+
+def _record_writes(monkeypatch) -> _RecordingCursor:
+    cursor = _RecordingCursor()
+
+    @contextmanager
+    def fake_cursor(self, uri):
+        yield cursor
+
+    monkeypatch.setattr(SnowflakeDialect, "_cursor", fake_cursor)
+    return cursor
+
+
+def test_write_to_a_quoted_target_keeps_each_part_and_stages_beside_it(monkeypatch):
+    cursor = _record_writes(monkeypatch)
+    uri = dialect.build_uri(host="h", port=443, username="u", password="p")
+    dialect.write(pl.DataFrame({"a": [1]}), uri=uri, table_name='"my.db"."My Schema".orders', if_exists="replace")
+    create, stage, put, copy = cursor.executed
+    assert create == 'CREATE OR REPLACE TABLE "my.db"."My Schema".orders (a NUMBER(38,0))'
+    assert stage.startswith('CREATE TEMPORARY STAGE "my.db"."My Schema".FLOWFILE_STAGE_')
+    stage_name = stage.removeprefix("CREATE TEMPORARY STAGE ")
+    assert f"@{stage_name} " in put
+    assert copy.startswith(f'COPY INTO "my.db"."My Schema".orders FROM @{stage_name} ')
+
+
+def test_write_to_a_quoted_database_on_the_connection(monkeypatch):
+    cursor = _record_writes(monkeypatch)
+    uri = dialect.build_uri(host="h", port=443, username="u", password="p", database='"USER$evaneechoud"')
+    dialect.write(pl.DataFrame({"a": [1]}), uri=uri, table_name='"Raw".T', if_exists="append")
+    assert cursor.executed[0] == 'CREATE TABLE IF NOT EXISTS "Raw".T (a NUMBER(38,0))'
+
+
+@pytest.mark.parametrize("table_name", ['"open.T', 'a"b', "a;b", '"a"b".T', '"a"."b"."c"."d"'])
+def test_write_refuses_a_malformed_target_before_connecting(monkeypatch, table_name):
+    cursor = _record_writes(monkeypatch)
+    uri = dialect.build_uri(host="h", port=443, username="u", password="p", database="D")
+    with pytest.raises(ValueError, match="not a Snowflake table name"):
+        dialect.write(pl.DataFrame({"a": [1]}), uri=uri, table_name=table_name)
+    assert cursor.executed == []
+
+
+class _DiscoverCursor:
+    """Answers the statements ``discover`` runs."""
+
+    def __init__(self):
+        self.description: list[_Column] = []
+        self._rows: list[tuple] = []
+
+    def execute(self, sql: str) -> None:
+        answers = {
+            "SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_WAREHOUSE(), CURRENT_DATABASE()": (
+                ["u", "r", "w", "d"],
+                [("ME", "SYSADMIN", "my_wh", "USER$evaneechoud")],
+            ),
+            "SHOW WAREHOUSES": (["name"], [("COMPUTE_WH",), ("my_wh",)]),
+            "SHOW DATABASES": (["name"], [("SALES",), ("USER$evaneechoud",), ("My.DB",)]),
+            "SELECT CURRENT_AVAILABLE_ROLES()": (["roles"], [('["SYSADMIN","PUBLIC"]',)]),
+        }
+        columns, self._rows = answers[sql]
+        self.description = [_Column(c) for c in columns]
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+def test_discover_answers_warehouses_and_databases_as_they_work_verbatim(monkeypatch):
+    @contextmanager
+    def fake_cursor(self, uri):
+        yield _DiscoverCursor()
+
+    monkeypatch.setattr(SnowflakeDialect, "_cursor", fake_cursor)
+    info = dialect.discover("snowflake://u:t@h:443")
+    assert info["warehouses"] == ["COMPUTE_WH", '"my_wh"']
+    assert info["databases"] == ["SALES", '"USER$evaneechoud"', '"My.DB"']
+    assert (info["warehouse"], info["database"]) == ('"my_wh"', '"USER$evaneechoud"')
+    assert (info["user"], info["role"], info["roles"]) == ("ME", "SYSADMIN", ["PUBLIC", "SYSADMIN"])

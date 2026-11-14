@@ -21,6 +21,11 @@ Contract notes:
   reaches many databases (Snowflake): the connection's database is then only a
   default, and a node may name another. The base answers one database per
   connection.
+- ``checked_identifier_path`` is the injection defence for every database,
+  schema and table name concatenated into SQL. The base keeps the historical
+  plain rule; only a dialect with ``quoted_identifiers`` takes double-quoted
+  parts (and ``$``), so a quoted name never reaches a writer that wraps or
+  splits names itself.
 """
 
 from __future__ import annotations
@@ -28,6 +33,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, ClassVar
+
+from shared.db_dialects.identifiers import is_plain_path
 
 if TYPE_CHECKING:
     import polars as pl
@@ -53,6 +60,7 @@ class DbDialect:
     auth_methods: ClassVar[tuple[str, ...]] = ()
     saved_connection_only: ClassVar[bool] = False
     browses_databases: ClassVar[bool] = False
+    quoted_identifiers: ClassVar[bool] = False
 
     @property
     def uri_scheme(self) -> str:
@@ -157,6 +165,17 @@ class DbDialect:
     def query_schema(self, uri: str, query: str) -> pl.Schema | None:
         """Fast schema for an arbitrary query without executing it; None = generic path."""
         return None
+
+    def checked_identifier_path(self, value: str, what: str = "name") -> str:
+        """``value`` as given when it is safe to put verbatim into this dialect's SQL, else ``ValueError``.
+
+        The base rule: each dot-separated part letters, digits and underscores, not starting with a digit.
+        ``what`` names the value for a dialect whose message says what it is; the base message is the
+        historical one.
+        """
+        if not isinstance(value, str) or not is_plain_path(value):
+            raise ValueError(f"Invalid SQL identifier: '{value}'. Only letters, numbers, and underscores are allowed.")
+        return value
 
     def checked_database(self, name: str) -> str:
         """A database name a node picked, checked as one identifier before it goes into a URI.

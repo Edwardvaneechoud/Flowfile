@@ -1,4 +1,3 @@
-import re
 from collections.abc import Callable, Generator
 from typing import Any, Literal, NamedTuple
 
@@ -39,34 +38,37 @@ def qualified_schema(database_name: str | None, schema_name: str | None) -> str 
     return schema_name or None
 
 
-def validate_sql_identifier(identifier: str, identifier_type: str = "identifier") -> None:
-    """Validate that a SQL identifier (table name, schema name) is safe.
+def validate_sql_identifier(
+    identifier: str, identifier_type: str = "identifier", dialect: DbDialect | None = None
+) -> None:
+    """Validate that a SQL identifier (table name, schema name) is safe to put verbatim into SQL.
 
-    Allows dotted identifiers (e.g., schema.table) by validating each part.
-
-    Args:
-        identifier: The SQL identifier to validate
-        identifier_type: Description of the identifier type for error messages
+    The dialect owns the rule (``DbDialect.checked_identifier_path``): dotted parts of letters, digits and
+    underscores for every dialect but one that declares ``quoted_identifiers`` (Snowflake), which also takes
+    ``$`` and double-quoted parts. No dialect means the base rule.
 
     Raises:
-        UnsafeSQLError: If the identifier contains unsafe characters
+        UnsafeSQLError: If the identifier is empty or does not fit the dialect's rule
     """
     if not identifier or not identifier.strip():
         raise UnsafeSQLError(f"SQL {identifier_type} cannot be empty")
+    try:
+        (dialect or get_dialect_or_generic("generic")).checked_identifier_path(identifier, identifier_type)
+    except ValueError as e:
+        raise UnsafeSQLError(str(e)) from None
 
-    # Split on dots to handle schema.table notation, validate each part
-    parts = identifier.split(".")
-    for part in parts:
-        if not part:
-            raise UnsafeSQLError(
-                f"Invalid SQL {identifier_type}: '{identifier}'. " f"Identifier parts cannot be empty."
-            )
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
-            raise UnsafeSQLError(
-                f"Invalid SQL {identifier_type}: '{identifier}'. "
-                f"Only letters, numbers, and underscores are allowed, "
-                f"and each part must start with a letter or underscore."
-            )
+
+def qualified_table(
+    dialect: DbDialect, database_name: str | None, schema_name: str | None, table_name: str
+) -> str:
+    """``database.schema.table`` (or the parts set) after each was checked against ``dialect``'s identifier rule."""
+    validate_sql_identifier(table_name, "table name", dialect)
+    if schema_name:
+        validate_sql_identifier(schema_name, "schema name", dialect)
+    if database_name:
+        validate_sql_identifier(database_name, "database name", dialect)
+    schema_path = qualified_schema(database_name, schema_name)
+    return f"{schema_path}.{table_name}" if schema_path else table_name
 
 
 def get_query_columns(engine: Engine, query_text: str):
@@ -167,12 +169,12 @@ class BaseSqlSource:
             self.schema_name = schema_name
             self.database_name = database_name or None
 
-            # Validate identifiers to prevent SQL injection
-            validate_sql_identifier(table_name, "table name")
+            # Validate identifiers to prevent SQL injection, by the connection's dialect
+            validate_sql_identifier(table_name, "table name", self.dialect)
             if schema_name is not None and schema_name != "":
-                validate_sql_identifier(schema_name, "schema name")
+                validate_sql_identifier(schema_name, "schema name", self.dialect)
             if self.database_name:
-                validate_sql_identifier(self.database_name, "database name")
+                validate_sql_identifier(self.database_name, "database name", self.dialect)
             self.schema_path = qualified_schema(self.database_name, schema_name)
 
             if self.schema_path:
@@ -586,7 +588,10 @@ def list_db_tables(database_settings: DatabaseSettings, user_id: int) -> list[st
     """
     resolved, dialect = _resolve_for_browsing(database_settings, user_id)
     schema = database_settings.schema_name if database_settings.schema_name else None
+    if schema:
+        validate_sql_identifier(schema, "schema name", dialect)
     if schema and database_settings.database_name:
+        validate_sql_identifier(database_settings.database_name, "database name", dialect)
         schema = qualified_schema(database_settings.database_name, schema)
     tables = dialect.list_tables(resolved.uri, schema)
     if tables is not None:

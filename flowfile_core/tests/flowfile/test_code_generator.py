@@ -4548,6 +4548,45 @@ def test_database_writer_export_names_the_database_only_when_set():
     assert with_database == [*plain[:5], '    database_name="ANALYTICS",', *plain[5:]]
 
 
+def test_database_export_writes_quoted_names_as_valid_python_literals():
+    import ast
+
+    reader = input_schema.NodeDatabaseReader(
+        flow_id=1,
+        node_id=1,
+        database_settings=input_schema.DatabaseSettings(
+            connection_mode="reference",
+            database_connection_name="sf",
+            query_mode="table",
+            table_name='"My ""odd"" table"',
+            schema_name='"Raw"',
+            database_name='"USER$evaneechoud"',
+        ),
+    )
+    lines = _database_export_lines(reader)
+    call = ast.parse("\n".join(lines[:-2]) + "\n)").body[0].value
+    keywords = {k.arg: ast.literal_eval(k.value) for k in call.keywords}
+    assert keywords == {
+        "table_name": '"My ""odd"" table"',
+        "schema_name": '"Raw"',
+        "database_name": '"USER$evaneechoud"',
+    }
+
+    writer = input_schema.NodeDatabaseWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        database_write_settings=input_schema.DatabaseWriteSettings(
+            connection_mode="reference", database_connection_name="sf", table_name='"T"', database_name='"D"',
+            schema_name="S",
+        ),
+    )
+    source = "\n".join(_database_export_lines(writer))
+    ast.parse(source)
+    assert '    "\\"T\\"",' in source
+    assert '    database_name="\\"D\\"",' in source
+
+
 def test_database_writer_inline_mode_adds_to_unsupported():
     """Test that database writer with inline mode is added to unsupported nodes."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter

@@ -37,6 +37,7 @@ from flowfile_core.schemas.yaml_types import (
 )
 from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
+from shared.db_dialects.identifiers import IDENTIFIER, is_identifier_path
 from shared.path_utils import default_scan_extension, ensure_glob_pattern, file_name, is_cloud_path, is_url
 
 keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", default=False)
@@ -1155,23 +1156,25 @@ class FullDatabaseConnectionInterface(BaseModel):
     source: Literal["local", "hub"] = "local"
 
 
-def _check_sql_identifier(v):
-    """Each dotted part a plain identifier; empty passes (the field is optional)."""
+def _check_sql_identifier(v, *, single_part: bool = False):
+    """A dotted identifier path whose parts are plain (letters, digits, ``_``, ``$``) or double-quoted.
+
+    That is the widest shape any dialect takes: a node names a connection, not a type, so the dialect's own,
+    stricter rule is applied where the name is used (``DbDialect.checked_identifier_path``). Empty passes (the
+    field is optional).
+    """
     if v is not None and v != "":
-        parts = v.split(".")
-        for part in parts:
-            if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
-                raise ValueError(
-                    f"Invalid SQL identifier: '{v}'. " f"Only letters, numbers, and underscores are allowed."
-                )
+        fits = isinstance(v, str) and (IDENTIFIER.match(v) if single_part else is_identifier_path(v))
+        if not fits:
+            raise ValueError(f"Invalid SQL identifier: '{v}'. Only letters, numbers, and underscores are allowed.")
     return v
 
 
 def _blank_database_name(v):
-    """A blank database name means the connection's default database."""
+    """A blank database name means the connection's default database; a set one is a single identifier."""
     if isinstance(v, str) and not v.strip():
         return None
-    return _check_sql_identifier(v.strip() if isinstance(v, str) else v)
+    return _check_sql_identifier(v.strip() if isinstance(v, str) else v, single_part=True)
 
 
 def _drop_unset_database_name(data: Any, database_name: str | None) -> Any:

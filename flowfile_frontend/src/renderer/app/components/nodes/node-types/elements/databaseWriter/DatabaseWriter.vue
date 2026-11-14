@@ -73,11 +73,13 @@
               clearable
               default-first-option
               :placeholder="databaseChoice.placeholder.value"
+              :loading="databaseChoice.databases.loading"
+              loading-text="Loading…"
               class="flex-input"
               @change="databaseChoice.handleDatabaseChange"
             >
               <el-option
-                v-for="d in databaseChoice.availableDatabases.value"
+                v-for="d in databaseChoice.databases.options"
                 :key="d"
                 :label="d"
                 :value="d"
@@ -86,14 +88,11 @@
             <button
               type="button"
               class="btn-fetch-icon"
-              :disabled="databaseChoice.databasesAreLoading.value"
+              :disabled="databaseChoice.databases.loading"
               title="Refresh databases"
               @click="databaseChoice.fetchDatabases()"
             >
-              <i
-                v-if="databaseChoice.databasesAreLoading.value"
-                class="fa-solid fa-spinner fa-spin"
-              ></i>
+              <i v-if="databaseChoice.databases.loading" class="fa-solid fa-spinner fa-spin"></i>
               <i v-else class="fa-solid fa-refresh"></i>
             </button>
           </div>
@@ -110,21 +109,28 @@
                 allow-create
                 clearable
                 default-first-option
-                :placeholder="schemasAreLoading ? 'Loading...' : 'Schema'"
+                :placeholder="databaseChoice.schemas.loading ? 'Loading...' : 'Schema'"
+                :loading="databaseChoice.schemas.loading"
+                loading-text="Loading…"
                 class="flex-input"
                 @change="handleSchemaChange"
                 @blur="handleSchemaBlur"
               >
-                <el-option v-for="s in availableSchemas" :key="s" :label="s" :value="s" />
+                <el-option
+                  v-for="s in databaseChoice.schemas.options"
+                  :key="s"
+                  :label="s"
+                  :value="s"
+                />
               </el-select>
               <button
                 type="button"
                 class="btn-fetch-icon"
-                :disabled="schemasAreLoading"
+                :disabled="databaseChoice.schemas.loading"
                 title="Refresh schemas"
-                @click="handleFetchSchemas()"
+                @click="databaseChoice.loadSchemas()"
               >
-                <i v-if="schemasAreLoading" class="fa-solid fa-spinner fa-spin"></i>
+                <i v-if="databaseChoice.schemas.loading" class="fa-solid fa-spinner fa-spin"></i>
                 <i v-else class="fa-solid fa-refresh"></i>
               </button>
             </div>
@@ -144,21 +150,29 @@
                 allow-create
                 clearable
                 default-first-option
-                :placeholder="tablesAreLoading ? 'Loading...' : 'Table'"
+                :placeholder="databaseChoice.tables.loading ? 'Loading...' : 'Table'"
+                :loading="databaseChoice.tables.loading"
+                loading-text="Loading…"
+                :no-data-text="databaseChoice.tablesNoDataText.value"
                 class="flex-input"
                 @change="handleTableSelect"
                 @blur="handleTableBlur"
               >
-                <el-option v-for="t in availableTables" :key="t" :label="t" :value="t" />
+                <el-option
+                  v-for="t in databaseChoice.tables.options"
+                  :key="t"
+                  :label="t"
+                  :value="t"
+                />
               </el-select>
               <button
                 type="button"
                 class="btn-fetch-icon"
-                :disabled="tablesAreLoading"
+                :disabled="databaseChoice.tables.loading"
                 title="Refresh tables"
-                @click="handleFetchTables()"
+                @click="databaseChoice.loadTables()"
               >
-                <i v-if="tablesAreLoading" class="fa-solid fa-spinner fa-spin"></i>
+                <i v-if="databaseChoice.tables.loading" class="fa-solid fa-spinner fa-spin"></i>
                 <i v-else class="fa-solid fa-refresh"></i>
               </button>
             </div>
@@ -213,7 +227,6 @@ import { fetchDatabaseConnectionsInterfaces } from "../../../../../views/Databas
 import { FullDatabaseConnectionInterface } from "../../../../../views/DatabaseView/databaseConnectionTypes";
 import { ElMessage, ElOption, ElRadio, ElSelect } from "element-plus";
 import DatabaseConnectionSettings from "../databaseReader/DatabaseConnectionSettings.vue";
-import { fetchDbSchemas, fetchDbTables } from "../databaseReader/api";
 import { useDatabaseChoice } from "../databaseReader/useDatabaseChoice";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
@@ -229,21 +242,12 @@ const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
 const nodeData = ref<null | NodeDatabaseWriter>(null);
 const dataLoaded = ref(false);
 const connectionsAreLoading = ref(false);
-const availableSchemas = ref<string[]>([]);
-const schemasAreLoading = ref(false);
-const availableTables = ref<string[]>([]);
-const tablesAreLoading = ref(false);
 const schemaSelectRef = ref();
 const tableSelectRef = ref();
 
 const databaseChoice = useDatabaseChoice({
   settings: () => nodeData.value?.database_write_settings,
   connections: connectionInterfaces,
-  reload: () => {
-    resetFields();
-    handleFetchSchemas(true);
-    handleFetchTables(true);
-  },
 });
 
 const databaseNameError = computed(() =>
@@ -304,13 +308,11 @@ const loadNodeData = async (nodeId: number) => {
 };
 
 const resetFields = () => {
-  availableSchemas.value = [];
-  availableTables.value = [];
+  databaseChoice.clearLists();
 };
 
 const handleSchemaChange = () => {
-  availableTables.value = [];
-  handleFetchTables(true);
+  databaseChoice.handleSchemaChange();
 };
 
 // Commit typed text on blur so custom values aren't discarded by el-select
@@ -330,36 +332,6 @@ const handleTableBlur = () => {
   }
 };
 
-const handleFetchSchemas = async (silent = false) => {
-  if (!nodeData.value?.database_write_settings) return;
-  schemasAreLoading.value = true;
-  try {
-    availableSchemas.value = await fetchDbSchemas(nodeData.value.database_write_settings);
-  } catch (error: any) {
-    if (!silent) {
-      const detail = error.response?.data?.detail || "Failed to fetch schemas";
-      ElMessage.error(detail);
-    }
-  } finally {
-    schemasAreLoading.value = false;
-  }
-};
-
-const handleFetchTables = async (silent = false) => {
-  if (!nodeData.value?.database_write_settings) return;
-  tablesAreLoading.value = true;
-  try {
-    availableTables.value = await fetchDbTables(nodeData.value.database_write_settings);
-  } catch (error: any) {
-    if (!silent) {
-      const detail = error.response?.data?.detail || "Failed to fetch tables";
-      ElMessage.error(detail);
-    }
-  } finally {
-    tablesAreLoading.value = false;
-  }
-};
-
 const handleTableSelect = (value: string) => {
   if (!nodeData.value) return;
   // When no schema was selected, tables come as "schema.table" — split them
@@ -367,7 +339,7 @@ const handleTableSelect = (value: string) => {
 };
 
 // Auto-fetch schemas/tables when connection details change.
-// Reference mode: fetch immediately on selection.
+// Reference mode: useDatabaseChoice fetches immediately on selection.
 // Inline mode: debounce so we don't fire on every keystroke, and only when the
 // connection looks complete (all required fields filled).
 const isInlineConnectionComplete = () => {
@@ -380,23 +352,13 @@ const isInlineConnectionComplete = () => {
 let inlineDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 watch(
-  () => nodeData.value?.database_write_settings?.database_connection_name,
-  (name) => {
-    if (name) {
-      handleFetchSchemas(true);
-      handleFetchTables(true);
-    }
-  },
-);
-
-watch(
   () => nodeData.value?.database_write_settings?.database_connection,
   () => {
     if (inlineDebounceTimer) clearTimeout(inlineDebounceTimer);
     if (!isInlineConnectionComplete()) return;
     inlineDebounceTimer = setTimeout(() => {
-      handleFetchSchemas(true);
-      handleFetchTables(true);
+      databaseChoice.loadSchemas(true);
+      databaseChoice.loadTables(true);
     }, 1500);
   },
   { deep: true },

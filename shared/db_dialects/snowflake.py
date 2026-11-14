@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 from urllib.parse import parse_qsl, quote, quote_plus, unquote, unquote_plus, urlencode, urlsplit
 
 from shared.db_dialects.base import DbDialect
+from shared.db_dialects.identifiers import IDENTIFIER, IDENTIFIER_PATH, identifier_parts
 from shared.snowflake_auth import (
     AUTH_ACCESS_TOKEN,
     AUTH_KEY_PAIR,
@@ -74,9 +75,10 @@ _APPLICATION = "Flowfile"
 
 _PLAIN_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 _PLAIN_UPPER_IDENTIFIER = re.compile(r"^[A-Z_][A-Z0-9_$]*$")
-_IDENTIFIER_PART = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")'
-_IDENTIFIER_PATH = re.compile(rf"^{_IDENTIFIER_PART}(?:\.{_IDENTIFIER_PART})*$")
-_IDENTIFIER = re.compile(rf"^{_IDENTIFIER_PART}$")
+_IDENTIFIER_PATH = IDENTIFIER_PATH
+_IDENTIFIER = IDENTIFIER
+
+QUOTED_NAME_HINT = "Use letters, numbers, _ and $, or put the name in double quotes."
 
 # Snowflake's reserved keywords: unquoted, these cannot name a column or table.
 _RESERVED = frozenset(
@@ -208,9 +210,10 @@ def ddl_identifier(name: str) -> str:
     """A column or table name for DDL: unquoted when plain (Snowflake upper-cases it), else double-quoted.
 
     A plain name that is a reserved word is quoted in upper case, so it means what
-    the unquoted name would; a name already in double quotes is kept as given.
+    the unquoted name would; a well-formed double-quoted name is kept as given, and any other name that
+    starts with a quote is quoted like the rest, so a column name cannot close the quote early.
     """
-    if len(name) >= 2 and name.startswith('"') and name.endswith('"'):
+    if name.startswith('"') and _IDENTIFIER.match(name):
         return name
     if _PLAIN_IDENTIFIER.match(name):
         return f'"{name.upper()}"' if name.upper() in _RESERVED else name
@@ -273,8 +276,10 @@ def _put_url(path: str) -> str:
 
 
 def _split_table_name(table_name: str) -> list[str]:
-    parts = (table_name or "").strip().split(".")
-    if any(not p for p in parts) or len(parts) > 3:
+    """The parts of a write target, split on the dots outside quotes; a quoted part is kept as given."""
+    value = (table_name or "").strip()
+    parts = identifier_parts(value) if _IDENTIFIER_PATH.match(value) else []
+    if not parts or len(parts) > 3:
         raise ValueError(f"'{table_name}' is not a Snowflake table name; use table, schema.table or db.schema.table.")
     return [ddl_identifier(p) for p in parts]
 
@@ -390,6 +395,7 @@ class SnowflakeDialect(DbDialect):
     auth_methods: ClassVar[tuple[str, ...]] = AUTH_METHODS
     saved_connection_only: ClassVar[bool] = True
     browses_databases: ClassVar[bool] = True
+    quoted_identifiers: ClassVar[bool] = True
 
     def is_available(self) -> bool:
         try:
@@ -519,6 +525,12 @@ class SnowflakeDialect(DbDialect):
         qualified = f"{schema_name}.{table_name}" if schema_name else table_name
         return self.query_schema(uri, f"SELECT * FROM {qualified}")
 
+    def checked_identifier_path(self, value: str, what: str = "name") -> str:
+        """Dotted parts, each plain (``$`` allowed) or double-quoted with inner quotes doubled; as given."""
+        if not isinstance(value, str) or not _IDENTIFIER_PATH.match(value):
+            raise ValueError(f"Invalid SQL identifier: '{value}'. {QUOTED_NAME_HINT}")
+        return value
+
     def checked_database(self, name: str) -> str:
         return checked_identifier(name, "database")
 
@@ -566,13 +578,18 @@ class SnowflakeDialect(DbDialect):
     def discover(self, uri: str) -> dict[str, Any]:
         """The session's user, role, warehouse and database plus the warehouses, databases and roles on offer.
 
+        Warehouse and database names come back through ``quote_identifier`` (as ``list_databases`` does), so a
+        picked one is stored as it works verbatim: a mixed-case name keeps its quotes and is not upper-cased.
         Each list is best-effort: a listing the role may not run comes back empty.
         """
         with self._cursor(uri) as cursor:
             info: dict[str, Any] = dict(_session_info(cursor))
-            info["warehouses"] = _best_effort(lambda: [r["name"] for r in _rows_by_name(cursor, "SHOW WAREHOUSES")])
-            info["databases"] = _best_effort(lambda: [r["name"] for r in _rows_by_name(cursor, "SHOW DATABASES")])
+            info["warehouses"] = _best_effort(lambda: _quoted_names(_rows_by_name(cursor, "SHOW WAREHOUSES")))
+            info["databases"] = _best_effort(lambda: _quoted_names(_rows_by_name(cursor, "SHOW DATABASES")))
             info["roles"] = _best_effort(lambda: _available_roles(cursor))
+        for key in ("warehouse", "database"):
+            if info.get(key):
+                info[key] = quote_identifier(info[key])
         return info
 
     def write(self, df: pl.DataFrame, *, uri: str, table_name: str, if_exists: str = "append") -> None:
@@ -629,6 +646,10 @@ def _fetch_frame(cursor, columns: list, targets: list[pl.DataType | None]) -> pl
         return pl.DataFrame(schema={name: dtype or pl.String for name, dtype in zip(names, targets, strict=True)})
     frames = [_cast_to_predicted(frame, targets) for frame in batches]
     return frames[0] if len(frames) == 1 else pl.concat(frames, how="vertical_relaxed")
+
+
+def _quoted_names(rows: list[dict[str, Any]]) -> list[str]:
+    return [quote_identifier(str(row["name"])) for row in rows]
 
 
 def _current_database(cursor) -> str | None:

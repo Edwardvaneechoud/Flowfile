@@ -1,36 +1,43 @@
-import { computed, ref, watch, type Ref } from "vue";
+import { computed, reactive, watch, type Ref } from "vue";
 import { ElMessage } from "element-plus";
 
 import type { DatabaseSettings, DatabaseWriteSettings } from "../../../baseNode/nodeInput";
 import type { FullDatabaseConnectionInterface } from "../../../../../views/DatabaseView/databaseConnectionTypes";
 import { useDbDialects } from "../../../../../composables/useDbDialects";
-import { fetchDbDatabases } from "./api";
+import { fetchDbDatabases, fetchDbSchemas, fetchDbTables } from "./api";
 import {
   connectionOptionLabel,
   databaseChanged,
   databasePlaceholder,
   missingSchemaError,
+  shouldLoadTables,
   splitTableReference,
+  tablesEmptyText,
 } from "./databaseChoice";
+import { createLatestLoader, type ListState } from "./latestLoader";
 
 /**
- * The Database select of the database reader and writer drawers, written once for both.
+ * The Database, Schema and Table lists of the database reader and writer drawers, written once for both.
  *
- * Shown in saved-connection mode for a dialect that browses databases (or whenever the node already
- * names a database, so it can be cleared). The node stores the pick in `database_name`; empty means
- * the connection's default database.
+ * The Database select shows in saved-connection mode for a dialect that browses databases (or
+ * whenever the node already names a database, so it can be cleared). The node stores the pick in
+ * `database_name`; empty means the connection's default database. Each list is filled only by its
+ * latest load, so a slow answer for an earlier connection, database or schema never lands.
  */
 export function useDatabaseChoice(options: {
   settings: () => DatabaseSettings | DatabaseWriteSettings | undefined;
   connections: Ref<FullDatabaseConnectionInterface[]>;
-  // Reloads the drawer's schema and table lists after the database changed.
-  reload: () => void;
+  // Drawer-side reset run when the database changes, before the lists reload.
+  onDatabaseChange?: () => void;
 }) {
   const { browsesDatabases } = useDbDialects();
-  const availableDatabases = ref<string[]>([]);
-  const databasesAreLoading = ref(false);
+  const databases = reactive<ListState<string>>({ options: [], loading: false });
+  const schemas = reactive<ListState<string>>({ options: [], loading: false });
+  const tables = reactive<ListState<string>>({ options: [], loading: false });
+  const databaseLoader = createLatestLoader(databases);
+  const schemaLoader = createLatestLoader(schemas);
+  const tableLoader = createLatestLoader(tables);
   let previousDatabase: string | null | undefined;
-  let fetchSeq = 0;
 
   const selectedConnection = computed(() => {
     const name = options.settings()?.database_connection_name;
@@ -41,6 +48,11 @@ export function useDatabaseChoice(options: {
     browsesDatabases(selectedConnection.value?.databaseType),
   );
 
+  // Databases are browsed only through a saved connection.
+  const browsing = computed(
+    () => options.settings()?.connection_mode === "reference" && connectionBrowses.value,
+  );
+
   const showDatabase = computed(() => {
     const settings = options.settings();
     if (!settings || settings.connection_mode !== "reference") return false;
@@ -48,9 +60,7 @@ export function useDatabaseChoice(options: {
   });
 
   const placeholder = computed(() =>
-    databasesAreLoading.value
-      ? "Loading..."
-      : databasePlaceholder(selectedConnection.value?.database),
+    databases.loading ? "Loading..." : databasePlaceholder(selectedConnection.value?.database),
   );
 
   const schemaError = computed(() => {
@@ -58,24 +68,51 @@ export function useDatabaseChoice(options: {
     return missingSchemaError(settings?.database_name, settings?.schema_name);
   });
 
+  const tablesNoDataText = computed(() =>
+    tablesEmptyText(browsing.value, options.settings()?.schema_name),
+  );
+
+  const reportError = (silent: boolean, fallback: string) =>
+    silent ? undefined : (error: any) => ElMessage.error(error?.response?.data?.detail || fallback);
+
   const fetchDatabases = async (silent = false) => {
     const settings = options.settings();
     if (!settings || !connectionBrowses.value) {
-      availableDatabases.value = [];
+      databaseLoader.invalidate();
       return;
     }
-    const seq = ++fetchSeq;
-    databasesAreLoading.value = true;
-    try {
-      const databases = await fetchDbDatabases(settings);
-      if (seq === fetchSeq) availableDatabases.value = databases;
-    } catch (error: any) {
-      if (!silent && seq === fetchSeq) {
-        ElMessage.error(error.response?.data?.detail || "Failed to fetch databases");
-      }
-    } finally {
-      if (seq === fetchSeq) databasesAreLoading.value = false;
+    await databaseLoader.load(
+      () => fetchDbDatabases(settings),
+      reportError(silent, "Failed to fetch databases"),
+    );
+  };
+
+  const loadSchemas = async (silent = false) => {
+    const settings = options.settings();
+    if (!settings) return;
+    await schemaLoader.load(
+      () => fetchDbSchemas(settings),
+      reportError(silent, "Failed to fetch schemas"),
+    );
+  };
+
+  const loadTables = async (silent = false) => {
+    const settings = options.settings();
+    if (!settings) return;
+    if (!shouldLoadTables(browsing.value, settings.schema_name)) {
+      tableLoader.invalidate();
+      return;
     }
+    await tableLoader.load(
+      () => fetchDbTables(settings),
+      reportError(silent, "Failed to fetch tables"),
+    );
+  };
+
+  /** Empty the schema and table lists and drop any answer still on its way. */
+  const clearLists = () => {
+    schemaLoader.invalidate();
+    tableLoader.invalidate();
   };
 
   /** Remember what the loaded node names, so the next change knows what it replaced. */
@@ -92,7 +129,15 @@ export function useDatabaseChoice(options: {
       settings.table_name = undefined;
     }
     previousDatabase = settings.database_name;
-    options.reload();
+    clearLists();
+    options.onDatabaseChange?.();
+    loadSchemas(true);
+    loadTables(true);
+  };
+
+  /** A new schema makes any table list still loading for the old one stale. */
+  const handleSchemaChange = () => {
+    loadTables(true);
   };
 
   /**
@@ -102,7 +147,7 @@ export function useDatabaseChoice(options: {
   const applyTableReference = (value: string): boolean => {
     const settings = options.settings();
     if (!settings || settings.schema_name) return false;
-    const parts = splitTableReference(value, showDatabase.value && connectionBrowses.value);
+    const parts = splitTableReference(value, browsing.value);
     if (!parts) return false;
     if (parts.database) {
       settings.database_name = parts.database;
@@ -126,20 +171,30 @@ export function useDatabaseChoice(options: {
         settings.database_name = null;
         previousDatabase = null;
       }
-      availableDatabases.value = [];
-      if (name) fetchDatabases(true);
+      databaseLoader.invalidate();
+      clearLists();
+      if (!name) return;
+      fetchDatabases(true);
+      loadSchemas(true);
+      loadTables(true);
     },
   );
 
   return {
-    availableDatabases,
-    databasesAreLoading,
+    databases,
+    schemas,
+    tables,
     showDatabase,
     placeholder,
     schemaError,
+    tablesNoDataText,
     fetchDatabases,
+    loadSchemas,
+    loadTables,
+    clearLists,
     syncDatabase,
     handleDatabaseChange,
+    handleSchemaChange,
     applyTableReference,
     optionLabel,
   };

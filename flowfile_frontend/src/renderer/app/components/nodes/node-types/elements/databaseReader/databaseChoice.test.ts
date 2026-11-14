@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CHOOSE_SCHEMA_FIRST,
   MISSING_SCHEMA_MESSAGE,
   connectionOptionLabel,
   databaseChanged,
   databasePlaceholder,
   missingSchemaError,
   normalizeDatabase,
+  shouldLoadTables,
   splitTableReference,
+  tablesEmptyText,
 } from "./databaseChoice";
 
 describe("databaseChoice", () => {
@@ -80,5 +83,15 @@ describe("databaseChoice", () => {
     expect(connectionOptionLabel({ connectionName: "pg", databaseType: "postgresql" }, false)).toBe(
       "pg (postgresql - )",
     );
+  });
+
+  it("waits for a schema before listing tables of a dialect that browses databases", () => {
+    expect(shouldLoadTables(true, undefined)).toBe(false);
+    expect(shouldLoadTables(true, "  ")).toBe(false);
+    expect(shouldLoadTables(true, "PUBLIC")).toBe(true);
+    expect(shouldLoadTables(false, undefined)).toBe(true);
+    expect(tablesEmptyText(true, null)).toBe(CHOOSE_SCHEMA_FIRST);
+    expect(tablesEmptyText(true, "PUBLIC")).toBe("No data");
+    expect(tablesEmptyText(false, undefined)).toBe("No data");
   });
 });

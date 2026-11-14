@@ -27,6 +27,23 @@ export function missingSchemaError(
   return normalizeDatabase(database) && !(schema ?? "").trim() ? MISSING_SCHEMA_MESSAGE : null;
 }
 
+export const CHOOSE_SCHEMA_FIRST = "Choose a schema first";
+
+/**
+ * Whether the Table select asks core for its list.
+ *
+ * A dialect that browses databases lists every table of the database as `schema.table` when no
+ * schema is given, which is slow and is not what the drawer offers, so it waits for a schema.
+ */
+export function shouldLoadTables(browsesDatabases: boolean, schema?: string | null): boolean {
+  return !browsesDatabases || !!(schema ?? "").trim();
+}
+
+/** What the Table select's empty list says. */
+export function tablesEmptyText(browsesDatabases: boolean, schema?: string | null): string {
+  return shouldLoadTables(browsesDatabases, schema) ? "No data" : CHOOSE_SCHEMA_FIRST;
+}
+
 export interface TableReference {
   database?: string;
   schema: string;

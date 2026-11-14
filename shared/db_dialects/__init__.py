@@ -83,6 +83,7 @@ class DialectInfo(BaseModel):
     auth_methods: list[str] = []
     saved_connection_only: bool = False
     browses_databases: bool = False
+    quoted_identifiers: bool = False
     install_hint: str | None = None
 
 
@@ -123,6 +124,7 @@ def dialect_catalog() -> list[DialectInfo]:
             auth_methods=list(d.auth_methods),
             saved_connection_only=d.saved_connection_only,
             browses_databases=d.browses_databases,
+            quoted_identifiers=d.quoted_identifiers,
             install_hint=d.install_hint,
         )
         for d in iter_dialects()

@@ -59,10 +59,11 @@ def test_a_blank_database_is_none_and_the_identifier_rule_is_the_schema_rule(mod
     assert model(**base, database_name="  ").database_name is None
     assert model(**base, database_name="").database_name is None
     assert model(**base, database_name="SALES").database_name == "SALES"
-    with pytest.raises(ValueError, match="Invalid SQL identifier"):
-        model(**base, database_name='"My DB"')
+    assert model(**base, database_name='"My DB"').database_name == '"My DB"'
     with pytest.raises(ValueError, match="Invalid SQL identifier"):
         model(**base, database_name="a;b")
+    with pytest.raises(ValueError, match="Invalid SQL identifier"):
+        model(**base, database_name="SALES.PUBLIC")
 
 
 def test_default_descriptions_name_the_database_when_set():
