@@ -34,6 +34,11 @@ const boot = async (path: string) => {
     component: { render: () => null },
     meta: { requiresAuth: false },
   });
+  router.addRoute({
+    path: "/private",
+    component: { render: () => null },
+    meta: { requiresAuth: true },
+  });
   void router.push(path);
   await redirectToLogin();
   return router.currentRoute.value;
@@ -52,9 +57,36 @@ describe("redirectToLogin", () => {
     expect((await boot("/elsewhere")).name).toBe("login");
   });
 
-  it("keeps a signed-in tab off the sign-in page, so `#/login?hub_signin=1` starts nothing", async () => {
+  it("leaves a signed-in tab at the sign-in start, which may sign in someone else through the hub", async () => {
     mocks.isAuthenticated.mockReturnValue(true);
 
-    expect((await boot("/login?hub_signin=1")).name).toBe("home");
+    expect((await boot("/login?hub_signin=1")).fullPath).toBe("/login?hub_signin=1");
+  });
+
+  it("sends a signed-in tab home once a password server drops the sign-in start's flag", async () => {
+    mocks.isAuthenticated.mockReturnValue(true);
+    await boot("/login?hub_signin=1");
+    const { default: router } = await import("./index");
+
+    await router.replace({ path: "/login", query: {} });
+
+    expect(router.currentRoute.value.name).toBe("home");
+  });
+
+  it("sends an unsigned tab at a page that needs a sign-in to the sign-in page, which returns there", async () => {
+    const route = await boot("/private?runId=17");
+
+    expect(route.name).toBe("login");
+    expect(route.query.redirect).toBe("/private?runId=17");
+  });
+
+  it("names no page to return to for the app's plain entry", async () => {
+    expect((await boot("/")).fullPath).toBe("/login");
+  });
+
+  it("keeps a signed-in tab off a plain sign-in page", async () => {
+    mocks.isAuthenticated.mockReturnValue(true);
+
+    expect((await boot("/login")).name).toBe("home");
   });
 });

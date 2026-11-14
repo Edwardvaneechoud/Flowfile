@@ -3,7 +3,7 @@ import stores from "./app/stores";
 import router, { redirectToLogin } from "./app/router";
 import App from "./app/App.vue";
 import ClickOutsideDirective from "./app/directives/ClickOutsideDirective";
-import ElementPlus, { messageConfig } from "element-plus";
+import ElementPlus, { ElMessage, messageConfig } from "element-plus";
 import "element-plus/dist/index.css";
 import i18n from "./app/i18n";
 import "@fortawesome/fontawesome-free/css/all.css";
@@ -63,6 +63,10 @@ setupService
     if (!authenticated && !authService.isInDesktopMode()) {
       console.log("Redirecting to login page");
       redirectToLogin();
+    } else {
+      // a hub sign-in this server refused left the session this tab had; the sign-in page shows it otherwise
+      const refusal = authService.takeHubSignInError();
+      if (refusal) ElMessage.error(refusal);
     }
   })
   .catch((error) => {

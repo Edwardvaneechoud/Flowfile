@@ -158,18 +158,17 @@
           <i class="fa-solid fa-file-lines"></i>
           Run Log
         </h3>
-        <a
-          v-if="logElsewhere"
+        <button
+          v-if="logElsewhere && detail?.log_page_url"
           class="btn btn-primary btn-sm"
-          :href="detail?.log_url ?? undefined"
-          target="_blank"
-          rel="noopener"
+          data-testid="run-log-open-elsewhere"
+          @click="openLogElsewhere"
         >
           <i class="fa-solid fa-arrow-up-right-from-square"></i>
-          Open the log on {{ run.executed_on ?? "the server that ran it" }}
-        </a>
+          Open the run on {{ executorName }}
+        </button>
         <button
-          v-else-if="!logContent && !loadingLog && !detailLoading"
+          v-else-if="!logElsewhere && !logContent && !loadingLog && !detailLoading"
           class="btn btn-primary btn-sm"
           @click="loadLog"
         >
@@ -178,9 +177,7 @@
         </button>
       </div>
       <div v-if="logElsewhere" class="log-viewer">
-        <pre class="snapshot-code">
-The log is kept where the run happened; open it there with your sign-in.</pre
-        >
+        <pre class="snapshot-code">{{ logElsewhereNote }}</pre>
       </div>
       <div v-else-if="loadingLog || detailLoading" class="log-viewer">
         <pre class="snapshot-code">Loading...</pre>
@@ -221,6 +218,7 @@ The log is kept where the run happened; open it there with your sign-in.</pre
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
+import { desktop } from "../../../lib/desktop";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useHubConnectionStore } from "../../stores/hub-connection-store";
@@ -280,7 +278,23 @@ const logRunHere = computed<number | null>(() => {
   const here = hub.connection?.server_name;
   return named && here && named[1] === here ? Number(named[2]) : null;
 });
-const logElsewhere = computed(() => !!detail.value?.log_url && logRunHere.value === null);
+const logElsewhere = computed(
+  () => !!(detail.value?.log_url || detail.value?.log_page_url) && logRunHere.value === null,
+);
+const executorName = computed(() => props.run.executed_on ?? "the server that ran it");
+const logElsewhereNote = computed(() => {
+  const where = `The log is kept on ${executorName.value}`;
+  if (detail.value?.log_page_url) {
+    return `${where}. Open the run there to read it; you sign in there as you do here.`;
+  }
+  // an older core sends no page at all; only null says the executor serves no editor
+  return detail.value?.log_page_url === null
+    ? `${where}, which has no editor to read it in.`
+    : `${where}. Open it in that server's editor to read it.`;
+});
+const openLogElsewhere = () => {
+  if (detail.value?.log_page_url) void desktop.openExternal(detail.value?.log_page_url);
+};
 
 async function loadLog() {
   loadingLog.value = true;

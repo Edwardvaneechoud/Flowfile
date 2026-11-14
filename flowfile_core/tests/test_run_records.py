@@ -58,6 +58,9 @@ def hooks(monkeypatch):
         run_records, "backend_core_url", lambda name: "http://bmax.example:63578" if name == "bmax" else None
     )
     monkeypatch.setattr(
+        run_records, "backend_ui_url", lambda name: "http://bmax.example:63578/ui/" if name == "bmax" else None
+    )
+    monkeypatch.setattr(
         run_records, "version_document", lambda uuid, v: '{"flowfile_name": "nightly v3"}' if v == 3 else None
     )
 
@@ -71,15 +74,23 @@ def test_log_refs_round_trip():
 def test_a_plain_core_names_no_other_machine(api, record):
     detail = api.get(f"/catalog/runs/{record}").json()
     assert (detail["executed_on"], detail["remote_run_id"], detail["flow_version"]) == ("bmax", "run-abc", 3)
-    assert detail["log_ref"] == "backend:bmax:17" and detail["log_url"] is None
+    assert detail["log_ref"] == "backend:bmax:17" and detail["log_url"] is None and detail["log_page_url"] is None
     assert detail["has_log"] is True and detail["has_snapshot"] is False and detail["flow_snapshot"] is None
     log = api.get(f"/catalog/runs/{record}/log", follow_redirects=False)
     assert log.status_code == 404 and log.json()["detail"] == run_records.LOG_ELSEWHERE.format(backend="bmax")
 
 
+def test_a_run_on_an_executor_without_an_editor_has_a_log_route_and_no_page(api, record, hooks, monkeypatch):
+    monkeypatch.setattr(run_records, "backend_ui_url", lambda name: None)
+    detail = api.get(f"/catalog/runs/{record}").json()
+    assert detail["log_url"] == "http://bmax.example:63578/catalog/runs/17/log" and detail["log_page_url"] is None
+    assert run_records.log_page("elsewhere") is None
+
+
 def test_a_core_that_knows_the_executor_redirects_to_its_log_and_serves_the_version(api, record, hooks):
     detail = api.get(f"/catalog/runs/{record}").json()
     assert detail["log_url"] == "http://bmax.example:63578/catalog/runs/17/log"
+    assert detail["log_page_url"] == "http://bmax.example:63578/ui/#/main/catalog?tab=runs&runId=17"
     assert detail["has_snapshot"] is True and detail["flow_snapshot"] == '{"flowfile_name": "nightly v3"}'
     log = api.get(f"/catalog/runs/{record}/log", follow_redirects=False)
     assert log.status_code == 307 and log.headers["location"] == "http://bmax.example:63578/catalog/runs/17/log"

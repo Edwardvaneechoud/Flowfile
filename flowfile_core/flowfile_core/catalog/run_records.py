@@ -6,7 +6,9 @@ run id the executor reported under), ``log_ref`` (``backend:<name>:<id>``, the e
 route holds the log) and ``flow_version`` (the published version that ran, in place of a snapshot). A plain core
 knows no other machine: ``backend_core_url`` answers ``None`` and ``version_document`` ``None``, so a record with
 a ``log_ref`` answers that its log is kept elsewhere and a record with a version has no snapshot. A core that keeps
-other machines' records (a hub) sets both at start-up.
+other machines' records (a hub) sets both at start-up, and ``backend_ui_url`` for the executors that serve an editor:
+the log route takes the executor's own sign-in, so a person is sent to the run's page in that editor (``log_page``),
+never to the route.
 """
 
 from collections.abc import Callable
@@ -32,12 +34,18 @@ def _no_core_url(backend: str) -> str | None:
     return None
 
 
+def _no_ui_url(backend: str) -> str | None:
+    return None
+
+
 def _no_document(flow_uuid: str, version: int) -> str | None:
     return None
 
 
 backend_core_url: Callable[[str], str | None] = _no_core_url
 """The base URL of the core that executes as ``backend``; set by an app that knows other machines."""
+backend_ui_url: Callable[[str], str | None] = _no_ui_url
+"""The editor ``backend`` serves, as a browser reaches it; set by an app that knows other machines."""
 version_document: Callable[[str, int], str | None] = _no_document
 """The document of a flow's published version, as text; set by an app that keeps flow versions."""
 
@@ -50,6 +58,17 @@ def log_location(ref: str) -> str | None:
     backend, run_id = parsed
     url = backend_core_url(backend)
     return f"{url.rstrip('/')}/catalog/runs/{run_id}/log" if url else None
+
+
+def log_page(ref: str) -> str | None:
+    """The page of the executor's editor that shows the run a ``log_ref`` names, its log included, for a person to
+    open; ``None`` when the executor serves no editor this core knows."""
+    parsed = parse_log_ref(ref)
+    if parsed is None:
+        return None
+    backend, run_id = parsed
+    url = backend_ui_url(backend)
+    return f"{url.rstrip('/')}/#/main/catalog?tab=runs&runId={run_id}" if url else None
 
 
 def snapshot_of(run) -> str | None:
