@@ -2,7 +2,20 @@
   <div class="stats-panel">
     <h2>Catalog Overview</h2>
 
-    <div v-if="stats" class="stats-grid">
+    <div v-if="!stats && catalogStore.overviewFailed" class="overview-error" role="alert">
+      <span>Couldn't load the catalog overview: {{ catalogStore.overviewError }}</span>
+      <button class="btn btn-secondary btn-sm" @click="catalogStore.initialize(true)">Retry</button>
+    </div>
+    <div v-else-if="!stats" class="stats-grid" aria-busy="true" data-testid="stats-pending">
+      <div v-for="card in PENDING_CARDS" :key="card.label" class="stat-card">
+        <i :class="card.icon" class="stat-icon"></i>
+        <div class="stat-info">
+          <span class="stat-value"><span class="skeleton-value"></span></span>
+          <span class="stat-label">{{ card.label }}</span>
+        </div>
+      </div>
+    </div>
+    <div v-else class="stats-grid">
       <div
         class="stat-card clickable"
         :class="{ 'stat-card--active': activeSection === 'flows' }"
@@ -205,8 +218,8 @@
       </div>
     </div>
 
-    <!-- Getting started / info section -->
-    <div v-if="!activeSection" class="info-section">
+    <!-- Getting started / info section; waits for the stats so the favorites above it can't push it down -->
+    <div v-if="!activeSection && stats" class="info-section">
       <h3>Getting Started</h3>
       <div class="info-cards">
         <div class="info-card clickable" @click="$emit('openTab', 'catalog')">
@@ -274,7 +287,7 @@
     </div>
 
     <!-- Empty state -->
-    <div v-if="!stats || (stats.total_flows === 0 && stats.total_runs === 0)" class="welcome">
+    <div v-if="stats && stats.total_flows === 0 && stats.total_runs === 0" class="welcome">
       <i class="fa-solid fa-folder-tree welcome-icon"></i>
       <h3>Welcome to Catalog</h3>
       <p>
@@ -308,6 +321,15 @@ import RunOverviewPanel from "./RunOverviewPanel.vue";
 import ScheduleOverviewPanel from "./ScheduleOverviewPanel.vue";
 
 type Section = "flows" | "tables" | "favorites" | "runs" | "schedules";
+
+// Same icons and labels as the loaded cards, so the grid keeps its size when the counts land.
+const PENDING_CARDS = [
+  { icon: "fa-solid fa-diagram-project", label: "Registered Flows" },
+  { icon: "fa-solid fa-play", label: "Total Runs" },
+  { icon: "fa-solid fa-table", label: "Tables" },
+  { icon: "fa-solid fa-star", label: "Favorites" },
+  { icon: "fa-solid fa-calendar-days", label: "Schedules" },
+];
 
 const catalogStore = useCatalogStore();
 

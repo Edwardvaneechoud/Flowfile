@@ -189,7 +189,7 @@
       title="Schedules"
       icon="fa-solid fa-calendar-days"
       persist-key="flow.schedules"
-      :count="catalogStore.flowSchedules.length"
+      :count="schedulesPending ? undefined : catalogStore.flowSchedules.length"
     >
       <template v-if="runnable" #actions>
         <el-button size="small" type="primary" @click="$emit('addSchedule', flow.id)">
@@ -202,28 +202,45 @@
         <div class="summary-card">
           <i class="fa-solid fa-calendar-days summary-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.flowSchedules.length }}</span>
+            <span class="summary-value">
+              <span v-if="schedulesPending" class="skeleton-value"></span>
+              <template v-else>{{ catalogStore.flowSchedules.length }}</template>
+            </span>
             <span class="summary-label">Total</span>
           </div>
         </div>
         <div class="summary-card">
           <i class="fa-solid fa-circle-check summary-icon enabled-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ scheduleEnabledCount }}</span>
+            <span class="summary-value">
+              <span v-if="schedulesPending" class="skeleton-value"></span>
+              <template v-else>{{ scheduleEnabledCount }}</template>
+            </span>
             <span class="summary-label">Enabled</span>
           </div>
         </div>
         <div class="summary-card">
           <i class="fa-solid fa-spinner summary-icon running-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ scheduleRunningCount }}</span>
+            <span class="summary-value">
+              <span v-if="schedulesPending" class="skeleton-value"></span>
+              <template v-else>{{ scheduleRunningCount }}</template>
+            </span>
             <span class="summary-label">Running</span>
           </div>
         </div>
       </div>
 
+      <div
+        v-if="schedulesPending"
+        class="skeleton-list"
+        aria-busy="true"
+        data-testid="flow-schedules-pending"
+      >
+        <div v-for="i in 2" :key="i" class="skeleton-block skeleton-row"></div>
+      </div>
       <EmptyState
-        v-if="catalogStore.flowSchedules.length === 0"
+        v-else-if="catalogStore.flowSchedules.length === 0"
         icon="fa-solid fa-calendar-xmark"
         description="No schedules configured"
       />
@@ -309,9 +326,17 @@
       icon="fa-solid fa-cube"
       persist-key="flow.artifacts"
       :default-open="false"
-      :count="artifacts.length"
+      :count="artifactsPending ? undefined : artifacts.length"
     >
-      <div v-if="artifacts.length === 0" class="empty-state">
+      <div
+        v-if="artifactsPending"
+        class="skeleton-list"
+        aria-busy="true"
+        data-testid="flow-artifacts-pending"
+      >
+        <div v-for="i in 2" :key="i" class="skeleton-block skeleton-row"></div>
+      </div>
+      <div v-else-if="artifacts.length === 0" class="empty-state">
         <i class="fa-solid fa-cube empty-state-icon"></i>
         <span>No artifacts published yet</span>
       </div>
@@ -449,13 +474,14 @@ watch(
   { immediate: true },
 );
 
-const latestSnapshotRunId = computed((): number | null => {
-  const runs = catalogStore.runs.filter(
-    (r) => r.registration_id === props.flow.id && r.has_snapshot,
-  );
-  if (runs.length === 0) return null;
-  return runs[0].id;
-});
+// Each slice names the flow it holds; until it holds this one the section shows a placeholder.
+const schedulesPending = computed(() => catalogStore.flowSchedulesFlowId !== props.flow.id);
+const artifactsPending = computed(() => catalogStore.flowArtifactsFlowId !== props.flow.id);
+
+// Read off the flow's newest runs, whatever page or filter its Run History shows.
+const latestSnapshotRunId = computed((): number | null =>
+  catalogStore.flowRunsPageFor(props.flow.id) ? catalogStore.flowLatestSnapshotRunId : null,
+);
 
 const isEditing = ref(false);
 const editName = ref("");
@@ -511,7 +537,7 @@ async function handleCancelScheduleRun(schedule: FlowSchedule) {
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to cancel run");
   }
-  await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(props.flow.id)]);
+  await Promise.all([catalogStore.loadActiveRuns(), catalogStore.refreshRuns()]);
 }
 
 const lastRunOutcome = computed(() =>
@@ -536,7 +562,7 @@ async function onSaveDescription(scheduleId: number, description: string | null)
 async function handleRunNow(scheduleId: number) {
   try {
     await CatalogApi.triggerScheduleNow(scheduleId);
-    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(props.flow.id)]);
+    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.refreshRuns()]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to trigger run");
   }
