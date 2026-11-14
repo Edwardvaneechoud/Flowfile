@@ -5,8 +5,9 @@ made with ``ca_cert`` reads its capabilities over ``https`` and submits a plan o
 refused as unreachable before anything is sent. Core trusts a CA per worker URL, so the backend that names none reaches
 the same worker by its other name, ``localhost``, which the certificate covers too. Every case runs under both states of
 the protocol flag and starts with the handshake not yet run, so the gate's own request and its probe go over TLS too.
-About one fresh ``wss`` open in a hundred to a uvicorn server over TLS stalls before the upgrade reaches the app, so the
-submit case dials a stalled socket again rather than read the server stack's stall as core falling back to the routes.
+About one fresh ``wss`` open in a hundred to a uvicorn server over TLS stalls or is dropped before the upgrade reaches
+the app, so the submit case dials such a socket again rather than read the server stack's failure as core falling back to
+the routes.
 """
 
 import io
@@ -23,6 +24,7 @@ import polars as pl
 import pyarrow as pa
 import pytest
 import requests
+from websockets.exceptions import ConnectionClosed, InvalidMessage
 
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.flowfile.execution.backends import worker as worker_backend
@@ -38,6 +40,7 @@ from tests.conftest import _free_port, protocol_states
 
 STARTUP_TIMEOUT = 120
 SOCKET_DIALS = 3
+UNOPENED_SOCKET = (TimeoutError, OSError, ConnectionClosed, InvalidMessage)
 HINTS = SubmitHints(must_materialise=True, wide=False, fanout=1, preview_rows=100)
 THREE_ROWS = pl.LazyFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
 
@@ -129,12 +132,14 @@ def no_rest_fallback(monkeypatch, flag) -> None:
 
 @pytest.fixture
 def redialled_socket(monkeypatch, tls_worker) -> None:
-    """Dial a socket whose opening handshake stalled again, and fail one that does not carry the CA the backend names.
+    """Dial a socket whose opening handshake failed again, and fail one that does not carry the CA the backend names.
 
-    The server stack, not core, stalls about one fresh ``wss`` open in a hundred: the TLS handshake completes, the
-    upgrade never reaches the app and the client's ``open_timeout`` raises ``TimeoutError``. Nothing was sent on such a
-    socket, so a second dial cannot run a plan twice. Both the transport's socket and the ``/v1`` one, the handshake's
-    probes included, go through it, so none of them takes the REST route the case refuses.
+    The server stack, not core, fails about one fresh ``wss`` open in a hundred: the TLS handshake completes and the
+    upgrade never reaches the app, either stalling until the client's ``open_timeout`` raises ``TimeoutError`` or
+    dropped, so writing the upgrade request meets ``ssl.SSLEOFError``. Nothing was sent on such a socket, so a second
+    dial cannot run a plan twice; a worker's HTTP answer (``InvalidStatus``) is no such failure and is not redialled.
+    Both the transport's socket and the ``/v1`` one, the handshake's probes included, go through it, so none of them
+    takes the REST route the case refuses.
     """
 
     def wrap(real_connect):
@@ -144,7 +149,7 @@ def redialled_socket(monkeypatch, tls_worker) -> None:
             for attempt in range(1, SOCKET_DIALS + 1):
                 try:
                     return real_connect(uri, *args, **kwargs)
-                except TimeoutError:
+                except UNOPENED_SOCKET:
                     if attempt == SOCKET_DIALS:
                         raise
 
