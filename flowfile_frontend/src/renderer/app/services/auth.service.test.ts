@@ -57,8 +57,8 @@ function fakeServer(answer: (config: InternalAxiosRequestConfig) => Answer) {
 const OPEN = "https://hub.example.com:8443/open/12";
 
 /** Start a sign-in through the hub as the sign-in page does, and answer the state the hub will carry back. */
-const startSignIn = async (): Promise<string> => {
-  const url = new URL((await load()).hubSignInUrl(OPEN));
+const startSignIn = async (returnTo?: string): Promise<string> => {
+  const url = new URL((await load()).hubSignInUrl(OPEN, returnTo));
   return url.searchParams.get("state") ?? "";
 };
 
@@ -169,9 +169,6 @@ describe("auth service: sign-in through the hub", () => {
   });
 
   it("leaves the sign-in page to show the server's sentence for a refused token", async () => {
-    localStorage.setItem("auth_token", "earlier");
-    localStorage.setItem("auth_token_expiration", String(Date.now() + 3_600_000));
-    localStorage.setItem("auth_refresh_token", "earlier-refresh");
     const sentence = "The hub refused this sign-in: this sign-in token was already used.";
     const server = fakeServer(() => ({ status: 401, data: { detail: sentence } }));
     axios.defaults.adapter = server.adapter;
@@ -182,11 +179,54 @@ describe("auth service: sign-in through the hub", () => {
     expect(await authService.initialize()).toBe(false);
     expect(server.requests).toHaveLength(1);
     expect(authService.requiresLogin()).toBe(true);
-    expect(localStorage.getItem("auth_token")).toBeNull();
-    expect(localStorage.getItem("auth_refresh_token")).toBeNull();
     expect(window.location.hash).toBe("");
     expect(authService.takeHubSignInError()).toBe(sentence);
     expect(authService.takeHubSignInError()).toBeNull();
+  });
+
+  it("keeps the session this tab had when the server refuses the hub's sign-in token", async () => {
+    const earlier = storeSession("alice");
+    const sentence = "You may not use this server.";
+    const server = fakeServer(() => ({ status: 403, data: { detail: sentence } }));
+    axios.defaults.adapter = server.adapter;
+    openAt(`#signin=refused-token&state=${await startSignIn()}`);
+
+    const authService = await load();
+
+    expect(await authService.initialize()).toBe(true);
+    expect(server.requests).toHaveLength(1);
+    expect(localStorage.getItem("auth_token")).toBe(earlier);
+    expect(localStorage.getItem("auth_username")).toBe("alice");
+    expect(localStorage.getItem("auth_refresh_token")).toBe("alice-refresh");
+    expect(authService.takeHubSignInError()).toBe(sentence);
+  });
+
+  it("opens the route the sign-in started from once the hub carries the token back", async () => {
+    openAt(`#signin=ana-token&state=${await startSignIn("/main/catalog?tab=runs&runId=17")}`);
+
+    await load();
+
+    expect(window.location.hash).toBe("#/main/catalog?tab=runs&runId=17");
+    expect(sessionStorage.getItem("hub_signin_return")).toBeNull();
+  });
+
+  it("opens no route for a sign-in token it drops, and spends the route with the state", async () => {
+    await startSignIn("/main/catalog?tab=runs&runId=17");
+    openAt("#signin=mallory-token&state=not-the-one");
+
+    await load();
+
+    expect(window.location.hash).toBe("");
+    expect(sessionStorage.getItem("hub_signin_return")).toBeNull();
+  });
+
+  it("forgets an earlier sign-in's route when a new one starts without one", async () => {
+    await startSignIn("/main/catalog?tab=runs&runId=17");
+    openAt(`#signin=ana-token&state=${await startSignIn()}`);
+
+    await load();
+
+    expect(window.location.hash).toBe("");
   });
 
   it("sends the browser to the hub's Open page with a new one-time state each time", async () => {
