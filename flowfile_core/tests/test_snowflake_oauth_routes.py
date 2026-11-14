@@ -150,13 +150,19 @@ def _callback(query: dict, path: str = "/", **params) -> httpx.Response:
 
 
 def _refused(query: dict, within: float = 3.0) -> bool:
-    """Whether the sign-in's listener stops accepting connections within ``within`` seconds."""
+    """Whether the sign-in's listener stops accepting connections within ``within`` seconds.
+
+    A connect that times out counts as refused: Windows retries a SYN to a closed loopback port for ~2 s instead
+    of refusing it, while an open listener completes the handshake from its backlog at once.
+    """
     deadline = time.monotonic() + within
     while time.monotonic() < deadline:
         try:
             httpx.get(query["redirect_uri"] + "/favicon.ico", timeout=1)
-        except httpx.ConnectError:
+        except (httpx.ConnectError, httpx.ConnectTimeout):
             return True
+        except httpx.ReadTimeout:
+            pass
         time.sleep(0.05)
     return False
 

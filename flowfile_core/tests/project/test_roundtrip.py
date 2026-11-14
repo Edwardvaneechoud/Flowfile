@@ -1510,19 +1510,19 @@ def test_postgres_connection_file_is_unchanged_by_the_snowflake_fields(tmp_path)
 
 def test_snowflake_connections_round_trip_for_every_sign_in_method(tmp_path, monkeypatch):
     project_sync.close_project(OWNER)
-    secrets = {
+    sign_ins = {
         "proj_sf_token": ("access_token", "pat-token-value"),
         "proj_sf_key": ("key_pair", _snowflake_key_pem()),
         "proj_sf_oauth": ("oauth", "refresh-token-value"),
     }
-    for name, (method, secret) in secrets.items():
+    for name, (method, secret) in sign_ins.items():
         _make_snowflake_connection(name, method, secret)
-    before = {name: (_stored_fields(name), _stored_secret(name)) for name in secrets}
+    before = {name: (_stored_fields(name), _stored_secret(name)) for name in sign_ins}
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Snowflake Round Trip", OWNER)
         snap = _snapshot(root)
-        for name, (method, secret) in secrets.items():
+        for name, (method, secret) in sign_ins.items():
             text = (root / "connections" / "database" / f"{name}.yaml").read_text(encoding="utf-8")
             data = yaml.safe_load(text)
             assert data["host"] == "myorg-myaccount.snowflakecomputing.com"
@@ -1531,27 +1531,27 @@ def test_snowflake_connections_round_trip_for_every_sign_in_method(tmp_path, mon
             assert data["warehouse"] == "COMPUTE_WH"
             assert data["password"] == "${secret:" + name + "}"
             assert before[name][1] not in text
-        assert before["proj_sf_key"][1] != secrets["proj_sf_key"][1], "the key is stored normalised"
+        assert before["proj_sf_key"][1] != sign_ins["proj_sf_key"][1], "the key is stored normalised"
 
         project_sync.close_project(OWNER)
-        for name in secrets:
+        for name in sign_ins:
             with get_db_context() as db:
                 delete_database_connection(db, name, OWNER)
-        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_TOKEN", secrets["proj_sf_token"][1])
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_TOKEN", sign_ins["proj_sf_token"][1])
         monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_KEY", before["proj_sf_key"][1])
-        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_OAUTH", secrets["proj_sf_oauth"][1])
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_OAUTH", sign_ins["proj_sf_oauth"][1])
         from flowfile_core.project.importer import import_project
 
         result = import_project(root, OWNER)
         assert result.imported_connections >= 3
-        for name in secrets:
+        for name in sign_ins:
             assert (_stored_fields(name), _stored_secret(name)) == before[name]
 
         with get_db_context() as db:
             projection.project_all(db, root, OWNER)
         assert _snapshot(root) == snap, "project -> import -> project must round-trip"
     finally:
-        _cleanup(list(secrets), [])
+        _cleanup(list(sign_ins), [])
 
 
 def test_snowflake_connection_imported_without_its_secret_fails_at_use(tmp_path, monkeypatch):
