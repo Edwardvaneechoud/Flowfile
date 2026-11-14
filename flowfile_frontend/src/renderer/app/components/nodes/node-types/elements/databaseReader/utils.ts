@@ -8,6 +8,7 @@ export const createNodeDatabaseReader = (flowId: number, nodeId: number): NodeDa
   const databaseSettings: DatabaseSettings = {
     query_mode: "table",
     connection_mode: "reference",
+    database_name: undefined,
     schema_name: undefined,
     table_name: undefined,
     query: "",

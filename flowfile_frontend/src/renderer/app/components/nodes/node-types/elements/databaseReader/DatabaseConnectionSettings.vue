@@ -19,7 +19,7 @@
             (e: Event) => updateField('database_type', (e.target as HTMLSelectElement).value)
           "
         >
-          <option v-for="dialect in dialects" :key="dialect.name" :value="dialect.name">
+          <option v-for="dialect in inlineDialects" :key="dialect.name" :value="dialect.name">
             {{ dialect.display_name }}
           </option>
         </select>
@@ -121,6 +121,10 @@ const props = defineProps<{
 }>();
 
 const { dialects, isFileBased } = useDbDialects();
+
+const inlineDialects = computed(() =>
+  dialects.value.filter((dialect) => !dialect.saved_connection_only),
+);
 
 const isFileBasedConnection = computed(() => isFileBased(props.modelValue.database_type));
 

@@ -1491,3 +1491,91 @@ class TestFlowSchedulesDisabledReasonMigration:
 
         _run_migration(db_path, monkeypatch)
         assert "disabled_reason" in self._columns(db_path)
+
+
+class TestDatabaseConnectionAuthMigration:
+    """041 adds ``database_connections.auth_method``, ``role`` and ``warehouse``: NULL on every existing row."""
+
+    COLUMNS = {"auth_method", "role", "warehouse"}
+
+    @staticmethod
+    def _columns(db_path: Path) -> set[str]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        names = {c["name"] for c in inspect(engine).get_columns("database_connections")}
+        engine.dispose()
+        return names
+
+    @staticmethod
+    def _rows(db_path: Path) -> list[tuple]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT connection_name, host, auth_method, role, warehouse FROM database_connections")
+            ).all()
+        engine.dispose()
+        return [tuple(r) for r in rows]
+
+    @staticmethod
+    def _insert(db_path: Path) -> None:
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO database_connections (connection_name, database_type, username, host, port, user_id) "
+                    "VALUES ('pg', 'postgresql', 'u', 'db.internal', 5432, 1)"
+                )
+            )
+            conn.commit()
+        engine.dispose()
+
+    def test_fresh_install_has_the_columns(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        assert self.COLUMNS <= self._columns(db_path)
+
+    def test_upgrade_from_040_keeps_rows_with_nulls(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "040")
+        assert not self.COLUMNS & self._columns(db_path)
+        self._insert(db_path)
+
+        _run_migration(db_path, monkeypatch)
+        assert self._rows(db_path) == [("pg", "db.internal", None, None, None)]
+
+    def test_downgrade_then_upgrade_round_trips(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        self._insert(db_path)
+        cfg = _get_alembic_config()
+
+        command.downgrade(cfg, "040")
+        assert not self.COLUMNS & self._columns(db_path)
+        command.upgrade(cfg, "041")
+        assert self.COLUMNS <= self._columns(db_path)
+        assert self._rows(db_path) == [("pg", "db.internal", None, None, None)]
+
+    def test_upgrade_is_guarded_when_a_column_already_exists(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "040")
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE database_connections ADD COLUMN role VARCHAR"))
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        assert self.COLUMNS <= self._columns(db_path)

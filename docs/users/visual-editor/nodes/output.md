@@ -45,7 +45,7 @@ CSV defaults to a `,` delimiter and `UTF-8` encoding.
 <div class="ff-split" markdown>
 
 <div markdown>
-Writes the incoming table to a database table.
+Writes the incoming table to a database table: PostgreSQL, MySQL, SQLite, DuckDB, SQL Server, Denodo (untested) or Snowflake (through a saved connection only; see [Snowflake](../connections.md#snowflake)).
 
 [Connect to PostgreSQL](../tutorials/database-connectivity.md) is a step-by-step walkthrough.
 </div>
@@ -65,6 +65,7 @@ Writes the incoming table to a database table.
 
 | Setting | Description |
 |---|---|
+| **Database** | Snowflake connections only: the database to write to. Empty uses the connection's default database. With a database set, choose a schema too; the target is `database.schema.table`. |
 | **Schema** | Target schema, e.g. `public`. |
 | **Table** | Target table name. |
 | **Write Mode** | **Append** adds rows to the existing table, **Replace** drops and recreates it with the new data, **Fail** errors if the table already exists. |

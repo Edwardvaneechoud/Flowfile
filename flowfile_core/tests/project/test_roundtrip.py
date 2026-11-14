@@ -1418,3 +1418,167 @@ def test_a_schedule_file_without_a_backend_imports_null(tmp_path):
         assert _schedule_backends(flow_uuid) == [None]
     finally:
         _cleanup([], [flow_uuid])
+
+
+def _snowflake_key_pem() -> str:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+
+
+def _make_snowflake_connection(name: str, auth_method: str, secret: str) -> None:
+    with get_db_context() as db:
+        store_database_connection(
+            db,
+            input_schema.FullDatabaseConnection(
+                connection_name=name,
+                database_type="snowflake",
+                username="" if auth_method == "oauth" else "ETL_USER",
+                password=secret,
+                host="https://app.snowflake.com/myorg/myaccount/worksheets",
+                database="SALES",
+                auth_method=auth_method,
+                role="ANALYST",
+                warehouse="COMPUTE_WH",
+            ),
+            OWNER,
+        )
+
+
+def _stored_secret(name: str) -> str:
+    from flowfile_core.database.models import Secret
+    from flowfile_core.secret_manager.secret_manager import decrypt_secret
+
+    with get_db_context() as db:
+        row = get_database_connection(db, name, OWNER)
+        secret = db.query(Secret).filter(Secret.id == row.password_id).first()
+        return decrypt_secret(secret.encrypted_value).get_secret_value()
+
+
+def _stored_fields(name: str) -> dict:
+    with get_db_context() as db:
+        row = get_database_connection(db, name, OWNER)
+        return {
+            "database_type": row.database_type,
+            "host": row.host,
+            "port": row.port,
+            "username": row.username,
+            "database": row.database,
+            "auth_method": row.auth_method,
+            "role": row.role,
+            "warehouse": row.warehouse,
+        }
+
+
+def test_postgres_connection_file_is_unchanged_by_the_snowflake_fields(tmp_path):
+    project_sync.close_project(OWNER)
+    conn = "proj_db_pg_shape"
+    _make_connection(conn, "pw")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Postgres Shape", OWNER)
+        text = (root / "connections" / "database" / f"{conn}.yaml").read_text(encoding="utf-8")
+        assert yaml.safe_load(text) == {
+            "kind": "database_connection",
+            "connection_name": conn,
+            "database_type": "postgresql",
+            "host": "db.internal",
+            "port": 5432,
+            "database": "sales",
+            "username": "etl_reader",
+            "ssl_enabled": True,
+            "password": "${secret:" + conn + "}",
+        }
+        assert list(yaml.safe_load(text)) == [
+            "kind",
+            "connection_name",
+            "database_type",
+            "host",
+            "port",
+            "database",
+            "username",
+            "ssl_enabled",
+            "password",
+        ]
+    finally:
+        _cleanup([conn], [])
+
+
+def test_snowflake_connections_round_trip_for_every_sign_in_method(tmp_path, monkeypatch):
+    project_sync.close_project(OWNER)
+    secrets = {
+        "proj_sf_token": ("access_token", "pat-token-value"),
+        "proj_sf_key": ("key_pair", _snowflake_key_pem()),
+        "proj_sf_oauth": ("oauth", "refresh-token-value"),
+    }
+    for name, (method, secret) in secrets.items():
+        _make_snowflake_connection(name, method, secret)
+    before = {name: (_stored_fields(name), _stored_secret(name)) for name in secrets}
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Snowflake Round Trip", OWNER)
+        snap = _snapshot(root)
+        for name, (method, secret) in secrets.items():
+            text = (root / "connections" / "database" / f"{name}.yaml").read_text(encoding="utf-8")
+            data = yaml.safe_load(text)
+            assert data["host"] == "myorg-myaccount.snowflakecomputing.com"
+            assert data["auth_method"] == method
+            assert data["role"] == "ANALYST"
+            assert data["warehouse"] == "COMPUTE_WH"
+            assert data["password"] == "${secret:" + name + "}"
+            assert before[name][1] not in text
+        assert before["proj_sf_key"][1] != secrets["proj_sf_key"][1], "the key is stored normalised"
+
+        project_sync.close_project(OWNER)
+        for name in secrets:
+            with get_db_context() as db:
+                delete_database_connection(db, name, OWNER)
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_TOKEN", secrets["proj_sf_token"][1])
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_KEY", before["proj_sf_key"][1])
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_OAUTH", secrets["proj_sf_oauth"][1])
+        from flowfile_core.project.importer import import_project
+
+        result = import_project(root, OWNER)
+        assert result.imported_connections >= 3
+        for name in secrets:
+            assert (_stored_fields(name), _stored_secret(name)) == before[name]
+
+        with get_db_context() as db:
+            projection.project_all(db, root, OWNER)
+        assert _snapshot(root) == snap, "project -> import -> project must round-trip"
+    finally:
+        _cleanup(list(secrets), [])
+
+
+def test_snowflake_connection_imported_without_its_secret_fails_at_use(tmp_path, monkeypatch):
+    from shared.db_dialects.snowflake import SnowflakeDialect
+
+    project_sync.close_project(OWNER)
+    conn = "proj_sf_nosecret"
+    _make_snowflake_connection(conn, "access_token", "pat-token-value")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Snowflake Missing Secret", OWNER)
+        project_sync.close_project(OWNER)
+        with get_db_context() as db:
+            delete_database_connection(db, conn, OWNER)
+        monkeypatch.delenv("FLOWFILE_SECRET_PROJ_SF_NOSECRET", raising=False)
+        from flowfile_core.project.importer import import_project
+
+        result = import_project(root, OWNER)
+        assert conn in result.placeholder_secrets
+        fields = _stored_fields(conn)
+        assert fields["auth_method"] == "access_token"
+        assert _stored_secret(conn) == ""
+
+        uri = SnowflakeDialect().build_uri(
+            host=fields["host"], username=fields["username"], password="", auth=fields["auth_method"]
+        )
+        with pytest.raises(ValueError, match="no credential saved"):
+            SnowflakeDialect()._connect(uri)
+    finally:
+        _cleanup([conn], [])

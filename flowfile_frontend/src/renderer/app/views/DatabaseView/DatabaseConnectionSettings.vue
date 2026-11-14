@@ -1,4 +1,4 @@
-//flowfile_frontend/src/renderer/app/pages/databaseManager/DatabaseConnectionForm.vue
+//flowfile_frontend/src/renderer/app/views/DatabaseView/DatabaseConnectionSettings.vue
 
 <template>
   <form class="form" @submit.prevent="submitForm">
@@ -22,10 +22,26 @@
           <option v-for="dialect in dialects" :key="dialect.name" :value="dialect.name">
             {{ dialect.display_name }}
           </option>
+          <option
+            v-for="dialect in missingDialects"
+            :key="dialect.name"
+            :value="dialect.name"
+            disabled
+          >
+            {{ notInstalledLabel(dialect) }}
+          </option>
         </select>
+        <div
+          v-for="note in installNotes"
+          :key="note"
+          class="form-hint"
+          data-testid="dialect-install-hint"
+        >
+          {{ note }}
+        </div>
       </div>
 
-      <div v-if="!isFileBasedType" class="form-field">
+      <div v-if="showServerFields" class="form-field">
         <label for="host" class="form-label">Host</label>
         <input
           id="host"
@@ -37,7 +53,7 @@
         />
       </div>
 
-      <div v-if="!isFileBasedType" class="form-field">
+      <div v-if="showServerFields" class="form-field">
         <label for="port" class="form-label">Port</label>
         <input
           id="port"
@@ -48,7 +64,7 @@
         />
       </div>
 
-      <div class="form-field">
+      <div v-if="!isSnowflake" class="form-field">
         <label for="database" class="form-label">{{
           isFileBasedType ? "File Path" : "Database"
         }}</label>
@@ -61,7 +77,7 @@
         />
       </div>
 
-      <div v-if="!isFileBasedType" class="form-field">
+      <div v-if="showServerFields" class="form-field">
         <label for="username" class="form-label">Username</label>
         <input
           id="username"
@@ -73,7 +89,7 @@
         />
       </div>
 
-      <div v-if="!isFileBasedType" class="form-field">
+      <div v-if="showServerFields" class="form-field">
         <label for="password" class="form-label">Password</label>
         <div class="password-field">
           <input
@@ -95,7 +111,7 @@
         </div>
       </div>
 
-      <div v-if="!isFileBasedType" class="form-field">
+      <div v-if="showServerFields" class="form-field">
         <div class="checkbox-container">
           <input
             id="ssl-enabled"
@@ -106,6 +122,16 @@
           <label for="ssl-enabled" class="form-label">Enable SSL</label>
         </div>
       </div>
+
+      <SnowflakeConnectionFields
+        v-if="isSnowflake"
+        v-model="connection"
+        :is-editing="props.isEditing"
+        :stored-auth-method="props.initialConnection?.authMethod"
+        :stored-host="props.initialConnection?.host"
+        :stored-role="props.initialConnection?.role"
+        :auth-methods="authMethods(connection.databaseType)"
+      />
     </div>
 
     <div class="form-actions">
@@ -118,9 +144,22 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, defineProps, defineEmits, watch } from "vue";
+import { ref, computed, defineProps, defineEmits, watch, onMounted } from "vue";
 import type { FullDatabaseConnection } from "./databaseConnectionTypes";
 import { useDbDialects } from "../../composables/useDbDialects";
+import {
+  type DbDialectInfo,
+  getUnavailableDbDialects,
+  installNote,
+  notInstalledLabel,
+} from "../../api/dbDialects";
+import SnowflakeConnectionFields from "./SnowflakeConnectionFields.vue";
+import {
+  SNOWFLAKE,
+  buildPayloadFields,
+  isSnowflakeFormValid,
+  snowflakeResetFields,
+} from "./snowflakeConnection";
 
 const props = defineProps<{
   initialConnection?: FullDatabaseConnection;
@@ -133,7 +172,20 @@ const emit = defineEmits<{
   (e: "cancel"): void;
 }>();
 
-const { dialects, isFileBased, defaultPort } = useDbDialects();
+const { dialects, isFileBased, defaultPort, authMethods } = useDbDialects();
+
+const unavailableDialects = ref<DbDialectInfo[]>([]);
+onMounted(async () => {
+  unavailableDialects.value = await getUnavailableDbDialects();
+});
+const missingDialects = computed(() =>
+  unavailableDialects.value.filter(
+    (missing) => !dialects.value.some((dialect) => dialect.name === missing.name),
+  ),
+);
+const installNotes = computed(() =>
+  missingDialects.value.map(installNote).filter((note): note is string => note !== null),
+);
 
 const defaultConnection = (): FullDatabaseConnection => ({
   connectionName: "",
@@ -161,18 +213,19 @@ watch(
 );
 
 watch(
-  () => connection.value.databaseType,
-  (newType, oldType) => {
-    if (newType !== oldType) {
-      const newDefault = defaultPort(newType);
-      if (isFileBased(newType)) {
-        // File-based databases have no port
-        connection.value.port = undefined;
-      } else {
-        const oldDefault = defaultPort(oldType);
-        if (!connection.value.port || connection.value.port === oldDefault) {
-          connection.value.port = newDefault;
-        }
+  () => [connection.value, connection.value.databaseType] as const,
+  ([current, newType], [previous, oldType]) => {
+    // A replaced connection (an edit loading) keeps its fields.
+    if (current !== previous || newType === oldType) return;
+    if (newType === SNOWFLAKE || oldType === SNOWFLAKE) {
+      Object.assign(connection.value, snowflakeResetFields());
+    }
+    if (isFileBased(newType) || newType === SNOWFLAKE) {
+      connection.value.port = undefined;
+    } else {
+      const oldDefault = defaultPort(oldType);
+      if (!connection.value.port || connection.value.port === oldDefault) {
+        connection.value.port = defaultPort(newType);
       }
     }
   },
@@ -181,8 +234,18 @@ watch(
 const showPassword = ref(false);
 
 const isFileBasedType = computed(() => isFileBased(connection.value.databaseType));
+const isSnowflake = computed(() => connection.value.databaseType === SNOWFLAKE);
+const showServerFields = computed(() => !isFileBasedType.value && !isSnowflake.value);
 
 const isValid = computed(() => {
+  if (isSnowflake.value) {
+    return isSnowflakeFormValid(connection.value, {
+      isEditing: !!props.isEditing,
+      storedAuthMethod: props.initialConnection?.authMethod,
+      storedHost: props.initialConnection?.host,
+      storedRole: props.initialConnection?.role,
+    });
+  }
   if (isFileBasedType.value) {
     return !!connection.value.connectionName && !!connection.value.database;
   }
@@ -203,7 +266,12 @@ const submitButtonText = computed(() => {
 
 const submitForm = () => {
   if (isValid.value) {
-    emit("submit", connection.value);
+    emit(
+      "submit",
+      isSnowflake.value
+        ? { ...connection.value, ...buildPayloadFields(connection.value) }
+        : connection.value,
+    );
   }
 };
 </script>

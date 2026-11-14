@@ -48,6 +48,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     _get_own_database_connection,
     delete_cloud_connection,
     delete_database_connection,
+    is_snowflake,
     store_cloud_connection,
     store_database_connection,
     update_cloud_connection,
@@ -179,12 +180,22 @@ def _import_db_connection(data: dict, owner_id: int, dotenv: dict, result: Setup
         port=entry.port,
         database=entry.database,
         ssl_enabled=entry.ssl_enabled,
+        auth_method=entry.auth_method,
+        role=entry.role,
+        warehouse=entry.warehouse,
     )
-    with get_db_context() as db:
-        if _get_own_database_connection(db, name, owner_id):
-            update_database_connection(db, conn, owner_id)
-        else:
-            store_database_connection(db, conn, owner_id)
+    # A Snowflake secret that did not resolve is stored blank and fails at use, not here.
+    try:
+        with get_db_context() as db:
+            if _get_own_database_connection(db, name, owner_id):
+                update_database_connection(db, conn, owner_id, allow_blank_secret=True)
+            else:
+                store_database_connection(db, conn, owner_id, allow_blank_secret=True)
+    except ValueError:
+        if not is_snowflake(entry.database_type):
+            raise
+        logger.warning("Project import: skipping Snowflake connection %r that could not be stored", name, exc_info=True)
+        return name
     result.imported_connections += 1
     return name
 

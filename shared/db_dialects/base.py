@@ -14,6 +14,18 @@ Contract notes:
   function-local so importing ``shared.db_dialects`` remains dependency-light.
 - The four schema hooks return ``None`` to mean "no fast path — the caller
   keeps its existing generic implementation" (SQLAlchemy inspection in core).
+- ``auth_methods``, ``saved_connection_only``, ``with_credentials`` and
+  ``session_info`` exist for dialects whose login is not a host/user/password
+  triple (Snowflake); their base values change nothing for the others.
+- ``browses_databases`` / ``list_databases`` are for a dialect whose one login
+  reaches many databases (Snowflake): the connection's database is then only a
+  default, and a node may name another. The base answers one database per
+  connection.
+- ``checked_identifier_path`` is the injection defence for every database,
+  schema and table name concatenated into SQL. The base keeps the historical
+  plain rule; only a dialect with ``quoted_identifiers`` takes double-quoted
+  parts (and ``$``), so a quoted name never reaches a writer that wraps or
+  splits names itself.
 """
 
 from __future__ import annotations
@@ -21,6 +33,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, ClassVar
+
+from shared.db_dialects.identifiers import is_plain_path
 
 if TYPE_CHECKING:
     import polars as pl
@@ -43,6 +57,10 @@ class DbDialect:
     sqlalchemy_driver: ClassVar[str | None] = None
     sqlglot_name: ClassVar[str] = "postgres"
     install_hint: ClassVar[str | None] = None
+    auth_methods: ClassVar[tuple[str, ...]] = ()
+    saved_connection_only: ClassVar[bool] = False
+    browses_databases: ClassVar[bool] = False
+    quoted_identifiers: ClassVar[bool] = False
 
     @property
     def uri_scheme(self) -> str:
@@ -106,6 +124,14 @@ class DbDialect:
 
         return base_uri
 
+    def with_credentials(self, url: str, password: str | None) -> str:
+        """``url`` with ``password`` merged in, for a URL that was shipped without its secret.
+
+        The base returns ``url`` unchanged: a full URL a caller passes already carries
+        whatever credentials it needs.
+        """
+        return url
+
     def sqlalchemy_uri(self, uri: str) -> str:
         """Apply this dialect's SQLAlchemy driver suffix to a base URI."""
         if self.sqlalchemy_driver and uri.startswith(f"{self.uri_scheme}://"):
@@ -140,10 +166,36 @@ class DbDialect:
         """Fast schema for an arbitrary query without executing it; None = generic path."""
         return None
 
+    def checked_identifier_path(self, value: str, what: str = "name") -> str:
+        """``value`` as given when it is safe to put verbatim into this dialect's SQL, else ``ValueError``.
+
+        The base rule: each dot-separated part letters, digits and underscores, not starting with a digit.
+        ``what`` names the value for a dialect whose message says what it is; the base message is the
+        historical one.
+        """
+        if not isinstance(value, str) or not is_plain_path(value):
+            raise ValueError(f"Invalid SQL identifier: '{value}'. Only letters, numbers, and underscores are allowed.")
+        return value
+
+    def checked_database(self, name: str) -> str:
+        """A database name a node picked, checked as one identifier before it goes into a URI.
+
+        Only a dialect that browses databases accepts one; the base refuses.
+        """
+        raise ValueError(f"A {self.display_name} connection has one database; a node cannot pick another.")
+
+    def list_databases(self, uri: str) -> list[str] | None:
+        """Database names a node may pick; None = this dialect has one database per connection."""
+        return None
+
     def list_schemas(self, uri: str) -> list[str] | None:
         """Schema names for connection browsing; None = caller uses SQLAlchemy inspection."""
         return None
 
     def list_tables(self, uri: str, schema_name: str | None) -> list[str] | None:
         """Table names for connection browsing; None = caller uses SQLAlchemy inspection."""
+        return None
+
+    def session_info(self, uri: str) -> dict[str, str] | None:
+        """Who and where a session runs as; None = no cheap way to describe the session, so the caller probes."""
         return None

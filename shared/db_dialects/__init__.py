@@ -28,6 +28,7 @@ from shared.db_dialects.builtin import (
 from shared.db_dialects.denodo import DenodoDialect
 from shared.db_dialects.duckdb import DuckDBDialect
 from shared.db_dialects.mssql import MSSQLDialect
+from shared.db_dialects.snowflake import SnowflakeDialect
 
 if TYPE_CHECKING:
     import polars as pl
@@ -41,6 +42,7 @@ __all__ = [
     "GenericDialect",
     "KNOWN_DIALECT_NAMES",
     "MSSQLDialect",
+    "SnowflakeDialect",
     "UnknownDialectError",
     "dialect_catalog",
     "get_dialect",
@@ -61,6 +63,7 @@ _BUILTIN_DIALECTS: tuple[DbDialect, ...] = (
     DuckDBDialect(),
     MSSQLDialect(),
     DenodoDialect(),
+    SnowflakeDialect(),
 )
 
 _REGISTRY: dict[str, DbDialect] = {d.name: d for d in _BUILTIN_DIALECTS}
@@ -77,6 +80,11 @@ class DialectInfo(BaseModel):
     default_port: int | None
     supports_ssl: bool
     available: bool
+    auth_methods: list[str] = []
+    saved_connection_only: bool = False
+    browses_databases: bool = False
+    quoted_identifiers: bool = False
+    install_hint: str | None = None
 
 
 def get_dialect(name: str) -> DbDialect:
@@ -113,6 +121,11 @@ def dialect_catalog() -> list[DialectInfo]:
             default_port=d.default_port,
             supports_ssl=d.supports_ssl,
             available=d.is_available(),
+            auth_methods=list(d.auth_methods),
+            saved_connection_only=d.saved_connection_only,
+            browses_databases=d.browses_databases,
+            quoted_identifiers=d.quoted_identifiers,
+            install_hint=d.install_hint,
         )
         for d in iter_dialects()
     ]

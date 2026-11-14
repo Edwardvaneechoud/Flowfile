@@ -422,6 +422,9 @@ df = ff.read_database(
 - `connection_name`: Name of a stored database connection (required)
 - `table_name`: Table to read from
 - `schema_name`: Database schema (e.g., "public")
+- `database_name`: Database the table is in, for a connection that reaches several (Snowflake, SQL Server).
+  Unset, the connection's default database. With a table the node reads `database_name.schema_name.table_name`,
+  so a schema is required; a query runs as written.
 - `query`: Custom SQL query (takes precedence over `table_name`)
 - `description`: Optional description for the node
 
@@ -500,6 +503,48 @@ df = ff.read_database("denodo-vdp", query="SELECT customer_id, revenue FROM cust
 ```
 
 Reads and queries are supported; writing to Denodo has not been verified against a live server.
+
+### Snowflake
+
+Snowflake connections use `database_type="snowflake"`. `host` is the account (an identifier such as
+`myorg-myaccount`, its `.snowflakecomputing.com` host, or a Snowsight link) and `password` is the
+credential: an access token by default, or the private key file's text with `auth_method="key_pair"`.
+`role` and `warehouse` are optional and fall back to the user's defaults in Snowflake:
+
+```python
+from pathlib import Path
+
+ff.create_database_connection(
+    connection_name="snowflake-sales",
+    database_type="snowflake",
+    host="myorg-myaccount",
+    username="ETL_SERVICE",
+    password=Path("rsa_key.p8").read_text(),
+    auth_method="key_pair",
+    warehouse="COMPUTE_WH",
+    database="SALES",
+)
+
+df = ff.read_database("snowflake-sales", schema_name="PUBLIC", table_name="ORDERS")
+```
+
+The connection's `database` is optional and only a default: the role reaches every database it may use, and
+`database_name` reads from another one:
+
+```python
+customers = ff.read_database(
+    "snowflake-sales",
+    table_name="CUSTOMER",
+    schema_name="TPCH_SF100",
+    database_name="SNOWFLAKE_SAMPLE_DATA",
+)
+```
+
+For an encrypted key, pass `private_key_passphrase=`; it opens the key once and is not stored.
+Browser sign-in (`auth_method="oauth"`) is refused from Python; create such a connection in the app and
+read it by name. A pip install needs the driver: `pip install "flowfile[snowflake]"`. The sign-in methods,
+the account formats and what the role needs are on the [Snowflake connections](../../visual-editor/connections.md#snowflake)
+page.
 
 ## Connection Management
 

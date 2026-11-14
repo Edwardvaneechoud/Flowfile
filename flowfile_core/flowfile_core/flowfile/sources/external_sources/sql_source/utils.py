@@ -407,6 +407,33 @@ def construct_sql_uri(
     )
 
 
+SNOWFLAKE_INLINE_REFUSAL = (
+    "Snowflake connections must be saved connections. Create one under Connections → Database and select it here."
+)
+
+
+def refuse_inline_snowflake(database_connection) -> None:
+    """Raise for an inline (unsaved) Snowflake connection: its login lives only on a saved connection."""
+    if (getattr(database_connection, "database_type", None) or "").lower() == "snowflake":
+        raise ValueError(SNOWFLAKE_INLINE_REFUSAL)
+
+
+def dialect_uri_options(database_connection) -> dict[str, str]:
+    """The dialect-specific URI options of a saved connection, passed to ``construct_sql_uri`` as keyword arguments.
+
+    Snowflake's are ``auth`` (the connection's ``auth_method``), ``role`` and ``warehouse``, each left out when unset;
+    every other dialect has none, so its URI is built exactly as before.
+    """
+    if (getattr(database_connection, "database_type", None) or "").lower() != "snowflake":
+        return {}
+    options = {
+        "auth": getattr(database_connection, "auth_method", None),
+        "role": getattr(database_connection, "role", None),
+        "warehouse": getattr(database_connection, "warehouse", None),
+    }
+    return {key: value for key, value in options.items() if value}
+
+
 # Re-export shared SQL utilities so existing imports from this module continue to work
 SQLALCHEMY_DRIVER_MAP = _shared_SQLALCHEMY_DRIVER_MAP
 get_sqlalchemy_uri = _shared_get_sqlalchemy_uri

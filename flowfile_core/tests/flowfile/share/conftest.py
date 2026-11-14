@@ -19,6 +19,8 @@ CANARIES = {
     "db_user": "CANARYDBUSER",
     "db_name": "CANARYDBNAME",
     "db_table": "CANARYDBTABLE",
+    "db_database": "CANARYDBDATABASE",
+    "db_schema": "CANARYDBSCHEMA",
     "db_connection": "CANARYDBCONNECTION",
     "cloud_connection": "CANARYCLOUDCONNECTION",
     "cloud_path": "CANARYCLOUDBUCKET",
@@ -126,6 +128,8 @@ def build_canary_flow() -> FlowGraph:
                     database=CANARIES["db_name"],
                 ),
                 table_name=CANARIES["db_table"],
+                schema_name=CANARIES["db_schema"],
+                database_name=CANARIES["db_database"],
                 query_mode="table",
             ),
         )

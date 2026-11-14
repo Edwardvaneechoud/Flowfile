@@ -159,7 +159,7 @@
     {
       "name": "FlowSettings",
       "kind": "class",
-      "signature": "(*, flow_id=<factory>, description=None, save_location=None, name='', path='', source_registration_id=None, execution_mode='Performance', execution_location=<factory>, max_parallel_workers=4, parameters=<factory>, auto_save=False, modified_on=None, show_detailed_progress=True, show_edge_labels=False, is_running=False, is_canceled=False, track_history=True, validate_settings=True)",
+      "signature": "(*, flow_id=<factory>, description=None, save_location=None, name='', path='', source_registration_id=None, execution_mode='Performance', execution_location=<factory>, max_parallel_workers=4, parameters=<factory>, hub_origin=None, auto_save=False, modified_on=None, show_detailed_progress=True, show_edge_labels=False, is_running=False, is_canceled=False, track_history=True, validate_settings=True)",
       "doc_first_line": "Extends FlowGraphConfig with additional operational settings for a flow."
     },
     {
@@ -171,7 +171,7 @@
     {
       "name": "FullCloudStorageConnection",
       "kind": "class",
-      "signature": "(*, storage_type, auth_method, connection_name='None', aws_region=None, aws_access_key_id=None, aws_secret_access_key=None, aws_role_arn=None, aws_allow_unsafe_html=None, aws_session_token=None, aws_profile=None, azure_account_name=None, azure_account_key=None, azure_tenant_id=None, azure_client_id=None, azure_client_secret=None, azure_sas_token=None, gcs_service_account_key=None, gcs_project_id=None, endpoint_url=None, verify_ssl=True)",
+      "signature": "(*, storage_type, auth_method, connection_name='None', aws_region=None, aws_access_key_id=None, aws_secret_access_key=None, aws_role_arn=None, aws_allow_unsafe_html=None, aws_session_token=None, aws_profile=None, azure_account_name=None, azure_account_key=None, azure_tenant_id=None, azure_client_id=None, azure_client_secret=None, azure_sas_token=None, gcs_service_account_key=None, gcs_project_id=None, endpoint_url=None, verify_ssl=True, granted=False)",
       "doc_first_line": "Internal model with decrypted secrets"
     },
     {
@@ -435,13 +435,13 @@
     {
       "name": "create_database_connection",
       "kind": "function",
-      "signature": "(connection_name, *, database_type='postgresql', host=None, port=None, database=None, username=None, password=None, ssl_enabled=False, url=None)",
+      "signature": "(connection_name, *, database_type='postgresql', host=None, port=None, database=None, username=None, password=None, ssl_enabled=False, url=None, auth_method=None, role=None, warehouse=None, private_key_passphrase=None)",
       "doc_first_line": "Create and store a new database connection."
     },
     {
       "name": "create_database_connection_if_not_exists",
       "kind": "function",
-      "signature": "(connection_name, *, database_type='postgresql', host=None, port=None, database=None, username=None, password=None, ssl_enabled=False, url=None)",
+      "signature": "(connection_name, *, database_type='postgresql', host=None, port=None, database=None, username=None, password=None, ssl_enabled=False, url=None, auth_method=None, role=None, warehouse=None, private_key_passphrase=None)",
       "doc_first_line": "Create a database connection if it doesn't already exist."
     },
     {
@@ -699,7 +699,7 @@
     {
       "name": "read_database",
       "kind": "function",
-      "signature": "(connection_name, *, table_name=None, schema_name=None, query=None, description=None, flow_graph=None)",
+      "signature": "(connection_name, *, table_name=None, schema_name=None, query=None, description=None, flow_graph=None, database_name=None)",
       "doc_first_line": "Read data from a database using a stored connection."
     },
     {
@@ -843,7 +843,7 @@
     {
       "name": "write_database",
       "kind": "function",
-      "signature": "(df, connection_name, table_name, *, schema_name=None, if_exists='append')",
+      "signature": "(df, connection_name, table_name, *, schema_name=None, if_exists='append', database_name=None)",
       "doc_first_line": "Write data to a database using a stored connection."
     },
     {
@@ -1583,7 +1583,7 @@
     {
       "name": "write_database",
       "kind": "method",
-      "signature": "(connection_name, table_name, *, schema_name=None, if_exists='append', description=None)",
+      "signature": "(connection_name, table_name, *, schema_name=None, if_exists='append', description=None, database_name=None)",
       "doc_first_line": "Write the data frame to a database using a stored connection."
     },
     {

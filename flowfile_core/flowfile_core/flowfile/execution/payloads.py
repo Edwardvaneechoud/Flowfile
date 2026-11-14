@@ -173,7 +173,7 @@ class DatabaseWritePayload(OperationPayload):
         settings: The node's settings; ``database_write_settings`` holds the connection mode and ``if_exists``.
         connection: The inline connection, or the stored one a reference names (its ``password`` the ciphertext).
         encrypted_password: The connection's password as stored, ``None`` for a file-based database.
-        table_name: The table to write, qualified by its schema when the settings name one.
+        table_name: The table to write, qualified by its schema (and database) when the settings name one.
     """
 
     plan: pl.LazyFrame

@@ -1791,6 +1791,8 @@ def _database_read_settings(read: DatabaseReadPayload) -> DatabaseExternalReadSe
         table_name=database_settings.table_name,
         schema_name=database_settings.schema_name,
         fields=node_settings.fields,
+        database_type=getattr(read.connection, "database_type", None),
+        database_name=database_settings.database_name,
     ).query
     settings = DatabaseExternalReadSettings.create_from_from_node_database_reader(
         node_database_reader=node_settings,

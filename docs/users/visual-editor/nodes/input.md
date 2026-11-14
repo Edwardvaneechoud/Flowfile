@@ -118,7 +118,7 @@ The drawer is a small spreadsheet rather than a form: **Add Column** and **Add R
 <div class="ff-split" markdown>
 
 <div markdown>
-Loads data from a database table or a custom SQL query. Supports PostgreSQL, MySQL, SQLite, DuckDB, SQL Server and Denodo.
+Loads data from a database table or a custom SQL query. Supports PostgreSQL, MySQL, SQLite, DuckDB, SQL Server, Denodo and Snowflake (Snowflake through a saved connection only).
 
 **Validate Settings** checks the connection before you run anything. [Connect to PostgreSQL](../tutorials/database-connectivity.md) is a step-by-step walkthrough.
 </div>
@@ -138,6 +138,7 @@ Loads data from a database table or a custom SQL query. Supports PostgreSQL, MyS
 
 | Setting | Description |
 |---|---|
+| **Database** | Snowflake connections only: the database to read from. Empty uses the connection's default database. With a database set, choose a schema too; the node reads `database.schema.table`. |
 | **Schema** | Database schema to query, e.g. `public`. |
 | **Table** | Table to read from. |
 | **Custom SQL** | Write a query instead of reading a whole table. |

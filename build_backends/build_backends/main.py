@@ -40,11 +40,34 @@ HANDSHAKE_METADATA_PACKAGES = (
     "polars_expr_transformer",
 )
 
+# Drivers from pip extras, as (module, distribution, extra): bundled with their extensions and data when installed.
+OPTIONAL_DRIVERS = (("snowflake.connector", "snowflake-connector-python", "snowflake"),)
 
-def create_spec_file(directory, script_name, output_name, hidden_imports, collected_packages=()):
+
+def installed_optional_drivers() -> list[tuple[str, str]]:
+    """Return ``(module, distribution)`` for each ``OPTIONAL_DRIVERS`` entry importable here.
+
+    A driver that is absent is skipped with one printed line, so a build without the extra still succeeds; the
+    sidecars then report that dialect as not installed.
+    """
+    found = []
+    for module, distribution, extra in OPTIONAL_DRIVERS:
+        try:
+            __import__(module)
+        except ImportError:
+            print(f"Skipping optional driver {module}: not installed (poetry install --extras {extra})")
+            continue
+        print(f"Bundling optional driver {module}")
+        found.append((module, distribution))
+    return found
+
+
+def create_spec_file(directory, script_name, output_name, hidden_imports, collected_packages=(), optional_drivers=()):
     """Create an optimized spec file for faster startup.
 
     ``collected_packages`` are expanded with ``collect_submodules`` at spec time and added to the hiddenimports.
+    ``optional_drivers`` are ``(module, distribution)`` pairs collected whole: submodules, data files, compiled
+    libraries and distribution metadata.
     """
     spec_content = f'''
 import sys
@@ -306,19 +329,29 @@ collected_hiddenimports = []
 for _pkg in {list(collected_packages)!r}:
     collected_hiddenimports += collect_submodules(_pkg)
 
+# Optional drivers found installed by build_backends; each is imported lazily, so static analysis misses it.
+driver_hiddenimports = []
+driver_datas = []
+driver_binaries = []
+for _pkg, _dist in {list(optional_drivers)!r}:
+    driver_hiddenimports += collect_submodules(_pkg)
+    driver_datas += collect_data_files(_pkg)
+    driver_binaries += collect_dynamic_libs(_pkg)
+    driver_datas += copy_metadata(_dist)
+
 # Create runtime hook file
 with open('connectorx_hook.py', 'w', encoding='utf-8') as f:
     f.write(create_runtime_hook())
 
 a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
-    binaries=plugin_binaries + ai_binaries,
+    binaries=plugin_binaries + ai_binaries + driver_binaries,
     datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas
     + code_generator_datas + demo_flows_datas + standard_icons_datas
     + kernel_manifest_datas + share_manifest_datas + plugin_datas + handshake_metadata_datas
-    + litellm_datas + ai_datas,
+    + litellm_datas + ai_datas + driver_datas,
     hiddenimports={hidden_imports} + plugin_hiddenimports + polars_hiddenimports
-    + litellm_hiddenimports + ai_hiddenimports + collected_hiddenimports + [
+    + litellm_hiddenimports + ai_hiddenimports + collected_hiddenimports + driver_hiddenimports + [
         'numpy',
         'numpy.core._dtype_ctypes',
         'numpy.core._methods',
@@ -418,9 +451,11 @@ coll = COLLECT(
     return spec_path
 
 
-def build_backend(directory, script_name, output_name, hidden_imports=None, collected_packages=()):
+def build_backend(directory, script_name, output_name, hidden_imports=None, collected_packages=(), optional_drivers=()):
     try:
-        spec_path = create_spec_file(directory, script_name, output_name, hidden_imports, collected_packages)
+        spec_path = create_spec_file(
+            directory, script_name, output_name, hidden_imports, collected_packages, optional_drivers
+        )
 
         env = os.environ.copy()
         env["PYTHONOPTIMIZE"] = "1"
@@ -542,6 +577,9 @@ def main():
         "polars_expr_transformer",
     ]
 
+    optional_drivers = installed_optional_drivers()
+    common_imports += [module for module, _distribution in optional_drivers]
+
     builds_successful = True
 
     if not build_backend(
@@ -549,6 +587,7 @@ def main():
         script_name="main.py",
         output_name="flowfile_worker",
         hidden_imports=common_imports,
+        optional_drivers=optional_drivers,
     ):
         builds_successful = False
 
@@ -558,6 +597,7 @@ def main():
         output_name="flowfile_core",
         hidden_imports=common_imports,
         collected_packages=NOTEBOOK_COLLECTED_PACKAGES,
+        optional_drivers=optional_drivers,
     ):
         builds_successful = False
 

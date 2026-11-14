@@ -42,6 +42,7 @@ from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     SqlSource,
+    qualified_table,
 )
 from flowfile_core.kafka.connection_manager import (
     build_consumer_config,
@@ -90,6 +91,8 @@ def _resolve_database_credentials(
         and database_settings.database_connection is not None
         and get_dialect_or_generic(database_settings.database_connection.database_type).file_based
     )
+    if database_settings.connection_mode == "inline":
+        sql_utils.refuse_inline_snowflake(database_settings.database_connection)
     if database_settings.connection_mode == "inline" and not is_file_based:
         database_connection = database_settings.database_connection
         encrypted_password = run_secrets.encrypted_secret(user_id, database_connection.password_ref)
@@ -186,10 +189,11 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 lambda: _resolve_database_credentials(database_settings, node_database_writer.user_id),
             )
             df.lazy = True
-            table_name = (
-                database_settings.schema_name + "." + database_settings.table_name
-                if database_settings.schema_name
-                else database_settings.table_name
+            table_name = qualified_table(
+                get_dialect_or_generic(database_connection.database_type or "generic"),
+                database_settings.database_name,
+                database_settings.schema_name,
+                database_settings.table_name,
             )
             write = DatabaseWritePayload(
                 plan=df.data_frame,
@@ -278,12 +282,14 @@ class ConnectorBuildersMixin(GraphMixinBase):
                     password=decrypt_secret(encrypted_password) if encrypted_password else None,
                     ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
                     connect_timeout=10,
+                    **sql_utils.dialect_uri_options(database_connection),
                 ),
                 query=None if database_settings.query_mode == "table" else database_settings.query,
                 table_name=database_settings.table_name,
                 schema_name=database_settings.schema_name,
                 fields=node_database_reader.fields,
                 database_type=database_connection.database_type,
+                database_name=database_settings.database_name,
             )
             return sql_source.get_schema()
 

@@ -37,6 +37,7 @@ from flowfile_core.schemas.yaml_types import (
 )
 from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
+from shared.db_dialects.identifiers import IDENTIFIER, is_identifier_path
 from shared.path_utils import default_scan_extension, ensure_glob_pattern, file_name, is_cloud_path, is_url
 
 keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", default=False)
@@ -1122,6 +1123,10 @@ class FullDatabaseConnection(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    # Snowflake only: what ``password`` holds (oauth, access_token, key_pair) and the session's role and warehouse
+    auth_method: str | None = None
+    role: str | None = None
+    warehouse: str | None = None
     # A connection a provider elsewhere keeps: its password here is empty, the run is granted it where the step runs
     granted: bool = Field(default=False, exclude=True)
 
@@ -1143,17 +1148,54 @@ class FullDatabaseConnectionInterface(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    auth_method: str | None = None
+    role: str | None = None
+    warehouse: str | None = None
     id: int | None = None
     access: AccessInfo | None = None
     source: Literal["local", "hub"] = "local"
 
 
+def _check_sql_identifier(v, *, single_part: bool = False):
+    """A dotted identifier path whose parts are plain (letters, digits, ``_``, ``$``) or double-quoted.
+
+    That is the widest shape any dialect takes: a node names a connection, not a type, so the dialect's own,
+    stricter rule is applied where the name is used (``DbDialect.checked_identifier_path``). Empty passes (the
+    field is optional).
+    """
+    if v is not None and v != "":
+        fits = isinstance(v, str) and (IDENTIFIER.match(v) if single_part else is_identifier_path(v))
+        if not fits:
+            raise ValueError(f"Invalid SQL identifier: '{v}'. Only letters, numbers, and underscores are allowed.")
+    return v
+
+
+def _blank_database_name(v):
+    """A blank database name means the connection's default database; a set one is a single identifier."""
+    if isinstance(v, str) and not v.strip():
+        return None
+    return _check_sql_identifier(v.strip() if isinstance(v, str) else v, single_part=True)
+
+
+def _drop_unset_database_name(data: Any, database_name: str | None) -> Any:
+    """A node with no database of its own serialises exactly as it did before the field existed."""
+    if isinstance(data, dict) and database_name is None:
+        data.pop("database_name", None)
+    return data
+
+
 class DatabaseSettings(BaseModel):
-    """Defines settings for reading from a database, either via table or query."""
+    """Defines settings for reading from a database, either via table or query.
+
+    ``database_name`` is optional: unset, the node reads from the connection's default database. Set, table mode
+    reads ``database_name.schema_name.table_name`` (a schema is then required); query mode keeps it as the node's
+    setting and leaves the SQL as written.
+    """
 
     connection_mode: Literal["inline", "reference"] | None = "inline"
     database_connection: DatabaseConnection | None = None
     database_connection_name: str | None = None
+    database_name: str | None = None
     schema_name: str | None = None
     table_name: str | None = None
     query: str | None = None
@@ -1162,14 +1204,16 @@ class DatabaseSettings(BaseModel):
     @field_validator("table_name", "schema_name", mode="before")
     @classmethod
     def validate_sql_identifier(cls, v):
-        if v is not None and v != "":
-            parts = v.split(".")
-            for part in parts:
-                if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
-                    raise ValueError(
-                        f"Invalid SQL identifier: '{v}'. " f"Only letters, numbers, and underscores are allowed."
-                    )
-        return v
+        return _check_sql_identifier(v)
+
+    @field_validator("database_name", mode="before")
+    @classmethod
+    def validate_database_name(cls, v):
+        return _blank_database_name(v)
+
+    @model_serializer(mode="wrap")
+    def _serialize_without_unset_database(self, handler: Any, _info: Any) -> Any:
+        return _drop_unset_database_name(handler(self), self.database_name)
 
     @model_validator(mode="after")
     def validate_table_or_query(self):
@@ -1186,26 +1230,33 @@ class DatabaseSettings(BaseModel):
 
 
 class DatabaseWriteSettings(BaseModel):
-    """Defines settings for writing data to a database table."""
+    """Defines settings for writing data to a database table.
+
+    ``database_name`` is optional: unset, the table goes to the connection's default database. Set, the target is
+    ``database_name.schema_name.table_name`` and a schema is required.
+    """
 
     connection_mode: Literal["inline", "reference"] | None = "inline"
     database_connection: DatabaseConnection | None = None
     database_connection_name: str | None = None
     table_name: str
+    database_name: str | None = None
     schema_name: str | None = None
     if_exists: Literal["append", "replace", "fail"] | None = "append"
 
     @field_validator("table_name", "schema_name", mode="before")
     @classmethod
     def validate_sql_identifier(cls, v):
-        if v is not None and v != "":
-            parts = v.split(".")
-            for part in parts:
-                if not part or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", part):
-                    raise ValueError(
-                        f"Invalid SQL identifier: '{v}'. " f"Only letters, numbers, and underscores are allowed."
-                    )
-        return v
+        return _check_sql_identifier(v)
+
+    @field_validator("database_name", mode="before")
+    @classmethod
+    def validate_database_name(cls, v):
+        return _blank_database_name(v)
+
+    @model_serializer(mode="wrap")
+    def _serialize_without_unset_database(self, handler: Any, _info: Any) -> Any:
+        return _drop_unset_database_name(handler(self), self.database_name)
 
 
 class NodeDatabaseReader(NodeBase):
@@ -1218,7 +1269,7 @@ class NodeDatabaseReader(NodeBase):
         """Describes the database source."""
         ds = self.database_settings
         if ds.query_mode == "table" and ds.table_name:
-            table = f"{ds.schema_name}.{ds.table_name}" if ds.schema_name else ds.table_name
+            table = ".".join(p for p in (ds.database_name, ds.schema_name, ds.table_name) if p)
             return f"Read from {table}"
         if ds.query_mode == "query" and ds.query:
             q = ds.query
@@ -1236,7 +1287,7 @@ class NodeDatabaseWriter(NodeSingleInput):
     def get_default_description(self) -> str:
         """Describes the database write target."""
         dw = self.database_write_settings
-        table = f"{dw.schema_name}.{dw.table_name}" if dw.schema_name else dw.table_name
+        table = ".".join(p for p in (dw.database_name, dw.schema_name, dw.table_name) if p)
         return f"Write to {table} ({dw.if_exists})"
 
 

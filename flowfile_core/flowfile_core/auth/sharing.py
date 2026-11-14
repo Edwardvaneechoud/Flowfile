@@ -86,6 +86,45 @@ def ambient_credentials_allowed() -> bool:
     return os.environ.get("FLOWFILE_MODE", "electron") not in ("docker", "server")
 
 
+def browser_sign_in_allowed() -> bool:
+    """Whether a connection may be signed in through the user's browser (Snowflake's built-in OAuth client).
+
+    That client redirects to a loopback address, so it works only where core runs on the user's own machine: not
+    on a multi-user server (docker or server). Read live, like ``sharing_enabled``.
+    """
+    return os.environ.get("FLOWFILE_MODE", "electron") not in ("docker", "server")
+
+
+PERSONAL_CONNECTION_MESSAGE = (
+    "A connection signed in through the browser is personal and cannot be shared. "
+    "Use an access token or a key-pair for a shared connection."
+)
+
+
+def is_personal_connection(db: Session, resource_type: str, resource_id: int) -> bool:
+    """Whether a resource may never be shared: a database connection signed in through the browser."""
+    if resource_type != "database_connection":
+        return False
+    method = (
+        db.query(db_models.DatabaseConnection.auth_method)
+        .filter(db_models.DatabaseConnection.id == resource_id)
+        .scalar()
+    )
+    return method == "oauth"
+
+
+def has_grants(db: Session, resource_type: str, resource_id: int) -> bool:
+    return (
+        db.query(db_models.ResourceGrant.id)
+        .filter(
+            db_models.ResourceGrant.resource_type == resource_type,
+            db_models.ResourceGrant.resource_id == resource_id,
+        )
+        .first()
+        is not None
+    )
+
+
 # Auth methods with no credentials of their own: the connection authenticates as the process.
 SERVER_IDENTITY_AUTH_METHODS = frozenset({"aws-cli", "env_vars", "iam_role", "managed_identity"})
 
