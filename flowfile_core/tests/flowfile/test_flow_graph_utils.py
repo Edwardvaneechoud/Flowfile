@@ -1,5 +1,7 @@
+
 import polars as pl
 import pytest
+
 from fastapi import HTTPException
 
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, validate_connection
@@ -24,9 +26,7 @@ def create_flowfile_handler():
 
 def create_graph(flow_id: int = 1, execution_mode: str = 'Development') -> FlowGraph:
     handler = create_flowfile_handler()
-    handler.register_flow(
-        schemas.FlowSettings(flow_id=flow_id, name=f'flow_{flow_id}', path='.', execution_mode=execution_mode)
-    )
+    handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name=f'flow_{flow_id}', path='.', execution_mode=execution_mode))
     graph = handler.get_flow(flow_id)
     return graph
 

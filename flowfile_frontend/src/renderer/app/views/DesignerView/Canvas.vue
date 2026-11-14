@@ -641,10 +641,11 @@ function isValidConnection(connection: Connection): boolean {
 
   const currentEdges = instance.getEdges.value;
 
+  const targetData = instance.findNode(target)?.data;
   const portError = connectionPortError(
     connection,
     instance.findNode(source)?.data,
-    instance.findNode(target)?.data,
+    targetData ? { ...targetData, inputHandles: targetData.inputs } : undefined,
     currentEdges,
   );
   if (portError) return rejectConnection(portError);

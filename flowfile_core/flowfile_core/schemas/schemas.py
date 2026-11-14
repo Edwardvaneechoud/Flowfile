@@ -755,7 +755,7 @@ class NodeTemplate(BaseModel):
     @computed_field
     @property
     def inputs(self) -> list[NodePort]:
-        """Derive handles without duplicating the node registry."""
+        """Derive handles; input_names reserves index 0 for parameters (currently Run Flow)."""
         names = getattr(self, "input_names", None)
         if self.dynamic_inputs or names is not None:
             return [
