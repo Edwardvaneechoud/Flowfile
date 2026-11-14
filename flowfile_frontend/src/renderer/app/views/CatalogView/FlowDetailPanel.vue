@@ -403,8 +403,7 @@ const emit = defineEmits([
 
 const runHistorySection = ref<HTMLElement | null>(null);
 
-// A flow of a remote catalog has this page through the same catalog routes, which its catalog answers; what
-// needs the flow's file here is left out.
+// A remote catalog's flow has this page too; what needs the flow's file here is left out.
 const remote = computed(() => isHubRow(props.flow));
 const hasFile = computed(() => !remote.value && props.flow.file_exists);
 const runnable = computed(() => remote.value || hasFile.value);

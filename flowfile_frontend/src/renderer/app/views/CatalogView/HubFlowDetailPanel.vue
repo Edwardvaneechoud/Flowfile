@@ -53,8 +53,7 @@ import { findNamespacePath, type FlowRegistration } from "../../types";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { rootOf } from "./hubRows";
 
-// Inside a hub flow's page: where it lives, as the catalog tree says, its versions, and Open for the one picked. The
-// copy is written by whoever listens to `open`, so this panel never navigates.
+// A hub flow's page: where it lives, its versions, and Open for the one picked; it never navigates.
 const props = defineProps<{ flow: FlowRegistration }>();
 
 const emit = defineEmits<{ (e: "open", version: number): void }>();

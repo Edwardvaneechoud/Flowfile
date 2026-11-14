@@ -378,8 +378,7 @@ const hubTarget = computed(
   () => !!nodeData.value && isHubTarget(nodeData.value.catalog_write_settings),
 );
 
-// A schema this machine cannot use stays out of the list unless the node already points at it; one the
-// person may only read is listed greyed.
+// A schema this machine cannot use shows only when the node points at it; a read-only one greyed.
 const shownNamespaceOptions = computed(() =>
   pickable(catalogNamespaces.value, selectedNamespaceId.value),
 );
@@ -747,8 +746,7 @@ onMounted(async () => {
   try {
     const fetched = await CatalogApi.getNamespaceTree();
     allCatalogNamespaces.value = namespaceOptions(fetched);
-    // Read-only ("use" grant) local schemas are pruned — the backend refuses writes there. A hub
-    // schema stays: the hub decides at run time.
+    // Read-only local schemas are pruned; a hub schema stays, since the hub decides at run time.
     catalogNamespaces.value = namespaceOptions([
       ...pruneNonWritable(withoutHubRows(fetched)),
       ...fetched.filter(isHubRow),

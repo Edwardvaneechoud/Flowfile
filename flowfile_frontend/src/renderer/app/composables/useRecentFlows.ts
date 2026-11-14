@@ -166,8 +166,7 @@ export function useRecentFlows() {
         .filter((f) => !gone.has(f.path))
         .map((f) => {
           const match = byPath.get(f.path);
-          // Unregistered flows have no authoritative name — keep the local one and
-          // only drop a ref/id left over from a since-removed registration.
+          // An unregistered flow keeps its local name; a removed registration's ref is dropped.
           if (!match) {
             if (f.catalogRef === undefined && f.catalogId === undefined) return f;
             return { ...f, catalogRef: undefined, catalogId: undefined };

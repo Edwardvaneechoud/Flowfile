@@ -1,5 +1,4 @@
-// The words of the hub publish and open dialogs, kept out of the .vue files so they can be unit-tested
-// (@vue/test-utils is not a dependency; the dialogs are thin bindings over these).
+// The words of the hub's publish and open dialogs, outside the .vue files so they are unit-tested.
 import type { HubFlowVersion, HubRefusal, LocalPathUse } from "../../api/hubFlows.api";
 
 export const publishedLabel = (version: number): string => `Published as version ${version}`;

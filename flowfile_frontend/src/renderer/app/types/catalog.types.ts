@@ -24,11 +24,9 @@ export interface CatalogNamespace {
 }
 
 export interface NamespaceTree extends CatalogNamespace {
-  // Where the catalog lives, in words ("On this computer", "On this server", the hub's name); set by core
-  // once a hub's catalogs are listed beside this machine's.
+  // Where the catalog lives, in words ("On this computer", the hub's name); set by core.
   place?: string | null;
-  // False for this machine's catalogs on a server joined to a hub: the Catalog panel and the catalog
-  // reader's and writer's pickers leave them out. Absent from an older core, which means offered.
+  // False for this machine's catalogs on a server joined to a hub; absent means offered.
   offered?: boolean;
   // Why this Flowfile cannot use a hub catalog's tables, in the words a run over it is refused with.
   unavailable_reason?: string | null;
@@ -52,8 +50,7 @@ export const SYSTEM_NAMESPACE_NAMES = new Set([
 // get a bulk "clean up" action; the cleanup route enforces the same set server-side.
 export const SCRATCH_NAMESPACE_NAMES = new Set(["Unnamed Flows", "Python Editor"]);
 
-// Shallow copy of the local tree (a hub's catalogs left out) with system schemas removed
-// from the "General" root; scoped to it so a same-named schema elsewhere is kept.
+// The local tree (a hub's catalogs left out) without the system schemas of the "General" root.
 export function filterSelectableNamespaces(tree: NamespaceTree[]): NamespaceTree[] {
   return tree
     .filter((node) => node.source !== "hub")
@@ -139,8 +136,7 @@ export interface FlowRegistration {
   tables_produced: CatalogTableSummary[];
   tables_read: CatalogTableSummary[];
   access?: AccessInfo | null;
-  // "hub" for a flow published to a connected hub: its id is the negative of the hub's registration id, with the
-  // flow's uuid and its newest version and who published it. Absent from this machine's flows.
+  // "hub" for a flow published to a connected hub: its id is the negative of the hub's own.
   source?: "local" | "hub";
   flow_uuid?: string | null;
   latest_version?: number | null;
