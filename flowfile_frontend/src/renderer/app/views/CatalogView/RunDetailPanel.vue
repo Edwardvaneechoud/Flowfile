@@ -235,13 +235,20 @@ const logRunHere = computed<number | null>(() => {
   const here = hub.connection?.server_name;
   return named && here && named[1] === here ? Number(named[2]) : null;
 });
-const logElsewhere = computed(() => !!props.run.log_url && logRunHere.value === null);
-const executorName = computed(() => props.run.executed_on ?? "the server that ran it");
-const logElsewhereNote = computed(() =>
-  props.run.log_page_url
-    ? `The log is kept on ${executorName.value}. Open the run there to read it; you sign in there as you do here.`
-    : `The log is kept on ${executorName.value}, which has no editor to read it in.`,
+const logElsewhere = computed(
+  () => !!(props.run.log_url || props.run.log_page_url) && logRunHere.value === null,
 );
+const executorName = computed(() => props.run.executed_on ?? "the server that ran it");
+const logElsewhereNote = computed(() => {
+  const where = `The log is kept on ${executorName.value}`;
+  if (props.run.log_page_url) {
+    return `${where}. Open the run there to read it; you sign in there as you do here.`;
+  }
+  // an older core sends no page at all; only null says the executor serves no editor
+  return props.run.log_page_url === null
+    ? `${where}, which has no editor to read it in.`
+    : `${where}. Open it in that server's editor to read it.`;
+});
 const openLogElsewhere = () => {
   if (props.run.log_page_url) void desktop.openExternal(props.run.log_page_url);
 };

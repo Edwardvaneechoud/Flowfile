@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../api/catalog.api", () => ({ CatalogApi: {} }));
+const { openExternal, getRunLog } = vi.hoisted(() => ({
+  openExternal: vi.fn(),
+  getRunLog: vi.fn(),
+}));
+
+vi.mock("../../api/catalog.api", () => ({ CatalogApi: { getRunLog } }));
+vi.mock("../../../lib/desktop", () => ({ desktop: { openExternal } }));
 vi.mock("../../api/hubConnection.api", () => ({
   getHubConnection: vi.fn().mockResolvedValue(null),
   connectHub: vi.fn(),
@@ -9,6 +15,8 @@ vi.mock("../../api/hubConnection.api", () => ({
 }));
 
 import { mount, type Mounted } from "../../__fixtures__/mount";
+import type { HubConnection } from "../../api/hubConnection.api";
+import { useHubConnectionStore } from "../../stores/hub-connection-store";
 import type { FlowRunDetail } from "../../types";
 import RunDetailPanel from "./RunDetailPanel.vue";
 
@@ -43,7 +51,11 @@ const run = (fields: Partial<FlowRunDetail>): FlowRunDetail => ({
 });
 
 let mounted: Mounted | undefined;
-afterEach(() => mounted?.unmount());
+afterEach(() => {
+  mounted?.unmount();
+  openExternal.mockReset();
+  getRunLog.mockReset();
+});
 
 const status = () => mounted!.el.querySelector(".meta-card:nth-child(2) .meta-value")!;
 const nodeBadges = () =>
@@ -88,5 +100,77 @@ describe("RunDetailPanel", () => {
       expect(Array.from(status().classList)).toContain("text-danger");
       expect(nodeBadges()[1]).toEqual({ label: "Failed", classes: ["failure"] });
     }
+  });
+});
+
+describe("RunDetailPanel: the log of a run kept elsewhere", () => {
+  const PAGE = "http://bmax.example:63578/ui/#/main/catalog?tab=runs&runId=17";
+  const ranOnBmax = (fields: Partial<FlowRunDetail>) =>
+    run({
+      has_log: true,
+      executed_on: "bmax",
+      log_ref: "backend:bmax:17",
+      log_url: "http://bmax.example:63578/catalog/runs/17/log",
+      log_page_url: PAGE,
+      ...fields,
+    });
+  /** Mounted on a server named `here`, or on one that joined no hub. */
+  const show = (detail: FlowRunDetail, here?: string) => {
+    mounted = mount(RunDetailPanel, { run: detail }, () => {
+      if (here) useHubConnectionStore().connection = { server_name: here } as HubConnection;
+    });
+  };
+  const openButton = () =>
+    mounted!.el.querySelector<HTMLButtonElement>('[data-testid="run-log-open-elsewhere"]');
+  const viewLog = () =>
+    Array.from(mounted!.el.querySelectorAll("button")).find((button) =>
+      button.textContent!.includes("View log"),
+    );
+  const note = () => mounted!.el.querySelector(".log-viewer")?.textContent?.trim();
+
+  it("sends a person to the run's page on the server that ran it", () => {
+    show(ranOnBmax({}));
+
+    expect(openButton()?.textContent?.trim()).toBe("Open the run on bmax");
+    expect(viewLog()).toBeUndefined();
+    expect(note()).toContain("Open the run there to read it");
+
+    openButton()!.click();
+    expect(openExternal).toHaveBeenCalledWith(PAGE);
+  });
+
+  it("sends a person to the run's page also when core names no log route", () => {
+    show(ranOnBmax({ log_url: null }));
+
+    expect(openButton()).not.toBeNull();
+    expect(viewLog()).toBeUndefined();
+  });
+
+  it("says the server that ran it has no editor when core names no page", () => {
+    show(ranOnBmax({ log_page_url: null }));
+
+    expect(openButton()).toBeNull();
+    expect(viewLog()).toBeUndefined();
+    expect(note()).toBe("The log is kept on bmax, which has no editor to read it in.");
+  });
+
+  it("claims no missing editor for an older core, which names no page at all", () => {
+    const older = ranOnBmax({});
+    delete older.log_page_url;
+    show(older);
+
+    expect(openButton()).toBeNull();
+    expect(viewLog()).toBeUndefined();
+    expect(note()).toBe("The log is kept on bmax. Open it in that server's editor to read it.");
+  });
+
+  it("reads the log here, under this server's own id, for a run this server ran", async () => {
+    getRunLog.mockResolvedValue("run 17 finished");
+    show(ranOnBmax({}), "bmax");
+    await new Promise((resolve) => setTimeout(resolve));
+
+    expect(openButton()).toBeNull();
+    expect(getRunLog).toHaveBeenCalledWith(17);
+    expect(note()).toBe("run 17 finished");
   });
 });
