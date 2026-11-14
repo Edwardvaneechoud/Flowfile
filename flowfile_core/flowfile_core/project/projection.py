@@ -101,12 +101,15 @@ def exportable(flow_path: str | None) -> bool:
     return p.suffix.lower() in (".yaml", ".yml", ".json") and may_touch_flow_file(p) and p.exists()
 
 
+YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
 def _load_flow_data(flow_path: str) -> dict | None:
     if not exportable(flow_path):
         return None
     p = Path(flow_path)
     text = p.read_text(encoding="utf-8")
-    return json.loads(text) if p.suffix.lower() == ".json" else yaml.safe_load(text)
+    return json.loads(text) if p.suffix.lower() == ".json" else yaml.load(text, Loader=YAML_LOADER)
 
 
 def _name_stem(name: str | None) -> str:
@@ -224,13 +227,38 @@ def _reference_lookup(db: Session):
     return lookup
 
 
+# flow_path -> (owner_id, stamp, [(kind, settings, answer)], (stem, text))
+_flow_texts: dict[str, tuple] = {}
+
+
 def flow_file(db: Session, reg: FlowRegistration, namespace: dict | None = None) -> tuple[str, str] | None:
-    """The stem a flow's file is named after and the file's text, or ``None`` when it is not exportable."""
+    """The stem a flow's file is named after and the file's text, or ``None`` when it is not exportable.
+
+    The result is cached per flow path, keyed on the file's mtime and size, the registration's uuid, name and
+    namespace, and the answers the reference lookup gave while rendering. A hit asks those lookups again (database
+    reads only), so a renamed table or namespace re-renders the flow while an unchanged flow is never parsed."""
+    if not exportable(reg.flow_path):
+        return None
+    st = Path(reg.flow_path).stat()
+    stamp = (st.st_mtime_ns, st.st_size, reg.flow_uuid, reg.name, namespace)
+    lookup = _reference_lookup(db)
+    cached = _flow_texts.get(reg.flow_path)
+    if cached is not None and cached[1] == stamp and all(lookup(k, s) == a for k, s, a in cached[2]):
+        return cached[3]
+    asked: list[tuple] = []
+
+    def recording(kind: str, settings: dict) -> dict | None:
+        answer = lookup(kind, settings)
+        asked.append((kind, copy.deepcopy(settings), answer))
+        return answer
+
     data = _load_flow_data(reg.flow_path)
     if data is None:
         return None
     stem = _name_stem(data.get("flowfile_name") or reg.name)
-    return stem, dump_yaml(normalize_flow_data(data, reg.flow_uuid, reg.name, namespace, lookup=_reference_lookup(db)))
+    result = stem, dump_yaml(normalize_flow_data(data, reg.flow_uuid, reg.name, namespace, lookup=recording))
+    _flow_texts[reg.flow_path] = (reg.owner_id, stamp, asked, result)
+    return result
 
 
 def project_flow(
@@ -263,8 +291,12 @@ def export_flows(db: Session, owner_id: int) -> dict[str, tuple[str, str]]:
     (a case-insensitive filesystem holds one of the two), gets the flow's ``_<uuid8>`` suffix."""
     out: dict[str, tuple[str, str]] = {}
     taken: set[str] = set()
+    seen: set[str] = set()
+    namespaces: dict[int | None, dict | None] = {}
     for reg in _owner_flows(db, owner_id):
-        exported = flow_file(db, reg, _namespace_path(db, reg.namespace_id))
+        if reg.namespace_id not in namespaces:
+            namespaces[reg.namespace_id] = _namespace_path(db, reg.namespace_id)
+        exported = flow_file(db, reg, namespaces[reg.namespace_id])
         if exported is None:
             continue
         stem, text = exported
@@ -272,6 +304,10 @@ def export_flows(db: Session, owner_id: int) -> dict[str, tuple[str, str]]:
             stem = f"{stem}_{reg.flow_uuid[:8]}"
         taken.add(stem.casefold())
         out[reg.flow_uuid] = (stem, text)
+        seen.add(reg.flow_path)
+    for path, cached in list(_flow_texts.items()):
+        if cached[0] == owner_id and path not in seen:
+            _flow_texts.pop(path, None)
     return out
 
 
@@ -419,9 +455,17 @@ def export_schedules(db: Session, owner_id: int, stems: dict[str, str]) -> dict[
     (a flow with no file after its name). Flows are taken in ``flow_uuid`` order and a flow with no
     schedule drops a file an earlier one wrote under the same stem, as a write over the folder did."""
     tree: dict[str, str] = {}
+    by_flow: dict[int, list[FlowSchedule]] = {}
+    for s in (
+        db.query(FlowSchedule)
+        .join(FlowRegistration, FlowSchedule.registration_id == FlowRegistration.id)
+        .filter(FlowRegistration.owner_id == owner_id, FlowSchedule.schedule_type.in_(_PROJECTABLE_SCHEDULE_TYPES))
+        .order_by(FlowSchedule.id.asc())
+    ):
+        by_flow.setdefault(s.registration_id, []).append(s)
     for reg in _owner_flows(db, owner_id):
         rel = f"schedules/{stems.get(reg.flow_uuid) or _name_stem(reg.name)}.yaml"
-        schedules = _projectable_schedules(db, reg)
+        schedules = by_flow.get(reg.id)
         if schedules:
             tree[rel] = dump_yaml(_schedule_file(reg, schedules))
         else:

@@ -3,6 +3,7 @@ the deterministic folder layout is still usable with bare git in that case."""
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import threading
@@ -206,6 +207,29 @@ def tree_blob_sizes(root: Path, sha: str) -> dict[str, int]:
         return {}
     tree = Repo(str(root)).commit(sha).tree
     return {b.path: b.size for b in tree.traverse() if b.type == "blob"}
+
+
+@functools.lru_cache(maxsize=8)
+def _managed_tree(root: str, hexsha: str) -> dict[str, str]:
+    tree = Repo(root).commit(hexsha).tree
+    return {
+        b.path: b.data_stream.read().decode("utf-8", errors="replace")
+        for b in tree.traverse()
+        if b.type == "blob" and (b.path == manifest.MANIFEST_NAME or kinds.kind_for_path(b.path) is not None)
+    }
+
+
+def read_tree_at(root: Path, sha: str) -> dict[str, str]:
+    """``{path: text}`` of the managed files in a commit's tree (``"HEAD"`` or a hex sha), ``project.yaml``
+    included; ``{}`` with no repo or no commit. Cached per resolved commit, whose tree never changes."""
+    if sha != "HEAD":
+        _require_hex_sha(sha)
+    if not is_repo(root):
+        return {}
+    repo = Repo(str(root))
+    if sha == "HEAD" and not repo.head.is_valid():
+        return {}
+    return _managed_tree(str(Path(root).resolve()), repo.commit(sha).hexsha)
 
 
 def read_blob(root: Path, sha: str, rel_path: str) -> str | None:

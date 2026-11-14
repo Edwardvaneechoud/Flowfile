@@ -36,7 +36,20 @@ class ExportContext:
 
 
 @dataclass(frozen=True)
+class Entry:
+    """One object of a kind as a comparison sees it: its label in a summary, the file it lives in and the
+    canonical text it is compared by."""
+
+    label: str
+    path: str
+    text: str
+
+
+@dataclass(frozen=True)
 class Kind:
+    """``entries(files) -> {key: Entry}`` splits the kind's files into objects; ``delete_label`` is what a preview
+    says a delete does, ``None`` for a kind that is never deleted, whose removals are then not reported."""
+
     name: str
     label: str
     paths: tuple[str, ...]
@@ -45,6 +58,18 @@ class Kind:
     cap: int | None = None
     entries_key: str | None = None
     tracked_by_data_flag: bool = False
+    entries: Callable[[dict[str, str]], dict[object, Entry]] | None = None
+    delete_label: str | None = None
+
+
+@dataclass(frozen=True)
+class Change:
+    kind: str
+    key: object
+    change: str
+    label: str
+    path: str
+    consequence: str | None = None
 
 
 _KINDS: dict[str, Kind] = {}
@@ -128,6 +153,49 @@ def snapshot(ctx: ExportContext) -> dict[str, str]:
             continue
         tree.update(kind.export(ctx))
     return tree
+
+
+def _by_kind(tree: dict[str, str]) -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
+    for rel, text in tree.items():
+        owned = kind_for_path(rel)
+        if owned is not None:
+            out.setdefault(owned[0].name, {})[rel] = text
+    return out
+
+
+def _file_entries(files: dict[str, str]) -> dict[str, Entry]:
+    return {path: Entry(path.rsplit("/", 1)[-1], path, text) for path, text in files.items()}
+
+
+def compare(a: dict[str, str], b: dict[str, str], *, kinds=None) -> list[Change]:
+    """What turns tree ``a`` into tree ``b``, per kind and key: ``added`` (in ``b`` only), ``modified`` (in both,
+    different text) and ``removed`` (in ``a`` only, reported only for a kind with a ``delete_label``).
+
+    Kinds come in ``ordered()`` order, keys sorted within a kind; ``kinds`` restricts it to those names. A kind
+    whose files do not parse (a version committed by hand) is compared per file instead, so status still answers."""
+    split_a, split_b = _by_kind(a), _by_kind(b)
+    changes: list[Change] = []
+    for kind in ordered():
+        if kind.entries is None or (kinds is not None and kind.name not in kinds):
+            continue
+        files_a, files_b = split_a.get(kind.name, {}), split_b.get(kind.name, {})
+        if files_a == files_b:
+            continue
+        try:
+            old_entries, new_entries = kind.entries(files_a), kind.entries(files_b)
+        except Exception:
+            old_entries, new_entries = _file_entries(files_a), _file_entries(files_b)
+        for key in sorted(old_entries.keys() | new_entries.keys(), key=str):
+            old, new = old_entries.get(key), new_entries.get(key)
+            if old is None:
+                changes.append(Change(kind.name, key, "added", new.label, new.path))
+            elif new is None:
+                if kind.delete_label is not None:
+                    changes.append(Change(kind.name, key, "removed", old.label, old.path, kind.delete_label))
+            elif old.text != new.text:
+                changes.append(Change(kind.name, key, "modified", new.label, new.path))
+    return changes
 
 
 def owned_paths(root: Path) -> list[str]:

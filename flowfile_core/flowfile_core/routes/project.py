@@ -2,7 +2,8 @@
 
 Projection (DB→files) happens automatically elsewhere; these endpoints cover the
 explicit boundaries: create a project, open/rebuild one, check status, save a version.
-There is deliberately no "export" or "apply" endpoint — the folder stays in sync on its own.
+There is deliberately no "export" or "apply" endpoint — the folder stays in sync on its own;
+``POST /plan`` only previews what a restore or reload would change.
 """
 
 from __future__ import annotations
@@ -81,6 +82,17 @@ class RestoreRequest(BaseModel):
     @classmethod
     def _validate_sha(cls, v: str) -> str:
         if not _SHA_RE.match(v):
+            raise ValueError(f"sha must be 7-40 hex characters, got {v!r}")
+        return v
+
+
+class PlanRequest(BaseModel):
+    sha: str | None = None
+
+    @field_validator("sha")
+    @classmethod
+    def _validate_sha(cls, v: str | None) -> str | None:
+        if v is not None and not _SHA_RE.match(v):
             raise ValueError(f"sha must be 7-40 hex characters, got {v!r}")
         return v
 
@@ -317,9 +329,20 @@ def version_diff(
 @router.get("/uncommitted", response_model=ChangesOut)
 def uncommitted(current_user=Depends(get_current_active_user)) -> ChangesOut:
     try:
-        changes = project_sync.uncommitted_changes(current_user.id)
+        changes = project_sync.unsaved_changes(current_user.id)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    return ChangesOut(changes=changes)
+
+
+@router.post("/plan", response_model=ChangesOut)
+def plan(req: PlanRequest | None = None, current_user=Depends(get_current_active_user)) -> ChangesOut:
+    try:
+        changes = project_sync.plan(current_user.id, req.sha if req is not None else None)
+    except NoActiveProjectError as e:
+        raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return ChangesOut(changes=changes)
 
 

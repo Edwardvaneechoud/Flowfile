@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
 from fastapi import HTTPException
 
 from flowfile_core import __version__
@@ -39,6 +40,7 @@ from flowfile_core.project.manifest import (
     PROJECT_FORMAT,
     ProjectManifest,
     kinds_to_save,
+    parse_manifest,
     read_manifest,
     write_gitignore,
     write_manifest,
@@ -102,6 +104,20 @@ def _classify_path(path: str) -> tuple[str, str]:
         kind, stem = owned
         return kind.label, stem
     return "settings", path.split("/")[-1]
+
+
+def _snapshot(root: Path, owner_id: int) -> dict[str, str]:
+    """The export of the kinds the folder's ``project.yaml`` lists (every kind without one), nothing written."""
+    m = read_manifest(root)
+    with get_db_context() as db:
+        ctx = kinds.ExportContext(db=db, owner_id=owner_id, kinds=None if m is None else frozenset(m.kinds))
+        return kinds.snapshot(ctx)
+
+
+def _change_rows(changes: list[kinds.Change]) -> list[dict]:
+    return [
+        {"change": c.change, "kind": kinds.get(c.kind).label, "label": c.label, "path": c.path} for c in changes
+    ]
 
 
 def _assert_not_foreign_owned(root: Path, owner_id: int) -> None:
@@ -538,12 +554,44 @@ class ProjectSyncService:
             raise NoActiveProjectError("No active project")
         return _friendly_changes(git_ops.changes_in(proj.root, sha))
 
-    def uncommitted_changes(self, user_id: int) -> list[dict]:
-        """Friendly summary of the unsaved working-tree changes (what a Save version would record)."""
+    def unsaved_changes(self, user_id: int) -> list[dict]:
+        """What the database holds that the last version does not, per object: ``compare(HEAD, snapshot)``.
+
+        HEAD's owned files are taken unfiltered, so a kind the folder stopped listing shows as removed. A hand
+        edit of the folder is not an unsaved change; a reload applies it."""
         proj = self.get_active_project(user_id)
         if proj is None:
             raise NoActiveProjectError("No active project")
-        return _friendly_changes(git_ops.uncommitted_changes(proj.root))
+        if not git_ops.is_repo(proj.root):
+            return []
+        head = git_ops.read_tree_at(proj.root, "HEAD")
+        return _change_rows(kinds.compare(head, _snapshot(proj.root, proj.owner_id)))
+
+    def plan(self, user_id: int, sha: str | None = None) -> list[dict]:
+        """What a restore of ``sha``, or a reload of the folder when ``sha`` is ``None``, would create, change and
+        remove: ``compare(snapshot, target)`` over the kinds the target lists, after the same preflight the restore
+        or reload runs, so a bad target is the same error. A removal names its consequence."""
+        proj = self.get_active_project(user_id)
+        if proj is None:
+            raise NoActiveProjectError("No active project")
+        root = proj.root
+        with git_ops.project_lock(root):
+            if sha is None:
+                preflight_import_caps_worktree(root)
+                preflight_import_files_worktree(root)
+                target = kinds.read_tree(root)
+                manifest_file = root / MANIFEST_NAME
+                manifest_text = manifest_file.read_text(encoding="utf-8") if manifest_file.is_file() else None
+            else:
+                preflight_import_caps(root, sha)
+                preflight_import_files(root, sha)
+                target = git_ops.read_tree_at(root, sha)
+                manifest_text = target.get(MANIFEST_NAME)
+            listed = None
+            if manifest_text is not None:
+                listed = parse_manifest(yaml.safe_load(manifest_text) or {}, root.name).kinds
+            changes = kinds.compare(_snapshot(root, proj.owner_id), target, kinds=listed)
+        return [{**row, "consequence": c.consequence} for row, c in zip(_change_rows(changes), changes, strict=True)]
 
     def close_project(self, owner_id: int) -> None:
         with get_db_context() as db:
@@ -575,7 +623,7 @@ class ProjectSyncService:
         proj = self.get_active_project(user_id)
         if proj is None:
             return False
-        return git_ops.is_dirty(proj.root)
+        return bool(self.unsaved_changes(user_id))
 
     def has_external_changes(self, user_id: int) -> bool:
         proj = self.get_active_project(user_id)

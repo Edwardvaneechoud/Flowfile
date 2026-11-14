@@ -125,6 +125,9 @@ def test_project_all_reads_each_flow_file_at_most_twice(tmp_path, monkeypatch):
             with get_db_context() as db:
                 projection.project_all(db, root, OWNER)
             ours = {p: n for p, n in reads.items() if p.parent == src or p.parent == root / "flows"}
+            if label == "populated":
+                assert not ours, f"populated: the flow text cache read {sorted(map(str, ours))}"
+                continue
             assert ours, f"{label}: no flow file was read"
             worst = max(ours.values())
             print(f"{label}: {len(ours)} flow files read, at most {worst} times each")

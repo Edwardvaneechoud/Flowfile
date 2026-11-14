@@ -84,7 +84,7 @@ def test_version_lifecycle_via_routes(tmp_path):
             "unknown_kinds",
             "not_applied",
         }
-        assert client.get("/project/active").json()["dirty"] is False
+        assert client.get("/project/active").json()["dirty"] is True  # ROUTE_SECRET_2 stays in the database
         assert client.get("/project/versions").json()["versions"][0]["message"].startswith("Restore")
 
         # The restore keeps ROUTE_SECRET_2, which version a lacks, so the reload needs force.
@@ -125,7 +125,7 @@ def test_restore_on_dirty_tree_409s_without_force(tmp_path):
         secrets_file = root / "secrets.yaml"
         edited = secrets_file.read_text(encoding="utf-8") + "# edited by hand\n"
         secrets_file.write_text(edited, encoding="utf-8")
-        assert client.get("/project/active").json()["dirty"] is True
+        assert client.get("/project/active").json()["dirty"] is False
         blocked = client.post("/project/restore", json={"sha": version_v1})
         assert blocked.status_code == 409
         detail = blocked.json()["detail"]

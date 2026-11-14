@@ -51,6 +51,8 @@ Project actions live on the Project Tracking page: **Settings → Workspace → 
 
 Files in the folder that Flowfile did not write, such as a `README.md` or a `.DS_Store`, are not counted as unsaved changes and are never committed. Inside `flows/`, `schedules/`, `connections/` and `notebooks/` only the file types the table above names count: a `flows/notes.yaml` is left alone like a `README.md`.
 
+"Unsaved" is what your resources hold that the last version does not, one row per object (a flow, a connection, a table), read when the Project page asks. A hand edit of the folder is not an unsaved change: a reload applies it. `POST /project/plan` names what a restore of a version (`{"sha": ...}`), or a reload of the folder (no body), would create, change and remove, with what a removal means for the object, such as a connection whose stored password is in no version.
+
 ![The Project Tracking page: the active project path, its version history, and the save, restore, and stop-tracking controls.](../assets/images/guides/projects/projects-panel.png)
 
 !!! warning "Restore and reload rebuild from the files"
