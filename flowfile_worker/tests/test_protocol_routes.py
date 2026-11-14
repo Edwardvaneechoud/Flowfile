@@ -207,11 +207,11 @@ def _submit(result_id: str, plan: pl.LazyFrame, **hints) -> SubmitResult:
 
 def test_the_token_is_checked_before_the_version():
     unsigned = TestClient(main.app)
-    assert unsigned.get("/v1/capabilities", headers={PROTOCOL_VERSION_HEADER: "2"}).status_code == 401
+    assert unsigned.get("/v1/capabilities", headers={PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION + 1)}).status_code == 401
     assert unsigned.get("/v1/capabilities").status_code == 401
 
 
-@pytest.mark.parametrize("sent", ["2", None], ids=["foreign", "missing"])
+@pytest.mark.parametrize("sent", [str(PROTOCOL_VERSION + 1), None], ids=["foreign", "missing"])
 @pytest.mark.parametrize(("method", "path"), ROUTES, ids=[f"{m} {p}" for m, p in ROUTES])
 def test_every_route_answers_426_to_a_foreign_or_missing_version(method, path, sent):
     headers = {PROTOCOL_VERSION_HEADER: sent} if sent is not None else {}
@@ -1079,7 +1079,7 @@ def test_a_websocket_submit_streams_progress_then_the_result_with_its_sample(hel
     assert client.head(f"/v1/results/{result_id}").status_code == 200
 
 
-@pytest.mark.parametrize("sent", ["2", None], ids=["foreign", "missing"])
+@pytest.mark.parametrize("sent", [str(PROTOCOL_VERSION + 1), None], ids=["foreign", "missing"])
 def test_the_websocket_submit_is_denied_426_before_accepting(sent):
     headers = {PROTOCOL_VERSION_HEADER: sent} if sent is not None else {}
 
@@ -1095,7 +1095,7 @@ def test_the_websocket_submit_is_denied_426_before_accepting(sent):
 
 @pytest.mark.parametrize("token", [None, "not-the-token"], ids=["missing", "wrong"])
 def test_the_websocket_submit_closes_1008_on_a_bad_token_before_the_version_is_checked(token):
-    headers = {PROTOCOL_VERSION_HEADER: "2"}
+    headers = {PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION + 1)}
     if token is not None:
         headers["X-Flowfile-Internal"] = token
 
@@ -1163,6 +1163,28 @@ def test_a_submit_sweeps_results_and_jobs_whose_submit_ended_too_long_ago(held, 
     assert client.head(f"/v1/results/{later}").status_code == 404
     assert client.head(f"/v1/results/{last}").status_code == 200
     assert client.get(f"/v1/jobs/{last}").json()["status"] == "Completed"
+
+
+def _past_the_age_limit(monkeypatch) -> None:
+    """The results registry's clock reads an hour past ``CACHE_EXPIRATION_TIME`` on from here."""
+    from flowfile_worker import results as results_module
+
+    later = service.CACHE_EXPIRATION_TIME + 3600
+    monkeypatch.setattr(results_module, "time", SimpleNamespace(monotonic=lambda: time.monotonic() + later))
+
+
+def test_a_submit_whose_input_is_past_the_age_limit_is_404_and_runs_nothing(held, monkeypatch):
+    first_id, second_id = held(), held()
+    first_path = ref_location(_submit(first_id, _plan(), must_materialise=True).ref).path
+    _past_the_age_limit(monkeypatch)
+    chained = pl.scan_ipc(first_path).filter(pl.col("id") > 2)
+
+    response = _post(chained.serialize(), _meta(second_id, must_materialise=True, inputs=(first_id,)))
+
+    assert response.status_code == 404
+    assert first_id in response.json()["detail"]
+    assert second_id not in status_dict
+    assert client.head(f"/v1/results/{second_id}").status_code == 404
 
 
 def _slow_plan() -> bytes:
@@ -1390,3 +1412,25 @@ def test_the_short_routes_answer_while_every_pool_thread_waits_on_a_child(held, 
             if prober.is_alive():
                 prober.join(60)
     assert answers == {"status": 200, "head": 404, "delete": 404, "cancel": 404}
+
+
+def test_an_operation_does_not_sweep_the_input_its_plan_scans(held, monkeypatch):
+    import base64
+
+    first_id = held()
+    first_path = ref_location(_submit(first_id, _plan(), must_materialise=True).ref).path
+    _past_the_age_limit(monkeypatch)
+    body = {
+        "code": "output_df = input_df",
+        "inputs": [base64.b64encode(pl.scan_ipc(first_path).serialize()).decode("ascii")],
+        "flowfile_flow_id": 1,
+        "flowfile_node_id": 1,
+    }
+
+    response = client.post("/v1/ops/polars_code", params={"job_id": held()}, json=body)
+
+    assert response.status_code == 200, response.text
+    assert os.path.isfile(first_path)
+    _submit(held(), _plan(), must_materialise=True)
+    assert not os.path.isfile(first_path)
+    assert client.head(f"/v1/results/{first_id}").status_code == 404

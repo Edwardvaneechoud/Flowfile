@@ -1,12 +1,23 @@
 <template>
   <div class="component-wrapper">
     <div class="status-indicator" :class="nodeResult?.statusIndicator">
-      <span class="tooltip-text">{{ tooltipContent }}</span>
+      <span :id="`node-tooltip-${props.nodeId}`" class="tooltip-text">{{ tooltipContent }}</span>
     </div>
 
-    <button :class="['node-button', { selected: isSelected }]" @click="onClick">
+    <button
+      :class="['node-button', { selected: isSelected, 'cached-node': showCachedIndicator }]"
+      :aria-describedby="showCachedIndicator ? `node-tooltip-${props.nodeId}` : undefined"
+      @click="onClick"
+    >
       <img :src="iconUrl" :alt="props.title" width="40" />
     </button>
+    <span
+      v-if="showCachedIndicator"
+      class="cache-indicator material-icons"
+      role="img"
+      aria-label="Cached result"
+      >cached</span
+    >
     <span
       v-if="placementNote"
       :class="['placement-badge', `placement-badge--${placementNote.kind}`]"
@@ -21,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-import { defineProps, defineEmits, computed, onMounted, ref, nextTick, watch } from "vue";
+import { computed, onMounted, ref, nextTick, watch } from "vue";
 import type { Component } from "vue"; // <-- Import as a TYPE, not a value
 import { useNodeIconUrl } from "../../../composables/useCustomNodeIcon";
 import { useNodeStore } from "../../../stores/column-store";
@@ -32,6 +43,7 @@ import { NodeTitleInfo } from "./nodeInterfaces";
 import { deriveNodeStatus, nodeStatusTooltip, type NodeStatusOutput } from "./nodeStatus";
 const description = ref<string>("");
 const nodeStore = useNodeStore();
+const flowStore = useFlowStore();
 
 const props = defineProps<{
   nodeId: number;
@@ -57,9 +69,19 @@ const nodeResult = computed<NodeStatusOutput | undefined>(() =>
   ),
 );
 
-const tooltipContent = computed(() => nodeStatusTooltip(nodeResult.value));
+const cacheExplanation =
+  "Cached: settings and upstream configuration match the stored result. Cache validity is checked when the flow runs.";
+const showCachedIndicator = computed(
+  () =>
+    flowStore.isNodeCached(props.nodeId) &&
+    !["running", "failure", "warning", "skipped"].includes(nodeResult.value?.statusIndicator ?? ""),
+);
+const tooltipContent = computed(
+  () =>
+    nodeStatusTooltip(nodeResult.value) +
+    (showCachedIndicator.value ? `\n${cacheExplanation}` : ""),
+);
 
-const flowStore = useFlowStore();
 const resultsStore = useResultsStore();
 const placementNote = computed(() =>
   nodePlacementNote(resultsStore.placements[flowStore.flowId], props.nodeId),
@@ -96,6 +118,26 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.node-button.cached-node {
+  box-shadow: 0 0 0 1px var(--color-info);
+}
+
+.cache-indicator {
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  line-height: 1;
+  border: 1px solid var(--color-text-secondary);
+  color: var(--color-text-primary);
+  background: var(--color-background-primary);
+  border-radius: 3px;
+}
+
 .status-indicator {
   position: relative;
   display: flex;

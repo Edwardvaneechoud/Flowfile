@@ -76,8 +76,19 @@ if sys.argv[1] == "populated":
     with engine.begin() as conn:
         conn.execute(
             text(
+                "INSERT INTO flow_runs (flow_name, user_id, started_at, nodes_completed, number_of_nodes, run_type) "
+                "VALUES ('sent', :o, CURRENT_TIMESTAMP, 0, 0, 'hub')"
+            ),
+            {"o": owner},
+        )
+    command.upgrade(cfg, "040")
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT run_type FROM flow_runs WHERE flow_name = 'sent'")) == "dispatched"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
                 "INSERT INTO flow_registrations (name, flow_path, owner_id, flow_uuid) "
-                "VALUES ('scheduled', '/scheduled.yaml', :o, 'a7c1c8e2-0000-4000-8000-000000000040')"
+                "VALUES ('scheduled', '/scheduled.yaml', :o, 'a7c1c8e2-0000-4000-8000-000000000041')"
             ),
             {"o": owner},
         )
@@ -90,12 +101,15 @@ if sys.argv[1] == "populated":
                 ),
                 {"r": reg, "o": owner, "i": interval},
             )
-    command.upgrade(cfg, "040")
+    command.upgrade(cfg, "041")
     with engine.connect() as conn:
         uuids = conn.execute(text("SELECT schedule_uuid FROM flow_schedules")).scalars().all()
     assert len(uuids) == 2 and all(uuids) and len(set(uuids)) == 2
-    command.downgrade(cfg, "039")
+    command.downgrade(cfg, "040")
     assert "schedule_uuid" not in {c["name"] for c in inspect(engine).get_columns("flow_schedules")}
+    command.downgrade(cfg, "039")
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT run_type FROM flow_runs WHERE flow_name = 'sent'")) == "hub"
 
 migration.run_startup_migration()
 init_db()

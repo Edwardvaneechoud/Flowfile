@@ -142,7 +142,8 @@ def read_api(
             e.g. ``{"auth_type": "bearer", "secret": "..."}``.
         pagination: Pagination settings as a ``RestApiPaginationSettings`` or a
             dict, e.g. ``{"pagination_type": "cursor", "cursor_param": "cursor",
-            "cursor_response_path": "next"}``.
+            "cursor_response_path": "next"}``; add
+            ``"cursor_request_location": "body"`` to send it in a POST body.
         record_path: Dot-path locating the record array in the JSON response
             (e.g. ``"data.items"``). Empty uses the top-level response.
         timeout_seconds: Per-request timeout.

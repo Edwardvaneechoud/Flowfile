@@ -24,6 +24,7 @@
         <template #content>
           <div>{{ flow.display_name || flow.name }}</div>
           <div v-if="isDirty(flow.flow_id)" class="tooltip-dirty-line">● Unsaved changes</div>
+          <div v-if="flow.save_note" class="tooltip-dirty-line">{{ flow.save_note }}</div>
         </template>
         <div
           class="flow-tab"
@@ -49,6 +50,13 @@
               @dblclick.stop
             />
             <span v-else class="tab-name">{{ flow.display_name || flow.name }}</span>
+            <span
+              v-if="flow.save_note"
+              class="material-icons note-mark"
+              data-testid="flow-tab-note"
+              :aria-label="flow.save_note"
+              >cloud_upload</span
+            >
           </div>
           <span class="tab-indicator" @dblclick.stop>
             <span
@@ -126,7 +134,12 @@ import type { FlowSettings } from "../../types";
 import SaveDialog from "../../features/designer/components/SaveDialog.vue";
 import SaveConfirmationModal from "../DesignerView/SaveConfirmationModal.vue";
 import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
-import { computeCloseTargets, tabMenuOptions, type TabCloseAction } from "./flowTabActions";
+import {
+  computeCloseTargets,
+  tabMenuOptions,
+  withSettings,
+  type TabCloseAction,
+} from "./flowTabActions";
 import { overflowState, stripMetrics, wheelScrollDelta } from "./flowTabScroll";
 
 const getAllFlows = FlowApi.getAllFlows;
@@ -234,7 +247,7 @@ const refreshDirtyState = async (flowId: number | null) => {
     if (!settings) return;
     const idx = flows.value.findIndex((f) => f.flow_id === flowId);
     if (idx !== -1) {
-      flows.value[idx] = { ...flows.value[idx], has_unsaved_changes: settings.has_unsaved_changes };
+      flows.value[idx] = withSettings(flows.value[idx], settings);
     }
   } catch (err) {
     // Non-critical: tab dot may be stale until the next refresh
@@ -760,6 +773,12 @@ defineExpose({
   background-color: var(--color-primary, #1976d2);
   transition: opacity var(--transition-fast);
   pointer-events: none;
+}
+
+.note-mark {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
 }
 
 .flow-tab.dirty .tab-name {

@@ -43,6 +43,7 @@ from flowfile_core.project.normalize import (
     write_yaml,
 )
 from flowfile_core.project.secrets_resolver import make_placeholder
+from shared.storage_config import may_touch_flow_file
 
 logger = logging.getLogger(__name__)
 
@@ -90,12 +91,14 @@ def exportable(flow_path: str | None) -> bool:
     """Whether a registration's flow file can be projected into the project.
 
     The export and the importer's prune share this one condition: a registration the export skips
-    (no file on disk, a ``.flowfile`` pickle, a kernel scratch flow's ``<kernel:id>`` pseudo-path) is
-    never in the files, so a restore or reload must leave it alone rather than read it as removed."""
+    (no file on disk, a ``.flowfile`` pickle, a kernel scratch flow's ``<kernel:id>`` pseudo-path, or
+    on a multi-user server a file outside the server's flow folders, which the project never reads
+    from) is never in the files, so a restore or reload must leave it alone rather than read it as
+    removed."""
     if not flow_path:
         return False
     p = Path(flow_path)
-    return p.suffix.lower() in (".yaml", ".yml", ".json") and p.exists()
+    return p.suffix.lower() in (".yaml", ".yml", ".json") and may_touch_flow_file(p) and p.exists()
 
 
 def _load_flow_data(flow_path: str) -> dict | None:
@@ -379,7 +382,8 @@ def remove_connection(root: Path, kind: str, name: str) -> None:
 
 
 def _schedule_dict(s: FlowSchedule) -> dict:
-    return {
+    """A schedule as its project file holds it; ``backend`` only when one is set, so older files stay unchanged."""
+    out = {
         "id": s.schedule_uuid,
         "name": s.name,
         "enabled": s.enabled,
@@ -389,6 +393,9 @@ def _schedule_dict(s: FlowSchedule) -> dict:
         "cron_timezone": s.cron_timezone,
         "description": s.description,
     }
+    if s.backend:
+        out["backend"] = s.backend
+    return out
 
 
 def _projectable_schedules(db: Session, reg: FlowRegistration) -> list[FlowSchedule]:

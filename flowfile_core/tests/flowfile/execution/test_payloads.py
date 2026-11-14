@@ -403,7 +403,7 @@ def test_the_embedded_worker_reads_a_database_and_holds_the_rows(tmp_path):
 def test_the_embedded_worker_fetches_rest_with_the_secret_decrypted_by_the_workers_reader(monkeypatch):
     captured = {}
 
-    def fetch(settings, *, secret=None):
+    def fetch(settings, *, secret=None, on_page=None):
         captured.update(settings=settings, secret=secret)
         return ROWS
 

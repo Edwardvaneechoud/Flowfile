@@ -39,11 +39,11 @@ Administrators set the size under **Warm worker pool** on the **Default worker**
 
 **Scheduled runs compute in their own process.** In Docker that is core's container, with its memory and CPU, not the worker container's; child processes do not change that. Such a run keeps one child warm rather than the size set on the Backends page, unless `FLOWFILE_WORKER_POOL_SIZE` is set in its environment. To send headless runs to a worker, name it, in this order of precedence:
 
-1. `--backend <id>` on `flowfile run flow` ([Headless runs](cli.md));
+1. the schedule's **Runs on** ([Schedules](../visual-editor/catalog/schedules.md#where-a-schedule-runs)), which a scheduled run and its **Run Now** get as `--backend`, or `--backend <id>` on `flowfile run flow` ([Headless runs](cli.md));
 2. the flow's **Execution location**, set to the worker's id;
 3. `FLOWFILE_COMPUTE_BACKEND` in core's environment (`worker` for the worker container, or a `worker:<name>` id), which every scheduled run inherits.
 
-A named worker that cannot be reached fails the run; the run does not fall back to its own process.
+A named worker that cannot be reached fails the run; the run does not fall back to its own process. `worker`, the default worker, is the one at `FLOWFILE_WORKER_URL` (else `WORKER_HOST` and `FLOWFILE_WORKER_PORT`) in the run's own environment, so naming it needs a worker the run's process can reach.
 
 ## What happens when a flow runs
 

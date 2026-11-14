@@ -17,6 +17,21 @@
         </button>
       </div>
       <div class="card-content">
+        <div
+          v-if="hub.joined && hub.connection?.organisation_storage"
+          class="info-box mb-3"
+          data-testid="hub-organisation-storage"
+        >
+          <i class="fa-solid fa-tower-broadcast"></i>
+          <div>
+            <p><strong>Set by your hub</strong></p>
+            <p>
+              The organisation's storage at {{ hub.connection.organisation_storage }}; each run gets
+              access from the hub.
+            </p>
+          </div>
+        </div>
+
         <!-- Info box about connections -->
         <div class="info-box mb-3">
           <i class="fa-solid fa-info-circle"></i>
@@ -60,6 +75,7 @@
                 <span class="badge auth-badge">{{
                   getAuthMethodLabel(connection.authMethod)
                 }}</span>
+                <span v-if="connection.source === 'hub'" class="badge">From your hub</span>
               </div>
               <div class="connection-details">
                 <span v-if="connection.storageType === 's3' && connection.awsRegion">
@@ -82,7 +98,7 @@
                 </span>
               </div>
             </div>
-            <div class="connection-actions">
+            <div v-if="connection.source !== 'hub'" class="connection-actions">
               <button type="button" class="btn btn-secondary" @click="showEditModal(connection)">
                 <i class="fa-solid fa-edit"></i>
                 <span>Modify</span>
@@ -163,6 +179,7 @@ import {
   FullCloudStorageConnection,
 } from "./CloudConnectionTypes";
 import CloudConnectionSettings from "./CloudConnectionSettings.vue";
+import { useHubConnectionStore } from "../../stores/hub-connection-store";
 
 // State
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
@@ -319,8 +336,12 @@ const handleCloseDeleteDialog = (done: () => void) => {
   done();
 };
 
+// A joined server shows the organisation's storage read-only, set by the hub.
+const hub = useHubConnectionStore();
+
 onMounted(() => {
   fetchConnections();
+  void hub.load();
 });
 </script>
 

@@ -51,6 +51,7 @@ import NamespaceTreeItem from "./NamespaceTreeItem.vue";
 import { CatalogApi } from "../../../api";
 import { filterSelectableNamespaces } from "../../../types";
 import type { FlowRegistration, NamespaceTree } from "../../../types";
+import { withoutHubRows } from "../../../views/CatalogView/hubRows";
 
 const props = defineProps<{
   modelValue: number | null;
@@ -107,7 +108,7 @@ const loadTree = async () => {
   treeLoading.value = true;
   treeError.value = null;
   try {
-    const fetched = await CatalogApi.getNamespaceTree();
+    const fetched = withoutHubRows(await CatalogApi.getNamespaceTree());
     tree.value = props.hideSystemNamespaces ? filterSelectableNamespaces(fetched) : fetched;
     if (selectedNamespaceId.value === null) {
       const defaultNs = findDefaultNamespace(tree.value);

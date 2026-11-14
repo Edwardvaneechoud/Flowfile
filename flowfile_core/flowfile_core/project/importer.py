@@ -72,7 +72,7 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
     store_secret,
 )
-from shared.storage_config import storage
+from shared.storage_config import flow_path_spellings, registered_flow_path, storage
 
 logger = logging.getLogger(__name__)
 
@@ -926,11 +926,18 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
                 logger.warning("Project import: flow_uuid %s already registered; minting a fresh uuid", flow_uuid)
                 flow_uuid = str(uuid.uuid4())
                 data = {**data, "flow_uuid": flow_uuid}
-            runtime_path = (
-                Path(existing.flow_path)
-                if existing
-                else storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
-            )
+            existing_id = None if existing is None else existing.id
+            if existing is None:
+                runtime_path = (
+                    storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
+                )
+            else:
+                try:
+                    runtime_path = Path(registered_flow_path(existing.flow_path))
+                except ValueError as exc:
+                    # On a multi-user server the import never writes outside the flow folders; the flow is skipped.
+                    logger.warning("Project import: flow %s not written — %s", flow_uuid, exc)
+                    return None
         if _after_commit_queue.get() is not None:  # loaded now otherwise, which is the same check
             _check_flow_loads(data, owner_id, flowfile_name)
         _after_commit(_write_runtime_flow, runtime_path, data)
@@ -942,7 +949,15 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
         # Reconcile identity + display name + namespace placement to the file (keeps flow_uuid stable for
         # determinism, the catalog name round-tripping, and the flow landing in its real schema on import).
         with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(runtime_path)).first()
+            # The existing row by its id, whatever spelling it stored; a new one by the file it was registered at.
+            reg = (
+                db.get(FlowRegistration, existing_id)
+                if existing_id is not None
+                else db.query(FlowRegistration)
+                .filter(FlowRegistration.flow_path.in_(flow_path_spellings(str(runtime_path))))
+                .order_by(FlowRegistration.id)
+                .first()
+            )
             if reg:
                 changed = (
                     reg.flow_uuid != flow_uuid
@@ -1035,6 +1050,7 @@ def _import_schedules(data: dict, owner_id: int) -> int:
                     enabled=sd.get("enabled", True),
                     name=sd.get("name"),
                     description=sd.get("description"),
+                    backend=sd.get("backend"),
                 )
                 sid = sd.get("id")
                 if sid is not None and db.query(FlowSchedule).filter(FlowSchedule.schedule_uuid == sid).first() is None:
@@ -1055,6 +1071,7 @@ def _schedule_signature(s) -> tuple:
         get("cron_expression"),
         get("cron_timezone"),
         get("name"),
+        get("backend"),
     )
 
 
@@ -1077,6 +1094,7 @@ def _update_schedule_in_place(db, row: FlowSchedule, sd: dict) -> None:
     row.enabled = sd.get("enabled", True)
     row.name = sd.get("name")
     row.description = sd.get("description")
+    row.backend = sd.get("backend")
     db.commit()
 
 

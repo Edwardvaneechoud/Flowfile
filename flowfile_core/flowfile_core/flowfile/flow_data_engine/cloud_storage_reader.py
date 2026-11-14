@@ -169,9 +169,14 @@ class CloudStorageReader:
         ``managed_identity`` get no provider. Otherwise (flag off, or no saved connection) core resolves the options
         and the plan carries their credentials encrypted.
 
+        A connection a provider elsewhere keeps (``granted``) is read with what the run was granted for the step
+        (``_granted_read_credentials``).
+
         Raises:
             ValueError: With the flag on, the connection is named but not stored for *user_id*, or *user_id* is None.
         """
+        if connection.granted:
+            return CloudStorageReader._granted_read_credentials(connection)
         if settings.FLOWFILE_COMPUTE_PROTOCOL:
             if connection.auth_method in ("env_vars", "managed_identity"):
                 return CloudStorageReader.get_plan_storage_options(connection), None
@@ -187,6 +192,25 @@ class CloudStorageReader:
                 )
         storage_options = CloudStorageReader.get_storage_options(connection)
         return storage_options, CloudStorageReader.get_credential_provider(storage_options, user_id)
+
+    @staticmethod
+    def _granted_read_credentials(connection: FullCloudStorageConnection) -> tuple[dict[str, Any], Any]:
+        """A read's options and provider for a connection a provider elsewhere keeps, which core never opens.
+
+        ``env_vars`` and ``managed_identity`` get no provider with the flag on; a step the run was granted the
+        connection for (``run_secrets``) gets its provider's credential provider, opened by the server that runs it.
+
+        Raises:
+            ValueError: The run was granted the step nothing, as for a schema preview.
+        """
+        from flowfile_core.flowfile.execution import run_secrets
+        from flowfile_core.secret_manager import credential_sources
+
+        if settings.FLOWFILE_COMPUTE_PROTOCOL and connection.auth_method in ("env_vars", "managed_identity"):
+            return CloudStorageReader.get_plan_storage_options(connection), None
+        granted = run_secrets.granted_connection("cloud", connection.connection_name)
+        provider = credential_sources.source().storage_provider(connection.connection_name, granted)
+        return CloudStorageReader.get_plan_storage_options(connection), provider
 
     @staticmethod
     def get_scan_kwargs(

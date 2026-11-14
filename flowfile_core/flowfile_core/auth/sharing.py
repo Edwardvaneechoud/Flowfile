@@ -13,6 +13,7 @@ False (electron/desktop mode).
 """
 
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from sqlalchemy import event, or_
@@ -79,9 +80,10 @@ def sharing_enabled() -> bool:
 def ambient_credentials_allowed() -> bool:
     """Whether cloud access may fall back to the process's own credentials and local disk.
 
-    False in docker, where both belong to the server. Read live, like ``sharing_enabled``.
+    False on a multi-user server (docker or server), where both belong to the server. Read live, like
+    ``sharing_enabled``.
     """
-    return os.environ.get("FLOWFILE_MODE", "electron") != "docker"
+    return os.environ.get("FLOWFILE_MODE", "electron") not in ("docker", "server")
 
 
 # Auth methods with no credentials of their own: the connection authenticates as the process.
@@ -109,6 +111,26 @@ def is_admin_user(db: Session, user_id: int | None) -> bool:
 
 def is_synthetic_principal(user) -> bool:
     return getattr(user, "username", None) == INTERNAL_SERVICE_USERNAME
+
+
+_ACTS_FOR_NO_PERSON: ContextVar[bool] = ContextVar("flowfile_acts_for_no_person", default=False)
+
+
+def note_principal(user) -> bool:
+    """Record for this request whether its caller is the internal service user, and answer it.
+
+    That user carries a person's id (``FLOWFILE_INTERNAL_SERVICE_USER_ID``, 1 unless set) and is nobody: what is kept
+    per person for use outside this install, such as a sign-in elsewhere, reads ``acts_for_no_person`` and answers as
+    it does for someone who has none. Call it from an ``async`` dependency, so the route's own thread inherits it.
+    """
+    synthetic = is_synthetic_principal(user)
+    _ACTS_FOR_NO_PERSON.set(synthetic)
+    return synthetic
+
+
+def acts_for_no_person() -> bool:
+    """Whether this request's caller was noted as the internal service user (``note_principal``)."""
+    return _ACTS_FOR_NO_PERSON.get()
 
 
 def user_group_ids(db: Session, user_id: int) -> list[int]:

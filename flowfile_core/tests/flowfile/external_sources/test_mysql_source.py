@@ -69,8 +69,9 @@ class TestMySQLURIConstruction:
         sa_uri = get_sqlalchemy_uri(base_uri)
         assert sa_uri == "mysql+pymysql://user:pass@localhost:3306/db"
 
-    def test_get_sqlalchemy_uri_postgresql_unchanged(self):
-        """Test that PostgreSQL URIs are not modified."""
+    def test_get_sqlalchemy_uri_postgresql_unchanged(self, monkeypatch):
+        """Test that PostgreSQL URIs are not modified when psycopg is installed."""
+        monkeypatch.setattr("shared.sql_utils._has_module", lambda name: True)
         pg_uri = "postgresql://user:pass@localhost:5432/db"
         assert get_sqlalchemy_uri(pg_uri) == pg_uri
 

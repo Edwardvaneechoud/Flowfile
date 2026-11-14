@@ -4,8 +4,8 @@ A schedule had only its integer primary key, so a project's schedule file could 
 import replaced every schedule of a flow, losing its notification rules and run state. With
 ``schedule_uuid`` written as each entry's ``id``, an import updates the row it names in place.
 
-Revision ID: 040
-Revises: 039
+Revision ID: 041
+Revises: 040
 Create Date: 2026-11-12
 """
 
@@ -16,8 +16,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision: str = "040"
-down_revision: str | None = "039"
+revision: str = "041"
+down_revision: str | None = "040"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

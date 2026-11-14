@@ -144,6 +144,7 @@ import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { withoutHubRows } from "../../../../../views/CatalogView/hubRows";
 
 const nodeStore = useNodeStore();
 const nodeApplyModel = ref<NodeApplyModel | null>(null);
@@ -339,7 +340,7 @@ async function loadNamespaces() {
   loadingNamespaces.value = true;
   try {
     const resp = await axios.get<CatalogNamespaceTree[]>("/catalog/namespaces/tree");
-    namespaceTree.value = resp.data;
+    namespaceTree.value = withoutHubRows(resp.data);
   } catch (e) {
     console.error("Failed to load /catalog/namespaces/tree", e);
   } finally {

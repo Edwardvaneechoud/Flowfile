@@ -1345,3 +1345,60 @@ def test_cloud_connection_profile_and_session_token_round_trip(tmp_path):
         with get_db_context() as db:
             for name in (cli, key):
                 delete_cloud_connection(db, name, OWNER)
+
+
+def _schedule_backends(flow_uuid: str) -> list[str | None]:
+    with get_db_context() as db:
+        reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+        return [s.backend for s in db.query(FlowSchedule).filter_by(registration_id=reg.id).all()]
+
+
+def test_a_schedule_s_backend_round_trips_and_an_unset_one_writes_no_key(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    flow_uuid, flow_name = _make_flow(tmp_path, "proj_flow_backend")
+    _make_schedule(flow_uuid)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Backend Test", OWNER)
+        schedule_file = root / "schedules" / f"{flow_name}.yaml"
+        assert "backend" not in yaml.safe_load(schedule_file.read_text())["schedules"][0]
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+            db.query(FlowSchedule).filter_by(registration_id=reg.id).one().backend = "worker:team"
+            db.commit()
+            projection.project_all(db, root, OWNER)
+        assert yaml.safe_load(schedule_file.read_text())["schedules"][0]["backend"] == "worker:team"
+        snap = _snapshot(root)
+
+        import_project(root, OWNER)
+        assert _schedule_backends(flow_uuid) == ["worker:team"]
+        with get_db_context() as db:
+            projection.project_all(db, root, OWNER)
+        assert _snapshot(root) == snap
+    finally:
+        _cleanup([], [flow_uuid])
+
+
+def test_a_schedule_file_without_a_backend_imports_null(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    flow_uuid, flow_name = _make_flow(tmp_path, "proj_flow_no_backend")
+    _make_schedule(flow_uuid)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "No Backend Test", OWNER)
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+            db.query(FlowSchedule).filter_by(registration_id=reg.id).one().backend = "worker:team"
+            db.commit()
+        schedule_file = root / "schedules" / f"{flow_name}.yaml"
+        assert "backend" not in yaml.safe_load(schedule_file.read_text())["schedules"][0]
+
+        import_project(root, OWNER)
+        assert _schedule_backends(flow_uuid) == [None]
+    finally:
+        _cleanup([], [flow_uuid])

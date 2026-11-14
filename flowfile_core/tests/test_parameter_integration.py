@@ -856,6 +856,7 @@ def test_retry_upstream_resolves_parameters(execution_location):
             False,
             True,
             graph.flow_logger.get_node_logger(3),
+            recomputes={2: upstream._recompute_count},
         )
 
     assert upstream.results.errors is None

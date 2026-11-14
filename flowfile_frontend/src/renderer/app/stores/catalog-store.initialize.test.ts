@@ -32,7 +32,7 @@ const overview = (): CatalogOverview =>
     schedules: [{ id: 30 }],
     active_runs: [{ id: 40 }],
     runs: runsPage([100, 101]),
-    scheduler: { active: true },
+    schedulers: [{ active: true }],
     default_namespace_id: 2,
   }) as unknown as CatalogOverview;
 
@@ -63,6 +63,7 @@ describe("catalog-store initialize", () => {
     expect(store.activeRuns.map((r) => r.id)).toEqual([40]);
     expect(store.stats?.total_flows).toBe(1);
     expect(store.schedulerStatus?.active).toBe(true);
+    expect(store.schedulers).toHaveLength(1);
     expect(store.defaultNamespaceId).toBe(2);
     expect(store.runs.map((r) => r.id)).toEqual([100, 101]);
     expect(store.runsTotal).toBe(2);

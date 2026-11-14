@@ -50,7 +50,9 @@
                   :key="conn.connectionName"
                   :value="conn.connectionName"
                 >
-                  {{ conn.connectionName }} ({{ conn.databaseType }} - {{ conn.database }})
+                  {{ conn.connectionName }} ({{ conn.databaseType }} - {{ conn.database }}){{
+                    conn.source === "hub" ? " · from your hub" : ""
+                  }}
                 </option>
               </select>
             </div>

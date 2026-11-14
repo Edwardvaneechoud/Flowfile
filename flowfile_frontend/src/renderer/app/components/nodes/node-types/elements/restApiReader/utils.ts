@@ -23,6 +23,7 @@ export const createNodeRestApiReader = (flowId: number, nodeId: number): NodeRes
       page_param: "page",
       start_page: 1,
       cursor_param: "cursor",
+      cursor_request_location: "query",
       cursor_location: "body",
       cursor_response_path: "",
       initial_cursor: "",

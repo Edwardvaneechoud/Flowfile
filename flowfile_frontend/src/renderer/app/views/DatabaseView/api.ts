@@ -57,6 +57,7 @@ export const convertConnectionInterfacePytoTs = (
     database: pythonConnectionInterface.database,
     id: pythonConnectionInterface.id,
     access: pythonConnectionInterface.access,
+    source: pythonConnectionInterface.source ?? "local",
   };
 };
 

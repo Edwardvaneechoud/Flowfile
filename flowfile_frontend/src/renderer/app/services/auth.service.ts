@@ -23,6 +23,33 @@ interface UserInfo {
   id?: number;
 }
 
+/** How people sign in on this server: with a password, or through the hub it joined. */
+export type SignInMethod = { method: "password" } | { method: "hub"; url: string; hub_url: string };
+
+const HUB_SIGN_IN_FAILED =
+  "Signing in through the hub did not work. Open this server from the hub again.";
+
+// This tab's one-time state for the sign-in through the hub it started.
+const HUB_SIGN_IN_STATE = "hub_signin_state";
+
+// Set on a session that came through the hub, the only kind whose sign-out the server is told of.
+const HUB_SESSION = "auth_hub_session";
+
+/** 32 random bytes as base64url; `getRandomValues` works on a plain-http server too. */
+function newSignInState(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/** The server's own sentence for a refused request, or `fallback` when it sent none. */
+function refusalSentence(error: unknown, fallback: string): string {
+  const detail = axios.isAxiosError(error) ? error.response?.data?.detail : undefined;
+  return typeof detail === "string" && detail ? detail : fallback;
+}
+
 class AuthService {
   private token = ref<string | null>(null);
   private tokenExpiration = ref<number | null>(null);
@@ -30,12 +57,16 @@ class AuthService {
   private modeInitialized = false;
   private refreshPromise: Promise<string | null> | null = null;
   private currentUsername = ref<string | null>(null);
+  // Held in memory only, from the fragment until `initialize` posts it.
+  private hubSignInToken: string | null = null;
+  private hubSignInError: string | null = null;
 
   constructor() {
     // Initial detection based on the Tauri runtime presence.
     this.isDesktopMode.value = this.detectDesktopMode();
     this.clearStoredTokens();
     this.loadStoredToken();
+    this.takeTokenFromFragment();
   }
 
   /**
@@ -48,8 +79,7 @@ class AuthService {
   setModeFromBackend(mode: string): void {
     if (!this.modeInitialized) {
       if (!this.detectDesktopMode()) {
-        this.isDesktopMode.value =
-          mode === "electron" || mode === "tauri" || mode === "desktop";
+        this.isDesktopMode.value = mode === "electron" || mode === "tauri" || mode === "desktop";
       }
       this.modeInitialized = true;
     }
@@ -94,6 +124,12 @@ class AuthService {
   async initialize(): Promise<boolean> {
     this.clearStoredTokens();
 
+    const signInToken = this.hubSignInToken;
+    this.hubSignInToken = null;
+    if (signInToken !== null && !this.isDesktopMode.value) {
+      return await this.signInThroughHub(signInToken);
+    }
+
     if (this.hasValidToken()) {
       return true;
     }
@@ -105,6 +141,90 @@ class AuthService {
 
     // In Docker/web mode, require manual login.
     return false;
+  }
+
+  /**
+   * Take a hub's one-time sign-in token, `#signin=<token>&state=<state>`, out of the URL and keep it in memory only
+   * when its state is the one this tab made (`hubSignInUrl`); any other is dropped, so a link carrying someone's
+   * token signs nobody in. Runs at construction, before the router's hash history could keep the fragment.
+   */
+  private takeTokenFromFragment(): void {
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const signInToken = fragment.get("signin");
+    if (signInToken === null) return;
+
+    const { pathname, search } = window.location;
+    window.history.replaceState(window.history.state, "", pathname + search);
+    const expected = sessionStorage.getItem(HUB_SIGN_IN_STATE);
+    sessionStorage.removeItem(HUB_SIGN_IN_STATE);
+    if (signInToken && expected && fragment.get("state") === expected) {
+      this.hubSignInToken = signInToken;
+    }
+  }
+
+  /**
+   * The hub's Open page for this server, `openUrl`, with a new one-time `state` that
+   * this tab keeps in sessionStorage; the hub carries it back beside the sign-in token.
+   */
+  hubSignInUrl(openUrl: string): string {
+    const state = newSignInState();
+    sessionStorage.setItem(HUB_SIGN_IN_STATE, state);
+    const url = new URL(openUrl, window.location.href);
+    url.searchParams.set("state", state);
+    return url.toString();
+  }
+
+  /** Start a sign-in through the hub: send this tab to the hub's Open page, replacing the entry so Back skips it. */
+  startHubSignIn(openUrl: string): void {
+    window.location.replace(this.hubSignInUrl(openUrl));
+  }
+
+  /**
+   * Trade the hub's sign-in token for this server's session, marked as the hub's. Posted once on a client without
+   * the retrying interceptors, since the hub takes it only once; a refusal keeps the server's sentence.
+   */
+  private async signInThroughHub(signInToken: string): Promise<boolean> {
+    try {
+      const response = await axios
+        .create()
+        .post<AuthResponse>("/auth/hub/signin", { token: signInToken });
+      const accessToken = response.data?.access_token;
+      const expiresAt = response.data?.expires_at;
+      if (!accessToken || !expiresAt) throw new Error("The server answered no session.");
+      this.logout();
+      this.setToken(accessToken, expiresAt);
+      if (response.data.refresh_token) {
+        localStorage.setItem("auth_refresh_token", response.data.refresh_token);
+      }
+      localStorage.setItem(HUB_SESSION, "1");
+      this.hubSignInError = null;
+      return true;
+    } catch (error) {
+      this.logout();
+      this.hubSignInError = refusalSentence(error, HUB_SIGN_IN_FAILED);
+      return false;
+    }
+  }
+
+  /** The server's sentence for a hub sign-in it refused at this load, given once. */
+  takeHubSignInError(): string | null {
+    const sentence = this.hubSignInError;
+    this.hubSignInError = null;
+    return sentence;
+  }
+
+  /** How this server signs people in; a password form when it cannot be asked. */
+  async getSignInMethod(): Promise<SignInMethod> {
+    try {
+      const response = await axios.get<SignInMethod>("/auth/sign_in_method", {
+        headers: { "X-Skip-Auth-Header": "true" },
+      });
+      const answer = response.data;
+      if (answer?.method === "hub" && typeof answer.url === "string" && answer.url) return answer;
+    } catch (error) {
+      console.error("Could not read how this server signs people in:", error);
+    }
+    return { method: "password" };
   }
 
   async login(username: string, password: string): Promise<boolean> {
@@ -288,6 +408,35 @@ class AuthService {
     return this.hasValidToken();
   }
 
+  /**
+   * Sign out: a session that came through the hub tells the server first, so it ends at the hub too; any other
+   * is cleared here only. Sent on a client without the interceptors, which would renew the session.
+   */
+  async signOut(): Promise<void> {
+    if (localStorage.getItem(HUB_SESSION) === null) {
+      this.logout();
+      return;
+    }
+    const client = axios.create();
+    try {
+      let token = this.hasValidToken() ? this.token.value : null;
+      const refreshToken = localStorage.getItem("auth_refresh_token");
+      if (!token && refreshToken && !this.isDesktopMode.value) {
+        const formData = new FormData();
+        formData.append("refresh_token", refreshToken);
+        const response = await client.post<AuthResponse>("/auth/refresh", formData);
+        token = response.data?.access_token ?? null;
+      }
+      if (token) {
+        await client.post("/auth/logout", null, { headers: { Authorization: `Bearer ${token}` } });
+      }
+    } catch (error) {
+      console.error("The server was not told of the sign-out:", error);
+    } finally {
+      this.logout();
+    }
+  }
+
   logout(): void {
     this.token.value = null;
     this.tokenExpiration.value = null;
@@ -296,6 +445,7 @@ class AuthService {
     localStorage.removeItem("auth_token_expiration");
     localStorage.removeItem("auth_refresh_token");
     localStorage.removeItem("auth_username");
+    localStorage.removeItem(HUB_SESSION);
   }
 }
 
@@ -340,6 +490,7 @@ axios.interceptors.response.use(
         localStorage.removeItem("auth_token_expiration");
         localStorage.removeItem("auth_refresh_token");
         localStorage.removeItem("auth_username");
+        localStorage.removeItem(HUB_SESSION);
 
         if (!window.location.hash.includes("login")) {
           window.location.href = "/#/login";

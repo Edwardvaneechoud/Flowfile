@@ -81,17 +81,17 @@ def _docker_master_key() -> str | None:
 
 
 def get_master_key() -> str:
-    """Resolve the Fernet master key: TEST_MODE → (docker only) env/docker secret → secure store.
+    """Resolve the Fernet master key: TEST_MODE → (a server only) env/docker secret → secure store.
 
-    The env var and the docker secret are consulted **only** in docker mode, exactly as
-    core and the worker do: outside docker they encrypt with the secure-store key, so
+    The env var and the docker secret are consulted **only** on a multi-user server (docker or server), exactly as
+    core and the worker do: elsewhere they encrypt with the secure-store key, so
     honouring a stray FLOWFILE_MASTER_KEY here would make every decrypt fail.
     """
     # Env is read per call rather than pinned at import so a test can set it late.
     if "TEST_MODE" in os.environ:
         return TEST_MASTER_KEY
 
-    if os.environ.get("FLOWFILE_MODE") == "docker":
+    if os.environ.get("FLOWFILE_MODE") in ("docker", "server"):
         key = _docker_master_key()
         if key is None:
             raise RuntimeError(

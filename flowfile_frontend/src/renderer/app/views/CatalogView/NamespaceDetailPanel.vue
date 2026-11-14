@@ -12,8 +12,11 @@
           <SharedBadge :access="namespace.access" />
         </div>
         <p v-if="namespace.description" class="description">{{ namespace.description }}</p>
+        <p v-if="isHub" class="description" data-testid="hub-managed-note">
+          {{ HUB_MANAGED_NOTE }}
+        </p>
       </div>
-      <div v-if="canManage(namespace)" class="header-actions">
+      <div v-if="!isHub && canManage(namespace)" class="header-actions">
         <button
           class="btn btn-danger btn-sm"
           data-testid="catalog-delete"
@@ -30,7 +33,7 @@
     <div class="section-header">
       <h3 class="section-title">Storage</h3>
       <button
-        v-if="canChangeStorage(namespace)"
+        v-if="!isHub && canChangeStorage(namespace)"
         class="btn btn-secondary btn-sm"
         data-testid="catalog-edit-storage"
         :disabled="!!storageLocked"
@@ -47,7 +50,7 @@
         <span class="meta-label">Backend</span>
         <span class="meta-value">
           <i :class="isCloud ? providerIcon : 'fa-solid fa-hard-drive'"></i>
-          {{ isCloud ? "Object storage" : "Local" }}
+          {{ isCloud ? "Object storage" : isHub ? "Hub filesystem" : "Local" }}
         </span>
       </div>
 
@@ -85,19 +88,21 @@
       </template>
     </div>
 
-    <p v-if="!isCloud" class="storage-hint">
-      Tables in this catalog are stored on the local filesystem under Flowfile's managed catalog
-      directory.
-    </p>
-    <p v-else-if="loadingConnection" class="storage-hint">
-      <i class="fa-solid fa-spinner fa-spin"></i> Loading connection details…
-    </p>
-    <p v-else-if="!connection" class="storage-hint muted">
-      Connection details unavailable — it may be owned by another user or no longer exist.
-    </p>
-    <p v-if="storageLocked && canChangeStorage(namespace)" class="storage-hint muted">
-      {{ storageLocked }}
-    </p>
+    <template v-if="!isHub">
+      <p v-if="!isCloud" class="storage-hint">
+        Tables in this catalog are stored on the local filesystem under Flowfile's managed catalog
+        directory.
+      </p>
+      <p v-else-if="loadingConnection" class="storage-hint">
+        <i class="fa-solid fa-spinner fa-spin"></i> Loading connection details…
+      </p>
+      <p v-else-if="!connection" class="storage-hint muted">
+        Connection details unavailable — it may be owned by another user or no longer exist.
+      </p>
+      <p v-if="storageLocked && canChangeStorage(namespace)" class="storage-hint muted">
+        {{ storageLocked }}
+      </p>
+    </template>
 
     <EditCatalogStorageModal
       :visible="showStorageEditor"
@@ -116,6 +121,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import EditCatalogStorageModal from "./EditCatalogStorageModal.vue";
+import { HUB_MANAGED_NOTE, isHubRow } from "./hubRows";
 import { deleteBlockedReason, storageLockedReason } from "./catalogStorageEdit";
 import { fetchCloudStorageConnectionsInterfaces } from "../CloudConnectionView/api";
 import {
@@ -132,6 +138,7 @@ const catalogStore = useCatalogStore();
 const { canManage, canManageGrants: canChangeStorage } = useResourceSharing();
 
 const isCloud = computed(() => !!props.namespace.storage_uri);
+const isHub = computed(() => isHubRow(props.namespace));
 const connection = ref<FullCloudStorageConnectionInterface | null>(null);
 const loadingConnection = ref(false);
 const showStorageEditor = ref(false);
@@ -202,7 +209,8 @@ const location = computed<{ label: string; value: string } | null>(() => {
 async function loadConnection() {
   connection.value = null;
   const name = props.namespace.storage_connection_name;
-  if (!isCloud.value || !name) return;
+  // A hub catalog's connection is the hub's; this desktop's connections never hold it.
+  if (isHub.value || !isCloud.value || !name) return;
   loadingConnection.value = true;
   try {
     const all = await fetchCloudStorageConnectionsInterfaces();

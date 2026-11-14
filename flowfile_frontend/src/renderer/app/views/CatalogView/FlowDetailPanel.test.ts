@@ -1,92 +1,190 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from "vitest";
+// A flow of a remote catalog (a hub row) has the page a local registered flow has: its run history, its schedules
+// with enable, disable and delete, and Favourite, each through core's own catalog route by the id its row carries.
+// It also has Run, Add schedule, a schedule's Run now and Cancel; left out for it: what needs the flow's file here.
+import { h, type FunctionalComponent } from "vue";
+import { createPinia, setActivePinia } from "pinia";
+import { describe, expect, it, vi } from "vitest";
+import { flow } from "../../__fixtures__/catalogTree";
+import { element, mountIn, text } from "../../__fixtures__/mount";
+import type { FlowRegistration, FlowSchedule } from "../../types";
 
-vi.mock("../../api/catalog.api", () => ({ CatalogApi: {} }));
-// The panel's children that reach the file browser, sharing or the API layer are not what is shown here.
-vi.mock("./ApiEndpointPanel.vue", () => ({ default: { render: () => null } }));
-vi.mock("./components/ScheduleTable.vue", () => ({ default: { render: () => null } }));
+const api = vi.hoisted(() => ({ updateSchedule: vi.fn(), getSchedules: vi.fn() }));
+
+vi.mock("../../api/catalog.api", () => ({ CatalogApi: api }));
+vi.mock("../../services/setup.service", () => ({ default: { computes: () => true } }));
+vi.mock("../../composables/useResourceSharing", () => ({
+  useResourceSharing: () => ({
+    canShare: () => true,
+    canManage: () => true,
+    canManageGrants: () => true,
+  }),
+}));
+vi.mock("./RunHistoryTable.vue", () => ({
+  default: {
+    props: ["registrationId"],
+    render() {
+      return h("div", {
+        "data-testid": "run-history",
+        "data-registration": (this as any).registrationId,
+      });
+    },
+  },
+}));
+vi.mock("./components/ScheduleTable.vue", () => ({
+  default: {
+    props: ["schedules", "disableRunNow"],
+    emits: ["toggleSchedule"],
+    render() {
+      const self = this as any;
+      return h(
+        "button",
+        {
+          "data-testid": "schedules",
+          "data-run-now-off": String(self.disableRunNow),
+          onClick: () => self.$emit("toggleSchedule", self.schedules[0].id, false),
+        },
+        String(self.schedules.length),
+      );
+    },
+  },
+}));
+vi.mock("./ApiEndpointPanel.vue", () => ({
+  default: { render: () => h("div", { "data-testid": "api-panel" }) },
+}));
 vi.mock("../../components/sharing/ShareDialog.vue", () => ({ default: { render: () => null } }));
 vi.mock("../../components/sharing/SharedBadge.vue", () => ({ default: { render: () => null } }));
 vi.mock("../../components/common", () => ({
-  CollapsibleSection: { render: () => null },
+  CollapsibleSection: {
+    props: ["title"],
+    render() {
+      const self = this as any;
+      return h("section", { "data-section": self.title }, [
+        self.$slots.actions?.(),
+        self.$slots.default?.(),
+      ]);
+    },
+  },
   EmptyState: { render: () => null },
 }));
-vi.mock("../../composables/useResourceSharing", () => ({
-  useResourceSharing: () => ({
-    canShare: () => false,
-    canManage: () => true,
-    canManageGrants: () => false,
-    isMultiUser: { value: false },
-    isOwned: () => true,
-  }),
-}));
 
-import { mount, type Mounted } from "../../__fixtures__/mount";
-import type { FlowRegistration } from "../../types";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
+import { useCatalogStore } from "../../stores/catalog-store";
 
-const flow = (fields: Partial<FlowRegistration>): FlowRegistration =>
-  ({
-    id: 1,
-    name: "orders",
-    description: null,
-    flow_path: "/flows/orders.yaml",
-    namespace_id: 1,
-    owner_id: 1,
-    created_at: "2026-11-01T10:00:00",
-    updated_at: "2026-11-01T10:00:00",
-    is_favorite: false,
-    is_following: false,
-    run_count: 1,
-    last_run_at: "2026-11-10T10:00:00",
-    last_run_success: false,
-    file_exists: true,
-    is_api_compatible: false,
-    artifact_count: 0,
-    tables_produced: [],
-    tables_read: [],
-    ...fields,
-  }) as FlowRegistration;
-
-let mounted: Mounted | undefined;
-afterEach(() => mounted?.unmount());
-
-const lastRunStatus = () => {
-  const card = Array.from(mounted!.el.querySelectorAll(".meta-card")).find(
-    (candidate) => candidate.querySelector(".meta-label")?.textContent === "Status",
-  )!;
-  const value = card.querySelector(".meta-value")!;
-  return {
-    label: value.textContent,
-    classes: Array.from(value.classList).filter((c) => c !== "meta-value"),
-  };
+const stubs: Record<string, FunctionalComponent> = {
+  "el-button": element("button"),
+  "el-dropdown": (_, { slots }) => h("span", slots.default?.()),
+  "el-dropdown-menu": () => null,
+  "el-dropdown-item": () => null,
 };
 
+const hubFlow = flow({
+  id: -201,
+  name: "orders-clean",
+  source: "hub",
+  flow_path: "hub://flows/u-1",
+});
+
+const mount = async (row: FlowRegistration) => {
+  const pinia = createPinia();
+  setActivePinia(pinia);
+  const store = useCatalogStore();
+  store.flowSchedules = [{ id: -7, registration_id: row.id, enabled: true } as FlowSchedule];
+  const favourited = vi.fn();
+  const host = await mountIn(FlowDetailPanel, {
+    props: { flow: row, artifacts: [], onToggleFavorite: favourited },
+    pinia,
+    stubs,
+  });
+  return { host, favourited };
+};
+
+const buttons = (host: HTMLElement) =>
+  Array.from(host.querySelectorAll(".header-actions button")).map((button) => text(button));
+
 describe("FlowDetailPanel", () => {
-  it("shows a flow whose last run was cancelled as Cancelled, not in the failure colour", () => {
-    mounted = mount(FlowDetailPanel, { flow: flow({ last_run_cancelled: true }), artifacts: [] });
+  it("shows a hub flow its run history, its schedules and Favourite, by the id its row carries", async () => {
+    const { host, favourited } = await mount(hubFlow);
 
-    expect(lastRunStatus()).toEqual({ label: "Cancelled", classes: ["text-cancelled"] });
+    expect(
+      host.querySelector("[data-testid='run-history']")?.getAttribute("data-registration"),
+    ).toBe("-201");
+    expect(text(host.querySelector("[data-testid='schedules']"))).toBe("1");
+    expect(buttons(host)).toEqual(["Run Flow", "Favorite", "Share", "Delete"]);
+    (host.querySelectorAll(".header-actions button")[1] as HTMLButtonElement).click();
+    expect(favourited).toHaveBeenCalledWith(-201);
   });
 
-  it("shows a flow whose last run failed as Failed, also against an older core", () => {
-    for (const fields of [{ last_run_cancelled: false }, {}]) {
-      mounted?.unmount();
-      mounted = mount(FlowDetailPanel, { flow: flow(fields), artifacts: [] });
+  it("pauses a hub flow's schedule through the schedule route a local one uses", async () => {
+    api.updateSchedule.mockResolvedValue({});
+    api.getSchedules.mockResolvedValue([]);
+    const { host } = await mount(hubFlow);
 
-      expect(lastRunStatus()).toEqual({ label: "Failed", classes: ["text-danger"] });
-    }
+    (host.querySelector("[data-testid='schedules']") as HTMLButtonElement).click();
+    expect(api.updateSchedule).toHaveBeenCalledWith(-7, { enabled: false });
   });
 
-  it("keeps a successful last run and a flow that never ran as they were", () => {
-    mounted = mount(FlowDetailPanel, { flow: flow({ last_run_success: true }), artifacts: [] });
-    expect(lastRunStatus()).toEqual({ label: "Success", classes: ["text-success"] });
-
-    mounted.unmount();
-    mounted = mount(FlowDetailPanel, {
-      flow: flow({ last_run_success: null, last_run_at: null, run_count: 0 }),
-      artifacts: [],
+  it("gives a hub flow Run, Add schedule, Run now and Cancel", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useCatalogStore();
+    store.flowSchedules = [{ id: -7, registration_id: -201, enabled: true } as FlowSchedule];
+    store.activeRuns = [{ id: -9, registration_id: -201 } as any];
+    const running = await mountIn(FlowDetailPanel, {
+      props: { flow: hubFlow, artifacts: [] },
+      pinia,
+      stubs,
     });
-    expect(lastRunStatus().label).toBe("No runs");
+    expect(buttons(running)).toContain("Cancel Run");
+
+    const { host } = await mount(hubFlow);
+    expect(buttons(host)).toContain("Run Flow");
+    expect(text(host.querySelector("[data-section='Schedules'] button:not([data-testid])"))).toBe(
+      "Add",
+    );
+    const schedules = host.querySelector("[data-testid='schedules']");
+    expect(schedules?.getAttribute("data-run-now-off")).toBe("false");
+  });
+
+  it("gives a hub flow Rename and Delete through core's routes by its own id", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const deleted = vi.fn();
+    const renamed = vi.fn();
+    const host = await mountIn(FlowDetailPanel, {
+      props: { flow: hubFlow, artifacts: [], onDeleteFlow: deleted, onRenameFlow: renamed },
+      pinia,
+      stubs,
+    });
+    (host.querySelector("[title='Delete flow']") as HTMLButtonElement).click();
+    expect(deleted).toHaveBeenCalledWith(-201);
+    expect(host.querySelector("[title='Rename']")).not.toBeNull();
+  });
+
+  it("gives a hub flow Share and leaves out what needs the file here, the API panel", async () => {
+    const { host } = await mount(hubFlow);
+
+    expect(buttons(host)).toContain("Share");
+    expect(host.querySelector("[data-testid='api-panel']")).toBeNull();
+    expect(host.querySelector(".missing-banner")).toBeNull();
+  });
+
+  it("keeps a local flow's page as it was: Run, Open, Copy, Share, Delete and Add schedule", async () => {
+    const { host } = await mount(flow());
+
+    expect(buttons(host)).toEqual(
+      expect.arrayContaining([
+        "Run Flow",
+        "Open in Designer",
+        "Modify in notebook",
+        "Favorite",
+        "Share",
+        "Delete",
+      ]),
+    );
+    expect(text(host.querySelector("[data-section='Schedules'] button:not([data-testid])"))).toBe(
+      "Add",
+    );
+    expect(host.querySelector("[data-testid='api-panel']")).not.toBeNull();
   });
 });

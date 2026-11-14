@@ -1122,6 +1122,8 @@ class FullDatabaseConnection(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    # A connection a provider elsewhere keeps: its password here is empty, the run is granted it where the step runs
+    granted: bool = Field(default=False, exclude=True)
 
     @field_validator("database_type")
     @classmethod
@@ -1143,6 +1145,7 @@ class FullDatabaseConnectionInterface(BaseModel):
     url: str | None = None
     id: int | None = None
     access: AccessInfo | None = None
+    source: Literal["local", "hub"] = "local"
 
 
 class DatabaseSettings(BaseModel):
@@ -1418,6 +1421,7 @@ class RestApiPaginationSettings(BaseModel):
     start_page: int = 1
     # cursor / next-page token
     cursor_param: str = "cursor"
+    cursor_request_location: Literal["query", "body"] = "query"
     cursor_location: Literal["body", "header"] = "body"
     cursor_response_path: str = ""
     initial_cursor: str = ""
@@ -1445,6 +1449,25 @@ class RestApiSettings(BaseModel):
     record_path: str = ""
     timeout_seconds: float = 30.0
     max_retries: int = 3
+
+    @model_validator(mode="after")
+    def _cursor_in_body_needs_post(self) -> "RestApiSettings":
+        p = self.pagination
+        if p.pagination_type == "cursor" and p.cursor_request_location == "body" and self.method != "POST":
+            raise ValueError(
+                "A cursor sent in the JSON body needs the POST method; "
+                "switch the method to POST or send the cursor as a query parameter."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _cursor_in_body_needs_an_object(self) -> "RestApiSettings":
+        p, body = self.pagination, self.json_body
+        in_body = p.pagination_type == "cursor" and p.cursor_request_location == "body"
+        is_reference = isinstance(body, str) and "${" in body
+        if in_body and body is not None and not isinstance(body, dict) and not is_reference:
+            raise ValueError("A cursor sent in the JSON body needs the body to be a JSON object.")
+        return self
 
 
 class NodeRestApiReader(NodeBase):
@@ -1922,9 +1945,14 @@ class CatalogWriteSettings(BaseModel):
     The target namespace is referenced name-first: ``namespace_full_name`` (``"catalog.schema"``) is
     the portable reference that survives recreation on another machine; ``namespace_id`` is a numeric
     fallback for flows saved before names were stored.
+
+    ``source`` says which catalog the namespace is in: this Flowfile's own (``local``), or the hub this
+    Flowfile is connected to (``hub``), where it is named by ``namespace_full_name`` alone and resolved
+    on the hub when the flow runs; ``namespace_id`` is null then, an id of another database means nothing.
     """
 
     table_name: str = ""
+    source: Literal["local", "hub"] = "local"
     namespace_id: int | None = None
     namespace_full_name: str | None = None
     description: str | None = None
@@ -1935,6 +1963,20 @@ class CatalogWriteSettings(BaseModel):
     scd2: Scd2Settings | None = None
     # Enable-only: True turns the Delta change data feed on; False never turns it off.
     track_changes: bool = False
+
+    @model_validator(mode="after")
+    def _validate_hub_namespace(self) -> "CatalogWriteSettings":
+        if self.source != "hub":
+            return self
+        if self.namespace_id is not None:
+            raise ValueError("A schema on the hub is named by its qualified name (catalog.schema), not by a local id")
+        if self.write_mode == "virtual":
+            raise ValueError("A virtual table is kept in the local catalog, not on the hub")
+        if self.write_mode == "scd2":
+            raise ValueError("An SCD2 table on the hub is not supported yet")
+        if self.track_changes:
+            raise ValueError("Change tracking is set on the hub")
+        return self
 
     @model_validator(mode="after")
     def _validate_merge_keys(self) -> "CatalogWriteSettings":
@@ -1990,10 +2032,17 @@ class NodeCatalogReader(ChangeFeedReadSettings, NodeBase):
     (``catalog_full_table_name`` = ``"schema.table"``) is the preferred human-facing
     identifier when an id isn't available.
 
+    ``source`` says which catalog the table is in: this Flowfile's own (``local``), or the hub this
+    Flowfile is connected to (``hub``). A table on the hub is named by ``catalog_full_table_name`` alone,
+    always its qualified ``catalog.schema.table``, and resolved on the hub when the flow runs; the local
+    ids are null then, since an id of another database means nothing here, and it is read as it is now,
+    or by its changes: no version, history view or SQL.
+
     The change feed ("Read" selector) comes from ``ChangeFeedReadSettings``; only valid when the
     resolved table is change-tracked. ``since_last_run`` is the only mode that keeps a cursor.
     """
 
+    source: Literal["local", "hub"] = "local"
     catalog_table_id: int | None = None
     catalog_full_table_name: str | None = None
     catalog_table_name: str | None = None
@@ -2006,6 +2055,26 @@ class NodeCatalogReader(ChangeFeedReadSettings, NodeBase):
     is_virtual_optimized: bool | None = None
     cdc_consumer_name: str | None = None  # names the cursor; without one it is keyed on flow + node
     cdc_start: Literal["now", "beginning"] = "now"
+
+    @property
+    def hub_namespace_name(self) -> str | None:
+        """The qualified ``catalog.schema`` of the hub table this reader names; ``None`` off the hub or unnamed."""
+        if self.source != "hub" or not self.catalog_full_table_name:
+            return None
+        namespace, _, _ = self.catalog_full_table_name.rpartition(".")
+        return namespace or None
+
+    @model_validator(mode="after")
+    def _validate_hub_table(self) -> "NodeCatalogReader":
+        if self.source != "hub":
+            return self
+        if self.catalog_table_id is not None or self.catalog_namespace_id is not None:
+            raise ValueError(
+                "A table on the hub is named by its qualified name (catalog.schema.table), not by a local id"
+            )
+        if self.delta_version is not None or self.scd2_view is not None or self.scd2_as_of or self.sql_query:
+            raise ValueError("A table on the hub is read whole or by its changes: no version, history view or SQL")
+        return self
 
     @model_validator(mode="after")
     def _validate_cdc(self) -> "NodeCatalogReader":

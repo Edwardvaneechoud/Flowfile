@@ -6,7 +6,9 @@
       <p class="page-description">
         Isolated Python environments that run your Python Script and custom nodes. Each kernel is a
         Docker container with its own packages. Regular data nodes don't need one — they run on
-        Flowfile's default worker (see the Backends tab).
+        Flowfile's default worker<template v-if="authStore.isAdmin">
+          (see the Backends tab)</template
+        >.
       </p>
     </div>
 
@@ -154,6 +156,10 @@ import { useKernelManager } from "./useKernelManager";
 import CreateKernelForm from "./CreateKernelForm.vue";
 import KernelStatusSidebar from "./KernelStatusSidebar.vue";
 import KernelDetailsModal from "./KernelDetailsModal.vue";
+import { useAuthStore } from "../../stores/auth-store";
+
+// The Backends tab is an administrator's; nobody else is pointed at it.
+const authStore = useAuthStore();
 
 const {
   kernels,

@@ -224,6 +224,7 @@ import {
   type BindingRow,
 } from "./runFlowLogic";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { withoutHubRows } from "../../../../../views/CatalogView/hubRows";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -246,7 +247,7 @@ const {
 } = useNodeSettings({ nodeRef: nodeRunFlow });
 
 const filteredFlows = computed(() => {
-  let flows = catalogStore.allFlows;
+  let flows = withoutHubRows(catalogStore.allFlows);
   if (selectedNamespaceId.value != null) {
     const ids =
       namespaceDescendants.value.get(selectedNamespaceId.value) ??
@@ -495,7 +496,7 @@ const loadCatalogData = async () => {
     // offer both, and let picking a catalog include its schemas' flows.
     const options: { id: number; label: string }[] = [];
     const descendants = new Map<number, Set<number>>();
-    for (const catalog of tree) {
+    for (const catalog of withoutHubRows(tree)) {
       const catalogIds = new Set<number>([catalog.id]);
       options.push({ id: catalog.id, label: catalog.name });
       for (const schema of catalog.children ?? []) {

@@ -19,6 +19,7 @@
           <span>File System</span>
         </button>
         <button
+          v-if="ownCatalogOffered"
           class="sidebar-btn"
           :class="{ active: createMode === 'catalog' }"
           @click="createMode = 'catalog'"
@@ -41,10 +42,14 @@
             @overwrite-file="handleCreateAtPath"
           />
           <catalog-register-row
+            v-if="ownCatalogOffered"
             ref="filePicker"
             v-model="registerInCatalog"
             v-model:namespace-id="selectedNamespaceId"
           />
+          <span v-else class="form-hint" data-testid="own-catalog-note">
+            {{ OWN_CATALOG_NOT_OFFERED }}
+          </span>
         </div>
 
         <!-- Catalog tab -->
@@ -100,6 +105,8 @@ import { ALLOWED_SAVE_EXTENSIONS } from "../../../components/common/FileBrowser/
 import { basenameNoExt } from "../../../composables/useRecentFlows";
 import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
 import CatalogRegisterRow from "./CatalogRegisterRow.vue";
+import { useOwnCatalog } from "../../../composables/useOwnCatalog";
+import { OWN_CATALOG_NOT_OFFERED } from "../../../views/CatalogView/hubRows";
 
 const props = defineProps({
   visible: {
@@ -113,6 +120,8 @@ const emit = defineEmits(["create-complete", "create-cancelled", "update:visible
 const isVisible = ref(props.visible);
 
 const createMode = ref<"file" | "catalog">("file");
+// Where this Flowfile's own catalog takes no flows a new flow is a file only.
+const { ownCatalogOffered, refreshOwnCatalog } = useOwnCatalog();
 
 // Catalog options
 const registerInCatalog = ref(true);
@@ -145,6 +154,7 @@ watch(isVisible, async (newValue) => {
     emit("create-cancelled");
     return;
   }
+  if (!(await refreshOwnCatalog())) createMode.value = "file";
   try {
     catalogFlowsDir.value = await getCatalogFlowsDirectory();
   } catch (error) {
@@ -176,12 +186,13 @@ const handleCreateAtPath = async (flowPath: string) => {
   try {
     // Unchecking must actually opt out: a null namespace_id alone still routes
     // into auto-registration on the backend.
-    const namespaceId = registerInCatalog.value ? selectedNamespaceId.value : null;
-    const newFlowId = await createFlow(flowPath, null, namespaceId, registerInCatalog.value);
+    const registers = registerInCatalog.value && ownCatalogOffered.value;
+    const namespaceId = registers ? selectedNamespaceId.value : null;
+    const newFlowId = await createFlow(flowPath, null, namespaceId, registers);
     ElMessage.success("Flow created");
     isVisible.value = false;
     const catalogRef =
-      registerInCatalog.value && selectedNamespaceId.value !== null
+      registers && selectedNamespaceId.value !== null
         ? catalogRefFor(basenameNoExt(flowPath))
         : undefined;
     emit("create-complete", newFlowId, catalogRef);

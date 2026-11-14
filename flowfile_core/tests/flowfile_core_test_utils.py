@@ -1,6 +1,8 @@
+import os
 import platform
 import subprocess
 from contextlib import contextmanager
+from unittest import mock
 
 from flowfile_core.auth.models import SecretInput
 from flowfile_core.database.connection import get_db_context
@@ -62,3 +64,20 @@ def run_generator():
         sleep(1)
 
     print(os.environ["TESTING"])
+
+
+def as_server(monkeypatch, mode: str) -> None:
+    """Make the flow-folder checks see a multi-user server in ``mode`` (``docker`` or ``server``).
+
+    The test clients sign in as the desktop (electron) and their tokens would not verify under another
+    ``FLOWFILE_MODE``, so only the check itself runs under that mode, through the real ``is_server_mode``.
+    """
+    from shared import storage_config
+
+    real = storage_config.is_server_mode
+
+    def in_mode() -> bool:
+        with mock.patch.dict(os.environ, {"FLOWFILE_MODE": mode}):
+            return real()
+
+    monkeypatch.setattr(storage_config, "is_server_mode", in_mode)

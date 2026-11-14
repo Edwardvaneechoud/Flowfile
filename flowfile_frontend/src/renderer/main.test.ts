@@ -77,6 +77,7 @@ describe("startup navigation", () => {
       expect(mocks.use).toHaveBeenCalledWith(mocks.router);
       expect(auth.isAdmin).toBe(isAdmin);
       expect(visibleAtMount.includes("backends")).toBe(isAdmin);
+      expect(visibleAtMount.includes("hub")).toBe(isAdmin);
       expect(visibleAtMount).toContain("kernels");
     },
   );
