@@ -213,6 +213,8 @@
           v-else-if="catalogStore.selectedRun"
           :run="catalogStore.selectedRun"
           :detail-pending="!catalogStore.selectedRunDetail"
+          :detail-error="catalogStore.runDetailError"
+          @retry-detail="retryRunDetail"
           @close="handleCloseDetail"
           @open-snapshot="openRunSnapshot($event)"
           @view-flow="navigateToFlow($event)"
@@ -725,7 +727,11 @@ import {
   catalogTabsInSection,
   schedulesBadge,
 } from "./catalogTabs";
-import { catalogTabLocation, lastCatalogQueryByTab } from "./catalogLastLocation";
+import {
+  catalogTabLocation,
+  forgetCatalogSelection,
+  lastCatalogQueryByTab,
+} from "./catalogLastLocation";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   ArtifactVersionInfo,
@@ -1016,10 +1022,13 @@ async function pollActiveRuns() {
 
   // When runs finish, refresh related data
   if (hadActiveRuns && !hasActiveRuns) {
+    // A finished run may have written tables, so the tree and table list refresh too (in place).
     const loads: Promise<void>[] = [
       catalogStore.refreshRuns(),
       catalogStore.loadSchedules(),
       catalogStore.loadStats(),
+      catalogStore.loadTree(),
+      catalogStore.loadAllTables(),
     ];
     if (catalogStore.selectedScheduleId !== null) {
       loads.push(catalogStore.loadScheduleRuns(catalogStore.selectedScheduleId));
@@ -1536,6 +1545,7 @@ async function handleDeleteTable(tableId: number) {
   if (!result) return;
   try {
     await CatalogApi.deleteTable(tableId, result.deleteFile);
+    forgetCatalogSelection("tableId", tableId);
     catalogStore.clearTableSelection();
     await Promise.all([
       catalogStore.loadTree(),
@@ -1565,6 +1575,7 @@ async function handleDeleteArtifact(artifact: GlobalArtifact) {
   }
   try {
     await CatalogApi.deleteArtifact(artifact.name, artifact.namespace_id);
+    forgetCatalogSelection("artifactId", artifact.id);
     catalogStore.clearArtifactSelection();
     await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
   } catch (e: any) {
@@ -1581,6 +1592,7 @@ async function handleDeleteFlow(flowId: number) {
   if (!result) return;
   try {
     await CatalogApi.deleteFlow(flowId, result.deleteFile);
+    forgetCatalogSelection("flowId", flowId);
     projectStore.onSourceChanged();
     catalogStore.selectedFlowId = null;
     await Promise.all([
@@ -1649,6 +1661,7 @@ async function handleCleanupNamespace(node: NamespaceTree) {
         ? `Removed ${result.deleted} flows (${result.kept} kept)`
         : `Removed ${result.deleted} flows`,
     );
+    for (const flow of node.flows) forgetCatalogSelection("flowId", flow.id);
     projectStore.onSourceChanged();
     catalogStore.selectedFlowId = null;
     await Promise.all([
@@ -1837,6 +1850,7 @@ async function handleDeleteSchedule(id: number) {
   }
   try {
     await CatalogApi.deleteSchedule(id);
+    forgetCatalogSelection("scheduleId", id);
     await Promise.all([catalogStore.loadSchedules(), catalogStore.loadStats()]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to delete schedule");
@@ -1886,6 +1900,7 @@ async function handleDeleteScheduleFromDetail(id: number) {
   }
   try {
     await CatalogApi.deleteSchedule(id);
+    forgetCatalogSelection("scheduleId", id);
     catalogStore.clearScheduleSelection();
     router.push({ name: "catalog", query: { tab: catalogStore.activeTab } });
     await Promise.all([catalogStore.loadSchedules(), catalogStore.loadStats()]);
@@ -1957,6 +1972,11 @@ function retryOverview() {
   void catalogStore.initialize(true);
 }
 
+function retryRunDetail() {
+  if (catalogStore.selectedRunId !== null)
+    void catalogStore.loadRunDetail(catalogStore.selectedRunId);
+}
+
 // The run branch renders first, so a selected run takes this pane before a schedule does.
 const pendingDetail = computed(() => {
   const runId = catalogStore.selectedRunId;
@@ -2002,6 +2022,7 @@ function applyRouteToStore() {
     if (tab === "favorites") catalogStore.loadFavorites();
     else if (tab === "runs" && !flowId) catalogStore.loadRuns();
     else if (tab === "schedules") catalogStore.loadSchedules();
+    else if (tab === "catalog") catalogStore.loadTree();
   }
 
   // Namespace (catalog) settings is exclusive with all other selections; selectNamespace

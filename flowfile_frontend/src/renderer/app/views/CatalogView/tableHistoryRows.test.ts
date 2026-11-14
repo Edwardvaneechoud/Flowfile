@@ -10,6 +10,9 @@ const makeStorage = () => {
     setItem: (key: string, value: string) => {
       data.set(key, value);
     },
+    removeItem: (key: string) => {
+      data.delete(key);
+    },
   };
 };
 
@@ -47,6 +50,9 @@ describe("tableHistoryRows", () => {
         throw new Error("denied");
       },
       setItem: () => {
+        throw new Error("denied");
+      },
+      removeItem: () => {
         throw new Error("denied");
       },
     };

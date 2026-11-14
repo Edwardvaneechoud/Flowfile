@@ -201,7 +201,8 @@ describe("catalog-store flow page slices", () => {
 
     expect(store.runs.map((r) => r.id)).toEqual([1, 2]);
     expect(store.flowRunsFlowId).toBe(2);
-    expect(store.flowRuns.map((r) => r.id)).toEqual([2]);
+    expect(store.flowRunsPageFor(2)?.items.map((r) => r.id)).toEqual([2]);
+    expect(store.flowRunsPageFor(1)).toBeNull();
     expect(api.getRuns).toHaveBeenCalledWith(2, 25, 0, undefined, undefined);
   });
 
@@ -219,7 +220,7 @@ describe("catalog-store flow page slices", () => {
     store.selectFlow(2);
 
     expect(store.flowRunsFlowId).toBeNull();
-    expect(store.flowRuns).toEqual([]);
+    expect(store.flowRunsPageFor(2)).toBeNull();
     expect(store.flowSchedules).toEqual([]);
     expect(store.flowSchedulesFlowId).toBeNull();
     expect(store.flowArtifacts).toEqual([]);
@@ -244,7 +245,7 @@ describe("catalog-store flow page slices", () => {
     await flush();
 
     expect(store.flowRunsFlowId).toBe(2);
-    expect(store.flowRuns.map((r) => r.id)).toEqual([20]);
+    expect(store.flowRunsPageFor(2)?.items.map((r) => r.id)).toEqual([20]);
     expect(store.flowSchedulesFlowId).toBe(2);
     expect(store.flowSchedules).toEqual([]);
     expect(store.flowArtifactsFlowId).toBe(2);
@@ -298,7 +299,7 @@ describe("catalog-store flow page slices", () => {
     await store.refreshRuns();
 
     expect(store.runs.map((r) => r.id)).toEqual([1, 30]);
-    expect(store.flowRuns.map((r) => r.id)).toEqual([30]);
+    expect(store.flowRunsPageFor(3)?.items.map((r) => r.id)).toEqual([30]);
   });
 
   it("keeps the newest global runs page when an older request lands last", async () => {
@@ -312,5 +313,67 @@ describe("catalog-store flow page slices", () => {
     await first;
 
     expect(store.runs.map((r) => r.id)).toEqual([2]);
+  });
+});
+
+describe("catalog-store review follow-ups", () => {
+  it("drops an unconfirmed schedule row when its fetch fails, and keeps a fetched one on a failed refresh", async () => {
+    const store = useCatalogStore();
+    store.schedules = [schedule(7)];
+    api.getRuns.mockResolvedValue(page());
+    api.getSchedule.mockRejectedValueOnce(new Error("gone"));
+
+    await store.selectSchedule(7);
+    expect(store.selectedScheduleId).toBe(7);
+    expect(store.selectedSchedule).toBeNull();
+    expect(store.scheduleDetailError).toBe("gone");
+
+    api.getSchedule.mockResolvedValueOnce(schedule(7, "Nightly"));
+    await store.loadScheduleDetail(7);
+    expect(store.selectedSchedule?.name).toBe("Nightly");
+    expect(store.scheduleDetailError).toBeNull();
+
+    api.getSchedule.mockRejectedValueOnce(new Error("offline"));
+    await store.loadScheduleDetail(7);
+    expect(store.selectedSchedule?.name).toBe("Nightly");
+    expect(store.scheduleDetailError).toBe("offline");
+  });
+
+  it("keeps the latest snapshot from the flow's newest runs while another page or filter is shown", async () => {
+    const store = useCatalogStore();
+    const withSnapshot = (id: number) => ({ ...run(id, 4), has_snapshot: true }) as FlowRun;
+    api.getSchedules.mockResolvedValue([]);
+    api.getFlowArtifacts.mockResolvedValue([]);
+    api.getRuns.mockResolvedValueOnce(page(run(90, 4), withSnapshot(80)));
+    store.selectFlow(4);
+    await flush();
+    expect(store.flowLatestSnapshotRunId).toBe(80);
+
+    api.getRuns.mockResolvedValueOnce(page(withSnapshot(10)));
+    store.setFlowRunsPage(2, 4);
+    await flush();
+    expect(store.flowRunsPageFor(4)?.items.map((r) => r.id)).toEqual([10]);
+    expect(store.flowLatestSnapshotRunId).toBe(80);
+
+    api.getRuns.mockResolvedValueOnce(page(withSnapshot(5)));
+    store.setFlowRunsTriggerFilter("manual", 4);
+    await flush();
+    expect(store.flowLatestSnapshotRunId).toBe(80);
+
+    api.getRuns.mockReturnValue(never());
+    store.selectFlow(5);
+    expect(store.flowLatestSnapshotRunId).toBeNull();
+  });
+
+  it("records a failed global runs load and clears it when a page lands", async () => {
+    const store = useCatalogStore();
+    api.getRuns.mockRejectedValueOnce(new Error("boom"));
+    await store.loadRuns();
+    expect(store.runsError).toBe("boom");
+
+    api.getRuns.mockResolvedValueOnce(page(run(1)));
+    await store.loadRuns();
+    expect(store.runsError).toBeNull();
+    expect(store.runs.map((r) => r.id)).toEqual([1]);
   });
 });

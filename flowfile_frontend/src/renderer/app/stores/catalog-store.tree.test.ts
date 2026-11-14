@@ -168,9 +168,73 @@ describe("catalog-store first load versus refresh", () => {
     expect(store.tree.map((n) => n.id)).toEqual([2]);
   });
 
-  it("does not refetch the tree on a switch to the catalog tab", () => {
+  it("keeps a tree that was reloaded while a slower overview was out", async () => {
+    const slow = deferred<CatalogOverview>();
+    getOverview.mockReturnValueOnce(slow.promise);
+    getNamespaceTree.mockResolvedValueOnce(tree(1, 2));
     const store = useCatalogStore();
+    store.tree = tree(1);
+    store.treeLoaded = true;
+
+    const loading = store.initialize();
+    await store.loadTree();
+    slow.resolve(overview());
+    await loading;
+
+    expect(store.tree.map((n) => n.id)).toEqual([1, 2]);
+    expect(store.overviewLoaded).toBe(true);
+  });
+
+  it("applies only the newest of two overviews, whichever lands last", async () => {
+    const first = deferred<CatalogOverview>();
+    const second = deferred<CatalogOverview>();
+    getOverview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const store = useCatalogStore();
+
+    const older = store.initialize();
+    const newer = store.initialize(true);
+    second.resolve({ ...overview(), tree: tree(1, 2) });
+    await newer;
+    expect(store.loading).toBe(false);
+    first.resolve(overview());
+    await older;
+
+    expect(store.tree.map((n) => n.id)).toEqual([1, 2]);
+  });
+
+  it("keeps a slice its own loader refreshed while the overview was out", async () => {
+    const slow = deferred<CatalogOverview>();
+    getOverview.mockReturnValueOnce(slow.promise);
+    getFavorites.mockResolvedValueOnce([{ id: 9 }]);
+    const store = useCatalogStore();
+
+    const loading = store.initialize();
+    await store.loadFavorites();
+    slow.resolve(overview());
+    await loading;
+
+    expect(store.favorites.map((f) => f.id)).toEqual([9]);
+  });
+
+  it("reports a persisted runs page that failed to load instead of an empty list", async () => {
+    getRuns.mockRejectedValueOnce(new Error("boom"));
+    const store = useCatalogStore();
+    store.runsPage = 3;
+
+    await store.initialize();
+
+    expect(store.overviewLoaded).toBe(true);
+    expect(store.runsError).toBe("boom");
+    expect(store.runs).toEqual([]);
+  });
+
+  it("reloads the tree, in place, on a switch to the catalog tab", async () => {
+    getNamespaceTree.mockResolvedValueOnce(tree(1, 2));
+    const store = useCatalogStore();
+    await store.initialize();
+
     store.setActiveTab("catalog");
-    expect(getNamespaceTree).not.toHaveBeenCalled();
+    expect(store.loading).toBe(false);
+    await vi.waitFor(() => expect(store.tree.map((n) => n.id)).toEqual([1, 2]));
   });
 });

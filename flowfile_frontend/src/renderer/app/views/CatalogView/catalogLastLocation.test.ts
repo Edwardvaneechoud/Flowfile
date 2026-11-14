@@ -9,12 +9,17 @@ import {
   LAST_BY_TAB_KEY,
   LAST_LOCATION_KEY,
   catalogTabLocation,
+  forgetCatalogSelection,
   isSameLocation,
+  lastCatalogQuery,
+  lastCatalogQueryByTab,
   loadCatalogLocationsByTab,
   loadLastCatalogLocation,
   persistCatalogLocationsByTab,
   persistLastCatalogLocation,
+  rememberCatalogLocation,
   sanitizeCatalogQuery,
+  withoutSelection,
 } from "./catalogLastLocation";
 
 interface MockStorage {
@@ -239,5 +244,32 @@ describe("catalogTabLocation", () => {
 
   it("goes to the root of a tab nothing is remembered for", () => {
     expect(catalogTabLocation("sql", "catalog", byTab)).toEqual({ tab: "sql" });
+  });
+});
+
+describe("forgetting a deleted item", () => {
+  it("sends a location naming the item back to its tab's root and leaves others alone", () => {
+    const open = { tab: "favorites", flowId: "12" };
+    expect(withoutSelection(open, "flowId", 12)).toEqual({ tab: "favorites" });
+    expect(withoutSelection(open, "flowId", 13)).toBe(open);
+    expect(withoutSelection(open, "tableId", 12)).toBe(open);
+  });
+
+  it("drops it from every tab's memory and from the last location", () => {
+    rememberCatalogLocation({ tab: "favorites", flowId: "12" });
+    rememberCatalogLocation({ tab: "runs", runId: "5" });
+    rememberCatalogLocation({ tab: "catalog", flowId: "12" });
+
+    forgetCatalogSelection("flowId", 12);
+
+    expect(lastCatalogQueryByTab.value).toEqual({
+      favorites: { tab: "favorites" },
+      runs: { tab: "runs", runId: "5" },
+      catalog: { tab: "catalog" },
+    });
+    expect(lastCatalogQuery.value).toEqual({ tab: "catalog" });
+    expect(catalogTabLocation("favorites", "catalog", lastCatalogQueryByTab.value)).toEqual({
+      tab: "favorites",
+    });
   });
 });

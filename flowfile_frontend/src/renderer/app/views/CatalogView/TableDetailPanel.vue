@@ -340,7 +340,12 @@
           </el-button>
         </div>
       </div>
-      <div v-if="hasHistory" class="version-table-wrapper" :style="historyHeldStyle">
+      <div
+        v-if="hasHistory"
+        ref="historyList"
+        class="version-table-wrapper history-held"
+        :style="historyHeldStyle"
+      >
         <table class="styled-table version-table">
           <thead>
             <tr>
@@ -425,7 +430,13 @@
           </tbody>
         </table>
       </div>
-      <p v-else class="history-empty" :style="historyHeldStyle" data-testid="history-empty">
+      <p
+        v-else
+        ref="historyEmpty"
+        class="history-empty history-held"
+        :style="historyHeldStyle"
+        data-testid="history-empty"
+      >
         No version history available for this table.
       </p>
     </div>
@@ -608,7 +619,7 @@
 <script setup lang="ts">
 // TODO(refactor): ~905 LOC, but cohesive. Defer unless touched.
 //   If split: per-section sub-components (PreviewSection, SchemaSection, VersionHistorySection).
-import { ref, computed, watch } from "vue";
+import { ref, computed, nextTick, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import type {
   CatalogTable,
@@ -681,19 +692,36 @@ const historySkeletonRows = computed(() => {
 });
 
 const historySkeleton = ref<HTMLElement | null>(null);
+const historyList = ref<HTMLElement | null>(null);
+const historyEmpty = ref<HTMLElement | null>(null);
 const historyHeldHeight = ref<number | null>(null);
 
-// Whatever replaces the placeholder keeps its height, so nothing below it moves.
 const historyHeldStyle = computed(() =>
-  historyHeldHeight.value ? { minHeight: `${historyHeldHeight.value}px` } : undefined,
+  historyHeldHeight.value === null ? undefined : { minHeight: `${historyHeldHeight.value}px` },
 );
 
+/** The list's own height, borders included; zero for the one-line empty state, measured all the same. */
+function historyNaturalHeight(): number {
+  const list = historyList.value;
+  const table = list?.querySelector("table");
+  if (list && table) return table.offsetHeight + (list.offsetHeight - list.clientHeight);
+  void historyEmpty.value?.offsetHeight;
+  return 0;
+}
+
+// What replaces the placeholder starts at its height, then eases to its own: no jump, no gap left.
 watch(
   () => props.loadingTableHistory,
   (loading, wasLoading) => {
-    if (wasLoading && !loading && historySkeleton.value) {
-      historyHeldHeight.value = historySkeleton.value.offsetHeight;
-    }
+    const held = wasLoading && !loading ? (historySkeleton.value?.offsetHeight ?? 0) : 0;
+    if (!held) return;
+    const tableId = props.table.id;
+    historyHeldHeight.value = held;
+    // Measuring after the patch computes the held height, which the transition then starts from.
+    void nextTick(() => {
+      if (props.table.id !== tableId || historyHeldHeight.value !== held) return;
+      historyHeldHeight.value = Math.min(historyNaturalHeight(), held);
+    });
   },
 );
 
@@ -1534,6 +1562,10 @@ function formatCell(value: any): string {
 }
 
 /* ========== States ========== */
+.history-held {
+  transition: min-height 200ms ease;
+}
+
 .history-empty {
   margin: 0;
   padding: var(--spacing-2) 0;
@@ -1591,6 +1623,10 @@ function formatCell(value: any): string {
 @media (prefers-reduced-motion: reduce) {
   .skeleton-bar {
     animation: none;
+  }
+
+  .history-held {
+    transition: none;
   }
 }
 

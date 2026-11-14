@@ -4,6 +4,7 @@
 
 import { ref } from "vue";
 
+import { resolveStorage, type StorageLike } from "./browserStorage";
 import { CATALOG_TAB_KEYS } from "./catalogTabs";
 
 export const LAST_LOCATION_KEY = "flowfile.catalog.lastLocation.v1";
@@ -11,13 +12,8 @@ export const LAST_BY_TAB_KEY = "flowfile.catalog.lastLocationByTab.v1";
 
 export type CatalogLocation = Record<string, string>;
 
-export interface StorageLike {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-}
-
 const ID_KEYS = ["flowId", "runId", "artifactId", "tableId", "scheduleId", "namespaceId"] as const;
+export type CatalogSelectionKey = (typeof ID_KEYS)[number];
 
 // Ids are opaque and server-authorized; the length cap only stops a hand-edited entry
 // reaching the API as 1e20.
@@ -26,15 +22,6 @@ const ID_PATTERN = /^\d{1,9}$/;
 const ENUM_KEYS: Record<string, readonly string[]> = {
   kind: ["charts", "dashboards"],
   apiView: ["endpoints", "consumers"],
-};
-
-const resolveStorage = (storage?: StorageLike | null): StorageLike | null => {
-  if (storage) return storage;
-  try {
-    return (globalThis as { sessionStorage?: StorageLike }).sessionStorage ?? null;
-  } catch {
-    return null;
-  }
 };
 
 /**
@@ -68,7 +55,7 @@ export const sanitizeCatalogQuery = (raw: unknown): CatalogLocation | null => {
 };
 
 export const loadLastCatalogLocation = (storage?: StorageLike | null): CatalogLocation | null => {
-  const store = resolveStorage(storage);
+  const store = resolveStorage(storage, "sessionStorage");
   if (!store) return null;
 
   let raw: string | null;
@@ -99,7 +86,7 @@ export const persistLastCatalogLocation = (
   location: CatalogLocation,
   storage?: StorageLike | null,
 ): void => {
-  const store = resolveStorage(storage);
+  const store = resolveStorage(storage, "sessionStorage");
   if (!store) return;
 
   try {
@@ -119,7 +106,7 @@ export type CatalogLocationsByTab = Record<string, CatalogLocation>;
 
 /** Where each tab was left, re-validated like the single location; an entry filed under another tab is dropped. */
 export const loadCatalogLocationsByTab = (storage?: StorageLike | null): CatalogLocationsByTab => {
-  const store = resolveStorage(storage);
+  const store = resolveStorage(storage, "sessionStorage");
   if (!store) return {};
 
   let parsed: unknown;
@@ -144,7 +131,7 @@ export const persistCatalogLocationsByTab = (
   byTab: CatalogLocationsByTab,
   storage?: StorageLike | null,
 ): void => {
-  const store = resolveStorage(storage);
+  const store = resolveStorage(storage, "sessionStorage");
   if (!store) return;
 
   try {
@@ -168,6 +155,30 @@ export const catalogTabLocation = (
 // Module singletons so the sidebar's `items` computed re-resolves when these change.
 export const lastCatalogQuery = ref<CatalogLocation | null>(loadLastCatalogLocation());
 export const lastCatalogQueryByTab = ref<CatalogLocationsByTab>(loadCatalogLocationsByTab());
+
+/** A location that names the given item, back at its tab's root; any other location unchanged. */
+export const withoutSelection = (
+  location: CatalogLocation,
+  key: CatalogSelectionKey,
+  id: number,
+): CatalogLocation => (location[key] === String(id) ? { tab: location.tab } : location);
+
+/** Forgets a deleted item, so no tab or the rail's catalog icon reopens it. */
+export const forgetCatalogSelection = (key: CatalogSelectionKey, id: number): void => {
+  const byTab = lastCatalogQueryByTab.value;
+  const next = Object.fromEntries(
+    Object.entries(byTab).map(([tab, location]) => [tab, withoutSelection(location, key, id)]),
+  );
+  if (Object.keys(byTab).some((tab) => next[tab] !== byTab[tab])) {
+    lastCatalogQueryByTab.value = next;
+    persistCatalogLocationsByTab(next);
+  }
+  const last = lastCatalogQuery.value;
+  if (last && withoutSelection(last, key, id) !== last) {
+    lastCatalogQuery.value = { tab: last.tab };
+    persistLastCatalogLocation(lastCatalogQuery.value);
+  }
+};
 
 export const rememberCatalogLocation = (query: unknown): void => {
   const location = sanitizeCatalogQuery(query);

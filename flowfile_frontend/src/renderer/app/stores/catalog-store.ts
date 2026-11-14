@@ -38,6 +38,18 @@ let tableHistoryRequestToken = 0;
 // A tree refresh that resolves after a newer one must not put the older tree back.
 let treeRequestToken = 0;
 
+// Newest overview wins; a slice whose own loader started while one was out keeps its newer data.
+let overviewRequestToken = 0;
+const sliceRequests = {
+  flows: 0,
+  tables: 0,
+  stats: 0,
+  favorites: 0,
+  schedules: 0,
+  activeRuns: 0,
+  schedulers: 0,
+};
+
 // Newest request wins for each slice below; a response for an item no longer selected is dropped too.
 let runsRequestToken = 0;
 let flowRunsRequestToken = 0;
@@ -74,12 +86,15 @@ interface CatalogState {
   runsPageSize: number;
   runsTriggerFilter: string | null;
   runsSearch: string | null;
+  runsError: string | null;
   /** The flow page's runs, apart from the global `runs` page; `flowRunsFlowId` names the flow they belong to. */
   flowRunsFlowId: number | null;
   flowRunsData: PaginatedFlowRuns | null;
   flowRunsPage: number;
   flowRunsTriggerFilter: string | null;
   flowRunsError: string | null;
+  /** Newest run of that flow with a snapshot, read off its first unfiltered page only. */
+  flowLatestSnapshotRunId: number | null;
   stats: CatalogStats | null;
   selectedFlowId: number | null;
   selectedRunId: number | null;
@@ -114,6 +129,8 @@ interface CatalogState {
   selectedScheduleId: number | null;
   selectedSchedule: FlowSchedule | null;
   scheduleDetailError: string | null;
+  /** The schedule whose detail was fetched; until then `selectedSchedule` is its unconfirmed list row. */
+  scheduleDetailLoadedId: number | null;
   scheduleRuns: FlowRun[];
   scheduleRunsScheduleId: number | null;
   scheduleRunsError: string | null;
@@ -190,11 +207,13 @@ export const useCatalogStore = defineStore("catalog", {
     runsPageSize: 25,
     runsTriggerFilter: null,
     runsSearch: null,
+    runsError: null,
     flowRunsFlowId: null,
     flowRunsData: null,
     flowRunsPage: 1,
     flowRunsTriggerFilter: null,
     flowRunsError: null,
+    flowLatestSnapshotRunId: null,
     stats: null,
     selectedFlowId: null,
     selectedRunId: null,
@@ -229,6 +248,7 @@ export const useCatalogStore = defineStore("catalog", {
     selectedScheduleId: null,
     selectedSchedule: null,
     scheduleDetailError: null,
+    scheduleDetailLoadedId: null,
     scheduleRuns: [],
     scheduleRunsScheduleId: null,
     scheduleRunsError: null,
@@ -267,11 +287,11 @@ export const useCatalogStore = defineStore("catalog", {
     selectedFlow: (state): FlowRegistration | null =>
       state.allFlows.find((f) => f.id === state.selectedFlowId) ?? null,
 
-    /** The selected flow's runs page, or empty while the page holds no runs of that flow yet. */
-    flowRuns: (state): FlowRun[] =>
-      state.selectedFlowId !== null && state.flowRunsFlowId === state.selectedFlowId
-        ? (state.flowRunsData?.items ?? [])
-        : [],
+    /** The flow page's runs page when it holds that flow's runs, else null: the one ownership check. */
+    flowRunsPageFor:
+      (state) =>
+      (flowId: number): PaginatedFlowRuns | null =>
+        state.flowRunsFlowId === flowId ? state.flowRunsData : null,
 
     /** The selected run as far as it is known: its detail once loaded, else its row in a loaded runs list. */
     selectedRun: (state): FlowRun | FlowRunDetail | null => {
@@ -332,6 +352,7 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     async loadAllFlows() {
+      sliceRequests.flows++;
       try {
         this.allFlows = await CatalogApi.getFlows();
       } catch (e: any) {
@@ -340,6 +361,7 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     async loadFavorites() {
+      sliceRequests.favorites++;
       try {
         this.favorites = await CatalogApi.getFavorites();
       } catch (e: any) {
@@ -372,13 +394,16 @@ export const useCatalogStore = defineStore("catalog", {
         if (token !== runsRequestToken) return;
         this.applyRunsPage(result);
       } catch (e: any) {
-        if (token === runsRequestToken) this.error = e?.message ?? "Failed to load runs";
+        if (token !== runsRequestToken) return;
+        this.error = e?.message ?? "Failed to load runs";
+        this.runsError = this.error;
       }
     },
 
     /** One page of a flow's runs, kept apart so the global page and the flow page never show each other's. */
     async loadFlowRuns(flowId: number) {
       const token = ++flowRunsRequestToken;
+      const newestFirst = this.flowRunsPage === 1 && !this.flowRunsTriggerFilter;
       try {
         const offset = (this.flowRunsPage - 1) * this.runsPageSize;
         const { scheduleId, runType } = triggerFilterParams(this.flowRunsTriggerFilter);
@@ -393,6 +418,9 @@ export const useCatalogStore = defineStore("catalog", {
         this.flowRunsData = result;
         this.flowRunsFlowId = flowId;
         this.flowRunsError = null;
+        if (newestFirst) {
+          this.flowLatestSnapshotRunId = result.items.find((r) => r.has_snapshot)?.id ?? null;
+        }
       } catch (e: any) {
         if (token !== flowRunsRequestToken || this.selectedFlowId !== flowId) return;
         this.flowRunsError = e?.message ?? "Failed to load runs";
@@ -427,6 +455,7 @@ export const useCatalogStore = defineStore("catalog", {
         this.flowRunsData = null;
         this.flowRunsPage = 1;
         this.flowRunsTriggerFilter = null;
+        this.flowLatestSnapshotRunId = null;
       }
       this.flowRunsError = null;
       if (this.flowSchedulesFlowId !== flowId) {
@@ -443,6 +472,7 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     applyRunsPage(result: PaginatedFlowRuns) {
+      this.runsError = null;
       this.runs = result.items;
       this.runsTotal = result.total;
       this.runsTotalSuccess = result.total_success;
@@ -493,6 +523,7 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     async loadStats() {
+      sliceRequests.stats++;
       try {
         this.stats = await CatalogApi.getStats();
       } catch (e: any) {
@@ -722,6 +753,7 @@ export const useCatalogStore = defineStore("catalog", {
     // -- Catalog Table actions --
 
     async loadAllTables() {
+      sliceRequests.tables++;
       try {
         this.allTables = await CatalogApi.getTables();
       } catch (e: any) {
@@ -991,6 +1023,7 @@ export const useCatalogStore = defineStore("catalog", {
     // -- Schedule actions --
 
     async loadSchedules() {
+      sliceRequests.schedules++;
       try {
         this.schedules = await CatalogApi.getSchedules();
       } catch (e: any) {
@@ -1045,15 +1078,18 @@ export const useCatalogStore = defineStore("catalog", {
       const token = ++scheduleDetailRequestToken;
       const stale = () =>
         token !== scheduleDetailRequestToken || this.selectedScheduleId !== scheduleId;
+      this.scheduleDetailError = null;
       try {
         const schedule = await CatalogApi.getSchedule(scheduleId);
         if (stale()) return;
         this.selectedSchedule = schedule;
-        this.scheduleDetailError = null;
+        this.scheduleDetailLoadedId = scheduleId;
       } catch (e: any) {
         if (stale()) return;
         this.error = e?.message ?? "Failed to load schedule detail";
         this.scheduleDetailError = this.error;
+        // A row never confirmed by its own fetch may be gone; a failed refresh keeps the detail shown.
+        if (this.scheduleDetailLoadedId !== scheduleId) this.selectedSchedule = null;
       }
     },
 
@@ -1104,6 +1140,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.selectedScheduleId = null;
       this.selectedSchedule = null;
       this.scheduleDetailError = null;
+      this.scheduleDetailLoadedId = null;
       this.scheduleRuns = [];
       this.scheduleRunsScheduleId = null;
       this.scheduleRunsError = null;
@@ -1119,6 +1156,7 @@ export const useCatalogStore = defineStore("catalog", {
     // -- Scheduler actions --
 
     async loadSchedulerStatus() {
+      sliceRequests.schedulers++;
       try {
         this.schedulers = await CatalogApi.getSchedulers();
       } catch {
@@ -1147,6 +1185,7 @@ export const useCatalogStore = defineStore("catalog", {
     // -- Active runs actions --
 
     async loadActiveRuns() {
+      sliceRequests.activeRuns++;
       try {
         this.activeRuns = await CatalogApi.getActiveRuns();
       } catch (e: any) {
@@ -1189,6 +1228,7 @@ export const useCatalogStore = defineStore("catalog", {
       else if (tab === "following") this.loadFollowing();
       else if (tab === "runs") this.loadRuns();
       else if (tab === "schedules") this.loadSchedules();
+      else if (tab === "catalog") this.loadTree();
     },
 
     /**
@@ -1200,35 +1240,44 @@ export const useCatalogStore = defineStore("catalog", {
       const fresh =
         this.overviewLoadedAt !== null && Date.now() - this.overviewLoadedAt < OVERVIEW_TTL_MS;
       if (fresh && !force) return;
+      const token = ++overviewRequestToken;
+      const before = { ...sliceRequests, tree: treeRequestToken, runs: runsRequestToken };
       this.loading = true;
       this.error = null;
       this.overviewError = null;
       try {
         const overview = await CatalogApi.getOverview(this.runsPageSize);
-        treeRequestToken++;
-        this.tree = overview.tree;
-        this.treeLoaded = true;
-        this.allFlows = overview.flows;
-        this.allTables = overview.tables;
-        this.stats = overview.stats;
-        this.favorites = overview.favorites;
-        this.schedules = overview.schedules;
-        this.activeRuns = overview.active_runs;
-        this.schedulers = overview.schedulers;
+        if (token !== overviewRequestToken) return;
+        const treeUntouched = treeRequestToken === before.tree;
+        if (treeUntouched || !this.treeLoaded) {
+          // Only a tree request older than this overview is cancelled.
+          if (treeUntouched) treeRequestToken++;
+          this.tree = overview.tree;
+          this.treeLoaded = true;
+        }
+        if (sliceRequests.flows === before.flows) this.allFlows = overview.flows;
+        if (sliceRequests.tables === before.tables) this.allTables = overview.tables;
+        if (sliceRequests.stats === before.stats) this.stats = overview.stats;
+        if (sliceRequests.favorites === before.favorites) this.favorites = overview.favorites;
+        if (sliceRequests.schedules === before.schedules) this.schedules = overview.schedules;
+        if (sliceRequests.activeRuns === before.activeRuns) this.activeRuns = overview.active_runs;
+        if (sliceRequests.schedulers === before.schedulers) this.schedulers = overview.schedulers;
         this.defaultNamespaceId = overview.default_namespace_id;
         // The overview carries page 1 unfiltered; a persisted page/filter needs its own query.
-        if (this.runsPage === 1 && !this.runsTriggerFilter && !this.runsSearch) {
+        if (this.runsPage !== 1 || this.runsTriggerFilter || this.runsSearch) {
+          await this.loadRuns();
+          if (token !== overviewRequestToken) return;
+        } else if (runsRequestToken === before.runs) {
           runsRequestToken++;
           this.applyRunsPage(overview.runs);
-        } else {
-          await this.loadRuns();
         }
         this.overviewLoadedAt = Date.now();
       } catch (e: any) {
+        if (token !== overviewRequestToken) return;
         this.error = e?.message ?? "Failed to load catalog";
         this.overviewError = this.error;
       } finally {
-        this.loading = false;
+        if (token === overviewRequestToken) this.loading = false;
       }
     },
 

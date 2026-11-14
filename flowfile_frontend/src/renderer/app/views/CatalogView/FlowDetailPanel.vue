@@ -478,14 +478,10 @@ watch(
 const schedulesPending = computed(() => catalogStore.flowSchedulesFlowId !== props.flow.id);
 const artifactsPending = computed(() => catalogStore.flowArtifactsFlowId !== props.flow.id);
 
-const latestSnapshotRunId = computed((): number | null => {
-  const runs =
-    catalogStore.flowRunsFlowId === props.flow.id
-      ? (catalogStore.flowRunsData?.items ?? []).filter((r) => r.has_snapshot)
-      : [];
-  if (runs.length === 0) return null;
-  return runs[0].id;
-});
+// Read off the flow's newest runs, whatever page or filter its Run History shows.
+const latestSnapshotRunId = computed((): number | null =>
+  catalogStore.flowRunsPageFor(props.flow.id) ? catalogStore.flowLatestSnapshotRunId : null,
+);
 
 const isEditing = ref(false);
 const editName = ref("");

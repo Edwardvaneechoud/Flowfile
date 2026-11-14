@@ -88,7 +88,7 @@
       />
     </div>
 
-    <div v-if="listPending && listError !== null" class="overview-error" role="alert">
+    <div v-if="listFailed" class="overview-error" role="alert">
       <span>Couldn't load runs: {{ listError }}</span>
       <button class="btn btn-secondary btn-sm" @click="retryList">Retry</button>
     </div>
@@ -275,9 +275,7 @@ const isScheduleMode = computed(() => props.scheduleId !== undefined);
 const isFlowMode = computed(() => !isScheduleMode.value && props.registrationId !== undefined);
 
 const flowPage = computed(() =>
-  isFlowMode.value && catalogStore.flowRunsFlowId === props.registrationId
-    ? catalogStore.flowRunsData
-    : null,
+  isFlowMode.value ? catalogStore.flowRunsPageFor(props.registrationId!) : null,
 );
 
 const allRuns = computed(() => {
@@ -312,13 +310,19 @@ const pendingExpandable = computed(
 const listError = computed((): string | null => {
   if (isScheduleMode.value) return catalogStore.scheduleRunsError;
   if (isFlowMode.value) return catalogStore.flowRunsError;
-  return catalogStore.overviewFailed ? catalogStore.overviewError : null;
+  return catalogStore.overviewFailed ? catalogStore.overviewError : catalogStore.runsError;
 });
+
+// A failed load with nothing to show offers a retry; a failed refresh keeps the rows it had.
+const listFailed = computed(
+  () => listError.value !== null && (listPending.value || allRuns.value.length === 0),
+);
 
 function retryList() {
   if (isScheduleMode.value) catalogStore.loadScheduleRuns(props.scheduleId!);
   else if (isFlowMode.value) catalogStore.loadFlowRuns(props.registrationId!);
-  else catalogStore.initialize(true);
+  else if (catalogStore.overviewFailed) catalogStore.initialize(true);
+  else catalogStore.loadRuns();
 }
 
 /** The value for the mode shown: a schedule's, the flow page's, or the global page's. */

@@ -102,4 +102,25 @@ describe("RunDetailPanel", () => {
     expect(mounted.el.querySelector(".snapshot-pending")).not.toBeNull();
     expect(mounted.text()).not.toContain("View log");
   });
+
+  it("says the detail could not be loaded and offers a retry, in place of the placeholders", () => {
+    const detail: Partial<FlowRunDetail> = run({ has_snapshot: true, has_log: true });
+    delete detail.flow_snapshot;
+    delete detail.node_results_json;
+    const retried = vi.fn();
+    mounted = mount(RunDetailPanel, {
+      run: detail,
+      detailPending: true,
+      detailError: "Request failed with status code 500",
+      onRetryDetail: retried,
+    });
+
+    const error = mounted.el.querySelector('[data-testid="run-detail-error"]')!;
+    expect(error.textContent).toContain("Request failed with status code 500");
+    expect(mounted.el.querySelector('[data-testid="run-detail-pending"]')).toBeNull();
+    expect(mounted.el.querySelector(".snapshot-pending")).toBeNull();
+    expect(mounted.text()).toContain("View log");
+    error.querySelector("button")!.click();
+    expect(retried).toHaveBeenCalledTimes(1);
+  });
 });

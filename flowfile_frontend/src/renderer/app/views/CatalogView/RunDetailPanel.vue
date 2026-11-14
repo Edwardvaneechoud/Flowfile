@@ -62,9 +62,19 @@
       </div>
     </div>
 
+    <div
+      v-if="detailPending && detailError"
+      class="overview-error"
+      role="alert"
+      data-testid="run-detail-error"
+    >
+      <span>Couldn't load this run's details: {{ detailError }}</span>
+      <button class="btn btn-secondary btn-sm" @click="$emit('retryDetail')">Retry</button>
+    </div>
+
     <!-- Node Results: held in place while the detail is on its way -->
     <div
-      v-if="detailPending && run.number_of_nodes > 0"
+      v-if="detailLoading && run.number_of_nodes > 0"
       class="section"
       data-testid="run-detail-pending"
     >
@@ -159,7 +169,7 @@
           Open the log on {{ run.executed_on ?? "the server that ran it" }}
         </a>
         <button
-          v-else-if="!logContent && !loadingLog && !detailPending"
+          v-else-if="!logContent && !loadingLog && !detailLoading"
           class="btn btn-primary btn-sm"
           @click="loadLog"
         >
@@ -172,7 +182,7 @@
 The log is kept where the run happened; open it there with your sign-in.</pre
         >
       </div>
-      <div v-else-if="loadingLog || detailPending" class="log-viewer">
+      <div v-else-if="loadingLog || detailLoading" class="log-viewer">
         <pre class="snapshot-code">Loading...</pre>
       </div>
       <div v-else-if="logContent !== null" class="log-viewer">
@@ -196,7 +206,7 @@ The log is kept where the run happened; open it there with your sign-in.</pre
         <pre class="snapshot-code">{{ formattedSnapshot }}</pre>
       </div>
     </div>
-    <div v-else-if="detailPending && run.has_snapshot" class="section">
+    <div v-else-if="detailLoading && run.has_snapshot" class="section">
       <div class="snapshot-header">
         <h3>
           <i class="fa-solid fa-code-branch"></i>
@@ -246,13 +256,17 @@ const props = defineProps<{
   /** The run's detail, or its list row while `detailPending` (the detail is still on its way). */
   run: FlowRun | FlowRunDetail;
   detailPending?: boolean;
+  /** Why the detail could not be fetched; the row stays shown with a Retry. */
+  detailError?: string | null;
 }>();
+
+const detailLoading = computed(() => !!props.detailPending && !props.detailError);
 
 const detail = computed<FlowRunDetail | null>(() =>
   props.detailPending ? null : (props.run as FlowRunDetail),
 );
 
-defineEmits(["close", "openSnapshot", "viewFlow", "viewScheduleRuns"]);
+defineEmits(["close", "openSnapshot", "viewFlow", "viewScheduleRuns", "retryDetail"]);
 
 const logContent = ref<string | null>(null);
 const loadingLog = ref(false);

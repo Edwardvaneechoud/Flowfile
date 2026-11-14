@@ -61,6 +61,17 @@ const summary = () =>
   );
 
 describe("RunHistoryTable", () => {
+  it("offers a retry, not the empty state, when the runs page failed to load", () => {
+    mounted = mount(RunHistoryTable, {}, () => {
+      const store = useCatalogStore();
+      store.overviewLoadedAt = Date.now();
+      store.runsError = "boom";
+    });
+
+    expect(mounted.text()).toContain("Couldn't load runs: boom");
+    expect(mounted.text()).not.toContain("No runs recorded yet");
+  });
+
   it("holds the list's place instead of the empty state until the overview lands", () => {
     mounted = mount(RunHistoryTable);
 
