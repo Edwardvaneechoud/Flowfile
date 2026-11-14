@@ -90,6 +90,8 @@ def _resolve_database_credentials(
         and database_settings.database_connection is not None
         and get_dialect_or_generic(database_settings.database_connection.database_type).file_based
     )
+    if database_settings.connection_mode == "inline":
+        sql_utils.refuse_inline_snowflake(database_settings.database_connection)
     if database_settings.connection_mode == "inline" and not is_file_based:
         database_connection = database_settings.database_connection
         encrypted_password = run_secrets.encrypted_secret(user_id, database_connection.password_ref)
@@ -278,6 +280,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                     password=decrypt_secret(encrypted_password) if encrypted_password else None,
                     ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
                     connect_timeout=10,
+                    **sql_utils.dialect_uri_options(database_connection),
                 ),
                 query=None if database_settings.query_mode == "table" else database_settings.query,
                 table_name=database_settings.table_name,

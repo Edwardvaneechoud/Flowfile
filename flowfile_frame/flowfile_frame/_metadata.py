@@ -350,6 +350,9 @@ def local_database_connections(*, user_id: int) -> list[FullDatabaseConnectionIn
                 port=row.port,
                 database=row.database,
                 ssl_enabled=row.ssl_enabled,
+                auth_method=row.auth_method,
+                role=row.role,
+                warehouse=row.warehouse,
             )
             for row in rows
         ]

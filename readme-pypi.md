@@ -37,7 +37,7 @@ This starts the backend services and opens the visual ETL interface in your brow
 - **Code generation** — export visual flows as standalone Python/Polars scripts
 - **Flow parameters** — `${variable}` substitution, configurable via UI or CLI
 - **Cloud storage** — S3, Azure Data Lake Storage, Google Cloud Storage
-- **Database connectivity** — PostgreSQL, MySQL, SQL Server, Oracle, DuckDB, and more
+- **Database connectivity** — PostgreSQL, MySQL, SQL Server, SQLite, DuckDB, Denodo, and Snowflake (`pip install "flowfile[snowflake]"`)
 - **Python API** with Polars-like syntax and visual flow graph generation
 
 ## Python API

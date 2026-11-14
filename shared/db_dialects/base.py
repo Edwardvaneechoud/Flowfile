@@ -14,6 +14,9 @@ Contract notes:
   function-local so importing ``shared.db_dialects`` remains dependency-light.
 - The four schema hooks return ``None`` to mean "no fast path — the caller
   keeps its existing generic implementation" (SQLAlchemy inspection in core).
+- ``auth_methods``, ``saved_connection_only``, ``with_credentials`` and
+  ``session_info`` exist for dialects whose login is not a host/user/password
+  triple (Snowflake); their base values change nothing for the others.
 """
 
 from __future__ import annotations
@@ -43,6 +46,8 @@ class DbDialect:
     sqlalchemy_driver: ClassVar[str | None] = None
     sqlglot_name: ClassVar[str] = "postgres"
     install_hint: ClassVar[str | None] = None
+    auth_methods: ClassVar[tuple[str, ...]] = ()
+    saved_connection_only: ClassVar[bool] = False
 
     @property
     def uri_scheme(self) -> str:
@@ -106,6 +111,14 @@ class DbDialect:
 
         return base_uri
 
+    def with_credentials(self, url: str, password: str | None) -> str:
+        """``url`` with ``password`` merged in, for a URL that was shipped without its secret.
+
+        The base returns ``url`` unchanged: a full URL a caller passes already carries
+        whatever credentials it needs.
+        """
+        return url
+
     def sqlalchemy_uri(self, uri: str) -> str:
         """Apply this dialect's SQLAlchemy driver suffix to a base URI."""
         if self.sqlalchemy_driver and uri.startswith(f"{self.uri_scheme}://"):
@@ -146,4 +159,8 @@ class DbDialect:
 
     def list_tables(self, uri: str, schema_name: str | None) -> list[str] | None:
         """Table names for connection browsing; None = caller uses SQLAlchemy inspection."""
+        return None
+
+    def session_info(self, uri: str) -> dict[str, str] | None:
+        """Who and where a session runs as; None = no cheap way to describe the session, so the caller probes."""
         return None

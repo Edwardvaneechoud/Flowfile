@@ -291,7 +291,7 @@ df.write_database(
 
 - `connection_name`: Name of the stored database connection (required)
 - `table_name`: Name of the table to write to (required)
-- `schema_name`: Database schema name (e.g., `"public"`, or `"dbo"` on SQL Server)
+- `schema_name`: Database schema name (e.g., `"public"`, `"dbo"` on SQL Server, `"PUBLIC"` on Snowflake)
 - `if_exists`: What to do if the table exists: `"append"`, `"replace"`, or `"fail"` (default: `"append"`)
 - `description`: Optional description for this operation
 
@@ -302,6 +302,12 @@ Returns a new child `FlowFrame`.
     modes apply, and rich types (nested lists/structs, decimals, timestamps) are stored
     natively rather than text-encoded. A DuckDB file accepts one writer at a time — close
     other tools using the file while a flow writes to it.
+
+!!! note "Snowflake"
+    A write to a `database_type="snowflake"` connection uploads the rows to a temporary stage and
+    copies them into the table, so the connection's role needs `CREATE STAGE` on the schema.
+    Unquoted names are upper-cased by Snowflake (`order_id` becomes `ORDER_ID`), and
+    `if_exists="replace"` recreates the table. See [Snowflake connections](../../visual-editor/connections.md#snowflake).
 
 ## Write Modes
 

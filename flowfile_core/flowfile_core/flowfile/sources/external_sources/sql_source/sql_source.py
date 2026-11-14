@@ -3,6 +3,7 @@ from collections.abc import Callable, Generator
 from typing import Any, Literal, NamedTuple
 
 import polars as pl
+from pydantic import SecretStr
 from sqlalchemy import Engine, create_engine, inspect, text
 
 from flowfile_core.configs import logger
@@ -11,8 +12,10 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 from flowfile_core.flowfile.sources.external_sources.sql_source.utils import (
     construct_sql_uri,
+    dialect_uri_options,
     get_polars_type,
     get_sqlalchemy_uri,
+    refuse_inline_snowflake,
 )
 from flowfile_core.schemas.input_schema import DatabaseSettings, MinimalFieldInfo
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
@@ -427,6 +430,23 @@ class ResolvedConnection(NamedTuple):
     database_type: str
 
 
+def connection_uri(database_connection, password) -> str:
+    """The URI of a connection given its decrypted password (a ``SecretStr``, a string or None)."""
+    if isinstance(password, str):
+        password = SecretStr(password)
+    return construct_sql_uri(
+        database_type=database_connection.database_type,
+        host=database_connection.host,
+        port=database_connection.port,
+        database=database_connection.database,
+        username=database_connection.username,
+        password=password,
+        ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
+        connect_timeout=10,
+        **dialect_uri_options(database_connection),
+    )
+
+
 def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> ResolvedConnection:
     """Resolve DatabaseSettings into a connection URI + dialect, handling inline/reference mode."""
     database_connection = database_settings.database_connection
@@ -434,6 +454,7 @@ def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> Re
     if database_settings.connection_mode == "inline":
         if database_connection is None:
             raise ValueError("Database connection is required in inline mode")
+        refuse_inline_snowflake(database_connection)
         is_file_based = get_dialect_or_generic(database_connection.database_type).file_based
         if is_file_based:
             password = None
@@ -458,16 +479,7 @@ def _resolve_connection(database_settings: DatabaseSettings, user_id: int) -> Re
         encrypted_secret = database_connection.password.get_secret_value()
         password = decrypt_secret(encrypted_secret)
 
-    uri = construct_sql_uri(
-        database_type=database_connection.database_type,
-        host=database_connection.host,
-        port=database_connection.port,
-        database=database_connection.database,
-        username=database_connection.username,
-        password=password,
-        ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
-        connect_timeout=10,
-    )
+    uri = connection_uri(database_connection, password)
     return ResolvedConnection(uri=uri, database_type=database_connection.database_type)
 
 

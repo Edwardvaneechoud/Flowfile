@@ -501,6 +501,36 @@ df = ff.read_database("denodo-vdp", query="SELECT customer_id, revenue FROM cust
 
 Reads and queries are supported; writing to Denodo has not been verified against a live server.
 
+### Snowflake
+
+Snowflake connections use `database_type="snowflake"`. `host` is the account (an identifier such as
+`myorg-myaccount`, its `.snowflakecomputing.com` host, or a Snowsight link) and `password` is the
+credential: an access token by default, or the private key file's text with `auth_method="key_pair"`.
+`role` and `warehouse` are optional and fall back to the user's defaults in Snowflake:
+
+```python
+from pathlib import Path
+
+ff.create_database_connection(
+    connection_name="snowflake-sales",
+    database_type="snowflake",
+    host="myorg-myaccount",
+    username="ETL_SERVICE",
+    password=Path("rsa_key.p8").read_text(),
+    auth_method="key_pair",
+    warehouse="COMPUTE_WH",
+    database="SALES",
+)
+
+df = ff.read_database("snowflake-sales", schema_name="PUBLIC", table_name="ORDERS")
+```
+
+For an encrypted key, pass `private_key_passphrase=`; it opens the key once and is not stored.
+Browser sign-in (`auth_method="oauth"`) is refused from Python; create such a connection in the app and
+read it by name. A pip install needs the driver: `pip install "flowfile[snowflake]"`. The sign-in methods,
+the account formats and what the role needs are on the [Snowflake connections](../../visual-editor/connections.md#snowflake)
+page.
+
 ## Connection Management
 
 Set up cloud and database connections once, then reference them by name. See [Cloud Connection Management](cloud-connections.md).

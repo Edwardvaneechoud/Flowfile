@@ -27,5 +27,18 @@ export function useDbDialects() {
   const defaultPort = (databaseType?: string): number | undefined =>
     findDialect(databaseType)?.default_port ?? undefined;
 
-  return { dialects, findDialect, isFileBased, defaultPort };
+  const authMethods = (databaseType?: string): string[] =>
+    findDialect(databaseType)?.auth_methods ?? [];
+
+  const isSavedConnectionOnly = (databaseType?: string): boolean =>
+    findDialect(databaseType)?.saved_connection_only ?? false;
+
+  return {
+    dialects,
+    findDialect,
+    isFileBased,
+    defaultPort,
+    authMethods,
+    isSavedConnectionOnly,
+  };
 }

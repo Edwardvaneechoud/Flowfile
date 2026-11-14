@@ -45,7 +45,7 @@ CSV defaults to a `,` delimiter and `UTF-8` encoding.
 <div class="ff-split" markdown>
 
 <div markdown>
-Writes the incoming table to a database table.
+Writes the incoming table to a database table: PostgreSQL, MySQL, SQLite, DuckDB, SQL Server, Denodo (untested) or Snowflake (through a saved connection only; see [Snowflake](../connections.md#snowflake)).
 
 [Connect to PostgreSQL](../tutorials/database-connectivity.md) is a step-by-step walkthrough.
 </div>

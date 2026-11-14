@@ -1,19 +1,25 @@
 """HTTP-surface tests for the dialect catalog, the vocabulary gates, and the browse routes."""
 
+import base64
 import sqlite3
 
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from flowfile_core import main
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import Secret
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_database_connection,
     get_database_connection,
     store_database_connection,
 )
 from flowfile_core.schemas import input_schema
-from shared.db_dialects import KNOWN_DIALECT_NAMES
+from flowfile_core.secret_manager.secret_manager import decrypt_secret
+from shared.db_dialects import KNOWN_DIALECT_NAMES, SnowflakeDialect
 
 
 def get_test_client() -> TestClient:
@@ -43,7 +49,15 @@ def test_get_db_dialects():
     assert by_name["sqlite"]["default_port"] is None
     assert by_name["postgresql"]["default_port"] == 5432
     assert by_name["postgresql"]["supports_ssl"] is True
-    assert all(d["available"] is True for d in dialects)
+    # Snowflake's driver is an optional extra; every other driver ships with Flowfile.
+    assert all(d["available"] is True for d in dialects if d["name"] != "snowflake")
+    snowflake = by_name["snowflake"]
+    assert snowflake["display_name"] == "Snowflake"
+    assert snowflake["saved_connection_only"] is True
+    assert snowflake["auth_methods"] == ["oauth", "access_token", "key_pair"]
+    assert snowflake["install_hint"] == 'pip install "flowfile[snowflake]"'
+    assert isinstance(snowflake["available"], bool)
+    assert all(d["auth_methods"] == [] and d["saved_connection_only"] is False for d in dialects if d is not snowflake)
 
 
 def test_create_db_connection_rejects_unknown_dialect():
@@ -258,3 +272,344 @@ def test_duckdb_browse_and_validate_endpoints(tmp_path):
     settings["table_name"] = "does_not_exist"
     response = client.post("/validate_db_settings", json=settings)
     assert response.status_code == 422, response.text
+
+
+# ---------- Snowflake connections ----------
+
+SF_NAME = "sf_conn"
+
+
+@pytest.fixture(scope="module")
+def rsa_key():
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+def _pem(key, passphrase: str | None = None) -> str:
+    encryption = (
+        serialization.BestAvailableEncryption(passphrase.encode()) if passphrase else serialization.NoEncryption()
+    )
+    return key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, encryption).decode()
+
+
+def _stored_der(key) -> str:
+    der = key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    return base64.b64encode(der).decode()
+
+
+@pytest.fixture
+def snowflake_available(monkeypatch):
+    monkeypatch.setattr(SnowflakeDialect, "is_available", lambda self: True)
+    _cleanup_connection(SF_NAME)
+    yield
+    _cleanup_connection(SF_NAME)
+
+
+def _sf_body(**overrides) -> dict:
+    body = {
+        "connection_name": SF_NAME,
+        "database_type": "snowflake",
+        "username": "ME@EXAMPLE.COM",
+        "password": "pat-token-123",
+        "host": "https://app.snowflake.com/myorg/myaccount/#/homepage",
+        "port": 443,
+        "database": "ANALYTICS",
+        "ssl_enabled": True,
+        "auth_method": "access_token",
+        "role": "ANALYST",
+        "warehouse": "COMPUTE_WH",
+    }
+    return body | overrides
+
+
+def _stored_row_and_secret(name: str = SF_NAME):
+    with get_db_context() as db:
+        row = get_database_connection(db, name, 1)
+        assert row is not None
+        secret = db.query(Secret).filter(Secret.id == row.password_id).one()
+        plain = decrypt_secret(secret.encrypted_value).get_secret_value()
+        return (row.host, row.port, row.username, row.auth_method, row.role, row.warehouse, row.database), plain
+
+
+def test_snowflake_create_needs_the_driver(monkeypatch):
+    _cleanup_connection(SF_NAME)
+    monkeypatch.setattr(SnowflakeDialect, "is_available", lambda self: False)
+    response = client.post("/db_connection_lib", json=_sf_body())
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == (
+        'The Snowflake driver is not installed. Install it with: pip install "flowfile[snowflake]", '
+        "then restart Flowfile."
+    )
+    with get_db_context() as db:
+        assert get_database_connection(db, SF_NAME, 1) is None
+
+
+def test_snowflake_access_token_connection_round_trip(snowflake_available):
+    response = client.post("/db_connection_lib", json=_sf_body(password="  pat-token-123  "))
+    assert response.status_code == 200, response.text
+    fields, secret = _stored_row_and_secret()
+    assert fields == (
+        "myorg-myaccount.snowflakecomputing.com",
+        None,
+        "ME@EXAMPLE.COM",
+        "access_token",
+        "ANALYST",
+        "COMPUTE_WH",
+        "ANALYTICS",
+    )
+    assert secret == "pat-token-123"
+
+    listed = next(c for c in client.get("/db_connection_lib").json() if c["connection_name"] == SF_NAME)
+    assert listed["auth_method"] == "access_token"
+    assert listed["role"] == "ANALYST"
+    assert listed["warehouse"] == "COMPUTE_WH"
+    assert listed["host"] == "myorg-myaccount.snowflakecomputing.com"
+    assert "password" not in listed
+
+    # A blank secret with the method unchanged keeps the stored token; the role may change.
+    response = client.put("/db_connection_lib", json=_sf_body(password="", role="", warehouse="BIG_WH"))
+    assert response.status_code == 200, response.text
+    fields, secret = _stored_row_and_secret()
+    assert fields[4:6] == (None, "BIG_WH")
+    assert secret == "pat-token-123"
+
+    response = client.put("/db_connection_lib", json=_sf_body(password="pat-token-456"))
+    assert response.status_code == 200, response.text
+    assert _stored_row_and_secret()[1] == "pat-token-456"
+
+    assert client.delete("/db_connection_lib", params={"connection_name": SF_NAME}).status_code == 200
+    with get_db_context() as db:
+        assert get_database_connection(db, SF_NAME, 1) is None
+
+
+@pytest.mark.parametrize("passphrase", [None, "open sesame"])
+def test_snowflake_key_pair_stores_the_normalised_key(snowflake_available, rsa_key, passphrase):
+    body = _sf_body(auth_method="key_pair", password=_pem(rsa_key, passphrase), private_key_passphrase=passphrase)
+    response = client.post("/db_connection_lib", json=body)
+    assert response.status_code == 200, response.text
+    fields, secret = _stored_row_and_secret()
+    assert fields[3] == "key_pair"
+    assert secret == _stored_der(rsa_key), "the key is stored unencrypted as PKCS8 DER in base64"
+    assert passphrase is None or passphrase not in secret
+
+
+def test_snowflake_key_pair_refusals(snowflake_available, rsa_key):
+    encrypted = _pem(rsa_key, "right")
+    wrong = client.post(
+        "/db_connection_lib", json=_sf_body(auth_method="key_pair", password=encrypted, private_key_passphrase="wrong")
+    )
+    assert wrong.status_code == 422
+    assert wrong.json()["detail"] == "The passphrase does not open this private key."
+    missing = client.post("/db_connection_lib", json=_sf_body(auth_method="key_pair", password=encrypted))
+    assert missing.json()["detail"] == "This private key is encrypted. Enter its passphrase."
+    public = (
+        rsa_key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    assert (
+        "public key"
+        in client.post("/db_connection_lib", json=_sf_body(auth_method="key_pair", password=public)).json()["detail"]
+    )
+    with get_db_context() as db:
+        assert get_database_connection(db, SF_NAME, 1) is None
+
+
+@pytest.mark.parametrize(
+    ("overrides", "detail"),
+    [
+        ({"host": "https://evil.example.com/x"}, "is not a Snowflake account"),
+        ({"host": ""}, "Enter your Snowflake account"),
+        ({"username": ""}, "Enter your Snowflake username."),
+        ({"auth_method": None}, "Choose how to sign in to Snowflake"),
+        ({"auth_method": "password"}, "Choose how to sign in to Snowflake"),
+        ({"password": ""}, "Paste a Snowflake access token."),
+        ({"auth_method": "key_pair", "password": ""}, "Choose your private key file (.p8)."),
+        ({"auth_method": "oauth", "password": "", "username": ""}, "Sign in with Snowflake to save this connection."),
+        ({"auth_method": "oauth", "password": "", "oauth_flow_id": "nope"}, "expired. Sign in again."),
+    ],
+)
+def test_snowflake_create_refusals(snowflake_available, overrides, detail):
+    response = client.post("/db_connection_lib", json=_sf_body(**overrides))
+    assert response.status_code == 422, response.text
+    assert detail in response.json()["detail"]
+    with get_db_context() as db:
+        assert get_database_connection(db, SF_NAME, 1) is None
+
+
+def test_snowflake_switching_method_needs_the_new_secret(snowflake_available, rsa_key):
+    assert client.post("/db_connection_lib", json=_sf_body()).status_code == 200
+    switched = client.put("/db_connection_lib", json=_sf_body(auth_method="key_pair", password=""))
+    assert switched.status_code == 422
+    assert switched.json()["detail"] == (
+        "You changed how this connection signs in. Choose your private key file (.p8)."
+    )
+    assert _stored_row_and_secret()[1] == "pat-token-123", "a refused update changes nothing"
+
+    switched = client.put("/db_connection_lib", json=_sf_body(auth_method="key_pair", password=_pem(rsa_key)))
+    assert switched.status_code == 200, switched.text
+    fields, secret = _stored_row_and_secret()
+    assert fields[3] == "key_pair"
+    assert secret == _stored_der(rsa_key)
+
+
+def test_switching_another_dialect_to_snowflake_needs_a_secret(snowflake_available):
+    assert (
+        client.post("/db_connection_lib", json=_sf_body(database_type="postgresql", host="h", port=5432)).status_code
+        == 200
+    )
+    response = client.put("/db_connection_lib", json=_sf_body(password=""))
+    assert response.status_code == 422
+    assert "Paste a Snowflake access token." in response.json()["detail"]
+
+
+def test_snowflake_update_needs_the_driver(snowflake_available, monkeypatch):
+    assert client.post("/db_connection_lib", json=_sf_body()).status_code == 200
+    monkeypatch.setattr(SnowflakeDialect, "is_available", lambda self: False)
+    response = client.put("/db_connection_lib", json=_sf_body(password=""))
+    assert response.status_code == 422
+    assert "flowfile[snowflake]" in response.json()["detail"]
+
+
+def test_other_dialects_store_no_snowflake_fields():
+    _cleanup_connection("plain_pg")
+    body = {
+        "connection_name": "plain_pg",
+        "database_type": "postgresql",
+        "username": "u",
+        "password": "pw",
+        "host": "db.internal",
+        "port": 5432,
+        "database": "d",
+        "auth_method": "access_token",
+        "role": "R",
+        "warehouse": "W",
+    }
+    assert client.post("/db_connection_lib", json=body).status_code == 200
+    with get_db_context() as db:
+        row = get_database_connection(db, "plain_pg", 1)
+        assert (row.host, row.port, row.auth_method, row.role, row.warehouse) == ("db.internal", 5432, None, None, None)
+    listed = next(c for c in client.get("/db_connection_lib").json() if c["connection_name"] == "plain_pg")
+    assert (listed["auth_method"], listed["role"], listed["warehouse"]) == (None, None, None)
+
+    assert client.put("/db_connection_lib", json=body | {"password": ""}).status_code == 200
+    with get_db_context() as db:
+        row = get_database_connection(db, "plain_pg", 1)
+        assert (row.auth_method, row.role, row.warehouse) == (None, None, None)
+        secret = db.query(Secret).filter(Secret.id == row.password_id).one()
+        assert decrypt_secret(secret.encrypted_value).get_secret_value() == "pw"
+    _cleanup_connection("plain_pg")
+
+
+def test_db_dialects_hides_browser_sign_in_on_a_multi_user_server(monkeypatch):
+    from flowfile_core.routes.routes import get_db_dialects
+
+    def snowflake_methods():
+        return next(d for d in get_db_dialects() if d.name == "snowflake").auth_methods
+
+    assert next(d for d in client.get("/db_dialects").json() if d["name"] == "snowflake")["auth_methods"] == [
+        "oauth",
+        "access_token",
+        "key_pair",
+    ]
+    for mode in ("docker", "server"):
+        monkeypatch.setenv("FLOWFILE_MODE", mode)
+        assert snowflake_methods() == ["access_token", "key_pair"]
+    monkeypatch.setenv("FLOWFILE_MODE", "package")
+    assert snowflake_methods() == ["oauth", "access_token", "key_pair"]
+
+
+# ---------- POST /db_connection_lib/test ----------
+
+
+def test_connection_test_unknown_name_is_404():
+    response = client.post("/db_connection_lib/test", json={"connection_name": "no_such_connection_xyz"})
+    assert response.status_code == 404
+
+
+def test_connection_test_sqlite_for_real(tmp_path):
+    _cleanup_connection("test_sqlite_conn")
+    db_path = tmp_path / "probe.db"
+    sqlite3.connect(db_path).close()
+    body = {"connection_name": "test_sqlite_conn", "database_type": "sqlite", "username": "", "password": ""}
+    assert client.post("/db_connection_lib", json=body | {"database": str(db_path)}).status_code == 200
+    response = client.post("/db_connection_lib/test", json={"connection_name": "test_sqlite_conn"})
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "message": "Connection successful.", "details": None}
+
+    db_path.unlink()
+    response = client.post("/db_connection_lib/test", json={"connection_name": "test_sqlite_conn"})
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert "File not found" in response.json()["message"]
+    assert not db_path.exists(), "testing a missing file must not create it"
+    _cleanup_connection("test_sqlite_conn")
+
+
+def test_connection_test_duckdb_for_real(tmp_path):
+    _cleanup_connection("test_duckdb_conn")
+    db_path = _make_duckdb_file(tmp_path)
+    body = {"connection_name": "test_duckdb_conn", "database_type": "duckdb", "username": "", "password": ""}
+    assert client.post("/db_connection_lib", json=body | {"database": db_path}).status_code == 200
+    response = client.post("/db_connection_lib/test", json={"connection_name": "test_duckdb_conn"})
+    assert response.json() == {"success": True, "message": "Connection successful.", "details": None}
+    _cleanup_connection("test_duckdb_conn")
+
+
+def test_connection_test_unreachable_server_fails_with_the_password_masked():
+    _cleanup_connection("test_dead_pg")
+    body = {
+        "connection_name": "test_dead_pg",
+        "database_type": "postgresql",
+        "username": "u",
+        "password": "very-secret-pw",
+        "host": "127.0.0.1",
+        "port": 1,
+        "database": "d",
+    }
+    assert client.post("/db_connection_lib", json=body).status_code == 200
+    response = client.post("/db_connection_lib/test", json={"connection_name": "test_dead_pg"})
+    assert response.status_code == 200
+    result = response.json()
+    assert result["success"] is False and result["message"]
+    assert "very-secret-pw" not in result["message"]
+    _cleanup_connection("test_dead_pg")
+
+
+def test_connection_test_snowflake_describes_the_session(snowflake_available, monkeypatch):
+    seen = []
+
+    def session_info(self, uri):
+        seen.append(uri)
+        return {"user": "ME@EXAMPLE.COM", "role": "ANALYST", "warehouse": "COMPUTE_WH", "database": ""}
+
+    monkeypatch.setattr(SnowflakeDialect, "session_info", session_info)
+    assert client.post("/db_connection_lib", json=_sf_body()).status_code == 200
+    response = client.post("/db_connection_lib/test", json={"connection_name": SF_NAME})
+    assert response.status_code == 200
+    assert response.json() == {
+        "success": True,
+        "message": "Connected as ME@EXAMPLE.COM, role ANALYST, warehouse COMPUTE_WH.",
+        "details": {"user": "ME@EXAMPLE.COM", "role": "ANALYST", "warehouse": "COMPUTE_WH"},
+    }
+    (uri,) = seen
+    assert uri == (
+        "snowflake://ME%40EXAMPLE.COM:pat-token-123@myorg-myaccount.snowflakecomputing.com:443/ANALYTICS"
+        "?auth=access_token&role=ANALYST&warehouse=COMPUTE_WH"
+    )
+
+
+def test_connection_test_snowflake_failure_is_a_200(snowflake_available, monkeypatch):
+    from shared.db_dialects.snowflake import SnowflakeError
+
+    def session_info(self, uri):
+        raise SnowflakeError("No warehouse is selected. Snowflake said: pat-token-123 rejected")
+
+    monkeypatch.setattr(SnowflakeDialect, "session_info", session_info)
+    assert client.post("/db_connection_lib", json=_sf_body()).status_code == 200
+    result = client.post("/db_connection_lib/test", json={"connection_name": SF_NAME}).json()
+    assert result["success"] is False
+    assert result["message"] == "No warehouse is selected. Snowflake said: *** rejected"
+
+    monkeypatch.setattr(SnowflakeDialect, "is_available", lambda self: False)
+    result = client.post("/db_connection_lib/test", json={"connection_name": SF_NAME}).json()
+    assert result["success"] is False and "flowfile[snowflake]" in result["message"]

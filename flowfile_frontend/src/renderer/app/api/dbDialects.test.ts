@@ -32,7 +32,9 @@ describe("getDbDialects", () => {
       },
     ];
     mockedGet.mockResolvedValueOnce({ data: fetched });
-    expect(await getDbDialects()).toEqual(fetched);
+    expect(await getDbDialects()).toEqual([
+      { ...fetched[0], auth_methods: [], saved_connection_only: false },
+    ]);
     expect(mockedGet).toHaveBeenCalledTimes(2);
   });
 
@@ -49,8 +51,8 @@ describe("getDbDialects", () => {
         available: true,
       },
       {
-        name: "snowflake",
-        display_name: "Snowflake",
+        name: "bigquery",
+        display_name: "BigQuery",
         file_based: false,
         default_port: 443,
         supports_ssl: true,
@@ -81,6 +83,87 @@ describe("getDbDialects", () => {
       "duckdb",
       "mssql",
       "denodo",
+      "snowflake",
     ]);
+  });
+
+  it("keeps the auth methods and saved-connection flag the catalog reports", async () => {
+    const { getDbDialects } = await loadModule();
+    const snowflake = {
+      name: "snowflake",
+      display_name: "Snowflake",
+      file_based: false,
+      default_port: 443,
+      supports_ssl: false,
+      available: true,
+      auth_methods: ["access_token", "key_pair"],
+      saved_connection_only: true,
+    };
+    mockedGet.mockResolvedValue({ data: [snowflake] });
+    expect(await getDbDialects()).toEqual([snowflake]);
+  });
+
+  it("offers every Snowflake sign-in method in the fallback list", async () => {
+    const { FALLBACK_DIALECTS } = await loadModule();
+    const snowflake = FALLBACK_DIALECTS.find((dialect) => dialect.name === "snowflake");
+    expect(snowflake?.auth_methods).toEqual(["oauth", "access_token", "key_pair"]);
+    expect(snowflake?.saved_connection_only).toBe(true);
+    expect(
+      FALLBACK_DIALECTS.filter((dialect) => dialect.name !== "snowflake").every(
+        (dialect) => dialect.auth_methods.length === 0 && !dialect.saved_connection_only,
+      ),
+    ).toBe(true);
+  });
+  it("lists the dialects core reports as not installed, with their install line", async () => {
+    const { getDbDialects, getUnavailableDbDialects, installNote, notInstalledLabel } =
+      await loadModule();
+    const postgres = {
+      name: "postgresql",
+      display_name: "PostgreSQL",
+      file_based: false,
+      default_port: 5432,
+      supports_ssl: true,
+      available: true,
+    };
+    const snowflake = {
+      name: "snowflake",
+      display_name: "Snowflake",
+      file_based: false,
+      default_port: 443,
+      supports_ssl: false,
+      available: false,
+      auth_methods: ["access_token", "key_pair"],
+      saved_connection_only: true,
+      install_hint: 'pip install "flowfile[snowflake]"',
+    };
+    mockedGet.mockResolvedValue({ data: [postgres, snowflake] });
+
+    expect((await getDbDialects()).map((dialect) => dialect.name)).toEqual(["postgresql"]);
+    const missing = await getUnavailableDbDialects();
+    expect(missing.map((dialect) => dialect.name)).toEqual(["snowflake"]);
+    expect(notInstalledLabel(missing[0])).toBe("Snowflake (not installed)");
+    expect(installNote(missing[0])).toBe(
+      'Snowflake is not installed. Run: pip install "flowfile[snowflake]"',
+    );
+    expect(mockedGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives no install line when core sends no hint, and lists nothing when the request fails", async () => {
+    const { getUnavailableDbDialects, installNote } = await loadModule();
+    const legacy = {
+      name: "bigquery",
+      display_name: "BigQuery",
+      file_based: false,
+      default_port: 443,
+      supports_ssl: true,
+      available: false,
+      auth_methods: [],
+      saved_connection_only: false,
+    };
+    expect(installNote(legacy)).toBeNull();
+    expect(installNote({ ...legacy, install_hint: null })).toBeNull();
+
+    mockedGet.mockRejectedValueOnce(new Error("network down"));
+    expect(await getUnavailableDbDialects()).toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-//flowfile_frontend/src/renderer/app/pages/DatabaseManager.vue
+//flowfile_frontend/src/renderer/app/views/DatabaseView/DatabaseView.vue
 
 <template>
   <div class="database-manager-container">
@@ -58,9 +58,22 @@
                 <i class="fa-solid fa-database"></i>
                 <span>{{ connection.connectionName }}</span>
                 <span class="badge">{{ connection.databaseType }}</span>
+                <span
+                  v-if="connection.databaseType === SNOWFLAKE && connection.authMethod"
+                  class="method-label"
+                  >{{ methodLabel(connection.authMethod) }}</span
+                >
                 <SharedBadge :access="connection.access" />
               </div>
-              <div class="connection-details">
+              <div v-if="connection.databaseType === SNOWFLAKE" class="connection-details">
+                <span>{{
+                  connection.database ? connection.database : "No database specified"
+                }}</span>
+                <span class="separator">•</span>
+                <span>{{ accountLabel(connection.host) }}</span>
+                <span v-if="connection.username"> · {{ connection.username }}</span>
+              </div>
+              <div v-else class="connection-details">
                 <span>{{
                   connection.database ? connection.database : "No database specified"
                 }}</span>
@@ -70,7 +83,28 @@
             </div>
             <div class="connection-actions">
               <button
-                v-if="isMultiUser && isOwned(connection) && connection.id != null"
+                type="button"
+                class="btn btn-secondary"
+                data-testid="db-connection-test"
+                :disabled="!!testing[connection.connectionName]"
+                @click="testConnection(connection)"
+              >
+                <i
+                  :class="
+                    testing[connection.connectionName]
+                      ? 'fa-solid fa-spinner fa-spin'
+                      : 'fa-solid fa-plug'
+                  "
+                ></i>
+                <span>Test</span>
+              </button>
+              <button
+                v-if="
+                  isMultiUser &&
+                  isOwned(connection) &&
+                  connection.id != null &&
+                  connection.authMethod !== 'oauth'
+                "
                 type="button"
                 class="btn btn-secondary"
                 @click="openShare(connection)"
@@ -107,6 +141,7 @@
       v-model="dialogVisible"
       :title="isEditing ? 'Edit Database Connection' : 'Add Database Connection'"
       width="500px"
+      destroy-on-close
       :before-close="handleCloseDialog"
     >
       <div class="modal-description mb-3">
@@ -159,14 +194,16 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted } from "vue";
+import { ref, reactive, onMounted } from "vue";
 import { ElDialog, ElButton, ElMessage } from "element-plus";
 import {
   fetchDatabaseConnectionsInterfaces,
   createDatabaseConnectionApi,
   updateDatabaseConnectionApi,
   deleteDatabaseConnectionApi,
+  testDatabaseConnectionApi,
 } from "./api";
+import { SNOWFLAKE, accountLabel, methodLabel, testSuccessText } from "./snowflakeConnection";
 import { FullDatabaseConnectionInterface, FullDatabaseConnection } from "./databaseConnectionTypes";
 import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
 import { useDbDialects } from "../../composables/useDbDialects";
@@ -189,6 +226,23 @@ const { isMultiUser, isOwned, canManage, canManageGrants } = useResourceSharing(
 const { defaultPort } = useDbDialects();
 const showShareDialog = ref(false);
 const shareConnection = ref<FullDatabaseConnectionInterface | null>(null);
+
+const testing = reactive<Record<string, boolean>>({});
+
+const testConnection = async (connection: FullDatabaseConnectionInterface) => {
+  const name = connection.connectionName;
+  testing[name] = true;
+  try {
+    const result = await testDatabaseConnectionApi(name);
+    if (result.success) {
+      ElMessage.success(testSuccessText(result));
+    } else {
+      ElMessage.error(result.message || "Connection test failed");
+    }
+  } finally {
+    delete testing[name];
+  }
+};
 
 const openShare = (c: FullDatabaseConnectionInterface) => {
   shareConnection.value = c;
@@ -221,10 +275,16 @@ const showEditModal = (connection: FullDatabaseConnectionInterface) => {
     username: connection.username,
     password: "", // Password is not returned from the API
     host: connection.host || "",
-    port: connection.port || defaultPort(connection.databaseType),
+    port:
+      connection.databaseType === SNOWFLAKE
+        ? undefined
+        : connection.port || defaultPort(connection.databaseType),
     database: connection.database || "",
     sslEnabled: connection.sslEnabled,
     url: connection.url || "",
+    authMethod: connection.authMethod ?? null,
+    role: connection.role ?? null,
+    warehouse: connection.warehouse ?? null,
   };
   dialogVisible.value = true;
 };
@@ -335,6 +395,12 @@ onMounted(() => {
   padding: var(--spacing-1) var(--spacing-3);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
+  margin-left: var(--spacing-2);
+}
+
+.method-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
   margin-left: var(--spacing-2);
 }
 

@@ -28,6 +28,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | **DuckDB** | `duckdb` |
 | **SQL Server** | `mssql` |
 | **Denodo** | `denodo` |
+| **Snowflake** | `snowflake` — see [Snowflake](#snowflake) |
 
 !!! note "File-based connections (SQLite, DuckDB)"
     SQLite and DuckDB connect to a local database **file path** (e.g. `/path/to/database.db`
@@ -59,7 +60,7 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 | Field | Description | Example |
 |-------|-------------|---------|
 | **Connection Name** | Unique identifier for this connection | `prod_postgres` |
-| **Database Type** | PostgreSQL, MySQL, SQLite, DuckDB, SQL Server, or Denodo | `postgresql` |
+| **Database Type** | PostgreSQL, MySQL, SQLite, DuckDB, SQL Server, Denodo, or Snowflake | `postgresql` |
 | **Host** | Database server hostname | `db.example.com` |
 | **Port** | Database port | `5432` |
 | **Database** | Database name | `analytics` |
@@ -78,6 +79,103 @@ and Cloud Storage Writer nodes without re-entering credentials each time.
 ![Create Database Connection](../../assets/images/guides/connections/create-db-connection.png)
 
 *Creating a new PostgreSQL connection*
+
+### Snowflake { #snowflake }
+
+A Snowflake connection replaces Host, Port, Password and SSL with its own fields: an account, a sign-in
+method, and the warehouse and database to use. A connection holds one credential (a token, a key or a
+browser sign-in) and stores it encrypted like any other password.
+
+**Account.** Enter the account identifier (`myorg-myaccount`), its host
+(`myorg-myaccount.snowflakecomputing.com`), or paste a link copied from Snowsight. The form shows the host it
+resolved to under the field.
+
+**Sign-in method.** Snowflake no longer accepts a password on its own, so the form offers three methods:
+
+| Method | Available in | Use it for |
+|---|---|---|
+| **Sign in with Snowflake** | Desktop app and local installs | Your own account. Opens your browser; your Snowflake password never passes through Flowfile. |
+| **Access token** | Every install | A personal account on a server, or when browser sign-in is turned off for your account. |
+| **Key-pair** | Every install | Service users and scheduled flows. |
+
+=== "Sign in with Snowflake"
+
+    Click **Sign in with Snowflake**, sign in in the browser tab that opens, and return to the form. It then
+    shows who you are signed in as and fills the warehouse and database lists.
+
+    - The sign-in belongs to you: a browser-signed-in connection cannot be shared with a group.
+    - It is bound to one role. Set **Role** before signing in (empty uses your default role); changing the role
+      means signing in again.
+    - Snowflake blocks `ACCOUNTADMIN`, `SECURITYADMIN` and other administrator roles for this kind of sign-in.
+      If your default role is one of them, set a non-admin default role in Snowflake or enter one in **Role**.
+    - When Snowflake's sign-in expires, using the connection reports it; edit the connection and sign in again.
+    - It uses Snowflake's built-in sign-in for local applications. If an administrator has turned that off for
+      the account, the form says so; use an access token or a key-pair instead.
+
+=== "Access token"
+
+    Enter your Snowflake **Username** and paste the **Access token**. Generate one in Snowsight under your user
+    menu: **Settings → Authentication → Programmatic access tokens**.
+
+    - A token expires: 15 days by default, at most 365. When it has expired, generate a new one and paste it on
+      the connection.
+    - For a human user (not a service user), Snowflake accepts a token only when a network policy is attached to
+      the user. Without one, connecting fails with a message saying so; ask an administrator to attach a policy
+      that allows your IP address.
+
+=== "Key-pair"
+
+    Enter the Snowflake **Username**, then **Choose .p8 file** (or paste the key), and the **Passphrase** if the
+    key file is encrypted. The passphrase opens the key once and is not stored. Only RSA keys are accepted.
+
+    Create a key and register its public half on the user:
+
+    ```bash
+    openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
+    openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
+    ```
+
+    ```sql
+    -- The contents of rsa_key.pub, without the BEGIN/END lines
+    ALTER USER etl_service SET RSA_PUBLIC_KEY='MIIBIjANBgkqh...';
+    ```
+
+    Leave out `-nocrypt` to protect the key file with a passphrase.
+
+With an access token or a key-pair, **Connect** signs in with what you entered and fills the warehouse and
+database lists.
+
+**Warehouse, database and role.** **Warehouse** and **Database** are lists filled from your session; you can
+also type a name. Empty fields use the user's defaults in Snowflake. A query needs a warehouse, so set one when
+the user has no default. Writing needs a database, either on the connection or in a `database.schema.table`
+name.
+
+**Test.** Each saved connection has a **Test** button in the list. It signs in and reports the user, role,
+warehouse and database the session got, or a plain reason it failed: no warehouse, a role that is not granted,
+a missing network policy, an expired token or sign-in, or an account that cannot be found.
+
+**Reading and writing.** Snowflake connections work in the **Read from Database** and **Write to Database** nodes
+in **Reference** mode only; there is no inline Snowflake connection.
+
+- Snowflake upper-cases names that are not quoted. Columns written from Flowfile are created unquoted, so
+  `order_id` becomes `ORDER_ID`; a name that is not a plain identifier, or is a reserved word, is quoted.
+- A write uploads the rows to a temporary stage in the table's schema, then copies them into the table, so the
+  connection's role needs `CREATE STAGE` on that schema as well as rights on the table.
+- **Replace** recreates the table (`CREATE OR REPLACE TABLE`); **Append** creates it when it does not exist;
+  **Fail** stops when it exists.
+
+**Installing.** The desktop app and the Docker images include the Snowflake driver. A pip install needs the
+extra:
+
+```bash
+pip install "flowfile[snowflake]"
+```
+
+Without it, the Database Type list shows **Snowflake (not installed)** with that command underneath.
+
+!!! note "Docker and server installs"
+    On a multi-user Docker or server install only **Access token** and **Key-pair** are offered; browser sign-in
+    is available in the desktop app and local installs.
 
 ### Using Database Connections in Flows
 

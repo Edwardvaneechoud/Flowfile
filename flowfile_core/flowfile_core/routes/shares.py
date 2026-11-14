@@ -117,6 +117,10 @@ def create_share(
             detail="Secrets can only be shared at 'use' level",
         )
     _require_manageable(db, current_user, share.resource_type, share.resource_id)
+    if sharing.is_personal_connection(db, share.resource_type, share.resource_id):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=sharing.PERSONAL_CONNECTION_MESSAGE
+        )
 
     is_owner = _is_resource_owner(db, current_user, share.resource_type, share.resource_id)
     if not (is_owner or current_user.is_admin):

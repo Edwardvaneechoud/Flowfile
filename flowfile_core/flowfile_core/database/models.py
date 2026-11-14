@@ -59,6 +59,10 @@ class DatabaseConnection(Base):
     ssl_enabled = Column(Boolean, default=False)
     password_id = Column(Integer, ForeignKey("secrets.id"))
     user_id = Column(Integer, ForeignKey("users.id"))
+    # Snowflake only (NULL for every other dialect): what the secret is, and the session's role and warehouse.
+    auth_method = Column(String, nullable=True)
+    role = Column(String, nullable=True)
+    warehouse = Column(String, nullable=True)
 
 
 class CloudStorageConnection(Base):

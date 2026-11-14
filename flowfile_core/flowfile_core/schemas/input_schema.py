@@ -1122,6 +1122,10 @@ class FullDatabaseConnection(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    # Snowflake only: what ``password`` holds (oauth, access_token, key_pair) and the session's role and warehouse
+    auth_method: str | None = None
+    role: str | None = None
+    warehouse: str | None = None
     # A connection a provider elsewhere keeps: its password here is empty, the run is granted it where the step runs
     granted: bool = Field(default=False, exclude=True)
 
@@ -1143,6 +1147,9 @@ class FullDatabaseConnectionInterface(BaseModel):
     database: str | None = None
     ssl_enabled: bool | None = False
     url: str | None = None
+    auth_method: str | None = None
+    role: str | None = None
+    warehouse: str | None = None
     id: int | None = None
     access: AccessInfo | None = None
     source: Literal["local", "hub"] = "local"

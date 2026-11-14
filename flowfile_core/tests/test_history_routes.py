@@ -328,6 +328,7 @@ NON_GRAPH_ROUTES = {
     "/flow/run/",
     "/flow/cancel/",
     "/db_connection_lib",
+    "/db_connection_lib/test",
     "/rest_api/sample",
     "/dynamic_rename/preview",
     "/save_flow",

@@ -4,6 +4,10 @@ from typing import Annotated, Any, Literal
 import polars as pl
 from pydantic import BaseModel, BeforeValidator, Field, PlainSerializer
 
+from flowfile_core.flowfile.sources.external_sources.sql_source.utils import (
+    dialect_uri_options,
+    refuse_inline_snowflake,
+)
 from flowfile_core.schemas.input_schema import (
     DatabaseConnection,
     FullDatabaseConnection,
@@ -11,6 +15,31 @@ from flowfile_core.schemas.input_schema import (
     NodeDatabaseWriter,
     SecretRef,
 )
+from shared.db_dialects import get_dialect_or_generic
+
+
+def _connection_fields(connection_mode: str | None, inline: DatabaseConnection | None, reference) -> dict[str, Any]:
+    """The worker connection's fields, its password left out (the caller adds the encrypted one).
+
+    A saved Snowflake connection travels as its URL without the secret, in ``url``; the worker merges the decrypted
+    password into it (``DbDialect.with_credentials``), so the wire model carries no Snowflake field of its own.
+    """
+    if connection_mode == "inline":
+        refuse_inline_snowflake(inline)
+        return inline.model_dump()
+    fields = {k: v for k, v in reference.model_dump().items() if k in ExtDatabaseConnection.model_fields}
+    fields.pop("password", None)
+    options = dialect_uri_options(reference)
+    if options:
+        fields["url"] = get_dialect_or_generic(reference.database_type).build_uri(
+            host=reference.host,
+            port=reference.port,
+            username=reference.username,
+            password=None,
+            database=reference.database,
+            **options,
+        )
+    return fields
 
 
 # Custom type for bytes that serializes to/from base64 string in JSON
@@ -71,10 +100,10 @@ class DatabaseExternalWriteSettings(BaseModel):
         Returns:
             DatabaseExternalReadSettings: an instance of DatabaseExternalReadSettings
         """
-        if node_database_writer.database_write_settings.connection_mode == "inline":
-            database_connection = node_database_writer.database_write_settings.database_connection.model_dump()
-        else:
-            database_connection = {k: v for k, v in database_reference_settings.model_dump().items() if k != "password"}
+        write_settings = node_database_writer.database_write_settings
+        database_connection = _connection_fields(
+            write_settings.connection_mode, write_settings.database_connection, database_reference_settings
+        )
 
         ext_database_connection = ExtDatabaseConnection(**database_connection, password=password)
         return cls(
@@ -113,10 +142,10 @@ class DatabaseExternalReadSettings(BaseModel):
         Returns:
             DatabaseExternalReadSettings: an instance of DatabaseExternalReadSettings
         """
-        if node_database_reader.database_settings.connection_mode == "inline":
-            database_connection = node_database_reader.database_settings.database_connection.model_dump()
-        else:
-            database_connection = {k: v for k, v in database_reference_settings.model_dump().items() if k != "password"}
+        read_settings = node_database_reader.database_settings
+        database_connection = _connection_fields(
+            read_settings.connection_mode, read_settings.database_connection, database_reference_settings
+        )
 
         ext_database_connection = ExtDatabaseConnection(**database_connection, password=password)
         return cls(

@@ -24,6 +24,9 @@ class DatabaseConnectionEntry(_Entry):
     username: str = ""
     ssl_enabled: bool = False
     password: str | None = None
+    auth_method: str | None = None
+    role: str | None = None
+    warehouse: str | None = None
 
 
 class CloudConnectionEntry(_Entry):
