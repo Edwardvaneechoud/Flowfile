@@ -30,11 +30,14 @@ from flowfile_core.flowfile.catalog_helpers import (
     FlowNameNamespaceCollision,
     FlowPathNamespaceCollision,
     auto_register_flow,
+    find_registration_by_name,
     register_flow_in_namespace,
     require_flow_save_permitted,
+    resolve_display_name,
     resolve_source_registration_id,
+    sync_api_compatibility,
 )
-from flowfile_core.flowfile.manage.io_flowfile import working_copy_directory
+from flowfile_core.flowfile.manage.io_flowfile import is_working_copy, working_copy_directory
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.hub_client import client, node_addresses, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
@@ -181,15 +184,22 @@ class LocalPathUse(BaseModel):
 
 
 class HubPublishRequest(BaseModel):
+    """``as_new`` publishes a flow already on the hub as a new flow under ``name``; ignored for one that is not."""
+
     flow_id: int
     namespace_id: int | None = None
     message: str | None = None
     overwrite_version: int | None = None
+    as_new: bool = False
+    name: str | None = None
 
 
 class HubPublishOut(BaseModel):
+    """``flow_id`` is answered only when the open flow moved to a new id (a publish as a new flow)."""
+
     version: int
     name: str
+    flow_id: int | None = None
 
 
 class HubOpenRequest(BaseModel):
@@ -303,19 +313,24 @@ def _version(versions: list, number: int | None) -> dict | None:
     return next((v for v in versions if v.get("version") == number), None)
 
 
-@router.post("/publish", status_code=201, summary="Publish a flow to the hub")
+@router.post("/publish", status_code=201, summary="Publish a flow to the hub", response_model_exclude_none=True)
 def publish(request: HubPublishRequest, current_user=Depends(get_current_active_user)) -> HubPublishOut:
     """Store the open flow as its hub flow's next version and stamp ``hub_origin``, so the next publish names its base.
 
     A stale base is 409 ``stale_base``. The flow is looked up before the hub session, so a flow the caller cannot see
-    is 404 whether or not a hub is connected.
+    is 404 whether or not a hub is connected. With ``as_new`` a flow already on the hub is published as a new flow
+    instead (``_publish_as_new``); a flow on no hub publishes as a first publish, ``as_new`` and ``name`` unread.
     """
     flow = get_flow_or_404(request.flow_id, current_user)
+    if request.as_new and request.overwrite_version is not None:
+        raise HTTPException(status_code=422, detail="A new flow has no version to publish over.")
     hub_url, token = _hub(current_user)
     flow_path = flow.flow_settings.path or flow.flow_settings.save_location
     if not flow_path:
         raise HTTPException(status_code=422, detail="save the flow first")
     origin = getattr(flow.flow_settings, "hub_origin", None)
+    if origin is not None and request.as_new:
+        return _publish_as_new(flow, flow_path, request, hub_url, token, current_user)
     if origin is not None and origin.hub_url.rstrip("/") != hub_url.rstrip("/"):
         raise HTTPException(status_code=409, detail={"kind": "other_hub", "hub_url": origin.hub_url})
 
@@ -363,6 +378,118 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
     flow.save_flow(flow_path=flow_path)
     flow.save_note = None
     return HubPublishOut(version=published["version"], name=published["name"])
+
+
+def _publish_as_new(
+    flow, flow_path: str, request: HubPublishRequest, hub_url: str, token: str, current_user
+) -> HubPublishOut:
+    """Publish what is open as a new hub flow at version 1, then make the open flow that new flow.
+
+    Nothing of the flow it came from is sent or changed: a new uuid, no base, the given name (else the flow's catalog
+    name, else its own) and the place picked (none lets the hub use its default schema). Where the open flow will live
+    is checked before the hub is asked, so a refusal from either side leaves the open flow, its file and its origin as
+    they were.
+    """
+    document = flow.get_flowfile_data()
+    name = (
+        (request.name or "").strip()
+        or resolve_display_name(flow_path)
+        or flow.flow_settings.name
+        or document.flowfile_name
+    )
+    flow_uuid = str(uuid.uuid4())
+    target, namespace_id = _new_flow_home(flow_uuid, name, flow_path, current_user)
+
+    document.flowfile_name = name
+    document.flowfile_settings.source_registration_id = None
+    document.flowfile_settings.hub_origin = None
+    body = {
+        "definition": document.model_dump(mode="json"),
+        "base_version": None,
+        "message": request.message,
+        "name": name,
+        "namespace_id": request.namespace_id,
+    }
+    try:
+        published = client.publish(hub_url, token, flow_uuid, body)
+    except (HubUnreachable, HubRefused, HubVersionRefused) as e:
+        raise _hub_error(e) from e
+
+    new_flow_id = _become_new_flow(flow, target, namespace_id, published, hub_url, current_user)
+    return HubPublishOut(version=published["version"], name=published["name"], flow_id=new_flow_id)
+
+
+def _new_flow_home(flow_uuid: str, name: str, flow_path: str, current_user) -> tuple[str, int | None]:
+    """The file the open flow moves to once it is the new hub flow, and the namespace it is registered in here.
+
+    It is the file ``open_from_hub`` would write for the new flow: a working copy where the open flow is one, else the
+    caller's local copy path, registered under the new uuid where this install's catalog takes people's work. So a
+    later open of the new flow finds this file, and a later open of the original finds the original's own.
+    """
+    registers = table_sources.local_catalog_offered()
+    if not registers and is_working_copy(flow_path):
+        target, namespace_id = _working_copy_path(flow_uuid, current_user), None
+    else:
+        target, _ = _local_copy_path(flow_uuid, name, current_user)
+        namespace_id = _local_flows_namespace_id() if registers else None
+    try:
+        require_flow_save_permitted(target, namespace_id, current_user)
+    except NotAuthorizedError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from None
+    try:
+        target = registered_flow_path(target)
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from None
+    if namespace_id is not None and find_registration_by_name(name, namespace_id) is not None:
+        raise HTTPException(
+            status_code=409, detail=f"This install already has a local flow named '{name}'. Pick another name."
+        )
+    return target, namespace_id
+
+
+def _become_new_flow(flow, target: str, namespace_id: int | None, published: dict, hub_url: str, current_user) -> int:
+    """Move the open flow to ``target`` as a Save As does (new flow id, ``flow_rekeyed`` on the change feed), stamped
+    with the new hub flow's origin and carrying its name; the original's file and registration stay as they were. A
+    move that fails leaves the open flow on its own origin, so its next publish is still the original's next version."""
+    name = published["name"]
+    flow_uuid = published["flow_uuid"]
+    previous_origin = flow.flow_settings.hub_origin
+    flow.flow_settings.hub_origin = schemas.HubOrigin(
+        hub_url=hub_url, flow_uuid=flow_uuid, version=published["version"]
+    )
+
+    def _register(path: str, _name: str, user_id: int | None) -> None:
+        register_flow_in_namespace(path, name, user_id, namespace_id, requesting_user=current_user, flow_uuid=flow_uuid)
+
+    def _adopt_name(graph) -> None:
+        resolve_source_registration_id(graph)
+        # A save to a new path names the flow after the file; the new flow keeps the name it has on the hub.
+        graph.__name__ = name
+        graph.flow_settings.name = name
+
+    try:
+        new_flow_id = flow_file_handler.save_as_flow(
+            flow_id=flow.flow_id,
+            new_path=target,
+            user_id=current_user.id,
+            on_catalog_register=_register if namespace_id is not None else None,
+            on_resolve_registration=_adopt_name,
+        )
+    except (FlowPathNamespaceCollision, FlowNameNamespaceCollision, FlowExistsError) as err:
+        flow.flow_settings.hub_origin = previous_origin
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except NotAuthorizedError as err:
+        flow.flow_settings.hub_origin = previous_origin
+        raise HTTPException(status_code=403, detail=str(err)) from None
+    except NamespaceNotFoundError:
+        flow.flow_settings.hub_origin = previous_origin
+        raise HTTPException(status_code=404, detail="Namespace not found") from None
+    except Exception:
+        flow.flow_settings.hub_origin = previous_origin
+        raise
+    flow.save_note = None
+    sync_api_compatibility(flow)
+    return new_flow_id
 
 
 def _local_copy_path(flow_uuid: str, name: str, current_user) -> tuple[str, str]:

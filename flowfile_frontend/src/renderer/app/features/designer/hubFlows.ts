@@ -3,6 +3,19 @@ import type { HubFlowVersion, HubRefusal, LocalPathUse } from "../../api/hubFlow
 
 export const publishedLabel = (version: number): string => `Published as version ${version}`;
 
+/** The name a new flow made from an open one starts with. */
+export const newFlowName = (name: string | null | undefined): string => {
+  const base = (name ?? "").trim();
+  return base ? `${base} copy` : "";
+};
+
+export const PUBLISH_AS_NEW_NOTE =
+  "A new flow at version 1 in the schema you pick. This tab becomes the new flow; the original stays on the hub as it is, with its versions, schedules and run history.";
+
+/** What a publish as a new flow says once the hub took it. */
+export const publishedAsNewHint = (name: string, version: number): string =>
+  `${name} is a new flow on the hub at version ${version}. This tab is that flow now, so your next publish builds on it; the original is unchanged.`;
+
 /** One warning line per node that reads or writes a path on this machine. */
 export const warningLines = (uses: LocalPathUse[]): string[] =>
   uses.map((use) => `Uses a local file path: ${use.label} (${use.path})`);

@@ -26,11 +26,17 @@ export interface HubPublishInput {
   message?: string;
   /** The version to publish over after a stale-base refusal. */
   overwrite_version?: number;
+  /** Publish a flow already on the hub as a new flow; the open flow then becomes that flow. */
+  as_new?: boolean;
+  /** The new flow's name, with `as_new`; the flow's own name when left out. */
+  name?: string;
 }
 
 export interface HubPublishResult {
   version: number;
   name: string;
+  /** The open flow's new id, answered only when the publish moved it (a publish as a new flow). */
+  flow_id?: number;
 }
 
 export interface HubOpenInput {

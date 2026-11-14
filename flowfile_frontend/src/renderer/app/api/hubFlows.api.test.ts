@@ -42,6 +42,22 @@ describe("the routes", () => {
     expect(mocks.post).toHaveBeenCalledWith("/hub_client/publish", input);
   });
 
+  it("posts a publish as a new flow with its name and place, and answers the moved flow's id", async () => {
+    mocks.post.mockResolvedValueOnce({ data: { version: 1, name: "Sales copy", flow_id: 77 } });
+    const input = {
+      flow_id: 42,
+      as_new: true,
+      name: "Sales copy",
+      namespace_id: 3,
+      message: "split off",
+    };
+
+    const result = await publishToHub(input);
+
+    expect(mocks.post).toHaveBeenCalledWith("/hub_client/publish", input);
+    expect(result).toEqual({ version: 1, name: "Sales copy", flow_id: 77 });
+  });
+
   it("posts an open to /hub_client/open", async () => {
     const input = { flow_uuid: "u", version: 2, replace: true };
 

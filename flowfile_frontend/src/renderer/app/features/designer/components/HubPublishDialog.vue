@@ -17,7 +17,10 @@
           :title="publishedLabel(result.version)"
           data-testid="hub-published"
         />
-        <p class="hub-dialog-hint">
+        <p v-if="publishedAsNew" class="hub-dialog-hint" data-testid="hub-published-as-new">
+          {{ publishedAsNewHint(result.name, result.version) }}
+        </p>
+        <p v-else class="hub-dialog-hint">
           {{ result.name }} is on the hub as version {{ result.version }}. The flow was saved with
           that version, so your next publish builds on it.
         </p>
@@ -58,7 +61,32 @@
       </template>
 
       <template v-else>
-        <div v-if="!hubOrigin" class="form-group">
+        <template v-if="hubOrigin && !asNew">
+          <p class="hub-dialog-hint">
+            This flow is on the hub as version {{ hubOrigin.version }}; this publish becomes the
+            next one.
+          </p>
+          <el-button
+            link
+            type="primary"
+            size="small"
+            class="hub-dialog-switch"
+            data-testid="hub-publish-as-new"
+            @click="startAsNew"
+          >
+            Publish as a new flow instead
+          </el-button>
+        </template>
+        <div v-if="asNew" class="form-group">
+          <label>Name</label>
+          <el-input
+            v-model="newName"
+            size="small"
+            placeholder="Name of the new flow"
+            data-testid="hub-publish-new-name"
+          />
+        </div>
+        <div v-if="!hubOrigin || asNew" class="form-group">
           <label>Namespace</label>
           <catalog-namespace-picker
             ref="picker"
@@ -82,10 +110,21 @@
             Use the hub's default namespace instead
           </el-button>
         </div>
-        <p v-else class="hub-dialog-hint">
-          This flow is on the hub as version {{ hubOrigin.version }}; this publish becomes the next
-          one.
-        </p>
+        <template v-if="asNew">
+          <p class="hub-dialog-hint" data-testid="hub-publish-new-note">
+            {{ PUBLISH_AS_NEW_NOTE }}
+          </p>
+          <el-button
+            link
+            type="primary"
+            size="small"
+            class="hub-dialog-switch"
+            data-testid="hub-publish-next-version"
+            @click="asNew = false"
+          >
+            Publish the next version instead
+          </el-button>
+        </template>
         <div class="form-group">
           <label>Message</label>
           <el-input
@@ -151,11 +190,11 @@
             type="primary"
             size="small"
             :loading="busy"
-            :disabled="loading"
+            :disabled="loading || (asNew && !newName.trim())"
             data-testid="hub-publish"
             @click="publish()"
           >
-            Publish
+            {{ asNew ? "Publish as new flow" : "Publish" }}
           </el-button>
         </template>
       </div>
@@ -178,9 +217,12 @@ import type { HubOrigin } from "../../../types";
 import { detailOf } from "../../../utils/apiDetail";
 import {
   OPENED_FROM_HUB,
+  PUBLISH_AS_NEW_NOTE,
   conflictLabel,
+  newFlowName,
   openInsteadLabel,
   publishOverLabel,
+  publishedAsNewHint,
   publishedLabel,
   refusalMessage,
   versionFacts,
@@ -192,6 +234,8 @@ const props = defineProps<{
   visible: boolean;
   flowId: number;
   hubOrigin: HubOrigin | null;
+  /** The open flow's name, which a new flow's name starts from. */
+  flowName?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -210,6 +254,9 @@ const message = ref("");
 const warnings = ref<string[]>([]);
 const result = ref<HubPublishResult | null>(null);
 const conflict = ref<Extract<HubRefusal, { kind: "stale_base" }> | null>(null);
+const asNew = ref(false);
+const newName = ref("");
+const publishedAsNew = ref(false);
 
 watch(
   () => props.visible,
@@ -231,6 +278,9 @@ async function prepare() {
   message.value = "";
   namespaceId.value = null;
   warnings.value = [];
+  asNew.value = false;
+  newName.value = "";
+  publishedAsNew.value = false;
   try {
     warnings.value = warningLines(await publishCheck(props.flowId));
   } catch (err) {
@@ -240,17 +290,27 @@ async function prepare() {
   }
 }
 
+function startAsNew() {
+  asNew.value = true;
+  error.value = "";
+  namespaceId.value = null;
+  if (!newName.value.trim()) newName.value = newFlowName(props.flowName);
+}
+
 async function publish(overwriteVersion?: number) {
   busy.value = true;
   error.value = "";
+  const asNewFlow = Boolean(props.hubOrigin) && asNew.value;
   try {
     const published = await publishToHub({
       flow_id: props.flowId,
-      namespace_id: props.hubOrigin ? null : picker.value?.hubIdOf(namespaceId.value),
+      namespace_id: props.hubOrigin && !asNewFlow ? null : picker.value?.hubIdOf(namespaceId.value),
       message: message.value.trim() || undefined,
       overwrite_version: overwriteVersion,
+      ...(asNewFlow ? { as_new: true, name: newName.value.trim() } : {}),
     });
     conflict.value = null;
+    publishedAsNew.value = asNewFlow;
     result.value = published;
     emit("published", published);
   } catch (err) {
@@ -325,6 +385,11 @@ async function openInstead() {
 .form-group .hub-dialog-hint,
 .form-group .hub-dialog-clear {
   margin-top: var(--spacing-2);
+}
+
+.hub-dialog-switch {
+  align-self: flex-start;
+  margin-top: calc(-1 * var(--spacing-2));
 }
 
 .hub-dialog-warning {
