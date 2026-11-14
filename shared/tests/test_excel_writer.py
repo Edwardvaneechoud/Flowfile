@@ -1,4 +1,5 @@
 import datetime
+import errno
 import multiprocessing
 import os
 import time
@@ -9,6 +10,7 @@ import polars as pl
 import pytest
 from openpyxl.utils.exceptions import IllegalCharacterError
 
+import shared.excel_writer as excel_writer
 from shared.excel_writer import write_excel_output
 
 
@@ -145,3 +147,39 @@ def test_parallel_update_writers_keep_every_sheet(tmp_path, preseeded):
     assert set(fastexcel.read_excel(path).sheet_names) == expected
     if os.name != "nt":
         assert list(tmp_path.glob("*.lock")) == []
+
+
+def _deny_lockfile_open(monkeypatch, times):
+    """Make the first *times* opens of a ``.lock`` file fail like Windows does mid-unlink."""
+    real_open = os.open
+    denied = []
+
+    def open_or_deny(path, flags, *args, **kwargs):
+        if str(path).endswith(".lock") and (times is None or len(denied) < times):
+            denied.append(path)
+            raise PermissionError(errno.EACCES, "Permission denied", path)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(excel_writer, "_RETRY_DENIED_LOCKFILE_OPEN", True)
+    monkeypatch.setattr(excel_writer.os, "open", open_or_deny)
+    return denied
+
+
+def test_update_retries_a_denied_lockfile_open(tmp_path, monkeypatch):
+    """On Windows a lockfile open denied while another writer deletes it is retried, not raised."""
+    path = tmp_path / "denied.xlsx"
+    denied = _deny_lockfile_open(monkeypatch, times=1)
+    write_excel_output(pl.DataFrame({"a": [1]}), str(path), sheet_name="A", write_mode="update")
+    assert len(denied) == 1
+    assert fastexcel.read_excel(str(path)).sheet_names == ["A"]
+
+
+def test_update_times_out_when_lockfile_open_stays_denied(tmp_path, monkeypatch):
+    """A lockfile open that is never allowed ends in the lock timeout, with the workbook untouched."""
+    path = tmp_path / "never.xlsx"
+    denied = _deny_lockfile_open(monkeypatch, times=None)
+    monkeypatch.setattr(excel_writer, "_LOCK_TIMEOUT_S", 0.2)
+    with pytest.raises(TimeoutError, match="Timed out waiting for the excel write lock"):
+        write_excel_output(pl.DataFrame({"a": [1]}), str(path), sheet_name="A", write_mode="update")
+    assert len(denied) > 1
+    assert not path.exists()
