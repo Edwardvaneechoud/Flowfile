@@ -159,33 +159,6 @@
       "port": 8086
     },
     {
-      "name": "core-restore",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": [
-        "-c",
-        "D=\"${TMPDIR:-/tmp}/flowfile-e2e-restore\" && mkdir -p \"$D/storage\" \"$D/user\" \"$D/secure\" && FLOWFILE_DB_PATH=\"$D/ff.db\" FLOWFILE_STORAGE_DIR=\"$D/storage\" FLOWFILE_USER_DATA_DIR=\"$D/user\" FLOWFILE_SECURE_STORAGE_PATH=\"$D/secure\" FLOWFILE_INTERNAL_TOKEN=restore-e2e-token FLOWFILE_WORKER_PORT=63599 FLOWFILE_KERNEL_GC=0 FLOWFILE_TELEMETRY=0 poetry run flowfile_core --port 63598"
-      ],
-      "port": 63598
-    },
-    {
-      "name": "worker-restore",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": [
-        "-c",
-        "D=\"${TMPDIR:-/tmp}/flowfile-e2e-restore\" && mkdir -p \"$D/storage\" \"$D/user\" \"$D/secure\" && FLOWFILE_DB_PATH=\"$D/ff.db\" FLOWFILE_STORAGE_DIR=\"$D/storage\" FLOWFILE_USER_DATA_DIR=\"$D/user\" FLOWFILE_SECURE_STORAGE_PATH=\"$D/secure\" FLOWFILE_INTERNAL_TOKEN=restore-e2e-token FLOWFILE_WORKER_LOCAL_FILES=1 CORE_PORT=63598 FLOWFILE_TELEMETRY=0 poetry run flowfile_worker --port 63599 --core-port 63598"
-      ],
-      "port": 63599
-    },
-    {
-      "name": "web-restore",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": [
-        "-c",
-        "FLOWFILE_CORE_PORT=63598 npm run dev:web --prefix flowfile_frontend -- --port 8088"
-      ],
-      "port": 8088
-    },
-    {
       "name": "core-ff",
       "runtimeExecutable": "C:/Users/edwar/miniconda3/envs/ff/Scripts/flowfile_core.cmd",
       "runtimeArgs": [],

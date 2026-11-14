@@ -477,6 +477,36 @@ class TestRestoreTableVersionApi:
         response = client.post(f"/catalog/tables/{table_id}/restore", json={"version": version})
         assert response.status_code == 422
 
+    def test_below_the_change_feed_floor_422(self, client, tmp_path):
+        from shared.delta_utils import enable_change_data_feed
+
+        table_id = _make_delta_table(tmp_path)
+        with get_db_context() as db:
+            table = db.get(CatalogTable, table_id)
+            floor = enable_change_data_feed(table.file_path)
+            table.cdc_enabled = True
+            table.cdc_enabled_version = floor
+            db.commit()
+        _overwrite_table(table_id, pl.DataFrame({"id": [9], "text": ["z"]}))
+        response = client.post(f"/catalog/tables/{table_id}/restore", json={"version": floor - 1})
+        assert response.status_code == 422
+        assert "change feed" in response.text
+        history = client.get(f"/catalog/tables/{table_id}/history").json()
+        assert history["current_version"] == floor + 1
+
+    def test_vacuumed_version_422(self, client, tmp_path):
+        from shared.delta_utils import vacuum_delta
+
+        table_id = _make_delta_table(tmp_path)
+        _overwrite_table(table_id, pl.DataFrame({"id": [9]}))
+        with get_db_context() as db:
+            path = db.get(CatalogTable, table_id).file_path
+        vacuum_delta(path, retention_hours=0, dry_run=False)
+        response = client.post(f"/catalog/tables/{table_id}/restore", json={"version": 0})
+        assert response.status_code == 422
+        assert "removed by a vacuum" in response.text
+        assert pl.read_delta(path)["id"].to_list() == [9]
+
     def test_negative_version_rejected_by_the_schema(self, client, tmp_path):
         table_id = _make_delta_table(tmp_path)
         response = client.post(f"/catalog/tables/{table_id}/restore", json={"version": -1})
