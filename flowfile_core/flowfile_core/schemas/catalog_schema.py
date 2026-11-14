@@ -223,12 +223,14 @@ class FlowRunDetail(FlowRunOut):
     """Extended run detail that includes the YAML flow snapshot and node results.
 
     ``flow_snapshot`` is the run's own snapshot, else the document of the published version it names; ``log_url``
-    is the executor's log route for a run whose log is kept elsewhere, when this core can name it.
+    is the executor's log route for a run whose log is kept elsewhere, when this core can name it, and
+    ``log_page_url`` the run's page in the executor's editor, which is what a person opens.
     """
 
     flow_snapshot: str | None = None
     node_results_json: str | None = None
     log_url: str | None = None
+    log_page_url: str | None = None
 
 
 # ==================== Favorite / Follow Schemas ====================
