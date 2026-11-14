@@ -15,6 +15,8 @@ import type {
   CatalogTableKeyColumnRequest,
   CatalogTableKeyColumnResponse,
   CatalogTablePreview,
+  CatalogTableRestoreRequest,
+  CatalogTableRestoreResponse,
   CatalogTableUpdate,
   CdcCursor,
   CdcCursorResetRequest,
@@ -473,6 +475,18 @@ export class CatalogApi {
   ): Promise<CatalogTableKeyColumnResponse> {
     const response = await axios.post<CatalogTableKeyColumnResponse>(
       `/catalog/tables/${tableId}/key-column`,
+      body,
+    );
+    return response.data;
+  }
+
+  /** Restore a table to an earlier Delta version (one RESTORE commit; history is kept). */
+  static async restoreTableVersion(
+    tableId: number,
+    body: CatalogTableRestoreRequest,
+  ): Promise<CatalogTableRestoreResponse> {
+    const response = await axios.post<CatalogTableRestoreResponse>(
+      `/catalog/tables/${tableId}/restore`,
       body,
     );
     return response.data;

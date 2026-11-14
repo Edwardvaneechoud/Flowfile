@@ -103,7 +103,11 @@ import { useTutorialStore } from "../../../stores/tutorial-store";
 import { gettingStartedTutorial } from "../../tutorial/tutorials";
 import { designerHelp } from "../../../views/DesignerView/designerHelp";
 import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
-import { lastCatalogQuery } from "../../../views/CatalogView/catalogLastLocation";
+import {
+  catalogTabLocation,
+  lastCatalogQuery,
+  lastCatalogQueryByTab,
+} from "../../../views/CatalogView/catalogLastLocation";
 import { catalogSectionOfTab } from "../../../views/CatalogView/catalogTabs";
 import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
 import { aiSettingsHelp } from "../../../views/AiSettingsView/aiSettingsHelp";
@@ -173,9 +177,18 @@ const items = computed(() => {
   const decorate = (entry: INavigationRoute): INavigationRoute =>
     entry.name === "project" ? { ...entry, statusDot: projectDot } : entry;
 
+  // A catalog tab's entry reopens where that tab was left (its open table or flow).
+  const currentCatalogTab =
+    route.name === "catalog" ? (route.query.tab as string | undefined) : undefined;
+  const byTab = lastCatalogQueryByTab.value;
+  const resume = (entry: INavigationRoute): INavigationRoute =>
+    entry.name === "catalog" && entry.query?.tab
+      ? { ...entry, query: catalogTabLocation(entry.query.tab, currentCatalogTab, byTab) }
+      : entry;
+
   return NavigationRoutes.routes.filter(visible).map((route) => {
     if (!route.children) return decorate(route);
-    const children = route.children.filter(visible).map(decorate);
+    const children = route.children.filter(visible).map(decorate).map(resume);
     const parent: INavigationRoute = { ...route };
     // A child's status dot (project sync state) also shows on the collapsed rail icon.
     const statusDot = children.find((c) => c.statusDot)?.statusDot;

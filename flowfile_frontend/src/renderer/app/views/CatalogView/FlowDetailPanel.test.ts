@@ -90,6 +90,7 @@ const mount = async (row: FlowRegistration) => {
   setActivePinia(pinia);
   const store = useCatalogStore();
   store.flowSchedules = [{ id: -7, registration_id: row.id, enabled: true } as FlowSchedule];
+  store.flowSchedulesFlowId = row.id;
   const favourited = vi.fn();
   const host = await mountIn(FlowDetailPanel, {
     props: { flow: row, artifacts: [], onToggleFavorite: favourited },
@@ -129,6 +130,7 @@ describe("FlowDetailPanel", () => {
     setActivePinia(pinia);
     const store = useCatalogStore();
     store.flowSchedules = [{ id: -7, registration_id: -201, enabled: true } as FlowSchedule];
+    store.flowSchedulesFlowId = -201;
     store.activeRuns = [{ id: -9, registration_id: -201 } as any];
     const running = await mountIn(FlowDetailPanel, {
       props: { flow: hubFlow, artifacts: [] },
@@ -186,5 +188,24 @@ describe("FlowDetailPanel", () => {
       "Add",
     );
     expect(host.querySelector("[data-testid='api-panel']")).not.toBeNull();
+  });
+
+  it("holds the schedules and artifacts sections while they still hold another flow's", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const store = useCatalogStore();
+    store.flowSchedules = [{ id: 3, registration_id: 5, enabled: true } as FlowSchedule];
+    store.flowSchedulesFlowId = 5;
+    store.flowArtifactsFlowId = 5;
+    const host = await mountIn(FlowDetailPanel, {
+      props: { flow: flow({ id: 6 }), artifacts: [{ id: 1, name: "model" }] },
+      pinia,
+      stubs,
+    });
+
+    expect(host.querySelector("[data-testid='schedules']")).toBeNull();
+    expect(host.querySelector("[data-testid='flow-schedules-pending']")).not.toBeNull();
+    expect(host.querySelector("[data-testid='flow-artifacts-pending']")).not.toBeNull();
+    expect(host.querySelector(".artifact-row")).toBeNull();
   });
 });
