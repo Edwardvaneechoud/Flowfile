@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 452" role="img" aria-label="One worker, two adapters, both ending in the same route bodies of flowfile_worker/service.py. In core's process, EmbeddedWorkerBackend, id local, calls the service.py bodies directly, an HTTPException becoming a typed error; there spawner.in_process decides where a job runs: yes for a headless run or Python, which runs it in this process, no for the pip server, which sends it to the warm pool or a child. WorkerBackend, ids worker and worker:name, also in core's process, reaches protocol_routes.py in the worker process over the /v1 routes on HTTP and WebSocket, and the worker's service.py bodies run each job in the warm pool or a child.">
+  <defs>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+  </defs>
+  <style>
+    .cluster { fill:#eef5fd; stroke:#1D76D6; stroke-width:1.7; }
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .hub   { fill:#ffffff; stroke:#1D76D6; stroke-width:2.3; }
+    .boxg  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .dia   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .ctitle{ font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:14px; fill:#233588; letter-spacing:0.3px; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13px; fill:#233588; }
+    .tm    { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-weight:600; font-size:12px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .mono  { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10px; fill:#5b6470; }
+    .q     { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10.5px; fill:#233588; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#4a5578; }
+    .am    { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10px; }
+    .same  { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:10.5px; fill:#233588; }
+    .arw   { fill:none; stroke:#9aa8b6; stroke-width:1.7; stroke-linejoin:round; }
+    .twin  { fill:none; stroke:#233588; stroke-width:1.4; stroke-dasharray:1.5 4; stroke-linecap:round; }
+    .flt   { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#8a93a3; }
+    @media (prefers-color-scheme: dark) { .flt { fill:#aeb6c0; } }
+    [data-md-color-scheme="slate"] .flt { fill:#aeb6c0; }
+  </style>
+
+  <!-- ============ PROCESS CLUSTERS ============ -->
+  <rect class="cluster" x="20" y="20" width="536" height="412" rx="16"/>
+  <text class="ctitle" x="40" y="48">Core&#8217;s process</text>
+  <rect class="cluster" x="640" y="20" width="340" height="412" rx="16"/>
+  <text class="ctitle" x="660" y="48">Worker process</text>
+
+  <!-- ============ EDGES ============ -->
+  <!-- embedded -> service : direct call -->
+  <path class="arw" d="M150,134 V198" marker-end="url(#ah)"/>
+  <text class="albl" x="160" y="160">direct call,</text>
+  <text class="albl" x="160" y="174"><tspan class="am">HTTPException</tspan> &#8594; typed error</text>
+  <!-- service -> decision -->
+  <path class="arw" d="M150,258 V284" marker-end="url(#ah)"/>
+  <!-- decision -> outcomes -->
+  <path class="arw" d="M236,320 H302" marker-end="url(#ah)"/>
+  <text class="albl" x="270" y="312" text-anchor="middle">yes</text>
+  <path class="arw" d="M150,356 V394 H302" marker-end="url(#ah)"/>
+  <text class="albl" x="162" y="378">no</text>
+  <!-- worker backend -> routes : /v1 over HTTP + WS -->
+  <path class="arw" d="M536,104 H656" marker-end="url(#ah)"/>
+  <text class="flt" x="598" y="94" text-anchor="middle"><tspan class="am">/v1</tspan> over</text>
+  <text class="flt" x="598" y="124" text-anchor="middle">HTTP + WS</text>
+  <!-- routes -> service -> pool -->
+  <path class="arw" d="M810,134 V198" marker-end="url(#ah)"/>
+  <path class="arw" d="M810,258 V350" marker-end="url(#ah)"/>
+  <!-- the same functions on both sides -->
+  <path class="twin" d="M280,228 H660"/>
+  <text class="same" x="470" y="220" text-anchor="middle">the same functions</text>
+
+  <!-- ============ CORE'S PROCESS ============ -->
+  <g>
+    <rect class="box" x="40" y="74" width="232" height="60" rx="10"/>
+    <text class="tm" x="56" y="98">EmbeddedWorkerBackend</text>
+    <text class="mono" x="56" y="117">id local</text>
+  </g>
+  <g>
+    <rect class="box" x="306" y="74" width="230" height="60" rx="10"/>
+    <text class="tm" x="322" y="98">WorkerBackend</text>
+    <text class="mono" x="322" y="117">ids worker, worker:&lt;name&gt;</text>
+  </g>
+  <g>
+    <rect class="hub" x="40" y="198" width="240" height="60" rx="10"/>
+    <text class="t" x="56" y="222">service.py bodies</text>
+    <text class="s" x="56" y="240">called in this process</text>
+  </g>
+  <g>
+    <polygon class="dia" points="150,284 236,320 150,356 64,320"/>
+    <text class="q" x="150" y="324" text-anchor="middle">spawner.in_process?</text>
+  </g>
+  <g>
+    <rect class="boxg" x="306" y="294" width="230" height="52" rx="10"/>
+    <text class="t" x="322" y="315">Run in this process</text>
+    <text class="s" x="322" y="333">a headless run, Python</text>
+  </g>
+  <g>
+    <rect class="boxg" x="306" y="368" width="230" height="52" rx="10"/>
+    <text class="t" x="322" y="389">Warm pool / child</text>
+    <text class="s" x="322" y="407">the pip server</text>
+  </g>
+
+  <!-- ============ WORKER PROCESS ============ -->
+  <g>
+    <rect class="box" x="660" y="74" width="300" height="60" rx="10"/>
+    <text class="t" x="676" y="98">protocol_routes.py</text>
+    <text class="s" x="676" y="117">the <tspan class="am">/v1</tspan> routes and submit socket</text>
+  </g>
+  <g>
+    <rect class="hub" x="660" y="198" width="300" height="60" rx="10"/>
+    <text class="t" x="676" y="222">service.py bodies</text>
+    <text class="s" x="676" y="240">behind the routes</text>
+  </g>
+  <g>
+    <rect class="boxg" x="660" y="354" width="300" height="52" rx="10"/>
+    <text class="t" x="676" y="375">Warm pool / child</text>
+    <text class="s" x="676" y="393">every job</text>
+  </g>
+</svg>

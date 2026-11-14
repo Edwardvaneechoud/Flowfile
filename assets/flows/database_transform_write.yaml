@@ -1,0 +1,224 @@
+flowfile_version: 0.12.8
+flowfile_id: 1
+flowfile_name: Language profitability
+flowfile_settings:
+  description: null
+  execution_mode: Performance
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: database_reader
+  is_start_node: true
+  description: Read from public.movies
+  node_reference: null
+  x_position: 0
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [3]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    database_settings:
+      connection_mode: reference
+      database_connection: null
+      database_connection_name: analytics-postgres
+      schema_name: public
+      table_name: movies
+      query: null
+      query_mode: table
+    fields:
+    - name: budget
+      data_type: Int64
+    - name: genres
+      data_type: String
+    - name: homepage
+      data_type: String
+    - name: id
+      data_type: Int32
+    - name: keywords
+      data_type: String
+    - name: original_language
+      data_type: String
+    - name: original_title
+      data_type: String
+    - name: overview
+      data_type: String
+    - name: popularity
+      data_type: Float64
+    - name: production_companies
+      data_type: String
+    - name: production_countries
+      data_type: String
+    - name: release_date
+      data_type: Datetime(time_unit='us', time_zone=None)
+    - name: revenue
+      data_type: Int64
+    - name: runtime
+      data_type: Float64
+    - name: spoken_languages
+      data_type: String
+    - name: status
+      data_type: String
+    - name: tagline
+      data_type: String
+    - name: title
+      data_type: String
+    - name: vote_average
+      data_type: Float64
+    - name: vote_count
+      data_type: Int32
+- id: 3
+  type: formula
+  is_start_node: false
+  description: profit = ([revenue] - [budget])
+  node_reference: null
+  x_position: 200
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [4]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    function:
+      field:
+        name: profit
+        data_type: Auto
+      function: ([revenue] - [budget])
+- id: 4
+  type: polars_code
+  is_start_node: false
+  description: input_df.filter((((pl.col('budget') > 0) & (pl.col('revenue') > 0))))
+  node_reference: null
+  x_position: 400
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: [5]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    polars_code_input:
+      polars_code: input_df.filter((((pl.col('budget') > 0) & (pl.col('revenue') >
+        0))))
+- id: 5
+  type: group_by
+  is_start_node: false
+  description: Aggregate after grouping by "original_language"
+  node_reference: null
+  x_position: 600
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [4]
+  outputs: [6]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    groupby_input:
+      agg_cols:
+      - old_name: original_language
+        agg: groupby
+        new_name: original_language
+        output_type: null
+      - old_name: title
+        agg: count
+        new_name: films
+        output_type: Int64
+      - old_name: vote_average
+        agg: mean
+        new_name: avg_score
+        output_type: Float64
+      - old_name: profit
+        agg: sum
+        new_name: total_profit
+        output_type: null
+      - old_name: profit
+        agg: median
+        new_name: median_profit
+        output_type: Float64
+- id: 6
+  type: polars_code
+  is_start_node: false
+  description: input_df.filter(((pl.col('films') >= 10)))
+  node_reference: null
+  x_position: 800
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [5]
+  outputs: [7]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    polars_code_input:
+      polars_code: input_df.filter(((pl.col('films') >= 10)))
+- id: 7
+  type: sort
+  is_start_node: false
+  description: Sort by total_profit
+  node_reference: null
+  x_position: 1000
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [6]
+  outputs: [8]
+  output_handles: [output-0]
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    sort_input:
+    - column: total_profit
+      how: desc
+- id: 8
+  type: database_writer
+  is_start_node: false
+  description: Write to public.language_profitability (replace)
+  node_reference: null
+  x_position: 1200
+  y_position: 100
+  group_id: null
+  left_input_id: null
+  right_input_id: null
+  input_ids: [7]
+  outputs: []
+  output_handles: []
+  input_connections: null
+  setting_input:
+    cache_results: false
+    output_field_config: null
+    database_write_settings:
+      connection_mode: reference
+      database_connection: null
+      database_connection_name: analytics-postgres
+      table_name: language_profitability
+      schema_name: public
+      if_exists: replace
+groups: []

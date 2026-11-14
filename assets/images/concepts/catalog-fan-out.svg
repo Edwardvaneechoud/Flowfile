@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 500" role="img" aria-label="One published catalog table fans out to three consumers: the SQL editor queries it, a Graphic Walker visualization charts it, and a saved virtual table derives from it — publish once, analyze many ways.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/>
+      <stop offset="0.55" stop-color="#26A8E0"/>
+      <stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto">
+      <path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/>
+    </marker>
+  </defs>
+  <style>
+    .box  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .chip { fill:#eef0f2; }
+    .ic   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw  { fill:none; stroke:#ffffff; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .t    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .s    { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .hubt { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:19px; fill:#ffffff; }
+    .hubs { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#eaf6ff; }
+    .arwc { fill:none; stroke:#2DD5D3; stroke-width:3; }
+    .albl { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+  </style>
+
+  <!-- ============ CATALOG TABLE (hero) ============ -->
+  <rect x="92" y="178" width="216" height="150" rx="16" fill="url(#brand)"/>
+  <g class="icw" transform="translate(178,197) scale(1.95)">
+    <rect x="2.5" y="3.5" width="19" height="16" rx="2.2"/>
+    <line x1="2.5" y1="8.5" x2="21.5" y2="8.5"/>
+    <line x1="9" y1="8.5" x2="9" y2="19.5"/>
+    <line x1="15" y1="8.5" x2="15" y2="19.5"/>
+    <line x1="2.5" y1="14" x2="21.5" y2="14"/>
+  </g>
+  <text class="hubt" x="200" y="288" text-anchor="middle">Catalog table</text>
+  <text class="hubs" x="200" y="308" text-anchor="middle">one live copy</text>
+
+  <!-- ============ SQL EDITOR ============ -->
+  <g>
+    <rect class="box" x="685" y="50" width="205" height="100" rx="11"/>
+    <rect class="chip" x="700" y="77" width="46" height="46" rx="9"/>
+    <g class="ic" transform="translate(710,86)">
+      <ellipse cx="10.5" cy="6" rx="6.5" ry="2.5"/>
+      <path d="M4,6 V14 C4,15.4 6.9,16.5 10.5,16.5 C14.1,16.5 17,15.4 17,14 V6"/>
+      <path d="M4,10 C4,11.4 6.9,12.5 10.5,12.5 C14.1,12.5 17,11.4 17,10"/>
+      <circle cx="16.8" cy="16.8" r="3.6" fill="#eef0f2"/>
+      <line x1="19.4" y1="19.4" x2="22.2" y2="22.2"/>
+    </g>
+    <text class="t" x="758" y="94">SQL editor</text>
+    <text class="s" x="758" y="112">query the table</text>
+  </g>
+
+  <!-- ============ VISUALIZATION ============ -->
+  <g>
+    <rect class="box" x="685" y="200" width="205" height="100" rx="11"/>
+    <rect class="chip" x="700" y="227" width="46" height="46" rx="9"/>
+    <g class="ic" transform="translate(710,236)">
+      <line x1="4" y1="19" x2="20.5" y2="19"/>
+      <line x1="4" y1="19" x2="4" y2="6"/>
+      <line x1="7.6" y1="19" x2="7.6" y2="13" stroke-width="2.8"/>
+      <line x1="12" y1="19" x2="12" y2="8.5" stroke-width="2.8"/>
+      <line x1="16.4" y1="19" x2="16.4" y2="11" stroke-width="2.8"/>
+    </g>
+    <text class="t" x="758" y="244">Visualization</text>
+    <text class="s" x="758" y="262">chart the results</text>
+  </g>
+
+  <!-- ============ VIRTUAL TABLE ============ -->
+  <g>
+    <rect class="box" x="685" y="350" width="205" height="100" rx="11"/>
+    <rect class="chip" x="700" y="377" width="46" height="46" rx="9"/>
+    <g class="ic" transform="translate(710,386)">
+      <rect x="8" y="3.5" width="12.5" height="12.5" rx="2"/>
+      <line x1="8" y1="7.6" x2="20.5" y2="7.6"/>
+      <rect x="3.5" y="8" width="12.5" height="12.5" rx="2" fill="#eef0f2"/>
+      <line x1="3.5" y1="12.1" x2="16" y2="12.1"/>
+      <line x1="9.75" y1="12.1" x2="9.75" y2="20.5"/>
+    </g>
+    <text class="t" x="758" y="394">Virtual table</text>
+    <text class="s" x="758" y="412">saved view, never stale</text>
+  </g>
+
+  <!-- ============ FAN-OUT ARROWS ============ -->
+  <path class="arwc" d="M308,232 C450,178 560,120 681,102" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M310,253 C450,251 560,250 681,250" marker-end="url(#ahc)"/>
+  <path class="arwc" d="M308,274 C450,328 560,388 681,400" marker-end="url(#ahc)"/>
+
+  <!-- ============ ARROW LABELS ============ -->
+  <text class="albl" x="470" y="150" text-anchor="middle">query</text>
+  <text class="albl" x="470" y="242" text-anchor="middle">chart</text>
+  <text class="albl" x="470" y="360" text-anchor="middle">save as view</text>
+</svg>

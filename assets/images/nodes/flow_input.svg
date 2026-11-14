@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#15B6C9"/><stop offset="1" stop-color="#0C8FA0"/></linearGradient></defs>
+  <circle cx="50" cy="50" r="48" fill="url(#bg)"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round">
+    <!-- bracket the arrow enters (subflow boundary) -->
+    <path d="M58 26 H70 a4 4 0 0 1 4 4 V70 a4 4 0 0 1 -4 4 H58"/>
+    <!-- arrow entering the bracket -->
+    <line x1="24" y1="50" x2="58" y2="50"/>
+    <polyline points="48,40 59,50 48,60"/>
+  </g>
+</svg>

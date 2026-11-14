@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 326" role="img" aria-label="Nodes of one flow on two workers: Read data and Filter data run on the default worker, Group by and Write data on worker:team; where the edge from Filter data to Group by crosses between the workers, the default worker exports the filtered result as parquet into the exchange store under exchange uri, flow id, run id, and worker:team imports it from there for Group by; core deletes the run's folder when the run ends.">
+  <defs>
+    <linearGradient id="gread" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#15B6C9"/><stop offset="1" stop-color="#0C8FA0"/></linearGradient>
+    <linearGradient id="gfilter" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3D9BF2"/><stop offset="1" stop-color="#2376D8"/></linearGradient>
+    <linearGradient id="ggroup" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6E7DF7"/><stop offset="1" stop-color="#4B58DC"/></linearGradient>
+    <linearGradient id="gout" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3A4FA6"/><stop offset="1" stop-color="#243A82"/></linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto"><path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/></marker>
+  </defs>
+  <style>
+    .panel{ fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .box  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .chip { fill:#eef0f2; }
+    .ic   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .t    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .tm   { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-weight:600; font-size:13px; fill:#233588; }
+    .s    { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .mono { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10.5px; fill:#5b6470; }
+    .nm   { font-family:Roboto,Arial,sans-serif; font-weight:500; font-size:11.5px; fill:#5b6470; }
+    .albl { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#8a93a3; }
+    .arw  { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwc { fill:none; stroke:#2DD5D3; stroke-width:3; stroke-linejoin:round; }
+    .gl   { fill:none; stroke:#ffffff; stroke-width:4.5; stroke-linejoin:round; stroke-linecap:round; }
+    @media (prefers-color-scheme: dark) { .albl { fill:#aeb6c0; } }
+    [data-md-color-scheme="slate"] .albl { fill:#aeb6c0; }
+  </style>
+
+  <!-- ============ WORKER PANELS ============ -->
+  <rect class="panel" x="30" y="30" width="380" height="158" rx="16"/>
+  <rect class="panel" x="530" y="30" width="380" height="158" rx="16"/>
+
+  <!-- ============ CROSSING (cyan, behind the nodes) ============ -->
+  <path class="arwc" d="M300,150 V262 H322" marker-end="url(#ahc)"/>
+  <text class="albl" x="310" y="208">export as parquet</text>
+  <path class="arwc" d="M614,262 H640 V156" marker-end="url(#ahc)"/>
+  <text class="albl" x="630" y="208" text-anchor="end">import</text>
+
+  <!-- ============ DEFAULT WORKER ============ -->
+  <g>
+    <rect class="chip" x="46" y="44" width="30" height="30" rx="7"/>
+    <g class="ic" transform="translate(49,47)">
+      <circle cx="12" cy="12" r="5.6"/><circle cx="12" cy="12" r="2.2"/>
+      <line x1="12" y1="3" x2="12" y2="5.4"/><line x1="12" y1="18.6" x2="12" y2="21"/>
+      <line x1="3" y1="12" x2="5.4" y2="12"/><line x1="18.6" y1="12" x2="21" y2="12"/>
+    </g>
+    <text class="t" x="86" y="64">Default worker</text>
+
+    <path class="arw" d="M164,126 H272" marker-end="url(#ah)"/>
+    <!-- Read data -->
+    <g transform="translate(118,104) scale(0.44)">
+      <circle cx="50" cy="50" r="48" fill="url(#gread)"/>
+      <g class="gl">
+        <rect x="28" y="26" width="44" height="38" rx="5" fill="#FFFFFF" fill-opacity="0.16"/>
+        <line x1="28" y1="39" x2="72" y2="39" stroke-width="4"/>
+        <line x1="46" y1="39" x2="46" y2="64" stroke-width="3.5"/>
+        <line x1="28" y1="52" x2="72" y2="52" stroke-width="3.5"/>
+        <line x1="50" y1="68" x2="50" y2="82"/>
+        <polyline points="43,75 50,82 57,75"/>
+      </g>
+    </g>
+    <text class="nm" x="140" y="168" text-anchor="middle">Read data</text>
+    <!-- Filter data -->
+    <g transform="translate(278,104) scale(0.44)">
+      <circle cx="50" cy="50" r="48" fill="url(#gfilter)"/>
+      <g class="gl">
+        <path d="M28 28 H72 L56 50 V66 L44 72 V50 Z" fill="#FFFFFF" fill-opacity="0.16"/>
+        <circle cx="50" cy="80" r="2.5" fill="#FFFFFF" stroke="none"/>
+      </g>
+    </g>
+    <text class="nm" x="350" y="130" text-anchor="middle">Filter data</text>
+  </g>
+
+  <!-- ============ WORKER:TEAM ============ -->
+  <g>
+    <rect class="chip" x="546" y="44" width="30" height="30" rx="7"/>
+    <g class="ic" transform="translate(549,47)">
+      <circle cx="12" cy="12" r="5.6"/><circle cx="12" cy="12" r="2.2"/>
+      <line x1="12" y1="3" x2="12" y2="5.4"/><line x1="12" y1="18.6" x2="12" y2="21"/>
+      <line x1="3" y1="12" x2="5.4" y2="12"/><line x1="18.6" y1="12" x2="21" y2="12"/>
+    </g>
+    <text class="tm" x="586" y="64">worker:team</text>
+
+    <path class="arw" d="M664,126 H772" marker-end="url(#ah)"/>
+    <!-- Group by -->
+    <g transform="translate(618,104) scale(0.44)">
+      <circle cx="50" cy="50" r="48" fill="url(#ggroup)"/>
+      <g class="gl">
+        <line x1="26" y1="34" x2="42" y2="34"/>
+        <line x1="26" y1="50" x2="42" y2="50"/>
+        <line x1="26" y1="66" x2="42" y2="66"/>
+        <line x1="50" y1="50" x2="68" y2="50" stroke-width="4"/>
+        <polyline points="61,43 68,50 61,57" stroke-width="4"/>
+      </g>
+    </g>
+    <text class="nm" x="590" y="130" text-anchor="middle">Group by</text>
+    <!-- Write data -->
+    <g transform="translate(778,104) scale(0.44)">
+      <circle cx="50" cy="50" r="48" fill="url(#gout)"/>
+      <g class="gl">
+        <path d="M28 58 V70 a4 4 0 0 0 4 4 H68 a4 4 0 0 0 4-4 V58"/>
+        <line x1="50" y1="26" x2="50" y2="58"/>
+        <polyline points="40,48 50,59 60,48"/>
+      </g>
+    </g>
+    <text class="nm" x="800" y="168" text-anchor="middle">Write data</text>
+  </g>
+
+  <!-- ============ EXCHANGE STORE ============ -->
+  <g>
+    <rect class="box" x="326" y="222" width="288" height="86" rx="12"/>
+    <rect class="chip" x="342" y="240" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(351,249)">
+      <path d="M3.5,6 H20.5 L18.6,19.4 A1.6,1.6 0 0 1 17,20.8 H7 A1.6,1.6 0 0 1 5.4,19.4 Z"/>
+      <ellipse cx="12" cy="6" rx="8.5" ry="2.4"/>
+      <path d="M9,12.5 H15"/>
+    </g>
+    <text class="t" x="396" y="252">Exchange store</text>
+    <text class="mono" x="396" y="270">&lt;exchange uri&gt;/&lt;flow id&gt;/</text>
+    <text class="mono" x="396" y="284">&lt;run id&gt;/</text>
+    <text class="s" x="396" y="300">deleted when the run ends</text>
+  </g>
+</svg>

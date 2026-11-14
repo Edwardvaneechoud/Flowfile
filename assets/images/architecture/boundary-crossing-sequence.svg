@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 404" role="img" aria-label="A result crossing between backends through a BoundaryEdge: the edge asks backend A to export the reference to a URI, and A writes it as parquet into the exchange store; the edge then calls import_uri on backend B with the URI, the schema and the row count, and B answers a deferred import reference; the node submits on B with must_materialise, so B reads the parquet and stores its own result; at the end of the run the run's prefix is removed from the store.">
+  <defs>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto"><path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/></marker>
+  </defs>
+  <style>
+    .head  { fill:#eef5fd; stroke:#1D76D6; stroke-width:1.7; }
+    .heads { fill:#eef2ff; stroke:#233588; stroke-width:1.7; }
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .note  { fill:#ffffff; stroke:#b9c2d0; stroke-width:1.4; stroke-dasharray:5 4; }
+    .life  { fill:none; stroke:#c7cdd5; stroke-width:1.4; stroke-dasharray:2 5; stroke-linecap:round; }
+    .tm    { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-weight:600; font-size:12px; fill:#233588; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13px; fill:#233588; }
+    .nt    { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#233588; }
+    .nm    { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10.5px; fill:#233588; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+    .am    { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10.5px; fill:#8a93a3; }
+    .cl    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:11px; fill:#12a8c2; }
+    .arw   { fill:none; stroke:#9aa8b6; stroke-width:1.7; }
+    .arwc  { fill:none; stroke:#2DD5D3; stroke-width:3; }
+    @media (prefers-color-scheme: dark) { .albl, .am { fill:#aeb6c0; } }
+    [data-md-color-scheme="slate"] .albl, [data-md-color-scheme="slate"] .am { fill:#aeb6c0; }
+  </style>
+
+  <!-- ============ LIFELINES ============ -->
+  <path class="life" d="M164,62 H990"/>
+  <path class="life" d="M164,158 H990"/>
+  <path class="life" d="M164,254 H990"/>
+  <path class="life" d="M164,350 H990"/>
+
+  <!-- ============ LANE HEADS ============ -->
+  <rect class="head" x="20" y="38" width="142" height="48" rx="10"/>
+  <text class="tm" x="91" y="66" text-anchor="middle">BoundaryEdge</text>
+  <rect class="head" x="20" y="134" width="142" height="48" rx="10"/>
+  <text class="t" x="91" y="163" text-anchor="middle">Backend A</text>
+  <rect class="heads" x="20" y="230" width="142" height="48" rx="10"/>
+  <text class="t" x="91" y="259" text-anchor="middle">Exchange store</text>
+  <rect class="head" x="20" y="326" width="142" height="48" rx="10"/>
+  <text class="t" x="91" y="355" text-anchor="middle">Backend B</text>
+
+  <!-- ============ EXPORT ============ -->
+  <path class="arw" d="M214,64 V152" marker-end="url(#ah)"/>
+  <text class="am" x="222" y="112">export(ref, uri)</text>
+  <path class="arwc" d="M330,160 V246" marker-end="url(#ahc)"/>
+  <text class="cl" x="340" y="210">write parquet</text>
+
+  <!-- ============ IMPORT ============ -->
+  <path class="arw" d="M456,64 V344" marker-end="url(#ah)"/>
+  <text class="am" x="464" y="104">import_uri(uri, schema, rows)</text>
+  <path class="arw" d="M690,348 V68" marker-end="url(#ah)"/>
+  <text class="albl" x="682" y="306" text-anchor="end">deferred import ref</text>
+
+  <!-- ============ SUBMIT ON B ============ -->
+  <path class="arwc" d="M760,256 V322" marker-end="url(#ahc)"/>
+  <text class="cl" x="770" y="294">reads the parquet</text>
+  <g>
+    <rect class="note" x="716" y="326" width="196" height="48" rx="9"/>
+    <text class="nt" x="814" y="346" text-anchor="middle">node submits on B with</text>
+    <text class="nm" x="814" y="362" text-anchor="middle">must_materialise</text>
+  </g>
+
+  <!-- ============ RUN END ============ -->
+  <g>
+    <rect class="note" x="858" y="230" width="132" height="48" rx="9"/>
+    <text class="nt" x="924" y="250" text-anchor="middle">run end:</text>
+    <text class="nt" x="924" y="266" text-anchor="middle">prefix removed</text>
+  </g>
+</svg>

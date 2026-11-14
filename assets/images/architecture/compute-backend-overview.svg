@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 272" role="img" aria-label="Core's process holds core, which plans each node, and a ComputeBackend, the adapter core calls: WorkerBackend (ids worker and worker:name) or EmbeddedWorkerBackend (id local). Core sends the backend a plan with SubmitHints and gets back a ResultRef and at most preview_rows rows. The backend reaches the worker over the /v1 routes on HTTP and WebSocket, or by a direct call for the worker embedded in core's process; the worker runs on any host and keeps each result in its own storage, read only through that backend.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto"><path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/></marker>
+    <marker id="ahn" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#233588"/></marker>
+  </defs>
+  <style>
+    .cluster { fill:#eef5fd; stroke:#1D76D6; stroke-width:1.7; }
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .store { fill:#eef2ff; stroke:#233588; stroke-width:1.6; }
+    .chip  { fill:#eaf3fc; }
+    .chipn { fill:#dfe6ff; }
+    .chipw { fill:#ffffff; fill-opacity:0.16; }
+    .ic    { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icn   { fill:none; stroke:#233588; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw   { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .ctitle{ font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:14px; fill:#233588; }
+    .sub   { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#6b7280; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13.5px; fill:#233588; }
+    .tw    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13.5px; fill:#ffffff; }
+    .sw    { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#d3f7f6; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .mono  { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10.5px; fill:#4a5578; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .am    { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10.5px; }
+    .arw   { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwc  { fill:none; stroke:#2DD5D3; stroke-width:3; }
+  </style>
+
+  <!-- core's process: core and the adapter it calls -->
+  <rect class="cluster" x="20" y="16" width="520" height="240" rx="16"/>
+  <text class="ctitle" x="42" y="44">Core&#8217;s process</text>
+  <text class="sub" x="152" y="44"><tspan class="am" fill="#4a5578">ComputeBackend</tspan> is an adapter inside core</text>
+
+  <path class="arwc" d="M196,112 H322" marker-end="url(#ahc)"/>
+  <text class="albl" x="259" y="102" text-anchor="middle">plan + <tspan class="am">SubmitHints</tspan></text>
+  <path class="arw" d="M328,138 H200" marker-end="url(#ah)"/>
+  <text class="albl" x="262" y="156" text-anchor="middle"><tspan class="am">ResultRef</tspan> + at most</text>
+  <text class="albl" x="262" y="170" text-anchor="middle"><tspan class="am">preview_rows</tspan> rows</text>
+
+  <g>
+    <rect class="box" x="44" y="92" width="150" height="64" rx="11"/>
+    <rect class="chip" x="58" y="106" width="36" height="36" rx="8"/>
+    <g class="ic" transform="translate(64,112)">
+      <circle cx="5" cy="6" r="2.4"/><circle cx="5" cy="18" r="2.4"/><circle cx="19" cy="12" r="2.4"/>
+      <path d="M7.3,7 L16.7,11"/><path d="M7.3,17 L16.7,13"/>
+    </g>
+    <text class="t" x="106" y="121">Core</text>
+    <text class="s" x="106" y="138">plans each node</text>
+  </g>
+  <g>
+    <rect x="330" y="92" width="190" height="64" rx="11" fill="url(#brand)"/>
+    <rect class="chipw" x="342" y="106" width="36" height="36" rx="8"/>
+    <g class="icw" transform="translate(348,112)">
+      <rect x="2" y="4" width="20" height="16" rx="2.5"/>
+      <path d="M7,9.5 L10,12 L7,14.5"/><line x1="12" y1="14.5" x2="17" y2="14.5"/>
+    </g>
+    <text class="tw" x="386" y="121">ComputeBackend</text>
+    <text class="sw" x="386" y="138">the adapter core calls</text>
+  </g>
+
+  <text class="s" x="44" y="206">Two implementations:</text>
+  <text class="mono" x="44" y="224">WorkerBackend · worker, worker:{name}</text>
+  <text class="mono" x="44" y="240">EmbeddedWorkerBackend · local</text>
+
+  <!-- the wire to the compute -->
+  <path class="arw" d="M522,124 H652" marker-end="url(#ah)"/>
+  <text class="albl" x="596" y="114" text-anchor="middle"><tspan class="am">/v1</tspan> over HTTP + WS</text>
+  <text class="albl" x="596" y="142" text-anchor="middle">or a direct call</text>
+
+  <g>
+    <rect class="box" x="660" y="92" width="300" height="64" rx="11"/>
+    <rect class="chip" x="672" y="106" width="36" height="36" rx="8"/>
+    <g class="ic" transform="translate(678,112)">
+      <circle cx="12" cy="12" r="5.6"/><circle cx="12" cy="12" r="2.2"/>
+      <line x1="12" y1="3" x2="12" y2="5.4"/><line x1="12" y1="18.6" x2="12" y2="21"/>
+      <line x1="3" y1="12" x2="5.4" y2="12"/><line x1="18.6" y1="12" x2="21" y2="12"/>
+    </g>
+    <text class="t" x="718" y="121">Worker</text>
+    <text class="s" x="718" y="138">any host, or embedded in core&#8217;s process</text>
+  </g>
+
+  <path class="arw" d="M810,158 V188" marker-end="url(#ahn)"/>
+  <text class="albl" x="820" y="177">keeps</text>
+
+  <g>
+    <rect class="store" x="660" y="196" width="300" height="60" rx="12"/>
+    <rect class="chipn" x="672" y="208" width="36" height="36" rx="8"/>
+    <g class="icn" transform="translate(678,214)">
+      <ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/>
+      <path d="M4.5,5.5 V16 C4.5,17.6 7.9,18.9 12,18.9 C16.1,18.9 19.5,17.6 19.5,16 V5.5"/>
+      <path d="M4.5,10.7 C4.5,12.3 7.9,13.6 12,13.6 C16.1,13.6 19.5,12.3 19.5,10.7"/>
+    </g>
+    <text class="t" x="718" y="223">Its own storage</text>
+    <text class="s" x="718" y="240" fill="#4a5578">each result, read only through that backend</text>
+  </g>
+</svg>

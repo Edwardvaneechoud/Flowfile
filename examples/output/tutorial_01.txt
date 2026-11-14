@@ -1,0 +1,28 @@
+● Read data (1)  Supermarket invoices
+│
+● Drop duplicates (2)
+│
+● Formula (4)
+│
+● Select data (5)
+│
+● Sort data (6)
+1030 rows read
+shape: (1_000, 3)
+┌────────────┬───────────┬─────────┐
+│ invoice_id ┆ city      ┆ revenue │
+│ ---        ┆ ---       ┆ ---     │
+│ str        ┆ str       ┆ f64     │
+╞════════════╪═══════════╪═════════╡
+│ INV-00001  ┆ Mandalay  ┆ 40.41   │
+│ INV-00002  ┆ Taunggyi  ┆ 638.9   │
+│ INV-00003  ┆ Bago      ┆ 391.59  │
+│ INV-00004  ┆ Naypyitaw ┆ 173.16  │
+│ INV-00005  ┆ Bago      ┆ 448.96  │
+│ …          ┆ …         ┆ …       │
+│ INV-00996  ┆ Bago      ┆ 514.71  │
+│ INV-00997  ┆ Taunggyi  ┆ 536.1   │
+│ INV-00998  ┆ Bago      ┆ 288.33  │
+│ INV-00999  ┆ Taunggyi  ┆ 846.9   │
+│ INV-01000  ┆ Yangon    ┆ 451.2   │
+└────────────┴───────────┴─────────┘

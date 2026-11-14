@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 540" role="img" aria-label="A positioning chart. Left to right, code goes from a supporting role to a main surface; bottom to top, the visual goes from a supporting role to a main surface. Visual-first tools such as Alteryx, KNIME and Power Query sit top-left; Excel and one-off scripts sit bottom-left; code-first tools such as dbt, Airflow and Dagster, Databricks and plain Polars sit bottom-right; Enso and Flowfile sit top-right, where both are main surfaces on one graph, with Flowfile furthest into that corner.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+  </defs>
+  <style>
+    .plot { fill:#ffffff; }
+    .frm  { fill:none; stroke:#d9dee5; stroke-width:1.2; }
+    .mid  { stroke:#d9dee5; stroke-width:1.2; }
+    .q    { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:10px; letter-spacing:1.2px; fill:#7a828e; }
+    .dot  { fill:#9aa0a6; stroke:#ffffff; stroke-width:1.5; }
+    .dl   { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .hl   { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:14px; fill:#233588; }
+    .axl  { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#6b7280; }
+    @media (prefers-color-scheme: dark) {
+      .axl { fill:#aeb6c0; }
+    }
+    [data-md-color-scheme="slate"] .axl { fill:#aeb6c0; }
+  </style>
+
+  <!-- ============ PLOT: four quadrants, top-right faintly tinted ============ -->
+  <rect class="plot" x="72" y="20" width="832" height="476" rx="12"/>
+  <path d="M488,20 H892 A12,12 0 0 1 904,32 V258 H488 Z" fill="#eaf3fc"/>
+  <line class="mid" x1="488" y1="20" x2="488" y2="496"/>
+  <line class="mid" x1="72" y1="258" x2="904" y2="258"/>
+  <rect class="frm" x="72" y="20" width="832" height="476" rx="12"/>
+
+  <!-- quadrant kickers -->
+  <text class="q" x="86" y="44">VISUAL FIRST</text>
+  <text class="q" x="502" y="44">BOTH, ON ONE GRAPH</text>
+  <text class="q" x="86" y="282">SPREADSHEETS AND SCRIPTS</text>
+  <text class="q" x="502" y="282">CODE FIRST</text>
+
+  <!-- ============ TOOLS (grey) ============ -->
+  <circle class="dot" cx="221.8" cy="86.6" r="6"/>
+  <circle class="dot" cx="354.9" cy="115.2" r="6"/>
+  <circle class="dot" cx="171.8" cy="191.4" r="6"/>
+  <circle class="dot" cx="737.6" cy="429.4" r="6"/>
+  <circle class="dot" cx="687.7" cy="381.8" r="6"/>
+  <circle class="dot" cx="837.4" cy="457.9" r="6"/>
+  <circle class="dot" cx="754.2" cy="324.6" r="6"/>
+  <circle class="dot" cx="155.2" cy="391.3" r="6"/>
+  <circle class="dot" cx="404.8" cy="438.9" r="6"/>
+  <circle class="dot" cx="654.4" cy="124.7" r="6"/>
+  <text class="dl" x="232.8" y="90.3">Alteryx</text>
+  <text class="dl" x="365.9" y="118.9">KNIME</text>
+  <text class="dl" x="182.8" y="195.1">Power Query</text>
+  <text class="dl" x="748.6" y="433.1">dbt</text>
+  <text class="dl" x="698.7" y="385.5">Airflow and Dagster</text>
+  <text class="dl" x="826.4" y="461.6" text-anchor="end">Plain Polars</text>
+  <text class="dl" x="765.2" y="328.3">Databricks</text>
+  <text class="dl" x="166.2" y="395.0">Excel</text>
+  <text class="dl" x="415.8" y="442.6">One-off scripts</text>
+  <text class="dl" x="665.4" y="128.4">Enso</text>
+
+  <!-- ============ FLOWFILE (hero) ============ -->
+  <circle cx="787.5" cy="86.6" r="11" fill="url(#brand)" stroke="#ffffff" stroke-width="2"/>
+  <text class="hl" x="805.5" y="91.6">Flowfile</text>
+
+  <!-- ============ AXES ============ -->
+  <text class="axl" x="72" y="520">Code plays a supporting role</text>
+  <text class="axl" x="904" y="520" text-anchor="end">Code is a main surface</text>
+  <text class="axl" transform="translate(58,496) rotate(-90)">Visual plays a supporting role</text>
+  <text class="axl" transform="translate(58,20) rotate(-90)" text-anchor="end">Visual is a main surface</text>
+</svg>

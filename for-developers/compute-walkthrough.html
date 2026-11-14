@@ -1,0 +1,2292 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/for-developers/compute-walkthrough.html">
+      
+      
+        <link rel="prev" href="flowfile-core.html">
+      
+      
+        <link rel="next" href="compute-protocol.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>How Compute Works - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#how-compute-works" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              How Compute Works
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/visual-editor/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/visual-editor/catalog/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../roadmap.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Roadmap
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../users/visual-editor/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../users/connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../users/visual-editor/catalog/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../users/python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../users/deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    For Developers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="design-philosophy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Philosophy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="flowfile-core.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Compute Works
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="compute-walkthrough.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Compute Works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#one-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One interface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-pieces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The pieces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-worker-two-adapters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One worker, two adapters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-node-step-by-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One node, step by step
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plans-and-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plans and operations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#placing-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Placing a run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-handshake" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The handshake
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#crossing-between-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Crossing between backends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#who-holds-and-releases-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who holds and releases results
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#changing-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changing the code
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="compute-protocol.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compute Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="python-api-reference.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internal API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="kernel-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ai-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Integration Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="visualizations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizations & Graphic Walker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/creating-custom-nodes.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Nodes in Code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../roadmap.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#one-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One interface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-pieces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The pieces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-worker-two-adapters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One worker, two adapters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-node-step-by-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One node, step by step
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plans-and-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plans and operations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#placing-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Placing a run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-handshake" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The handshake
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#crossing-between-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Crossing between backends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#who-holds-and-releases-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who holds and releases results
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#changing-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changing the code
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="how-compute-works">How compute works</h1>
+<p>This page walks through the code that runs a flow's nodes: how core hands one node to compute, how a run is placed across backends, how results, data and credentials travel, and which files to change for a new operation or a new backend. It is the guided tour; <a href="compute-protocol.html">Compute protocol</a> is the design reference with every invariant and the full interface. <a href="../users/deployment/where-flows-run.html">Where flows run</a> is the same model from the user's side.</p>
+<h2 id="one-interface">One interface</h2>
+<p>Core talks to compute only through <code>ComputeBackend</code> (<code>flowfile_core/flowfile/execution/protocol.py</code>). A backend is not a service of its own: it is an adapter object inside core's process, <code>WorkerBackend</code> or <code>EmbeddedWorkerBackend</code>, and the worker it talks to is the compute. A result is a <code>ResultRef</code>: the id of the backend that minted it, the node hash, the schema, the row count when known, and a <code>location</code> only that backend reads. Rows reach core only through <code>sample</code> and the sample <code>submit</code> returns inline.</p>
+<p><img alt="Core's process holds core, which plans each node, and a ComputeBackend, the adapter core calls: WorkerBackend (ids worker and worker:name) or EmbeddedWorkerBackend (id local). Core sends the backend a plan with SubmitHints and gets back a ResultRef and at most preview_rows rows. The backend reaches the worker over the /v1 routes on HTTP and WebSocket, or by a direct call for the worker embedded in core's process; the worker runs on any host and keeps each result in its own storage, read only through that backend." src="../assets/images/architecture/compute-backend-overview.svg" /></p>
+<p>The rest of the page builds on these rules:</p>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Where</th>
+<th>Held by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Core holds a <code>ResultRef</code>, never a path; only the backend that minted it reads its <code>location</code></td>
+<td><code>execution/protocol.py</code></td>
+<td>the conformance suite, <code>test_serving_app_ratchet.py</code></td>
+</tr>
+<tr>
+<td>One place decides where work runs</td>
+<td><code>execution/registry.py</code>, <code>ExecutionContext</code></td>
+<td><code>test_inline_location_branches.py</code></td>
+</tr>
+<tr>
+<td>A node its backend cannot run is refused before any node starts</td>
+<td><code>requirements_for</code>, <code>place()</code></td>
+<td><code>test_placement.py</code></td>
+</tr>
+<tr>
+<td>An unreachable backend is a typed <code>ComputeError</code>, never a cache miss; <code>results_exists</code> raises <code>ComputeUnavailable</code></td>
+<td><code>execution/errors.py</code></td>
+<td><code>test_handshake.py</code>, the conformance suite</td>
+</tr>
+<tr>
+<td>A plan names a stored connection (<code>CredentialRef</code>) and carries no secret; the process that runs it resolves it</td>
+<td><code>shared/cloud_credential_provider.py</code></td>
+<td><code>flowfile_core/tests/flowfile/test_cloud_plan_secrets.py</code>, <code>flowfile_worker/tests/test_plan_credentials.py</code></td>
+</tr>
+<tr>
+<td>There is one compute implementation: <code>EmbeddedWorkerBackend</code> calls the worker's own route bodies in this process</td>
+<td><code>execution/backends/embedded.py</code></td>
+<td><code>test_embedded_backend.py</code>, <code>test_local_backend.py</code></td>
+</tr>
+</tbody>
+</table>
+<p>The tests are under <code>flowfile_core/tests/flowfile/execution/</code> unless a path is given.</p>
+<h2 id="the-pieces">The pieces</h2>
+<p><img alt="The modules of the compute path: flow_graph/execution.py (run_graph, _place_run, BoundaryEdge) calls placement.py, which reads requirements.py, calls the handshake (verify, Verdict), and runs flow_node.py (_do_execute, run_op, release_result), which reads ExecutionContext, which resolves its backend through registry.py; the registry hands out EmbeddedWorkerBackend (id local), which calls the worker's service.py directly, and WorkerBackend (worker and worker:name), which reaches protocol_routes.py and streaming.py over HTTP and WebSocket; service.py holds one body per route and runs jobs through funcs.py, pool.py and spawner.py; the handshake and service.py both import shared/compute_protocol.py." src="../assets/images/architecture/compute-module-map.svg" /></p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>execution/protocol.py</code></td>
+<td><code>ComputeBackend</code> and its value types: <code>ResultRef</code>, <code>SubmitHints</code>, <code>SubmitResult</code>, <code>OpResult</code>, <code>CredentialRef</code>, the closed <code>OperationKind</code> enum</td>
+</tr>
+<tr>
+<td><code>execution/registry.py</code></td>
+<td>Backends by id: <code>local</code> and <code>worker</code> built in, <code>worker:&lt;name&gt;</code> from the <code>compute_backends</code> table, others through the <code>flowfile.compute_backends</code> entry-point group; <code>default_backend_id()</code>; <code>mark_serving()</code></td>
+</tr>
+<tr>
+<td><code>execution/context.py</code></td>
+<td><code>ExecutionContext(backend_id, parallelism, preview_rows)</code>, derived from the flow's settings; <code>current_context()</code>, <code>use_context()</code></td>
+</tr>
+<tr>
+<td><code>execution/placement.py</code></td>
+<td><code>place()</code>, <code>SingleBackendPolicy</code>, <code>MixedPlacementPolicy</code>, <code>Refusal</code>, <code>Fallback</code></td>
+</tr>
+<tr>
+<td><code>flow_node/requirements.py</code></td>
+<td><code>requirements_for()</code>: what a node needs from its compute, from its template and settings alone</td>
+</tr>
+<tr>
+<td><code>flow_data_engine/subprocess_operations/handshake.py</code></td>
+<td><code>verify()</code>, <code>verdict_for()</code>, <code>ensure_handshake()</code>: one check per backend per process</td>
+</tr>
+<tr>
+<td><code>execution/exchange.py</code></td>
+<td>The exchange store and <code>ExchangeRun</code>, a run's prefix and its removal</td>
+</tr>
+<tr>
+<td><code>execution/payloads.py</code></td>
+<td>One frozen dataclass per operation kind</td>
+</tr>
+<tr>
+<td><code>execution/backends/worker.py</code></td>
+<td><code>WorkerBackend</code>: the HTTP and WebSocket client of a worker</td>
+</tr>
+<tr>
+<td><code>execution/backends/embedded.py</code></td>
+<td><code>EmbeddedWorkerBackend</code>: the same worker, called in this process</td>
+</tr>
+<tr>
+<td><code>flowfile_worker/service.py</code></td>
+<td>The <code>/v1</code> route bodies, shared by the routes and the embedded adapter</td>
+</tr>
+<tr>
+<td><code>shared/compute_protocol.py</code></td>
+<td>What both sides import: <code>Capabilities</code>, <code>PROTOCOL_VERSION</code>, the wire models</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>flowfile_core/</code> files are under <code>flowfile_core/flowfile_core/flowfile/</code>.</p>
+<h2 id="one-worker-two-adapters">One worker, two adapters</h2>
+<p>There is one compute implementation: the worker. Core reaches it in one of two ways, and both end in the same functions in <code>flowfile_worker/service.py</code>.</p>
+<p><img alt="One worker, two adapters, both ending in the same service.py functions: in core's process EmbeddedWorkerBackend (local) calls the service.py bodies directly, an HTTPException becoming a typed error, and spawner.in_process decides whether a job runs in this process (a headless run, Python) or in the warm pool or a child (the pip server); WorkerBackend (worker and worker:name) reaches protocol_routes.py in the worker process over /v1 on HTTP and WebSocket, and the worker's service.py bodies run each job in the warm pool or a child." src="../assets/images/architecture/one-worker-two-adapters.svg" /></p>
+<p><code>EmbeddedWorkerBackend</code> passes the plan as <code>serialize()</code> bytes, so the worker loads it exactly as one sent over the wire, and its references are the worker's references under the id <code>local</code>. The registry's <code>local</code> factory sets <code>flowfile_worker.spawner.in_process</code> in a process that does not serve, so a scheduled run or a script runs each job where the rows are wanted. In a process that serves (<code>registry.mark_serving()</code>, called by <code>main.run</code>), it leaves the flag unset and jobs go to the pool, never the serving process. The pip server's built-in <code>worker</code> is this adapter too (single-file mode); the desktop app and Docker use <code>WorkerBackend</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Core calls it from</th>
+<th><code>WorkerBackend</code>, protocol on</th>
+<th><code>EmbeddedWorkerBackend</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>capabilities</code></td>
+<td>the handshake</td>
+<td><code>GET /v1/capabilities</code></td>
+<td><code>service.worker_capabilities</code></td>
+</tr>
+<tr>
+<td><code>submit</code></td>
+<td><code>FlowNode._submit</code>, bounded reads, handshake probes</td>
+<td><code>WS /v1/ws/submit</code>, else <code>POST /v1/submit</code></td>
+<td><code>service.run_submit</code></td>
+</tr>
+<tr>
+<td><code>run_op</code></td>
+<td><code>FlowNode.run_op</code>, called by the builders</td>
+<td><code>POST /v1/ops/{kind}</code>; the Delta writes and <code>viz_session</code> stay on task routes</td>
+<td>the matching <code>service</code> body</td>
+</tr>
+<tr>
+<td><code>sample</code>, <code>count</code></td>
+<td>previews, <code>flow_data_engine/bounded.py</code>, the API runner</td>
+<td><code>GET /v1/results/{id}/sample</code>, <code>/count</code></td>
+<td><code>service.sample</code>, <code>service.count</code></td>
+</tr>
+<tr>
+<td><code>exists</code>, <code>release</code></td>
+<td>the cache check, <code>FlowNode.release_result</code></td>
+<td><code>HEAD</code>, <code>DELETE /v1/results/{id}</code></td>
+<td><code>service.exists</code>, <code>service.release</code></td>
+</tr>
+<tr>
+<td><code>plan_for</code></td>
+<td>composing the next node's plan</td>
+<td>no call: decodes <code>location</code></td>
+<td>no call</td>
+</tr>
+<tr>
+<td><code>export</code>, <code>import_uri</code></td>
+<td><code>BoundaryEdge</code>, <code>artifacts/publish.py</code></td>
+<td><code>POST /v1/results/{id}/export</code>, <code>/import</code></td>
+<td><code>service.export</code>, <code>service.import_uri</code></td>
+</tr>
+<tr>
+<td><code>status</code>, <code>cancel</code></td>
+<td><code>FlowNode.cancel</code></td>
+<td><code>GET /v1/jobs/{id}</code>, <code>POST /v1/jobs/{id}/cancel</code></td>
+<td><code>service.job_status</code>, <code>service.cancel_job</code></td>
+</tr>
+</tbody>
+</table>
+<p>Every <code>/v1</code> request carries <code>X-Protocol-Version</code>; a worker answers a different version with 426, which core reads as <code>VersionMismatch</code>. With <code>FLOWFILE_COMPUTE_PROTOCOL</code> off, <code>WorkerBackend</code> uses the task routes instead and core opens the worker's files over the shared disk.</p>
+<h2 id="one-node-step-by-step">One node, step by step</h2>
+<p><code>run_graph</code> places the run, then <code>_execute_stages</code> runs each stage's nodes (up to <code>ExecutionContext.parallelism</code> at once, each thread under a copy of the run's context). For a node that submits a plain Polars plan, <code>FlowNode._do_execute</code> does this. <code>FlowNode</code> and the backend run in core's process; the worker's <code>service.run_submit</code> and the child it starts run in the worker's process, or in core's for <code>EmbeddedWorkerBackend</code>:</p>
+<p><img alt="One node, step by step. In core's process, FlowNode runs its cache check (1), builds the plan over its input leaves (2) and calls hints_for (3), then calls submit with the plan, inputs, hints and hash on the backend (4). The backend sends the plan bytes over the worker's /v1 submit, or by a direct call, to service.run_submit, which runs funcs.submit_result in a worker child; the child answers a file or a deferred plan and a sample, run_submit answers a SubmitResult, and the backend answers FlowNode a ResultRef and the sample, so FlowNode sets resulting_data to plan_for(ref) (5)." src="../assets/images/architecture/node-submit-sequence.svg" /></p>
+<ol>
+<li><strong>Cache check.</strong> A node with <strong>Cache Results</strong> on that still holds a stored result under its hash on this backend (<code>held_result</code>, then <code>exists</code>) takes it and skips the submit.</li>
+<li><strong>Build the plan.</strong> <code>get_resulting_data()</code> runs the node function over its inputs' engines, each built on <code>plan_for</code> of the input's reference, so the function only composes a plan.</li>
+<li><strong>Hints.</strong> <code>flow_node/executor.py::hints_for</code> describes the plan: <code>must_materialise</code> (Cache Results, or an input that crossed from another backend), <code>wide</code> (not a narrow transform), <code>fanout</code> (the distinct plans among the nodes this run executes that execute the result: a consumer that collects counts once, a deferred one passes on its own count) and <code>preview_rows</code>.</li>
+<li><strong>Submit.</strong> <code>backend.submit</code> runs it under the node's hash; on the worker, <code>service.run_submit</code> runs <code>funcs.submit_result</code> in a child.</li>
+<li><strong>Take the result.</strong> <code>_take_result</code> keeps the <code>ResultRef</code> on <code>results.result_ref</code>, sets <code>resulting_data</code> to an engine over <code>plan_for(ref)</code> with the schema the reference carries, and the preview from the inline sample.</li>
+</ol>
+<p>The next node's function composes on <code>plan_for(ref)</code>, a leaf valid only on that backend, and sends the composed plan back to the same backend. Core never collects a leaf; <code>test_serving_app_ratchet.py</code> fails on a <code>.collect(</code> over a <code>plan_for</code> result in core or the pip server's app.</p>
+<p>The worker's <code>service._materialise</code> reads the hints:</p>
+<p><img alt="How service._materialise reads SubmitHints: with must_materialise set the result is materialised, a file on the worker that plan_for reads with scan_ipc; otherwise a plan that is wide and either previewed (preview_rows set) or executed by more than one plan of the run (fanout above one) is materialised too; anything else is deferred, the plan kept on the worker, and plan_for answers the plan itself." src="../assets/images/architecture/materialise-rule.svg" /></p>
+<p>A join, group by, sort or pivot previewed in Development mode is therefore stored, and a chain of narrow nodes reaches the worker as one composed plan and runs as one Polars query. A wide result that more than one plan of the run executes (<code>fanout &gt; 1</code>) is stored in either mode, written once instead of computed again inside each of them; core counts only the plans the run at hand executes, so a single-node fetch counts none, and a Performance run with no writer below a node counts none either.</p>
+<h2 id="plans-and-operations">Plans and operations</h2>
+<p>A node whose work is a Polars plan uses <code>submit</code>. Anything that needs Flowfile code on the compute, reads a source whose result is not deterministic, or writes, is an <code>OperationKind</code> run through <code>FlowNode.run_op(backend, kind, op_payload(payload), job_id=...)</code>. Each kind takes one frozen dataclass from <code>execution/payloads.py</code>, and <code>run_op</code> answers an <code>OpResult</code>: named <code>ResultRef</code>s plus <code>metadata</code> (Kafka offsets, a model's digest, a Delta write's version and counts).</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Kinds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Reads</td>
+<td><code>database_read</code>, <code>kafka_read</code>, <code>google_analytics_read</code>, <code>rest_api_read</code>, <code>file_read</code> (Excel, Avro, Arrow streams, non-UTF-8 CSV)</td>
+</tr>
+<tr>
+<td>Writes</td>
+<td><code>file_write</code>, <code>database_write</code>, <code>cloud_write</code>, <code>delta_write</code>, <code>delta_merge</code>, <code>delta_scd2</code></td>
+</tr>
+<tr>
+<td>Transforms</td>
+<td><code>fuzzy_join</code>, <code>random_split</code>, <code>custom_node</code>, <code>polars_code</code>, <code>sql_query</code></td>
+</tr>
+<tr>
+<td>Models</td>
+<td><code>ml_train</code> (answers the model as a <code>kind="blob"</code> ref), <code>ml_apply</code></td>
+</tr>
+<tr>
+<td>Other</td>
+<td><code>viz_session</code> (the Explore Data node's charts)</td>
+</tr>
+</tbody>
+</table>
+<p><code>polars_code</code> and <code>sql_query</code> mean core never executes a Polars Code node's code or translates a SQL Query node's statement: the backend that holds the inputs runs it once and answers a reference with the resulting schema. The designer's schema prediction is the same operation over empty frames of the predicted input schemas.</p>
+<h2 id="placing-a-run">Placing a run</h2>
+<p>With the protocol on, <code>FlowGraph._place_run</code> decides every node's backend before any node starts:</p>
+<p><img alt="Placing a run: without an exchange store SingleBackendPolicy puts every node on the run's backend (Google Analytics pinned to the worker), with one MixedPlacementPolicy follows each node's execution_location; handshake.verdict_for reads each backend named; a backend refused whole or an unknown id refuses every node there, an unreachable one keeps its nodes assigned unchecked to fail with ComputeUnavailable when they run, and for an ok one place() compares requirements_for(node) with the offered capabilities and what is absent; a node that fits is assigned, one that does not is refused under the single policy and, under the mixed policy, falls back to the default backend when that fits, else is refused with both reasons; assignments give the boundaries, each a BoundaryEdge priced against FLOWFILE_EXCHANGE_MAX_ROWS, and any refusal stops the run before a node starts." src="../assets/images/architecture/placing-a-run.svg" /></p>
+<p><code>requirements_for</code> reads a node's template and settings, with the flow's parameters resolved, and nothing else: the operation it runs, the schemes it reads and writes (<code>file</code>, <code>s3</code>, <code>az</code>, <code>gs</code>, <code>http</code>, <code>https</code>), the plugins its expressions load, the stored connections it names, whether its plan may carry a Python function, and whether it runs on a notebook kernel. <code>place</code> compares those with the <code>Capabilities</code> the backend's verdict offers. <code>file</code> is offered only to a worker that sees core's disk: the embedded worker, the built-in <code>worker</code> at its unconfigured address, a configured row marked <code>shares_core_disk</code>, or a worker started with <code>FLOWFILE_WORKER_LOCAL_FILES=1</code>.</p>
+<p><code>GET /flow/placement</code> answers <code>FlowGraph.preview_placement()</code> without running, which the designer's node badges read; the run report carries <code>boundaries</code>, which the canvas draws on its edges.</p>
+<h2 id="the-handshake">The handshake</h2>
+<p><code>handshake.verify(backend)</code> runs through the backend's own interface, the same for every kind: <code>capabilities()</code> compared with <code>local_capabilities()</code>, then one probe plan per expression plugin and one carrying a trivial Python function, each run as an ordinary job (<code>submit</code> with a one-row preview, <code>sample</code>, <code>release</code>). The <code>Verdict</code> is cached per backend; it is checked on first use in a process and again after a call could not reach the backend.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Effect of a difference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>protocol_version</code>, <code>polars_version</code>, <code>polars_runtime</code></td>
+<td>Refuses the backend whole (<code>VersionMismatch</code>)</td>
+</tr>
+<tr>
+<td><code>plugins</code> (by version and by probe)</td>
+<td>Absent from what the backend offers; only nodes that use the plugin are refused there</td>
+</tr>
+<tr>
+<td><code>python_version</code></td>
+<td>Listed in <code>differences</code>; the Python probe decides whether formula nodes are refused there</td>
+</tr>
+<tr>
+<td><code>app_version</code>, <code>platform</code>, <code>plugin_libs</code></td>
+<td>Reported, not compared</td>
+</tr>
+</tbody>
+</table>
+<p><code>PROTOCOL_VERSION</code> is the worker contract. <code>shared/tests/test_worker_contract.py</code> fingerprints every request and answer shape against <code>worker_contract.json</code> and fails on a change until the number is bumped and the pin rewritten with <code>python shared/tests/test_worker_contract.py</code>. A new operation kind passes without a bump, since a worker that does not declare it is refused only that kind's nodes.</p>
+<h2 id="crossing-between-backends">Crossing between backends</h2>
+<p>Under the mixed policy each boundary becomes a <code>BoundaryEdge</code> (<code>flow_graph/execution.py</code>), set on the importing node as <code>_boundary_inputs</code>:</p>
+<p><img alt="Crossing between backends: the BoundaryEdge asks backend A to export the reference to a URI and A writes parquet into the exchange store; it then calls import_uri on backend B with the URI, schema and row count, and B answers a deferred import reference; the node submits on B with must_materialise, so B reads the parquet and stores its own result; at the end of the run the run's prefix is removed." src="../assets/images/architecture/boundary-crossing-sequence.svg" /></p>
+<p><code>BoundaryEdge.cross()</code> runs when the importing node first reads that input. The URI is <code>&lt;prefix&gt;&lt;from&gt;-&lt;handle&gt;-&lt;to&gt;.parquet</code> under the run's prefix <code>&lt;uri&gt;/&lt;flow id&gt;/&lt;run id&gt;/</code>, and the node composes on <code>plan_for</code> of the import on its own backend. The importing node is submitted with <code>must_materialise</code>, and <code>FlowNode._store_other_outputs</code> stores its other outputs beside the result, so nothing refers to the run's prefix once <code>run_graph</code> removes it. The store's connection is the deployment's: an administrator's cloud connection of the configured name, looked up once per run.</p>
+<h2 id="credentials">Credentials</h2>
+<p>A plan names a stored connection and carries no secret:</p>
+<p><img alt="Credentials: core builds the scan with a CredentialRefProvider (connection_id, user_id, nonce), so the serialised plan names the connection and carries no secret; the worker child that runs the plan reads the connection row from the shared catalog DB, decrypts it with the master key, exchanging Azure and GCS secrets for a token, and reaches object storage with the credentials." src="../assets/images/architecture/plan-credentials.svg" /></p>
+<p><code>CloudStorageReader.get_read_credentials</code> and <code>CatalogStorageTarget.scan_kwargs</code> attach the provider; the worker resolves it where the plan runs. A worker on another host therefore needs core's catalog database (the shared PostgreSQL) and the same master key, and connections that use the host's identity (<code>aws-cli</code>, <code>iam_role</code>, <code>env_vars</code>, <code>managed_identity</code>) authenticate as the worker host. A read that names a connection the catalog does not hold for the user it runs as is refused, never resolved in core.</p>
+<h2 id="who-holds-and-releases-results">Who holds and releases results</h2>
+<p>A node owns every reference it minted: <code>results.result_ref</code>, the outputs it stored beside it (<code>_stored_outputs</code>) and its operations' outputs (<code>_operation_refs</code>). <code>FlowNode.release_result</code> releases them together, on a rerun under another hash or on another backend, on <code>FlowGraph.delete_node</code>, on <code>close_flow</code>, and when the node fails after storing part of its outputs. A release that fails is logged and the reference dropped, so a close always completes. The worker's age sweep (<code>CACHE_EXPIRATION_TIME</code>, 24 hours) is the backstop for a core that died, not how results are meant to go.</p>
+<h2 id="changing-the-code">Changing the code</h2>
+<p><strong>A node type that submits a plain plan</strong> needs no protocol work. Make sure <code>requirements_for</code> claims what it reads and writes and the plugins it loads, or placement sends it to a backend that cannot run it.</p>
+<p><strong>A new operation kind</strong> touches, in order (the <code>sql_query</code> kind follows this path end to end):</p>
+<ol>
+<li><code>OperationKind</code> in <code>execution/protocol.py</code> and a payload dataclass in <code>execution/payloads.py</code>.</li>
+<li>The builder in <code>flow_graph/builders/</code>, calling <code>node.run_op(current_context(graph).backend, ...)</code> with no location branch.</li>
+<li><code>flow_node/requirements.py</code>, so placement knows the node needs the kind.</li>
+<li>The worker: the child function in <code>funcs.py</code>, the body in <code>service.py</code> (and the kind in <code>service.OPERATIONS</code>), the route in <code>protocol_routes.py</code>, and <code>pool.py</code> if it may run in a pooled child.</li>
+<li><code>WorkerBackend.run_op</code> and <code>EmbeddedWorkerBackend.run_op</code>.</li>
+<li><code>shared/tests/worker_contract.json</code>, regenerated with <code>python shared/tests/test_worker_contract.py</code>.</li>
+<li>Tests: the worker's <code>test_protocol_ops.py</code>, core's <code>test_placement.py</code> and <code>test_op_payloads.py</code>.</li>
+</ol>
+<p><strong>A new backend</strong> implements <code>ComputeBackend</code>, declares honest <code>Capabilities</code> (operations, schemes, <code>credential_resolution</code>), registers a factory under the <code>flowfile.compute_backends</code> entry-point group, and passes <code>flowfile_core/tests/flowfile/execution/conformance/</code>. A compute that speaks the worker's <code>/v1</code> wire needs no code in core: add it as a <code>worker:&lt;name&gt;</code> row and the handshake reads what it declares.</p>
+<p>The ratchets that keep the design in place:</p>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Only <code>configs/settings.py</code> and <code>execution/registry.py</code> read <code>WORKER_URL</code> or <code>OFFLOAD_TO_WORKER</code>; no inline <code>execution_location</code> compare</td>
+<td><code>test_inline_location_branches.py</code></td>
+</tr>
+<tr>
+<td>No <code>.collect(</code> over a <code>plan_for</code> leaf in core or the pip server's app</td>
+<td><code>test_serving_app_ratchet.py</code></td>
+</tr>
+<tr>
+<td>Every backend keeps the invariants</td>
+<td><code>conformance/</code></td>
+</tr>
+<tr>
+<td>The wire shape is pinned to <code>PROTOCOL_VERSION</code></td>
+<td><code>shared/tests/test_worker_contract.py</code></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code>poetry<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>flowfile_core/tests/flowfile/execution
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>poetry<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>shared/tests/test_worker_contract.py<span class="w"> </span>flowfile_worker/tests/test_protocol_routes.py<span class="w"> </span>flowfile_worker/tests/test_protocol_ops.py
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>poetry<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/remote_worker<span class="w"> </span>-m<span class="w"> </span><span class="s2">"not docker_integration"</span>
+</code></pre></div>
+<p>The last runs core and a worker on storage directories of their own, so a read of a worker's file from core fails there; <code>-m docker_integration</code> runs the same with no shared volume at all (<code>docker-compose.remote-worker.yml</code>).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="flowfile-core.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Core Internals">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Core Internals
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="compute-protocol.html" class="md-footer__link md-footer__link--next" aria-label="Next: Compute Protocol">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Compute Protocol
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Flowfile is MIT-licensed. Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>
