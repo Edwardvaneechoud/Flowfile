@@ -201,3 +201,14 @@ def test_admin_can_manage_any_share(users, client_for, resource_factory, team):
     )
     assert response.status_code == 200
     assert admin.get("/shares", params={"resource_type": "secret", "resource_id": secret_id}).status_code == 200
+
+
+def test_share_groups_are_every_group_for_an_admin_and_a_persons_own_otherwise(
+    users, client_for, resource_factory, team, other_group
+):
+    named = {"resource_type": "secret", "resource_id": _make_secret(resource_factory, users["alice"].id)}
+    own = client_for("alice").get("/shares/groups", params=named)
+    assert own.status_code == 200 and [g["id"] for g in own.json()] == [team]
+    every = client_for("admin").get("/shares/groups", params=named)
+    assert every.status_code == 200 and {team, other_group} <= {g["id"] for g in every.json()}
+    assert client_for("bob").get("/shares/groups", params=named).status_code == 404

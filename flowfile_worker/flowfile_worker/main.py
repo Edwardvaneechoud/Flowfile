@@ -17,22 +17,33 @@ from flowfile_worker.pool import task_pool
 from flowfile_worker.protocol_routes import router as protocol_router
 from flowfile_worker.routes import router
 from flowfile_worker.streaming import streaming_router, v1_streaming_router
+from shared import server_extension
+from shared._version import get_version
 from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
 should_exit = False
 server_instance = None
+serving_port: int | None = None
+"""The port ``run`` serves on, which a server's extension is told while it serves; ``None`` outside ``run``."""
 
 
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
-    """Handle application startup and shutdown"""
+    """Handle application startup and shutdown.
+
+    A server's extension runs what it runs while the worker serves, on the port it serves on (``server_extension``'s
+    ``serving``).
+    """
     logger.info("Starting application...")
+    stop_extension = server_extension.call("serving", "worker", serving_port, app)
     task_pool.prewarm()
     try:
         yield
     finally:
         logger.info("Shutting down application...")
+        if stop_extension is not None:
+            stop_extension()
         try:
             task_pool.shutdown()
         except Exception as e:
@@ -71,6 +82,23 @@ async def request_validation_without_input(request: Request, exc: RequestValidat
     """FastAPI's 422 without each error's ``input``, which repeats the body (an export or import's presigned URI)."""
     errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    """Say the worker is up and which Flowfile release it runs, to any caller, with or without a token.
+
+    A worker whose storage dir keeps a name as a controller's server (``server_extension.identity``) also says it,
+    as ``node``: a controller that looks for a server that moved tells it by that name from another machine at the
+    same private address on another network. Nothing more: the host, Python, Polars
+    and the operations are in ``/v1/capabilities``, behind a token. Core never calls this route, so it is not part of
+    the worker contract.
+    """
+    answer = {"status": "ok", "version": get_version()}
+    identity = server_extension.identity()
+    if identity is not None and identity.recorded_name is not None:
+        answer["node"] = identity.recorded_name
+    return answer
 
 
 def _supervising_shell(request: Request) -> bool:
@@ -120,14 +148,20 @@ def signal_handler(signum, frame):
 def run(host: str = None, port: int = None):
     """Run the FastAPI app with graceful shutdown.
 
+    A storage dir marked for a server extension is served only with it loaded (``require_marked``). An extension
+    takes a last step before requests are taken (``before_serving``); when it answers a socket it bound, the worker
+    serves on that socket. Otherwise uvicorn binds the port, as it always has.
     Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
     """
-    global server_instance
+    global server_instance, serving_port
 
     if host is None:
         host = SERVICE_HOST
     if port is None:
         port = SERVICE_PORT
+
+    server_extension.require_marked()
+    sock = server_extension.call("before_serving", "worker", host, port, app)
 
     from connectorx import __version__ as connectorx_version
 
@@ -146,6 +180,7 @@ def run(host: str = None, port: int = None):
     config = uvicorn.Config(app, host=host, port=port, loop="asyncio", ssl_certfile=tls_cert, ssl_keyfile=tls_key)
     server = uvicorn.Server(config)
     server_instance = server
+    serving_port = port
 
     # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.
     start_parent_death_watcher(lambda: setattr(server, "should_exit", True))
@@ -154,11 +189,12 @@ def run(host: str = None, port: int = None):
     logger.info("Server started")
 
     try:
-        server.run()
+        server.run(sockets=[sock] if sock is not None else None)
     except KeyboardInterrupt:
         logger.info("Received interrupt signal, shutting down...")
     finally:
         server_instance = None
+        serving_port = None
         logger.info("Server shutdown complete")
 
 

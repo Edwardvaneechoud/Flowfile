@@ -9,6 +9,15 @@ const notifyError = (title: string, message: string) =>
 // Shared open-flow contract for HomeView and DesignerView: record the flow in
 // recents on a successful open, PRUNE it on failure — moved/deleted files must
 // not keep resurfacing on the home screen.
+// A flow a remote catalog keeps has a working file only, which is no recent to reopen.
+const isWorkingCopy = async (flowId: number): Promise<boolean> => {
+  try {
+    return !!(await FlowApi.getAllFlows()).find((s) => s.flow_id === flowId)?.working_copy;
+  } catch {
+    return false;
+  }
+};
+
 export function useFlowOpener() {
   const nodeStore = useNodeStore();
   const { recordFlow, removeFlow } = useRecentFlows();
@@ -50,6 +59,10 @@ export function useFlowOpener() {
       }
       // setFlowId triggers the Canvas watcher which loads the flow.
       nodeStore.setFlowId(flowId);
+      if (await isWorkingCopy(flowId)) {
+        removeFlow(flowPath);
+        return flowId;
+      }
       recordFlow({
         path: flowPath,
         name: meta?.name,

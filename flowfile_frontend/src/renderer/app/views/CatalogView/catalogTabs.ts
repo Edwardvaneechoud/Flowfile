@@ -151,3 +151,9 @@ export function catalogSectionOfTab(key: string | undefined): CatalogSection | n
 export function catalogTabsInSection(section: CatalogSection): CatalogTabDef[] {
   return catalogTabs.filter((t) => CATALOG_SECTION_GROUPS[section].includes(t.group));
 }
+
+/** The Schedules tab's count: the schedules the tab lists, a remote catalog's included; null until the screen has
+ * loaded. The catalog stats count only this machine's own. */
+export function schedulesBadge(loaded: boolean, listed: readonly unknown[]): number | null {
+  return loaded ? listed.length : null;
+}

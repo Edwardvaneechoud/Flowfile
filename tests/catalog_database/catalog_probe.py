@@ -72,6 +72,21 @@ if sys.argv[1] == "populated":
     constraints = inspect(engine).get_unique_constraints("workspace_projects")
     assert any(set(c["column_names"]) == {"owner_id", "folder_path"} for c in constraints)
     assert not any(c["column_names"] == ["folder_path"] for c in constraints)
+    command.upgrade(cfg, "039")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO flow_runs (flow_name, user_id, started_at, nodes_completed, number_of_nodes, run_type) "
+                "VALUES ('sent', :o, CURRENT_TIMESTAMP, 0, 0, 'hub')"
+            ),
+            {"o": owner},
+        )
+    command.upgrade(cfg, "040")
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT run_type FROM flow_runs WHERE flow_name = 'sent'")) == "dispatched"
+    command.downgrade(cfg, "039")
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT run_type FROM flow_runs WHERE flow_name = 'sent'")) == "hub"
 
 migration.run_startup_migration()
 init_db()

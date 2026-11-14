@@ -4,20 +4,20 @@ import json
 
 import polars as pl
 
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.delta_utils import (
     is_delta_table,
     is_legacy_parquet,
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.catalog.storage_backend import CatalogStorageTarget, _is_cloud_uri, resolve_for_namespace
+from flowfile_core.catalog.storage_backend import CatalogStorageTarget, _is_cloud_uri, resolve_for_table
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.catalog_cdc import (
     make_cdc_commit_callback,
-    read_cursor,
     resolve_change_window,
     resolve_consumer_key,
+    stored_version,
 )
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.protocol import ComputeBackend
@@ -26,6 +26,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _CDF_COLUMN_DTYPES,
@@ -55,6 +56,22 @@ from shared.delta_utils import (
     scan_delta_changes,
 )
 
+PICK_REMOTE_TABLE = "No table on the hub is picked for this reader; pick one."
+
+
+def unnamed_remote_table(settings: input_schema.NodeCatalogReader) -> str | None:
+    """Why a remote reader cannot be read: it names no table by its qualified name; ``None`` when it does."""
+    return None if settings.catalog_full_table_name else PICK_REMOTE_TABLE
+
+
+def _filtered_frame(lf: pl.LazyFrame, row_filter: pl.Expr | None, backend: ComputeBackend | None) -> FlowDataEngine:
+    """``lf`` under ``row_filter``; with a ``backend``, its schema read there with the plan held deferred."""
+    plan = lf if row_filter is None else lf.filter(row_filter)
+    if backend is None:
+        return FlowDataEngine(plan)
+    with _deferred(backend, plan) as ref:
+        return FlowDataEngine(plan, schema=ref.schema)
+
 
 class CatalogBuildersMixin(GraphMixinBase):
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
@@ -66,7 +83,9 @@ class CatalogBuildersMixin(GraphMixinBase):
         the SQL against all catalog Delta tables instead.
         """
 
-        if node_catalog_reader.sql_query:
+        if table_sources.is_remote(node_catalog_reader.source):
+            is_virtual_optimized = self._add_remote_table_reader(node_catalog_reader)
+        elif node_catalog_reader.sql_query:
             is_virtual_optimized = self._add_catalog_sql_reader(node_catalog_reader)
         else:
             is_virtual_optimized = self._add_catalog_table_reader(node_catalog_reader)
@@ -88,27 +107,23 @@ class CatalogBuildersMixin(GraphMixinBase):
         virtual_tables = resolved.virtual_tables
         table_namespaces = resolved.table_namespaces
 
-        # Memoized per namespace: one SQL query can join tables from catalogs with different storage.
+        # Memoized per storage: one SQL query can join tables from catalogs with different storage.
         targets_by_name: dict[str, CatalogStorageTarget] = {}
-        _targets_by_namespace: dict[int | None, CatalogStorageTarget] = {}
+        _targets: dict[tuple[bool, int | None], CatalogStorageTarget] = {}
         for _name, _path in table_paths.items():
-            if not _is_cloud_uri(_path):
-                continue
             _ns = table_namespaces.get(_name)
-            if _ns not in _targets_by_namespace:
-                _targets_by_namespace[_ns] = resolve_for_namespace(_ns)
-            targets_by_name[_name] = _targets_by_namespace[_ns]
+            _key = (_is_cloud_uri(_path), _ns)
+            if _key not in _targets:
+                _targets[_key] = resolve_for_table(_path, _ns)
+            targets_by_name[_name] = _targets[_key]
 
         def _func() -> FlowDataEngine:
             if not table_paths and not virtual_tables:
                 raise ValueError("No catalog tables available to query")
             ctx = pl.SQLContext()
             for name, path in table_paths.items():
-                if _is_cloud_uri(path):
-                    scan_kwargs = targets_by_name[name].scan_kwargs(node_catalog_reader.user_id)
-                    ctx.register(name, pl.scan_delta(path, **scan_kwargs))
-                else:
-                    ctx.register(name, pl.scan_delta(path))
+                scan_kwargs = targets_by_name[name].scan_kwargs(node_catalog_reader.user_id)
+                ctx.register(name, pl.scan_delta(path, **scan_kwargs))
             run_location = current_context(self).backend_id if FLOWFILE_COMPUTE_PROTOCOL else self.execution_location
             for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
                 ctx.register(
@@ -147,6 +162,157 @@ class CatalogBuildersMixin(GraphMixinBase):
 
         return is_virtual_optimized
 
+    def _scan_stored_table(
+        self,
+        target: CatalogStorageTarget,
+        path: str,
+        user_id: int | None,
+        row_filter: pl.Expr | None,
+        columns: dict[str, pl.DataType] | None = None,
+        **scan_kwargs,
+    ) -> FlowDataEngine:
+        """The read every reader of a table on object storage ends in, whichever catalog keeps the table: a lazy scan
+        of ``path`` on ``target`` under ``row_filter``, its schema read on the reader's backend with the protocol on."""
+        lf = table_sources.scan_delta(target, path, user_id, columns, **scan_kwargs)
+        backend = current_context(self).backend if FLOWFILE_COMPUTE_PROTOCOL else None
+        return _filtered_frame(lf, row_filter, backend)
+
+    def _add_remote_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> None:
+        """Read a table a remote catalog keeps, named by its qualified name, on the storage target that catalog
+        answers for the run.
+
+        The table is looked up in its catalog by name once here, and its columns are the node's predicted schema; a
+        catalog that does not answer leaves its message on the node, and the table is looked up again when the run
+        reads it. A reader that names no table yet fails with ``unnamed_remote_table`` when it runs. The target is asked
+        for when the node runs (``RemoteCatalog.table_target``), since its credential is the run's and short-lived, so
+        outside a run the node cannot read. A change read takes the table's row and a target from the catalog when it
+        runs (``table_sources.row_targets``) and its cursor from that catalog, as ``_read_table_changes`` reads one.
+        """
+        source = node_catalog_reader.source
+        user_id = node_catalog_reader.user_id
+        qualified_name = node_catalog_reader.catalog_full_table_name
+        node_logger = self.flow_logger.get_node_logger(node_catalog_reader.node_id)
+        designed: dict | None = None
+        unread: str | None = unnamed_remote_table(node_catalog_reader)
+        if unread is None:
+            try:
+                designed = table_sources.remote(source).table_named(user_id, qualified_name)
+            except LookupError as e:
+                unread = str(e)
+        row_filter = _scd2_row_filter(None, node_catalog_reader.scd2_view, None, node_logger=node_logger)
+
+        def _func() -> FlowDataEngine:
+            unnamed = unnamed_remote_table(node_catalog_reader)
+            if unnamed is not None:
+                raise ValueError(unnamed)
+            catalog = table_sources.remote(source)
+            if designed is None and catalog.run_grant(self.catalog_run_id) is None:
+                # Outside a run the catalog's own sentence, before a lookup it may refuse for another reason.
+                catalog.table_target(None, user_id, "")
+            table = designed or catalog.table_named(user_id, qualified_name)
+            if node_catalog_reader.cdc_mode != "off":
+                row = table_sources.table_row(None, -table["id"], user_id)
+                [target] = table_sources.row_targets([row], user_id, "changes")
+                facts = (row.id, row.name, row.file_path, row.cdc_enabled, row.cdc_enabled_version)
+                return self._read_table_changes(node_catalog_reader, *facts, target)
+            columns = {
+                column["name"]: cast_str_to_polars_type(column["dtype"]) for column in table.get("schema_columns") or ()
+            }
+            path = table["file_path"]
+            target = catalog.table_target(self.catalog_run_id, user_id, path)
+            return self._scan_stored_table(target, path, user_id, row_filter, columns)
+
+        def _schema_callback() -> list[FlowfileColumn]:
+            feed = _CDF_COLUMN_DTYPES if node_catalog_reader.cdc_mode != "off" else ()
+            return [
+                FlowfileColumn.from_input(column_name=column["name"], data_type=column["dtype"])
+                for column in designed["schema_columns"]
+            ] + [FlowfileColumn.from_input(column_name=name, data_type=dtype) for name, dtype in feed]
+
+        self.add_node_step(
+            node_id=node_catalog_reader.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="catalog_reader",
+            setting_input=node_catalog_reader,
+            schema_callback=_schema_callback if designed is not None else None,
+        )
+        node = self.get_node(node_catalog_reader.node_id)
+        self.add_node_to_starting_list(node)
+        if unread is not None:
+            node.results.errors = unread
+        return None
+
+    def _read_table_changes(
+        self,
+        settings: input_schema.NodeCatalogReader,
+        table_id: int,
+        table_name: str,
+        table_path: str | None,
+        cdc_enabled: bool,
+        floor: int | None,
+        target: CatalogStorageTarget,
+    ) -> FlowDataEngine:
+        """Read a table's change feed for this run, whichever catalog keeps it: the window from the cursor that
+        catalog keeps, read on ``target``.
+
+        Head and the cursor are resolved here, at execution time: the designer keeps one
+        FlowGraph across runs, so a window pinned while wiring would go stale after the first
+        one. Strict by design — an untracked table is an actionable error, never a silent
+        full read.
+        """
+        if not cdc_enabled:
+            raise ValueError(
+                f"Change tracking is not enabled on '{table_name}'. Enable change tracking on "
+                f"'{table_name}' first, then re-run."
+            )
+        if not table_path:
+            raise ValueError(f"Catalog table '{table_name}' has no storage to read changes from")
+
+        storage_options = target.storage_options or None
+        head = get_delta_head_version(table_path, storage_options=storage_options)
+        cursor_consumer: tuple[str, str | None] | None = None
+        last_version: int | None = None
+        if settings.cdc_mode == "since_last_run":
+            elsewhere = table_sources.remote_of(table_id) is not None
+            cursor_consumer = resolve_consumer_key(self, settings, elsewhere=elsewhere)
+            last_version = stored_version(table_id, cursor_consumer[0], table_path, settings.user_id)
+        starting_version = resolve_change_window(
+            settings.cdc_mode,
+            settings.cdc_from_version,
+            settings.cdc_from_timestamp,
+            head=head,
+            floor=floor,
+            path=table_path,
+            storage_options=storage_options,
+            last_version=last_version,
+            cdc_start=settings.cdc_start,
+        )
+
+        lf = scan_delta_changes(
+            table_path,
+            starting_version,
+            head,
+            **target.scan_kwargs(settings.user_id),
+            include_preimage=settings.cdc_include_preimage,
+        )
+        if cursor_consumer is not None:
+            consumer_key, label = cursor_consumer
+            self.get_node(settings.node_id)._on_flow_complete = make_cdc_commit_callback(
+                table_id,
+                consumer_key,
+                head,
+                settings.node_id,
+                self.flow_logger,
+                owner_id=settings.user_id,
+                label=label,
+                table_path=table_path,
+            )
+        self.flow_logger.get_node_logger(settings.node_id).info(
+            f"Reading changes from '{table_name}' (v{starting_version}..v{head})"
+        )
+        return FlowDataEngine(lf)
+
     def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
         """Read a single table from the catalog (physical or virtual).
 
@@ -181,13 +347,8 @@ class CatalogBuildersMixin(GraphMixinBase):
         _authorized = info.authorized
         _user_id = node_catalog_reader.user_id
 
-        # Resolve cloud storage once at wiring time; local tables don't touch the DB.
-        _reader_target = None
-        _reader_storage_options = None
-        if resolved_path and _is_cloud_uri(resolved_path):
-            _reader_namespace_id = info.namespace_id or node_catalog_reader.catalog_namespace_id
-            _reader_target = resolve_for_namespace(_reader_namespace_id)
-            _reader_storage_options = _reader_target.storage_options or None
+        # Resolve storage once at wiring time; local tables don't touch the DB.
+        _reader_target = resolve_for_table(resolved_path, info.namespace_id or node_catalog_reader.catalog_namespace_id)
 
         _scd2_filter = _scd2_row_filter(
             info.scd2_config,
@@ -205,11 +366,7 @@ class CatalogBuildersMixin(GraphMixinBase):
                 raise ValueError("Change tracking is not available for legacy parquet catalog tables")
 
         def _apply_scd2_filter(lf: pl.LazyFrame, backend: ComputeBackend | None = None) -> FlowDataEngine:
-            plan = lf if _scd2_filter is None else lf.filter(_scd2_filter)
-            if backend is None:
-                return FlowDataEngine(plan)
-            with _deferred(backend, plan) as ref:
-                return FlowDataEngine(plan, schema=ref.schema)
+            return _filtered_frame(lf, _scd2_filter, backend)
 
         def _resolve_table_row(db):
             repo = SQLAlchemyCatalogRepository(db)
@@ -224,71 +381,13 @@ class CatalogBuildersMixin(GraphMixinBase):
             )
 
         def _read_changes() -> FlowDataEngine:
-            """Read the table's change feed for this run.
-
-            Head and the cursor are resolved here, at execution time: the designer keeps one
-            FlowGraph across runs, so a window pinned while wiring would go stale after the first
-            one. Strict by design — an untracked table is an actionable error, never a silent
-            full read.
-            """
+            """Read the table's change feed for this run, the row resolved at execution time."""
             with get_db_context() as db:
                 table = _resolve_table_row(db)
                 if table is None:
                     raise ValueError("Catalog table could not be resolved — no change feed to read")
-                table_id, table_name = table.id, table.name
-                table_path, cdc_enabled, floor = table.file_path, table.cdc_enabled, table.cdc_enabled_version
-            if not cdc_enabled:
-                raise ValueError(
-                    f"Change tracking is not enabled on '{table_name}'. Enable change tracking on "
-                    f"'{table_name}' first, then re-run."
-                )
-            if not table_path:
-                raise ValueError(f"Catalog table '{table_name}' has no storage to read changes from")
-
-            head = get_delta_head_version(table_path, storage_options=_reader_storage_options)
-            cursor_consumer: tuple[str, str | None] | None = None
-            last_version: int | None = None
-            if _cdc_mode == "since_last_run":
-                consumer_key, label = resolve_consumer_key(self, node_catalog_reader)
-                with get_db_context() as db:
-                    cursor = read_cursor(db, table_id, consumer_key, table_path)
-                last_version = cursor.last_version if cursor is not None else None
-                cursor_consumer = (consumer_key, label)
-            starting_version = resolve_change_window(
-                _cdc_mode,
-                node_catalog_reader.cdc_from_version,
-                node_catalog_reader.cdc_from_timestamp,
-                head=head,
-                floor=floor,
-                path=table_path,
-                storage_options=_reader_storage_options,
-                last_version=last_version,
-                cdc_start=node_catalog_reader.cdc_start,
-            )
-
-            lf = scan_delta_changes(
-                table_path,
-                starting_version,
-                head,
-                **(_reader_target.scan_kwargs(_user_id) if _reader_target is not None else {}),
-                include_preimage=node_catalog_reader.cdc_include_preimage,
-            )
-            if cursor_consumer is not None:
-                consumer_key, label = cursor_consumer
-                self.get_node(node_catalog_reader.node_id)._on_flow_complete = make_cdc_commit_callback(
-                    table_id,
-                    consumer_key,
-                    head,
-                    node_catalog_reader.node_id,
-                    self.flow_logger,
-                    owner_id=node_catalog_reader.user_id,
-                    label=label,
-                    table_path=table_path,
-                )
-            self.flow_logger.get_node_logger(node_catalog_reader.node_id).info(
-                f"Reading changes from '{table_name}' (v{starting_version}..v{head})"
-            )
-            return FlowDataEngine(lf)
+                row = (table.id, table.name, table.file_path, table.cdc_enabled, table.cdc_enabled_version)
+            return self._read_table_changes(node_catalog_reader, *row, _reader_target)
 
         def _cdc_schema_callback() -> list[FlowfileColumn]:
             """Predicted schema of a change read: the table's own columns plus the three feed columns."""
@@ -330,9 +429,7 @@ class CatalogBuildersMixin(GraphMixinBase):
                 scan_kwargs["version"] = delta_version
             if _is_cloud_uri(resolved_path):
                 # Cloud catalog table: scan directly (stays lazy ⇒ no collect in core).
-                scan_kwargs.update(_reader_target.scan_kwargs(_user_id))
-                backend = current_context(self).backend if FLOWFILE_COMPUTE_PROTOCOL else None
-                return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs), backend)
+                return self._scan_stored_table(_reader_target, resolved_path, _user_id, _scd2_filter, **scan_kwargs)
             if is_delta_table(resolved_path):
                 return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs))
             return _apply_scd2_filter(pl.scan_parquet(resolved_path))

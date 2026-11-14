@@ -133,8 +133,9 @@ def test_unauthenticated_returns_401(unauth_client: TestClient) -> None:
     assert unauth_client.post("/telemetry/consent", json={"enabled": True}).status_code == 401
 
 
-def test_docker_non_admin_cannot_manage(non_admin_client: TestClient, monkeypatch) -> None:
-    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+@pytest.mark.parametrize("mode", ["docker", "server"])
+def test_docker_non_admin_cannot_manage(non_admin_client: TestClient, monkeypatch, mode) -> None:
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
     status = non_admin_client.get("/telemetry/status")
     assert status.status_code == 200
     assert status.json()["can_manage"] is False

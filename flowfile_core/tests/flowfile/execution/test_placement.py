@@ -63,8 +63,11 @@ from tests.flowfile.execution.graph_helpers import (
     add_promise,
     code_flow,
     connect,
+    input_then_sort,
     make_graph,
+    ranks,
 )
+from tests.hub_client import conftest as hub_conftest
 from tests.test_catalog_cloud_virtual import _create_cloud_schema, _ensure_connection
 
 flag = protocol_states()
@@ -369,14 +372,10 @@ def test_a_fuzzy_match_is_refused_on_a_backend_without_its_plugin(protocol_on, d
 
     run_info = graph.run_graph()
 
-    assert_refused_before_any_node(
-        graph, run_info, backend, {3: ["it needs polars_simed (not installed)"]}
-    )
+    assert_refused_before_any_node(graph, run_info, backend, {3: ["it needs polars_simed (not installed)"]})
 
 
-def test_each_formula_node_is_refused_on_a_backend_without_the_formula_library_and_a_select_still_runs(
-    declare, flag
-):
+def test_each_formula_node_is_refused_on_a_backend_without_the_formula_library_and_a_select_still_runs(declare, flag):
     """Every formula-family node needs the formula library, whatever its formulas compile to, so a backend without it
     refuses each of them and places a select; with the flag off nothing is placed."""
     assert everything().plugins["polars_expr_transformer"] == importlib.metadata.version("polars_expr_transformer")
@@ -830,6 +829,27 @@ def test_a_version_mismatch_refuses_every_node_of_the_backend_before_any_starts(
     assert backend.work == []
 
 
+def test_a_run_and_a_fetch_follow_the_remotes_servers_before_they_ask_it_for_anything(protocol_on, monkeypatch):
+    """What a vend is sealed to is read from the rows the remote fills, so they are followed first, once per run."""
+    graph = input_then_sort(make_graph(7391, execution_location="local"), ranks(3), "rank")
+    order: list[str] = []
+    asked = graph._start_remote_run
+    monkeypatch.setattr(registry.remote_servers, "refresh", lambda backend_ids: order.append("servers"))
+    monkeypatch.setattr(
+        graph, "_start_remote_run", lambda nodes, run: order.append("credentials") or asked(nodes, run)
+    )
+    monkeypatch.setattr(graph, "_vend_for_fetch", lambda node, run: order.append("credentials"))
+    try:
+        assert graph.run_graph().success is True
+        assert order == ["servers", "credentials"]
+
+        order.clear()
+        graph.trigger_fetch_node(2)
+        assert order == ["servers", "credentials"]
+    finally:
+        graph.close_flow()
+
+
 def test_a_run_on_local_in_a_process_that_serves_is_refused_before_local_is_made(protocol_on, declare, monkeypatch):
     monkeypatch.setattr(registry, "_serving", False)
     registry.mark_serving()
@@ -1247,3 +1267,123 @@ def test_a_write_whose_needs_cannot_be_read_is_refused_before_any_node_starts_an
     assert warning.levelname == "WARNING"
     assert warning.getMessage() == f'Node 2 of flow {flow_id} is refused on backend "{BACKEND_ID}": {unchecked(error)}'
     assert warning.exc_info[1] is error
+
+
+HUB_READ_REFUSAL = (
+    "it reads a table on the hub with a credential the hub vends to this run, which this backend cannot take"
+)
+HUB_WRITE_REFUSAL = (
+    "it writes a table on the hub with a credential the hub vends to this run, which this backend cannot take"
+)
+
+
+def hub_flow(flow_id: int, *, vended: bool) -> FlowGraph:
+    """A hub catalog reader 1 over ``sales.raw`` into a hub catalog writer 2 into ``sales.curated``, built with no hub
+    session.
+
+    ``vended`` gives the graph the credential a run's vend would hold: one for ``s3://acme/sales``, both namespaces'
+    root, with the hub's ids 11 and 12 of the two schemas.
+    """
+    from flowfile_core.hub_client import vend
+
+    graph = make_graph(flow_id)
+    token = schema_prefetch_blocked.set(True)
+    try:
+        add_promise(graph, 1, "catalog_reader")
+        graph.add_catalog_reader(
+            input_schema.NodeCatalogReader(
+                flow_id=flow_id, node_id=1, user_id=1, source="hub", catalog_full_table_name="sales.raw.orders"
+            )
+        )
+        add_promise(graph, 2, "catalog_writer")
+        graph.add_catalog_writer(
+            input_schema.NodeCatalogWriter(
+                flow_id=flow_id,
+                node_id=2,
+                depending_on_id=1,
+                user_id=1,
+                catalog_write_settings=input_schema.CatalogWriteSettings(
+                    table_name="out", source="hub", namespace_full_name="sales.curated"
+                ),
+            )
+        )
+        connect(graph, 1, 2)
+    finally:
+        schema_prefetch_blocked.reset(token)
+    if vended:
+        credential = vend.HubCredential("s3://acme/sales", {"aws_access_key_id": "k"})
+        vend.hold(
+            vend.RunVend(
+                run_id="run",
+                vend_id=1,
+                credentials=(credential,),
+                bases={"sales.raw": "s3://acme/sales", "sales.curated": "s3://acme/sales"},
+                ids={"sales.raw": 11, "sales.curated": 12},
+            )
+        )
+        graph.catalog_run_id = "run"
+    return graph
+
+
+# A secure store of the test's own, so no hub session of another test is found.
+store = hub_conftest.store
+
+
+def test_a_vended_hub_node_needs_its_scheme_and_names_no_connection(store):
+    graph = hub_flow(8460, vended=True)
+
+    for node_id, read, write in ((1, {"s3"}, set()), (2, set(), {"s3"})):
+        node = graph.get_node(node_id)
+        target, namespace, _ = _catalog_target(node.setting_input, graph)
+        requirements = requirements_for(node.node_template, node.setting_input, catalog_target=target)
+        assert requirements.read_schemes == read and requirements.write_schemes == write
+        assert requirements.credentials == frozenset()
+        assert namespace == ("sales.raw" if node_id == 1 else "sales.curated")
+
+
+def test_a_vended_hub_node_is_refused_on_a_backend_without_its_scheme(store):
+    graph = hub_flow(8461, vended=True)
+
+    placement = place(graph, {BACKEND_ID: without(everything(), scheme="s3")}, SingleBackendPolicy(BACKEND_ID))
+
+    assert placement.refusals == [
+        Refusal(1, BACKEND_ID, "it reads s3:// paths"),
+        Refusal(2, BACKEND_ID, "it writes s3:// paths"),
+    ]
+
+
+def test_a_vended_hub_node_is_refused_on_an_ambient_backend_by_name(store):
+    graph = hub_flow(8462, vended=True)
+
+    placement = place(graph, {BACKEND_ID: ambient()}, SingleBackendPolicy(BACKEND_ID))
+
+    assert placement.refusals == [Refusal(1, BACKEND_ID, HUB_READ_REFUSAL), Refusal(2, BACKEND_ID, HUB_WRITE_REFUSAL)]
+
+
+@pytest.mark.parametrize("backend_id", ["local", "worker", "worker:team"])
+def test_a_vended_hub_node_runs_where_s3_is_declared(store, backend_id):
+    from flowfile_worker import service as worker_service
+
+    declared = {
+        "local": everything(),
+        "worker": worker_service.worker_capabilities(),
+        "worker:team": without(everything(), scheme="file"),
+    }[backend_id]
+    graph = hub_flow(8463, vended=True)
+
+    placement = place(graph, {backend_id: declared}, SingleBackendPolicy(backend_id))
+
+    assert placement.refusals == []
+    assert placement.assignment == {1: backend_id, 2: backend_id}
+
+
+@pytest.mark.parametrize("declared", [without(everything(), scheme="s3"), ambient()], ids=["no_s3", "ambient"])
+def test_a_hub_node_without_a_vend_claims_nothing(store, declared):
+    graph = hub_flow(8464, vended=False)
+
+    placement = place(graph, {BACKEND_ID: declared}, SingleBackendPolicy(BACKEND_ID))
+
+    assert placement.refusals == []
+    for node_id in (1, 2):
+        node = graph.get_node(node_id)
+        assert _catalog_target(node.setting_input, graph) == (None, None, None)

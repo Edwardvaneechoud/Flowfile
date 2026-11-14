@@ -8,6 +8,7 @@ A worker with a private TLS certificate is trusted through ``trust_ca``; every o
 public CAs.
 """
 
+import contextvars
 import io
 import json
 import os
@@ -30,6 +31,7 @@ from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavail
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
     ensure_handshake,
     fetch_worker_capabilities,
+    owner,
     reset_handshake,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
@@ -89,11 +91,18 @@ class _WorkerSession(requests.Session):
     ``ComputeUnavailable``. A call that cannot reach the worker re-arms the check of the backends on its URL, since the
     worker that comes back there may be another one. ``gated=False`` skips the gate, neither passing nor re-arming it,
     for the reads of a worker's versions themselves (``GET /capabilities``).
+
+    A call that brings no ``auth`` of its own is signed as the backend that owns ``worker_url`` (``handshake.owner``):
+    with that backend's token when it has one, such as the run token a hub mints for its node, else with the process's
+    internal token. So every task-route call to a worker (a submit, a status poll, a fetch, a cancel, a clear)
+    carries the token the backend's handshake and ``/v1`` calls carry.
     """
 
     def request(
         self, method, path, *args, worker_url: str, backend_id: str | None = None, gated: bool = True, **kwargs
     ):
+        if kwargs.get("auth") is None:
+            kwargs["auth"] = signer_for(worker_url)
         if gated:
             ensure_handshake(worker_url, backend_id=backend_id)
         try:
@@ -102,6 +111,23 @@ class _WorkerSession(requests.Session):
             if gated:
                 reset_handshake(worker_url)
             raise
+
+
+def signer_for(worker_url: str) -> requests.auth.AuthBase | None:
+    """What a call to ``worker_url`` that names no backend signs with: the owning backend's own token, else ``None``,
+    the session's internal token."""
+    backend = owner(worker_url)
+    return backend.request_auth if backend is not None else None
+
+
+def signing_token(worker_url: str) -> str:
+    """The token a socket to ``worker_url`` that names no backend carries: the owning backend's, else the internal one.
+
+    Raises:
+        TaskFailed: The owning backend's token is no header value (``TOKEN_RULE``).
+    """
+    backend = owner(worker_url)
+    return backend.signing_token() if backend is not None else get_internal_token()
 
 
 class _TrustedCa(HTTPAdapter):
@@ -868,6 +894,37 @@ def trigger_add_key_column(
     return response.json()
 
 
+def trigger_restore_version(
+    table_name: str,
+    table_id: int,
+    version: int,
+    expected_version: int | None = None,
+    commit_metadata: dict[str, str] | None = None,
+    storage: dict | None = None,
+    *,
+    worker_url: str,
+) -> dict:
+    """Ask the worker to restore a Delta catalog table to an earlier version."""
+    payload = {
+        "table_path": table_name,
+        "version": version,
+        "expected_version": expected_version,
+        "commit_metadata": commit_metadata,
+    }
+    if storage is not None:
+        payload["storage"] = storage
+    try:
+        response = _worker_session.post("/catalog/restore_version", worker_url=worker_url, json=payload, timeout=600)
+    except (requests.RequestException, ComputeError) as exc:
+        from flowfile_core.catalog.exceptions import WorkerUnavailableError
+
+        raise WorkerUnavailableError(f"worker unavailable while restoring a table version: {exc}") from exc
+    _raise_for_edit_response(response, table_id)
+    if not response.ok:
+        raise RuntimeError(f"Worker restore_version failed: {response.text}")
+    return response.json()
+
+
 def get_results(file_ref: str, *, worker_url: str) -> Status | None:
     f = _worker_session.get(f"/status/{file_ref}", worker_url=worker_url, timeout=_WORKER_TIMEOUT)
     if f.status_code == 200:
@@ -1051,7 +1108,10 @@ class BaseFetcher:
     def _start_thread(self):
         """Internal method to start thread (must be called under lock)."""
         if not self._started:
-            self._thread = threading.Thread(target=self._fetch_cached_df, daemon=True)
+            # Under the starter's context, so each poll is signed for the person the task runs for.
+            self._thread = threading.Thread(
+                target=contextvars.copy_context().run, args=(self._fetch_cached_df,), daemon=True
+            )
             self._thread.start()
             self._started = True
 
@@ -1313,8 +1373,8 @@ class BaseFetcher:
                 self._running = True
                 self._started = True
                 self._thread = threading.Thread(
-                    target=self._ws_receive_thread,
-                    args=(ws,),
+                    target=contextvars.copy_context().run,
+                    args=(self._ws_receive_thread, ws),
                     daemon=True,
                 )
                 self._thread.start()

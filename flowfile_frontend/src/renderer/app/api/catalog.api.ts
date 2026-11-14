@@ -15,6 +15,8 @@ import type {
   CatalogTableKeyColumnRequest,
   CatalogTableKeyColumnResponse,
   CatalogTablePreview,
+  CatalogTableRestoreRequest,
+  CatalogTableRestoreResponse,
   CatalogTableUpdate,
   CdcCursor,
   CdcCursorResetRequest,
@@ -478,6 +480,18 @@ export class CatalogApi {
     return response.data;
   }
 
+  /** Restore a table to an earlier Delta version (one RESTORE commit; history is kept). */
+  static async restoreTableVersion(
+    tableId: number,
+    body: CatalogTableRestoreRequest,
+  ): Promise<CatalogTableRestoreResponse> {
+    const response = await axios.post<CatalogTableRestoreResponse>(
+      `/catalog/tables/${tableId}/restore`,
+      body,
+    );
+    return response.data;
+  }
+
   /** Distinct values + min/max for a single column on a catalog table.
    * Used by the dashboard filter UI to pre-populate categorical
    * dropdowns and pre-fill numeric / date range inputs. */
@@ -586,8 +600,8 @@ export class CatalogApi {
 
   // ====== Scheduler ======
 
-  static async getSchedulerStatus(): Promise<SchedulerStatus> {
-    const response = await axios.get<SchedulerStatus>("/catalog/scheduler/status");
+  static async getSchedulers(): Promise<SchedulerStatus[]> {
+    const response = await axios.get<SchedulerStatus[]>("/catalog/schedulers");
     return response.data;
   }
 

@@ -93,6 +93,8 @@ import authService from "../../../services/auth.service";
 import { desktop } from "../../../../lib/desktop";
 import { DOCS_BASE_URL } from "../../../lib/docsLinks";
 import { useAuthStore } from "../../../stores/auth-store";
+import { useHubConnectionStore } from "../../../stores/hub-connection-store";
+import { showsTab } from "../../../views/ComputeView/computeTabs";
 import { useMultiUser } from "../../../composables/useMultiUser";
 import { useTheme } from "../../../composables/useTheme";
 import { useAppUpdate } from "../../../composables/useAppUpdate";
@@ -122,6 +124,7 @@ defineEmits(["toggle-collapse"]);
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const hub = useHubConnectionStore();
 const projectStore = useProjectStore();
 const tutorialStore = useTutorialStore();
 const { isMultiUser } = useMultiUser();
@@ -165,7 +168,7 @@ const items = computed(() => {
     if ((entry.hideInElectron || entry.dockerOnly) && isDesktopShell) return false;
     // Projects are admin-only in docker; admins keep it even when disabled (to reach the how-to page).
     if (entry.name === "project" && isMultiUser.value && !isAdmin) return false;
-    return !entry.requiresAdmin || isAdmin;
+    return showsTab(entry, isAdmin, hub.joined);
   };
   const decorate = (entry: INavigationRoute): INavigationRoute =>
     entry.name === "project" ? { ...entry, statusDot: projectDot } : entry;
@@ -235,13 +238,15 @@ const handleRequestNode = () => {
 // The native Help menu forwards its "Request a Node" item here (see menu.rs).
 let stopHelpRequestNode: (() => void) | null = null;
 onMounted(async () => {
+  // An admin sees every entry; anyone else gets the Hub entry only where the server belongs to a hub.
+  if (!authStore.isAdmin) void hub.load();
   stopHelpRequestNode = await desktop.onHelpRequestNode(handleRequestNode);
 });
 onBeforeUnmount(() => stopHelpRequestNode?.());
 
-const handleLogout = () => {
+const handleLogout = async () => {
   // Store logout, not authService: per-user store state must be torn down too.
-  authStore.logout();
+  await authStore.logout();
   router.push({ name: "login" });
 };
 </script>

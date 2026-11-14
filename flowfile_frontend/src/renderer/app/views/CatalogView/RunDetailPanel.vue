@@ -37,6 +37,10 @@
         <span class="meta-label">Nodes succeeded</span>
         <span class="meta-value">{{ run.nodes_completed }} / {{ run.number_of_nodes }}</span>
       </div>
+      <div v-if="run.executed_on" class="meta-card">
+        <span class="meta-label">Executed on</span>
+        <span class="meta-value">{{ run.executed_on }}</span>
+      </div>
       <div class="meta-card">
         <span class="meta-label">Run Type</span>
         <span v-if="run.run_type === 'scheduled' && run.schedule_id" class="meta-value">
@@ -123,19 +127,38 @@
       </div>
     </div>
 
-    <!-- Run Log (scheduled runs) -->
+    <!-- Run Log (scheduled runs; a run executed elsewhere keeps its log there) -->
     <div v-if="run.has_log" class="section">
       <div class="snapshot-header">
         <h3>
           <i class="fa-solid fa-file-lines"></i>
           Run Log
         </h3>
-        <button v-if="!logContent && !loadingLog" class="btn btn-primary btn-sm" @click="loadLog">
+        <a
+          v-if="logElsewhere"
+          class="btn btn-primary btn-sm"
+          :href="run.log_url ?? undefined"
+          target="_blank"
+          rel="noopener"
+        >
+          <i class="fa-solid fa-arrow-up-right-from-square"></i>
+          Open the log on {{ run.executed_on ?? "the server that ran it" }}
+        </a>
+        <button
+          v-else-if="!logContent && !loadingLog"
+          class="btn btn-primary btn-sm"
+          @click="loadLog"
+        >
           <i class="fa-solid fa-eye"></i>
           View log
         </button>
       </div>
-      <div v-if="loadingLog" class="log-viewer">
+      <div v-if="logElsewhere" class="log-viewer">
+        <pre class="snapshot-code">
+The log is kept where the run happened; open it there with your sign-in.</pre
+        >
+      </div>
+      <div v-else-if="loadingLog" class="log-viewer">
         <pre class="snapshot-code">Loading...</pre>
       </div>
       <div v-else-if="logContent !== null" class="log-viewer">
@@ -167,6 +190,7 @@ import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useHubConnectionStore } from "../../stores/hub-connection-store";
 import type { FlowRunDetail } from "../../types";
 import {
   NODE_OUTCOME_BADGE,
@@ -204,10 +228,21 @@ defineEmits(["close", "openSnapshot", "viewFlow", "viewScheduleRuns"]);
 const logContent = ref<string | null>(null);
 const loadingLog = ref(false);
 
+const hub = useHubConnectionStore();
+if (hub.connection === null) void hub.load();
+
+/** The run's own id on this server when this server ran it, so its log is read here; null when it ran elsewhere. */
+const logRunHere = computed<number | null>(() => {
+  const named = /^backend:(.+):(\d+)$/.exec(props.run.log_ref ?? "");
+  const here = hub.connection?.server_name;
+  return named && here && named[1] === here ? Number(named[2]) : null;
+});
+const logElsewhere = computed(() => !!props.run.log_url && logRunHere.value === null);
+
 async function loadLog() {
   loadingLog.value = true;
   try {
-    logContent.value = await CatalogApi.getRunLog(props.run.id);
+    logContent.value = await CatalogApi.getRunLog(logRunHere.value ?? props.run.id);
   } catch {
     logContent.value = "Failed to load log file.";
   } finally {
@@ -217,10 +252,10 @@ async function loadLog() {
 
 // Auto-load log when viewing a scheduled run
 watch(
-  () => props.run.id,
+  [() => props.run.id, logElsewhere],
   () => {
     logContent.value = null;
-    if (props.run.has_log) {
+    if (props.run.has_log && !logElsewhere.value) {
       loadLog();
     }
   },

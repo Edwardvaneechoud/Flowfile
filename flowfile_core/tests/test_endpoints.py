@@ -1,5 +1,6 @@
 import datetime
 import os
+import tempfile
 import threading
 from pathlib import Path
 from time import sleep
@@ -3644,8 +3645,9 @@ def test_flow_run_status():
 
 def test_directory_contents_in_electron_mode():
     """Test that directory_contents allows browsing any directory in Electron mode."""
-    response = client.get("/files/directory_contents/", params={"directory": "/tmp", "include_hidden": False})
-    assert response.status_code == 200, "Should be able to browse /tmp in Electron mode"
+    root = Path(tempfile.gettempdir()).anchor
+    response = client.get("/files/directory_contents/", params={"directory": root, "include_hidden": False})
+    assert response.status_code == 200, f"Should be able to browse {root} in Electron mode"
     assert isinstance(response.json(), list), "Should return a list of file info"
 
 

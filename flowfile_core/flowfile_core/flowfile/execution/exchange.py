@@ -1,8 +1,10 @@
 """The exchange store: an object-storage prefix that a run's results cross between backends through.
 
 ``FLOWFILE_EXCHANGE_URI`` names its ``s3://`` root and ``FLOWFILE_EXCHANGE_CONNECTION`` the stored cloud connection
-that opens it. The connection is the operator's, never a node's user's, and reaches a backend as a ``CredentialRef``.
-A run writes under ``<uri>/<flow id>/<run id>/``, which ``run_graph`` removes when the run ends.
+that opens it, else the store saved from the Backends page (``exchange_config.effective_store``). The connection is the
+operator's, never a node's user's, and reaches a backend as a ``CredentialRef``. A remote's store is opened by what it
+vends the run instead (``ExchangeRun.sealed``, ``ExchangeRun.own``). A run writes under ``<uri>/<flow id>/<run id>/``,
+which ``run_graph`` removes when the run ends.
 """
 
 from __future__ import annotations
@@ -10,18 +12,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from flowfile_core.configs import settings
-from flowfile_core.flowfile.execution.protocol import CredentialRef
-from shared.cloud_credential_provider import credential_ref_kwargs, resolve_credential_ref
+from flowfile_core.configs import exchange_config
+from flowfile_core.configs.exchange_config import ExchangeConfig
+from flowfile_core.flowfile.execution.protocol import (
+    Credential,
+    CredentialRef,
+    EncryptedCredential,
+    SealedCredential,
+)
+from shared.cloud_credential_provider import (
+    EncryptedCredentialProvider,
+    credential_ref_kwargs,
+    resolve_credential_ref,
+)
 from shared.cloud_storage.storage_options import build_s3_client
+
+NOT_VENDED = "the hub vended this run no credential for its exchange store; run the flow again"
 
 
 @dataclass(frozen=True)
 class ExchangeStore:
-    """The exchange store's root URI, without a trailing slash, and the reference to the connection that opens it."""
+    """The exchange store's root URI, without a trailing slash, and the credential that opens it."""
 
     uri: str
-    credential: CredentialRef
+    credential: Credential
 
 
 def exchange_store() -> ExchangeStore | None:
@@ -35,10 +49,11 @@ def exchange_store() -> ExchangeStore | None:
         ValueError: The URI is set without a connection name, its scheme is not ``s3``, or no administrator has a
             cloud connection of that name.
     """
-    uri = settings.get_exchange_uri()
+    configured = exchange_config.effective_store()
+    uri = configured.uri
     if uri is None:
         return None
-    name = settings.get_exchange_connection()
+    name = configured.connection
     if name is None:
         raise ValueError(
             "FLOWFILE_EXCHANGE_URI is set but FLOWFILE_EXCHANGE_CONNECTION is not: name the stored cloud connection "
@@ -67,25 +82,62 @@ class ExchangeRun:
     """One run's prefix in the exchange store, ``<uri>/<flow id>/<run id>/``, and its removal when the run ends.
 
     The run looks the store up once, on the first ``prefix`` that finds one, and answers that store after; ``collect``
-    removes the run's prefix from it.
+    removes the run's prefix from it. ``hub_store`` applies while neither the environment nor the saved store names
+    one.
     """
 
-    def __init__(self, flow_id: int, run_id: str):
+    def __init__(self, flow_id: int, run_id: str, hub_store: ExchangeConfig | None = None):
         self.flow_id = flow_id
         self.run_id = run_id
+        self.hub_store = hub_store
+        self.sealed: SealedCredential | None = None
+        self.own: EncryptedCredential | None = None
+        self.remote_steps: dict | None = None
+        self.moved: dict | None = None
+        self.unmoved: str | None = None
+        self.servers_followed = False
         self._store: ExchangeStore | None = None
 
-    def prefix(self) -> tuple[str, CredentialRef] | None:
-        """The run's prefix and the reference that opens it; ``None`` when no store is configured.
+    def vended(self) -> bool:
+        """Whether the run's store is the remote's, opened by what it vends this run."""
+        if self.hub_store is None or self.hub_store.vended_for is None:
+            return False
+        return exchange_config.effective_store(hub=self.hub_store).uri == self.hub_store.uri
+
+    def prefix(self) -> tuple[str, Credential] | None:
+        """The run's prefix and the credential that opens it; ``None`` when no store is configured.
 
         Raises:
-            ValueError: The store is misconfigured, as ``exchange_store`` says.
+            ValueError: The store is misconfigured, as ``exchange_store`` says, or no credential was vended for it.
         """
+        if self._store is None and self.vended():
+            credential = self.own or self.sealed
+            if credential is None:
+                raise ValueError(NOT_VENDED)
+            self._store = ExchangeStore(uri=self.hub_store.uri.rstrip("/"), credential=credential)
         if self._store is None:
             self._store = exchange_store()
         if self._store is None:
             return None
         return self._prefix(self._store), self._store.credential
+
+    def credential_for(self, backend_id: str) -> Credential | None:
+        """The store's credential in the form ``backend_id``'s worker opens; ``None`` before ``prefix`` found one."""
+        from flowfile_core.flowfile.execution import registry
+
+        if self._store is None:
+            return None
+        if self.sealed is not None and registry.server_name(backend_id) in self.sealed.sealed:
+            return self.sealed
+        return self.own or self._store.credential
+
+    def max_rows(self) -> int | None:
+        """The most rows an input may cross with in this run; ``None`` for no limit.
+
+        Raises:
+            ValueError: ``FLOWFILE_EXCHANGE_MAX_ROWS`` is set to something other than a whole number.
+        """
+        return exchange_config.effective_max_rows(hub=self.hub_store)
 
     def collect(self) -> None:
         """Remove the run's prefix from its store and forget the store; without one, call nothing."""
@@ -105,11 +157,20 @@ def remove_prefix(store: ExchangeStore, prefix: str) -> None:
 
     Raises:
         OSError: The store refused to delete an object; the message names how many and the first reason.
+        CredentialResolutionError: A sealed credential this server cannot open.
     """
-    connection_id, user_id = store.credential.connection_id, store.credential.user_id
-    options = credential_ref_kwargs(connection_id, user_id).get("storage_options", {})
-    keys, _ = resolve_credential_ref(connection_id, user_id)
-    client = build_s3_client({**options, **keys}, path_style=True)
+    if isinstance(store.credential, SealedCredential):
+        from shared.sealed import sealed_storage_options
+
+        client = build_s3_client(sealed_storage_options(store.credential.sealed), path_style=True)
+    elif isinstance(store.credential, EncryptedCredential):
+        keys = EncryptedCredentialProvider(store.credential.encrypted)()[0] if store.credential.encrypted else {}
+        client = build_s3_client({**store.credential.options, **keys}, path_style=True)
+    else:
+        connection_id, user_id = store.credential.connection_id, store.credential.user_id
+        options = credential_ref_kwargs(connection_id, user_id).get("storage_options", {})
+        keys, _ = resolve_credential_ref(connection_id, user_id)
+        client = build_s3_client({**options, **keys}, path_style=True)
     bucket, _, key_prefix = prefix.removeprefix("s3://").partition("/")
     for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=key_prefix):
         objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]

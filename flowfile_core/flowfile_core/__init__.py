@@ -4,9 +4,6 @@ import logging
 import os
 import sys
 
-from flowfile_core.utils.validate_setup import validate_setup
-from shared._version import get_version
-
 
 def _runs_as_service() -> bool:
     """Whether this process is core itself (its console script, ``python -m flowfile_core.main``, a frozen sidecar)
@@ -18,6 +15,14 @@ def _runs_as_service() -> bool:
         os.path.splitext(os.path.basename(arg))[0] == "flowfile_core" for arg in argv
     )
 
+
+# A server's extension has its say before `shared.storage_config` reads a storage dir.
+from shared import server_extension as _server_extension
+
+_server_extension.before_import("core")
+
+from flowfile_core.utils.validate_setup import validate_setup
+from shared._version import get_version
 
 if _runs_as_service():
     # The migration below runs at import, so its log lines belong in the service log; a library import stays quiet.
@@ -41,3 +46,5 @@ class ServerRun:
 __version__ = get_version()
 
 flow_file_handler = FlowfileHandler()
+
+from flowfile_core import hub_client as _hub_client  # noqa: E402, F401  registers with core's seams

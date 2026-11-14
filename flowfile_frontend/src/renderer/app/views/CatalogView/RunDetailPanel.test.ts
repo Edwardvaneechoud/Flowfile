@@ -2,6 +2,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../api/catalog.api", () => ({ CatalogApi: {} }));
+vi.mock("../../api/hubConnection.api", () => ({
+  getHubConnection: vi.fn().mockResolvedValue(null),
+  connectHub: vi.fn(),
+  disconnectHub: vi.fn(),
+}));
 
 import { mount, type Mounted } from "../../__fixtures__/mount";
 import type { FlowRunDetail } from "../../types";

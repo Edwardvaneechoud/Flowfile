@@ -18,6 +18,7 @@ from pyarrow import dataset as ds
 from requests.exceptions import RequestException
 from sqlalchemy.orm.attributes import flag_modified
 
+from flowfile_core.catalog import table_sources
 from flowfile_core.catalog.compute import uses_worker
 from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
@@ -60,6 +61,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_apply_table_edits,
     trigger_optimize_catalog_table,
     trigger_read_table_metadata,
+    trigger_restore_version,
     trigger_vacuum_catalog_table,
 )
 from flowfile_core.schemas.catalog_schema import (
@@ -74,7 +76,7 @@ from flowfile_core.schemas.catalog_schema import (
     scd2_system_columns_missing,
 )
 from shared.path_utils import contained_path
-from shared.storage_config import storage
+from shared.storage_config import require_flow_in_storage, storage
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.access import AccessResolver
@@ -355,7 +357,9 @@ class TableService:
 
     @staticmethod
     def _parse_schema_columns(table: CatalogTable) -> list[ColumnSchema]:
-        """Parse the JSON-encoded column schema from a catalog table."""
+        """The columns of a catalog table: parsed from its row here, as given on a remote catalog's row."""
+        if table_sources.is_remote(getattr(table, "source", None)):
+            return list(table.schema_columns)
         if not table.schema_json:
             return []
         try:
@@ -474,7 +478,7 @@ class TableService:
         from flowfile_core.flowfile.handler import open_flow
 
         flow_graph = resolve_or_log(
-            lambda: open_flow(Path(producer_file_path)),
+            lambda: open_flow(require_flow_in_storage(Path(producer_file_path))),
             kind="producer flow for laziness inspection",
             identifier=producer_file_path,
         )
@@ -811,13 +815,18 @@ class TableService:
         size_bytes: int | None = None,
         partition_columns: list[str] | None = None,
         scd2_config: dict | None | object = _KEEP_SCD2,
+        cdc_enabled_version: int | None = None,
+        data_changed: bool = True,
     ) -> CatalogTableOut:
-        """Replace the data of an existing catalog table **in-place**."""
+        """Replace the data of an existing catalog table **in-place**; with ``cdc_enabled_version`` the table is marked
+        change-tracked from that version, as ``enable_cdc`` marks it. ``data_changed`` false records what a
+        maintenance found (an optimize's or vacuum's new size): ``updated_at`` is kept and no table trigger fires, as
+        ``_update_table_size`` does for a local table."""
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
 
-        resolved_path_str = table_path or parquet_path
+        resolved_path_str = table_path or parquet_path or table.file_path
         if resolved_path_str is None:
             raise ValueError("overwrite_table_data requires either table_path or parquet_path")
         is_cloud = _is_cloud_uri(resolved_path_str)
@@ -868,9 +877,14 @@ class TableService:
         if description is not None:
             table.description = description
 
+        if not data_changed:
+            flag_modified(table, "updated_at")
         table = self.repo.update_table(table)
+        if cdc_enabled_version is not None:
+            table = self.repo.set_cdc_enabled(table.id, cdc_enabled_version)
 
-        self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
+        if data_changed:
+            self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
         _project_sync_tables(table.owner_id)
 
         return self.table_to_out(table)
@@ -923,28 +937,28 @@ class TableService:
         if getattr(table, "table_type", "physical") == "virtual" or not table.file_path:
             raise ValueError(f"Table '{table.name}' is virtual and has no Delta storage to maintain")
         if _is_cloud_uri(table.file_path):
-            if table.storage_format != "delta":
-                raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be optimized or vacuumed")
+            if getattr(table, "storage_format", "delta") != "delta":
+                raise ValueError(f"Table '{table.name}' is not a Delta table")
             return table.file_path
         path = Path(table.file_path)
         if table.storage_format != "delta" or is_legacy_parquet(path) or not is_delta_table(path):
-            raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be optimized or vacuumed")
+            raise ValueError(f"Table '{table.name}' is not a Delta table")
         return str(path)
 
-    def _update_table_size(self, table: CatalogTable, size_bytes: int | None) -> None:
-        """Persist a recomputed size after a maintenance op."""
-        if size_bytes is None:
+    def _update_table_size(self, table: CatalogTable, size_bytes: int | None, user_id: int | None = None) -> None:
+        """Persist a recomputed size after a maintenance op, on the catalog that keeps the row."""
+        if size_bytes is None or table_sources.write_row(table, user_id, size_bytes=size_bytes, data_changed=False):
             return
         table.size_bytes = size_bytes
         # Not a data change: table-trigger schedules fire on updated_at, so suppress its onupdate.
         flag_modified(table, "updated_at")
         self.repo.update_table(table)
 
-    def optimize_table(self, table_id: int, z_order_columns: list[str] | None = None) -> OptimizeTableResponse:
+    def optimize_table(
+        self, table_id: int, z_order_columns: list[str] | None = None, user_id: int | None = None
+    ) -> OptimizeTableResponse:
         """Compact (and optionally Z-order) a Delta catalog table, refreshing its size."""
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
+        table = table_sources.table_row(self.repo, table_id, user_id)
         data_path = self._require_delta_table_path(table)
         is_cloud = _is_cloud_uri(data_path)
 
@@ -954,14 +968,14 @@ class TableService:
             if missing:
                 raise ValueError(f"z_order_columns not in table schema: {missing}")
 
-        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
-        storage_options = target.storage_options if target else None
+        [target] = table_sources.row_targets([table], user_id, "optimize", writes=True)
+        storage_options = target.storage_options if is_cloud else None
 
         if uses_worker():
             result = trigger_optimize_catalog_table(
                 _catalog_table_dir_name(data_path),
                 z_order_columns,
-                storage=target.to_worker_payload() if target else None,
+                storage=target.to_worker_payload(),
                 worker_url=registry.worker_url(),
             )
             metrics, size_bytes = result.get("metrics", {}), result.get("size_bytes")
@@ -977,7 +991,7 @@ class TableService:
                 else get_delta_table_size_bytes(Path(data_path))
             )
 
-        self._update_table_size(table, size_bytes)
+        self._update_table_size(table, size_bytes, user_id)
         return OptimizeTableResponse(metrics=metrics, size_bytes=size_bytes)
 
     def vacuum_table(
@@ -986,11 +1000,10 @@ class TableService:
         retention_hours: int = 168,
         dry_run: bool = True,
         force: bool = False,
+        user_id: int | None = None,
     ) -> VacuumTableResponse:
         """Vacuum tombstoned files from a Delta catalog table; refresh size on a real run."""
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
+        table = table_sources.table_row(self.repo, table_id, user_id)
         data_path = self._require_delta_table_path(table)
         is_cloud = _is_cloud_uri(data_path)
         if not force:
@@ -998,15 +1011,15 @@ class TableService:
             if at_risk:
                 raise CdcCursorsAtRiskError(at_risk)
 
-        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
-        storage_options = target.storage_options if target else None
+        [target] = table_sources.row_targets([table], user_id, "vacuum", writes=True)
+        storage_options = target.storage_options if is_cloud else None
 
         if uses_worker():
             result = trigger_vacuum_catalog_table(
                 _catalog_table_dir_name(data_path),
                 retention_hours,
                 dry_run,
-                storage=target.to_worker_payload() if target else None,
+                storage=target.to_worker_payload(),
                 worker_url=registry.worker_url(),
             )
             files, size_bytes = result.get("files_removed", []), result.get("size_bytes")
@@ -1023,7 +1036,7 @@ class TableService:
             )
 
         if not dry_run:
-            self._update_table_size(table, size_bytes)
+            self._update_table_size(table, size_bytes, user_id)
         return VacuumTableResponse(
             dry_run=dry_run,
             files_removed=list(files),
@@ -1033,6 +1046,11 @@ class TableService:
 
     # Change tracking (CDC)
 
+    @staticmethod
+    def _scd2_of(table: CatalogTable | CatalogTableOut):
+        """A table's SCD2 tracking: a row of its own keeps it as ``scd2_config``, a remote catalog's as ``scd2``."""
+        return getattr(table, "scd2_config", None) or getattr(table, "scd2", None)
+
     def _require_cdc_capable_path(self, table: CatalogTable) -> str:
         """Guard: only a physical, non-SCD2 Delta table can carry a change data feed.
 
@@ -1040,12 +1058,12 @@ class TableService:
         """
         if getattr(table, "table_type", "physical") == "virtual" or not table.file_path:
             raise CdcNotSupportedError(f"Table '{table.name}' is virtual and has no Delta history to track")
-        if table.scd2_config:
+        if self._scd2_of(table):
             raise CdcNotSupportedError(
                 f"Table '{table.name}' is SCD2-tracked; its history already lives in its validity columns"
             )
         if _is_cloud_uri(table.file_path):
-            if table.storage_format != "delta":
+            if getattr(table, "storage_format", "delta") != "delta":
                 raise CdcNotSupportedError(f"Table '{table.name}' is not a Delta table and cannot track changes")
             return table.file_path
         path = Path(table.file_path)
@@ -1053,20 +1071,24 @@ class TableService:
             raise CdcNotSupportedError(f"Table '{table.name}' is not a Delta table and cannot track changes")
         return str(path)
 
-    def _cdc_storage_options(self, table: CatalogTable) -> dict[str, str] | None:
+    def _cdc_storage_options(
+        self, table: CatalogTable, user_id: int | None = None, writes: bool = False
+    ) -> dict[str, str] | None:
+        """The storage options of a table on object storage, from ``table_sources.row_targets``; with ``writes`` ones
+        that may also change it."""
         if not table.file_path or not _is_cloud_uri(table.file_path):
             return None
-        target = resolve_for_namespace(table.namespace_id)
-        return target.storage_options if target else None
+        [target] = table_sources.row_targets([table], user_id, "track-changes", writes=writes)
+        return target.storage_options
 
-    def _live_delta_version(self, table: CatalogTable) -> int | None:
+    def _live_delta_version(self, table: CatalogTable, user_id: int | None = None) -> int | None:
         """Live Delta head, or ``None`` when the table has no readable Delta log."""
         from shared.delta_utils import get_delta_head_version
 
-        if not table.file_path or table.storage_format != "delta":
+        if not table.file_path or getattr(table, "storage_format", "delta") != "delta":
             return None
         try:
-            return get_delta_head_version(table.file_path, storage_options=self._cdc_storage_options(table))
+            return get_delta_head_version(table.file_path, storage_options=self._cdc_storage_options(table, user_id))
         except Exception:
             logger.debug("Could not read Delta head for table %s", table.id, exc_info=True)
             return None
@@ -1074,54 +1096,60 @@ class TableService:
     def _cursor_out(self, cursor: CatalogCdcCursor, head: int | None) -> CdcCursorOut:
         out = CdcCursorOut.model_validate(cursor)
         if head is not None:
-            out.pending_commits = max(0, head - cursor.last_version)
+            out.pending_commits = max(0, head - out.last_version)
         return out
 
-    def get_cdc_status(self, table_id: int) -> CdcStatusOut:
-        """Change-tracking state plus every consumer's position in the table's feed."""
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-        head = self._live_delta_version(table)
+    def get_cdc_status(self, table_id: int, user_id: int | None = None) -> CdcStatusOut:
+        """Change-tracking state plus every consumer's position in the table's feed, from the catalog that keeps the
+        row and its cursors; the head is read here."""
+        table = table_sources.table_row(self.repo, table_id, user_id)
+        head = self._live_delta_version(table, user_id)
+        kept = table_sources.cursors(table_id, user_id)
+        kept = self.repo.list_cdc_cursors(table_id) if kept is None else kept
         return CdcStatusOut(
             cdc_enabled=bool(table.cdc_enabled),
             cdc_enabled_version=table.cdc_enabled_version,
             current_version=head,
-            cursors=[self._cursor_out(c, head) for c in self.repo.list_cdc_cursors(table_id)],
+            cursors=[self._cursor_out(c, head) for c in kept],
         )
 
-    def enable_cdc(self, table_id: int) -> CdcStatusOut:
-        """Turn the Delta change data feed on and mirror it onto the catalog row.
+    def enable_cdc(self, table_id: int, user_id: int | None = None) -> CdcStatusOut:
+        """Turn the Delta change data feed on and mirror it onto the catalog row, a remote catalog's on its refresh
+        route.
 
         Idempotent: an already-enabled table keeps the floor recorded when it was first
         enabled, which is the version its feed genuinely became readable at.
         """
         from shared.delta_utils import enable_change_data_feed
 
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
+        table = table_sources.table_row(self.repo, table_id, user_id)
         data_path = self._require_cdc_capable_path(table)
-        enabled_version = enable_change_data_feed(data_path, storage_options=self._cdc_storage_options(table))
-        self.repo.set_cdc_enabled(table_id, enabled_version)
-        return self.get_cdc_status(table_id)
+        options = self._cdc_storage_options(table, user_id, writes=True)
+        enabled_version = enable_change_data_feed(data_path, storage_options=options)
+        if not table_sources.write_row(table, user_id, cdc_enabled_version=enabled_version):
+            self.repo.set_cdc_enabled(table_id, enabled_version)
+        return self.get_cdc_status(table_id, user_id)
 
-    def reset_cdc_cursor(self, table_id: int, consumer_key: str, to: str | int) -> CdcCursorOut:
-        """Move a cursor to the live head (``"now"``), below the floor (``"beginning"``) or a version."""
+    def reset_cdc_cursor(
+        self, table_id: int, consumer_key: str, to: str | int, user_id: int | None = None
+    ) -> CdcCursorOut:
+        """Move a cursor to the live head (``"now"``), below the floor (``"beginning"``) or a version; a remote
+        catalog's cursor to the version the head read here resolves it to, on that catalog's route."""
         from flowfile_core.flowfile.catalog_cdc import init_cursor_value
 
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-        if self.repo.get_cdc_cursor(table_id, consumer_key) is None:
+        table = table_sources.table_row(self.repo, table_id, user_id)
+        remote = table_sources.remote_of(table_id) is not None
+        if not remote and self.repo.get_cdc_cursor(table_id, consumer_key) is None:
             raise CdcCursorNotFoundError(table_id, consumer_key)
-        head = self._live_delta_version(table)
+        head = self._live_delta_version(table, user_id)
         if to in ("now", "beginning"):
             if head is None:
                 raise ValueError(f"Could not read the Delta version of table '{table.name}'")
             version = init_cursor_value(str(to), head, table.cdc_enabled_version)
         else:
             version = int(to)
+        if remote:
+            return self._cursor_out(table_sources.reset_cursor(table_id, user_id, consumer_key, version), head)
         cursor = self.repo.reset_cdc_cursor(table_id, consumer_key, version)
         return self._cursor_out(cursor, head)
 
@@ -1165,10 +1193,10 @@ class TableService:
         """
         if getattr(table, "table_type", "physical") == "virtual" or not table.file_path:
             raise ValueError(f"Table '{table.name}' is virtual and has no physical data to edit")
-        if table.scd2_config:
+        if self._scd2_of(table):
             raise ValueError(f"Table '{table.name}' is SCD2-tracked; in-place edits would corrupt its history")
         if _is_cloud_uri(table.file_path):
-            if table.storage_format != "delta":
+            if getattr(table, "storage_format", "delta") != "delta":
                 raise ValueError(f"Table '{table.name}' is not a Delta table and cannot be edited")
             return table.file_path
         path = Path(table.file_path)
@@ -1190,18 +1218,17 @@ class TableService:
         new_columns: list[dict] | None = None,
         delete_keys: list[list] | None = None,
         edited_by: str | None = None,
-    ) -> tuple[CatalogTableOut, dict]:
+        user_id: int | None = None,
+    ) -> tuple[CatalogTableOut | None, dict]:
         """Apply keyed row edits (upserts / deletes / new columns) to a catalog table.
 
         The Delta merge executes on the worker in offload mode (merge cost scales with
         the *target* table, not the UI-sized payload); the in-process path serves
-        worker-less local runs. On success the catalog record is refreshed through
-        ``overwrite_table_data``, which fires table-trigger schedules — a manual edit
-        is a data change, so dependent scheduled flows re-run.
+        worker-less local runs. On success the catalog record is refreshed (``_record_edit``),
+        which fires table-trigger schedules — a manual edit is a data change, so dependent
+        scheduled flows re-run.
         """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
+        table = table_sources.table_row(self.repo, table_id, user_id)
         data_path = self._require_editable_delta_path(table)
 
         schema_names = {c.name for c in self._parse_schema_columns(table)}
@@ -1214,7 +1241,7 @@ class TableService:
             raise ValueError(f"New columns already exist in the table: {colliding}")
 
         is_cloud = _is_cloud_uri(data_path)
-        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
+        [target] = table_sources.row_targets([table], user_id, "edit", writes=True)
         commit_metadata = None
         if edited_by:
             commit_metadata = {"flowfile_user": edited_by, "flowfile_operation": "catalog_table_edit"}
@@ -1236,7 +1263,7 @@ class TableService:
                         "delete_keys": delete_keys,
                         "commit_metadata": commit_metadata,
                     },
-                    storage=target.to_worker_payload() if target else None,
+                    storage=target.to_worker_payload(),
                     worker_url=registry.worker_url(),
                 )
             else:
@@ -1251,7 +1278,7 @@ class TableService:
                         new_columns=new_columns,
                         delete_keys=delete_keys,
                         expected_version=expected_version,
-                        storage_options=(target.storage_options or None) if target else None,
+                        storage_options=target.storage_options or None,
                         commit_metadata=commit_metadata,
                     )
                 except DeltaEditStaleError as e:
@@ -1263,37 +1290,66 @@ class TableService:
         except Exception:
             # Edits land as up to three commits, so refresh the record from disk before raising.
             try:
-                self.overwrite_table_data(table_id, table_path=data_path, storage_format="delta")
+                self._record_edit(table, data_path, target, user_id)
             except Exception:
                 logger.warning("Post-failure metadata refresh failed for table %s", table_id, exc_info=True)
             raise
 
-        schema_list = result.get("column_schema") or result.get("schema") or []
-        table_out = self.overwrite_table_data(
-            table_id,
+        return self._record_edit(table, data_path, target, user_id, result), result
+
+    def _record_edit(
+        self,
+        table: CatalogTable | CatalogTableOut,
+        data_path: str,
+        target: CatalogStorageTarget,
+        user_id: int | None,
+        result: dict | None = None,
+    ) -> CatalogTableOut | None:
+        """Write an edited table's facts to its row: ``result``'s, as the edit answered them, or without one (an edit
+        that failed part-way) read from storage. A remote catalog's row takes them on its refresh route (``None``)."""
+        remote = table_sources.is_remote(getattr(table, "source", None))
+        if result is None and not remote:
+            return self.overwrite_table_data(table.id, table_path=data_path, storage_format="delta")
+        if result is None:
+            schema, row_count, column_count, size_bytes = self._read_table_metadata(
+                data_path, "delta", storage=target.to_worker_payload()
+            )
+        else:
+            schema = result.get("column_schema") or result.get("schema") or []
+            row_count, column_count, size_bytes = (result.get(k) for k in ("row_count", "column_count", "size_bytes"))
+        if remote:
+            table_sources.write_row(
+                table,
+                user_id,
+                schema_columns=[{"name": c["name"], "dtype": c["dtype"]} for c in schema] or None,
+                row_count=row_count,
+                column_count=column_count,
+                size_bytes=size_bytes,
+            )
+            return None
+        return self.overwrite_table_data(
+            table.id,
             table_path=data_path,
             storage_format="delta",
-            schema=schema_list,
-            row_count=result.get("row_count"),
-            column_count=result.get("column_count"),
-            size_bytes=result.get("size_bytes"),
+            schema=schema,
+            row_count=row_count,
+            column_count=column_count,
+            size_bytes=size_bytes,
         )
-        return table_out, result
 
     def add_table_key_column(
         self,
         table_id: int,
         column_name: str = "record_id",
         expected_version: int | None = None,
-    ) -> tuple[CatalogTableOut, dict]:
+        user_id: int | None = None,
+    ) -> tuple[CatalogTableOut | None, dict]:
         """Rewrite a catalog table with a sequential row-id column appended.
 
         The escape hatch for editing tables with no natural unique key. A full-table
         rewrite, so it runs on the worker in offload mode.
         """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
+        table = table_sources.table_row(self.repo, table_id, user_id)
         data_path = self._require_editable_delta_path(table)
 
         schema_names = {c.name for c in self._parse_schema_columns(table)}
@@ -1301,7 +1357,7 @@ class TableService:
             raise ValueError(f"Column '{column_name}' already exists in the table")
 
         is_cloud = _is_cloud_uri(data_path)
-        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
+        [target] = table_sources.row_targets([table], user_id, "edit", writes=True)
 
         # The gate of apply_table_edits: bare directory names are unambiguous only for managed tables.
         offload = uses_worker() and (is_cloud or _is_managed_table_path(data_path))
@@ -1313,7 +1369,7 @@ class TableService:
                     table_id,
                     column_name,
                     expected_version=expected_version,
-                    storage=target.to_worker_payload() if target else None,
+                    storage=target.to_worker_payload(),
                     worker_url=registry.worker_url(),
                 )
             else:
@@ -1324,7 +1380,77 @@ class TableService:
                         data_path,
                         column_name=column_name,
                         expected_version=expected_version,
+                        storage_options=target.storage_options or None,
+                    )
+                except DeltaEditStaleError as e:
+                    raise StaleWriteError("catalog_table", table_id, expected=e.expected, current=e.current) from e
+                except DeltaEditError as e:
+                    raise ValueError(str(e)) from e
+        except (StaleWriteError, ValueError):
+            raise
+        except Exception:
+            # As in apply_table_edits: a response lost after the commit would leave schema_json stale.
+            try:
+                self._record_edit(table, data_path, target, user_id)
+            except Exception:
+                logger.warning("Post-failure metadata refresh failed for table %s", table_id, exc_info=True)
+            raise
+
+        return self._record_edit(table, data_path, target, user_id, result), result
+
+    def restore_table_version(
+        self,
+        table_id: int,
+        version: int,
+        expected_version: int | None = None,
+        restored_by: str | None = None,
+    ) -> tuple[CatalogTableOut, dict]:
+        """Restore a Delta catalog table to an earlier version with one ``RESTORE`` commit.
+
+        A change-tracked table cannot go below the version its feed was enabled at: the restore
+        brings back that version's table properties, which would switch the feed off under every
+        cursor. The refresh runs through ``overwrite_table_data``, so table-trigger schedules fire.
+        """
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        data_path = self._require_delta_table_path(table)
+        if table.cdc_enabled and table.cdc_enabled_version is not None and version < table.cdc_enabled_version:
+            raise ValueError(
+                f"Table '{table.name}' tracks changes since version {table.cdc_enabled_version}; "
+                f"restoring version {version} would turn its change feed off"
+            )
+
+        is_cloud = _is_cloud_uri(data_path)
+        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
+        commit_metadata = {"flowfile_operation": "catalog_table_restore"}
+        if restored_by:
+            commit_metadata["flowfile_user"] = restored_by
+
+        # The gate of apply_table_edits: bare directory names are unambiguous only for managed tables.
+        offload = uses_worker() and (is_cloud or _is_managed_table_path(data_path))
+
+        try:
+            if offload:
+                result = trigger_restore_version(
+                    _catalog_table_dir_name(data_path),
+                    table_id,
+                    version,
+                    expected_version=expected_version,
+                    commit_metadata=commit_metadata,
+                    storage=target.to_worker_payload() if target else None,
+                    worker_url=registry.worker_url(),
+                )
+            else:
+                from shared.delta_utils import DeltaEditError, DeltaEditStaleError, restore_delta_version
+
+                try:
+                    result = restore_delta_version(
+                        data_path,
+                        version,
+                        expected_version=expected_version,
                         storage_options=(target.storage_options or None) if target else None,
+                        commit_metadata=commit_metadata,
                     )
                 except DeltaEditStaleError as e:
                     raise StaleWriteError("catalog_table", table_id, expected=e.expected, current=e.current) from e

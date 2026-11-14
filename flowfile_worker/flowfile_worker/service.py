@@ -10,7 +10,8 @@ time (``_claim``): a later job under the id, or a release of it, replaces the ru
 nothing. Every submit and import first drops what has been held for ``CACHE_EXPIRATION_TIME``; an operation does not,
 since it cannot name the held results its plans scan.
 
-A credential crosses as a stored connection's id and user, resolved where the plan runs. A blob takes none: the
+A credential crosses as a stored connection's id and user, resolved where the plan runs, or as the map of tokens a
+hub sealed to the nodes of a run, of which this node opens its own (``shared.sealed``). A blob takes none: the
 presigned URL it is copied to or from carries its own authorisation. With ``spawner.in_process`` set, every job runs in
 the calling process instead of a child.
 """
@@ -55,7 +56,7 @@ from flowfile_worker.spawner import (
     start_train_model_process,
 )
 from flowfile_worker.task_errors import describe_exception
-from shared.cloud_credential_provider import CredentialResolutionError, credential_ref_kwargs
+from shared.cloud_credential_provider import CredentialResolutionError, credential_body_kwargs
 from shared.compute_protocol import (
     CLOUD_SCHEMES,
     Capabilities,
@@ -215,11 +216,28 @@ class CredentialRefBody(WireModel):
     user_id: int
 
 
+class SealedCredentialBody(WireModel):
+    """A credential a hub vended to a run and sealed to its nodes: node name -> JWE token, one entry per target.
+
+    This node opens the entry under its own name with its own key; the others are sealed to other nodes' keys.
+    """
+
+    sealed: dict[str, str] = Field(min_length=1)
+
+
+class EncryptedCredentialBody(WireModel):
+    """A credential a hub vended to a run of the core this worker runs beside: the options that hold no secret, and
+    the secrets as a ``$ffsec$`` ciphertext this worker opens with the master key it shares with that core."""
+
+    options: dict[str, str]
+    encrypted: str
+
+
 class ExportBody(WireModel):
-    """Where ``export`` writes the result, and the stored connection the target needs."""
+    """Where ``export`` writes the result, and the stored connection or sealed credential the target needs."""
 
     uri: str
-    credential: CredentialRefBody | None = None
+    credential: CredentialRefBody | SealedCredentialBody | EncryptedCredentialBody | None = None
 
 
 class ImportBody(WireModel):
@@ -230,7 +248,7 @@ class ImportBody(WireModel):
     """
 
     uri: str
-    credential: CredentialRefBody | None = None
+    credential: CredentialRefBody | SealedCredentialBody | EncryptedCredentialBody | None = None
     columns: list[WireColumn]
     row_count: int | None = None
     kind: Literal["table", "blob"] = "table"
@@ -556,14 +574,18 @@ def worker_capabilities() -> Capabilities:
 
     It reads and writes object storage and ``https``, plus ``file`` while ``FLOWFILE_WORKER_LOCAL_FILES`` is ``1`` (a
     worker on core's host). It also reads ``http``, since a Read node's child fetches its URL itself; nothing writes to
-    one.
+    one. A node that joined an issuer with keys of its own declares ``credential_resolution: vended``: besides its
+    own master key it opens what the issuer seals to it (``sealed.can_open``).
     """
     schemes = CLOUD_SCHEMES | {"https"}
     if os.environ.get("FLOWFILE_WORKER_LOCAL_FILES") == "1":
         schemes |= {"file"}
-    return local_capabilities().model_copy(
-        update={"operations": OPERATIONS, "read_schemes": schemes | {"http"}, "write_schemes": schemes}
-    )
+    update: dict[str, Any] = {"operations": OPERATIONS, "read_schemes": schemes | {"http"}, "write_schemes": schemes}
+    from shared import sealed
+
+    if sealed.can_open():
+        update["credential_resolution"] = "vended"
+    return local_capabilities().model_copy(update=update)
 
 
 def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
@@ -707,9 +729,10 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
     """Hold a scan of the parquet at ``body.uri`` as the deferred result *result_id*, and answer its reference.
 
     The scan is built here and never run, so the file need not exist yet; the columns and row count are core's. The
-    connection is read here for its endpoint and region (``credential_ref_kwargs``); the child that runs the scan
-    resolves its secrets. An unreadable catalog is a 500. ``release`` leaves the file, which is not this worker's. An id
-    that is not a ``RESULT_ID`` is 422, as it would name a blob's file.
+    connection is read here for its endpoint and region (``credential_ref_kwargs``), or a sealed credential opened here
+    for them (``sealed_scan_kwargs``); the child that runs the scan resolves the secrets, so the plan holds none. An
+    unreadable catalog, or a sealed credential this node cannot open, is a 500. ``release`` leaves the file, which is
+    not this worker's. An id that is not a ``RESULT_ID`` is 422, as it would name a blob's file.
 
     With ``kind="blob"`` the bytes at a ``file://`` URI or presigned ``https://`` URL are copied into a ``.blob`` file
     (``get_blob``), which ``release`` removes. Another scheme is 422, a failed fetch a 500. A failed import holds
@@ -742,9 +765,8 @@ def _hold_import(result_id: str, body: ImportBody) -> ResultRef:
         results.put(record)
         results.mark_ended(result_id)
         return record.ref()
-    ref = body.credential
     try:
-        credential_kwargs = {} if ref is None else credential_ref_kwargs(ref.connection_id, ref.user_id)
+        credential_kwargs = credential_body_kwargs(None if body.credential is None else body.credential.model_dump())
     except CredentialResolutionError as e:
         raise HTTPException(
             status_code=500, detail={"status": "Error", "error_message": describe_exception(e), "error_kind": "task"}

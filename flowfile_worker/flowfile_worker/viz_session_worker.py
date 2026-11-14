@@ -15,6 +15,7 @@ import polars as pl
 import polars_gw
 
 from flowfile_worker import models
+from flowfile_worker import utils as _utils  # noqa: F401  registers the decryptor for credentials a plan carries
 from flowfile_worker.catalog_reader import open_catalog_table, open_virtual_result
 from shared.delta_utils import make_json_safe
 

@@ -22,6 +22,7 @@ from flowfile_core.flowfile.flow_graph.cloud import (
     _cloud_write_uses_delta_ops,
     _is_cloud_change_read,
     _resolve_cloud_node_connection,
+    _worker_connection,
     _write_cloud_delta,
 )
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
@@ -62,7 +63,7 @@ class CloudStorageBuildersMixin(GraphMixinBase):
             write = CloudWritePayload(
                 plan=df.data_frame,
                 settings=write_settings,
-                connection=connection.get_worker_interface(user_id),
+                connection=_worker_connection(connection, user_id),
                 flow_id=self.flow_id,
                 node_id=node_cloud_storage_writer.node_id,
             )
