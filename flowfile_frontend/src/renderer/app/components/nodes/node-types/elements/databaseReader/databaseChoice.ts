@@ -1,6 +1,8 @@
 // Framework-free rules for the database a reader or writer node picks (database_name), shared by
 // both drawers through useDatabaseChoice.ts.
 
+import { QUOTED_IDENTIFIER_PART, QUOTED_IDENTIFIER_PATH } from "../databaseWriter/validation";
+
 export const MISSING_SCHEMA_MESSAGE = "Choose a schema when a database is set.";
 
 /** A blank, null or absent database all mean the connection's default database. */
@@ -62,13 +64,10 @@ export function tablesEmptyText(browsesDatabases: boolean, schema?: string | nul
   return shouldLoadTables(browsesDatabases, schema) ? "No data" : CHOOSE_SCHEMA_FIRST;
 }
 
-const IDENTIFIER_PART = String.raw`(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")`;
-const IDENTIFIER_PATH = new RegExp(`^${IDENTIFIER_PART}(?:\\.${IDENTIFIER_PART})*$`);
-
 /** The parts of a dotted name, split on the dots outside double quotes; null when it is not one. */
 export function identifierParts(value: string): string[] | null {
-  if (!IDENTIFIER_PATH.test(value)) return null;
-  return value.match(new RegExp(IDENTIFIER_PART, "g"));
+  if (!QUOTED_IDENTIFIER_PATH.test(value)) return null;
+  return value.match(new RegExp(QUOTED_IDENTIFIER_PART, "g"));
 }
 
 export interface TableReference {

@@ -2,8 +2,8 @@
 // parts of letters, digits and underscores; one with quoted_identifiers (Snowflake) also takes $ and parts in
 // double quotes whose inner quotes are doubled, joined by dots outside the quotes.
 const SQL_IDENTIFIER_PART = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-const QUOTED_IDENTIFIER_PART = String.raw`(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")`;
-const QUOTED_IDENTIFIER_PATH = new RegExp(
+export const QUOTED_IDENTIFIER_PART = String.raw`(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")`;
+export const QUOTED_IDENTIFIER_PATH = new RegExp(
   `^${QUOTED_IDENTIFIER_PART}(?:\\.${QUOTED_IDENTIFIER_PART})*$`,
 );
 

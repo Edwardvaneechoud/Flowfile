@@ -165,6 +165,9 @@ in **Reference** mode only; there is no inline Snowflake connection.
 
 - Snowflake upper-cases names that are not quoted. Columns written from Flowfile are created unquoted, so
   `order_id` becomes `ORDER_ID`; a name that is not a plain identifier, or is a reserved word, is quoted.
+- Database, schema and table names may hold `$` or be double-quoted, as the lists offer them: a name that is
+  not plain upper case arrives quoted (`"USER$evaneechoud"`, `"My Schema"`), and a quoted name keeps its case.
+  Other databases keep the plain rule: letters, numbers and underscores only.
 - A write uploads the rows to a temporary stage in the table's schema, then copies them into the table, so the
   connection's role needs `CREATE STAGE` on that schema as well as rights on the table.
 - **Replace** recreates the table (`CREATE OR REPLACE TABLE`); **Append** creates it when it does not exist;
