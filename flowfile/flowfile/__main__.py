@@ -356,12 +356,23 @@ def _run_import_command(
 
 
 def _run_project_command(action: str | None, arg: str | None) -> None:
-    """Headless project init/open/save — the proof that build-from-scratch works without the UI."""
+    """Headless project init/open/save/plan/apply — the proof that build-from-scratch works without the UI."""
     from fastapi import HTTPException
 
     from flowfile_core.auth.utils import get_local_user_id
     from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
     from flowfile_core.project import project_sync
+    from flowfile_core.project.models import NoActiveProjectError
+
+    def _or_exit(call, *args):
+        """Run ``call``; on an expected project error print one line to stderr and exit 1."""
+        try:
+            return call(*args)
+        except HTTPException as e:
+            print(e.detail["message"] if isinstance(e.detail, dict) else e.detail, file=sys.stderr)
+        except (ValueError, NoActiveProjectError) as e:
+            print(str(e), file=sys.stderr)
+        sys.exit(1)
 
     def _validated_folder(usage: str) -> str:
         if not arg:
@@ -380,7 +391,7 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
         print(f"Initialized project '{project.name}' at {project.root}")
     elif action == "open":
         folder = _validated_folder("Usage: flowfile project open <folder>")
-        project, result = project_sync.open_project(folder, owner_id)
+        project, result = _or_exit(project_sync.open_project, folder, owner_id)
         print(f"Opened project '{project.name}' at {project.root}")
         print(
             f"Imported: flows={result.imported_flows}, "
@@ -393,10 +404,20 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
         if not arg:
             print('Usage: flowfile project save "<message>"', file=sys.stderr)
             sys.exit(1)
-        sha = project_sync.save_version(owner_id, arg)
+        sha = _or_exit(project_sync.save_version, owner_id, arg)
         print(f"Saved version {sha[:8] if sha else '(no changes)'}")
+    elif action == "plan":
+        if not arg:
+            print("Usage: flowfile project plan <sha|.>", file=sys.stderr)
+            sys.exit(1)
+        for c in _or_exit(project_sync.plan, owner_id, None if arg == "." else arg):
+            line = f'{c["change"]} {c["kind"]} "{c["label"]}"'
+            print(f"{line}: {c['consequence']}" if c["consequence"] else line)
+    elif action == "apply":
+        result = _or_exit(project_sync.reload_from_disk, owner_id)
+        print(f"Imported: {', '.join(f'{k}={n}' for k, n in result.by_kind.items()) or 'nothing'}")
     else:
-        print("Usage: flowfile project {init|open|save} <folder-or-message>", file=sys.stderr)
+        print("Usage: flowfile project {init|open|save|plan|apply} <folder-message-or-sha>", file=sys.stderr)
         sys.exit(1)
 
 
@@ -430,8 +451,9 @@ def main():
     parser.add_argument(
         "component",
         nargs="?",
-        choices=["ui", "core", "worker", "flow", "init", "open", "save", "yxdb", "alteryx"],
-        help="Component to run, project sub-command (init/open/save), convert format (yxdb) or import format (alteryx)",
+        choices=["ui", "core", "worker", "flow", "init", "open", "save", "plan", "apply", "yxdb", "alteryx"],
+        help="Component to run, project sub-command (init/open/save/plan/apply), convert format (yxdb) or import "
+        "format (alteryx)",
     )
     parser.add_argument(
         "file_path", nargs="?", help="Flow file path, project folder, version message, or file/dir to convert"

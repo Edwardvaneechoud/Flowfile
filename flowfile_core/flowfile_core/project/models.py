@@ -20,30 +20,14 @@ class NoActiveProjectError(RuntimeError):
 
 
 @dataclass
-class KeptResources:
-    """The resources still present in the project files after an import — everything else of the
-    owner's is pruned. A ``None`` set means that category isn't tracked by this project and is left
-    alone entirely (never pruned)."""
-
-    flow_uuids: set[str]
-    db_connections: set[str]
-    cloud_connections: set[str]
-    namespace_ids: set[int]
-    table_ids: set[int] | None
-    artifact_ids: set[int] | None
-    kernel_ids: set[str]
-    viz_uuids: set[str]
-    dashboard_uuids: set[str]
-    notebook_uuids: set[str]
-
-
-@dataclass
 class SetupResult:
     imported_flows: int = 0
     imported_connections: int = 0
     imported_schedules: int = 0
+    by_kind: dict[str, int] = field(default_factory=dict)
+    unknown_kinds: list[str] = field(default_factory=list)
+    not_applied: list[str] = field(default_factory=list)
     placeholder_secrets: list[str] = field(default_factory=list)
-    prune_errors: list[str] = field(default_factory=list)
     recovery_sha: str | None = None
 
     def to_dict(self) -> dict:
@@ -52,8 +36,10 @@ class SetupResult:
                 "flows": self.imported_flows,
                 "connections": self.imported_connections,
                 "schedules": self.imported_schedules,
+                "by_kind": dict(self.by_kind),
             },
+            "unknown_kinds": sorted(self.unknown_kinds),
+            "not_applied": sorted(self.not_applied),
             "placeholder_secrets": sorted(set(self.placeholder_secrets)),
-            "prune_errors": list(self.prune_errors),
             "recovery_sha": self.recovery_sha,
         }

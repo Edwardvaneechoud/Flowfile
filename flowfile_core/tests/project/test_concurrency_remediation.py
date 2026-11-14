@@ -1,7 +1,6 @@
-"""Regression tests for Theme E (M-E1, L6, L7, L9, L11) concurrency / DoS fixes.
+"""Regression tests for Theme E (L6, L7, L9, L11) concurrency / DoS fixes.
 
-M-E1: per-owner suppression — user A's import must not suppress user B's projection hooks.
-L6:   _by_owner / _suppressed guarded by _cache_lock; no dict-mutation-during-iteration.
+L6:   _by_owner guarded by _cache_lock; no dict-mutation-during-iteration.
 L7:   /versions?limit clamped to 1-500.
 L9:   oversized YAML file and excess entries raise ValueError (surfaced as 413 by route).
 """
@@ -15,84 +14,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from flowfile_core.project.service import ProjectSyncService
-
-
-# ---------------------------------------------------------------------------
-# M-E1: per-owner suppression
-# ---------------------------------------------------------------------------
-
-
-class TestPerOwnerSuppression:
-    def setup_method(self):
-        self.svc = ProjectSyncService()
-
-    def test_suppress_only_affects_target_owner(self):
-        owner_a, owner_b = 1, 2
-        with self.svc.suppress_projection(owner_a):
-            assert owner_a in self.svc._suppressed
-            assert owner_b not in self.svc._suppressed
-
-    def test_suppression_released_on_exit(self):
-        owner = 1
-        with self.svc.suppress_projection(owner):
-            assert owner in self.svc._suppressed
-        assert owner not in self.svc._suppressed
-
-    def test_suppression_released_on_exception(self):
-        owner = 1
-        try:
-            with self.svc.suppress_projection(owner):
-                raise RuntimeError("boom")
-        except RuntimeError:
-            pass
-        assert owner not in self.svc._suppressed
-
-    def test_get_active_project_suppressed_owner_returns_none(self, tmp_path):
-        from flowfile_core.project.models import ActiveProject
-
-        owner = 42
-        self.svc._by_owner = {owner: ActiveProject(1, "p", tmp_path, owner, True)}
-        with self.svc.suppress_projection(owner):
-            assert self.svc.get_active_project(owner) is None
-
-    def test_get_active_project_other_owner_not_suppressed(self, tmp_path):
-        from flowfile_core.project.models import ActiveProject
-
-        owner_a, owner_b = 1, 2
-        self.svc._by_owner = {
-            owner_a: ActiveProject(1, "pa", tmp_path, owner_a, True),
-            owner_b: ActiveProject(2, "pb", tmp_path, owner_b, True),
-        }
-        with self.svc.suppress_projection(owner_a):
-            assert self.svc.get_active_project(owner_a) is None
-            assert self.svc.get_active_project(owner_b) is not None
-
-    def test_two_concurrent_suppressions_are_independent(self, tmp_path):
-        from flowfile_core.project.models import ActiveProject
-
-        owner_a, owner_b = 10, 20
-        self.svc._by_owner = {
-            owner_a: ActiveProject(1, "pa", tmp_path, owner_a, True),
-            owner_b: ActiveProject(2, "pb", tmp_path, owner_b, True),
-        }
-        results: list[tuple[bool, bool]] = []
-
-        def suppress_a():
-            with self.svc.suppress_projection(owner_a):
-                threading.Event().wait(0.05)  # hold for 50 ms
-                a_suppressed = self.svc.get_active_project(owner_a) is None
-                b_visible = self.svc.get_active_project(owner_b) is not None
-                results.append((a_suppressed, b_visible))
-
-        t = threading.Thread(target=suppress_a)
-        t.start()
-        # While A's suppression is held, B must still be visible from main thread.
-        import time
-
-        time.sleep(0.01)
-        assert self.svc.get_active_project(owner_b) is not None
-        t.join()
-        assert results == [(True, True)]
 
 
 # ---------------------------------------------------------------------------

@@ -891,16 +891,13 @@ class KernelManager:
                     self._kernel_owners[kernel_id] = user_id
 
     def _persist_kernel(self, kernel: KernelInfo, user_id: int) -> None:
-        """Save a kernel record to the database, then re-project the project's kernels manifest."""
+        """Save a kernel record to the database."""
         try:
             from flowfile_core.database.connection import get_db_context
             from flowfile_core.kernel.persistence import save_kernel
 
             with get_db_context() as db:
                 save_kernel(db, kernel, user_id)
-            from flowfile_core.project import project_sync
-
-            project_sync.kernels_changed(user_id)
         except Exception as exc:
             logger.warning("Could not persist kernel '%s': %s", kernel.id, exc)
 
@@ -1870,7 +1867,6 @@ class KernelManager:
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state == KernelState.CREATING:
             raise ValueError(f"Kernel '{kernel_id}' is still being created — wait for creation to finish")
-        owner_id = self._kernel_owners.get(kernel_id)  # capture before the pop, for the project hook
         # Unconditional: a STOPPED/ERROR kernel may still track a leftover container.
         await self.stop_kernel(kernel_id)
         had_packages = bool(kernel.packages)
@@ -1882,10 +1878,6 @@ class KernelManager:
         self._remove_kernel_from_db(kernel_id)
         if had_packages:
             self._remove_derived_image(kernel_id)
-        # Fine after the row is gone, as the manifest is regenerated whole; a None owner (older kernel) no-ops.
-        from flowfile_core.project import project_sync
-
-        project_sync.kernels_changed(owner_id)
         logger.info("Deleted kernel '%s'", kernel_id)
 
     def shutdown_all(self) -> None:

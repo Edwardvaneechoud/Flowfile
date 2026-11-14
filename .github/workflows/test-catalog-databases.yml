@@ -46,6 +46,18 @@ jobs:
           sudo apt-get install -y sqlite3
       - name: Verify SQLite and PostgreSQL catalogs
         run: poetry run pytest tests/catalog_database -v --basetemp=/tmp/catalog-proof
+      - name: Create the project suite's database
+        run: >-
+          poetry run python -c "import psycopg2;
+          c = psycopg2.connect(host='localhost', port=5432, user='catalog', password='catalog-test', dbname='catalog');
+          c.autocommit = True;
+          c.cursor().execute('CREATE DATABASE flowfile_projects')"
+      - name: Run the project suite on PostgreSQL
+        env:
+          FLOWFILE_DATABASE_URL: postgresql+psycopg2://catalog:catalog-test@localhost:5432/flowfile_projects
+          FLOWFILE_MODE: electron
+          SKIP_WORKER_TESTS: "1"
+        run: poetry run pytest flowfile_core/tests/project flowfile_core/tests/test_project_capabilities.py -q
       - name: Preserve SQLite schema evidence
         if: always()
         uses: actions/upload-artifact@v4

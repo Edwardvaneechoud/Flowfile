@@ -8,7 +8,7 @@ export const projectHelp: PageHelpContent = {
       title: "What is a project?",
       icon: "fa-solid fa-circle-info",
       description:
-        "A project turns a folder on your computer into a safe, versioned copy of your work — backed by a standard Git repository. Your flows, connections and schedules are mirrored there automatically as you work. Because it's just Git, it's ideal for syncing to GitHub or any remote.",
+        "A project turns a folder on your computer into a Git repository of your work's definitions: flows, connections, schedules and catalog metadata, written each time you save a version. Data, stored passwords and run history are not in it. Because it's just Git, it's ideal for syncing to GitHub or any remote.",
     },
     {
       title: "What you can do here",
@@ -18,7 +18,7 @@ export const projectHelp: PageHelpContent = {
           icon: "fa-solid fa-camera",
           title: "Save a version",
           description:
-            "Write a short message to snapshot everything as it is right now. Save as often as you like.",
+            "Write a short message to commit your definitions as they are right now. Save as often as you like.",
         },
         {
           icon: "fa-solid fa-clock-rotate-left",
@@ -29,7 +29,7 @@ export const projectHelp: PageHelpContent = {
           icon: "fa-solid fa-rotate-left",
           title: "Restore a version",
           description:
-            "Roll the whole project back to an earlier snapshot. An autosave is taken first, so it's reversible.",
+            "Roll your resources back to an earlier version. Flowfile lists what it would change first and can keep a recovery point.",
         },
         {
           icon: "fa-solid fa-code-branch",
@@ -54,7 +54,7 @@ export const projectHelp: PageHelpContent = {
           icon: "fa-solid fa-link-slash",
           title: "Stop tracking",
           description:
-            "Disconnect the folder anytime. Your files stay on disk — Flowfile just stops mirroring them.",
+            "Disconnect the folder anytime. Your files stay on disk — Flowfile just stops versioning this folder.",
         },
       ],
     },
@@ -64,9 +64,8 @@ export const projectHelp: PageHelpContent = {
       tips: [
         {
           type: "success",
-          title: "Restoring is safe",
-          description:
-            "Flowfile saves an automatic snapshot before any restore, so you can always come back.",
+          title: "A restore is previewed",
+          description: "You see what it adds, changes and removes before anything happens.",
         },
         {
           type: "success",

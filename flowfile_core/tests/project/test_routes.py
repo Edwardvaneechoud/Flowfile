@@ -76,14 +76,28 @@ def test_version_lifecycle_via_routes(tmp_path):
         # as a new version (so the tree is clean afterwards).
         restored = client.post("/project/restore", json={"sha": version_a})
         assert restored.status_code == 200
-        assert set(restored.json()) == {"imported", "placeholder_secrets", "prune_errors", "recovery_sha"}
-        assert client.get("/project/active").json()["dirty"] is False
-        assert client.get("/project/versions").json()["versions"][0]["message"].startswith("Restore")
+        assert set(restored.json()) == {
+            "imported",
+            "placeholder_secrets",
+            "recovery_sha",
+            "unknown_kinds",
+            "not_applied",
+        }
+        assert client.get("/project/active").json()["dirty"] is False  # the restore commit is the export after it
+        # A standalone secret is never deleted, so the export after the restore is version b and no version is added.
+        assert client.get("/project/versions").json()["versions"][0]["message"] == "version b"
 
-        # Reload accepts on-disk state and returns the same import shape.
-        reloaded = client.post("/project/reload")
+        # The restore commit holds ROUTE_SECRET_2, which stays in the database, so the reload needs no force.
+        assert client.post("/project/reload").status_code == 200
+        reloaded = client.post("/project/reload", json={"force": True})
         assert reloaded.status_code == 200
-        assert set(reloaded.json()) == {"imported", "placeholder_secrets", "prune_errors", "recovery_sha"}
+        assert set(reloaded.json()) == {
+            "imported",
+            "placeholder_secrets",
+            "recovery_sha",
+            "unknown_kinds",
+            "not_applied",
+        }
 
         assert client.post("/project/close").json() == {"ok": True}
         assert client.get("/project/active").json()["project"] is None
@@ -92,30 +106,36 @@ def test_version_lifecycle_via_routes(tmp_path):
 
 
 def test_restore_on_dirty_tree_409s_without_force(tmp_path):
-    """M-C1: restore/reload reset the tree and hard-prune the DB, destroying uncommitted work. A dirty
-    tree must be 409'd (not silently discarded) unless the caller passes force=true."""
+    """M-C1: a restore resets the tree and hard-prunes the DB, so a dirty tree must be 409'd (not
+    silently discarded) unless the caller passes force=true. A reload applies the hand edit instead,
+    so it needs no force when the database holds nothing unsaved."""
     root = tmp_path / "proj"
     project_sync.close_project(OWNER)
     try:
         assert client.post("/project/init", json={"folder_path": str(root), "name": "Dirty"}).status_code == 201
-        # Use a standalone secret to create a managed diff that persists through project_all.
+        # Use a standalone secret to create a managed diff that persists through the export.
         client.post("/project/secrets", json={"secrets": [{"name": "DIRTY_SECRET_V1", "value": "v1"}]})
         assert client.post("/project/versions", json={"message": "v1"}).json()["sha"]
         version_v1 = client.get("/project/versions").json()["versions"][0]["sha"]
         client.post("/project/secrets", json={"secrets": [{"name": "DIRTY_SECRET_V2", "value": "v2"}]})
         assert client.post("/project/versions", json={"message": "v2"}).json()["sha"]
 
-        # Make an uncommitted change (untracked file is enough for is_dirty).
-        (root / "unsaved.txt").write_text("uncommitted", encoding="utf-8")
-        assert client.get("/project/active").json()["dirty"] is True
+        # Make an uncommitted change: a hand edit of a managed file.
+        secrets_file = root / "secrets.yaml"
+        edited = secrets_file.read_text(encoding="utf-8") + "# edited by hand\n"
+        secrets_file.write_text(edited, encoding="utf-8")
+        assert client.get("/project/active").json()["dirty"] is False
         blocked = client.post("/project/restore", json={"sha": version_v1})
         assert blocked.status_code == 409
-        # The unsaved file is untouched (nothing destroyed).
-        assert (root / "unsaved.txt").read_text(encoding="utf-8") == "uncommitted"
+        detail = blocked.json()["detail"]
+        assert detail["code"] == "UNSAVED_CHANGES"
+        assert [c["path"] for c in detail["changes"]] == ["secrets.yaml"]
+        # The edit is untouched (nothing destroyed).
+        assert secrets_file.read_text(encoding="utf-8") == edited
 
-        # reload is guarded the same way.
-        assert client.post("/project/reload", json={"force": False}).status_code == 409
-        assert (root / "unsaved.txt").read_text(encoding="utf-8") == "uncommitted"
+        # A reload applies the hand edit; with nothing unsaved in the database it needs no force.
+        assert client.post("/project/reload", json={"force": False}).status_code == 200
+        assert secrets_file.read_text(encoding="utf-8") == edited
     finally:
         project_sync.close_project(OWNER)
 
@@ -132,18 +152,17 @@ def test_restore_with_force_autosaves_uncommitted_work(tmp_path):
         assert client.post("/project/versions", json={"message": "v1"}).json()["sha"]
         version_v1 = client.get("/project/versions").json()["versions"][0]["sha"]
 
-        # Create uncommitted work that will be captured by the autosave:
-        # add a second secret, which changes secrets.yaml (a managed path).
+        # Create unsaved work that the recovery commit will capture: a second secret.
         client.post("/project/secrets", json={"secrets": [{"name": "FORCE_SECRET_UNSAVED", "value": "unsaved"}]})
         assert client.get("/project/active").json()["dirty"] is True
         restored = client.post("/project/restore", json={"sha": version_v1, "force": True})
         assert restored.status_code == 200
         recovery_sha = restored.json()["recovery_sha"]
         assert recovery_sha, "force restore must record a recovery commit for managed-path changes"
-        # The autosave commit captured the dirty managed change.
+        # The recovery commit holds the database export, unsaved secret included.
         recovered = git_ops.diff_name_status(root, version_v1, recovery_sha)
         assert any(c["path"] == "secrets.yaml" for c in recovered), recovered
-        assert any(m["message"].startswith("Autosave before") for m in git_ops.log(root))
+        assert any(m["message"] == "Database before restore" for m in git_ops.log(root))
     finally:
         project_sync.close_project(OWNER)
 
@@ -154,30 +173,35 @@ def test_restore_prunes_added_flow_and_diff_lists_it(tmp_path):
     from flowfile_core.flowfile.handler import FlowfileHandler
     from flowfile_core.schemas import input_schema, schemas
 
+    def _register_flow(flow_id: int, name: str) -> str:
+        handler = FlowfileHandler()
+        handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name=name, path="."))
+        graph = handler.get_flow(flow_id)
+        graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+        graph.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow_id, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"a": 1}])
+            )
+        )
+        flow_path = str(tmp_path / f"{name}.flow.yaml")
+        graph.save_flow(flow_path)
+        auto_register_flow(flow_path, name, OWNER)
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
+            assert reg is not None
+            return reg.flow_uuid
+
     root = tmp_path / "proj"
     project_sync.close_project(OWNER)
-    flow_uuid = None
+    flow_uuid = keep_uuid = None
     try:
+        # The older version holds another flow: a version with no flow file at all prunes no flow.
+        keep_uuid = _register_flow(636364, "keeper")
         assert client.post("/project/init", json={"folder_path": str(root), "name": "Prune"}).status_code == 201
         empty_sha = client.get("/project/versions").json()["versions"][0]["sha"]
 
         # Build a real flow, then project + commit it as a new version.
-        handler = FlowfileHandler()
-        handler.register_flow(schemas.FlowSettings(flow_id=636363, name="demo", path="."))
-        graph = handler.get_flow(636363)
-        graph.add_node_promise(input_schema.NodePromise(flow_id=636363, node_id=1, node_type="manual_input"))
-        graph.add_manual_input(
-            input_schema.NodeManualInput(
-                flow_id=636363, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"a": 1}])
-            )
-        )
-        flow_path = str(tmp_path / "demo.flow.yaml")
-        graph.save_flow(flow_path)
-        auto_register_flow(flow_path, "demo", OWNER)
-        with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
-            assert reg is not None
-            flow_uuid = reg.flow_uuid
+        flow_uuid = _register_flow(636363, "demo")
 
         assert client.post("/project/versions", json={"message": "add demo"}).json()["sha"]
         assert list(root.glob("flows/demo*.flow.yaml")), "flow should be projected into the project"
@@ -187,28 +211,23 @@ def test_restore_prunes_added_flow_and_diff_lists_it(tmp_path):
         version_diff = client.get(f"/project/versions/{add_demo_sha}/diff").json()["changes"]
         assert any(c["change"] == "added" and c["kind"] == "flow" for c in version_diff), version_diff
 
-        # The diff preview for the empty version lists the flow as a removal.
-        changes = client.get(f"/project/versions/{empty_sha}/changes").json()["changes"]
-        assert any(
-            c["change"] == "removed" and c["kind"] == "flow" and c["label"].startswith("demo")
-            for c in changes
-        ), changes
-
         # Restore the empty version: the flow is pruned from the DB and the files; auto-committed.
         restored = client.post("/project/restore", json={"sha": empty_sha, "label": "empty"})
         assert restored.status_code == 200
         with get_db_context() as db:
             assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None
+            assert db.query(FlowRegistration).filter_by(flow_uuid=keep_uuid).first() is not None
         assert not list(root.glob("flows/demo*.flow.yaml")), "flow file should be gone after restore"
+        assert list(root.glob("flows/keeper*.flow.yaml")), "the version's own flow stays"
         assert client.get("/project/active").json()["dirty"] is False
         assert client.get("/project/versions").json()["versions"][0]["message"].startswith("Restore")
     finally:
         project_sync.close_project(OWNER)
-        if flow_uuid is not None:
-            with get_db_context() as db:
-                for reg in db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).all():
+        with get_db_context() as db:
+            for uuid_ in (flow_uuid, keep_uuid):
+                for reg in db.query(FlowRegistration).filter_by(flow_uuid=uuid_).all():
                     db.delete(reg)
-                db.commit()
+            db.commit()
 
 
 def test_deleting_a_flow_shows_as_a_project_change(tmp_path):
@@ -245,10 +264,9 @@ def test_deleting_a_flow_shows_as_a_project_change(tmp_path):
         assert list(root.glob("flows/*.flow.yaml")), "flow should be projected"
         assert client.get("/project/active").json()["dirty"] is False
 
-        # Delete the flow → the projected file is removed, so it shows as an unsaved change.
+        # Delete the flow → it shows as an unsaved change.
         with get_db_context() as db:
             CatalogService(SQLAlchemyCatalogRepository(db)).delete_flow(reg_id, delete_file=True)
-        assert not list(root.glob("flows/*.flow.yaml")), "projected flow file should be gone after delete"
         assert client.get("/project/active").json()["dirty"] is True
         unsaved = client.get("/project/uncommitted").json()["changes"]
         assert any(c["change"] == "removed" and c["kind"] == "flow" for c in unsaved), unsaved

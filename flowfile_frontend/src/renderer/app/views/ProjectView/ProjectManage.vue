@@ -37,7 +37,7 @@
     </div>
 
     <!-- Files changed outside Flowfile -->
-    <div v-if="store.hasExternalChanges" class="banner banner--warning mb-3">
+    <div v-if="store.hasExternalChanges || store.externalEdits" class="banner banner--warning mb-3">
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div class="banner__body">
         <p class="banner__title">Files changed outside Flowfile</p>
@@ -125,7 +125,7 @@
               <el-tooltip
                 effect="dark"
                 placement="top"
-                content="A version is a named snapshot of your whole project. Save one whenever you reach a point you might want to return to."
+                content="A version is a commit of your flows, connections, schedules and catalog metadata as they are set up, not their data, stored passwords or run history."
               >
                 <button type="button" class="help-hint" aria-label="What is a version?">
                   <i class="fa-solid fa-circle-info"></i>
@@ -141,13 +141,13 @@
                 <p v-if="latestVersion" class="saved-state__sub">
                   Latest version: <strong>“{{ latestVersion.message }}”</strong>
                 </p>
-                <p v-else class="saved-state__sub">Your work is mirrored to the project folder.</p>
+                <p v-else class="saved-state__sub">The folder changes when you save a version.</p>
               </div>
             </div>
             <template v-else>
               <p class="save-prompt">
                 <i class="fa-solid fa-pen-to-square"></i>
-                Describe what changed, then save a snapshot you can return to.
+                Describe what changed, then save a version you can return to.
               </p>
               <SaveVersionForm :rows="3" @saved="loadUnsaved" />
               <div v-if="unsavedChanges.length" class="unsaved-changes">
@@ -197,6 +197,7 @@ import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import SaveVersionForm from "../../components/project/SaveVersionForm.vue";
 import ChangeList from "./ChangeList.vue";
+import { ProjectUnsavedChanges } from "./unsavedChanges";
 import ProjectVersionHistory from "./ProjectVersionHistory.vue";
 import ProjectSettingsDialog from "./ProjectSettingsDialog.vue";
 import { useProjectStore } from "../../stores/project-store";
@@ -246,32 +247,63 @@ watch(() => store.status, loadUnsaved);
 const goToSecrets = () => router.push({ name: "connections", query: { tab: "secrets" } });
 
 const handleReload = async () => {
-  if (store.status === "unsaved") {
-    try {
-      await ElMessageBox.confirm(
-        "Reloading replaces your current unsaved changes with what's on disk. Continue?",
-        "Reload project",
-        { confirmButtonText: "Reload", cancelButtonText: "Cancel", type: "warning" },
-      );
-    } catch {
-      return;
-    }
-  }
   reloading.value = true;
   try {
+    const plan = await store.loadPlan();
+    if (plan.length) {
+      const lines = plan
+        .map(
+          (c) => `${c.change} ${c.kind} “${c.label}”${c.consequence ? `: ${c.consequence}` : ""}`,
+        )
+        .join("\n");
+      try {
+        await ElMessageBox.confirm(lines, "Reload applies these changes", {
+          confirmButtonText: "Reload",
+          cancelButtonText: "Cancel",
+          type: "warning",
+          customStyle: { whiteSpace: "pre-line" },
+        });
+      } catch {
+        return;
+      }
+    }
     await store.reloadFromDisk();
     ElMessage.success("Project reloaded from disk");
   } catch (e: any) {
-    ElMessage.error(e?.message || "Could not reload project");
+    if (e instanceof ProjectUnsavedChanges) {
+      await reloadKeepingRecoveryPoint(e);
+    } else {
+      ElMessage.error(e?.message || "Could not reload project");
+    }
   } finally {
     reloading.value = false;
+  }
+};
+
+const reloadKeepingRecoveryPoint = async (unsaved: ProjectUnsavedChanges) => {
+  const lines = unsaved.changes.map((c) => `${c.kind} “${c.label}”`).join("\n");
+  try {
+    await ElMessageBox.confirm(`${unsaved.message}\n\n${lines}`, "Unsaved changes", {
+      confirmButtonText: "Keep a recovery point and continue",
+      cancelButtonText: "Cancel",
+      type: "warning",
+      customStyle: { whiteSpace: "pre-line" },
+    });
+  } catch {
+    return;
+  }
+  try {
+    await store.reloadFromDisk(true);
+    ElMessage.success("Project reloaded from disk");
+  } catch (e: any) {
+    ElMessage.error(e?.message || "Could not reload project");
   }
 };
 
 const handleClose = async () => {
   try {
     await ElMessageBox.confirm(
-      "Stop tracking this project? Your files stay on disk; Flowfile just stops mirroring and versioning this folder.",
+      "Stop tracking this project? Your files stay on disk; Flowfile just stops versioning this folder.",
       "Stop tracking",
       { confirmButtonText: "Stop tracking", cancelButtonText: "Cancel", type: "info" },
     );

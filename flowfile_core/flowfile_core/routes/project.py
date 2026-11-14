@@ -1,8 +1,8 @@
 """Git-friendly Flowfile project endpoints (JWT-gated).
 
-Projection (DB→files) happens automatically elsewhere; these endpoints cover the
-explicit boundaries: create a project, open/rebuild one, check status, save a version.
-There is deliberately no "export" or "apply" endpoint — the folder stays in sync on its own.
+These endpoints cover the explicit boundaries: create a project, open/rebuild one, check status,
+save a version (the one write of the folder besides init, the settings toggle and a restore).
+``POST /plan`` only previews what a restore or reload would change.
 """
 
 from __future__ import annotations
@@ -70,6 +70,7 @@ class OpenProjectRequest(BaseModel):
 
 class SaveVersionRequest(BaseModel):
     message: str
+    overwrite: bool = False
 
 
 class RestoreRequest(BaseModel):
@@ -81,6 +82,17 @@ class RestoreRequest(BaseModel):
     @classmethod
     def _validate_sha(cls, v: str) -> str:
         if not _SHA_RE.match(v):
+            raise ValueError(f"sha must be 7-40 hex characters, got {v!r}")
+        return v
+
+
+class PlanRequest(BaseModel):
+    sha: str | None = None
+
+    @field_validator("sha")
+    @classmethod
+    def _validate_sha(cls, v: str | None) -> str | None:
+        if v is not None and not _SHA_RE.match(v):
             raise ValueError(f"sha must be 7-40 hex characters, got {v!r}")
         return v
 
@@ -109,12 +121,14 @@ class ImportedCounts(BaseModel):
     flows: int
     connections: int
     schedules: int
+    by_kind: dict[str, int] = {}
 
 
 class SetupResultOut(BaseModel):
     imported: ImportedCounts
     placeholder_secrets: list[str]
-    prune_errors: list[str]
+    unknown_kinds: list[str] = []
+    not_applied: list[str] = []
     recovery_sha: str | None = None
 
 
@@ -130,7 +144,7 @@ class ActiveProjectOut(BaseModel):
     project: ProjectPayload | None = None
     has_external_changes: bool | None = None
     dirty: bool | None = None
-    projection_failed: bool | None = None
+    external_edits: bool | None = None
 
 
 class SettingsOut(BaseModel):
@@ -236,7 +250,7 @@ def get_active(current_user=Depends(get_current_active_user)) -> ActiveProjectOu
         project=_payload(project),
         has_external_changes=project_sync.has_external_changes(current_user.id),
         dirty=project_sync.has_uncommitted_changes(current_user.id),
-        projection_failed=project_sync.projection_failed(current_user.id),
+        external_edits=project_sync.external_edits(current_user.id),
     )
 
 
@@ -246,15 +260,19 @@ def update_settings(req: UpdateSettingsRequest, current_user=Depends(get_current
         value = project_sync.update_settings(current_user.id, req.track_data_artifacts)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return SettingsOut(track_data_artifacts=value)
 
 
 @router.post("/versions", response_model=SaveVersionOut)
 def save_version(req: SaveVersionRequest, current_user=Depends(get_current_active_user)) -> SaveVersionOut:
     try:
-        sha = project_sync.save_version(current_user.id, req.message)
+        sha = project_sync.save_version(current_user.id, req.message, req.overwrite)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return SaveVersionOut(sha=sha)
 
 
@@ -283,18 +301,6 @@ def restore_version(req: RestoreRequest, current_user=Depends(get_current_active
 _SHA_PATH = FPath(..., pattern=r"^[0-9a-fA-F]{7,40}$")
 
 
-@router.get("/versions/{sha}/changes", response_model=ChangesOut)
-def version_changes(
-    sha: str = _SHA_PATH,
-    current_user=Depends(get_current_active_user),
-) -> ChangesOut:
-    try:
-        changes = project_sync.changes_for_version(current_user.id, sha)
-    except NoActiveProjectError as e:
-        raise _no_active_project(e) from e
-    return ChangesOut(changes=changes)
-
-
 @router.get("/versions/{sha}/diff", response_model=ChangesOut)
 def version_diff(
     sha: str = _SHA_PATH,
@@ -310,9 +316,22 @@ def version_diff(
 @router.get("/uncommitted", response_model=ChangesOut)
 def uncommitted(current_user=Depends(get_current_active_user)) -> ChangesOut:
     try:
-        changes = project_sync.uncommitted_changes(current_user.id)
+        changes = project_sync.unsaved_changes(current_user.id)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
+    return ChangesOut(changes=changes)
+
+
+@router.post("/plan", response_model=ChangesOut)
+def plan(req: PlanRequest | None = None, current_user=Depends(get_current_active_user)) -> ChangesOut:
+    try:
+        changes = project_sync.plan(current_user.id, req.sha if req is not None else None)
+    except NoActiveProjectError as e:
+        raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return ChangesOut(changes=changes)
 
 
@@ -339,5 +358,4 @@ def fill_secrets(req: FillSecretsRequest, current_user=Depends(get_current_activ
     with get_db_context() as db:
         for item in req.secrets:
             upsert_secret(db, SecretInput(name=item.name, value=SecretStr(item.value)), current_user.id)
-    project_sync.secret_changed(current_user.id)
     return UpdatedOut(updated=len(req.secrets))

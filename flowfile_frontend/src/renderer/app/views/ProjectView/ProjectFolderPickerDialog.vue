@@ -28,8 +28,8 @@
           A new folder will be created at <code>{{ fullPath }}</code>
         </p>
         <p class="picker-hint">
-          Nothing is overwritten — your flows and connections are mirrored as files you can save
-          versions of.
+          Nothing is overwritten — your flows and connections are written as files when you save a
+          version.
         </p>
         <div class="picker-actions">
           <el-button @click="pickedFolder = null">Choose another folder</el-button>

@@ -14,7 +14,7 @@ Installing Flowfile with `pip install flowfile` puts a `flowfile` command on you
 | `flowfile run worker` | Start only the compute worker service. |
 | `flowfile seed-demo` | Populate the optional demo catalog. |
 | `flowfile remove-demo` | Remove the demo catalog. |
-| `flowfile project init/open/save` | Git version control for your work (see [Projects](../projects.md)). |
+| `flowfile project init/open/save/plan/apply` | Git version control for your work (see [Projects](../projects.md)). |
 
 ## Start the app
 
@@ -110,9 +110,11 @@ flowfile remove-demo    # remove everything under the demo catalog
 flowfile project init <folder>       # create a project in <folder>
 flowfile project open <folder>       # open a project and rebuild it into the database
 flowfile project save "<message>"    # save a version with a commit message
+flowfile project plan <sha|.>        # list what a restore of <sha>, or a reload of the folder (.), would change
+flowfile project apply               # reload: apply the folder's edits to the database
 ```
 
-These are the headless equivalents of the app's project controls. Opening a project reports what it imported and how many secret values still need to be set. See [Projects](../projects.md) for the full workflow, and note that in Docker mode the project commands require `FLOWFILE_ENABLE_PROJECTS` to be set.
+These are the headless equivalents of the app's project controls. Opening a project reports what it imported and how many secret values still need to be set. `plan` prints one line per object it would add, change or remove, a removal with its consequence; `apply` runs the reload and prints what it imported per kind, and stops with the message and exit code 1 when the database holds changes the last version does not (save a version first). See [Projects](../projects.md) for the full workflow, and note that in Docker mode the project commands require `FLOWFILE_ENABLE_PROJECTS` to be set.
 
 ## Scheduling
 

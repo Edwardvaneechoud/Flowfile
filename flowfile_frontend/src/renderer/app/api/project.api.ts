@@ -9,9 +9,20 @@ import type {
   ProjectVersionChange,
   SaveVersionResult,
 } from "../types";
+import { unsavedChangesFrom } from "../views/ProjectView/unsavedChanges";
 
 /** Raised when a Phase-2 route isn't deployed yet, so the store can hide its UI. */
 export class ProjectFeatureUnavailable extends Error {}
+
+/** A save refused because the project folder holds edits that were never applied. */
+export class ProjectFolderEdited extends Error {
+  constructor(
+    message: string,
+    readonly changes: ProjectVersionChange[],
+  ) {
+    super(message);
+  }
+}
 
 const detail = (error: any, fallback: string): string =>
   error?.response?.data?.detail || error?.message || fallback;
@@ -75,12 +86,19 @@ export class ProjectApi {
     }
   }
 
-  /** Save a version (commit). sha is null when nothing changed. */
-  static async saveVersion(message: string): Promise<SaveVersionResult> {
+  /** Save a version (commit). sha is null when nothing changed. `overwrite` saves over folder edits. */
+  static async saveVersion(message: string, overwrite = false): Promise<SaveVersionResult> {
     try {
-      const res = await axios.post<SaveVersionResult>("/project/versions", { message });
+      const res = await axios.post<SaveVersionResult>("/project/versions", { message, overwrite });
       return res.data;
-    } catch (error) {
+    } catch (error: any) {
+      const body = error?.response?.data?.detail;
+      if (error?.response?.status === 409 && body?.code === "FOLDER_EDITED") {
+        throw new ProjectFolderEdited(
+          String(body.message ?? ""),
+          Array.isArray(body.changes) ? body.changes : [],
+        );
+      }
       throw new Error(detail(error, "Failed to save version"));
     }
   }
@@ -100,27 +118,29 @@ export class ProjectApi {
     }
   }
 
-  /** Restore the project files to a version and rebuild the environment. */
-  static async restore(sha: string, label?: string): Promise<ImportResult> {
+  /** Restore the project files to a version and rebuild the environment. `force` keeps a
+   * recovery point of unsaved changes first; without it they raise ProjectUnsavedChanges. */
+  static async restore(sha: string, label?: string, force = false): Promise<ImportResult> {
     try {
-      const res = await axios.post<ImportResult>("/project/restore", { sha, label });
+      const res = await axios.post<ImportResult>("/project/restore", { sha, label, force });
       return res.data;
     } catch (error: any) {
       if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
-      throw new Error(detail(error, "Failed to restore version"));
+      throw unsavedChangesFrom(error) ?? new Error(detail(error, "Failed to restore version"));
     }
   }
 
-  /** Friendly summary of what restoring a version would change (vs the latest saved version). */
-  static async getVersionChanges(sha: string): Promise<ProjectVersionChange[]> {
+  /** What a restore of `sha`, or a reload of the folder without one, would create, change and remove. */
+  static async plan(sha?: string): Promise<ProjectVersionChange[]> {
     try {
-      const res = await axios.get<{ changes: ProjectVersionChange[] }>(
-        `/project/versions/${sha}/changes`,
+      const res = await axios.post<{ changes: ProjectVersionChange[] }>(
+        "/project/plan",
+        sha ? { sha } : {},
       );
       return res.data.changes ?? [];
     } catch (error: any) {
       if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
-      throw new Error(detail(error, "Failed to load changes"));
+      throw new Error(detail(error, "Failed to load the plan"));
     }
   }
 
@@ -148,14 +168,15 @@ export class ProjectApi {
     }
   }
 
-  /** Accept external (on-disk) changes by rebuilding from files. */
-  static async reload(): Promise<ImportResult> {
+  /** Accept external (on-disk) changes by rebuilding from files. `force` keeps a recovery point of
+   * unsaved database changes first; without it they raise ProjectUnsavedChanges. */
+  static async reload(force = false): Promise<ImportResult> {
     try {
-      const res = await axios.post<ImportResult>("/project/reload", {});
+      const res = await axios.post<ImportResult>("/project/reload", { force });
       return res.data;
     } catch (error: any) {
       if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
-      throw new Error(detail(error, "Failed to reload project"));
+      throw unsavedChangesFrom(error) ?? new Error(detail(error, "Failed to reload project"));
     }
   }
 

@@ -3,18 +3,21 @@ the deterministic folder layout is still usable with bare git in that case."""
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import threading
 from contextlib import contextmanager
 from pathlib import Path
 
-from flowfile_core.project import manifest
+from filelock import FileLock
+
+from flowfile_core.project import kinds, manifest
 
 logger = logging.getLogger(__name__)
 
 try:
-    from git import Repo
+    from git import Commit, Repo
 
     _GIT_AVAILABLE = True
 except Exception:  # pragma: no cover - import guard
@@ -46,6 +49,38 @@ def repo_lock(root: Path):
         yield
     finally:
         lock.release()
+
+
+_file_locks: dict[str, FileLock] = {}
+
+
+def _file_lock_for(root: Path) -> FileLock | None:
+    git_dir = Path(root).resolve() / ".git"
+    if not git_dir.is_dir():
+        return None
+    key = str(git_dir)
+    with _repo_locks_guard:
+        lock = _file_locks.get(key)
+        if lock is None:
+            lock = FileLock(str(git_dir / "flowfile.lock"))
+            _file_locks[key] = lock
+        return lock
+
+
+@contextmanager
+def project_lock(root: Path):
+    """``repo_lock`` plus a file lock at ``.git/flowfile.lock``, so a save, open, restore or reload in
+    another process waits for this one instead of losing a race on ``index.lock`` or a file.
+
+    The file lock is one object per root and counts re-entries, so nesting in one thread is safe. A
+    folder with no ``.git`` (git unavailable) gets the thread lock only."""
+    with repo_lock(root):
+        file_lock = _file_lock_for(root)
+        if file_lock is None:
+            yield
+            return
+        with file_lock:
+            yield
 
 
 # sha validation
@@ -88,48 +123,49 @@ def init(root: Path) -> None:
         Repo.init(str(root))
 
 
-def _is_managed(path: str) -> bool:
-    """True when ``path`` (repo-relative, forward-slash) belongs to the managed set.
+def _managed_pathspecs() -> list[str]:
+    """Git pathspecs for the files Flowfile writes: the project manifest, ``.gitignore`` and every path
+    pattern a project kind owns (``project.kinds``). Anything else in the folder (a README,
+    ``.DS_Store``, ``flows/notes.yaml``) is never counted as unsaved and never staged."""
+    patterns = kinds.managed_patterns()
+    roots = [manifest.MANIFEST_NAME, ".gitignore"] + [p for p in patterns if "*" not in p]
+    return [f":(literal){p}" for p in roots] + [f":(glob){p}" for p in patterns if "*" in p]
 
-    Root-level entries match exactly; directory entries match the prefix so that
-    any file under ``flows/`` is considered managed."""
-    for mp in manifest.MANAGED_PATHS:
-        if path == mp or path.startswith(mp + "/") or path.startswith(mp + "\\"):
-            return True
-    return False
+
+def _managed_status(repo) -> list[tuple[str, str]]:
+    """``(XY code, path)`` for each managed file that differs from HEAD, untracked ones included.
+
+    ``git status`` accepts pathspecs that match nothing, unlike ``git add``."""
+    out = repo.git.status("--porcelain", "-z", "--untracked-files=all", "--", *_managed_pathspecs())
+    entries = out.split("\0")
+    rows: list[tuple[str, str]] = []
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        code, path = entry[:2], entry[3:]
+        if code[0] in "RC":
+            i += 1  # -z puts a rename's source path in the next field
+        rows.append((code, path))
+    return rows
 
 
 def commit_all(root: Path, message: str) -> str | None:
-    """Stage only the known managed manifest paths and commit.
+    """Stage the managed files that changed and commit them.
 
-    Avoids ``git add -A``: staging everything under the root would sweep
-    unrelated tenant data and secret-bearing files into history.
-
-    Strategy: stage ALL changes (so deletions of tracked files are captured), then
-    unstage any file that falls outside the managed set before committing."""
+    Only the managed pathspecs are staged, so files Flowfile did not write never reach the index
+    or the object store. Each path changed in the working tree is staged by name, since ``git add``
+    refuses a pathspec that matches nothing (a first commit with no ``flows/``, or a deletion a
+    restore's ``read-tree`` already staged)."""
     if not is_repo(root):
         return None
     with repo_lock(root):
         repo = Repo(str(root))
-        repo.git.add(A=True)
-        # Unstage anything that is not in the managed set.
-        if repo.head.is_valid():
-            staged = repo.index.diff("HEAD")
-            to_reset: list[str] = [
-                diff.b_path or diff.a_path
-                for diff in staged
-                if not _is_managed(diff.b_path or diff.a_path or "")
-            ]
-            if to_reset:
-                repo.index.reset(paths=to_reset)
-        else:
-            # No HEAD yet (first/init commit): diff(None) is index-vs-worktree which is empty
-            # immediately after add -A.  Enumerate staged blobs directly and remove unmanaged ones.
-            # index.entries keys are (path, stage_number) tuples; path is repo-relative with '/' separators.
-            # index.reset() requires a HEAD ref so use index.remove() with working_tree=False instead.
-            to_remove = [path for path, _stage in repo.index.entries.keys() if not _is_managed(path)]
-            if to_remove:
-                repo.index.remove(to_remove, working_tree=False)
+        paths = [path for code, path in _managed_status(repo) if code[1] != " "]
+        if paths:
+            repo.git.add("-A", "--", *(f":(literal){p}" for p in paths))
         has_head = repo.head.is_valid()
         if has_head and not repo.index.diff("HEAD"):
             return None
@@ -173,6 +209,29 @@ def tree_blob_sizes(root: Path, sha: str) -> dict[str, int]:
     return {b.path: b.size for b in tree.traverse() if b.type == "blob"}
 
 
+@functools.lru_cache(maxsize=8)
+def _managed_tree(root: str, hexsha: str) -> dict[str, str]:
+    tree = Repo(root).commit(hexsha).tree
+    return {
+        b.path: b.data_stream.read().decode("utf-8", errors="replace")
+        for b in tree.traverse()
+        if b.type == "blob" and (b.path == manifest.MANIFEST_NAME or kinds.kind_for_path(b.path) is not None)
+    }
+
+
+def read_tree_at(root: Path, sha: str) -> dict[str, str]:
+    """``{path: text}`` of the managed files in a commit's tree (``"HEAD"`` or a hex sha), ``project.yaml``
+    included; ``{}`` with no repo or no commit. Cached per resolved commit, whose tree never changes."""
+    if sha != "HEAD":
+        _require_hex_sha(sha)
+    if not is_repo(root):
+        return {}
+    repo = Repo(str(root))
+    if sha == "HEAD" and not repo.head.is_valid():
+        return {}
+    return _managed_tree(str(Path(root).resolve()), repo.commit(sha).hexsha)
+
+
 def read_blob(root: Path, sha: str, rel_path: str) -> str | None:
     """The UTF-8 text of one blob in ``sha``'s tree, or ``None`` if it is absent."""
     _require_hex_sha(sha)
@@ -195,6 +254,51 @@ def restore(root: Path, sha: str) -> None:
     if is_repo(root):
         with repo_lock(root):
             Repo(str(root)).git.read_tree("-u", "--reset", sha)
+
+
+def _folder_git(repo, folder: Path, *args: str) -> str:
+    """Run git against ``folder`` as the work tree with an index of its own beside it
+    (``.<name>.index``), so the project's real index and working tree are never touched."""
+    folder = Path(folder)
+    index = folder.parent / f".{folder.name}.index"
+    return repo.git.execute(
+        ["git", f"--work-tree={folder}", *args],
+        env={"GIT_INDEX_FILE": str(index)},
+        strip_newline_in_stdout=False,
+    )
+
+
+def seed_folder(root: Path, folder: Path, sha: str = "HEAD") -> bool:
+    """Write ``sha``'s files into ``folder`` (created if missing) through its own index.
+
+    Returns ``False`` when there is no repo or no such commit, leaving ``folder`` empty."""
+    Path(folder).mkdir(parents=True, exist_ok=True)
+    if not is_repo(root):
+        return False
+    repo = Repo(str(root))
+    if sha == "HEAD":
+        if not repo.head.is_valid():
+            return False
+    else:
+        _require_hex_sha(sha)
+    _folder_git(repo, folder, "read-tree", "-u", "--reset", sha)
+    return True
+
+
+def commit_folder(root: Path, folder: Path, message: str, ref: str) -> str | None:
+    """Commit a seeded ``folder``'s files on top of HEAD and point ``ref`` at the commit.
+
+    ``ref`` is ``HEAD`` (the branch moves, so the commit is part of the history) or a ref of its own
+    such as ``refs/flowfile/recovery/<stamp>`` (the branch stays where it is). The project's index and
+    working tree are left as they were. ``None`` when the folder holds exactly HEAD's tree."""
+    repo = Repo(str(root))
+    _folder_git(repo, folder, "add", "-A", "--", ".")
+    tree_sha = _folder_git(repo, folder, "write-tree").strip()
+    if tree_sha == repo.head.commit.tree.hexsha:
+        return None
+    commit = Commit.create_from_tree(repo, repo.tree(tree_sha), message, parent_commits=[repo.head.commit], head=False)
+    repo.git.update_ref(ref, commit.hexsha)
+    return commit.hexsha
 
 
 def _parse_name_status(out: str) -> list[dict]:
@@ -232,20 +336,15 @@ def changes_in(root: Path, sha: str) -> list[dict]:
 
 
 def uncommitted_changes(root: Path) -> list[dict]:
-    """Working-tree changes vs the last version (incl. untracked new files), as name-status rows."""
+    """Managed files changed since the last version (incl. untracked new ones), as name-status rows."""
     if not is_repo(root):
         return []
     try:
-        out = Repo(str(root)).git.status("--porcelain")
+        rows = _managed_status(Repo(str(root)))
     except Exception:
         return []
     changes: list[dict] = []
-    for line in out.splitlines():
-        if not line.strip():
-            continue
-        code, path = line[:2], line[3:].strip()
-        if "->" in path:  # rename: report the new path
-            path = path.split("->")[-1].strip()
+    for code, path in rows:
         if code == "??" or "A" in code:
             status = "A"
         elif "D" in code:
@@ -257,10 +356,10 @@ def uncommitted_changes(root: Path) -> list[dict]:
 
 
 def is_dirty(root: Path) -> bool:
-    """True when the working tree has changes (incl. untracked) to save as a version."""
+    """True when a managed file has changes (incl. untracked) to save as a version."""
     if not is_repo(root):
         return False
     try:
-        return Repo(str(root)).is_dirty(untracked_files=True)
+        return bool(_managed_status(Repo(str(root))))
     except Exception:
         return False

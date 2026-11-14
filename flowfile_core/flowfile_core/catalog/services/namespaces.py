@@ -84,14 +84,6 @@ def _validate_namespace_storage(owner_id: int, storage_uri: str | None, storage_
         )
 
 
-def _project_sync_namespace(owner_id: int) -> None:
-    """Mirror a namespace create/update/delete into the active project's namespaces.yaml (no-op
-    when none active)."""
-    from flowfile_core.project import project_sync
-
-    project_sync.namespace_changed(owner_id)
-
-
 def bulk_enrich_artifacts(
     artifacts: list[GlobalArtifact],
     version_counts: dict[str, int] | None = None,
@@ -229,7 +221,6 @@ class NamespaceService:
             storage_connection_name=storage_connection_name,
         )
         created = self.repo.create_namespace(namespace)
-        _project_sync_namespace(owner_id)
         return created
 
     def update_namespace(
@@ -275,7 +266,6 @@ class NamespaceService:
                 namespace.storage_connection_name = new_conn
 
         updated = self.repo.update_namespace(namespace)
-        _project_sync_namespace(updated.owner_id)
         return updated
 
     def _is_seeded(self, namespace: CatalogNamespace) -> bool:
@@ -302,9 +292,7 @@ class NamespaceService:
             raise NamespaceNotEmptyError(
                 namespace_id=namespace_id, children=children, flows=flows, tables=tables, notebooks=notebooks
             )
-        owner_id = namespace.owner_id
         self.repo.delete_namespace(namespace_id)
-        _project_sync_namespace(owner_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:
         """Retrieve a single namespace by ID."""

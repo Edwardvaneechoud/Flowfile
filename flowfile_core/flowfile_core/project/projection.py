@@ -13,8 +13,10 @@ import logging
 from pathlib import Path
 
 import yaml
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.catalog.services import notebook_store
 from flowfile_core.catalog.services.tables import _is_managed_table_path
 from flowfile_core.database.models import (
@@ -31,8 +33,12 @@ from flowfile_core.database.models import (
     Kernel,
     Secret,
 )
-from flowfile_core.project import manifest
-from flowfile_core.project.normalize import atomic_write, normalize_flow_data, safe_stem, unique_stem, write_yaml
+from flowfile_core.project.normalize import (
+    dump_yaml,
+    normalize_flow_data,
+    safe_stem,
+    unique_stem,
+)
 from flowfile_core.project.secrets_resolver import make_placeholder
 from shared.storage_config import may_touch_flow_file
 
@@ -47,7 +53,6 @@ _CLOUD_SECRETS = [
     ("azure_sas_token", "azure_sas_token_id"),
     ("gcs_service_account_key", "gcs_service_account_key_id"),
 ]
-_CLOUD_SECRET_FK_COLUMNS = [fk for _, fk in _CLOUD_SECRETS]
 _PROJECTABLE_SCHEDULE_TYPES = ("interval", "cron")
 
 # Non-secret cloud-connection fields that round-trip verbatim (projection reads them off the ORM
@@ -79,14 +84,29 @@ def _secret_name(db: Session, secret_id: int | None) -> str | None:
 # --- flows -------------------------------------------------------------------
 
 
-def _load_flow_data(flow_path: str) -> dict | None:
-    """The registered flow's document, or None when it is missing, not yaml/json, or (on a multi-user server)
-    outside the server's flow folders, which the project never reads from."""
+def exportable(flow_path: str | None) -> bool:
+    """Whether a registration's flow file can be projected into the project.
+
+    The export and the importer's prune share this one condition: a registration the export skips
+    (no file on disk, a ``.flowfile`` pickle, a kernel scratch flow's ``<kernel:id>`` pseudo-path, or
+    on a multi-user server a file outside the server's flow folders, which the project never reads
+    from) is never in the files, so a restore or reload must leave it alone rather than read it as
+    removed."""
+    if not flow_path:
+        return False
     p = Path(flow_path)
-    if not may_touch_flow_file(p) or not p.exists() or p.suffix.lower() not in (".yaml", ".yml", ".json"):
+    return p.suffix.lower() in (".yaml", ".yml", ".json") and may_touch_flow_file(p) and p.exists()
+
+
+YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def _load_flow_data(flow_path: str) -> dict | None:
+    if not exportable(flow_path):
         return None
+    p = Path(flow_path)
     text = p.read_text(encoding="utf-8")
-    return json.loads(text) if p.suffix.lower() == ".json" else yaml.safe_load(text)
+    return json.loads(text) if p.suffix.lower() == ".json" else yaml.load(text, Loader=YAML_LOADER)
 
 
 def _name_stem(name: str | None) -> str:
@@ -96,21 +116,6 @@ def _name_stem(name: str | None) -> str:
     if name.endswith(".flow"):
         name = name[: -len(".flow")]
     return safe_stem(name)
-
-
-def _flow_stem(root: Path, reg: FlowRegistration) -> str:
-    """The stem of the flow's actual projected file (matched by ``flow_uuid``), so a schedule lines up
-    with a disambiguated ``<stem>_<uuid8>.flow.yaml`` instead of overwriting a same-named flow's file.
-    Falls back to the intrinsic ``flowfile_name`` stem when the flow file isn't on disk yet."""
-    for p in manifest.flows_dir(root).glob("*.flow.yaml"):
-        try:
-            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        except Exception:
-            continue
-        if data.get("flow_uuid") == reg.flow_uuid:
-            return p.name[: -len(".flow.yaml")]
-    data = _load_flow_data(reg.flow_path) or {}
-    return _name_stem(data.get("flowfile_name") or reg.name)
 
 
 def _namespace_path(db: Session, namespace_id: int | None) -> dict | None:
@@ -130,58 +135,117 @@ def _namespace_path(db: Session, namespace_id: int | None) -> dict | None:
     return {"catalog": parent.name if parent else ns.name, "schema": ns.name}
 
 
-def project_flow(root: Path, reg: FlowRegistration, namespace: dict | None = None) -> Path | None:
+def _reference_lookup(db: Session):
+    """The names a flow file's node references resolve to on this install, for ``normalize_flow_data``.
+
+    A table resolves as the catalog reader resolves it at run time (its id, else its name in its namespace) and is
+    named ``catalog.schema.table``, which resolves without ambiguity; a namespace as the writer and models resolve
+    it (a stored full name that resolves, else the id's); a flow by its ``flow_uuid``, namespace and name, unless
+    the reference already holds a uuid, which the run time reads before the id. ``None`` when nothing resolves.
+    """
+    repo = SQLAlchemyCatalogRepository(db)
+    svc = CatalogService(repo)
+
+    def lookup(kind: str, settings: dict) -> dict | None:
+        if kind == "namespace":
+            stored = settings.get("namespace_full_name")
+            if stored and svc.resolve_namespace_id_by_full_name(stored) is not None:
+                return {"namespace_full_name": stored}
+            full_name = svc.resolve_namespace_full_name(settings.get("namespace_id"))
+            return {"namespace_full_name": full_name} if full_name else None
+        if kind == "flow":
+            if settings.get("flow_uuid"):
+                return None
+            reg = repo.get_flow(settings["registration_id"])
+            if reg is None:
+                return None
+            return {
+                "flow_uuid": reg.flow_uuid,
+                "namespace": svc.resolve_namespace_full_name(reg.namespace_id),
+                "name": reg.name,
+            }
+        table = repo.get_table(settings["catalog_table_id"]) if settings.get("catalog_table_id") else None
+        reference = settings.get("catalog_full_table_name") or settings.get("catalog_table_name")
+        if table is None and not settings.get("catalog_table_id") and reference:
+            try:
+                table = svc.resolve_table(reference, default_namespace_id=settings.get("catalog_namespace_id"))
+            except Exception:
+                table = None
+        if table is None:
+            return None
+        namespace = svc.resolve_namespace_full_name(table.namespace_id)
+        return {"catalog_full_table_name": f"{namespace}.{table.name}" if namespace else table.name}
+
+    return lookup
+
+
+# flow_path -> (owner_id, stamp, [(kind, settings, answer)], (stem, text))
+_flow_texts: dict[str, tuple] = {}
+
+
+def flow_file(db: Session, reg: FlowRegistration, namespace: dict | None = None) -> tuple[str, str] | None:
+    """The stem a flow's file is named after and the file's text, or ``None`` when it is not exportable.
+
+    The result is cached per flow path, keyed on the file's mtime and size, the registration's uuid, name and
+    namespace, and the answers the reference lookup gave while rendering. A hit asks those lookups again (database
+    reads only), so a renamed table or namespace re-renders the flow while an unchanged flow is never parsed."""
+    if not exportable(reg.flow_path):
+        return None
+    st = Path(reg.flow_path).stat()
+    stamp = (st.st_mtime_ns, st.st_size, reg.flow_uuid, reg.name, namespace)
+    lookup = _reference_lookup(db)
+    cached = _flow_texts.get(reg.flow_path)
+    if cached is not None and cached[1] == stamp and all(lookup(k, s) == a for k, s, a in cached[2]):
+        return cached[3]
+    asked: list[tuple] = []
+
+    def recording(kind: str, settings: dict) -> dict | None:
+        answer = lookup(kind, settings)
+        asked.append((kind, copy.deepcopy(settings), answer))
+        return answer
+
     data = _load_flow_data(reg.flow_path)
     if data is None:
         return None
     stem = _name_stem(data.get("flowfile_name") or reg.name)
-    target = manifest.flows_dir(root) / f"{stem}.flow.yaml"
-    if target.exists():
-        existing = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
-        if existing.get("flow_uuid") not in (None, reg.flow_uuid):
-            target = manifest.flows_dir(root) / f"{stem}_{reg.flow_uuid[:8]}.flow.yaml"
-    write_yaml(target, normalize_flow_data(data, reg.flow_uuid, reg.name, namespace))
-    return target
+    result = stem, dump_yaml(normalize_flow_data(data, reg.flow_uuid, reg.name, namespace, lookup=recording))
+    _flow_texts[reg.flow_path] = (reg.owner_id, stamp, asked, result)
+    return result
 
 
-def remove_flow(root: Path, flow_uuid: str | None = None, name: str | None = None) -> None:
-    """Remove a flow's projected file and its schedule file.
-
-    Matches by ``flow_uuid`` (filename-independent — the projected name is derived from the flow's
-    intrinsic ``flowfile_name``, which the caller may no longer have after a delete); falls back to a
-    name-stem glob when only a name is known.
-    """
-    flows_dir = manifest.flows_dir(root)
-    if flow_uuid:
-        for p in flows_dir.glob("*.flow.yaml"):
-            try:
-                data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-            except Exception:
-                continue
-            if data.get("flow_uuid") == flow_uuid:
-                p.unlink(missing_ok=True)
-                manifest.schedules_dir(root).joinpath(f"{p.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
-    elif name:
-        stem = _name_stem(name)
-        for p in flows_dir.glob(f"{stem}*.flow.yaml"):
-            p.unlink(missing_ok=True)
-            manifest.schedules_dir(root).joinpath(f"{p.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
-        manifest.schedules_dir(root).joinpath(f"{stem}.yaml").unlink(missing_ok=True)
+def _owner_flows(db: Session, owner_id: int):
+    return (
+        db.query(FlowRegistration)
+        .filter(FlowRegistration.owner_id == owner_id)
+        .order_by(FlowRegistration.flow_uuid.asc())
+    )
 
 
-def remove_stale_flow_files(root: Path, flow_uuid: str, keep: Path) -> None:
-    """After (re)projecting a flow, drop any other file carrying the same ``flow_uuid`` — e.g. an
-    old name left behind by a rename — plus its now-orphaned schedule file."""
-    for p in manifest.flows_dir(root).glob("*.flow.yaml"):
-        if p == keep:
+def export_flows(db: Session, owner_id: int) -> dict[str, tuple[str, str]]:
+    """``{flow_uuid: (file stem, text)}`` of the owner's exportable flows, the stems assigned in memory.
+
+    Flows are taken in ``flow_uuid`` order and a stem an earlier flow holds, compared without letter case
+    (a case-insensitive filesystem holds one of the two), gets the flow's ``_<uuid8>`` suffix."""
+    out: dict[str, tuple[str, str]] = {}
+    taken: set[str] = set()
+    seen: set[str] = set()
+    namespaces: dict[int | None, dict | None] = {}
+    for reg in _owner_flows(db, owner_id):
+        if reg.namespace_id not in namespaces:
+            namespaces[reg.namespace_id] = _namespace_path(db, reg.namespace_id)
+        exported = flow_file(db, reg, namespaces[reg.namespace_id])
+        if exported is None:
             continue
-        try:
-            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        except Exception:
-            continue
-        if data.get("flow_uuid") == flow_uuid:
-            p.unlink(missing_ok=True)
-            manifest.schedules_dir(root).joinpath(f"{p.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
+        stem, text = exported
+        if stem.casefold() in taken:
+            stem = f"{stem}_{reg.flow_uuid[:8]}"
+        taken.add(stem.casefold())
+        out[reg.flow_uuid] = (stem, text)
+        seen.add(reg.flow_path)
+    for path, cached in list(_flow_texts.items()):
+        if cached[0] == owner_id and path not in seen:
+            _flow_texts.pop(path, None)
+    return out
 
 
 # --- connections -------------------------------------------------------------
@@ -211,34 +275,17 @@ def _cloud_connection_dict(db: Session, conn: CloudStorageConnection) -> dict:
     return d
 
 
-def project_database_connection(db: Session, root: Path, name: str, owner_id: int) -> Path | None:
-    conn = (
-        db.query(DatabaseConnection)
-        .filter(DatabaseConnection.connection_name == name, DatabaseConnection.user_id == owner_id)
-        .first()
-    )
-    if conn is None:
-        return None
-    target = manifest.connections_dir(root, "database") / f"{unique_stem(name)}.yaml"
-    write_yaml(target, _db_connection_dict(db, conn))
-    return target
-
-
-def project_cloud_connection(db: Session, root: Path, name: str, owner_id: int) -> Path | None:
-    conn = (
-        db.query(CloudStorageConnection)
-        .filter(CloudStorageConnection.connection_name == name, CloudStorageConnection.user_id == owner_id)
-        .first()
-    )
-    if conn is None:
-        return None
-    target = manifest.connections_dir(root, "cloud") / f"{unique_stem(name)}.yaml"
-    write_yaml(target, _cloud_connection_dict(db, conn))
-    return target
-
-
-def remove_connection(root: Path, kind: str, name: str) -> None:
-    manifest.connections_dir(root, kind).joinpath(f"{unique_stem(name)}.yaml").unlink(missing_ok=True)
+def export_connections(db: Session, owner_id: int, kind: str) -> dict[str, str]:
+    """``{path: text}`` of the owner's database (``kind="database"``) or cloud connections."""
+    if kind == "database":
+        rows = db.query(DatabaseConnection).filter(DatabaseConnection.user_id == owner_id)
+        render = _db_connection_dict
+    else:
+        rows = db.query(CloudStorageConnection).filter(CloudStorageConnection.user_id == owner_id)
+        render = _cloud_connection_dict
+    return {
+        f"connections/{kind}/{unique_stem(conn.connection_name)}.yaml": dump_yaml(render(db, conn)) for conn in rows
+    }
 
 
 # --- schedules ---------------------------------------------------------------
@@ -247,6 +294,7 @@ def remove_connection(root: Path, kind: str, name: str) -> None:
 def _schedule_dict(s: FlowSchedule) -> dict:
     """A schedule as its project file holds it; ``backend`` only when one is set, so older files stay unchanged."""
     out = {
+        "id": s.schedule_uuid,
         "name": s.name,
         "enabled": s.enabled,
         "schedule_type": s.schedule_type,
@@ -260,47 +308,55 @@ def _schedule_dict(s: FlowSchedule) -> dict:
     return out
 
 
-def project_schedules_for_registration(
-    db: Session, root: Path, reg: FlowRegistration, stem: str | None = None
-) -> Path | None:
-    schedules = (
+def _schedule_file(reg: FlowRegistration, schedules: list[FlowSchedule]) -> dict:
+    return {"flow_uuid": reg.flow_uuid, "schedules": [_schedule_dict(s) for s in schedules]}
+
+
+def export_schedules(db: Session, owner_id: int, stems: dict[str, str]) -> dict[str, str]:
+    """``{path: text}`` of the owner's schedule files, each named after its flow's stem in ``stems``
+    (a flow with no file after its name). Flows are taken in ``flow_uuid`` order and a flow with no
+    schedule drops a file an earlier one wrote under the same stem, as a write over the folder did."""
+    tree: dict[str, str] = {}
+    by_flow: dict[int, list[FlowSchedule]] = {}
+    for s in (
         db.query(FlowSchedule)
-        .filter(
-            FlowSchedule.registration_id == reg.id,
-            FlowSchedule.schedule_type.in_(_PROJECTABLE_SCHEDULE_TYPES),
-        )
+        .join(FlowRegistration, FlowSchedule.registration_id == FlowRegistration.id)
+        .filter(FlowRegistration.owner_id == owner_id, FlowSchedule.schedule_type.in_(_PROJECTABLE_SCHEDULE_TYPES))
         .order_by(FlowSchedule.id.asc())
-        .all()
-    )
-    # Share the flow's file stem so a flow and its schedule always line up (caller passes the
-    # resolved stem in full projection; the single-schedule hook resolves it from the projected file).
-    target = manifest.schedules_dir(root) / f"{stem or _flow_stem(root, reg)}.yaml"
-    if not schedules:
-        target.unlink(missing_ok=True)
-        return None
-    write_yaml(target, {"flow_uuid": reg.flow_uuid, "schedules": [_schedule_dict(s) for s in schedules]})
-    return target
+    ):
+        by_flow.setdefault(s.registration_id, []).append(s)
+    for reg in _owner_flows(db, owner_id):
+        rel = f"schedules/{stems.get(reg.flow_uuid) or _name_stem(reg.name)}.yaml"
+        schedules = by_flow.get(reg.id)
+        if schedules:
+            tree[rel] = dump_yaml(_schedule_file(reg, schedules))
+        else:
+            tree.pop(rel, None)
+    return tree
 
 
 # --- secret manifest (standalone secrets only) -------------------------------
 
 
-def regenerate_secret_manifest(db: Session, root: Path, owner_id: int) -> None:
-    """secrets.yaml lists only standalone secrets; connection secrets are implied by
-    the connection files (and recreated by their store functions on import)."""
+def secret_manifest_data(db: Session, owner_id: int) -> dict:
+    """secrets.yaml lists the owner's standalone secrets: those no row refers to through a foreign key
+    to ``secrets.id`` and that no feature keeps under a name of its own. A connection's secrets are
+    implied by its file (and recreated by its store function on import); a Kafka, Google Analytics or
+    AI-provider key, OAuth settings and the GitHub publish token belong to features with no file."""
+    from flowfile_core.configs.app_settings import _OAUTH_KEYS
+    from flowfile_core.database.models import Base
+    from flowfile_core.routes.community_github import GITHUB_PUBLISH_LOGIN_KEY, GITHUB_PUBLISH_TOKEN_KEY
+
     linked: set[int] = set()
-    for (sid,) in db.query(DatabaseConnection.password_id).filter(DatabaseConnection.user_id == owner_id):
-        if sid:
-            linked.add(sid)
-    for row in db.query(*[getattr(CloudStorageConnection, fk) for fk in _CLOUD_SECRET_FK_COLUMNS]).filter(
-        CloudStorageConnection.user_id == owner_id
-    ):
-        linked.update(sid for sid in row if sid)
+    for table in Base.metadata.tables.values():
+        for column in table.columns:
+            if any(fk.column.table.name == Secret.__tablename__ for fk in column.foreign_keys):
+                linked.update(sid for (sid,) in db.execute(select(column).where(column.isnot(None))))
+    feature_names = {*_OAUTH_KEYS, GITHUB_PUBLISH_TOKEN_KEY, GITHUB_PUBLISH_LOGIN_KEY}
     q = db.query(Secret.name).filter(Secret.user_id == owner_id)
     if linked:
         q = q.filter(~Secret.id.in_(linked))
-    standalone = sorted({name for (name,) in q})
-    write_yaml(manifest.secrets_manifest_path(root), {"required_secrets": standalone})
+    return {"required_secrets": sorted({name for (name,) in q} - feature_names)}
 
 
 # --- namespace manifest (custom, non-public catalogs/schemas) ----------------
@@ -317,7 +373,7 @@ def _namespace_entry(name_key: str, name: str, description: str | None, is_publi
     return entry
 
 
-def regenerate_namespace_manifest(db: Session, root: Path, owner_id: int) -> None:
+def namespace_manifest_data(db: Session, owner_id: int) -> dict:
     """namespaces.yaml mirrors the owner's catalog tree by name — seeded system namespaces
     (General + default/Unnamed Flows/Local Flows/...) and custom catalogs/schemas alike — as a
     nested ``catalog -> schemas`` structure so the hierarchy is visible and versioned.
@@ -349,7 +405,7 @@ def regenerate_namespace_manifest(db: Session, root: Path, owner_id: int) -> Non
         entry = dict(catalogs[catalog_name])
         entry["schemas"] = sorted(schemas.get(catalog_name, []), key=lambda s: s["name"])
         out.append(entry)
-    write_yaml(manifest.namespaces_manifest_path(root), {"namespaces": out})
+    return {"namespaces": out}
 
 
 # --- catalog tables ----------------------------------------------------------
@@ -386,12 +442,13 @@ def _table_entry(db: Session, table: CatalogTable) -> dict:
         entry["pointer"] = _table_pointer(table)
     if table.source_registration_id:
         reg = db.get(FlowRegistration, table.source_registration_id)
-        if reg is not None:
+        # A producer outside the project (another owner's, a run snapshot) is never named by the files.
+        if reg is not None and reg.owner_id == table.owner_id and exportable(reg.flow_path):
             entry["source_flow_uuid"] = reg.flow_uuid
     return entry
 
 
-def regenerate_tables_manifest(db: Session, root: Path, owner_id: int) -> None:
+def tables_manifest_data(db: Session, owner_id: int) -> dict:
     """tables.yaml mirrors the owner's physical tables and SQL-view virtual tables as
     definition + schema + a portable data pointer. Flow-produced virtual tables are skipped
     (their serialized plan isn't portable; re-running the producer flow rebuilds them). Volatile
@@ -400,7 +457,7 @@ def regenerate_tables_manifest(db: Session, root: Path, owner_id: int) -> None:
     rows = db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id).all()
     entries = [_table_entry(db, t) for t in rows if not (t.table_type == "virtual" and not t.sql_query)]
     entries.sort(key=lambda e: (e["name"], json.dumps(e.get("namespace"), sort_keys=True)))
-    write_yaml(manifest.tables_manifest_path(root), {"tables": entries})
+    return {"tables": entries}
 
 
 # --- models (global artifacts) -----------------------------------------------
@@ -426,14 +483,14 @@ def _artifact_entry(db: Session, a: GlobalArtifact) -> dict:
     return entry
 
 
-def regenerate_models_manifest(db: Session, root: Path, owner_id: int) -> None:
+def models_manifest_data(db: Session, owner_id: int) -> dict:
     """models.yaml mirrors the owner's active global artifacts as definition + lineage. The blob
     lives outside the project (global_artifacts_directory) and is never committed; on a fresh clone
     the row reappears and the blob refills when its producing flow re-runs."""
     rows = db.query(GlobalArtifact).filter(GlobalArtifact.owner_id == owner_id, GlobalArtifact.status == "active").all()
     entries = [_artifact_entry(db, a) for a in rows]
     entries.sort(key=lambda e: (e["name"], json.dumps(e.get("namespace"), sort_keys=True), e["version"]))
-    write_yaml(manifest.models_manifest_path(root), {"models": entries})
+    return {"models": entries}
 
 
 # --- kernels -----------------------------------------------------------------
@@ -458,14 +515,14 @@ def _kernel_entry(kernel: Kernel) -> dict:
     return entry
 
 
-def regenerate_kernels_manifest(db: Session, root: Path, owner_id: int) -> None:
+def kernels_manifest_data(db: Session, owner_id: int) -> dict:
     """kernels.yaml mirrors the owner's kernel definitions so the compute setup round-trips with the
     project. Only the definition is recorded — import recreates the config row; the container is
     still started on demand (no auto-bake, and Docker is never required to project or import)."""
     rows = db.query(Kernel).filter(Kernel.user_id == owner_id).all()
     entries = [_kernel_entry(k) for k in rows]
     entries.sort(key=lambda e: (e["name"], e["id"]))
-    write_yaml(manifest.kernels_manifest_path(root), {"kernels": entries})
+    return {"kernels": entries}
 
 
 # --- visualizations & dashboards ---------------------------------------------
@@ -508,7 +565,7 @@ def _visualization_entry(db: Session, viz: CatalogVisualization) -> dict:
     return entry
 
 
-def regenerate_visualizations_manifest(db: Session, root: Path, owner_id: int) -> None:
+def visualizations_manifest_data(db: Session, owner_id: int) -> dict:
     """visualizations.yaml mirrors the owner's saved charts keyed by stable ``viz_uuid``: the
     GraphicWalker spec plus a portable source (``{catalog, schema}`` namespace + source table by
     name, or inline SQL). The client-side PNG thumbnail is never committed — it re-exports on the
@@ -516,7 +573,7 @@ def regenerate_visualizations_manifest(db: Session, root: Path, owner_id: int) -
     rows = db.query(CatalogVisualization).filter(CatalogVisualization.created_by == owner_id).all()
     entries = [_visualization_entry(db, v) for v in rows]
     entries.sort(key=lambda e: (e["name"], e["viz_uuid"]))
-    write_yaml(manifest.visualizations_manifest_path(root), {"visualizations": entries})
+    return {"visualizations": entries}
 
 
 def _portable_layout(db: Session, layout: dict) -> dict:
@@ -547,31 +604,21 @@ def _dashboard_entry(db: Session, dashboard: CatalogDashboard) -> dict:
     return entry
 
 
-def regenerate_dashboards_manifest(db: Session, root: Path, owner_id: int) -> None:
+def dashboards_manifest_data(db: Session, owner_id: int) -> dict:
     """dashboards.yaml mirrors the owner's dashboards keyed by stable ``dashboard_uuid``. Tiles
     reference their visualization by portable ``viz_uuid`` and filters their datasource by portable
     table name, so the canvas re-links to local ids on another machine."""
     rows = db.query(CatalogDashboard).filter(CatalogDashboard.created_by == owner_id).all()
     entries = [_dashboard_entry(db, d) for d in rows]
     entries.sort(key=lambda e: (e["name"], e["dashboard_uuid"]))
-    write_yaml(manifest.dashboards_manifest_path(root), {"dashboards": entries})
+    return {"dashboards": entries}
 
 
 # --- notebooks ---------------------------------------------------------------
 
 
-def project_notebook(db: Session, root: Path, nb: CatalogNotebook, owner_id: int) -> Path:
-    """Write a notebook as ``notebooks/<stem>.notebook.yaml`` — one file per notebook, keyed by
-    ``notebook_uuid`` inside (like a flow). Metadata comes from the row, cells from the runtime
-    content file, and the namespace is rendered portable (``{catalog, schema}`` names). A same-named
-    notebook collides on a disambiguated ``<stem>_<uuid8>.notebook.yaml`` instead of overwriting."""
-    stem = safe_stem(nb.name)
-    target = manifest.notebooks_dir(root) / f"{stem}.notebook.yaml"
-    if target.exists():
-        existing = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
-        if existing.get("notebook_uuid") not in (None, nb.notebook_uuid):
-            target = manifest.notebooks_dir(root) / f"{stem}_{nb.notebook_uuid[:8]}.notebook.yaml"
-    content = notebook_store.serialize_notebook(
+def notebook_file_text(db: Session, nb: CatalogNotebook, owner_id: int) -> str:
+    return notebook_store.serialize_notebook(
         notebook_uuid=nb.notebook_uuid,
         name=nb.name,
         description=nb.description,
@@ -579,84 +626,24 @@ def project_notebook(db: Session, root: Path, nb: CatalogNotebook, owner_id: int
         default_kernel_id=nb.default_kernel_id,
         cells=notebook_store.read_notebook_cells(owner_id, nb.notebook_uuid),
     )
-    atomic_write(target, content)
-    return target
 
 
-def regenerate_notebooks(db: Session, root: Path, owner_id: int) -> set[Path]:
-    """Project every one of the owner's notebooks; return the written paths. Ordered by
-    ``notebook_uuid`` so the bare-vs-suffixed filename for same-named notebooks is stable across
-    runs. Pruning of orphaned files is left to the caller."""
-    written: set[Path] = set()
-    for nb in (
+def _owner_notebooks(db: Session, owner_id: int):
+    return (
         db.query(CatalogNotebook)
         .filter(CatalogNotebook.owner_id == owner_id)
         .order_by(CatalogNotebook.notebook_uuid.asc())
-    ):
-        written.add(project_notebook(db, root, nb, owner_id))
-    return written
+    )
 
 
-def prune_orphan_notebooks(root: Path, written: set[Path]) -> None:
-    """Delete notebook files with no matching DB row (single-dir prune for the projection hook)."""
-    d = manifest.notebooks_dir(root)
-    if not d.exists():
-        return
-    for p in d.glob("*.notebook.yaml"):
-        if p not in written:
-            p.unlink(missing_ok=True)
-
-
-# --- full projection ---------------------------------------------------------
-
-
-def _prune_orphan_files(root: Path, written: set[Path]) -> None:
-    """Delete project files with no matching DB resource so the folder is an exact mirror.
-
-    Only touches ``.yaml`` files under the mirrored dirs; ``project.yaml``, ``.gitignore`` and
-    ``secrets.yaml`` live at the root and are never swept.
-    """
-    for rel in manifest.MIRRORED_DIRS:
-        d = root / rel
-        if not d.exists():
-            continue
-        for p in d.glob("*.yaml"):
-            if p not in written:
-                p.unlink(missing_ok=True)
-
-
-def project_all(db: Session, root: Path, owner_id: int) -> None:
-    written: set[Path] = set()
-    # Order by flow_uuid so the bare-vs-suffixed filename for same-named flows is stable across runs.
-    for reg in (
-        db.query(FlowRegistration)
-        .filter(FlowRegistration.owner_id == owner_id)
-        .order_by(FlowRegistration.flow_uuid.asc())
-    ):
-        flow_path = project_flow(root, reg, _namespace_path(db, reg.namespace_id))
-        if flow_path is not None:
-            written.add(flow_path)
-        stem = flow_path.name[: -len(".flow.yaml")] if flow_path is not None else None
-        sched_path = project_schedules_for_registration(db, root, reg, stem)
-        if sched_path is not None:
-            written.add(sched_path)
-    for conn in db.query(DatabaseConnection).filter(DatabaseConnection.user_id == owner_id):
-        written.add(project_database_connection(db, root, conn.connection_name, owner_id))
-    for conn in db.query(CloudStorageConnection).filter(CloudStorageConnection.user_id == owner_id):
-        written.add(project_cloud_connection(db, root, conn.connection_name, owner_id))
-    regenerate_secret_manifest(db, root, owner_id)
-    regenerate_namespace_manifest(db, root, owner_id)
-    # Catalog tables + global artifacts are opt-out per project (manifest.track_data_artifacts).
-    # When off, drop the root manifests (they aren't swept by _prune_orphan_files).
-    m = manifest.read_manifest(root)
-    if m is None or m.track_data_artifacts:
-        regenerate_tables_manifest(db, root, owner_id)
-        regenerate_models_manifest(db, root, owner_id)
-    else:
-        manifest.tables_manifest_path(root).unlink(missing_ok=True)
-        manifest.models_manifest_path(root).unlink(missing_ok=True)
-    regenerate_kernels_manifest(db, root, owner_id)
-    regenerate_visualizations_manifest(db, root, owner_id)
-    regenerate_dashboards_manifest(db, root, owner_id)
-    written |= regenerate_notebooks(db, root, owner_id)
-    _prune_orphan_files(root, written - {None})
+def export_notebooks(db: Session, owner_id: int) -> dict[str, str]:
+    """``{path: text}`` of the owner's notebooks, named in ``notebook_uuid`` order as flows are."""
+    tree: dict[str, str] = {}
+    taken: set[str] = set()
+    for nb in _owner_notebooks(db, owner_id):
+        stem = safe_stem(nb.name)
+        if stem.casefold() in taken:
+            stem = f"{stem}_{nb.notebook_uuid[:8]}"
+        taken.add(stem.casefold())
+        tree[f"notebooks/{stem}.notebook.yaml"] = notebook_file_text(db, nb, owner_id)
+    return tree
