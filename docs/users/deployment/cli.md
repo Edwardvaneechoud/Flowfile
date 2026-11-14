@@ -28,7 +28,7 @@ Flags:
 
 - `--no-browser` — start the services but don't open a browser tab.
 - `--host` and `--port` — where the UI is served, `127.0.0.1` and `63578` by default. A host other machines reach needs `FLOWFILE_MODE=docker` (below).
-- A server whose configuration names a server extension (`FLOWFILE_SERVER_EXTENSION`, [Compute protocol](../../for-developers/compute-protocol.md)) also takes that extension's flags, such as the ones a hub's node package joins its hub with. Without the extension `flowfile run` refuses them as any unknown flag, while `flowfile_core` and `flowfile_worker` started on their own ignore them, as they ignore every flag they do not know, and serve as a server on its own.
+- A server whose configuration names a server extension (`FLOWFILE_SERVER_EXTENSION`, [Compute protocol](../../for-developers/compute-protocol.md)) also takes that extension's flags; without it `flowfile run` refuses them as any unknown flag.
 
 !!! warning "Other machines reach the UI only in docker mode"
     By default `run ui` binds `127.0.0.1`, which only this machine reaches, and in the default mode it refuses any other host: there everyone who reaches the UI works as this machine's user without signing in. To serve other machines, set `FLOWFILE_MODE=docker` with `JWT_SECRET_KEY`, `FLOWFILE_INTERNAL_TOKEN`, `FLOWFILE_MASTER_KEY`, `FLOWFILE_ADMIN_USER` and `FLOWFILE_ADMIN_PASSWORD`, then `flowfile run ui --host 0.0.0.0`: everyone signs in with a password, the admin with that one, who adds the other users. Or use the [Docker deployment](docker.md).

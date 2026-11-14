@@ -447,7 +447,7 @@ class TestProjectReadsRegisteredFlowsInsideTheFlowFolders:
 
 
 class TestEditorLimitsOnAHubServer:
-    """A hub server gets docker's path limits: the working folder and the storage folder, never the home folder
+    """A server run by hand is limited to the working folder and the storage folder, never the home folder
     its user data directory points at."""
 
     @staticmethod

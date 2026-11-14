@@ -2,9 +2,9 @@
 
 With ``FLOWFILE_EXCHANGE_URI`` set, it and ``FLOWFILE_EXCHANGE_CONNECTION`` replace the saved URI and connection.
 ``FLOWFILE_EXCHANGE_MAX_ROWS``, when set, replaces the saved row limit. The file, ``exchange_store.yaml`` under core's
-internal storage, is read per call, so a save takes effect on the next run with no restart. A server joined to its hub
-with keys of its own takes the store its hub sets when neither the environment nor the file names one
-(``hub.exchange_store``).
+internal storage, is read per call, so a save takes effect on the next run with no restart. A machine signed in to a
+hub takes the store that hub sets when neither the environment nor the file names one
+(``hub_client.exchange_store.hub_store``).
 ``settings.get_exchange_*`` read through ``effective_store`` and ``effective_max_rows``.
 """
 
@@ -25,9 +25,8 @@ MAX_ROWS_VAR = "FLOWFILE_EXCHANGE_MAX_ROWS"
 class ExchangeConfig:
     """Where results cross between backends (``uri``), the stored S3 connection that opens it, and the row limit.
 
-    ``vended_for`` is set only on the store a server joined to its hub with keys of its own takes from that hub: the
-    connection is named in the hub's database, not here, so the store is opened by what the hub vends each run through
-    that user's hub session.
+    ``vended_for`` is set only on a store taken from a hub: the connection is named in the hub's database, not here, so
+    the store is opened by what the hub vends each run through that user's hub session.
     """
 
     uri: str | None = None

@@ -1,9 +1,4 @@
-/**
- * This Flowfile's hub connection, as every part of the editor that shows it reads it: the header's identity, the
- * Open dialog's Hub tab, the Backends tab, the cloud connections page and the Hub card itself. Each loads it when it
- * mounts; only the Hub card connects and disconnects, and the others see the change through the store, so nothing
- * asks core again when a menu or a dialog opens.
- */
+/** This Flowfile's hub connection, shared by every part of the editor that shows it; only the Hub card changes it. */
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import {

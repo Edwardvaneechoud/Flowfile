@@ -57,7 +57,7 @@ def create_docker_admin_user(db: Session):
 
     if not admin_username or not admin_password:
         logger.warning(
-            "Docker or hub mode detected but FLOWFILE_ADMIN_USER or FLOWFILE_ADMIN_PASSWORD "
+            "Docker or server mode detected but FLOWFILE_ADMIN_USER or FLOWFILE_ADMIN_PASSWORD "
             "not set. Admin user will not be created."
         )
         return False

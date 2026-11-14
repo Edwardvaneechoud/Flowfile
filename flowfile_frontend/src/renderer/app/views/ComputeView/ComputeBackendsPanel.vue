@@ -310,6 +310,7 @@ import {
 } from "./useComputeBackends";
 
 const isAdmin = computed(() => useAuthStore().isAdmin);
+
 const { backends, loading, loadError, adding, busy, verdicts, load, add, remove, handshake } =
   useComputeBackends();
 

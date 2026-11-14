@@ -70,8 +70,7 @@ def get_kernel_manager() -> KernelManager:
             if _manager is None:
                 from shared.storage_config import storage
 
-                # The folder the worker writes kernel exchanges into (artifacts, view snapshots): FLOWFILE_SHARED_DIR
-                # when set, as on a server joined to a hub, else <internal storage>/temp/kernel_shared.
+                # FLOWFILE_SHARED_DIR when set, else <internal storage>/temp/kernel_shared, as the worker writes it.
                 _manager = KernelManager(shared_volume_path=str(storage.shared_directory))
     return _manager
 

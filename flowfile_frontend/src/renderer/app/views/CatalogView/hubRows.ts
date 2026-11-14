@@ -110,4 +110,3 @@ export function rootOf<R extends { id: number; children: R[] }>(
   const holds = (row: R): boolean => row.id === namespaceId || row.children.some(holds);
   return rows.find(holds) ?? null;
 }
-

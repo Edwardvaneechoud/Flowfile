@@ -1518,12 +1518,11 @@ def _require_flow_save_permitted(flow_path: str | None, namespace_id: int | None
 def _require_registered_file_in_storage(flow_path: str) -> None:
     """422 on a server when ``flow_path`` is a registered flow's file outside the flow folders: a registration
     from before the rule is not opened or written over through the editor either."""
-    if find_registration_by_path(flow_path) is None:
-        return
     try:
         require_flow_in_storage(Path(flow_path))
     except ValueError as err:
-        raise HTTPException(status_code=422, detail=str(err)) from None
+        if find_registration_by_path(flow_path) is not None:
+            raise HTTPException(status_code=422, detail=str(err)) from None
 
 
 def _require_registrable_flow_path(flow_path: str | None) -> None:
@@ -2835,10 +2834,8 @@ def get_flow_settings(
     flow_id: int | None = 1, current_user=Depends(get_current_active_user)
 ) -> schemas.FlowSettingsResponse:
     """Retrieves the main settings for a flow (including dirty-state info)."""
-    flow = get_flow_or_404(flow_id, current_user)
-    settings = _with_display_name(flow_file_handler.get_flow_info_with_runtime(flow_id))
-    settings.save_note = getattr(flow, "save_note", None)
-    return settings
+    get_flow_or_404(flow_id, current_user)
+    return _with_display_name(flow_file_handler.get_flow_info_with_runtime(flow_id))
 
 
 _SERVER_OWNED_FLOW_SETTINGS = (

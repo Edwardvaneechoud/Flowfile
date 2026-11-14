@@ -100,4 +100,15 @@ describe("RunHistoryTable", () => {
     expect(badges().map((badge) => badge.label)).toEqual(["Cancelled"]);
     expect(summary()).toMatchObject({ Failed: "0", Cancelled: "1" });
   });
+
+  it("offers the Dispatched runs filter only where such a run is listed", () => {
+    const triggers = () => mounted!.el.querySelectorAll('[data-stub="el-option"]').length;
+    mounted = mount(RunHistoryTable, {}, () => useCatalogStore().applyRunsPage(page));
+    expect(triggers()).toBe(4);
+    mounted.unmount();
+
+    const sent = { ...page, items: [run(9, { run_type: "dispatched" })] };
+    mounted = mount(RunHistoryTable, {}, () => useCatalogStore().applyRunsPage(sent));
+    expect(triggers()).toBe(5);
+  });
 });

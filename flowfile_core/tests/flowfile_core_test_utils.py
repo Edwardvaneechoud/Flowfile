@@ -67,7 +67,7 @@ def run_generator():
 
 
 def as_server(monkeypatch, mode: str) -> None:
-    """Make the flow-folder checks see a multi-user server in ``mode`` (``docker`` or ``hub``).
+    """Make the flow-folder checks see a multi-user server in ``mode`` (``docker`` or ``server``).
 
     The test clients sign in as the desktop (electron) and their tokens would not verify under another
     ``FLOWFILE_MODE``, so only the check itself runs under that mode, through the real ``is_server_mode``.

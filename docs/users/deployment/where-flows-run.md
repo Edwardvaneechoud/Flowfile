@@ -110,7 +110,7 @@ The common reasons:
 | `its plan may carry a Python function, which this backend cannot run` | A formula node on a worker where core's Python functions do not run, because its Python differs from core's. |
 | `Backend "<id>" does not match core (…)` | The worker runs another Polars version or worker contract. Upgrade one side. |
 
-A worker that cannot be reached is not refused up front: its nodes fail when they run, with a message ending `Is backend "<id>" running? Start it, or check the Backends page.`, or for one of your hub's servers `Is the hub's server "<name>" running? Start it, or check its address on the hub's Compute page.` Flowfile never runs such a node elsewhere and never treats an unreachable worker as a missing cache.
+A worker that cannot be reached is not refused up front: its nodes fail when they run, with a message ending `Is backend "<id>" running? Start it, or check the Backends page.` Flowfile never runs such a node elsewhere and never treats an unreachable worker as a missing cache.
 
 ## When results are released
 

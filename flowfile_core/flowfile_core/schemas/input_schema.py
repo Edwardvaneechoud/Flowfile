@@ -2072,12 +2072,7 @@ class NodeCatalogReader(ChangeFeedReadSettings, NodeBase):
             raise ValueError(
                 "A table on the hub is named by its qualified name (catalog.schema.table), not by a local id"
             )
-        if (
-            self.delta_version is not None
-            or self.scd2_view is not None
-            or self.scd2_as_of
-            or self.sql_query
-        ):
+        if self.delta_version is not None or self.scd2_view is not None or self.scd2_as_of or self.sql_query:
             raise ValueError("A table on the hub is read whole or by its changes: no version, history view or SQL")
         return self
 

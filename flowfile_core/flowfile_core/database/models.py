@@ -271,8 +271,7 @@ class FlowRun(Base):
     schedule_id = Column(Integer, ForeignKey("flow_schedules.id"), nullable=True)
     # YAML snapshot of the flow definition at run time
     flow_snapshot = Column(Text, nullable=True)
-    # A run executed elsewhere (catalog/run_records.py): the backend's name, the run id it reported under, the
-    # executor's own run row holding the log (``backend:<name>:<id>``) and the published version that ran.
+    # Where a run executed elsewhere ran, its id there, its log and its version (catalog/run_records.py).
     executed_on = Column(String, nullable=True)
     remote_run_id = Column(String(64), nullable=True)
     log_ref = Column(String, nullable=True)

@@ -38,8 +38,8 @@
       </ul>
     </section>
     <p class="note">
-      Open makes your own copy of the version you pick, as Open Flow → Hub does; publish it back
-      from the designer. The hub runs it and keeps its schedules.
+      Open makes your own copy of the version you pick, as Open Flow does; publish it back from the
+      designer. The hub runs it and keeps its schedules.
     </p>
   </div>
 </template>

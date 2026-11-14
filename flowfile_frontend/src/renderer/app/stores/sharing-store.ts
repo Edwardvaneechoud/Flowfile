@@ -1,11 +1,6 @@
 import { defineStore } from "pinia";
 import { SharesApi } from "../api/shares.api";
-import type {
-  PermissionLevel,
-  ResourceType,
-  Share,
-  ShareCreate,
-} from "../types/sharing.types";
+import type { PermissionLevel, ResourceType, Share, ShareCreate } from "../types/sharing.types";
 
 // Pinia id "sharing": distinct from node-canvas groups (which are not a store).
 export const useSharingStore = defineStore("sharing", {

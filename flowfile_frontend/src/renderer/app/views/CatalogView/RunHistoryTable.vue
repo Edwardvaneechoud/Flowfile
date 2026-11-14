@@ -52,7 +52,7 @@
         <el-option label="Scheduled runs" value="scheduled" />
         <el-option label="Manual runs" value="manual" />
         <el-option label="On-demand runs" value="on_demand" />
-        <el-option label="Dispatched runs" value="dispatched" />
+        <el-option v-if="showDispatched" label="Dispatched runs" value="dispatched" />
         <el-option label="Designer runs" value="in_designer_run" />
         <el-option-group
           v-if="!scheduleId && catalogStore.enrichedSchedules.length > 0"
@@ -195,6 +195,7 @@
 import { computed, ref, watch } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowRun } from "../../types";
+import { isHubRow } from "./hubRows";
 import { RUN_OUTCOME_BADGE, RUN_OUTCOME_ICON, RUN_OUTCOME_LABEL, runOutcome } from "./runStatus";
 import {
   formatDate,
@@ -272,6 +273,13 @@ const totalPages = computed(() =>
 );
 const triggerFilter = computed(() =>
   isScheduleMode.value ? catalogStore.scheduleRunsTriggerFilter : catalogStore.runsTriggerFilter,
+);
+/** A run a hub sent to a server: a filter only where a hub's catalog shows or such a run is listed. */
+const showDispatched = computed(
+  () =>
+    triggerFilter.value === "dispatched" ||
+    catalogStore.tree.some(isHubRow) ||
+    allRuns.value.some((run) => run.run_type === "dispatched"),
 );
 
 function handleFilterChange(value: string | null) {

@@ -241,8 +241,7 @@ WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_
 WORKER_ADDRESS_CONFIGURED = bool(config("FLOWFILE_WORKER_URL", cast=str, default="")) or bool(os.getenv("WORKER_HOST"))
 TEMP_DIR = storage.temp_directory
 
-# "electron" (desktop app), "package" (Python package), "docker" (container) or "server" (a multi-user server run
-# by hand, such as a node behind a hub).
+# "electron" (desktop app), "package" (Python package), "docker" (container) or "server" (run by hand).
 FLOWFILE_MODE = os.getenv("FLOWFILE_MODE", "electron")
 
 

@@ -590,8 +590,8 @@ const isViewingHistorical = computed(
     props.selectedVersion !== props.tableHistory.current_version,
 );
 
-// Edit surface: physical non-SCD2 tables with data on disk,
-// manage access required. Legacy Parquet tables pass this gate but are refused server-side.
+// Edit surface: physical non-SCD2 tables with data on disk, manage access required.
+// Legacy Parquet tables pass this gate but are refused server-side with a clear message.
 const canEditData = computed(
   () =>
     canManage(props.table) &&

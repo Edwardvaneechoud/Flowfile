@@ -331,7 +331,7 @@ def test_a_rest_step_carries_its_sealed_auth_secret_which_opens_where_it_runs(
 
     assert resolve_auth_secret_encrypted(auth, user_id).startswith("$ffsec$")
     with run_secrets.use_sealed(sealed):
-        carried = run_secrets.in_place_of(auth.secret_name, resolve_auth_secret_encrypted(auth, user_id))
+        carried = run_secrets.sealed(auth.secret_name)
     wire = worker_backend._rest_api_read_settings(
         RestApiReadPayload(settings=node, encrypted_secret=carried, flow_id=1, node_id=3)
     )

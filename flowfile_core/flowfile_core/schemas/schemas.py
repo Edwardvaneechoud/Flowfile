@@ -314,6 +314,28 @@ class FlowfileSettings(BaseModel):
             return "Performance"
         return v
 
+    @model_serializer(mode="wrap")
+    def _omit_unset_origin(self, handler: SerializerFunctionWrapHandler):
+        """A flow that came from no hub is saved without ``hub_origin``, as before the field existed."""
+        data = handler(self)
+        if data.get("hub_origin") is None:
+            data.pop("hub_origin", None)
+        return data
+
+
+def _without_local_source(value, data: dict) -> dict:
+    """A catalog reader or writer of this Flowfile's own catalog is saved without ``source``, as before the field
+    existed; one of a catalog elsewhere keeps it."""
+    if isinstance(value, input_schema.NodeCatalogReader):
+        settings = data
+    elif isinstance(value, input_schema.NodeCatalogWriter):
+        settings = data.get("catalog_write_settings")
+    else:
+        return data
+    if isinstance(settings, dict) and settings.get("source") == "local":
+        del settings["source"]
+    return data
+
 
 class FlowfileInputConnection(BaseModel):
     """One keyed input edge of a dynamic-input node (per-edge target handle).
@@ -389,7 +411,7 @@ class FlowfileNode(BaseModel):
             data = value.model_dump(exclude=self._setting_input_exclude)
             data["is_user_defined"] = True
             return data
-        return value.model_dump(exclude=self._setting_input_exclude)
+        return _without_local_source(value, value.model_dump(exclude=self._setting_input_exclude))
 
     @model_serializer(mode="wrap")
     def _keep_description_provenance_in_memory(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo):

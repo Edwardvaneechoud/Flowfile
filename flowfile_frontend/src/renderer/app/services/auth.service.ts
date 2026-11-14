@@ -144,18 +144,9 @@ class AuthService {
   }
 
   /**
-   * Keep a hub's one-time sign-in token, `#signin=<token>&state=<state>`, in memory
-   * only and remove it from the URL; a fragment never reaches a server or its access
-   * logs. `initialize` trades it for a session.
-   *
-   * The token is kept only when its state is the one this tab made when it started
-   * the sign-in (`hubSignInUrl`), and that state is spent by any `#signin=` that
-   * arrives. A token without it, or with another, is dropped and changes nothing:
-   * a link carrying someone's sign-in token signs nobody in and nobody out.
-   *
-   * This runs when the service is constructed, at module load. The router imports
-   * this module, so the fragment is read and removed before its hash history is
-   * created; that history would otherwise keep it as the initial route.
+   * Take a hub's one-time sign-in token, `#signin=<token>&state=<state>`, out of the URL and keep it in memory only
+   * when its state is the one this tab made (`hubSignInUrl`); any other is dropped, so a link carrying someone's
+   * token signs nobody in. Runs at construction, before the router's hash history could keep the fragment.
    */
   private takeTokenFromFragment(): void {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
@@ -189,12 +180,8 @@ class AuthService {
   }
 
   /**
-   * Trade the hub's sign-in token for this server's session, stored as a password
-   * sign-in stores it and marked as the hub's, expiring at the answer's `expires_at`.
-   * The token is posted once, on a client without the interceptors that renew a
-   * session or retry a refused request, since the hub takes it only once. Any
-   * earlier session in this browser ends; a refusal keeps the server's sentence
-   * for the sign-in page.
+   * Trade the hub's sign-in token for this server's session, marked as the hub's. Posted once on a client without
+   * the retrying interceptors, since the hub takes it only once; a refusal keeps the server's sentence.
    */
   private async signInThroughHub(signInToken: string): Promise<boolean> {
     try {
@@ -422,11 +409,8 @@ class AuthService {
   }
 
   /**
-   * Sign out: a session that came through the hub tells the server first, so the
-   * sign-in ends at the hub too; then this browser's session is cleared whatever
-   * the server answered. Any other session is cleared here only. The requests go
-   * on a client without the interceptors, which would renew the session or send
-   * the browser to the sign-in page on a refusal.
+   * Sign out: a session that came through the hub tells the server first, so it ends at the hub too; any other
+   * is cleared here only. Sent on a client without the interceptors, which would renew the session.
    */
   async signOut(): Promise<void> {
     if (localStorage.getItem(HUB_SESSION) === null) {

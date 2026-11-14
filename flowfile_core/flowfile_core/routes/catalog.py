@@ -1931,6 +1931,7 @@ def get_catalog_overview(
     runs, the runs and the schedulers.
     """
     user_id = current_user.id
+    schedulers = _schedulers(db, user_id)
     return CatalogOverview(
         stats=service.get_catalog_stats(user_id=user_id),
         tree=table_sources.merged_tree(user_id, service.get_namespace_tree(user_id=user_id)),
@@ -1940,7 +1941,8 @@ def get_catalog_overview(
         schedules=table_sources.merged_rows(user_id, "/catalog/schedules", service.list_schedules(), FlowScheduleOut),
         active_runs=_active_runs(service, user_id),
         runs=_all_runs(service, user_id, None, None, runs_limit, 0),
-        schedulers=_schedulers(db, user_id),
+        scheduler=schedulers[0],
+        schedulers=schedulers,
         default_namespace_id=service.get_default_namespace_id(),
     )
 

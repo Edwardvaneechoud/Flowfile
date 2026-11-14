@@ -1227,6 +1227,7 @@ class TestOverview:
         assert data["schedules"] == client.get("/catalog/schedules").json()
         assert data["active_runs"] == client.get("/catalog/active-runs").json()
         assert data["runs"] == client.get("/catalog/runs", params={"limit": 25, "offset": 0}).json()
+        assert data["scheduler"] == client.get("/catalog/scheduler/status").json()
         assert data["schedulers"] == client.get("/catalog/schedulers").json()
         assert data["schedulers"] == [client.get("/catalog/scheduler/status").json()]
         assert data["default_namespace_id"] == client.get("/catalog/default-namespace-id").json()
@@ -3153,7 +3154,8 @@ class TestCrossNamespaceResolution:
             db.commit()
 
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
-            aliases = svc.resolve_cloud_only_table_aliases()
+            found = svc._virtual_tables._object_storage_tables(None, frozenset())
+            aliases = {name: display for name, (_, display) in found.items()}
             leaf_names = {a.split(".")[-1] for a in aliases}
             assert "v" not in leaf_names, aliases  # virtual never flagged
             assert "p" in leaf_names, aliases  # physical cloud table flagged
@@ -3196,7 +3198,8 @@ class TestCrossNamespaceResolution:
             db.commit()
 
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
-            aliases = svc.resolve_cloud_only_table_aliases()
+            found = svc._virtual_tables._object_storage_tables(None, frozenset())
+            aliases = {name: display for name, (_, display) in found.items()}
 
             # Qualified forms carry each table's own display, never the other's.
             assert aliases["ns_a.shared"] == "cat.ns_a.shared"

@@ -91,7 +91,12 @@ describe("tabMenuOptions", () => {
 });
 
 describe("withSettings", () => {
-  const tab = { flow_id: 1, name: "f", has_unsaved_changes: false, save_note: null as string | null };
+  const tab = {
+    flow_id: 1,
+    name: "f",
+    has_unsaved_changes: false,
+    save_note: null as string | null,
+  };
 
   it("marks a tab with the catalog's note and clears it once the catalog sends none", () => {
     const noted = withSettings(tab, { has_unsaved_changes: true, save_note: "Draft on the hub." });

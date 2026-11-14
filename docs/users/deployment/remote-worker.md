@@ -60,10 +60,6 @@ The worker reaches the catalog database and every database, Kafka broker, REST e
 - **One master key.** The worker decrypts a stored connection's secrets when the node runs. With another key, a cloud read fails with *Core and the worker must share the same master key.*
 - **The host's own identity.** `aws-cli`, `iam_role`, `env_vars` and `managed_identity` connections store no credentials and authenticate as the host that runs the node. On a remote worker that is the worker host's AWS profile or role, environment or managed identity, not core's.
 
-### A server joined to a hub with keys of its own
-
-A server that joined a hub, which the hub's own node package does for it as the server's extension, has its own master key and catalog database, so it shares neither with the core that sends it work. What a run there needs from the hub (a hub table's storage, the exchange store's prefix, a secret a step names) reaches the server that runs the step sealed to the key from its join, and only that server opens it; such a server declares `credential_resolution: vended`, and a step that needs a sealed credential is refused before the run on a backend that does not declare it (`the hub seals that credential to the server that runs it, and this backend cannot open one`) or that is not one of the hub's servers. On such a server every secret a step names lives on the hub: the Secrets page lists, adds, changes and removes the person's secrets there. A secret the server held before it joined stays in its database, unused, and its owner adds it again on the hub. Which credentials and secrets the hub vends, to which servers, and in what order a name resolves is the hub's documentation; [the compute protocol](../../for-developers/compute-protocol.md#credentials) has the wire. A desktop connected to the hub that runs a step on a hub table on such a server has the hub seal that table's credential to the server the same way, and opens nothing itself; when the hub seals none (an older hub, a server without keys of its own) the step is refused before the run with a sentence saying to run it on the desktop. A team node, and a desktop's steps on its own workers, are unchanged.
-
 ## Storage a remote worker can use
 
 | Storage | Reads | Writes |
@@ -163,8 +159,6 @@ A store core cannot use (a URI without a connection, a scheme other than `s3`, o
     A core that stops in the middle of a run leaves that run's prefix in the bucket, and so does a removal that fails, which is a warning in the flow log. Expire objects under the URI's prefix after longer than the longest run takes, a day for example.
 
 Core and every worker open the store at its connection's endpoint, so that endpoint must lead to the store from each of them; see [The worker's environment](#the-workers-environment).
-
-On a server joined to its hub with keys of its own the store is the one the hub sets, shown on the card as **Set by your hub** and read-only: each run that crosses gets the store's prefix from the hub, sealed to the servers it uses ([above](#a-server-joined-to-a-hub-with-keys-of-its-own)), so no connection is stored on the server. When the hub sets no store, a node set to another backend is refused before the run, as without one.
 
 ## A Polars cluster as a backend
 

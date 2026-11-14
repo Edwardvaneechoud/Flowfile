@@ -1641,10 +1641,7 @@ async function openFlowInDesigner(
   }
 }
 
-/**
- * Opens `version` of a hub flow (the newest when none is given) as the person's own copy, exactly as Open Flow → Hub
- * does, then shows it in the designer. The question about a copy with unpublished edits is the shared module's.
- */
+/** Opens `version` of a hub flow (the newest when none is given) as the person's own copy, as Open Flow does. */
 async function openHubFlowInDesigner(flow: FlowRegistration, version?: number | null) {
   const wanted = version ?? flow.latest_version;
   if (!flow.flow_uuid || wanted == null) return;

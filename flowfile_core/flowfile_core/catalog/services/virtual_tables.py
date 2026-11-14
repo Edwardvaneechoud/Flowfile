@@ -625,14 +625,6 @@ class VirtualTableService:
                     delta_map[alias] = dir_name
         return delta_map, virtual_map
 
-    def resolve_cloud_only_table_aliases(
-        self, accessible_table_ids: set[int] | None = None, exclude: set[str] | frozenset = frozenset()
-    ) -> dict[str, str]:
-        """Map each SQL name of an object-storage-backed physical table to its fully-qualified
-        display name. ``exclude`` drops names also served by a queryable table."""
-        found = self._object_storage_tables(accessible_table_ids, exclude)
-        return {name: display for name, (_, display) in found.items()}
-
     def _object_storage_tables(
         self, accessible_table_ids: set[int] | None, exclude: set[str] | frozenset
     ) -> dict[str, tuple[CatalogTable, str]]:

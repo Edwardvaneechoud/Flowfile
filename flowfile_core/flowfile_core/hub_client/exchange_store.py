@@ -52,6 +52,8 @@ def store_for_run(flow, user_id: int | None) -> ExchangeConfig | None:
     """
     from flowfile_core.flowfile.execution.placement import SingleBackendPolicy, unmoved_without_store
 
+    if user_id is None or session.load(user_id) is None:
+        return None
     run_backend_id = current_context(flow).backend_id
     elsewhere = run_backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX)
     if not elsewhere and not unmoved_without_store(flow.nodes, SingleBackendPolicy(run_backend_id)):

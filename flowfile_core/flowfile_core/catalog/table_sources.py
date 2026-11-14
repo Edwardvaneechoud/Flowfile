@@ -177,10 +177,10 @@ def remote_answer(user_id: int | None, path: str, params: dict | None = None) ->
     return answer if status == 200 else None
 
 
-def merged_rows(user_id: int | None, path: str, local: list, row: type[BaseModel], params: dict | None = None) -> list:
+def merged_rows(user_id: int | None, path: str, local: list, row: type[BaseModel]) -> list:
     """This install's ``local`` rows of the list route ``path``, then the remote catalog's, each as ``row``."""
     try:
-        return [*local, *(row.model_validate(item) for item in remote_answer(user_id, path, params) or ())]
+        return [*local, *(row.model_validate(item) for item in remote_answer(user_id, path) or ())]
     except (ValidationError, TypeError):
         return list(local)
 

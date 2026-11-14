@@ -130,11 +130,6 @@ def sealed(name: str | None) -> str | None:
     return _sealed.get().get(name) if name else None
 
 
-def in_place_of(name: str | None, encrypted: str | None) -> str | None:
-    """What the running step carries for the secret ``name`` it holds as ``encrypted``: its sealed form, if any."""
-    return sealed(name) or encrypted
-
-
 def encrypted_secret(user_id: int, name: str) -> str | None:
     """The user's ``$ffsec$`` ciphertext of ``name``, else a provider's granted form; ``None`` when neither has it."""
     from flowfile_core.secret_manager.secret_manager import get_encrypted_secret

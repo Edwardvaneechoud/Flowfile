@@ -318,7 +318,7 @@ def _registration(**by):
 
 
 def _saved_origin(path: Path) -> dict | None:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))["flowfile_settings"]["hub_origin"]
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["flowfile_settings"].get("hub_origin")
 
 
 def test_every_flow_route_needs_a_hub_connection_and_never_answers_401(api, hub, user_id):
@@ -364,7 +364,7 @@ def test_a_first_publish_sends_no_base_the_registrations_uuid_the_stripped_docum
     assert body["name"] == "Sales report"
     assert body["namespace_id"] == 2
     assert body["definition"]["flowfile_settings"]["source_registration_id"] is None
-    assert body["definition"]["flowfile_settings"]["hub_origin"] is None
+    assert "hub_origin" not in body["definition"]["flowfile_settings"]
     assert [n["type"] for n in body["definition"]["nodes"]] == ["manual_input"]
 
     origin = {"hub_url": HUB_URL, "flow_uuid": registration["flow_uuid"], "version": 1}

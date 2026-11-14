@@ -139,24 +139,32 @@ def _step_kafka_settings(read_settings: KafkaReadSettings, kafka_settings, user_
 
 
 def _kafka_consumer_config(kafka_settings, user_id: int) -> dict:
-    """The consumer config of a Kafka source's connection, its secrets encrypted: this machine's own by id (when its
-    name matches), else by name, else a provider's row by name, which holds no secret (``_step_kafka_settings``)."""
+    """The consumer config of a Kafka source's connection, its secrets encrypted.
+
+    The node stores an id and the name the connection had then. The id's connection is taken when its name still
+    matches; else the name is looked up, here and then at a provider, whose row holds no secret
+    (``_step_kafka_settings``), since an id from another machine's document names nothing here. Only when the name
+    resolves nowhere is the id's connection taken, as one renamed since the node was saved.
+    """
     from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate
 
     name = kafka_settings.kafka_connection_name
     with get_db_context() as db:
-        db_conn = get_kafka_connection(db, kafka_settings.kafka_connection_id, user_id)
-        if db_conn is not None and name and db_conn.connection_name != name:
-            db_conn = None
+        by_id = get_kafka_connection(db, kafka_settings.kafka_connection_id, user_id)
+        db_conn = by_id if by_id is not None and (not name or by_id.connection_name == name) else None
         if db_conn is None and name:
             db_conn = get_kafka_connection_by_name(db, name, user_id)
         if db_conn is not None:
             return build_consumer_config(db, db_conn, user_id)
     row = credential_sources.connection(user_id, "kafka", name)
-    if row is None:
-        raise HTTPException(status_code=400, detail="Kafka connection not found")
-    fields = {key: value for key, value in row.items() if key in KafkaConnectionCreate.model_fields}
-    return consumer_config_of(KafkaConnectionCreate.model_validate(fields), user_id)
+    if row is not None:
+        fields = {key: value for key, value in row.items() if key in KafkaConnectionCreate.model_fields}
+        return consumer_config_of(KafkaConnectionCreate.model_validate(fields), user_id)
+    with get_db_context() as db:
+        renamed = get_kafka_connection(db, kafka_settings.kafka_connection_id, user_id)
+        if renamed is None:
+            raise HTTPException(status_code=400, detail="Kafka connection not found")
+        return build_consumer_config(db, renamed, user_id)
 
 
 class ConnectorBuildersMixin(GraphMixinBase):

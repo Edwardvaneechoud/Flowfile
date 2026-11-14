@@ -419,8 +419,8 @@ def validate_path_under_cwd(user_path: str) -> str:
     - Current working directory (for development/testing)
     - Flowfile storage directory (~/.flowfile)
     - User data directory (home directory in local mode, /data/user in Docker)
-    A hub server gets docker's limits: its user data directory is the service account's home, which is
-    not a root there.
+    A server run by hand (``server`` mode) is limited to the first two: its user data directory is the
+    service account's home.
 
     Args:
         user_path: The user-provided path string

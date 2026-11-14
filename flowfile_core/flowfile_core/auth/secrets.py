@@ -219,14 +219,14 @@ def get_master_key():
     """
     Get or generate the master encryption key.
 
-    In docker or hub mode, retrieves the key from Docker secrets or environment.
+    In docker or server mode, retrieves the key from Docker secrets or environment.
     Otherwise, retrieves or generates a key using the secure storage.
 
     Returns:
         str: The master encryption key
 
     Raises:
-        RuntimeError: If in docker or hub mode and no key is configured.
+        RuntimeError: If in docker or server mode and no key is configured.
     """
     if is_server_mode():
         key = get_docker_secret_key()

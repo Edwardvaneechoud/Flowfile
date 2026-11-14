@@ -3,8 +3,8 @@
 Mounted under ``/system`` in :mod:`flowfile_core.main`, admin-only. ``GET`` answers the store a run uses now, its source
 (the environment, the saved file, this server's hub, or none) and the S3 connections it may use; ``POST`` saves or
 clears it and answers the same. A set ``FLOWFILE_EXCHANGE_URI`` keeps winning over the saved values, and
-``env_override`` says so. A server joined with keys of its own asks its hub for its store with the admin's hub session:
-it applies while nothing is saved here, and it is read-only here. The settings are read per call
+``env_override`` says so. A machine signed in to a hub asks it for its store with the admin's hub session: it applies
+while nothing is saved here, and it is read-only here. The settings are read per call
 (``configs/exchange_config.py``), so a save takes effect on the next run.
 """
 
@@ -53,8 +53,7 @@ class ExchangeStoreState(BaseModel):
     saved: ExchangeStoreSaved
     hub: ExchangeStoreSaved | None = Field(
         default=None,
-        description="The store this server's hub sets, when it joined a hub that sets one with keys of its own; it "
-        "applies while nothing is saved here.",
+        description="The store the hub this machine is signed in to sets; it applies while nothing is saved here.",
     )
     connections: list[str] = Field(description="Names of the S3 connections the store may be opened with.")
 

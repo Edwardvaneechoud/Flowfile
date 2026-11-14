@@ -1777,12 +1777,10 @@ class ExecutionMixin(GraphMixinBase):
                 self.release_run()
             self._end_exchange_run(exchange_run)
 
-    def _run_policy(
-        self, exchange_run: ExchangeRun, run_backend_id: str | None = None
-    ) -> MixedPlacementPolicy | SingleBackendPolicy:
+    def _run_policy(self, exchange_run: ExchangeRun) -> MixedPlacementPolicy | SingleBackendPolicy:
         """Mixed placement, falling back to ``registry.fallback_backend_id``, while an exchange store is in use; else
         the run's backend for every node."""
-        run_backend_id = run_backend_id or current_context(self).backend_id
+        run_backend_id = current_context(self).backend_id
         if not exchange_config.effective_store(hub=exchange_run.hub_store).uri:
             return SingleBackendPolicy(run_backend_id)
         policy = MixedPlacementPolicy(run_backend_id, fallback_id=registry.fallback_backend_id())

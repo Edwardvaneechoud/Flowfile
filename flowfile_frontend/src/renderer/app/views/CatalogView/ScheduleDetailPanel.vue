@@ -41,7 +41,7 @@
           Cancel Run
         </button>
         <button
-          v-else-if="!isScheduleRunning && !isFlowRunning"
+          v-else-if="!isFlowRunning"
           class="btn btn-success btn-sm"
           @click="$emit('runNow', schedule.id)"
         >
@@ -258,9 +258,8 @@ const showEdit = ref(false);
 const displayName = computed(() => getScheduleDisplayName(props.schedule, props.schedule.id));
 
 const flowName = computed(() => {
-  const id = props.schedule.registration_id;
-  const flow = catalogStore.allFlows.find((f) => f.id === id);
-  return flow?.name ?? `Flow #${id}`;
+  const flow = catalogStore.allFlows.find((f) => f.id === props.schedule.registration_id);
+  return flow?.name ?? `Flow #${props.schedule.registration_id}`;
 });
 
 const scheduleTypeName = computed(() => {

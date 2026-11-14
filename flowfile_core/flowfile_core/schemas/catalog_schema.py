@@ -119,8 +119,7 @@ class FlowRegistrationOut(BaseModel):
     tables_produced: list["CatalogTableSummary"] = Field(default_factory=list)
     tables_read: list["CatalogTableSummary"] = Field(default_factory=list)
     access: AccessInfo | None = None
-    # Where the flow lives; a hub's row carries the negative of the hub's registration id as ``id``, the flow's uuid,
-    # and its newest published version with who published it.
+    # Where the flow lives; a hub's row has the hub's registration id negated, its uuid and newest version.
     source: Literal["local", "hub"] = "local"
     flow_uuid: str | None = None
     latest_version: int | None = None
@@ -1158,6 +1157,7 @@ class CatalogOverview(BaseModel):
     schedules: list[FlowScheduleOut] = Field(default_factory=list)
     active_runs: list[ActiveFlowRun] = Field(default_factory=list)
     runs: PaginatedFlowRuns
+    scheduler: SchedulerStatusOut
     schedulers: list[SchedulerStatusOut] = Field(default_factory=list)
     default_namespace_id: int | None = None
 

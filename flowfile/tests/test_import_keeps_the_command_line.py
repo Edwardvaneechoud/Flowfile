@@ -15,7 +15,7 @@ _PROGRAM = (
 )
 
 
-def test_a_program_given_join_flags_imports_flowfile(tmp_path):
+def test_a_program_given_flags_of_its_own_imports_flowfile(tmp_path):
     program = tmp_path / "etl.py"
     program.write_text(_PROGRAM, encoding="utf-8")
     env = {
@@ -27,9 +27,8 @@ def test_a_program_given_join_flags_imports_flowfile(tmp_path):
         "FLOWFILE_TELEMETRY": "0",
         "TESTING": "True",
     }
-    for name in ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_WORKER_PORT"):
-        env.pop(name, None)
-    flags = ["--join", "x", "--joi", "y", "--worker", "5", "--name", "n"]
+    env.pop("FLOWFILE_WORKER_PORT", None)
+    flags = ["--target", "x", "--targ", "y", "--worker", "5", "--name", "n"]
 
     result = subprocess.run(
         [sys.executable, str(program), *flags], capture_output=True, text=True, env=env, cwd=tmp_path, timeout=600

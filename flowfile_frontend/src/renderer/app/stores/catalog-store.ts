@@ -599,14 +599,13 @@ export const useCatalogStore = defineStore("catalog", {
       this.previewError = null;
       // Show recently-loaded version history automatically from the sessionStorage cache (flagged
       // stale after 5 min). Only the data preview stays gated for object-storage tables.
-      const found = tableId !== null ? this.findTableInTree(tableId) : null;
       const cachedHistory = tableId !== null ? readCachedHistory(tableId) : null;
       this.tableHistory = cachedHistory?.history ?? null;
       this.tableHistoryStale = cachedHistory?.stale ?? false;
       this.selectedVersion = null;
 
       if (tableId !== null) {
-        this.selectedTable = found;
+        this.selectedTable = this.findTableInTree(tableId) ?? null;
         const isPhysical = this.selectedTable?.table_type !== "virtual";
         const isRemote = !!this.selectedTable?.is_remote_storage;
         // Data preview: local auto-loads; object storage loads on demand (a button).
