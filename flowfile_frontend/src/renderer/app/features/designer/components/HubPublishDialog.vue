@@ -64,7 +64,6 @@
             ref="picker"
             v-model="namespaceId"
             hub
-            catalogs-selectable
             data-testid="hub-publish-namespace"
           />
           <p v-if="namespaceId === null" class="hub-dialog-hint">
