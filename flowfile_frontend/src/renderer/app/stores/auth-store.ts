@@ -88,8 +88,8 @@ export const useAuthStore = defineStore("auth", {
       }
     },
 
-    logout() {
-      authService.logout();
+    async logout() {
+      await authService.signOut();
       this.user = null;
       this.isAuthenticated = false;
       this.error = null;

@@ -92,6 +92,7 @@ export const convertConnectionInterfacePytoTs = (
     // Common
     endpointUrl: pythonConnectionInterface.endpoint_url,
     verifySsl: pythonConnectionInterface.verify_ssl,
+    source: pythonConnectionInterface.source ?? "local",
   };
 };
 

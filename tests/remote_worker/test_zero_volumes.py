@@ -279,6 +279,10 @@ def _set_up_sources(stack: Stack) -> None:
     assert response.status_code == 201, response.text
 
 
+CORE_FLOWS = "/app/user_data/flows"
+"""Core's flows folder (``FLOWFILE_USER_DATA_DIR`` in the compose file): a server registers a flow only inside it."""
+
+
 def _copy_to_core(flow: dict, path: str) -> None:
     """Write the flow to ``path`` in core's container, as nothing is mounted there."""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
@@ -292,8 +296,9 @@ def _copy_to_core(flow: dict, path: str) -> None:
 
 def _import_flow(stack: Stack, flow: dict) -> int:
     """Copy the flow into core's container and import it."""
-    _copy_to_core(flow, "/app/zero_volumes_flow.json")
-    response = stack.http.get(f"{stack.core}/import_flow/", params={"flow_path": "/app/zero_volumes_flow.json"})
+    path = f"{CORE_FLOWS}/zero_volumes_flow.json"
+    _copy_to_core(flow, path)
+    response = stack.http.get(f"{stack.core}/import_flow/", params={"flow_path": path})
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -350,7 +355,7 @@ def test_core_and_the_worker_have_no_mount(stack):
         assert json.loads(inspected.stdout) == [], (service, inspected.stdout)
 
 
-SCHEDULED_FLOW = "/app/scheduled_flow.json"
+SCHEDULED_FLOW = f"{CORE_FLOWS}/scheduled_flow.json"
 
 
 def _scheduled_flow() -> dict:

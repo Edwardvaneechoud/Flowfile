@@ -600,8 +600,8 @@ export class CatalogApi {
 
   // ====== Scheduler ======
 
-  static async getSchedulerStatus(): Promise<SchedulerStatus> {
-    const response = await axios.get<SchedulerStatus>("/catalog/scheduler/status");
+  static async getSchedulers(): Promise<SchedulerStatus[]> {
+    const response = await axios.get<SchedulerStatus[]>("/catalog/schedulers");
     return response.data;
   }
 

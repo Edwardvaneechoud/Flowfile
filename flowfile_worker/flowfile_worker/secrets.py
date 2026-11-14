@@ -121,7 +121,7 @@ def get_master_key() -> str:
     Get the master encryption key.
 
     If in TEST_MODE, returns a test key.
-    If running in Docker, retrieves the key from Docker secrets or environment.
+    On a multi-user server (docker or server mode), retrieves the key from Docker secrets or environment.
     Otherwise, retrieves the key from secure storage.
 
     Returns:
@@ -134,7 +134,7 @@ def get_master_key() -> str:
     if TEST_MODE:
         return b"06t640eu3AG2FmglZS0n0zrEdqadoT7lYDwgSmKyxE4=".decode()
 
-    if os.environ.get("FLOWFILE_MODE") == "docker":
+    if os.environ.get("FLOWFILE_MODE") in ("docker", "server"):
         key = get_docker_secret_key()
         if key is None:
             raise RuntimeError(
@@ -179,16 +179,25 @@ def decrypt_secret(encrypted_value: str) -> SecretStr:
     """
     Decrypt an encrypted value.
 
-    Supports both new format (with embedded user_id) and legacy format.
+    Supports both new format (with embedded user_id) and legacy format, and a secret sealed to this server.
     - New format: $ffsec$1${user_id}${fernet_token} - user_id extracted automatically
     - Legacy format: raw Fernet token - uses master key directly
+    - Sealed: $ffseal$..., ``shared.sealed.sealed_secret``'s string, opened with this server's own key; what says who
+      sealed it is loaded only for one
 
     Args:
         encrypted_value: The encrypted value as a string
 
     Returns:
         SecretStr: The decrypted value as a SecretStr
+
+    Raises:
+        CredentialResolutionError: A sealed secret this server cannot open.
     """
+    if encrypted_value.startswith("$ffseal$"):
+        from shared import sealed
+
+        return SecretStr(sealed.open_secret(encrypted_value))
     if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
         # Parse: $ffsec$1${user_id}${fernet_token}
         remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]

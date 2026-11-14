@@ -16,11 +16,16 @@ from functools import wraps
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.routing import APIRoute
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
-from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
+from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service, kernel_owner_id
+from flowfile_core.auth.sharing import note_principal
 from flowfile_core.catalog import (
     KEEP_PREDICTION,
     AmbiguousTableError,
@@ -59,6 +64,8 @@ from flowfile_core.catalog import (
     VisualizationExistsError,
     VisualizationNotFoundError,
     WorkerUnavailableError,
+    run_records,
+    table_sources,
 )
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.services.tables import catalog_table_location
@@ -87,6 +94,7 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableRestoreRequest,
     CatalogTableRestoreResponse,
     CatalogTableUpdate,
+    CdcCursorCommitRequest,
     CdcCursorOut,
     CdcCursorResetRequest,
     CdcStatusOut,
@@ -146,13 +154,87 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationUpdate,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
-from shared.storage_config import storage
+from shared.storage_config import require_flow_in_storage, storage
+
+_READ_HERE = (
+    "/preview",
+    "/history",
+    "/materialize",
+    "/optimize",
+    "/vacuum",
+    "/cdc",
+    "/cdc/enable",
+    "/cdc/cursors/reset",
+    "/edits",
+    "/key-column",
+)
+"""The table routes that read, maintain or edit data: this install reaches a remote table through its storage target,
+and its row's new facts go back on the catalog's refresh route."""
+
+
+class _RemoteAnswer(Exception):
+    """A remote catalog answered the request (``_remote_rows``); ``response`` is its answer."""
+
+    def __init__(self, response: Response):
+        self.response = response
+
+
+class _RemoteRoute(APIRoute):
+    """A catalog route whose request a remote catalog answered answers with that, its own handler not run."""
+
+    def get_route_handler(self):
+        local = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await local(request)
+            except _RemoteAnswer as answered:
+                return answered.response
+
+        return handler
+
+
+async def relay_remote(request: Request, user_id: int, prefix: str) -> None:
+    """Hand a request that names a row of a remote catalog to that catalog (``table_sources.relayed``), as
+    ``user_id`` and on core's own route from ``prefix`` on; its answer is the route's (``_RemoteAnswer``)."""
+    if not table_sources.has_remote():
+        return
+    body = None
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+    path = f"{prefix}{request.url.path.split(prefix, 1)[1]}"
+    answered = await run_in_threadpool(
+        table_sources.relayed, user_id, request.method, path, dict(request.query_params), body
+    )
+    if answered is not None:
+        status, answer = answered
+        raise _RemoteAnswer(Response(status_code=status) if answer is None else JSONResponse(answer, status))
+
+
+async def _remote_rows(
+    request: Request,
+    current_user=Depends(get_user_or_internal_service),
+    kernel_owner: int | None = Depends(kernel_owner_id),
+) -> None:
+    """Every route of this router goes through ``relay_remote``, so a remote table, flow or namespace has the detail,
+    run history, rename, delete and schedules a local one has, answered by its catalog as the signed-in person. Left
+    to the handlers here: the routes that read a table's data (``_READ_HERE``), a kernel's lookups, and a caller
+    holding only the internal token, who is no person a remote catalog knows (``note_principal``)."""
+    read_here = request.url.path.endswith(_READ_HERE)
+    a_person = not note_principal(current_user) and kernel_owner is None
+    if a_person and not getattr(current_user, "disabled", False) and not read_here:
+        await relay_remote(request, current_user.id, "/catalog")
+
 
 router = APIRouter(
     prefix="/catalog",
     tags=["catalog"],
     # JWT or the kernel's X-Internal-Token; a JWT-only endpoint re-checks with get_current_active_user.
-    dependencies=[Depends(get_user_or_internal_service)],
+    dependencies=[Depends(get_user_or_internal_service), Depends(_remote_rows)],
+    route_class=_RemoteRoute,
 )
 
 
@@ -210,6 +292,7 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     CdcNotSupportedError: (409, None),
     CdcCursorNotFoundError: (404, None),
     CdcCursorsAtRiskError: (409, None),
+    table_sources.Refused: (403, None),
     ValueError: (422, None),
 }
 
@@ -319,10 +402,20 @@ def remove_demo(current_user=Depends(get_current_active_user)):
 @router.get("/namespaces", response_model=list[NamespaceOut])
 def list_namespaces(
     parent_id: int | None = None,
+    kernel_owner: int | None = Depends(kernel_owner_id),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """List namespaces, optionally filtered by parent."""
-    return service.list_namespaces(parent_id)
+    """List namespaces, optionally filtered by parent.
+
+    A kernel also gets its owner's remote catalogs after this machine's, and the schemas of one of those (a
+    negative ``parent_id``), so a notebook cell walks to a remote table as it does to a local one.
+    """
+    if kernel_owner is not None and parent_id is not None and parent_id < 0:
+        return table_sources.kernel_namespaces(kernel_owner, parent_id)
+    rows = service.list_namespaces(parent_id)
+    if kernel_owner is not None and parent_id is None:
+        return [*rows, *table_sources.kernel_namespaces(kernel_owner, None)]
+    return rows
 
 
 @router.post("/namespaces", response_model=NamespaceOut, status_code=201)
@@ -394,8 +487,14 @@ def get_namespace_tree(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return the full catalog tree with flows nested under schemas."""
-    return service.get_namespace_tree(user_id=current_user.id)
+    """Return the full catalog tree with flows nested under schemas.
+
+    The local catalogs come first, then those of a remote catalog the user reads, each row marked with its
+    ``source`` and a negative ``id``. Beside those, every row says where it lives (``place``), a remote catalog this
+    Flowfile cannot use says why (``unavailable_reason``), and on a server joined with keys of its own the server's
+    own rows are not ``offered`` (``table_sources.merged_tree``).
+    """
+    return table_sources.merged_tree(current_user.id, service.get_namespace_tree(user_id=current_user.id))
 
 
 # Default namespace helper
@@ -415,7 +514,11 @@ def list_flows(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.list_flows(user_id=current_user.id, namespace_id=namespace_id)
+    """List flows; the list of every flow holds a remote catalog's too, after this install's."""
+    local = service.list_flows(user_id=current_user.id, namespace_id=namespace_id)
+    if namespace_id is not None:
+        return local
+    return table_sources.merged_rows(current_user.id, "/catalog/flows", local, FlowRegistrationOut)
 
 
 @router.post("/flows", response_model=FlowRegistrationOut, status_code=201)
@@ -454,13 +557,15 @@ def get_flow_interface(
     """The flow's callable surface (flow_input/flow_output ports + typed parameters).
 
     Degrades to empty lists with ``file_exists=False`` when the flow file is
-    missing or unparseable, so the run_flow picker can still render.
+    missing or unparseable, so the run_flow picker can still render. On a
+    multi-user server a file outside the flow folders is refused (422), not read.
     """
     from flowfile_core.flowfile import subflow
 
     registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
+    path = require_flow_in_storage(Path(registration.flow_path))
     try:
-        interface = subflow.get_subflow_interface(Path(registration.flow_path))
+        interface = subflow.get_subflow_interface(path)
     except Exception:  # noqa: BLE001 - degrade like the flow-API parameter lookup
         return FlowInterfaceOut(registration_id=flow_id, file_exists=False)
     return FlowInterfaceOut(
@@ -488,14 +593,16 @@ def get_flow_code(
     """
     from flowfile_core.flowfile.code_generator import export_flow_to_flowframe, export_flow_to_polars
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
-    from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
     from flowfile_core.notebook.render import render
 
     registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
+    try:
+        path = require_flow_in_storage(Path(registration.flow_path))
+    except ValueError as exc:
+        return FlowCodeOut(registration_id=flow_id, format=format, error=str(exc))
     if not registration.file_exists:
         return FlowCodeOut(registration_id=flow_id, format=format, file_exists=False)
     try:
-        path = require_flow_in_storage(Path(registration.flow_path))
         if format == "yaml":
             if path.suffix.lower() not in (".yaml", ".yml", ".json"):
                 raise ValueError("the flow is stored in the legacy binary format; save it from the designer first")
@@ -561,6 +668,63 @@ def list_flow_artifacts(
     return service.list_artifacts_for_flow(flow_id)
 
 
+_RUNS_WINDOW = 500
+"""The most runs one request reads of a remote catalog, its list route's own cap."""
+
+
+def _remote_runs(user_id: int | None, run_type, search: str | None, wanted: int) -> PaginatedFlowRuns | None:
+    """A remote catalog's newest ``wanted`` runs with its counts, a window per request; ``None`` when none answers."""
+    first: PaginatedFlowRuns | None = None
+    items: list = []
+    while len(items) < wanted:
+        asked = {
+            "limit": min(wanted - len(items), _RUNS_WINDOW),
+            "offset": len(items),
+            "run_type": run_type,
+            "search": search,
+        }
+        params = {key: value for key, value in asked.items() if value is not None}
+        try:
+            page = PaginatedFlowRuns.model_validate(table_sources.remote_answer(user_id, "/catalog/runs", params))
+        except ValidationError:
+            break
+        first = first or page
+        items += page.items
+        if len(page.items) < asked["limit"]:
+            break
+    return first.model_copy(update={"items": items}) if first is not None else None
+
+
+def _all_runs(
+    service: CatalogService, user_id: int | None, run_type, search: str | None, limit: int, offset: int
+) -> PaginatedFlowRuns:
+    """One page of the runs of every flow: this install's and a remote catalog's, newest first, the counts summed.
+
+    Each catalog is asked for its newest ``offset + limit`` runs and the page is cut from the two together. A run a
+    remote catalog records as executed here (``table_sources.has_its_record_here``), or under a run id a local
+    record carries, is this install's own record: listed once and counted once among the runs read. With no remote
+    catalog answering, the page is this install's as it was.
+    """
+    page = _remote_runs(user_id, run_type, search, offset + limit)
+    if page is None:
+        return service.list_runs(run_type=run_type, limit=limit, offset=offset, search=search)
+    local = service.list_runs(run_type=run_type, limit=offset + limit, offset=0, search=search)
+    own_ids = {run.remote_run_id for run in local.items if run.remote_run_id}
+    theirs, twice = [], []
+    for run in page.items:
+        here = table_sources.has_its_record_here(run.executed_on) or run.remote_run_id in own_ids
+        (twice if here else theirs).append(run)
+    items, merged = [*local.items, *theirs], local.model_copy()
+    merged.total += page.total - len(twice)
+    merged.total_success += page.total_success - sum(run.success is True for run in twice)
+    merged.total_failed += page.total_failed - sum(run.success is False and not run.cancelled for run in twice)
+    merged.total_cancelled += page.total_cancelled - sum(run.success is False and run.cancelled for run in twice)
+    merged.total_running += page.total_running - sum(run.success is None for run in twice)
+    items.sort(key=lambda run: run.started_at.replace(tzinfo=None), reverse=True)
+    merged.items = items[offset : offset + limit]
+    return merged
+
+
 @router.get("/runs", response_model=PaginatedFlowRuns)
 def list_runs(
     registration_id: int | None = None,
@@ -569,8 +733,12 @@ def list_runs(
     search: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
+    """Run history, newest first. The list of every flow's runs holds a remote catalog's too (``_all_runs``)."""
+    if registration_id is None and schedule_id is None:
+        return _all_runs(service, current_user.id, run_type, search, limit, offset)
     return service.list_runs(
         registration_id=registration_id,
         schedule_id=schedule_id,
@@ -600,8 +768,15 @@ def get_run_log(
     run_id: int,
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return the log content for a subprocess-spawned run."""
+    """Return the log content for a subprocess-spawned run; a run executed elsewhere (``log_ref``) is a 307 to the
+    executor's own log route, which the caller fetches with their sign-in there, or a 404 when this core cannot name
+    it (``catalog/run_records.py``)."""
     run = service.get_run_detail(run_id)
+    if run.log_ref:
+        backend = run_records.parse_log_ref(run.log_ref)
+        if run.log_url is None:
+            raise HTTPException(404, run_records.LOG_ELSEWHERE.format(backend=backend[0] if backend else "elsewhere"))
+        return RedirectResponse(run.log_url, status_code=307)
 
     log_path = service.resolve_run_log_path(run.id, run.run_type)
     if log_path is None:
@@ -721,14 +896,18 @@ def remove_follow(
 @router.get("/tables", response_model=list[CatalogTableOut])
 def list_tables(
     namespace_id: int | None = None,
+    kernel_owner: int | None = Depends(kernel_owner_id),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
     """List catalog tables, optionally filtered by namespace.
 
     Accepts the kernel's internal token so ``flowfile_ctx.list_catalog_tables``
-    can enumerate available tables.
+    can enumerate available tables. A negative ``namespace_id`` is a namespace
+    of a remote catalog of the kernel's owner.
     """
+    if kernel_owner is not None and namespace_id is not None and namespace_id < 0:
+        return table_sources.kernel_tables(kernel_owner, namespace_id)
     return service.list_tables(namespace_id=namespace_id, user_id=current_user.id)
 
 
@@ -808,6 +987,8 @@ def refresh_table_metadata(
         row_count=body.row_count,
         column_count=body.column_count,
         size_bytes=body.size_bytes,
+        cdc_enabled_version=body.cdc_enabled_version,
+        data_changed=body.data_changed,
     )
 
 
@@ -817,6 +998,7 @@ def resolve_table(
     q: str,
     namespace_id: int | None = None,
     strict: bool = False,
+    kernel_owner: int | None = Depends(kernel_owner_id),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
@@ -824,13 +1006,26 @@ def resolve_table(
 
     Strict mode raises ``AmbiguousTableError`` (→ 409) when a bare name matches >1 row.
     Default mode soft-picks deterministically and reports alternatives in ``warnings``.
+    For a kernel, a name this machine's catalog does not hold is looked up among the tables of its owner's remote
+    catalogs, and a negative ``namespace_id`` names a namespace there (``table_sources.kernel_table``).
     """
-    table_out, warnings = service.resolve_table_out(
-        q,
-        default_namespace_id=namespace_id,
-        strict=strict,
-        user_id=current_user.id,
-    )
+    if kernel_owner is not None and namespace_id is not None and namespace_id < 0:
+        in_namespace = table_sources.kernel_table(kernel_owner, q, namespace_id)
+        if in_namespace is None:
+            raise HTTPException(404, "Catalog table not found")
+        return ResolveTableResult(table=in_namespace)
+    try:
+        table_out, warnings = service.resolve_table_out(
+            q,
+            default_namespace_id=namespace_id,
+            strict=strict,
+            user_id=current_user.id,
+        )
+    except (TableNotFoundError, NamespaceNotFoundError):
+        elsewhere = table_sources.kernel_table(kernel_owner, q) if kernel_owner is not None else None
+        if elsewhere is None:
+            raise
+        return ResolveTableResult(table=elsewhere)
     return ResolveTableResult(table=table_out, warnings=warnings)
 
 
@@ -896,6 +1091,7 @@ def get_table_preview(
 @handle_catalog_exceptions()
 def materialize_table(
     table_id: int,
+    kernel_owner: int | None = Depends(kernel_owner_id),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
@@ -904,9 +1100,13 @@ def materialize_table(
     Resolves the view (SQL, optimized plan, or producer re-run), has the
     worker collect it to an Arrow IPC file under the kernel-shared volume,
     and returns the host path. Used by ``flowfile_ctx.read_catalog_table``
-    for views; physical tables are rejected with 400.
+    for views and for physical tables on object storage, which a kernel
+    holds no credential for; a physical table on disk is rejected with 400.
+    A table of a remote catalog (``resolve_table``) is read as the kernel's
+    owner, the person its catalog answers to.
     """
-    return service.materialize_table(table_id, user_id=current_user.id)
+    as_owner = kernel_owner is not None and table_sources.remote_of(table_id) is not None
+    return service.materialize_table(table_id, user_id=kernel_owner if as_owner else current_user.id)
 
 
 @router.get(
@@ -938,7 +1138,7 @@ def get_table_history(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Return version history for a Delta catalog table."""
-    return service.get_table_history(table_id, limit=limit)
+    return service.get_table_history(table_id, limit=limit, user_id=current_user.id)
 
 
 @router.post("/tables/{table_id}/optimize", response_model=OptimizeTableResponse)
@@ -950,7 +1150,7 @@ def optimize_table(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Compact (and optionally Z-order) a Delta catalog table."""
-    return service.optimize_table(table_id, z_order_columns=body.z_order_columns)
+    return service.optimize_table(table_id, z_order_columns=body.z_order_columns, user_id=current_user.id)
 
 
 @router.post("/tables/{table_id}/vacuum", response_model=VacuumTableResponse)
@@ -966,7 +1166,13 @@ def vacuum_table(
     Refused with 409 ``CDC_CURSORS_AT_RISK`` when change-feed cursors still point into the
     history this retention window would drop, unless ``force`` is set.
     """
-    return service.vacuum_table(table_id, retention_hours=body.retention_hours, dry_run=body.dry_run, force=body.force)
+    return service.vacuum_table(
+        table_id,
+        retention_hours=body.retention_hours,
+        dry_run=body.dry_run,
+        force=body.force,
+        user_id=current_user.id,
+    )
 
 
 @router.get("/tables/{table_id}/cdc", response_model=CdcStatusOut)
@@ -977,7 +1183,7 @@ def get_table_cdc(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Change-tracking state for a catalog table, with every consumer's cursor position."""
-    return service.get_table_cdc_status(table_id)
+    return service.get_table_cdc_status(table_id, user_id=current_user.id)
 
 
 @router.post("/tables/{table_id}/cdc/enable", response_model=CdcStatusOut)
@@ -988,7 +1194,7 @@ def enable_table_cdc(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Turn change tracking on for a Delta catalog table (idempotent). Requires manage."""
-    return service.enable_table_cdc(table_id)
+    return service.enable_table_cdc(table_id, user_id=current_user.id)
 
 
 @router.post("/tables/{table_id}/cdc/cursors/reset", response_model=CdcCursorOut)
@@ -1000,7 +1206,23 @@ def reset_table_cdc_cursor(
     service: CatalogService = Depends(get_catalog_service),
 ):
     """Move one consumer's cursor. Requires cursor ownership or manage on the table."""
-    return service.reset_table_cdc_cursor(table_id, body.consumer_key, body.to)
+    return service.reset_table_cdc_cursor(table_id, body.consumer_key, body.to, user_id=current_user.id)
+
+
+@router.post("/tables/{table_id}/cdc/cursors", response_model=CdcCursorOut)
+@handle_catalog_exceptions()
+def commit_table_cdc_cursor(
+    table_id: int,
+    body: CdcCursorCommitRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Advance one consumer's cursor after a run that read its changes, as that run's reader.
+
+    Requires use of the table; a flow's cursor also use of that flow, or for a flow this catalog does not hold cursor
+    ownership, or manage on the table.
+    """
+    return service.commit_table_cdc_cursor(table_id, body, owner_id=current_user.id)
 
 
 @router.delete("/tables/{table_id}/cdc/cursors/{consumer_key}", status_code=204)
@@ -1504,10 +1726,15 @@ def get_catalog_stats(
 @router.get("/schedules", response_model=list[FlowScheduleOut])
 def list_schedules(
     registration_id: int | None = None,
+    current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """List schedules, optionally filtered by flow registration."""
-    return service.list_schedules(registration_id=registration_id)
+    """List schedules, optionally filtered by flow registration. The list of every flow's schedules holds a remote
+    catalog's too, after this install's (``table_sources.merged_rows``)."""
+    local = service.list_schedules(registration_id=registration_id)
+    if registration_id is not None:
+        return local
+    return table_sources.merged_rows(current_user.id, "/catalog/schedules", local, FlowScheduleOut)
 
 
 @router.post("/schedules", response_model=FlowScheduleOut, status_code=201)
@@ -1529,6 +1756,7 @@ def create_schedule(
         enabled=body.enabled,
         name=body.name,
         description=body.description,
+        backend=body.backend,
     )
 
 
@@ -1574,6 +1802,7 @@ def update_schedule(
         cron_timezone=body.cron_timezone,
         name=body.name,
         description=body.description,
+        backend=body.backend,
     )
 
 
@@ -1611,13 +1840,26 @@ def trigger_schedule_now(
 # Active Runs
 
 
+def _active_runs(service: CatalogService, user_id: int | None) -> list[ActiveFlowRun]:
+    """The runs under way, this install's first, then a remote catalog's (``table_sources.merged_rows``).
+
+    A run a remote catalog sent here is listed once, as the remote's row: this install's record of it carries the
+    remote's run id as ``remote_run_id``, and only the remote's row names the flow and schedule it is a run of and
+    has a Cancel that stops it (the catalog that sent it tells this install to stop). Run History keeps this install's
+    record instead, whose log is here (``_all_runs``).
+    """
+    merged = table_sources.merged_rows(user_id, "/catalog/active-runs", service.list_active_runs(), ActiveFlowRun)
+    theirs = {run.remote_run_id for run in merged if run.id < 0 and run.remote_run_id}
+    return [run for run in merged if run.id < 0 or run.remote_run_id not in theirs]
+
+
 @router.get("/active-runs", response_model=list[ActiveFlowRun])
 def list_active_runs(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """List all currently running flows."""
-    return service.list_active_runs()
+    """List all currently running flows, a remote catalog's after this install's (``_active_runs``)."""
+    return _active_runs(service, current_user.id)
 
 
 @router.post("/runs/{run_id}/cancel", status_code=204)
@@ -1693,6 +1935,16 @@ def _scheduler_status(db: Session) -> SchedulerStatusOut:
     )
 
 
+def _schedulers(db: Session, user_id: int) -> list[SchedulerStatusOut]:
+    """This install's scheduler, then a remote catalog's, which fires that catalog's listed schedules
+    (``table_sources.merged_rows``); each says whose it is once both are listed."""
+    own = _scheduler_status(db)
+    listed = table_sources.merged_rows(user_id, "/catalog/schedulers", [own], SchedulerStatusOut)
+    if len(listed) > 1:
+        own.place = table_sources.own_place()
+    return listed
+
+
 @router.get("/scheduler/status", response_model=SchedulerStatusOut)
 def scheduler_status(
     db: Session = Depends(get_db),
@@ -1700,6 +1952,12 @@ def scheduler_status(
 ):
     """Return the current scheduler lock status."""
     return _scheduler_status(db)
+
+
+@router.get("/schedulers", response_model=list[SchedulerStatusOut])
+def list_schedulers(db: Session = Depends(get_db), current_user=Depends(get_current_active_user)):
+    """The schedulers that fire the listed schedules, this install's first (``_schedulers``)."""
+    return _schedulers(db, current_user.id)
 
 
 @router.get("/overview", response_model=CatalogOverview)
@@ -1713,19 +1971,23 @@ def get_catalog_overview(
 
     FastAPI caches ``get_db`` per request, so ``db`` is the session the service was
     built on: the whole screen costs one pooled connection instead of one per call.
-    The individual endpoints stay for detail views, mutations and the poll loop.
+    The individual endpoints stay for detail views, mutations and the poll loop. The tree is the one
+    ``/namespaces/tree`` answers, a remote catalog's rows after the local ones, and so are the flows, schedules, active
+    runs, the runs and the schedulers.
     """
     user_id = current_user.id
+    schedulers = _schedulers(db, user_id)
     return CatalogOverview(
         stats=service.get_catalog_stats(user_id=user_id),
-        tree=service.get_namespace_tree(user_id=user_id),
-        flows=service.list_flows(user_id=user_id),
+        tree=table_sources.merged_tree(user_id, service.get_namespace_tree(user_id=user_id)),
+        flows=table_sources.merged_rows(user_id, "/catalog/flows", service.list_flows(user_id), FlowRegistrationOut),
         tables=service.list_tables(user_id=user_id),
         favorites=service.list_favorites(user_id=user_id),
-        schedules=service.list_schedules(),
-        active_runs=service.list_active_runs(),
-        runs=service.list_runs(limit=runs_limit, offset=0),
-        scheduler=_scheduler_status(db),
+        schedules=table_sources.merged_rows(user_id, "/catalog/schedules", service.list_schedules(), FlowScheduleOut),
+        active_runs=_active_runs(service, user_id),
+        runs=_all_runs(service, user_id, None, None, runs_limit, 0),
+        scheduler=schedulers[0],
+        schedulers=schedulers,
         default_namespace_id=service.get_default_namespace_id(),
     )
 

@@ -1,6 +1,6 @@
 import { createApp } from "vue";
 import stores from "./app/stores";
-import router from "./app/router";
+import router, { redirectToLogin } from "./app/router";
 import App from "./app/App.vue";
 import ClickOutsideDirective from "./app/directives/ClickOutsideDirective";
 import ElementPlus, { messageConfig } from "element-plus";
@@ -62,7 +62,7 @@ setupService
 
     if (!authenticated && !authService.isInDesktopMode()) {
       console.log("Redirecting to login page");
-      router.push({ name: "login" });
+      redirectToLogin();
     }
   })
   .catch((error) => {
@@ -71,6 +71,6 @@ setupService
     app.mount("#app");
 
     if (!authService.isInDesktopMode()) {
-      router.push({ name: "login" });
+      redirectToLogin();
     }
   });

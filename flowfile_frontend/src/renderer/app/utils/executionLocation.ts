@@ -91,3 +91,19 @@ export function nodeExecutionLocationOptions(
   if (!keys.includes(current)) keys.push(current);
   return withVerdicts(keys, rows, nodeExecutionLocationLabel);
 }
+
+export function scheduleBackendLabel(backend: string): string {
+  if (backend === "") return "The flow's own setting";
+  if (backend === "worker") return "Default worker";
+  return backend;
+}
+
+/** A schedule's "Runs on": the flow's own setting (""), the default worker, the configured backends, then its own. */
+export function scheduleBackendOptions(
+  current: string,
+  rows: BackendRow[],
+): ExecutionLocationOption[] {
+  const keys = ["", "worker", ...rows.map((row) => row.id).filter((id) => id !== "worker")];
+  if (!keys.includes(current)) keys.push(current);
+  return withVerdicts(keys, rows, scheduleBackendLabel);
+}

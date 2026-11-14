@@ -18,6 +18,8 @@ from flowfile_core.auth.models import ChangePassword, Token, User, UserCreate, U
 from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash, validate_password, verify_password
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from flowfile_core.hub_client import session as hub_session
+from shared import server_extension
 
 router = APIRouter()
 
@@ -35,6 +37,7 @@ def login_for_access_token(
         return {"access_token": access_token, "token_type": "bearer"}
     else:
         # In Docker mode, authenticate against database
+        _refuse_passwords()
         if not username or not password:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -56,13 +59,28 @@ def login_for_access_token(
         return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
+def _refuse_passwords() -> None:
+    """403 on a server whose extension signs people in elsewhere: neither a password nor a session that began with one
+    is taken there.
+    """
+    refusal = server_extension.call("password_refusal")
+    if refusal is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=refusal)
+
+
 @router.post("/refresh", response_model=Token)
 def refresh_access_token(
     refresh_token: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    """Exchange a valid refresh token for a new access token and refresh token."""
-    username = decode_refresh_token(refresh_token)
+    """Exchange a valid refresh token for a new access token and refresh token.
+
+    An account that signs in elsewhere is renewed by the server's extension (``refresh_session``, given the sign-in
+    ``sid`` the token names), which answers the new pair or refuses. On a server that takes no passwords the session
+    of any other account is not renewed: 403, as its password sign-in is.
+    """
+    claims = decode_refresh_token(refresh_token)
+    username, sid = claims["sub"], claims.get("sid")
 
     user = db.query(db_models.User).filter(db_models.User.username == username).first()
     if user is None:
@@ -78,9 +96,35 @@ def refresh_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    renewed = server_extension.call("refresh_session", db, user, sid)
+    if renewed is not None:
+        return renewed
+    _refuse_passwords()
     new_access_token = create_access_token(data={"sub": user.username})
     new_refresh_token = create_refresh_token(data={"sub": user.username})
-    return {"access_token": new_access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
+    return {
+        "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+        "expires_at": None,
+    }
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(current_user: User = Depends(get_current_active_user)) -> None:
+    """Sign out: a sign-in made elsewhere is ended there by the server's extension as far as that answers, and
+    forgotten here. Answers 204 either way; a plain server keeps no session, so there is nothing to end.
+    """
+    server_extension.call("sign_out", current_user.id)
+    return None
+
+
+@router.get("/sign_in_method")
+def sign_in_method() -> dict:
+    """How people sign in on this server: ``{"method": "password"}``, or what its extension answers, with the ``url``
+    where a person's browser starts the sign-in.
+    """
+    return server_extension.call("sign_in_method", default={"method": "password"})
 
 
 @router.get("/users/me", response_model=User)
@@ -258,6 +302,9 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
     db.query(db_models.WorkspaceProject).filter(db_models.WorkspaceProject.owner_id == user_id).delete(
         synchronize_session=False
     )
+    # A hub person's mapping and hub session go too: a reused rowid would otherwise hand both to the next account.
+    server_extension.call("account_removed", db, user_id)
+    hub_session.clear(user_id)
 
     # Notification channels hold an encrypted webhook credential and rules keep alerting
     # after the owner is gone — a reused user rowid would inherit both. History rows go

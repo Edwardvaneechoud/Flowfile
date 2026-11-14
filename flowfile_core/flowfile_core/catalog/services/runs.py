@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy.orm.attributes import flag_modified
 
+from flowfile_core.catalog import run_records
 from flowfile_core.catalog.exceptions import (
     FlowAlreadyRunningError,
     FlowNotFoundError,
@@ -23,22 +26,60 @@ from flowfile_core.schemas.catalog_schema import (
     PaginatedFlowRuns,
 )
 from shared.run_completion import terminate_pid
-from shared.run_logs import SUBPROCESS_RUN_TYPES, run_log_path
+from shared.run_logs import LOGGED_RUN_TYPES, run_log_path
+from shared.storage_config import require_flow_in_storage
 from shared.subprocess_utils import spawn_flow_subprocess
+
+if TYPE_CHECKING:
+    from flowfile_core.catalog.access import AccessResolver
 
 logger = logging.getLogger(__name__)
 
 
 class FlowRunService:
-    """Owns FlowRun lifecycle: list, fetch, start, complete, cancel."""
+    """Owns FlowRun lifecycle: list, fetch, start, complete, cancel.
 
-    def __init__(self, repo: CatalogRepository) -> None:
+    With a restricted ``access`` resolver, run history (lists, counts, active
+    runs, run detail) covers only the runs the caller may see: runs they
+    started, runs of a flow they own or were granted, and runs of a flow
+    registered in a namespace they can see.
+    """
+
+    def __init__(self, repo: CatalogRepository, access: AccessResolver | None = None) -> None:
         self.repo = repo
+        # None (internal callers, electron mode, tests) is unrestricted.
+        self._access = access
+
+    def visible_run_filters(self) -> dict:
+        """Keyword filters that limit a repository run query to the caller's visible runs.
+
+        Empty when the caller is unrestricted, so the query is unchanged.
+        """
+        if self._access is None or not self._access.restricted:
+            return {}
+        return {
+            "visible_user_id": self._access.user_id,
+            "visible_flow_ids": self._access.accessible_ids("flow"),
+            "visible_namespace_ids": self._access.visible_namespace_ids(),
+        }
+
+    def is_visible(self, run: FlowRun) -> bool:
+        """Whether the caller may see ``run``; the per-row form of ``visible_run_filters``."""
+        if self._access is None or not self._access.restricted:
+            return True
+        if run.user_id == self._access.user_id:
+            return True
+        if run.registration_id is None:
+            return False
+        if run.registration_id in self._access.accessible_ids("flow"):
+            return True
+        reg = self.repo.get_flow(run.registration_id)
+        return reg is not None and reg.namespace_id in self._access.visible_namespace_ids()
 
     @staticmethod
     def _resolve_log_path(run_id: int, run_type: str) -> str | None:
         """Return the log file path if it exists for subprocess-spawned runs."""
-        if run_type not in SUBPROCESS_RUN_TYPES:
+        if run_type not in LOGGED_RUN_TYPES:
             return None
         log_file = run_log_path(run_id)
         return str(log_file) if log_file.exists() else None
@@ -74,6 +115,7 @@ class FlowRunService:
         search: str | None = None,
     ) -> PaginatedFlowRuns:
         """List run summaries (without snapshots) with total count for pagination."""
+        visible = self.visible_run_filters()
         runs = self.repo.list_runs(
             registration_id=registration_id,
             schedule_id=schedule_id,
@@ -81,9 +123,10 @@ class FlowRunService:
             limit=limit,
             offset=offset,
             search=search,
+            **visible,
         )
         counts = self.repo.count_runs_by_status(
-            registration_id=registration_id, schedule_id=schedule_id, run_type=run_type, search=search
+            registration_id=registration_id, schedule_id=schedule_id, run_type=run_type, search=search, **visible
         )
         name_overrides = self._display_names_for(runs)
         return PaginatedFlowRuns(
@@ -96,15 +139,19 @@ class FlowRunService:
         )
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
-        """Get a single run including the YAML snapshot."""
+        """Get a single run including the YAML snapshot.
+
+        A run the caller may not see is reported as not found, so its id reveals nothing.
+        """
         run = self.repo.get_run(run_id)
-        if run is None:
+        if run is None or not self.is_visible(run):
             raise RunNotFoundError(run_id=run_id)
         display_name = None
         if run.registration_id is not None:
             reg = self.repo.get_flow(run.registration_id)
             if reg is not None and reg.name:
                 display_name = reg.name
+        snapshot = run_records.snapshot_of(run)
         return FlowRunDetail(
             id=run.id,
             registration_id=run.registration_id,
@@ -121,10 +168,15 @@ class FlowRunService:
             duration_seconds=run.duration_seconds,
             run_type=run.run_type,
             schedule_id=run.schedule_id,
-            has_snapshot=run.flow_snapshot is not None,
-            has_log=self._resolve_log_path(run.id, run.run_type) is not None,
-            flow_snapshot=run.flow_snapshot,
+            has_snapshot=snapshot is not None,
+            has_log=self._resolve_log_path(run.id, run.run_type) is not None or run.log_ref is not None,
+            flow_snapshot=snapshot,
             node_results_json=run.node_results_json,
+            executed_on=run.executed_on,
+            remote_run_id=run.remote_run_id,
+            log_ref=run.log_ref,
+            flow_version=run.flow_version,
+            log_url=run_records.log_location(run.log_ref) if run.log_ref else None,
         )
 
     def get_run(self, run_id: int) -> FlowRun:
@@ -144,6 +196,10 @@ class FlowRunService:
         run_type: RunType,
         flow_snapshot: str | None = None,
         flow_uuid: str | None = None,
+        executed_on: str | None = None,
+        remote_run_id: str | None = None,
+        log_ref: str | None = None,
+        flow_version: int | None = None,
     ) -> FlowRun:
         """Record a new flow run start.
 
@@ -164,6 +220,10 @@ class FlowRunService:
             number_of_nodes=number_of_nodes,
             run_type=run_type,
             flow_snapshot=flow_snapshot,
+            executed_on=executed_on,
+            remote_run_id=remote_run_id,
+            log_ref=log_ref,
+            flow_version=flow_version,
         )
         return self.repo.create_run(run)
 
@@ -218,6 +278,10 @@ class FlowRunService:
         node_results_json: str | None = None,
         flow_snapshot: str | None = None,
         flow_uuid: str | None = None,
+        executed_on: str | None = None,
+        remote_run_id: str | None = None,
+        log_ref: str | None = None,
+        flow_version: int | None = None,
         cancelled: bool = False,
     ) -> FlowRun:
         """Record a fully completed run in one step (fallback when start_run was skipped)."""
@@ -242,6 +306,10 @@ class FlowRunService:
             number_of_nodes=number_of_nodes,
             duration_seconds=duration,
             run_type=run_type,
+            executed_on=executed_on,
+            remote_run_id=remote_run_id,
+            log_ref=log_ref,
+            flow_version=flow_version,
             node_results_json=node_results_json,
             flow_snapshot=flow_snapshot,
         )
@@ -252,9 +320,10 @@ class FlowRunService:
         run = self.repo.get_run(run_id)
         if run is None:
             raise RunNotFoundError(run_id=run_id)
-        if not run.flow_snapshot:
+        snapshot = run_records.snapshot_of(run)
+        if not snapshot:
             raise NoSnapshotError(run_id=run_id)
-        return run.flow_snapshot
+        return snapshot
 
     @staticmethod
     def _spawn_flow_subprocess(
@@ -283,8 +352,11 @@ class FlowRunService:
         ``suppress_telemetry`` is forwarded to the child only (the demo seeder's
         runs are ours, not the user's). ``backend`` names the compute backend the
         child runs the flow on; without it the child runs in its own process
-        unless the flow saved a backend id.
+        unless the flow saved a backend id. On a multi-user server a flow whose
+        file lies outside the server's flow folders is refused before any run
+        record exists.
         """
+        flow_path = str(require_flow_in_storage(Path(flow.flow_path)))
         now = datetime.now(timezone.utc)
         run = FlowRun(
             registration_id=flow.id,
@@ -299,9 +371,7 @@ class FlowRunService:
         )
         run = self.repo.create_run(run)
 
-        pid = self._spawn_flow_subprocess(
-            flow.flow_path, run.id, suppress_telemetry=suppress_telemetry, backend=backend
-        )
+        pid = self._spawn_flow_subprocess(flow_path, run.id, suppress_telemetry=suppress_telemetry, backend=backend)
         if pid is not None:
             run.pid = pid
         else:
@@ -328,7 +398,7 @@ class FlowRunService:
 
     def list_active_runs(self) -> list[ActiveFlowRun]:
         """List all currently running flows (ended_at IS NULL)."""
-        runs = self.repo.list_active_runs()
+        runs = self.repo.list_active_runs(**self.visible_run_filters())
         return [
             ActiveFlowRun(
                 id=r.id,
@@ -341,6 +411,7 @@ class FlowRunService:
                 number_of_nodes=r.number_of_nodes,
                 run_type=r.run_type,
                 schedule_id=r.schedule_id,
+                remote_run_id=r.remote_run_id,
             )
             for r in runs
         ]

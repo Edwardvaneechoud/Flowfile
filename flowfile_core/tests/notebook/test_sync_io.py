@@ -173,8 +173,9 @@ def _record_io(monkeypatch, calls: _Calls) -> list[str]:
     calls.record(monkeypatch, subprocess_operations.BaseFetcher, "__init__", label="worker offload")
     for module in (streaming, subprocess_operations):
         calls.record(monkeypatch, module, "streaming_start")
-    for module in (jwt_module, streaming, subprocess_operations):
+    for module in (jwt_module, subprocess_operations):
         calls.record(monkeypatch, module, "get_internal_token")
+    calls.record(monkeypatch, subprocess_operations, "signing_token")
     calls.record(monkeypatch, FlowDataEngine, "_fetch_null_profile")
     calls.record(monkeypatch, io_flowfile, "_load_flow_storage")
     calls.record(monkeypatch, SingleExecutionFuture, "start")

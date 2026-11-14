@@ -46,6 +46,15 @@
               <span class="material-icons save-as-icon">save_as</span>
               Save As…
             </el-dropdown-item>
+            <el-dropdown-item
+              v-if="hub.connected"
+              divided
+              data-testid="publish-to-hub"
+              @click="openHubPublishDialog"
+            >
+              <span class="material-icons save-as-icon">cloud_upload</span>
+              Publish to hub…
+            </el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -155,6 +164,7 @@
     v-model:visible="modalVisibleForSave"
     :flow-id="nodeStore.flow_id"
     @save-complete="handleSaveDialogComplete"
+    @publish="openHubPublishDialog"
   />
 
   <create-dialog
@@ -164,6 +174,14 @@
   />
 
   <alteryx-import-dialog v-model:visible="modalVisibleForAlteryx" @imported="emit('refreshFlow')" />
+
+  <hub-publish-dialog
+    v-model:visible="modalVisibleForHubPublish"
+    :flow-id="nodeStore.flow_id"
+    :hub-origin="flowSettings?.hub_origin ?? null"
+    @published="handleHubPublished"
+    @open-flow="handleOpenFromDialog"
+  />
 
   <el-dialog
     v-model="modalVisibleForSettings"
@@ -284,12 +302,15 @@ import { ref, onMounted, watch, computed } from "vue";
 import { ElMessage } from "element-plus";
 
 import { saveFlowSilent } from "./utils";
+import { noteAtOpen } from "./catalogNote";
+import { detailMessage } from "../../../composables/saveError";
 import RunButton from "./run.vue";
 import ParameterSettings from "./ParameterSettings.vue";
 import SaveDialog from "../../../features/designer/components/SaveDialog.vue";
 import OpenDialog from "../../../features/designer/components/OpenDialog.vue";
 import CreateDialog from "../../../features/designer/components/CreateDialog.vue";
 import AlteryxImportDialog from "../../../features/designer/components/AlteryxImportDialog.vue";
+import HubPublishDialog from "../../../features/designer/components/HubPublishDialog.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useFlowStore } from "../../../stores/flow-store";
 import { useEditorStore } from "../../../stores/editor-store";
@@ -308,6 +329,7 @@ import {
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 import { executionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
 import { listComputeBackends } from "../../../api/computeBackends.api";
+import { useHubConnectionStore } from "../../../stores/hub-connection-store";
 import BackendHandshakeStatus from "../../settings/BackendHandshakeStatus.vue";
 
 const nodeStore = useNodeStore();
@@ -316,6 +338,7 @@ const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
 const projectStore = useProjectStore();
 const catalogStore = useCatalogStore();
+const hub = useHubConnectionStore();
 const { recordFlow, recordFlowFromSettings, reconcileWithCatalog, removeFlow } = useRecentFlows();
 
 const modalVisibleForOpen = ref(false);
@@ -323,6 +346,18 @@ const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
 const modalVisibleForAlteryx = ref(false);
 const modalVisibleForSettings = ref(false);
+const modalVisibleForHubPublish = ref(false);
+
+const openHubPublishDialog = () => {
+  modalVisibleForHubPublish.value = true;
+};
+
+// A publish saves the flow with its new hub version; refresh what the header caches about it.
+const handleHubPublished = async () => {
+  emit("flowSaved", nodeStore.flow_id);
+  projectStore.onSourceChanged();
+  await loadFlowSettings();
+};
 
 // Save is a no-op when no flow is loaded; hide the button entirely rather
 // than leaving a disabled control in the header.
@@ -427,6 +462,8 @@ const loadFlowSettings = async (): Promise<void> => {
     }
     flowSettings.value = settings;
     if (!flowSettings.value) return;
+    const note = noteAtOpen(flowSettings.value);
+    if (note) ElMessage.info({ message: note, duration: 6000 });
 
     flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
     flowSettings.value.show_edge_labels = flowSettings.value.show_edge_labels ?? false;
@@ -518,7 +555,7 @@ const handleSaveDialogComplete = async (flowId: number) => {
 const recordRelocatedFlowAsRecent = async (previousPath: string | null) => {
   await loadFlowSettings();
   const newPath = flowSettings.value?.path;
-  if (!newPath) return;
+  if (!newPath || flowSettings.value?.working_copy) return;
   // Label from the registration: flow_settings.name is the on-disk stem after a save.
   const registration = catalogStore.allFlows.find((f) => f.flow_path === newPath);
   recordFlow({ path: newPath, name: registration?.name, catalogId: registration?.id });
@@ -552,12 +589,19 @@ const openSaveModal = async () => {
       await saveFlowSilent(nodeStore.flow_id);
       emit("flowSaved", nodeStore.flow_id);
       projectStore.onSourceChanged();
-      ElMessage.success("Flow saved");
+      // A flow kept in a catalog elsewhere says where the save went, in that catalog's words.
+      const saved = await getFlowSettings(nodeStore.flow_id);
+      if (flowSettings.value && saved?.flow_id === flowSettings.value.flow_id) {
+        flowSettings.value.save_note = saved.save_note ?? null;
+      }
+      if (saved) noteAtOpen(saved);
+      if (saved?.save_note) ElMessage.success({ message: saved.save_note, duration: 6000 });
+      else ElMessage.success("Flow saved");
       tutorialStore.notify({ type: "flow-saved", flowId: nodeStore.flow_id });
     } catch (error: any) {
       ElMessage.error({
-        message: error.message || "Failed to save flow",
-        duration: 5000,
+        message: detailMessage(error, "Failed to save flow"),
+        duration: 8000,
       });
     }
     return;

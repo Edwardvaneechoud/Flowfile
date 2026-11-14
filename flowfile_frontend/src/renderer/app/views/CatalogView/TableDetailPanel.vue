@@ -31,6 +31,7 @@
       <div class="header-actions">
         <button
           class="action-btn-lg"
+          data-testid="query-table"
           :disabled="!table.file_exists"
           @click="emit('queryTable', table.qualified_name ?? table.full_table_name ?? table.name)"
         >
@@ -38,7 +39,16 @@
           Query table
         </button>
         <button
-          v-if="table.table_type === 'virtual' && table.sql_query"
+          v-if="isHub"
+          class="action-btn-lg"
+          data-testid="hub-create-viz"
+          @click="emit('createViz', table)"
+        >
+          <i class="fa-solid fa-chart-column"></i>
+          New visualization
+        </button>
+        <button
+          v-if="!isHub && table.table_type === 'virtual' && table.sql_query"
           class="action-btn-lg"
           :title="
             canManage(table)
@@ -52,12 +62,14 @@
         </button>
         <button
           class="action-btn-lg"
+          data-testid="table-favorite"
           :class="{ active: table.is_favorite }"
           @click="emit('toggleTableFavorite', table.id)"
         >
           <i :class="table.is_favorite ? 'fa-solid fa-star' : 'fa-regular fa-star'"></i>
           {{ table.is_favorite ? "Favorited" : "Favorite" }}
         </button>
+        <!-- A remote table is optimized, vacuumed and tracked by this machine, as a local one is. -->
         <TableMaintenance v-if="table.table_type !== 'virtual'" :table="table" />
         <button
           v-if="canShare(table)"
@@ -71,6 +83,7 @@
         <button
           v-if="canManage(table)"
           class="btn btn-danger btn-sm"
+          data-testid="table-delete"
           title="Delete table"
           @click="emit('deleteTable', table.id)"
         >
@@ -166,7 +179,7 @@
           </div>
         </el-popover>
       </div>
-      <div v-if="table.table_type !== 'virtual'" class="meta-card">
+      <div v-if="table.table_type !== 'virtual'" class="meta-card" data-testid="change-tracking">
         <span class="meta-label">Change tracking</span>
         <el-popover
           v-if="table.cdc_enabled"
@@ -207,8 +220,15 @@
         <span class="meta-label">Created</span>
         <span class="meta-value">{{ formatDate(table.created_at) }}</span>
       </div>
+      <div v-if="isHub && hubProducer" class="meta-card" data-testid="hub-table-producer">
+        <span class="meta-label">Produced by</span>
+        <span class="meta-value meta-static" :title="hubProducer">
+          <i class="fa-solid fa-diagram-project"></i>
+          <span class="meta-link-text">{{ hubProducer }}</span>
+        </span>
+      </div>
       <div
-        v-if="
+        v-else-if="
           table.table_type === 'virtual' &&
           table.producer_registration_id &&
           table.producer_registration_name
@@ -267,7 +287,7 @@
         </ul>
       </div>
       <div
-        v-if="table.read_by_flows && table.read_by_flows.length > 0"
+        v-if="!isHub && table.read_by_flows && table.read_by_flows.length > 0"
         class="meta-card meta-card-clickable"
         @click="showReadByModal = true"
       >
@@ -453,6 +473,7 @@
         <button
           v-if="canEditData"
           class="btn btn-sm btn-primary edit-data-btn"
+          data-testid="edit-data"
           title="Edit table data (cells, rows, columns) in place"
           @click="showTableEditor = true"
         >
@@ -494,7 +515,7 @@
           </tbody>
         </table>
       </div>
-      <div v-else-if="table.table_type === 'virtual'" class="empty-state">
+      <div v-else-if="table.table_type === 'virtual' && !isHub" class="empty-state">
         This is a virtual table, no data preview available. Use the SQL editor or a flow to view the
         data.
       </div>
@@ -505,7 +526,7 @@
     </div>
 
     <!-- Visualizations -->
-    <div class="section viz-section">
+    <div v-if="!isHub" class="section viz-section">
       <VisualizationsTab :table-id="table.id" />
     </div>
   </div>
@@ -532,6 +553,7 @@ import TableEditorDialog from "./TableEditorDialog.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { isHubRow } from "./hubRows";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
@@ -562,7 +584,14 @@ const emit = defineEmits([
   "refreshHistory",
   "editsSaved",
   "restoreVersion",
+  "createViz",
 ]);
+
+const isHub = computed(() => isHubRow(props.table));
+// The flow ids are the hub's, so the producer is shown by name and links nowhere.
+const hubProducer = computed(
+  () => props.table.producer_registration_name ?? props.table.source_registration_name ?? null,
+);
 
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
 

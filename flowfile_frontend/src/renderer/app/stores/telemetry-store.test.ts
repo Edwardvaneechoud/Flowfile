@@ -14,7 +14,7 @@ vi.mock("../api/telemetry.api", () => ({
 
 // Mocked because the real auth service reaches DOM globals through axios.config at import time.
 vi.mock("../services/auth.service", () => ({
-  default: { logout: vi.fn() },
+  default: { logout: vi.fn(), signOut: vi.fn(async () => undefined) },
 }));
 
 import { useAuthStore } from "./auth-store";
@@ -138,7 +138,7 @@ describe("telemetry-store", () => {
     getStatusMock.mockResolvedValue(status({ canManage: true }));
     await store.loadStatus();
 
-    useAuthStore().logout();
+    await useAuthStore().logout();
 
     expect(store.status).toBeNull();
     expect(store.loaded).toBe(false);

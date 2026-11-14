@@ -29,7 +29,7 @@
       </div>
       <div class="header-actions">
         <button
-          v-if="flow.file_exists && !isFlowRunning"
+          v-if="runnable && !isFlowRunning"
           class="btn btn-success btn-sm"
           @click="$emit('runFlow', flow.id)"
         >
@@ -45,7 +45,7 @@
           Cancel Run
         </button>
         <button
-          v-if="flow.file_exists"
+          v-if="hasFile"
           class="btn btn-primary btn-sm"
           @click="$emit('openFlow', flow.flow_path)"
         >
@@ -53,7 +53,7 @@
           Open in Designer
         </button>
         <button
-          v-if="flow.file_exists"
+          v-if="hasFile"
           class="btn btn-secondary btn-sm"
           title="Open in the designer with the notebook, where edits sync back to the canvas"
           data-testid="flow-modify-in-notebook"
@@ -62,12 +62,7 @@
           <i class="fa-solid fa-book"></i>
           Modify in notebook
         </button>
-        <el-dropdown
-          v-if="flow.file_exists"
-          trigger="click"
-          placement="bottom-start"
-          @command="copyAs"
-        >
+        <el-dropdown v-if="hasFile" trigger="click" placement="bottom-start" @command="copyAs">
           <button
             class="btn btn-secondary btn-sm"
             :disabled="copying"
@@ -129,7 +124,7 @@
     />
 
     <!-- File missing banner -->
-    <div v-if="!flow.file_exists" class="missing-banner">
+    <div v-if="!remote && !flow.file_exists" class="missing-banner">
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div>
         <strong>Flow file not found</strong>
@@ -149,6 +144,8 @@
     </div>
 
     <!-- Metadata Grid -->
+    <slot name="remote" />
+
     <div class="meta-grid">
       <div class="meta-card">
         <span class="meta-label">Total Runs</span>
@@ -194,7 +191,7 @@
       persist-key="flow.schedules"
       :count="catalogStore.flowSchedules.length"
     >
-      <template v-if="flow.file_exists" #actions>
+      <template v-if="runnable" #actions>
         <el-button size="small" type="primary" @click="$emit('addSchedule', flow.id)">
           <i class="fa-solid fa-plus" /> Add
         </el-button>
@@ -246,7 +243,7 @@
     </CollapsibleSection>
 
     <!-- Expose as API -->
-    <ApiEndpointPanel :flow="flow" />
+    <ApiEndpointPanel v-if="!remote" :flow="flow" />
 
     <!-- Data Lineage -->
     <CollapsibleSection
@@ -372,6 +369,7 @@ import ApiEndpointPanel from "./ApiEndpointPanel.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { isHubRow } from "./hubRows";
 
 const catalogStore = useCatalogStore();
 const showShareDialog = ref(false);
@@ -404,6 +402,11 @@ const emit = defineEmits([
 ]);
 
 const runHistorySection = ref<HTMLElement | null>(null);
+
+// A remote catalog's flow has this page too; what needs the flow's file here is left out.
+const remote = computed(() => isHubRow(props.flow));
+const hasFile = computed(() => !remote.value && props.flow.file_exists);
+const runnable = computed(() => remote.value || hasFile.value);
 
 const COPY_OPTIONS: { format: FlowCodeFormat; label: string }[] = [
   { format: "yaml", label: "Flow file (YAML)" },
@@ -501,8 +504,12 @@ function isScheduleRunning(schedule: FlowSchedule): boolean {
 
 async function handleCancelScheduleRun(schedule: FlowSchedule) {
   const activeRuns = catalogStore.activeRuns.filter((r) => r.schedule_id === schedule.id);
-  for (const run of activeRuns) {
-    await catalogStore.cancelRun(run.id);
+  try {
+    for (const run of activeRuns) {
+      await catalogStore.cancelRun(run.id);
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to cancel run");
   }
   await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(props.flow.id)]);
 }

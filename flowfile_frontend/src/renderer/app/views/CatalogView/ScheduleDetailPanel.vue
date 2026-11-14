@@ -56,7 +56,9 @@
           :model-value="schedule.enabled"
           size="default"
           active-text="Enabled"
-          inactive-text="Disabled"
+          :inactive-text="
+            schedule.disabled_reason ? `Disabled: ${schedule.disabled_reason}` : 'Disabled'
+          "
           @change="(val: boolean) => $emit('toggleSchedule', schedule.id, val)"
         />
         <button class="btn btn-danger btn-sm" @click="$emit('deleteSchedule', schedule.id)">
@@ -90,6 +92,14 @@
       <div class="meta-card">
         <span class="meta-label">Created</span>
         <span class="meta-value">{{ formatDate(schedule.created_at) }}</span>
+      </div>
+      <div class="meta-card">
+        <span class="meta-label">Runs on</span>
+        <ScheduleBackendSelect
+          :model-value="schedule.backend ?? ''"
+          size="small"
+          @update:model-value="saveBackend"
+        />
       </div>
       <div
         v-if="schedule.schedule_type === 'interval' && schedule.interval_seconds"
@@ -213,6 +223,7 @@ import {
 import RunHistoryTable from "./RunHistoryTable.vue";
 import CreateScheduleModal from "./CreateScheduleModal.vue";
 import NotificationRules from "./components/NotificationRules.vue";
+import ScheduleBackendSelect from "./components/ScheduleBackendSelect.vue";
 
 const router = useRouter();
 const catalogStore = useCatalogStore();
@@ -349,6 +360,20 @@ async function saveDescription() {
     } catch (e: any) {
       ElMessage.error(e?.response?.data?.detail ?? "Failed to update description");
     }
+  }
+}
+
+async function saveBackend(value: string) {
+  if (value === (props.schedule.backend ?? "")) return;
+  try {
+    // An empty string clears the backend; the update keeps a field it is not sent.
+    await CatalogApi.updateSchedule(props.schedule.id, { backend: value });
+    await Promise.all([
+      catalogStore.loadScheduleDetail(props.schedule.id),
+      catalogStore.loadSchedules(),
+    ]);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to change where the schedule runs");
   }
 }
 

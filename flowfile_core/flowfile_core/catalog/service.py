@@ -62,6 +62,7 @@ from flowfile_core.catalog.services.tables import (
 from flowfile_core.catalog.services.virtual_tables import _UNSET as _VERSIONS_UNSET
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
+from flowfile_core.catalog.table_sources import remote_of, table_row
 
 # Re-exported under the underscore names external callers and tests still use.
 from flowfile_core.catalog.text_utils import hash_source_versions as _hash_source_versions  # noqa: F401
@@ -108,6 +109,7 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
     CatalogTablePreview,
     CatalogTableRestoreResponse,
+    CdcCursorCommitRequest,
     CdcCursorOut,
     CdcStatusOut,
     ColumnStatsResponse,
@@ -137,7 +139,7 @@ from flowfile_core.schemas.catalog_schema import (
     VizSourceDescriptor,
 )
 from flowfile_core.schemas.sharing_schema import AccessInfo
-from shared.storage_config import storage
+from shared.storage_config import registered_flow_path, storage
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
@@ -170,7 +172,7 @@ class CatalogService:
         self.access = access
         self._namespaces = NamespaceService(repo)
         self._flows = FlowRegistrationService(repo, self._namespaces)
-        self._runs = FlowRunService(repo)
+        self._runs = FlowRunService(repo, access=access)
         self._engagement = FlowEngagementService(repo, self._flows)
         self._schedules = ScheduleService(repo, self._runs, self._namespaces)
         self._tables = TableService(repo, self._namespaces, self._flows, self._schedules, access=access)
@@ -183,7 +185,7 @@ class CatalogService:
 
         self._previews = TablePreviewService(repo, self._tables, self._virtual_tables)
         self._visualizations = VisualizationService(
-            repo, self._namespaces, self._tables, self._virtual_tables, self._sql
+            repo, self._namespaces, self._tables, self._virtual_tables, self._sql, access=access
         )
         # Bound to the facade, so tests that patch its methods reach these sub-services.
         self._visualizations.bind_facade(self)
@@ -205,11 +207,13 @@ class CatalogService:
         return (self.access.user_id if self.access is not None else None) or -1
 
     def _require_use(self, resource_type: str, resource_id: int) -> None:
-        if self._restricted:
+        """A table of a remote catalog (``table_sources.remote_of``) is that catalog's to refuse, not this one's."""
+        if self._restricted and not (resource_type == "catalog_table" and remote_of(resource_id) is not None):
             self.access.require_use(resource_type, resource_id)
 
     def _require_manage(self, resource_type: str, resource_id: int) -> None:
-        if self._restricted:
+        """As ``_require_use``: a remote catalog refuses the write of its own table."""
+        if self._restricted and not (resource_type == "catalog_table" and remote_of(resource_id) is not None):
             self.access.require_manage(resource_type, resource_id)
 
     def _require_namespace_writable(self, namespace_id: int | None) -> None:
@@ -249,8 +253,8 @@ class CatalogService:
         raise NotAuthorizedError(self.access.user_id or -1, "modify this schedule")
 
     def _require_manage_cdc_cursor(self, table_id: int, consumer_key: str) -> None:
-        """Editing a change cursor needs cursor ownership, manage on its table, or admin."""
-        if not self._restricted:
+        """Editing a change cursor needs cursor ownership, manage on its table, or admin; a remote catalog's is its."""
+        if not self._restricted or remote_of(table_id) is not None:
             return
         self._require_use("catalog_table", table_id)
         cursor = self.repo.get_cdc_cursor(table_id, consumer_key)
@@ -259,6 +263,23 @@ class CatalogService:
         if cursor.owner_id == self.access.user_id:
             return
         self._require_manage("catalog_table", table_id)
+
+    def _require_commit_cdc_cursor(self, table_id: int, consumer_key: str, cursor) -> None:
+        """Who may advance ``cursor`` (``None`` for one this commit creates), beyond reading its table.
+
+        A named cursor is shared by every reader of the table. A flow's cursor (``flow:<flow_uuid>:node:<id>``) is
+        advanced by whoever may use that flow, since a flow has one cursor whoever runs it; that of a flow this
+        catalog does not hold by its owner. Whoever manages the table advances any, as they may reset it.
+        """
+        if not self._restricted or remote_of(table_id) is not None or not consumer_key.startswith("flow:"):
+            return
+        flow = self.repo.get_flow_by_uuid(consumer_key.split(":")[1])
+        if flow is not None:
+            allowed = self.access.can_use("flow", flow.id)
+        else:
+            allowed = cursor is None or cursor.owner_id in (None, self.access.user_id)
+        if not allowed and not self.access.can_manage("catalog_table", table_id):
+            raise NotAuthorizedError(self.access.user_id or -1, "advance this flow's change cursor")
 
     def _require_use_visualization(self, viz_id: int) -> None:
         """Viz read: creator, a use/manage grant, or read on its parent table."""
@@ -594,10 +615,11 @@ class CatalogService:
         owner_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
+        flow_uuid: str | None = None,
     ) -> FlowRegistrationOut:
-        """Register a new flow in the catalog."""
+        """Register a new flow in the catalog, under ``flow_uuid`` when the caller supplies one."""
         self._require_namespace_writable(namespace_id)
-        return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description)
+        return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description, flow_uuid=flow_uuid)
 
     def update_flow(
         self,
@@ -697,23 +719,14 @@ class CatalogService:
         offset: int = 0,
         search: str | None = None,
     ) -> PaginatedFlowRuns:
-        """List run summaries (without snapshots) with total count for pagination."""
-        if self._restricted and registration_id is not None:
-            self._require_use("flow", registration_id)
-        elif self._restricted and schedule_id is not None:
-            schedule = self._schedules.get_schedule(schedule_id)
-            self._require_use("flow", schedule.registration_id)
-        result = self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset, search)
-        if self._restricted and registration_id is None and schedule_id is None:
-            # Best-effort page filter, so totals may drift; by-id run reads are guarded separately.
-            allowed_flows = self.access.accessible_ids("flow")
-            user_id = self.access.user_id
-            result.items = [r for r in result.items if r.user_id == user_id or (r.registration_id in allowed_flows)]
-        return result
+        """List run summaries (without snapshots) with total count for pagination.
+
+        Restricted callers get only their visible runs; the filter is in the query, so totals match.
+        """
+        return self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset, search)
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
-        """Get a single run including the YAML snapshot."""
-        self._require_use_run(run_id)
+        """Get a single run including the YAML snapshot; a run the caller may not see is not found."""
         return self._runs.get_run_detail(run_id)
 
     def get_run(self, run_id: int) -> FlowRun:
@@ -810,9 +823,10 @@ class CatalogService:
                 ROOT_CATALOG.name,
             )
             return None
-        existing = self.repo.get_flow_by_path(flow_path)
-        if existing:
+        # The lookup takes the path as given, so a row from before the rule is found under its own spelling.
+        if self.repo.get_flow_by_path(flow_path):
             return None
+        flow_path = registered_flow_path(flow_path)
         reg = FlowRegistration(
             name=name or Path(flow_path).stem,
             flow_path=flow_path,
@@ -981,6 +995,8 @@ class CatalogService:
         size_bytes: int | None = None,
         partition_columns: list[str] | None = None,
         scd2_config: dict | None | object = _KEEP_SCD2,
+        cdc_enabled_version: int | None = None,
+        data_changed: bool = True,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table in-place, preserving its ID."""
         self._require_manage("catalog_table", table_id)
@@ -998,6 +1014,8 @@ class CatalogService:
             size_bytes,
             partition_columns,
             scd2_config,
+            cdc_enabled_version=cdc_enabled_version,
+            data_changed=data_changed,
         )
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:
@@ -1221,15 +1239,19 @@ class CatalogService:
         self._require_use("catalog_table", table_id)
         return self._previews.resolve_virtual_flow_table_preview(table_id, limit, user_id)
 
-    def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
+    def get_table_history(
+        self, table_id: int, limit: int | None = None, user_id: int | None = None
+    ) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table."""
         self._require_use("catalog_table", table_id)
-        return self._previews.get_table_history(table_id, limit)
+        return self._previews.get_table_history(table_id, limit, user_id)
 
-    def optimize_table(self, table_id: int, z_order_columns: list[str] | None = None) -> OptimizeTableResponse:
+    def optimize_table(
+        self, table_id: int, z_order_columns: list[str] | None = None, user_id: int | None = None
+    ) -> OptimizeTableResponse:
         """Compact (and optionally Z-order) a Delta catalog table."""
         self._require_manage("catalog_table", table_id)
-        return self._tables.optimize_table(table_id, z_order_columns)
+        return self._tables.optimize_table(table_id, z_order_columns, user_id=user_id)
 
     def vacuum_table(
         self,
@@ -1237,25 +1259,49 @@ class CatalogService:
         retention_hours: int = 168,
         dry_run: bool = True,
         force: bool = False,
+        user_id: int | None = None,
     ) -> VacuumTableResponse:
         """Vacuum tombstoned files from a Delta catalog table."""
         self._require_manage("catalog_table", table_id)
-        return self._tables.vacuum_table(table_id, retention_hours=retention_hours, dry_run=dry_run, force=force)
+        return self._tables.vacuum_table(
+            table_id, retention_hours=retention_hours, dry_run=dry_run, force=force, user_id=user_id
+        )
 
-    def get_table_cdc_status(self, table_id: int) -> CdcStatusOut:
+    def get_table_cdc_status(self, table_id: int, user_id: int | None = None) -> CdcStatusOut:
         """Change-tracking state and cursor positions for a catalog table."""
         self._require_use("catalog_table", table_id)
-        return self._tables.get_cdc_status(table_id)
+        return self._tables.get_cdc_status(table_id, user_id=user_id)
 
-    def enable_table_cdc(self, table_id: int) -> CdcStatusOut:
+    def enable_table_cdc(self, table_id: int, user_id: int | None = None) -> CdcStatusOut:
         """Turn change tracking on for a catalog table (idempotent)."""
         self._require_manage("catalog_table", table_id)
-        return self._tables.enable_cdc(table_id)
+        return self._tables.enable_cdc(table_id, user_id=user_id)
 
-    def reset_table_cdc_cursor(self, table_id: int, consumer_key: str, to: str | int = "now") -> CdcCursorOut:
+    def reset_table_cdc_cursor(
+        self, table_id: int, consumer_key: str, to: str | int = "now", user_id: int | None = None
+    ) -> CdcCursorOut:
         """Move one consumer's cursor to head, to the start of the tracked history, or a version."""
         self._require_manage_cdc_cursor(table_id, consumer_key)
-        return self._tables.reset_cdc_cursor(table_id, consumer_key, to)
+        return self._tables.reset_cdc_cursor(table_id, consumer_key, to, user_id=user_id)
+
+    def commit_table_cdc_cursor(
+        self, table_id: int, commit: CdcCursorCommitRequest, owner_id: int | None
+    ) -> CdcCursorOut:
+        """Record a consumer's read of the table's changes up to ``commit.last_version``, as a run's reader does.
+
+        ``owner_id`` owns a cursor this commit creates, or one nobody owns yet; a cursor that has an owner keeps it,
+        so a commit never hands the caller the owner's right to reset or delete it. A flow's cursor takes more than
+        reading the table (``_require_commit_cdc_cursor``).
+        """
+        self.get_table(table_id)
+        fields = commit.model_dump(exclude={"consumer_key", "last_version"})
+        existing = self.repo.get_cdc_cursor(table_id, commit.consumer_key)
+        self._require_commit_cdc_cursor(table_id, commit.consumer_key, existing)
+        owner = owner_id if existing is None or existing.owner_id is None else None
+        cursor = self.repo.upsert_cdc_cursor(
+            table_id, commit.consumer_key, commit.last_version, owner_id=owner, **fields
+        )
+        return CdcCursorOut.model_validate(cursor)
 
     def delete_table_cdc_cursor(self, table_id: int, consumer_key: str) -> None:
         """Forget one consumer's cursor."""
@@ -1266,8 +1312,10 @@ class CatalogService:
         """Re-read a table as a fully enriched, access-stamped DTO after a write.
 
         ``overwrite_table_data`` knows neither the caller nor the sharing filter, so its
-        DTO carries ``is_favorite=False`` and no ``access``.
+        DTO carries ``is_favorite=False`` and no ``access``. A remote catalog's row is read again from it.
         """
+        if remote_of(table_id) is not None:
+            return table_row(self.repo, table_id, user_id)
         return self._stamp_access([self._tables.get_table(table_id, user_id)], "catalog_table")[0]
 
     def apply_table_edits(
@@ -1288,6 +1336,7 @@ class CatalogService:
             new_columns=[c.model_dump() for c in edits.new_columns],
             delete_keys=edits.delete_keys,
             edited_by=edited_by,
+            user_id=user_id,
         )
         return CatalogTableEditsResponse(
             table=self._reloaded_table_out(table_id, user_id),
@@ -1306,7 +1355,7 @@ class CatalogService:
         """Mint a sequential row-id column so a keyless table becomes editable."""
         self._require_manage("catalog_table", table_id)
         _, result = self._tables.add_table_key_column(
-            table_id, column_name=column_name, expected_version=expected_version
+            table_id, column_name=column_name, expected_version=expected_version, user_id=user_id
         )
         return CatalogTableKeyColumnResponse(
             table=self._reloaded_table_out(table_id, user_id),
@@ -1364,6 +1413,7 @@ class CatalogService:
         enabled: bool = True,
         name: str | None = None,
         description: str | None = None,
+        backend: str | None = None,
     ) -> FlowScheduleOut:
         """Create a new schedule (interval, cron, table_trigger or table_set_trigger) for a flow."""
         # Use suffices: the schedule runs as its creator, so it resolves secrets and connections as them.
@@ -1380,6 +1430,7 @@ class CatalogService:
             enabled=enabled,
             name=name,
             description=description,
+            backend=backend,
         )
 
     def update_schedule(
@@ -1391,8 +1442,9 @@ class CatalogService:
         cron_timezone: str | None = None,
         name: str | None = None,
         description: str | None = None,
+        backend: str | None = None,
     ) -> FlowScheduleOut:
-        """Update a schedule's enabled flag, interval, cron expression/timezone, name or description."""
+        """Update a schedule's enabled flag, interval, cron expression/timezone, name, description or backend."""
         self._require_manage_schedule(schedule_id)
         return self._schedules.update_schedule(
             schedule_id=schedule_id,
@@ -1402,6 +1454,7 @@ class CatalogService:
             cron_timezone=cron_timezone,
             name=name,
             description=description,
+            backend=backend,
         )
 
     def delete_schedule(self, schedule_id: int) -> None:
@@ -1459,13 +1512,8 @@ class CatalogService:
     # Active runs + cancel
 
     def list_active_runs(self) -> list[ActiveFlowRun]:
-        """List all currently running flows (``ended_at IS NULL``)."""
-        runs = self._runs.list_active_runs()
-        if self._restricted:
-            allowed = self.access.accessible_ids("flow")
-            user_id = self.access.user_id
-            runs = [r for r in runs if r.user_id == user_id or r.registration_id in allowed]
-        return runs
+        """List all currently running flows (``ended_at IS NULL``) the caller may see."""
+        return self._runs.list_active_runs()
 
     def cancel_run(self, run_id: int) -> None:
         """Cancel a run that has not ended: mark it cancelled and terminate its subprocess."""
@@ -1488,12 +1536,6 @@ class CatalogService:
     def resolve_all_queryable_tables(self) -> tuple[dict[str, str], dict[str, int]]:
         """Return Delta + virtual name maps, keyed by qualified name and by bare name (when unique)."""
         return self._virtual_tables.resolve_all_queryable_tables()
-
-    def resolve_cloud_only_table_aliases(self, exclude: set[str] | frozenset = frozenset()) -> dict[str, str]:
-        """Map SQL names of object-storage-backed physical tables (not queryable in the SQL editor)
-        to their fully-qualified display name. Virtual tables are excluded — they materialize
-        through their flow (with the flow's credentials) and do resolve."""
-        return self._virtual_tables.resolve_cloud_only_table_aliases(exclude=exclude)
 
     def execute_sql_query(
         self, query: str, max_rows: int = DEFAULT_SQL_MAX_ROWS, user_id: int | None = None

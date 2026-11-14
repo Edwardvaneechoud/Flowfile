@@ -145,6 +145,7 @@ import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { useWritableNamespaces } from "../../../../../composables/useWritableNamespaces";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { withoutHubRows } from "../../../../../views/CatalogView/hubRows";
 import DynamicParams from "./DynamicParams.vue";
 
 const nodeStore = useNodeStore();
@@ -258,7 +259,7 @@ const loadNodeData = async (nodeId: number) => {
     loadingNamespaces.value = true;
     try {
       const resp = await axios.get<CatalogNamespaceTree[]>("/catalog/namespaces/tree");
-      namespaceTree.value = resp.data;
+      namespaceTree.value = withoutHubRows(resp.data);
     } catch (e) {
       console.error("Failed to load /catalog/namespaces/tree", e);
     } finally {

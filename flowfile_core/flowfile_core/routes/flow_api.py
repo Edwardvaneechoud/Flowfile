@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.auth.api_key import generate_api_key, verify_api_key
 from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.catalog.services.flows import flow_file_exists
 from flowfile_core.configs import logger
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
@@ -48,6 +49,7 @@ from flowfile_core.schemas.flow_api_schema import (
     FlowParamInfo,
     PublishableFlow,
 )
+from shared.storage_config import require_flow_in_storage
 
 _API_RUN_TIMEOUT = float(os.environ.get("FLOWFILE_API_RUN_TIMEOUT_SECONDS", "120"))
 
@@ -134,12 +136,20 @@ def _get_owned_endpoint(db: Session, endpoint_id: int, user_id: int) -> db_model
     return ep
 
 
-def _resolve_api_node_id(flow_path: str | None, user_id: int) -> int:
+def _registered_flow_file(registration: db_models.FlowRegistration) -> Path:
+    """The registration's file to open or run; on a multi-user server only inside the flow folders (422)."""
+    try:
+        return require_flow_in_storage(Path(registration.flow_path))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+def _resolve_api_node_id(flow_path: Path | None, user_id: int) -> int:
     """Open the flow and return the id of its single ``api_response`` node."""
     if not flow_path:
         raise HTTPException(status_code=400, detail="Flow has no saved file to publish")
     try:
-        flow = open_flow(Path(flow_path), user_id=user_id)
+        flow = open_flow(flow_path, user_id=user_id)
     except Exception as exc:  # noqa: BLE001 - surface load failure to the user
         raise HTTPException(status_code=400, detail=f"Could not open flow: {exc}") from exc
     api_nodes = [n for n in flow.nodes if n.node_type == "api_response"]
@@ -167,7 +177,11 @@ async def run_published_flow(
 
     specs = _parse_param_schema(endpoint.param_schema_json)
     query = dict(request.query_params)
-    flow_path = registration.flow_path
+    try:
+        flow_path = str(require_flow_in_storage(Path(registration.flow_path)))
+    except ValueError as exc:
+        logger.error("Published flow '%s' cannot run: %s", slug, exc)
+        raise HTTPException(status_code=500, detail="Published flow is no longer available") from None
     owner_id = endpoint.owner_id
 
     # No await between this check and the acquire, so the acquire never blocks.
@@ -222,7 +236,7 @@ def publish_endpoint(
         raise HTTPException(status_code=409, detail="Slug already in use")
 
     # 400 unless one api_response node; its id is not stored, as the runner re-scans the flow per request.
-    _resolve_api_node_id(registration.flow_path, current_user.id)
+    _resolve_api_node_id(_registered_flow_file(registration) if registration.flow_path else None, current_user.id)
     ep = db_models.FlowApiEndpoint(
         registration_id=body.registration_id,
         owner_id=current_user.id,
@@ -290,7 +304,7 @@ def list_publishable_flows(
         PublishableFlow(
             registration_id=r.id,
             name=r.name,
-            file_exists=bool(r.flow_path) and Path(r.flow_path).exists(),
+            file_exists=flow_file_exists(r),
         )
         for r in regs
     ]
@@ -312,7 +326,7 @@ def get_flow_parameters(
     if not registration.flow_path:
         return []
     try:
-        flow = open_flow(Path(registration.flow_path), user_id=current_user.id)
+        flow = open_flow(require_flow_in_storage(Path(registration.flow_path)), user_id=current_user.id)
     except Exception:  # noqa: BLE001 - convenience lookup, degrade gracefully
         return []
     return [
@@ -333,7 +347,7 @@ def get_endpoint(
     parameters = _parse_param_schema(ep.param_schema_json)
     if registration and registration.flow_path:
         try:
-            flow = open_flow(Path(registration.flow_path), user_id=current_user.id)
+            flow = open_flow(require_flow_in_storage(Path(registration.flow_path)), user_id=current_user.id)
             parameters = _effective_specs(flow, parameters)
         except Exception:  # noqa: BLE001 - degrade to stored specs on load failure
             pass
@@ -392,7 +406,7 @@ async def test_endpoint(
         raise HTTPException(status_code=404, detail="Flow not found")
     specs = _parse_param_schema(ep.param_schema_json)
     params = dict(body.params) if body else {}
-    flow_path = registration.flow_path
+    flow_path = str(_registered_flow_file(registration))
     owner_id = ep.owner_id
 
     def _run():

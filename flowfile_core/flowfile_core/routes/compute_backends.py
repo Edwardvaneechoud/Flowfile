@@ -8,8 +8,11 @@ administrator gets the URL and the whole verdict; anyone else gets the verdict w
 A row is one worker: its id ``worker:<name>``, its base URL, its bearer token (secret-manager ciphertext, never
 answered), an optional CA certificate PEM for a worker whose TLS certificate is not public, and ``shares_core_disk``
 (the worker sees core's files, so core offers it ``file``). ``local`` and ``worker`` are built in and never rows.
-Core manages no worker itself; the Backends page or a deployment's control plane fills the table. The registry makes
-a ``WorkerBackend`` from a row on its id's first lookup.
+Core manages no worker itself; the Backends page or a deployment's control plane fills the table, and so does a
+remote this Flowfile is signed in to, which the listing asks to bring its rows up to date first
+(``registry.remote_servers.sync``): such a row carries ``source: "remote"``, holds no token of its own, is checked
+once after the listing that wrote it, and is removed with the remote's connection rather than here (409). The
+registry makes a ``WorkerBackend`` from a row on its id's first lookup.
 
 The add route checks the token is a header value itself (``worker.is_header_value``), because a model validator's
 422 would echo the input. A CA certificate ``ssl`` cannot load as PEM, or one given with an ``http://`` URL, is a
@@ -22,8 +25,9 @@ that no longer decrypts): ``ok`` false with the error, not a 503.
 from __future__ import annotations
 
 import ssl
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, SecretStr, field_validator
 from sqlalchemy.orm import Session
 
@@ -61,12 +65,14 @@ class ComputeBackendInput(BaseModel):
 
 class ComputeBackendOut(BaseModel):
     """One configured worker as the routes answer it, never its token: its URL is ``None`` to a non-administrator,
-    and its verdict is the last handshake verdict in this process (``None`` until it was checked)."""
+    its verdict is the last handshake verdict in this process (``None`` until it was checked), and its source says
+    who filled the row: ``local`` for one added here, ``remote`` for one a remote filled, which is not removed here."""
 
     id: str
     url: str | None
     shares_core_disk: bool = False
     verdict: handshake.Verdict | None = None
+    source: Literal["local", "remote"] = "local"
 
 
 _REFUSAL_REASONS = {"ComputeUnavailable": "unreachable", "VersionMismatch": "version mismatch"}
@@ -106,13 +112,9 @@ def _configured(db: Session, backend_id: str) -> ConfiguredBackend:
     return row
 
 
-@router.get("", response_model=list[ComputeBackendOut])
-def list_compute_backends(
-    current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)
-) -> list[ComputeBackendOut]:
-    """The configured workers, ordered by id, each with its last verdict; the URLs, and the verdicts whole, to an
+def listed_backends(rows: list[ConfiguredBackend], current_user: User) -> list[ComputeBackendOut]:
+    """*rows* as ``GET /compute_backends`` answers them to *current_user*: the URLs, and the verdicts whole, to an
     administrator only (``_without_addresses``)."""
-    rows = db.query(ConfiguredBackend).order_by(ConfiguredBackend.id).all()
     return [
         ComputeBackendOut(
             id=row.id,
@@ -123,9 +125,37 @@ def list_compute_backends(
                 if current_user.is_admin
                 else _without_addresses(handshake.last_verdict(row.id))
             ),
+            source="remote" if row.remote_id is not None else "local",
         )
         for row in rows
     ]
+
+
+def check_unchecked(backend_ids: list[str]) -> None:
+    """Handshake each of *backend_ids* that has no verdict yet, so the next listing carries it."""
+    for backend_id in backend_ids:
+        if handshake.last_verdict(backend_id) is not None:
+            continue
+        try:
+            handshake.verdict_for(registry.backend(backend_id))
+        except (LookupError, ComputeError):
+            continue
+
+
+@router.get("", response_model=list[ComputeBackendOut])
+def list_compute_backends(
+    background: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> list[ComputeBackendOut]:
+    """The configured workers, ordered by id, each with its last verdict and its source (``listed_backends``).
+
+    A remote the reader is signed in to brings its rows up to date first; one that cannot be read keeps them as they
+    are. The rows it wrote are checked after the answer.
+    """
+    background.add_task(check_unchecked, registry.remote_servers.sync(current_user.id))
+    rows = db.query(ConfiguredBackend).order_by(ConfiguredBackend.id).all()
+    return listed_backends(rows, current_user)
 
 
 @router.post("", response_model=ComputeBackendOut, status_code=status.HTTP_201_CREATED)
@@ -170,8 +200,12 @@ def add_compute_backend(
 @router.delete("/{backend_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_admin_user)])
 def remove_compute_backend(backend_id: str, db: Session = Depends(get_db)) -> Response:
     """Remove a configured worker, forget the registry's instance of it and the verdicts of the backends on its URL;
-    404 when no row has the id."""
+    404 when no row has the id, 409 for a row a remote fills (disconnecting from it removes the row)."""
     row = _configured(db, backend_id)
+    if row.remote_id is not None:
+        raise HTTPException(
+            status_code=409, detail=f"Compute backend {backend_id!r} is managed by the remote that filled it"
+        )
     url = row.url
     db.delete(row)
     db.commit()

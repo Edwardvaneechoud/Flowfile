@@ -149,8 +149,9 @@ class TestAmbientCredentialsGate:
         monkeypatch.delenv("FLOWFILE_MODE", raising=False)
         assert storage_browser.ambient_credentials_allowed() is True
 
-    def test_refused_in_docker(self, monkeypatch):
-        monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    @pytest.mark.parametrize("mode", ["docker", "server"])
+    def test_refused_on_a_multi_user_server(self, monkeypatch, mode):
+        monkeypatch.setenv("FLOWFILE_MODE", mode)
         assert storage_browser.ambient_credentials_allowed() is False
 
     def test_the_mode_is_read_live_not_cached_at_import(self, monkeypatch):
