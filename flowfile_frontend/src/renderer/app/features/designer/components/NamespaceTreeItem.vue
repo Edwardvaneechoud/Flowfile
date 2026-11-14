@@ -31,7 +31,6 @@
         :selected-id="selectedId"
         :initially-expanded="initiallyExpanded"
         :writable-only="writableOnly"
-        :catalogs-selectable="catalogsSelectable"
         :inherited-access="node.access ?? inheritedAccess"
         @select="$emit('select', $event)"
       />
@@ -55,8 +54,6 @@ const props = defineProps<{
   // Parent namespace's access stamp: the backend stamps direct grants only, so an
   // unstamped schema inherits its catalog's grant level.
   inheritedAccess?: AccessInfo | null;
-  // A top-level row selects on click too; its chevron still folds it.
-  catalogsSelectable?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -75,9 +72,8 @@ const isReadOnly = computed(
     props.node.level === 1 &&
     !isWritableNamespace({ access: props.node.access ?? props.inheritedAccess }),
 );
-const isSelectable = computed(
-  () => (props.node.level === 1 || (props.catalogsSelectable ?? false)) && !isReadOnly.value,
-);
+// Only a schema is picked: a flow or table lives in a schema, and a catalog row opens and closes.
+const isSelectable = computed(() => props.node.level === 1 && !isReadOnly.value);
 
 const toggle = () => {
   expanded.value = !expanded.value;

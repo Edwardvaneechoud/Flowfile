@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 // The table panel for a hub table: no Hub badge, and no "Read by" card, whose flow ids are the hub's and would open a
 // local flow of the same id; a local table keeps both as before.
-import { h, type FunctionalComponent } from "vue";
-import { describe, expect, it, vi } from "vitest";
+import { defineComponent, h, reactive, type FunctionalComponent } from "vue";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { table } from "../../__fixtures__/catalogTree";
-import { element, mountIn } from "../../__fixtures__/mount";
-import type { CatalogTable } from "../../types";
+import { element, mountIn, settle, text } from "../../__fixtures__/mount";
+import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../../types";
 
 vi.mock("../../api/catalog.api", () => ({
   CatalogApi: { getTableCdc: vi.fn(), resetCdcCursor: vi.fn(), deleteCdcCursor: vi.fn() },
@@ -30,6 +30,7 @@ vi.mock("./TableEditorDialog.vue", () => ({ default: { render: () => null } }));
 vi.mock("../../components/sharing/ShareDialog.vue", () => ({ default: { render: () => null } }));
 
 import TableDetailPanel from "./TableDetailPanel.vue";
+import { recallHistoryRows } from "./tableHistoryRows";
 
 const stubs: Record<string, FunctionalComponent> = {
   "el-tooltip": (_, { slots }) => h("span", slots.default?.()),
@@ -73,6 +74,15 @@ const metaLabels = () =>
   Array.from(host.querySelectorAll(".meta-label")).map((el) => el.textContent?.trim());
 
 describe("TableDetailPanel", () => {
+  // The node runtime under happy-dom has no localStorage of its own.
+  beforeEach(() => {
+    const data = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => void data.set(key, value),
+    });
+  });
+
   it("shows a local table its Read by card, and a hub table none, whose flows are the hub's", async () => {
     await mount(localTable);
     expect(metaLabels()).toContain("Read by");
@@ -110,5 +120,151 @@ describe("TableDetailPanel", () => {
     expect(host.querySelector('[data-testid="maintenance"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="edit-data"]')).not.toBeNull();
     expect(host.querySelector(".viz-section")).toBeNull();
+  });
+
+  describe("layout while data is pending", () => {
+    const physical = table({
+      ...localTable,
+      row_count: 3,
+      column_count: 2,
+      schema_columns: [
+        { name: "id", dtype: "Int64" },
+        { name: "amount", dtype: "Float64" },
+      ],
+    } as Partial<CatalogTable>);
+    const preview: CatalogTablePreview = {
+      columns: ["id", "amount"],
+      dtypes: ["Int64", "Float64"],
+      rows: [
+        [1, 10.5],
+        [2, 20.25],
+        [3, 30],
+      ],
+      total_rows: 3,
+    };
+    const history: DeltaTableHistory = {
+      current_version: 2,
+      history: [
+        { version: 2, timestamp: null, operation: "WRITE", parameters: null },
+        { version: 1, timestamp: null, operation: "WRITE", parameters: null },
+      ],
+    } as DeltaTableHistory;
+
+    const mountLive = async (row: CatalogTable, initial: Record<string, unknown>) => {
+      const state = reactive({
+        table: row,
+        preview: null as CatalogTablePreview | null,
+        loadingPreview: false,
+        previewError: null as string | null,
+        tableHistory: null as DeltaTableHistory | null,
+        loadingTableHistory: false,
+        tableHistoryStale: false,
+        selectedVersion: null as number | null,
+        ...initial,
+      });
+      const Host = defineComponent({ setup: () => () => h(TableDetailPanel, { ...state }) });
+      host = await mountIn(Host, { stubs });
+      return state;
+    };
+
+    const sectionTitles = () =>
+      Array.from(host.querySelectorAll(".section h3")).map((el) => el.textContent?.trim());
+    const q = (testId: string) => host.querySelector(`[data-testid="${testId}"]`);
+
+    it("lays out every section from the first paint and fills the slots as responses land", async () => {
+      const state = await mountLive(physical, { loadingPreview: true, loadingTableHistory: true });
+      const pendingTitles = sectionTitles();
+      expect(pendingTitles).toEqual(["Version History", "Schema", "Data Preview"]);
+      expect(q("table-version")?.querySelector(".skeleton-inline")).not.toBeNull();
+      expect(q("history-skeleton")?.querySelectorAll("tbody tr")).toHaveLength(7);
+      const skeleton = q("preview-skeleton");
+      expect(
+        Array.from(skeleton?.querySelectorAll("thead .col-header-name") ?? []).map(text),
+      ).toEqual(["id", "amount"]);
+      expect(skeleton?.querySelectorAll("tbody tr")).toHaveLength(3);
+      expect(text(q("preview-loading"))).toBe("Loading preview…");
+
+      Object.assign(state, { preview, loadingPreview: false });
+      await settle();
+      expect(sectionTitles()).toEqual(pendingTitles);
+      expect(q("preview-skeleton")).toBeNull();
+      expect(q("preview-table")?.querySelectorAll("tbody tr")).toHaveLength(3);
+      expect(q("history-skeleton")).not.toBeNull();
+
+      Object.assign(state, { tableHistory: history, loadingTableHistory: false });
+      await settle();
+      expect(sectionTitles()).toEqual(pendingTitles);
+      expect(q("history-skeleton")).toBeNull();
+      expect(host.querySelectorAll(".version-row")).toHaveLength(2);
+      expect(text(q("table-version")?.querySelector(".meta-value") ?? null)).toBe("2");
+    });
+
+    it("sizes the Version History placeholder to the count the table listed last time", async () => {
+      const state = await mountLive(physical, { loadingTableHistory: true });
+      Object.assign(state, { tableHistory: history, loadingTableHistory: false });
+      await settle();
+      expect(recallHistoryRows(physical.id)).toBe(2);
+      host.remove();
+
+      await mountLive(physical, { loadingTableHistory: true });
+      expect(q("history-skeleton")?.querySelectorAll("tbody tr")).toHaveLength(2);
+    });
+
+    it("keeps the Version History section, as one line, for a table whose history is empty", async () => {
+      const state = await mountLive(physical, { loadingTableHistory: true, preview });
+      Object.assign(state, { loadingTableHistory: false });
+      await settle();
+      expect(sectionTitles()).toEqual(["Version History", "Schema", "Data Preview"]);
+      expect(text(q("history-empty"))).toBe("No version history available for this table.");
+      expect(text(q("table-version")?.querySelector(".meta-value") ?? null)).toBe("--");
+    });
+
+    it("keeps the rows on screen, marked as refreshing, while another version loads", async () => {
+      const state = await mountLive(physical, { preview, tableHistory: history });
+      Object.assign(state, { selectedVersion: 1, loadingPreview: true });
+      await settle();
+      const shown = q("preview-table");
+      expect(shown?.querySelectorAll("tbody tr")).toHaveLength(3);
+      expect(shown?.classList.contains("is-refreshing")).toBe(true);
+      expect(shown?.getAttribute("aria-busy")).toBe("true");
+      expect(q("preview-skeleton")).toBeNull();
+      expect(text(q("preview-loading"))).toBe("Refreshing…");
+      expect(text(host.querySelector(".version-banner"))).toContain("Viewing version 1");
+
+      Object.assign(state, {
+        preview: { ...preview, rows: [[1, 9]], total_rows: 1 },
+        loadingPreview: false,
+      });
+      await settle();
+      expect(q("preview-table")?.classList.contains("is-refreshing")).toBe(false);
+      expect(q("preview-table")?.querySelectorAll("tbody tr")).toHaveLength(1);
+      expect(q("preview-loading")).toBeNull();
+    });
+
+    it("shows the error with Back to latest when an older version cannot be read", async () => {
+      const state = await mountLive(physical, {
+        preview,
+        tableHistory: history,
+        selectedVersion: 1,
+      });
+      Object.assign(state, { preview: null, previewError: "files vacuumed" });
+      await settle();
+      expect(q("preview-table")).toBeNull();
+      expect(text(host.querySelector(".preview-error"))).toContain("files vacuumed");
+      expect(text(host.querySelector(".preview-error"))).toContain("Back to latest");
+    });
+
+    it("gives a virtual table no Version History section and no Version card", async () => {
+      await mountLive(table({ ...localTable, table_type: "virtual" } as Partial<CatalogTable>), {});
+      expect(q("version-history")).toBeNull();
+      expect(metaLabels()).not.toContain("Version");
+    });
+
+    it("keeps the Load preview button for an object-storage table", async () => {
+      await mountLive(table({ ...physical, is_remote_storage: true } as Partial<CatalogTable>), {
+        tableHistory: history,
+      });
+      expect(Array.from(host.querySelectorAll(".empty-state")).map(text)).toContain("Load preview");
+    });
   });
 });

@@ -103,17 +103,24 @@ const error = ref(authService.takeHubSignInError() ?? "");
 // The password form until the server says it signs people in through a hub.
 const signInMethod = ref<SignInMethod>({ method: "password" });
 
+// The page that sent this tab here, an address in this app only, which the sign-in returns to.
+const redirect = route.query.redirect;
+const returnTo =
+  typeof redirect === "string" && redirect.startsWith("/") && !redirect.startsWith("//")
+    ? redirect
+    : undefined;
+
 const startHubSignIn = () => {
-  if (signInMethod.value.method === "hub") authService.startHubSignIn(signInMethod.value.url);
+  if (signInMethod.value.method === "hub")
+    authService.startHubSignIn(signInMethod.value.url, returnTo);
 };
 
-// `#/login?hub_signin=1` is the sign-in start the hub's Continue page sends people to.
+// `#/login?hub_signin=1` is the hub's sign-in start: the hub's page replaces its entry, a password server drops the flag.
 onMounted(async () => {
   signInMethod.value = await authService.getSignInMethod();
-  if (route.query.hub_signin === "1") {
-    await router.replace({ path: route.path, query: {} });
-    startHubSignIn();
-  }
+  if (route.query.hub_signin !== "1") return;
+  if (signInMethod.value.method === "hub") startHubSignIn();
+  else await router.replace({ path: route.path, query: {} });
 });
 
 const handleLogin = async () => {
@@ -140,7 +147,7 @@ const handleLogin = async () => {
   // Navigate only after login succeeds, and outside the try above so a
   // navigation failure can't be misreported as a login error.
   if (success) {
-    router.push({ name: "home" });
+    router.push(returnTo ?? { name: "home" });
   }
 };
 </script>

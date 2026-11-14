@@ -42,6 +42,14 @@
       </template>
     </div>
 
+    <div
+      v-if="listPending && catalogStore.schedulers.length === 0 && !catalogStore.overviewFailed"
+      class="scheduler-status-bar scheduler-pending"
+      aria-busy="true"
+    >
+      <span class="scheduler-status-text">Checking scheduler…</span>
+    </div>
+
     <!-- Lifecycle warning (hidden in Docker mode where the scheduler is always running) -->
     <div v-if="ownShown && !isDockerMode" class="scheduler-warning">
       <i class="fa-solid fa-circle-info"></i>
@@ -73,29 +81,51 @@
       <div class="summary-card">
         <i class="fa-solid fa-calendar-days summary-icon"></i>
         <div class="summary-info">
-          <span class="summary-value">{{ catalogStore.schedules.length }}</span>
+          <span class="summary-value">
+            <span v-if="listPending" class="skeleton-value"></span>
+            <template v-else>{{ catalogStore.schedules.length }}</template>
+          </span>
           <span class="summary-label">Total</span>
         </div>
       </div>
       <div class="summary-card">
         <i class="fa-solid fa-circle-check summary-icon enabled-icon"></i>
         <div class="summary-info">
-          <span class="summary-value">{{ enabledCount }}</span>
+          <span class="summary-value">
+            <span v-if="listPending" class="skeleton-value"></span>
+            <template v-else>{{ enabledCount }}</template>
+          </span>
           <span class="summary-label">Enabled</span>
         </div>
       </div>
       <div class="summary-card">
         <i class="fa-solid fa-spinner summary-icon running-icon"></i>
         <div class="summary-info">
-          <span class="summary-value">{{ runningCount }}</span>
+          <span class="summary-value">
+            <span v-if="listPending" class="skeleton-value"></span>
+            <template v-else>{{ runningCount }}</template>
+          </span>
           <span class="summary-label">Running</span>
         </div>
       </div>
     </div>
 
+    <div v-if="listPending && catalogStore.overviewFailed" class="overview-error" role="alert">
+      <span>Couldn't load schedules: {{ catalogStore.overviewError }}</span>
+      <button class="btn btn-secondary btn-sm" @click="catalogStore.initialize(true)">Retry</button>
+    </div>
+    <div
+      v-else-if="listPending"
+      class="skeleton-list"
+      aria-busy="true"
+      data-testid="schedules-pending"
+    >
+      <div v-for="i in 3" :key="i" class="skeleton-block skeleton-row"></div>
+    </div>
+
     <!-- Empty state -->
     <EmptyState
-      v-if="catalogStore.schedules.length === 0"
+      v-else-if="catalogStore.schedules.length === 0"
       icon="fa-solid fa-calendar-xmark"
       title="No schedules configured"
       description="Create a schedule to automatically run your flows on a timer or when a table updates."
@@ -181,6 +211,11 @@ const displaySchedules = computed(() => {
   );
 });
 
+// Until the overview lands, an empty schedule list means "not loaded yet", not "none".
+const listPending = computed(
+  () => catalogStore.schedules.length === 0 && !catalogStore.overviewLoaded,
+);
+
 const enabledCount = computed(() => catalogStore.schedules.filter((s) => s.enabled).length);
 
 const runningCount = computed(() => enrichedSchedules.value.filter((s) => s.isRunning).length);
@@ -244,6 +279,15 @@ async function onSaveDescription(scheduleId: number, description: string | null)
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
+}
+
+.scheduler-status-bar.scheduler-pending {
+  min-height: 42px;
+}
+
+.scheduler-status-bar.scheduler-pending .scheduler-status-text {
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-normal, 400);
 }
 
 .scheduler-dot {
