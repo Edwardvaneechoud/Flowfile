@@ -306,6 +306,15 @@ In the table detail panel, the **History** section shows:
 !!! info "Delta versioning is only available for physical tables"
     Virtual tables have no physical storage and therefore no version history. If you need historical snapshots, use a physical table.
 
+### Restoring a version
+
+To roll a table back, click **restore** on a row of the version list, or **Restore this version** while you preview an older version. The restore adds a new version that holds the data and schema the table had at the version you picked. The versions after it stay in the list, so you can restore one of them to undo the restore.
+
+- You need **manage** access to the table.
+- A restore counts as a write: [table trigger schedules](schedules.md#table-trigger) watching the table fire, and Catalog Readers read the restored data on their next run.
+- A version whose files a vacuum removed can no longer be restored.
+- On a table with [change tracking](change-tracking.md), you cannot restore a version from before tracking was turned on, because that would turn the change feed off.
+
 ### Change tracking
 
 Version history tells you what the whole table looked like at a past version. **Change tracking** tells you which rows changed between two versions: turn it on for a table and a Catalog Reader can read only the inserts, updates and deletes committed since its last run, keeping a cursor per consumer. It is off by default, enable-only, and only records commits made after it is turned on. See [Change Tracking](change-tracking.md).

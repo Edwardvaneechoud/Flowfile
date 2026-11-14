@@ -384,6 +384,14 @@
                   class="version-view-link"
                   >view</span
                 >
+                <span
+                  v-if="canRestore && entry.version !== tableHistory!.current_version"
+                  class="version-view-link version-restore-link"
+                  :data-testid="`restore-version-${entry.version}`"
+                  title="Restore the table to this version"
+                  @click.stop="confirmRestore(entry.version)"
+                  >restore</span
+                >
               </td>
             </tr>
           </tbody>
@@ -443,9 +451,19 @@
       <div v-if="isViewingHistorical" class="version-banner">
         <i class="fa-solid fa-clock-rotate-left"></i>
         Viewing version {{ selectedVersion }}
-        <button class="version-banner-link" @click="emit('selectVersion', null)">
-          Back to latest
-        </button>
+        <span class="version-banner-actions">
+          <button
+            v-if="canRestore"
+            class="version-banner-link"
+            data-testid="restore-this-version"
+            @click="confirmRestore(selectedVersion!)"
+          >
+            Restore this version
+          </button>
+          <button class="version-banner-link" @click="emit('selectVersion', null)">
+            Back to latest
+          </button>
+        </span>
       </div>
       <div class="section-header">
         <h3>Data Preview</h3>
@@ -565,6 +583,7 @@ const emit = defineEmits([
   "loadPreview",
   "refreshHistory",
   "editsSaved",
+  "restoreVersion",
   "createViz",
 ]);
 
@@ -599,6 +618,25 @@ const canEditData = computed(
     props.table.file_exists &&
     !props.table.scd2,
 );
+
+// Restore: physical Delta tables on disk, manage access required (SCD2 tables included).
+const canRestore = computed(
+  () => canManage(props.table) && props.table.table_type !== "virtual" && props.table.file_exists,
+);
+
+async function confirmRestore(version: number) {
+  try {
+    await ElMessageBox.confirm(
+      `Restore "${props.table.name}" to version ${version}? This adds a new version with the data ` +
+        `as it was at version ${version}. Later versions stay in the history, so this can be undone.`,
+      "Restore version",
+      { confirmButtonText: "Restore", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  emit("restoreVersion", version);
+}
 
 const cdcStatus = ref<TableCdcStatus | null>(null);
 const cdcLoading = ref(false);
@@ -1233,6 +1271,20 @@ function formatCell(value: any): string {
 
 .version-view-link:hover {
   text-decoration: underline;
+}
+
+.version-restore-link {
+  margin-left: var(--spacing-2);
+}
+
+.version-banner-actions {
+  display: flex;
+  gap: var(--spacing-3);
+  margin-left: auto;
+}
+
+.version-banner-actions .version-banner-link {
+  margin-left: 0;
 }
 
 /* ========== Version Banner ========== */

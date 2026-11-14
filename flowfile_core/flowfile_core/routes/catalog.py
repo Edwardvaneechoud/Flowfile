@@ -91,6 +91,8 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
     CatalogTablePreview,
     CatalogTableRefreshRequest,
+    CatalogTableRestoreRequest,
+    CatalogTableRestoreResponse,
     CatalogTableUpdate,
     CdcCursorCommitRequest,
     CdcCursorOut,
@@ -1255,6 +1257,30 @@ def apply_table_edits(
         table_id,
         body,
         edited_by=getattr(current_user, "username", None),
+        user_id=current_user.id,
+    )
+
+
+@router.post("/tables/{table_id}/restore", response_model=CatalogTableRestoreResponse)
+@handle_catalog_exceptions()
+def restore_table_version(
+    table_id: int,
+    body: CatalogTableRestoreRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Restore a Delta catalog table to an earlier version.
+
+    One ``RESTORE`` commit points the table back at that version's files, so the later
+    versions stay in the history and the restore can itself be undone. ``expected_version``
+    guards against concurrent writers (409 stale-write on mismatch); a version whose files a
+    vacuum removed is a 422. Requires manage on the table.
+    """
+    return service.restore_table_version(
+        table_id,
+        body.version,
+        expected_version=body.expected_version,
+        restored_by=getattr(current_user, "username", None),
         user_id=current_user.id,
     )
 

@@ -707,6 +707,18 @@ export const useCatalogStore = defineStore("catalog", {
       await this.loadAllTables();
     },
 
+    /** Restore a table to an earlier version, guarded by the version this window last saw. */
+    async restoreTableVersion(tableId: number, version: number) {
+      const expected =
+        this.selectedTableId === tableId ? (this.tableHistory?.current_version ?? null) : null;
+      const response = await CatalogApi.restoreTableVersion(tableId, {
+        version,
+        expected_version: expected,
+      });
+      await this.handleTableEdited(response.table);
+      return response;
+    },
+
     async optimizeTable(tableId: number, zOrderColumns?: string[] | null) {
       const result = await CatalogApi.optimizeTable(tableId, zOrderColumns);
       if (this.selectedTable && this.selectedTable.id === tableId) {
