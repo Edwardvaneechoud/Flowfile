@@ -1,9 +1,7 @@
-"""ProjectSyncService: invisible DB→files projection + project lifecycle.
+"""ProjectSyncService: the project lifecycle.
 
-Hooks at the tail of the central save/store functions call the ``project_sync``
-singleton. With no active project every call is a cheap no-op; with one active,
-the affected file is re-projected as a side-effect — never blocking the primary
-operation (projection failures are logged and swallowed).
+The folder is written only by ``write_export`` (init, save, the settings toggle, after a restore);
+status is read when asked, by comparing the last version with the database.
 """
 
 from __future__ import annotations
@@ -14,7 +12,6 @@ import shutil
 import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,9 +22,8 @@ from flowfile_core import __version__
 from flowfile_core.configs import settings
 from flowfile_core.database import backup
 from flowfile_core.database.connection import get_database_path, get_db_context
-from flowfile_core.database.models import FlowRegistration
 from flowfile_core.fileExplorer.funcs import _is_contained, validate_path_under_cwd
-from flowfile_core.project import git_ops, kinds, projection, repository
+from flowfile_core.project import git_ops, kinds, repository
 from flowfile_core.project.importer import (
     import_project,
     preflight_import_caps,
@@ -46,7 +42,7 @@ from flowfile_core.project.manifest import (
     write_manifest,
 )
 from flowfile_core.project.models import ActiveProject, NoActiveProjectError, SetupResult
-from shared.storage_config import flow_path_spellings, storage
+from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
@@ -200,36 +196,7 @@ def _unsaved_detail(action: str, changes: list[dict]) -> dict:
 class ProjectSyncService:
     def __init__(self) -> None:
         self._by_owner: dict[int, ActiveProject] | None = None  # None = not loaded yet
-        self._suppressed: set[int] = set()  # owner_ids whose projection is paused (per-owner, not global)
-        self._projection_failed: set[int] = set()  # owner_ids whose last projection hook errored
-        self._cache_lock = threading.RLock()  # guards _by_owner/_suppressed/_projection_failed; separate from repo_lock
-
-    def _mark_projection(self, owner_id: int, failed: bool) -> None:
-        with self._cache_lock:
-            if failed:
-                self._projection_failed.add(owner_id)
-            else:
-                self._projection_failed.discard(owner_id)
-
-    def projection_failed(self, user_id: int | None) -> bool:
-        if user_id is None:
-            return False
-        with self._cache_lock:
-            return user_id in self._projection_failed
-
-    @contextmanager
-    def suppress_projection(self, owner_id: int):
-        """Disable projection hooks for ``owner_id`` for the duration.
-
-        Only the importing owner's hooks no-op; every other user keeps projecting normally.
-        """
-        with self._cache_lock:
-            self._suppressed.add(owner_id)
-        try:
-            yield
-        finally:
-            with self._cache_lock:
-                self._suppressed.discard(owner_id)
+        self._cache_lock = threading.RLock()  # guards _by_owner; separate from repo_lock
 
     # --- active-project cache -------------------------------------------------
 
@@ -253,140 +220,27 @@ class ProjectSyncService:
     def get_active_project(self, user_id: int | None) -> ActiveProject | None:
         if user_id is None:
             return None
-        with self._cache_lock:
-            if user_id in self._suppressed:
-                return None
         return self._load().get(user_id)
 
-    # --- hooks (called after the primary commit; must never raise) ------------
+    def _unapplied_edits(self, proj: ActiveProject) -> list[dict]:
+        """The folder's uncommitted rows of files a kind owns that applying the folder would still change.
 
-    def flow_saved(self, flow_path: str, user_id: int | None) -> None:
-        proj = self.get_active_project(user_id)
-        if proj is None:
-            return
+        Compared per entry, as the plan is, so an edit a reload already applied is none, however the export
+        spells it. The plan is computed only when such rows exist, so a clean folder costs one ``git status``;
+        a folder that cannot be read counts as edited."""
+        rows = [r for r in git_ops.uncommitted_changes(proj.root) if kinds.kind_for_path(r["path"]) is not None]
+        if not rows:
+            return []
         try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    reg = (
-                        db.query(FlowRegistration)
-                        .filter(FlowRegistration.flow_path.in_(flow_path_spellings(flow_path)))
-                        .order_by(FlowRegistration.id)
-                        .first()
-                    )
-                    if reg is not None and reg.owner_id == proj.owner_id:
-                        namespace = projection._namespace_path(db, reg.namespace_id)
-                        index = projection.flow_index(proj.root)
-                        target = projection.project_flow(db, proj.root, reg, index, namespace)
-                        if target is not None:
-                            projection.remove_stale_flow_files(proj.root, reg.flow_uuid, target, index)
-            self._mark_projection(proj.owner_id, failed=False)
-        except Exception:
-            self._mark_projection(proj.owner_id, failed=True)
-            logger.error("Project flow projection failed for %s", flow_path, exc_info=True)
+            changed = {c.path for c in _plan_changes(proj.root, proj.owner_id, None)}
+        except (OSError, ValueError):
+            return rows
+        return [r for r in rows if r["path"] in changed]
 
-    def flow_deleted(self, flow_uuid: str, user_id: int | None) -> None:
+    def external_edits(self, user_id: int) -> bool:
+        """True when the folder holds edits of files a kind owns that were not applied to the database."""
         proj = self.get_active_project(user_id)
-        if proj is None:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                projection.remove_flow(proj.root, projection.flow_index(proj.root), flow_uuid=flow_uuid)
-            self._mark_projection(proj.owner_id, failed=False)
-        except Exception:
-            self._mark_projection(proj.owner_id, failed=True)
-            logger.error("Project flow-delete projection failed for %s", flow_uuid, exc_info=True)
-
-    def connection_changed(self, kind: str, connection_name: str, user_id: int | None, deleted: bool = False) -> None:
-        proj = self.get_active_project(user_id)
-        if proj is None:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                if deleted:
-                    projection.remove_connection(proj.root, kind, connection_name)
-                else:
-                    with get_db_context() as db:
-                        if kind == "database":
-                            projection.project_database_connection(db, proj.root, connection_name, proj.owner_id)
-                        elif kind == "cloud":
-                            projection.project_cloud_connection(db, proj.root, connection_name, proj.owner_id)
-                with get_db_context() as db:
-                    projection.regenerate_secret_manifest(db, proj.root, proj.owner_id)
-            self._mark_projection(proj.owner_id, failed=False)
-        except Exception:
-            self._mark_projection(proj.owner_id, failed=True)
-            logger.error("Project connection projection failed for %s/%s", kind, connection_name, exc_info=True)
-
-    def schedule_changed(self, registration_id: int, user_id: int | None, deleted: bool = False) -> None:
-        proj = self.get_active_project(user_id)
-        if proj is None:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    reg = db.query(FlowRegistration).filter(FlowRegistration.id == registration_id).first()
-                    if reg is not None and reg.owner_id == proj.owner_id:
-                        index = projection.flow_index(proj.root)
-                        projection.project_schedules_for_registration(db, proj.root, reg, index)
-            self._mark_projection(proj.owner_id, failed=False)
-        except Exception:
-            self._mark_projection(proj.owner_id, failed=True)
-            logger.error("Project schedule projection failed for reg %s", registration_id, exc_info=True)
-
-    def _project_manifest(self, user_id: int | None, regen, label: str, require_track: bool = False) -> None:
-        """Re-run one DB→file manifest regenerator under the repo lock; swallow+log on failure.
-
-        ``regen(db, root, owner_id)`` is the projection writer; ``require_track`` skips when the
-        project opts out of data-artifact tracking."""
-        proj = self.get_active_project(user_id)
-        if proj is None or (require_track and not proj.track_data_artifacts):
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    regen(db, proj.root, proj.owner_id)
-            self._mark_projection(proj.owner_id, failed=False)
-        except Exception:
-            self._mark_projection(proj.owner_id, failed=True)
-            logger.error("Project %s projection failed", label, exc_info=True)
-
-    def secret_changed(self, user_id: int | None) -> None:
-        self._project_manifest(user_id, projection.regenerate_secret_manifest, "secret-manifest")
-
-    def namespace_changed(self, user_id: int | None) -> None:
-        self._project_manifest(user_id, projection.regenerate_namespace_manifest, "namespace-manifest")
-
-    def tables_changed(self, user_id: int | None) -> None:
-        self._project_manifest(user_id, projection.regenerate_tables_manifest, "tables-manifest", require_track=True)
-
-    def artifacts_changed(self, user_id: int | None) -> None:
-        self._project_manifest(user_id, projection.regenerate_models_manifest, "models-manifest", require_track=True)
-
-    def kernels_changed(self, user_id: int | None) -> None:
-        self._project_manifest(user_id, projection.regenerate_kernels_manifest, "kernels-manifest")
-
-    def visualizations_changed(self, user_id: int | None) -> None:
-        self._project_manifest(user_id, projection.regenerate_visualizations_manifest, "visualizations-manifest")
-
-    def dashboards_changed(self, user_id: int | None) -> None:
-        self._project_manifest(user_id, projection.regenerate_dashboards_manifest, "dashboards-manifest")
-
-    def notebooks_changed(self, user_id: int | None) -> None:
-        """Re-project all the owner's notebook files and prune orphaned ones (one hook covers
-        create/update/delete/rename, like the manifest hooks). Notebooks are per-file (like flows),
-        so this can't use ``_project_manifest`` — it regenerates the dir then prunes. Never raises."""
-        proj = self.get_active_project(user_id)
-        if proj is None:
-            return
-        try:
-            with git_ops.repo_lock(proj.root):
-                with get_db_context() as db:
-                    written = projection.regenerate_notebooks(db, proj.root, proj.owner_id)
-                projection.prune_orphan_notebooks(proj.root, written)
-            self._mark_projection(proj.owner_id, failed=False)
-        except Exception:
-            self._mark_projection(proj.owner_id, failed=True)
-            logger.error("Project notebooks projection failed", exc_info=True)
+        return proj is not None and bool(self._unapplied_edits(proj))
 
     # --- lifecycle (explicit user actions via /project router + CLI) ----------
 
@@ -437,7 +291,8 @@ class ProjectSyncService:
                 self._load()[owner_id] = project
             return project, import_project(root, owner_id)
 
-    def save_version(self, user_id: int, message: str) -> str | None:
+    def save_version(self, user_id: int, message: str, overwrite: bool = False) -> str | None:
+        """Write the export and commit it; un-applied folder edits are a 409 ``FOLDER_EDITED`` unless ``overwrite``."""
         proj = self.get_active_project(user_id)
         if proj is None:
             raise NoActiveProjectError("No active project")
@@ -446,7 +301,18 @@ class ProjectSyncService:
             m = read_manifest(proj.root)
             if m is not None:
                 _save_manifest(proj.root, m)
-            write_export(proj.root, proj.owner_id)
+            snapshot = _snapshot(proj.root, proj.owner_id)
+            edits = self._unapplied_edits(proj)
+            if edits and not overwrite:
+                refusal = (
+                    f"{len(edits)} file(s) in the project folder were edited and not applied; "
+                    "apply them first, or overwrite them with this save."
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "FOLDER_EDITED", "message": refusal, "changes": _named_changes(edits)},
+                )
+            kinds.write_tree(proj.root, snapshot)
             sha = git_ops.commit_all(proj.root, message)
             with get_db_context() as db:
                 repository.set_head_sha(db, proj.id, sha or git_ops.head_sha(proj.root))
@@ -457,7 +323,7 @@ class ProjectSyncService:
 
         Restore/reload just reset the working tree (incl. ``project.yaml``) to an authoritative state,
         so the DB row and the cached project must match it — otherwise the Settings UI and the
-        projection hooks (which read the cached flag) go stale. Mutates ``proj`` in place, mirroring
+        export (which reads the cached flag) go stale. Mutates ``proj`` in place, mirroring
         :meth:`update_settings`.
         """
         m = read_manifest(proj.root)
@@ -470,8 +336,8 @@ class ProjectSyncService:
     def _guard_before_apply(self, proj: ActiveProject, force: bool, action: str) -> str | None:
         """Name what a restore or reload would lose, and keep it first when ``force`` is set.
 
-        The database is exported to a temp folder and compared with the last version, so a change
-        no hook wrote to the folder is seen too. A restore also refuses a dirty folder, since its
+        The database is exported to a temp folder and compared with the last version, so every
+        database change is seen. A restore also refuses a dirty folder, since its
         ``read-tree --reset`` discards hand edits; a reload applies them, so it refuses only unsaved
         database changes. With ``force`` a restore autosaves the folder and commits the export on the
         branch, and a reload commits the export under ``refs/flowfile/recovery/`` with the branch
@@ -622,7 +488,6 @@ class ProjectSyncService:
             repository.deactivate_owner(db, owner_id)
         with self._cache_lock:
             self._load().pop(owner_id, None)
-            self._projection_failed.discard(owner_id)
 
     def update_settings(self, user_id: int, track_data_artifacts: bool) -> bool:
         """Flip the track-data-artifacts toggle: add or remove the data kinds in project.yaml's ``kinds``, update

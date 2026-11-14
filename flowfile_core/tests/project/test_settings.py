@@ -1,9 +1,9 @@
-"""Per-project track_data_artifacts toggle: projection, hooks, import/prune, and the DB mirror.
+"""Per-project track_data_artifacts toggle: projection, import/prune, and the DB mirror.
 
 The toggle is all-or-nothing for catalog tables (tables.yaml) + global artifacts (models.yaml),
 stored in project.yaml (source of truth) and mirrored onto the WorkspaceProject row. Default True
 keeps the existing always-track behavior. When off, the two manifests are never written/committed,
-the projection hooks no-op, and import leaves those DB resources entirely alone (never pruned).
+and import leaves those DB resources entirely alone (never pruned).
 """
 
 import json
@@ -138,11 +138,6 @@ def test_tracking_off_at_init_excludes_tables_and_models(tmp_path):
         assert proj.track_data_artifacts is False
         assert read_manifest(root).track_data_artifacts is False
         assert _db_flag(root) is False
-        assert not (root / "tables.yaml").exists()
-        assert not (root / "models.yaml").exists()
-        # Hooks must be no-ops while tracking is off (no file is (re)created on a table/model change).
-        project_sync.tables_changed(OWNER)
-        project_sync.artifacts_changed(OWNER)
         assert not (root / "tables.yaml").exists()
         assert not (root / "models.yaml").exists()
     finally:

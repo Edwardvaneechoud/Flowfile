@@ -393,7 +393,11 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
         if not arg:
             print('Usage: flowfile project save "<message>"', file=sys.stderr)
             sys.exit(1)
-        sha = project_sync.save_version(owner_id, arg)
+        try:
+            sha = project_sync.save_version(owner_id, arg)
+        except HTTPException as e:
+            print(e.detail["message"] if isinstance(e.detail, dict) else e.detail, file=sys.stderr)
+            sys.exit(1)
         print(f"Saved version {sha[:8] if sha else '(no changes)'}")
     elif action == "plan":
         if not arg:

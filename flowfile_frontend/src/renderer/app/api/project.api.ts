@@ -14,6 +14,16 @@ import { unsavedChangesFrom } from "../views/ProjectView/unsavedChanges";
 /** Raised when a Phase-2 route isn't deployed yet, so the store can hide its UI. */
 export class ProjectFeatureUnavailable extends Error {}
 
+/** A save refused because the project folder holds edits that were never applied. */
+export class ProjectFolderEdited extends Error {
+  constructor(
+    message: string,
+    readonly changes: ProjectVersionChange[],
+  ) {
+    super(message);
+  }
+}
+
 const detail = (error: any, fallback: string): string =>
   error?.response?.data?.detail || error?.message || fallback;
 
@@ -76,12 +86,19 @@ export class ProjectApi {
     }
   }
 
-  /** Save a version (commit). sha is null when nothing changed. */
-  static async saveVersion(message: string): Promise<SaveVersionResult> {
+  /** Save a version (commit). sha is null when nothing changed. `overwrite` saves over folder edits. */
+  static async saveVersion(message: string, overwrite = false): Promise<SaveVersionResult> {
     try {
-      const res = await axios.post<SaveVersionResult>("/project/versions", { message });
+      const res = await axios.post<SaveVersionResult>("/project/versions", { message, overwrite });
       return res.data;
-    } catch (error) {
+    } catch (error: any) {
+      const body = error?.response?.data?.detail;
+      if (error?.response?.status === 409 && body?.code === "FOLDER_EDITED") {
+        throw new ProjectFolderEdited(
+          String(body.message ?? ""),
+          Array.isArray(body.changes) ? body.changes : [],
+        );
+      }
       throw new Error(detail(error, "Failed to save version"));
     }
   }

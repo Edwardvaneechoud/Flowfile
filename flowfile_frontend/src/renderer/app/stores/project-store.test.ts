@@ -108,23 +108,24 @@ describe("status getter", () => {
 });
 
 describe("refreshActive", () => {
-  it("captures the projection_failed flag", async () => {
-    mocks.getActive.mockResolvedValue({ project: PROJECT, projection_failed: true });
+  it("captures the external_edits flag", async () => {
+    mocks.getActive.mockResolvedValue({ project: PROJECT, external_edits: true });
     const store = useProjectStore();
     await store.refreshActive();
-    expect(store.projectionFailed).toBe(true);
+    expect(store.externalEdits).toBe(true);
+    expect(store.status).toBe("external");
   });
 
   it("clears all status when no project is active", async () => {
     mocks.getActive.mockResolvedValue({ project: null });
     const store = useProjectStore();
     store.hasExternalChanges = true;
-    store.projectionFailed = true;
+    store.externalEdits = true;
     store.dirty = true;
     await store.refreshActive();
     expect(store.activeProject).toBeNull();
     expect(store.hasExternalChanges).toBe(false);
-    expect(store.projectionFailed).toBe(false);
+    expect(store.externalEdits).toBe(false);
     expect(store.dirty).toBe(false);
   });
 
@@ -170,13 +171,13 @@ describe("initProject", () => {
     mocks.init.mockResolvedValue(PROJECT);
     const store = useProjectStore();
     store.hasExternalChanges = true;
-    store.projectionFailed = true;
+    store.externalEdits = true;
 
     const project = await store.initProject("/p", "Demo");
     expect(project).toEqual(PROJECT);
     expect(store.activeProject).toEqual(PROJECT);
     expect(store.status).toBe("clean");
-    expect(store.projectionFailed).toBe(false);
+    expect(store.externalEdits).toBe(false);
     expect(store.loading).toBe(false);
   });
 });
@@ -329,6 +330,18 @@ describe("saveVersion", () => {
     expect(store.dirty).toBe(false);
     expect(store.hasUnsavedChanges).toBe(false);
     expect(mocks.getVersions).toHaveBeenCalled();
+  });
+
+  it("passes overwrite to the api, false unless asked", async () => {
+    mocks.saveVersion.mockResolvedValue({ sha: "abc123" });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.saveVersion("m", true);
+    expect(mocks.saveVersion).toHaveBeenLastCalledWith("m", true);
+    await store.saveVersion("m");
+    expect(mocks.saveVersion).toHaveBeenLastCalledWith("m", false);
   });
 
   it("keeps the server's dirty answer when nothing was committed", async () => {

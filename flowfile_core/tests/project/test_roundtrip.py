@@ -1,4 +1,4 @@
-"""DB-backed projection determinism + import round-trip + hook isolation.
+"""DB-backed projection determinism + import round-trip.
 
 Uses the session test DB and the real store functions. Each test sets up and
 tears down its own project + resources so the project_sync singleton never
@@ -307,29 +307,6 @@ def test_init_commit_excludes_unmanaged_files(tmp_path):
     assert "flows/a.flow.yaml" in committed, "managed flows/ file must be committed"
 
 
-def test_projection_failure_does_not_break_the_primary_operation(tmp_path, monkeypatch):
-    project_sync.close_project(OWNER)
-    seed = "proj_db_seed"
-    _make_connection(seed, "pw")
-    root = tmp_path / "project"
-    project_sync.init_project(str(root), "Isolation Test", OWNER)
-    conn = "proj_db_isolation"
-    try:
-        with get_db_context() as db:
-            delete_database_connection(db, conn, OWNER)
-
-        def _boom(*args, **kwargs):
-            raise RuntimeError("projection blew up")
-
-        monkeypatch.setattr(projection, "project_database_connection", _boom)
-        # The hook fires inside store_database_connection; it must swallow the error.
-        _make_connection(conn, "pw2")
-        with get_db_context() as db:
-            assert get_database_connection(db, conn, OWNER) is not None
-    finally:
-        _cleanup([seed, conn], [])
-
-
 def test_init_and_save_version_create_git_history(tmp_path):
     from flowfile_core.project import git_ops
 
@@ -344,25 +321,13 @@ def test_init_and_save_version_create_git_history(tmp_path):
         assert git_ops.is_repo(root)
         assert len(git_ops.log(root)) >= 1
 
-        # A new connection projects automatically; "Save version" commits it.
+        # "Save version" writes the new connection and commits it.
         _make_connection("proj_db_git2", "pw2")
         sha = project_sync.save_version(OWNER, "Add second connection")
         assert sha
         assert len(git_ops.log(root)) >= 2
     finally:
         _cleanup([conn, "proj_db_git2"], [])
-
-
-def test_no_op_when_no_active_project(monkeypatch):
-    project_sync.close_project(OWNER)
-    assert project_sync.get_active_project(OWNER) is None
-
-    def _boom(*args, **kwargs):
-        raise AssertionError("projection must not run without an active project")
-
-    monkeypatch.setattr(projection, "project_flow", _boom)
-    # No active project -> hook returns immediately, never touching projection.
-    project_sync.flow_saved("/some/path.flow.yaml", OWNER)
 
 
 # --- churn / naming-stability regressions (the reported bug) ------------------
@@ -550,35 +515,6 @@ def test_reload_prunes_emptied_custom_namespace(tmp_path):
         project_sync.close_project(OWNER)
 
 
-def test_namespace_hook_updates_manifest_under_active_project(tmp_path):
-    project_sync.close_project(OWNER)
-    root = tmp_path / "project"
-    ns_file = root / "namespaces.yaml"
-
-    def catalogs() -> dict:
-        return {c["catalog"]: c for c in yaml.safe_load(ns_file.read_text(encoding="utf-8"))["namespaces"]}
-
-    try:
-        project_sync.init_project(str(root), "Hook Test", OWNER)
-        assert "General" in catalogs() and "HookCat" not in catalogs()
-
-        with get_db_context() as db:
-            svc = CatalogService(SQLAlchemyCatalogRepository(db))
-            cat_id = svc.create_namespace(name="HookCat", owner_id=OWNER).id
-            svc.create_namespace(name="HookSchema", owner_id=OWNER, parent_id=cat_id).id
-        assert {s["name"] for s in catalogs()["HookCat"]["schemas"]} == {"HookSchema"}
-
-        with get_db_context() as db:
-            svc = CatalogService(SQLAlchemyCatalogRepository(db))
-            schema_id = svc.repo.get_namespace_by_name("HookSchema", cat_id).id
-            svc.delete_namespace(schema_id)
-            svc.delete_namespace(cat_id)
-        assert "HookCat" not in catalogs() and "General" in catalogs()  # seeded untouched
-    finally:
-        _cleanup_custom_namespaces(["HookCat"])
-        project_sync.close_project(OWNER)
-
-
 def test_flow_move_reprojects_namespace(tmp_path):
     project_sync.close_project(OWNER)
     flow_uuid, _, catalog_id = _make_flow_in_namespace(tmp_path, "mv_flow", "MoveCat", "SchemaA")
@@ -594,6 +530,7 @@ def test_flow_move_reprojects_namespace(tmp_path):
             reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
             svc.update_flow(registration_id=reg.id, requesting_user_id=OWNER, namespace_id=schema_b_id)
 
+        project_sync.save_version(OWNER, "move")
         doc = yaml.safe_load((root / "flows" / "mv_flow.flow.yaml").read_text(encoding="utf-8"))
         assert doc["namespace"] == {"catalog": "MoveCat", "schema": "SchemaB"}
     finally:
@@ -1166,48 +1103,6 @@ def test_prune_removes_flow_with_its_artifact(tmp_path):
         _delete_flow(flow_uuid)
         _delete_flow(keep_uuid)
         _cleanup_custom_namespaces(["OrdCat"])
-        project_sync.close_project(OWNER)
-
-
-def test_table_and_model_hooks_and_failure_isolation(tmp_path, monkeypatch):
-    from flowfile_core.artifacts import get_storage_backend
-    from flowfile_core.artifacts.service import ArtifactService
-
-    project_sync.close_project(OWNER)
-    name = f"hook_tbl_{uuid4().hex[:6]}"
-    model = f"hook_mdl_{uuid4().hex[:6]}"
-    flow_uuid, _ = _make_flow(tmp_path, f"hook_flow_{uuid4().hex[:6]}")
-    root = tmp_path / "project"
-    try:
-        project_sync.init_project(str(root), "Hook Test", OWNER)
-
-        # Table create/delete hooks add then drop the entry.
-        _make_table(name)
-        assert name in _tables_yaml(root)
-        _delete_table_row_only(name)
-        assert name not in _tables_yaml(root)
-
-        # Model finalize/delete hooks: simulate finalize via the service hook, then delete via the service.
-        _make_artifact(model, _reg_id(flow_uuid))
-        project_sync.artifacts_changed(OWNER)
-        assert (model, 1) in _models_yaml(root)
-        with get_db_context() as db:
-            ArtifactService(db, get_storage_backend()).delete_all_versions(model)
-        assert (model, 1) not in _models_yaml(root)
-
-        # A projection failure must never break the primary mutation.
-        def _boom(*_args, **_kwargs):
-            raise RuntimeError("projection boom")
-
-        monkeypatch.setattr(projection, "regenerate_tables_manifest", _boom)
-        _make_table(f"{name}_2")
-        with get_db_context() as db:
-            assert SQLAlchemyCatalogRepository(db).get_table_by_name(f"{name}_2", None) is not None
-    finally:
-        _delete_tables_by_name(name)
-        _delete_tables_by_name(f"{name}_2")
-        _delete_artifacts(model)
-        _delete_flow(flow_uuid)
         project_sync.close_project(OWNER)
 
 

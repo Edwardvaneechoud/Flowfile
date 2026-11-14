@@ -1278,27 +1278,22 @@ def _reconcile_kernel_manager(owner_id: int) -> None:
 def import_project(root: Path, owner_id: int, removed=()) -> SetupResult:
     """Rebuild this install's environment from the project folder. Always completes.
 
-    Projection is suppressed for the whole rebuild: importing flows/tables/etc. would otherwise fire
-    the DB→file hooks and regenerate the manifests from the half-built DB, wiping the very files being
-    read. ``removed`` is the ``removed`` rows of ``kinds.compare(snapshot, target)`` (restore / reload): those
+    ``removed`` is the ``removed`` rows of ``kinds.compare(snapshot, target)`` (restore / reload): those
     objects are deleted after every kind's import, and nothing else is; open passes none and is additive.
 
     The database changes are one transaction (``apply_transaction``): a failure anywhere rolls all of
     them back. Flow, notebook and empty-table files, the flow handler's loads and evictions and the
     kernel reconcile are queued and run only once it has committed.
     """
-    from flowfile_core.project import project_sync
-
-    with project_sync.suppress_projection(owner_id):
-        queue: list = []
-        token = _after_commit_queue.set(queue)
-        try:
-            with apply_transaction():
-                result = _do_import_project(root, owner_id, removed)
-        finally:
-            _after_commit_queue.reset(token)
-        _run_after_commit(queue)
-        return result
+    queue: list = []
+    token = _after_commit_queue.set(queue)
+    try:
+        with apply_transaction():
+            result = _do_import_project(root, owner_id, removed)
+    finally:
+        _after_commit_queue.reset(token)
+    _run_after_commit(queue)
+    return result
 
 
 def _assert_within_cap(items: list, cap: int, kind: str) -> None:

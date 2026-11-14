@@ -65,8 +65,7 @@ def _register_without_hooks(tmp_path: Path, name: str, flow_id: int) -> str:
     )
     flow_path = str(tmp_path / f"{name}.yaml")
     graph.save_flow(flow_path)
-    with project_sync.suppress_projection(OWNER):
-        auto_register_flow(flow_path, name, OWNER)
+    auto_register_flow(flow_path, name, OWNER)
     with get_db_context() as db:
         return db.query(FlowRegistration).filter_by(flow_path=flow_path).one().flow_uuid
 

@@ -2551,7 +2551,6 @@ def _save_flow_impl(
         except NamespaceNotFoundError:
             raise HTTPException(status_code=404, detail="Namespace not found") from None
         sync_api_compatibility(flow_file_handler.get_flow(new_flow_id))
-        _project_flow_saved(flow_path, user_id)
         return new_flow_id
 
     resolve_source_registration_id(flow)
@@ -2576,15 +2575,7 @@ def _save_flow_impl(
         except NamespaceNotFoundError:
             raise HTTPException(status_code=404, detail="Namespace not found") from None
     sync_api_compatibility(flow)
-    _project_flow_saved(flow_path, current_user.id if current_user else None)
     return flow_id
-
-
-def _project_flow_saved(flow_path: str, user_id: int | None) -> None:
-    """Mirror the saved flow into the active project folder (no-op when none active)."""
-    from flowfile_core.project import project_sync
-
-    project_sync.flow_saved(flow_path, user_id)
 
 
 @router.get("/save_flow", tags=["editor"])

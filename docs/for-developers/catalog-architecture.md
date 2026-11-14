@@ -97,7 +97,7 @@ A registered flow can be **published** as an HTTP data endpoint (`routes/flow_ap
 - **Worker** — the only sanctioned reader of full table data: `catalog_reader.open_catalog_table` (Delta, local or cloud) and `open_virtual_result` (IPC), invoked through core's `trigger_*` calls; results are collected in spawned children and returned as paths/rows, never frames. Long-lived viz session children are the same pattern specialized for Graphic Walker — see [Visualizations](visualizations.md).
 - **Kernels** — write Delta directories *directly* on the shared volume, read the resulting metadata from the Delta log without materializing, and POST it to core (`/catalog/tables/from-data` or `/{id}/refresh`); core stores the pre-computed metadata as-is and never scans the file. Kernel-exchange and artifact directories must stay under the kernel shared volume — see [Kernel Architecture](kernel-architecture.md).
 - **Artifacts** — `GlobalArtifact` rows are metadata plus a `storage_key`; blobs live on the kernel shared volume with versioning and soft delete.
-- **Projects** — catalog mutations fire never-raising `project_sync` hooks that mirror *metadata* (namespaces, table pointers, schedules, notebooks, model metadata — no data, no blobs, secrets as `${secret:NAME}` placeholders) into the active git project. The DB remains the runtime source of truth.
+- **Projects** — a saved version exports *metadata* (namespaces, table pointers, schedules, notebooks, model metadata — no data, no blobs, secrets as `${secret:NAME}` placeholders) into the active git project; no catalog mutation calls into it, and status is derived from the database when asked, by comparing it with the last version. The DB remains the runtime source of truth.
 
 ## Invariants
 
@@ -114,7 +114,7 @@ A registered flow can be **published** as an HTTP data endpoint (`routes/flow_ap
 
 ## Extension points
 
-**A new catalog resource type** touches, in order: the model in `database/models.py` plus an Alembic migration (next `NNN_` prefix); a `ResourceSpec` in `sharing.RESOURCE_REGISTRY` (and `_NAMESPACE_SCOPED_TYPES` if namespace grants should cascade to it); a sub-service under `catalog/services/` wired into `CatalogService.__init__`; repository methods whose delete path cleans up grants; DTOs in `schemas/catalog_schema.py`; an exception in `catalog/exceptions.py` mapped in `_CATALOG_EXCEPTION_MAP`; router endpoints; access guards and DTO stamping; and a `project_sync` hook if it should be projectable.
+**A new catalog resource type** touches, in order: the model in `database/models.py` plus an Alembic migration (next `NNN_` prefix); a `ResourceSpec` in `sharing.RESOURCE_REGISTRY` (and `_NAMESPACE_SCOPED_TYPES` if namespace grants should cascade to it); a sub-service under `catalog/services/` wired into `CatalogService.__init__`; repository methods whose delete path cleans up grants; DTOs in `schemas/catalog_schema.py`; an exception in `catalog/exceptions.py` mapped in `_CATALOG_EXCEPTION_MAP`; router endpoints; access guards and DTO stamping; and a kind in `project/kinds.py` if it should be projectable.
 
 **A new schedule kind** adds the `schedule_type` semantics and validators, a `_process_*` method in the scheduler's `_tick`, and — if push-triggered — a fan-out method in `schedules.py`. Keep the scheduler free of core imports; reflect any new columns via `shared/models.py`.
 

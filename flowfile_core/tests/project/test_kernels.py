@@ -1,9 +1,9 @@
-"""Kernel-definition projection: determinism, import round-trip, prune, hook isolation.
+"""Kernel-definition projection: determinism, import round-trip, prune.
 
 Kernels round-trip their *definition* only (flavour, requested packages, resource limits) keyed
 by the stable kernel id. Bake-time detail (resolved_packages, the resolved image tag) is never
 projected, and the container is never started on import — these tests stay Docker-free by writing
-Kernel rows directly and driving the project_sync hooks, exactly as _persist_kernel would.
+Kernel rows directly, as _persist_kernel would.
 """
 
 import json
@@ -14,7 +14,7 @@ import yaml
 
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import Kernel
-from flowfile_core.project import project_sync, projection
+from flowfile_core.project import project_sync
 from flowfile_core.project.service import write_export
 
 OWNER = 1
@@ -155,42 +155,3 @@ def test_kernel_prune_removes_absent_kernel(tmp_path):
     finally:
         _delete_all_kernels()
         project_sync.close_project(OWNER)
-
-
-def test_kernel_hook_and_failure_isolation(tmp_path, monkeypatch):
-    project_sync.close_project(OWNER)
-    _delete_all_kernels()
-    root = tmp_path / "project"
-    try:
-        project_sync.init_project(str(root), "Kernel Hook", OWNER)
-        assert _kernels_yaml(root) == {}
-
-        # Create hook: a new row + kernels_changed adds the manifest entry.
-        kid = _make_kernel("hooked", packages=["numpy"])
-        project_sync.kernels_changed(OWNER)
-        assert kid in _kernels_yaml(root)
-
-        # Delete hook: drop the row + kernels_changed removes it (manifest regenerated wholesale).
-        _delete_all_kernels()
-        project_sync.kernels_changed(OWNER)
-        assert _kernels_yaml(root) == {}
-
-        # A projection failure must never escape the hook.
-        def _boom(*_args, **_kwargs):
-            raise RuntimeError("projection boom")
-
-        monkeypatch.setattr(projection, "regenerate_kernels_manifest", _boom)
-        project_sync.kernels_changed(OWNER)  # must not raise
-    finally:
-        _delete_all_kernels()
-        project_sync.close_project(OWNER)
-
-
-def test_kernels_changed_is_noop_without_active_project():
-    project_sync.close_project(OWNER)
-    _delete_all_kernels()
-    _make_kernel("orphan-kernel")
-    try:
-        project_sync.kernels_changed(OWNER)  # no active project -> silent no-op, no raise
-    finally:
-        _delete_all_kernels()

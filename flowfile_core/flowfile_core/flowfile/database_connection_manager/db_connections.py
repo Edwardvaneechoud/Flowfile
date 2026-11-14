@@ -14,13 +14,6 @@ from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_sec
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
 
 
-def _project_sync_connection(kind: str, name: str, user_id: int, deleted: bool = False) -> None:
-    """Mirror a connection change into the active project folder (no-op when none active)."""
-    from flowfile_core.project import project_sync
-
-    project_sync.connection_changed(kind=kind, connection_name=name, user_id=user_id, deleted=deleted)
-
-
 def store_database_connection(db: Session, connection: FullDatabaseConnection, user_id: int) -> DBConnectionModel:
     """
     Store a database connection in the database.
@@ -52,7 +45,6 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
     db.commit()
     db.refresh(db_connection)
 
-    _project_sync_connection("database", connection.connection_name, user_id)
     return db_connection
 
 
@@ -87,7 +79,6 @@ def update_database_connection(db: Session, connection: FullDatabaseConnection, 
 
     db.commit()
     db.refresh(db_connection)
-    _project_sync_connection("database", connection.connection_name, user_id)
     return db_connection
 
 
@@ -221,7 +212,6 @@ def delete_database_connection(db: Session, connection_name: str, user_id: int) 
         if password_secret:
             db.delete(password_secret)
         db.commit()
-        _project_sync_connection("database", connection_name, user_id, deleted=True)
 
 
 def database_connection_interface_from_db_connection(
@@ -367,7 +357,6 @@ def store_cloud_connection(
     db.add(db_cloud_connection)
     db.commit()
     db.refresh(db_cloud_connection)
-    _project_sync_connection("cloud", connection.connection_name, user_id)
     return db_cloud_connection
 
 
@@ -496,7 +485,6 @@ def update_cloud_connection(
 
     db.commit()
     db.refresh(db_connection)
-    _project_sync_connection("cloud", connection.connection_name, user_id)
     return db_connection
 
 
@@ -674,4 +662,3 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
         if secret_ids_to_delete:
             db.query(Secret).filter(Secret.id.in_(secret_ids_to_delete)).delete(synchronize_session=False)
         db.commit()
-        _project_sync_connection("cloud", connection_name, user_id, deleted=True)

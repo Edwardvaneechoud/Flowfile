@@ -154,18 +154,17 @@ def test_restore_with_force_autosaves_uncommitted_work(tmp_path):
         assert client.post("/project/versions", json={"message": "v1"}).json()["sha"]
         version_v1 = client.get("/project/versions").json()["versions"][0]["sha"]
 
-        # Create uncommitted work that will be captured by the autosave:
-        # add a second secret, which changes secrets.yaml (a managed path).
+        # Create unsaved work that the recovery commit will capture: a second secret.
         client.post("/project/secrets", json={"secrets": [{"name": "FORCE_SECRET_UNSAVED", "value": "unsaved"}]})
         assert client.get("/project/active").json()["dirty"] is True
         restored = client.post("/project/restore", json={"sha": version_v1, "force": True})
         assert restored.status_code == 200
         recovery_sha = restored.json()["recovery_sha"]
         assert recovery_sha, "force restore must record a recovery commit for managed-path changes"
-        # The autosave commit captured the dirty managed change.
+        # The recovery commit holds the database export, unsaved secret included.
         recovered = git_ops.diff_name_status(root, version_v1, recovery_sha)
         assert any(c["path"] == "secrets.yaml" for c in recovered), recovered
-        assert any(m["message"].startswith("Autosave before") for m in git_ops.log(root))
+        assert any(m["message"] == "Database before restore" for m in git_ops.log(root))
     finally:
         project_sync.close_project(OWNER)
 
@@ -274,10 +273,9 @@ def test_deleting_a_flow_shows_as_a_project_change(tmp_path):
         assert list(root.glob("flows/*.flow.yaml")), "flow should be projected"
         assert client.get("/project/active").json()["dirty"] is False
 
-        # Delete the flow → the projected file is removed, so it shows as an unsaved change.
+        # Delete the flow → it shows as an unsaved change.
         with get_db_context() as db:
             CatalogService(SQLAlchemyCatalogRepository(db)).delete_flow(reg_id, delete_file=True)
-        assert not list(root.glob("flows/*.flow.yaml")), "projected flow file should be gone after delete"
         assert client.get("/project/active").json()["dirty"] is True
         unsaved = client.get("/project/uncommitted").json()["changes"]
         assert any(c["change"] == "removed" and c["kind"] == "flow" for c in unsaved), unsaved

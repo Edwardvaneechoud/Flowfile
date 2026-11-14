@@ -35,12 +35,10 @@ from flowfile_core.database.models import (
 )
 from flowfile_core.project import manifest
 from flowfile_core.project.normalize import (
-    atomic_write,
     dump_yaml,
     normalize_flow_data,
     safe_stem,
     unique_stem,
-    write_yaml,
 )
 from flowfile_core.project.secrets_resolver import make_placeholder
 from shared.storage_config import may_touch_flow_file
@@ -146,24 +144,13 @@ def flow_index(root: Path) -> FlowIndex:
 
     One read of each file's first line replaces the sweep each lookup used to make. A uuid maps to a
     list because a rename leaves the old file beside the new one until it is removed; the file the
-    flow is projected to comes first. The writers below keep it current as they write and unlink."""
+    flow is projected to comes first."""
     index: FlowIndex = {}
     for p in sorted(manifest.flows_dir(root).glob("*.flow.yaml")):
         flow_uuid = _file_flow_uuid(p)
         if flow_uuid is not None:
             index.setdefault(flow_uuid, []).append(p)
     return index
-
-
-def _flow_stem(root: Path, reg: FlowRegistration, index: FlowIndex) -> str:
-    """The stem of the flow's actual projected file (matched by ``flow_uuid``), so a schedule lines up
-    with a disambiguated ``<stem>_<uuid8>.flow.yaml`` instead of overwriting a same-named flow's file.
-    Falls back to the intrinsic ``flowfile_name`` stem when the flow file isn't on disk yet."""
-    paths = index.get(reg.flow_uuid)
-    if paths:
-        return paths[0].name[: -len(".flow.yaml")]
-    data = _load_flow_data(reg.flow_path) or {}
-    return _name_stem(data.get("flowfile_name") or reg.name)
 
 
 def _namespace_path(db: Session, namespace_id: int | None) -> dict | None:
@@ -261,21 +248,6 @@ def flow_file(db: Session, reg: FlowRegistration, namespace: dict | None = None)
     return result
 
 
-def project_flow(
-    db: Session, root: Path, reg: FlowRegistration, index: FlowIndex, namespace: dict | None = None
-) -> Path | None:
-    exported = flow_file(db, reg, namespace)
-    if exported is None:
-        return None
-    stem, text = exported
-    target = manifest.flows_dir(root) / f"{stem}.flow.yaml"
-    if target.exists() and _file_flow_uuid(target) not in (None, reg.flow_uuid):
-        target = manifest.flows_dir(root) / f"{stem}_{reg.flow_uuid[:8]}.flow.yaml"
-    atomic_write(target, text)
-    index[reg.flow_uuid] = [target] + [p for p in index.get(reg.flow_uuid, []) if p != target]
-    return target
-
-
 def _owner_flows(db: Session, owner_id: int):
     return (
         db.query(FlowRegistration)
@@ -309,39 +281,6 @@ def export_flows(db: Session, owner_id: int) -> dict[str, tuple[str, str]]:
         if cached[0] == owner_id and path not in seen:
             _flow_texts.pop(path, None)
     return out
-
-
-def _unlink_flow_file(root: Path, path: Path) -> None:
-    path.unlink(missing_ok=True)
-    manifest.schedules_dir(root).joinpath(f"{path.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
-
-
-def remove_flow(root: Path, index: FlowIndex, flow_uuid: str | None = None, name: str | None = None) -> None:
-    """Remove a flow's projected file and its schedule file.
-
-    Matches by ``flow_uuid`` (filename-independent — the projected name is derived from the flow's
-    intrinsic ``flowfile_name``, which the caller may no longer have after a delete); falls back to a
-    name-stem glob when only a name is known.
-    """
-    flows_dir = manifest.flows_dir(root)
-    if flow_uuid:
-        for p in index.pop(flow_uuid, []):
-            _unlink_flow_file(root, p)
-    elif name:
-        stem = _name_stem(name)
-        for p in flows_dir.glob(f"{stem}*.flow.yaml"):
-            p.unlink(missing_ok=True)
-            manifest.schedules_dir(root).joinpath(f"{p.name[: -len('.flow.yaml')]}.yaml").unlink(missing_ok=True)
-        manifest.schedules_dir(root).joinpath(f"{stem}.yaml").unlink(missing_ok=True)
-
-
-def remove_stale_flow_files(root: Path, flow_uuid: str, keep: Path, index: FlowIndex) -> None:
-    """After (re)projecting a flow, drop any other file carrying the same ``flow_uuid`` — e.g. an
-    old name left behind by a rename — plus its now-orphaned schedule file."""
-    for p in index.get(flow_uuid, []):
-        if p != keep:
-            _unlink_flow_file(root, p)
-    index[flow_uuid] = [keep]
 
 
 # --- connections -------------------------------------------------------------
@@ -384,36 +323,6 @@ def export_connections(db: Session, owner_id: int, kind: str) -> dict[str, str]:
     }
 
 
-def project_database_connection(db: Session, root: Path, name: str, owner_id: int) -> Path | None:
-    conn = (
-        db.query(DatabaseConnection)
-        .filter(DatabaseConnection.connection_name == name, DatabaseConnection.user_id == owner_id)
-        .first()
-    )
-    if conn is None:
-        return None
-    target = manifest.connections_dir(root, "database") / f"{unique_stem(name)}.yaml"
-    write_yaml(target, _db_connection_dict(db, conn))
-    return target
-
-
-def project_cloud_connection(db: Session, root: Path, name: str, owner_id: int) -> Path | None:
-    conn = (
-        db.query(CloudStorageConnection)
-        .filter(CloudStorageConnection.connection_name == name, CloudStorageConnection.user_id == owner_id)
-        .first()
-    )
-    if conn is None:
-        return None
-    target = manifest.connections_dir(root, "cloud") / f"{unique_stem(name)}.yaml"
-    write_yaml(target, _cloud_connection_dict(db, conn))
-    return target
-
-
-def remove_connection(root: Path, kind: str, name: str) -> None:
-    manifest.connections_dir(root, kind).joinpath(f"{unique_stem(name)}.yaml").unlink(missing_ok=True)
-
-
 # --- schedules ---------------------------------------------------------------
 
 
@@ -432,18 +341,6 @@ def _schedule_dict(s: FlowSchedule) -> dict:
     if s.backend:
         out["backend"] = s.backend
     return out
-
-
-def _projectable_schedules(db: Session, reg: FlowRegistration) -> list[FlowSchedule]:
-    return (
-        db.query(FlowSchedule)
-        .filter(
-            FlowSchedule.registration_id == reg.id,
-            FlowSchedule.schedule_type.in_(_PROJECTABLE_SCHEDULE_TYPES),
-        )
-        .order_by(FlowSchedule.id.asc())
-        .all()
-    )
 
 
 def _schedule_file(reg: FlowRegistration, schedules: list[FlowSchedule]) -> dict:
@@ -473,20 +370,6 @@ def export_schedules(db: Session, owner_id: int, stems: dict[str, str]) -> dict[
     return tree
 
 
-def project_schedules_for_registration(
-    db: Session, root: Path, reg: FlowRegistration, index: FlowIndex, stem: str | None = None
-) -> Path | None:
-    schedules = _projectable_schedules(db, reg)
-    # Share the flow's file stem so a flow and its schedule always line up (caller passes the
-    # resolved stem in full projection; the single-schedule hook resolves it from the projected file).
-    target = manifest.schedules_dir(root) / f"{stem or _flow_stem(root, reg, index)}.yaml"
-    if not schedules:
-        target.unlink(missing_ok=True)
-        return None
-    write_yaml(target, _schedule_file(reg, schedules))
-    return target
-
-
 # --- secret manifest (standalone secrets only) -------------------------------
 
 
@@ -509,10 +392,6 @@ def secret_manifest_data(db: Session, owner_id: int) -> dict:
     if linked:
         q = q.filter(~Secret.id.in_(linked))
     return {"required_secrets": sorted({name for (name,) in q} - feature_names)}
-
-
-def regenerate_secret_manifest(db: Session, root: Path, owner_id: int) -> None:
-    write_yaml(manifest.secrets_manifest_path(root), secret_manifest_data(db, owner_id))
 
 
 # --- namespace manifest (custom, non-public catalogs/schemas) ----------------
@@ -562,10 +441,6 @@ def namespace_manifest_data(db: Session, owner_id: int) -> dict:
         entry["schemas"] = sorted(schemas.get(catalog_name, []), key=lambda s: s["name"])
         out.append(entry)
     return {"namespaces": out}
-
-
-def regenerate_namespace_manifest(db: Session, root: Path, owner_id: int) -> None:
-    write_yaml(manifest.namespaces_manifest_path(root), namespace_manifest_data(db, owner_id))
 
 
 # --- catalog tables ----------------------------------------------------------
@@ -620,10 +495,6 @@ def tables_manifest_data(db: Session, owner_id: int) -> dict:
     return {"tables": entries}
 
 
-def regenerate_tables_manifest(db: Session, root: Path, owner_id: int) -> None:
-    write_yaml(manifest.tables_manifest_path(root), tables_manifest_data(db, owner_id))
-
-
 # --- models (global artifacts) -----------------------------------------------
 
 
@@ -657,10 +528,6 @@ def models_manifest_data(db: Session, owner_id: int) -> dict:
     return {"models": entries}
 
 
-def regenerate_models_manifest(db: Session, root: Path, owner_id: int) -> None:
-    write_yaml(manifest.models_manifest_path(root), models_manifest_data(db, owner_id))
-
-
 # --- kernels -----------------------------------------------------------------
 
 
@@ -691,10 +558,6 @@ def kernels_manifest_data(db: Session, owner_id: int) -> dict:
     entries = [_kernel_entry(k) for k in rows]
     entries.sort(key=lambda e: (e["name"], e["id"]))
     return {"kernels": entries}
-
-
-def regenerate_kernels_manifest(db: Session, root: Path, owner_id: int) -> None:
-    write_yaml(manifest.kernels_manifest_path(root), kernels_manifest_data(db, owner_id))
 
 
 # --- visualizations & dashboards ---------------------------------------------
@@ -748,10 +611,6 @@ def visualizations_manifest_data(db: Session, owner_id: int) -> dict:
     return {"visualizations": entries}
 
 
-def regenerate_visualizations_manifest(db: Session, root: Path, owner_id: int) -> None:
-    write_yaml(manifest.visualizations_manifest_path(root), visualizations_manifest_data(db, owner_id))
-
-
 def _portable_layout(db: Session, layout: dict) -> dict:
     """Rewrite a dashboard layout's machine-local references to portable handles so the canvas
     round-trips: each tile's ``viz_id`` → ``viz_uuid``, each filter's ``datasource_id`` →
@@ -790,26 +649,7 @@ def dashboards_manifest_data(db: Session, owner_id: int) -> dict:
     return {"dashboards": entries}
 
 
-def regenerate_dashboards_manifest(db: Session, root: Path, owner_id: int) -> None:
-    write_yaml(manifest.dashboards_manifest_path(root), dashboards_manifest_data(db, owner_id))
-
-
 # --- notebooks ---------------------------------------------------------------
-
-
-def project_notebook(db: Session, root: Path, nb: CatalogNotebook, owner_id: int) -> Path:
-    """Write a notebook as ``notebooks/<stem>.notebook.yaml`` — one file per notebook, keyed by
-    ``notebook_uuid`` inside (like a flow). Metadata comes from the row, cells from the runtime
-    content file, and the namespace is rendered portable (``{catalog, schema}`` names). A same-named
-    notebook collides on a disambiguated ``<stem>_<uuid8>.notebook.yaml`` instead of overwriting."""
-    stem = safe_stem(nb.name)
-    target = manifest.notebooks_dir(root) / f"{stem}.notebook.yaml"
-    if target.exists():
-        existing = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
-        if existing.get("notebook_uuid") not in (None, nb.notebook_uuid):
-            target = manifest.notebooks_dir(root) / f"{stem}_{nb.notebook_uuid[:8]}.notebook.yaml"
-    atomic_write(target, notebook_file_text(db, nb, owner_id))
-    return target
 
 
 def notebook_file_text(db: Session, nb: CatalogNotebook, owner_id: int) -> str:
@@ -842,23 +682,3 @@ def export_notebooks(db: Session, owner_id: int) -> dict[str, str]:
         taken.add(stem.casefold())
         tree[f"notebooks/{stem}.notebook.yaml"] = notebook_file_text(db, nb, owner_id)
     return tree
-
-
-def regenerate_notebooks(db: Session, root: Path, owner_id: int) -> set[Path]:
-    """Project every one of the owner's notebooks; return the written paths. Ordered by
-    ``notebook_uuid`` so the bare-vs-suffixed filename for same-named notebooks is stable across
-    runs. Pruning of orphaned files is left to the caller."""
-    written: set[Path] = set()
-    for nb in _owner_notebooks(db, owner_id):
-        written.add(project_notebook(db, root, nb, owner_id))
-    return written
-
-
-def prune_orphan_notebooks(root: Path, written: set[Path]) -> None:
-    """Delete notebook files with no matching DB row (single-dir prune for the projection hook)."""
-    d = manifest.notebooks_dir(root)
-    if not d.exists():
-        return
-    for p in d.glob("*.notebook.yaml"):
-        if p not in written:
-            p.unlink(missing_ok=True)

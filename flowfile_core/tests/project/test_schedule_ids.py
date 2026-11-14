@@ -116,6 +116,7 @@ def _two_schedules(tmp_path, created, flow_id: int) -> tuple[int, int, int]:
 def test_an_entry_carries_its_schedule_uuid(project, tmp_path):
     root, created, _ = project
     reg_id, _, _ = _two_schedules(tmp_path, created, 818101)
+    project_sync.save_version(OWNER, "schedules")
     by_name = {r.name: r.schedule_uuid for r in _rows(reg_id)}
     entries = _entries(root)
     assert [e["id"] for e in entries] == [by_name["hourly"], by_name["morning"]]
@@ -161,7 +162,8 @@ def test_a_file_without_ids_reloads_without_duplicating_and_the_next_save_writes
 
     rows = _rows(reg_id)
     assert [r.id for r in rows] == [interval_id, cron_id]
-    project_sync.save_version(OWNER, "ids")
+    # The id-less entries still differ from the rows by key, so writing the ids is an overwrite.
+    project_sync.save_version(OWNER, "ids", overwrite=True)
     assert [e["id"] for e in _entries(root)] == [r.schedule_uuid for r in rows]
 
 

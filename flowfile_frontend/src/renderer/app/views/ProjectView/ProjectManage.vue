@@ -37,7 +37,7 @@
     </div>
 
     <!-- Files changed outside Flowfile -->
-    <div v-if="store.hasExternalChanges" class="banner banner--warning mb-3">
+    <div v-if="store.hasExternalChanges || store.externalEdits" class="banner banner--warning mb-3">
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div class="banner__body">
         <p class="banner__title">Files changed outside Flowfile</p>

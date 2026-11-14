@@ -127,6 +127,7 @@ def project(tmp_path):
     assert client.post("/project/init", json={"folder_path": str(root), "name": "Plan"}).status_code == 201
     before = git_ops.head_sha(root)
     _make_db_connection(name)
+    project_sync.save_version(OWNER, "with the connection")
     try:
         yield root, before, name
     finally:

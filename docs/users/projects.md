@@ -4,11 +4,11 @@ This page is for anyone who wants a versioned, portable copy of their Flowfile w
 
 ## What a project is
 
-A project is a folder that Flowfile keeps in sync with the resources you own. As you save flows, edit connections, and manage catalog metadata, Flowfile writes a deterministic, human-readable copy of everything into the project folder and tracks it with git. You get version history, diffs, and a folder you can commit to your own remote, share with a teammate, or copy to another machine.
+A project is a folder that mirrors the resources you own. When you save a version, Flowfile writes a deterministic, human-readable copy of your flows, connections and catalog metadata into the project folder and tracks it with git. You get version history, diffs, and a folder you can commit to your own remote, share with a teammate, or copy to another machine.
 
 Your Flowfile database stays the source of truth at runtime. The project folder is a **mirror**:
 
-- **Projection (database → files)** happens automatically in the background whenever you save a flow, change a connection, edit a schedule, or update catalog metadata. You never trigger it by hand, and a sync error never blocks the save that caused it.
+- **Export (database → files)** happens when you save a version. What is unsaved is read when you ask, by comparing your resources with the last version. If the folder holds edits that were not applied, a save asks you to **Apply** them first (a reload) or **Overwrite** them with your resources.
 - **Import (files → database)** happens only at explicit moments: when you open a project, reload it from disk, or restore an older version.
 
 !!! info "Not in Flowfile Lite"
@@ -87,4 +87,4 @@ Projects are always available in the desktop app and the pip-installed package. 
 - [CLI reference](deployment/cli.md) — headless `flowfile project` commands.
 - [Catalog](visual-editor/catalog/index.md) — the flows, tables, and metadata a project mirrors.
 - [Connections & secrets](visual-editor/connections.md) — connections are mirrored; their secrets are not.
-- For the internals (projection hooks, import boundaries, the git folder contract), see [Architecture](../for-developers/architecture.md).
+- For the internals (import boundaries, the git folder contract), see [Architecture](../for-developers/architecture.md).

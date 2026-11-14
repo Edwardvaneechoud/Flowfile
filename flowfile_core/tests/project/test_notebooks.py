@@ -1,10 +1,9 @@
-"""Notebook projection: determinism, portable round-trip, prune, hook isolation.
+"""Notebook projection: determinism, portable round-trip, prune.
 
 Notebooks are tracked per-file (like flows): one ``notebooks/<stem>.notebook.yaml`` keyed by stable
 ``notebook_uuid``, carrying the cells (literal-block source) and a portable ``{catalog, schema}``
 namespace so they re-link to local ids on another machine. Metadata comes from the DB row, cells from
-the on-disk content file. These tests write rows + content files directly and drive the project_sync
-hooks, exactly as the catalog service does.
+the on-disk content file. These tests write rows + content files directly.
 """
 
 from pathlib import Path
@@ -15,7 +14,7 @@ from flowfile_core.catalog import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.services import notebook_store
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogNamespace, CatalogNotebook
-from flowfile_core.project import project_sync, projection
+from flowfile_core.project import project_sync
 from flowfile_core.project.service import write_export
 from flowfile_core.schemas.catalog_schema import NotebookCellModel
 
@@ -176,33 +175,6 @@ def test_prune_removes_absent_notebook(tmp_path):
         project_sync.close_project(OWNER)
 
 
-def test_notebook_hook_and_failure_isolation(tmp_path, monkeypatch):
-    project_sync.close_project(OWNER)
-    _clear_notebooks()
-    root = tmp_path / "project"
-    try:
-        project_sync.init_project(str(root), "Hooks NB", OWNER)
-        assert _nb_yaml(root) == {}
-
-        _, nuuid = _make_notebook("hk-nb", cells=_CELLS)
-        project_sync.notebooks_changed(OWNER)
-        assert nuuid in _nb_yaml(root)
-
-        # Deleting the notebook + re-running the hook prunes its file (one hook covers delete).
-        _clear_notebooks()
-        project_sync.notebooks_changed(OWNER)
-        assert _nb_yaml(root) == {}
-
-        def _boom(*_args, **_kwargs):
-            raise RuntimeError("projection boom")
-
-        monkeypatch.setattr(projection, "regenerate_notebooks", _boom)
-        project_sync.notebooks_changed(OWNER)  # must not raise
-    finally:
-        _clear_notebooks()
-        project_sync.close_project(OWNER)
-
-
 def test_malformed_notebook_uuid_does_not_abort_import(tmp_path):
     """A notebooks/*.notebook.yaml with a non-UUID notebook_uuid (hand-edit / merge corruption) must
     not raise out of the import (notebook_store derives the content path via uuid.UUID()); a fresh
@@ -239,13 +211,3 @@ def test_malformed_notebook_uuid_does_not_abort_import(tmp_path):
     finally:
         _clear_notebooks()
         project_sync.close_project(OWNER)
-
-
-def test_notebooks_changed_noop_without_active_project():
-    project_sync.close_project(OWNER)
-    _clear_notebooks()
-    _make_notebook("orphan-nb", cells=_CELLS)
-    try:
-        project_sync.notebooks_changed(OWNER)  # no active project -> silent no-op
-    finally:
-        _clear_notebooks()

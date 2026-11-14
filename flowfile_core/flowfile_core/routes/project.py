@@ -1,8 +1,7 @@
 """Git-friendly Flowfile project endpoints (JWT-gated).
 
-Projection (DB→files) happens automatically elsewhere; these endpoints cover the
-explicit boundaries: create a project, open/rebuild one, check status, save a version.
-There is deliberately no "export" or "apply" endpoint — the folder stays in sync on its own;
+These endpoints cover the explicit boundaries: create a project, open/rebuild one, check status,
+save a version (the one write of the folder besides init, the settings toggle and a restore).
 ``POST /plan`` only previews what a restore or reload would change.
 """
 
@@ -71,6 +70,7 @@ class OpenProjectRequest(BaseModel):
 
 class SaveVersionRequest(BaseModel):
     message: str
+    overwrite: bool = False
 
 
 class RestoreRequest(BaseModel):
@@ -145,7 +145,7 @@ class ActiveProjectOut(BaseModel):
     project: ProjectPayload | None = None
     has_external_changes: bool | None = None
     dirty: bool | None = None
-    projection_failed: bool | None = None
+    external_edits: bool | None = None
 
 
 class SettingsOut(BaseModel):
@@ -251,7 +251,7 @@ def get_active(current_user=Depends(get_current_active_user)) -> ActiveProjectOu
         project=_payload(project),
         has_external_changes=project_sync.has_external_changes(current_user.id),
         dirty=project_sync.has_uncommitted_changes(current_user.id),
-        projection_failed=project_sync.projection_failed(current_user.id),
+        external_edits=project_sync.external_edits(current_user.id),
     )
 
 
@@ -269,7 +269,7 @@ def update_settings(req: UpdateSettingsRequest, current_user=Depends(get_current
 @router.post("/versions", response_model=SaveVersionOut)
 def save_version(req: SaveVersionRequest, current_user=Depends(get_current_active_user)) -> SaveVersionOut:
     try:
-        sha = project_sync.save_version(current_user.id, req.message)
+        sha = project_sync.save_version(current_user.id, req.message, req.overwrite)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
     except ValueError as e:
@@ -369,5 +369,4 @@ def fill_secrets(req: FillSecretsRequest, current_user=Depends(get_current_activ
     with get_db_context() as db:
         for item in req.secrets:
             upsert_secret(db, SecretInput(name=item.name, value=SecretStr(item.value)), current_user.id)
-    project_sync.secret_changed(current_user.id)
     return UpdatedOut(updated=len(req.secrets))

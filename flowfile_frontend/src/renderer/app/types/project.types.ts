@@ -29,7 +29,7 @@ export interface ActiveProjectResult {
   project: ProjectInfo | null;
   has_external_changes?: boolean; // present only when a project is active
   dirty?: boolean; // working tree has changes to save as a version
-  projection_failed?: boolean; // last DB→files sync hook errored — folder may have drifted
+  external_edits?: boolean | null; // the folder holds edits that were never applied
 }
 
 export interface SaveVersionResult {

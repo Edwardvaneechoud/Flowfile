@@ -380,7 +380,8 @@ def test_what_another_owner_holds_is_reported_as_not_applied(tmp_path, every_kin
         names = {t.name for t in db.query(CatalogTable).filter_by(owner_id=every_kind)}
     assert "own_view" in names and "foreign_view" not in names
 
-    project_sync.save_version(every_kind, "a save")
+    # What another owner holds is never applied, so the save is told to overwrite it.
+    project_sync.save_version(every_kind, "a save", overwrite=True)
     assert (root / "flows" / "@alice" / "x.flow.yaml").read_text(encoding="utf-8") == reserved_text
     committed = set(git_ops.tree_blob_sizes(root, git_ops.head_sha(root)))
     assert "flows/@alice/x.flow.yaml" not in committed

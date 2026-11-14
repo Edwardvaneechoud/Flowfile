@@ -2,7 +2,8 @@
 
 On ``test_kinds_list.py``'s every-kind install, real git and the test database: a create, rename and delete of
 each kind shows as unsaved and a save clears it; a write from another process shows; a warm read parses no flow
-file, and a renamed table or a rewritten flow file re-renders exactly the flows it touches.
+file, and a renamed table or a rewritten flow file re-renders exactly the flows it touches. A hand edit of a flow
+file in the folder is reported and refuses a save until it is applied or overwritten.
 """
 
 import json
@@ -13,9 +14,11 @@ from uuid import uuid4
 
 import pytest
 import yaml
+from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import inspect
 
+from flowfile_core import main
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogDashboard,
@@ -33,7 +36,10 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_cloud_connection,
     store_database_connection,
 )
-from flowfile_core.project import kinds, project_sync, projection
+from flowfile_core.flowfile.catalog_helpers import auto_register_flow
+from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.project import git_ops, kinds, project_sync, projection
+from flowfile_core.schemas import schemas
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.schemas.input_schema import FullDatabaseConnection
 from flowfile_core.secret_manager.secret_manager import SecretInput, store_secret
@@ -255,3 +261,50 @@ def test_a_flow_file_rewritten_elsewhere_is_re_rendered(tmp_path, every_kind, lo
     assert loads == ["flow_b.yaml"]
     assert [(r["kind"], r["label"]) for r in rows] == [("flow", "flow_b")]
 
+
+
+def test_a_hand_edit_blocks_a_save_until_it_is_applied_or_overwritten(tmp_path):
+    if not git_ops.git_available():
+        pytest.skip("git not available")
+    owner = 1
+    client = TestClient(main.app)
+    client.headers = {"Authorization": f"Bearer {client.post('/auth/token').json()['access_token']}"}
+    stem = f"hand_edit_{uuid4().hex[:6]}"
+    source = str(tmp_path / f"{stem}.yaml")
+    handler = FlowfileHandler()
+    handler.register_flow(schemas.FlowSettings(flow_id=818181, name=stem, path="."))
+    handler.get_flow(818181).save_flow(source)
+    auto_register_flow(source, stem, owner)
+    with get_db_context() as db:
+        flow_uuid = db.query(FlowRegistration).filter_by(flow_path=source).one().flow_uuid
+    project_sync.close_project(owner)
+    root = tmp_path / "project"
+    flow_file = root / "flows" / f"{stem}.flow.yaml"
+
+    def edit(label: str) -> None:
+        data = yaml.safe_load(flow_file.read_text(encoding="utf-8"))
+        data["catalog_name"] = label
+        flow_file.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    try:
+        assert client.post("/project/init", json={"folder_path": str(root), "name": "Edits"}).status_code == 201
+        edit("Edited by hand")
+        assert client.get("/project/active").json()["external_edits"] is True
+
+        refused = client.post("/project/versions", json={"message": "refused"})
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["code"] == "FOLDER_EDITED"
+        assert f"flows/{stem}.flow.yaml" in {c["path"] for c in refused.json()["detail"]["changes"]}
+        assert client.post("/project/versions", json={"message": "overwrite", "overwrite": True}).status_code == 200
+        assert client.get("/project/active").json()["external_edits"] is False
+
+        edit("Applied by hand")
+        reloaded = client.post("/project/reload")
+        assert reloaded.status_code == 200, reloaded.text
+        assert client.get("/project/active").json()["external_edits"] is False
+        assert client.post("/project/versions", json={"message": "applied"}).status_code == 200
+    finally:
+        project_sync.close_project(owner)
+        with get_db_context() as db:
+            db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).delete()
+            db.commit()
