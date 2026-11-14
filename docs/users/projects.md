@@ -1,12 +1,12 @@
 # Projects: version your work with git
 
-This page is for anyone who wants a versioned, portable copy of their Flowfile work — flows, connections (without their secrets), schedules, and catalog metadata — tracked in a git repository. You'll learn how a project mirrors your install to a folder, how to save and open versions, and what does and doesn't end up in git.
+This page is for anyone who wants a versioned, portable copy of their Flowfile work — flows, connections (without their secrets), schedules, and catalog metadata — tracked in a git repository. You'll learn how a project writes your work's definitions to a folder, how to save and open versions, and what does and doesn't end up in git.
 
 ## What a project is
 
-A project is a folder that mirrors the resources you own. When you save a version, Flowfile writes a deterministic, human-readable copy of your flows, connections and catalog metadata into the project folder and tracks it with git. You get version history, diffs, and a folder you can commit to your own remote, share with a teammate, or copy to another machine.
+A project is a git folder holding the definitions of the resources you own. When you save a version, Flowfile writes a deterministic, human-readable copy of your flows, connections and catalog metadata into the project folder and tracks it with git. You get version history, diffs, and a folder you can commit to your own remote, share with a teammate, or copy to another machine.
 
-Your Flowfile database stays the source of truth at runtime. The project folder is a **mirror**:
+Your Flowfile database stays the source of truth at runtime. The project folder holds a copy of their definitions:
 
 - **Export (database → files)** happens when you save a version. What is unsaved is read when you ask, by comparing your resources with the last version. If the folder holds edits that were not applied, a save asks you to **Apply** them first (a reload) or **Overwrite** them with your resources.
 - **Import (files → database)** happens only at explicit moments: when you open a project, reload it from disk, or restore an older version.
@@ -16,13 +16,13 @@ Your Flowfile database stays the source of truth at runtime. The project folder 
 
 ## Secrets never enter the folder
 
-A project folder is safe to commit. Secret **values** are never written into it — only the manifest of which secret names exist. Connections are mirrored without their bundled credentials. Flowfile also writes a `.gitignore` into every project (and hardens a hand-written one) so that credential and local-state files can never be committed, including `.env`, `*.secret`, `*.db`, `master_key.txt`, `*.key`, `*.pem`, and any materialized `data/` or `catalog_tables/`.
+A project folder is safe to commit. Secret **values** are never written into it — only the manifest of which secret names exist. Connections are written without their bundled credentials. Flowfile also writes a `.gitignore` into every project (and hardens a hand-written one) so that credential and local-state files can never be committed, including `.env`, `*.secret`, `*.db`, `master_key.txt`, `*.key`, `*.pem`, and any materialized `data/` or `catalog_tables/`.
 
 When you open a project on a new machine, the secret manifest tells Flowfile which values are still missing. Set them by name (see the CLI output below) or fill them in the app afterward.
 
 ## What's in the folder
 
-A project folder holds YAML mirrors of your resources:
+A project folder holds YAML files of your resources:
 
 | Path | Contents |
 |---|---|
@@ -35,9 +35,13 @@ A project folder holds YAML mirrors of your resources:
 | `namespaces.yaml`, `tables.yaml`, `models.yaml`, `kernels.yaml`, `visualizations.yaml`, `dashboards.yaml` | Catalog metadata manifests. `tables.yaml` names a table's producing flow only when that flow is in the project. |
 | `.gitignore` | Guards against committing secrets and local data. |
 
+## What a version holds
+
+A version is a commit of your resources' definitions: what they are and how they are set up. It holds no table data, no model files, no secret values, no run history, and no users or grants. A version is not a backup of those: on SQLite, **Settings → Preferences → Backups** snapshots the catalog database, and your data files are yours to back up.
+
 ### Tracking data artifacts
 
-The **track data artifacts** toggle (on by default) adds `tables` and `models` to the `kinds` list in `project.yaml`, or removes them. When on, catalog-table metadata (`tables.yaml`) and global-model metadata (`models.yaml`) are mirrored too. Turn it off to keep a project focused on flows and connections and leave data-artifact metadata out of git entirely. The materialized table data itself is never committed regardless — only its metadata.
+The **track data artifacts** toggle (on by default) adds `tables` and `models` to the `kinds` list in `project.yaml`, or removes them. When on, catalog-table metadata (`tables.yaml`) and global-model metadata (`models.yaml`) are written too. Turn it off to keep a project focused on flows and connections and leave data-artifact metadata out of git entirely. The materialized table data itself is never committed regardless — only its metadata.
 
 ## Working with projects in the app
 
@@ -85,6 +89,6 @@ Projects are always available in the desktop app and the pip-installed package. 
 ## Related
 
 - [CLI reference](deployment/cli.md) — headless `flowfile project` commands.
-- [Catalog](visual-editor/catalog/index.md) — the flows, tables, and metadata a project mirrors.
-- [Connections & secrets](visual-editor/connections.md) — connections are mirrored; their secrets are not.
-- For the internals (import boundaries, the git folder contract), see [Architecture](../for-developers/architecture.md).
+- [Catalog](visual-editor/catalog/index.md) — the flows, tables, and metadata a project holds the definitions of.
+- [Connections & secrets](visual-editor/connections.md) — connections are written into a project; their secrets are not.
+- For the internals (import boundaries, the git folder contract), see [Architecture](../for-developers/architecture.md); to add a kind of resource from your own package, see [Project kinds](../for-developers/project-kinds.md).

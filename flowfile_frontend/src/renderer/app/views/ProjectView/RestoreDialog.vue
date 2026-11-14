@@ -29,14 +29,12 @@
 
       <template v-else>
         <div v-if="changes.length" class="restore-changes">
-          <p class="restore-changes__caption">
-            This will change the following, compared to your latest saved version:
-          </p>
+          <p class="restore-changes__caption">This will change the following in your resources:</p>
           <ChangeList :changes="changes" mode="restore" />
           <p class="restore-warning">
             <i class="fa-solid fa-triangle-exclamation"></i>
-            Anything added since then will be removed. A new “Restored” version is saved, so you can
-            always come back.
+            What the list removes is gone from your resources after the restore; your versions stay,
+            so you can always come back.
           </p>
         </div>
 

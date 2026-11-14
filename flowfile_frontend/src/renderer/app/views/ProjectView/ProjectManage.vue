@@ -125,7 +125,7 @@
               <el-tooltip
                 effect="dark"
                 placement="top"
-                content="A version is a named snapshot of your whole project. Save one whenever you reach a point you might want to return to."
+                content="A version is a commit of your flows, connections, schedules and catalog metadata as they are set up, not their data, stored passwords or run history."
               >
                 <button type="button" class="help-hint" aria-label="What is a version?">
                   <i class="fa-solid fa-circle-info"></i>
@@ -141,13 +141,13 @@
                 <p v-if="latestVersion" class="saved-state__sub">
                   Latest version: <strong>“{{ latestVersion.message }}”</strong>
                 </p>
-                <p v-else class="saved-state__sub">Your work is mirrored to the project folder.</p>
+                <p v-else class="saved-state__sub">The folder changes when you save a version.</p>
               </div>
             </div>
             <template v-else>
               <p class="save-prompt">
                 <i class="fa-solid fa-pen-to-square"></i>
-                Describe what changed, then save a snapshot you can return to.
+                Describe what changed, then save a version you can return to.
               </p>
               <SaveVersionForm :rows="3" @saved="loadUnsaved" />
               <div v-if="unsavedChanges.length" class="unsaved-changes">
@@ -303,7 +303,7 @@ const reloadKeepingRecoveryPoint = async (unsaved: ProjectUnsavedChanges) => {
 const handleClose = async () => {
   try {
     await ElMessageBox.confirm(
-      "Stop tracking this project? Your files stay on disk; Flowfile just stops mirroring and versioning this folder.",
+      "Stop tracking this project? Your files stay on disk; Flowfile just stops versioning this folder.",
       "Stop tracking",
       { confirmButtonText: "Stop tracking", cancelButtonText: "Cancel", type: "info" },
     );
