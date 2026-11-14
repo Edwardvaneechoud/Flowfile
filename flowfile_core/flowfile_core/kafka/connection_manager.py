@@ -205,29 +205,50 @@ def build_consumer_config(db: Session, db_conn: KafkaConnection, user_id: int) -
     **encrypted** form (``$ffsec$`` format).  They are only decrypted at
     point-of-use via ``KafkaReadSettings.to_consumer_config(decrypt_fn=...)``.
     """
+
+    def encrypted(secret_id: int | None) -> str | None:
+        secret = db.query(Secret).filter(Secret.id == secret_id).first() if secret_id else None
+        return secret.encrypted_value if secret else None
+
+    return _consumer_config(
+        db_conn,
+        encrypted(db_conn.sasl_password_id),
+        encrypted(db_conn.ssl_key_id),
+        json.loads(db_conn.extra_config) if db_conn.extra_config else None,
+    )
+
+
+def consumer_config_of(connection: KafkaConnectionCreate, user_id: int) -> dict:
+    """``build_consumer_config``'s dict for a connection given whole, as the hub hands one to a server joined to it
+    with keys of its own: its secrets encrypted here for ``user_id``."""
+
+    def encrypted(secret) -> str | None:
+        return encrypt_secret(secret.get_secret_value(), user_id) if secret and secret.get_secret_value() else None
+
+    return _consumer_config(
+        connection, encrypted(connection.sasl_password), encrypted(connection.ssl_key_pem), connection.extra_config
+    )
+
+
+def _consumer_config(connection, sasl_password: str | None, ssl_key: str | None, extra: dict | None) -> dict:
     config: dict[str, str] = {
-        "bootstrap.servers": db_conn.bootstrap_servers,
+        "bootstrap.servers": connection.bootstrap_servers,
         "enable.auto.commit": "false",
     }
-    config["security.protocol"] = db_conn.security_protocol
-    if db_conn.sasl_mechanism:
-        config["sasl.mechanism"] = db_conn.sasl_mechanism
-    if db_conn.sasl_username:
-        config["sasl.username"] = db_conn.sasl_username
-    if db_conn.sasl_password_id:
-        secret = db.query(Secret).filter(Secret.id == db_conn.sasl_password_id).first()
-        if secret:
-            config["sasl.password"] = secret.encrypted_value
-    if db_conn.ssl_ca_location:
-        config["ssl.ca.location"] = db_conn.ssl_ca_location
-    if db_conn.ssl_cert_location:
-        config["ssl.certificate.location"] = db_conn.ssl_cert_location
-    if db_conn.ssl_key_id:
-        secret = db.query(Secret).filter(Secret.id == db_conn.ssl_key_id).first()
-        if secret:
-            config["ssl.key.pem"] = secret.encrypted_value
-    if db_conn.extra_config:
-        extra = json.loads(db_conn.extra_config)
+    config["security.protocol"] = connection.security_protocol
+    if connection.sasl_mechanism:
+        config["sasl.mechanism"] = connection.sasl_mechanism
+    if connection.sasl_username:
+        config["sasl.username"] = connection.sasl_username
+    if sasl_password:
+        config["sasl.password"] = sasl_password
+    if connection.ssl_ca_location:
+        config["ssl.ca.location"] = connection.ssl_ca_location
+    if connection.ssl_cert_location:
+        config["ssl.certificate.location"] = connection.ssl_cert_location
+    if ssl_key:
+        config["ssl.key.pem"] = ssl_key
+    if extra:
         blocked_prefixes = ("sasl.", "ssl.", "security.protocol")
         blocked_exact = {"bootstrap.servers", "group.id", "enable.auto.commit", "enable.partition.eof"}
         extra = {k: v for k, v in extra.items() if not k.startswith(blocked_prefixes) and k not in blocked_exact}

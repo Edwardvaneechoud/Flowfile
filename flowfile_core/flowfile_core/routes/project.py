@@ -26,17 +26,22 @@ from flowfile_core.secret_manager.secret_manager import SecretInput, upsert_secr
 from shared.storage_config import storage
 
 
+def _multi_user_server() -> bool:
+    """Docker or a server run by hand, read where ``is_docker_mode`` reads it."""
+    return settings.FLOWFILE_MODE in ("docker", "server")
+
+
 def require_projects_enabled() -> None:
-    """404 (not 403/503) in docker unless an operator opted in: in a multi-tenant deployment the
+    """404 (not 403/503) on a multi-user server unless an operator opted in: in a multi-tenant deployment the
     git-tracking router does not exist by default. package/electron are always on."""
-    if settings.is_docker_mode() and not settings.FLOWFILE_ENABLE_PROJECTS:
+    if _multi_user_server() and not settings.FLOWFILE_ENABLE_PROJECTS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
 def require_projects_admin(current_user=Depends(get_current_active_user)) -> None:
-    """In docker mode the git-tracking router is admin-only (404, matching require_projects_enabled,
+    """On a multi-user server the git-tracking router is admin-only (404, matching require_projects_enabled,
     so the endpoints stay undisclosed to non-admins). electron/package are single-user and unrestricted."""
-    if settings.is_docker_mode() and not getattr(current_user, "is_admin", False):
+    if _multi_user_server() and not getattr(current_user, "is_admin", False):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 

@@ -26,12 +26,8 @@ from flowfile_core.catalog.serializers import format_pyarrow_preview
 from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.tables import TableService, _is_managed_table_path
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
-from flowfile_core.catalog.storage_backend import (
-    CatalogStorageTarget,
-    _catalog_table_dir_name,
-    _is_cloud_uri,
-    resolve_for_namespace,
-)
+from flowfile_core.catalog.storage_backend import CatalogStorageTarget, _catalog_table_dir_name, _is_cloud_uri
+from flowfile_core.catalog.table_sources import row_targets, table_row
 from flowfile_core.catalog.text_utils import parse_delta_history
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.models import CatalogTable
@@ -46,6 +42,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_resolve_virtual_table,
 )
 from flowfile_core.schemas.catalog_schema import (
+    CatalogTableOut,
     CatalogTablePreview,
     DeltaTableHistory,
 )
@@ -79,17 +76,16 @@ class TablePreviewService:
         version: int | None = None,
         user_id: int | None = None,
     ) -> CatalogTablePreview:
-        """Read the first N rows from a catalog table."""
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
+        """Read the first N rows from a catalog table, whichever catalog keeps it (``table_row``)."""
+        table = table_row(self.repo, table_id, user_id)
 
         if getattr(table, "table_type", "physical") == "virtual":
             if getattr(table, "sql_query", None):
                 return self._get_query_virtual_table_preview(table, limit, user_id)
             return self._get_virtual_table_preview(table, limit, user_id)
 
-        return self._get_physical_table_preview(table, limit, version)
+        [target] = row_targets([table], user_id, "preview")
+        return self.physical_table_preview(table, target, limit, version)
 
     def _format_virtual_preview(
         self,
@@ -204,19 +200,22 @@ class TablePreviewService:
         lazy_frame = self._virtual_tables.resolve_virtual_flow_table(table_id, user_id=user_id)
         return self._format_virtual_preview(lazy_frame, table, limit)
 
-    def _get_physical_table_preview(
+    def physical_table_preview(
         self,
-        table: CatalogTable,
+        table: CatalogTable | CatalogTableOut,
+        target: CatalogStorageTarget,
         limit: int,
         version: int | None,
     ) -> CatalogTablePreview:
-        """Read a preview from a physical (Delta or Parquet) catalog table."""
+        """Read a preview from a physical (Delta or Parquet) catalog table, given its row and its storage *target*.
+
+        Reads only ``file_path`` off the row and nothing from the catalog database. A row on this machine's disk is
+        read from its path; the target matters for one on object storage.
+        """
         if not table.file_path:
             return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
 
-        is_cloud = _is_cloud_uri(table.file_path)
-        if is_cloud or (uses_worker() and _is_managed_table_path(table.file_path)):
-            target = resolve_for_namespace(table.namespace_id) if is_cloud else None
+        if _is_cloud_uri(table.file_path) or (uses_worker() and _is_managed_table_path(table.file_path)):
             if version is not None:
                 return self._get_delta_version_preview(table.file_path, version, limit, target=target)
             return self._get_delta_preview(table.file_path, limit, target=target)
@@ -245,7 +244,7 @@ class TablePreviewService:
         """
         storage_payload = target.to_worker_payload() if target else None
         storage_options = (target.storage_options or None) if target else None
-        if uses_worker() and (target is not None or _is_managed_table_path(table_path)):
+        if uses_worker() and (_is_cloud_uri(table_path) or _is_managed_table_path(table_path)):
             worker_url = registry.worker_url()
             try:
                 return trigger_delta_version_preview(
@@ -279,7 +278,7 @@ class TablePreviewService:
         """
         storage_payload = target.to_worker_payload() if target else None
         storage_options = (target.storage_options or None) if target else None
-        if uses_worker() and (target is not None or _is_managed_table_path(table_path)):
+        if uses_worker() and (_is_cloud_uri(table_path) or _is_managed_table_path(table_path)):
             worker_url = registry.worker_url()
             try:
                 return trigger_delta_preview(
@@ -295,23 +294,29 @@ class TablePreviewService:
         pa_table, total_rows = read_delta_preview(dt, limit, storage_options)
         return format_pyarrow_preview(pa_table, total_rows=total_rows)
 
-    def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
-        """Return the version history for a Delta catalog table.
+    def get_table_history(
+        self, table_id: int, limit: int | None = None, user_id: int | None = None
+    ) -> DeltaTableHistory:
+        """Return the version history for a Delta catalog table, whichever catalog keeps it."""
+        table = table_row(self.repo, table_id, user_id)
+        [target] = row_targets([table], user_id, "history")
+        return self.table_history(table, target, limit)
 
-        Read where ``_get_delta_version_preview`` reads, with the same ``ComputeUnavailable`` rule.
+    def table_history(
+        self, table: CatalogTable | CatalogTableOut, target: CatalogStorageTarget, limit: int | None = None
+    ) -> DeltaTableHistory:
+        """The version history of a Delta table, given its row and its storage *target*.
+
+        Reads only ``file_path`` off the row. Read where ``_get_delta_version_preview`` reads, with the same
+        ``ComputeUnavailable`` rule.
         """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-
         if not table.file_path:
             return DeltaTableHistory(current_version=0, history=[])
 
         is_cloud = _is_cloud_uri(table.file_path)
-        target = resolve_for_namespace(table.namespace_id) if is_cloud else None
         table_path = table.file_path
-        storage_payload = target.to_worker_payload() if target else None
-        storage_options = (target.storage_options or None) if target else None
+        storage_payload = target.to_worker_payload()
+        storage_options = target.storage_options or None
         if uses_worker() and (is_cloud or _is_managed_table_path(table_path)):
             worker_url = registry.worker_url()
             try:

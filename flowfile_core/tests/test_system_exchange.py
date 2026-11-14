@@ -1,4 +1,4 @@
-"""The /system/exchange_store admin routes and the settings behind them: a saved store, the environment winning."""
+"""The /system/exchange_store admin routes and the settings behind them: a saved store and the environment winning."""
 
 from __future__ import annotations
 
@@ -163,3 +163,4 @@ def test_an_unreadable_file_is_no_store(no_env):
     exchange_config._settings_file().write_text("uri: 3\nconnection: ''\nmax_rows: true\n", encoding="utf-8")
 
     assert exchange_config.saved() == exchange_config.ExchangeConfig()
+

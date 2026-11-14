@@ -8,6 +8,7 @@ from flowfile_core.database.models import Secret
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
 from flowfile_core.schemas.sharing_schema import AccessInfo
+from flowfile_core.secret_manager import credential_sources
 from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
 
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
@@ -177,22 +178,33 @@ def get_database_connection_schema(db: Session, connection_name: str, user_id: i
 
 
 def get_local_database_connection(connection_name: str, user_id: int) -> FullDatabaseConnection | None:
+    """The database connection ``connection_name`` a step of ``user_id`` uses, its password encrypted: this machine's
+    own, else one granted to the user, else the one a provider elsewhere keeps for them (``granted``, its password
+    empty; the run is granted it for the server that runs the step). ``None`` when none of them has it."""
     with get_db_context() as db:
-        return get_database_connection_schema(db, connection_name, user_id)
+        connection = get_database_connection_schema(db, connection_name, user_id)
+    if connection is not None:
+        return connection
+    row = credential_sources.connection(user_id, "database", connection_name)
+    if row is None:
+        return None
+    fields = {key: value for key, value in row.items() if key in FullDatabaseConnection.model_fields}
+    return FullDatabaseConnection.model_validate({**fields, "password": "", "granted": True})
 
 
 def get_local_cloud_connection(connection_name: str, user_id: int) -> FullCloudStorageConnection | None:
-    """
-    Get a cloud storage connection schema by its name and user ID.
-    Args:
-        connection_name (str): The name of the cloud storage connection.
-        user_id (int): The ID of the user who owns the connection.
-
-    Returns:
-        FullCloudStorageConnection | None: The cloud storage connection schema if found, otherwise None.
-    """
+    """The cloud storage connection ``connection_name`` a step of ``user_id`` uses: this machine's own, else one
+    granted to the user, else the one a provider elsewhere keeps for them (``granted``, no secret; the run is granted
+    its secrets for the server that runs the step). ``None`` when none of them has it."""
     with get_db_context() as db:
-        return get_cloud_connection_schema(db, connection_name, user_id)
+        connection = get_cloud_connection_schema(db, connection_name, user_id)
+    if connection is not None:
+        return connection
+    row = credential_sources.connection(user_id, "cloud", connection_name)
+    if row is None:
+        return None
+    fields = {key: value for key, value in row.items() if key in FullCloudStorageConnection.model_fields}
+    return FullCloudStorageConnection.model_validate({**fields, "granted": True})
 
 
 def delete_database_connection(db: Session, connection_name: str, user_id: int) -> None:
@@ -638,6 +650,9 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
     """
     Deletes a cloud storage connection (by name and owner user ID) and all of its
     associated secrets from the database.
+
+    The connection row holds foreign keys to its secrets, which Postgres enforces
+    and SQLite does not, so the row goes first and the secrets after it.
     """
     db_connection = _get_own_cloud_connection(db, connection_name, user_id)
 
@@ -652,10 +667,12 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
         ]
         secret_ids_to_delete = [id for id in secret_ids_to_delete if id is not None]
 
+        sharing.delete_grants_for_resource(db, "cloud_connection", db_connection.id)
+        db.delete(db_connection)
+        db.flush()
+
         if secret_ids_to_delete:
             db.query(Secret).filter(Secret.id.in_(secret_ids_to_delete)).delete(synchronize_session=False)
 
-        sharing.delete_grants_for_resource(db, "cloud_connection", db_connection.id)
-        db.delete(db_connection)
         db.commit()
         _project_sync_connection("cloud", connection_name, user_id, deleted=True)

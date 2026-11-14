@@ -7,11 +7,12 @@ run history, favorites and follows.
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
+from shared.models import RunType
 
 # ==================== Namespace Schemas ====================
 
@@ -47,6 +48,8 @@ class NamespaceOut(BaseModel):
     # How the requesting user accesses this resource (multi-user mode); None when
     # unrestricted (admin / electron / internal) — the frontend shows no badge then.
     access: AccessInfo | None = None
+    # Where the namespace lives; a hub's row carries the negative of the hub's id as ``id``.
+    source: Literal["local", "hub"] = "local"
 
     model_config = {"from_attributes": True}
 
@@ -59,8 +62,18 @@ class ScratchCleanupOut(BaseModel):
 
 
 class NamespaceTree(NamespaceOut):
-    """Recursive tree node – children are nested schemas of the same hierarchy."""
+    """Recursive tree node – children are nested schemas of the same hierarchy.
 
+    ``place`` says in words where the catalog lives (``On this computer`` or ``On this server`` for this machine's,
+    the hub's name for a hub's), set once a hub's catalogs are listed beside this machine's. ``offered`` is false for
+    this machine's catalogs on a server joined to a hub with keys of its own: the Catalog panel and the catalog
+    reader's and writer's pickers leave them out, while the flow pickers still find them. ``unavailable_reason`` says
+    why this Flowfile cannot use a hub catalog's tables (on the hub's own disk, or on storage it does not write).
+    """
+
+    place: str | None = None
+    offered: bool = True
+    unavailable_reason: str | None = None
     children: list["NamespaceTree"] = Field(default_factory=list)
     flows: list["FlowRegistrationOut"] = Field(default_factory=list)
     artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
@@ -106,6 +119,11 @@ class FlowRegistrationOut(BaseModel):
     tables_produced: list["CatalogTableSummary"] = Field(default_factory=list)
     tables_read: list["CatalogTableSummary"] = Field(default_factory=list)
     access: AccessInfo | None = None
+    # Where the flow lives; a hub's row has the hub's registration id negated, its uuid and newest version.
+    source: Literal["local", "hub"] = "local"
+    flow_uuid: str | None = None
+    latest_version: int | None = None
+    author_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -175,10 +193,17 @@ class FlowRunOut(BaseModel):
     nodes_completed: int = 0
     number_of_nodes: int = 0
     duration_seconds: float | None = None
-    run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand"] = "in_designer_run"
+    run_type: RunType = "in_designer_run"
     schedule_id: int | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
+    source: Literal["local", "hub"] = "local"
     has_snapshot: bool = False
     has_log: bool = False
+    # A run executed elsewhere: where, under which run id, where its log is, and the published version that ran.
+    executed_on: str | None = None
+    remote_run_id: str | None = None
+    log_ref: str | None = None
+    flow_version: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -195,10 +220,15 @@ class PaginatedFlowRuns(BaseModel):
 
 
 class FlowRunDetail(FlowRunOut):
-    """Extended run detail that includes the YAML flow snapshot and node results."""
+    """Extended run detail that includes the YAML flow snapshot and node results.
+
+    ``flow_snapshot`` is the run's own snapshot, else the document of the published version it names; ``log_url``
+    is the executor's log route for a run whose log is kept elsewhere, when this core can name it.
+    """
 
     flow_snapshot: str | None = None
     node_results_json: str | None = None
+    log_url: str | None = None
 
 
 # ==================== Favorite / Follow Schemas ====================
@@ -301,7 +331,11 @@ class CatalogTableRefreshRequest(BaseModel):
 
     Used by the kernel runtime after append / upsert / update / delete writes
     that mutate an existing Delta directory: the kernel sends back the new
-    row_count / size_bytes / schema so Core's record stays consistent.
+    row_count / size_bytes / schema so Core's record stays consistent. A core that
+    turned on the table's change feed sends ``cdc_enabled_version``, the version it
+    was turned on at, which marks the table tracked. A core that optimized or vacuumed
+    the table sends ``data_changed`` false: its data did not change, so the table's
+    ``updated_at`` is kept and no table trigger fires, as for a local optimize.
     """
 
     table_path: str | None = None
@@ -311,6 +345,8 @@ class CatalogTableRefreshRequest(BaseModel):
     column_count: int | None = None
     size_bytes: int | None = None
     description: str | None = None
+    cdc_enabled_version: int | None = None
+    data_changed: bool = True
 
 
 class VirtualFlowTableCreate(BaseModel):
@@ -434,6 +470,15 @@ class CdcCursorResetRequest(BaseModel):
     to: int | Literal["now", "beginning"] = "now"
 
 
+class CdcCursorCommitRequest(BaseModel):
+    """Record ``last_version`` as fully read by one consumer, creating its cursor on the first read."""
+
+    consumer_key: str
+    last_version: int
+    consumer_label: str | None = None
+    table_path: str | None = None
+
+
 class CatalogTableOut(BaseModel):
     id: int
     name: str
@@ -482,6 +527,8 @@ class CatalogTableOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None
+    # Where the table lives; a hub's row carries the negatives of the hub's own ids.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -965,6 +1012,17 @@ class TableFavoriteOut(BaseModel):
 # ==================== Schedule Schemas ====================
 
 
+def _schedule_backend(value: str | None) -> str | None:
+    """A schedule's backend becomes the value of the run command's ``--backend``, so it may not read as an option."""
+    stripped = (value or "").strip()
+    if stripped.startswith("-") or len(stripped) > 255:
+        raise ValueError("A backend id cannot start with '-' and is at most 255 characters long.")
+    return value
+
+
+ScheduleBackend = Annotated[str | None, AfterValidator(_schedule_backend)]
+
+
 class FlowScheduleCreate(BaseModel):
     registration_id: int
     schedule_type: Literal["interval", "cron", "table_trigger", "table_set_trigger"]
@@ -976,6 +1034,7 @@ class FlowScheduleCreate(BaseModel):
     enabled: bool = True
     name: str | None = None
     description: str | None = None
+    backend: ScheduleBackend = None
 
 
 class FlowScheduleUpdate(BaseModel):
@@ -985,6 +1044,7 @@ class FlowScheduleUpdate(BaseModel):
     cron_timezone: str | None = None
     name: str | None = None
     description: str | None = None
+    backend: ScheduleBackend = None
 
 
 class FlowScheduleOut(BaseModel):
@@ -1006,10 +1066,14 @@ class FlowScheduleOut(BaseModel):
     trigger_table_ids: list[int] = Field(default_factory=list)
     trigger_table_names: list[str] = Field(default_factory=list)
     trigger_full_table_names: list[str] = Field(default_factory=list)
+    backend: str | None = None
+    disabled_reason: str | None = None
     last_triggered_at: datetime | None = None
     last_trigger_table_updated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1040,8 +1104,11 @@ class ActiveFlowRun(BaseModel):
     started_at: datetime
     nodes_completed: int = 0
     number_of_nodes: int = 0
-    run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand"] = "in_designer_run"
+    run_type: RunType = "in_designer_run"
     schedule_id: int | None = None
+    remote_run_id: str | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1069,6 +1136,9 @@ class CatalogStats(BaseModel):
 
 
 class SchedulerStatusOut(BaseModel):
+    """A scheduler's status; ``place`` says whose it is once a remote catalog's is listed beside this install's."""
+
+    place: str | None = None
     active: bool
     holder_id: str | None = None
     started_at: datetime | None = None
@@ -1088,6 +1158,7 @@ class CatalogOverview(BaseModel):
     active_runs: list[ActiveFlowRun] = Field(default_factory=list)
     runs: PaginatedFlowRuns
     scheduler: SchedulerStatusOut
+    schedulers: list[SchedulerStatusOut] = Field(default_factory=list)
     default_namespace_id: int | None = None
 
 

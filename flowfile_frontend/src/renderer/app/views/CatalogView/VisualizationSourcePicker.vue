@@ -59,6 +59,7 @@
 import { computed, ref, watch } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { NamespaceTree, VizSourceDescriptor } from "../../types";
+import { chartSource } from "./hubRows";
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{
@@ -153,7 +154,8 @@ const onContinue = () => {
   if (mode.value === "table") {
     const tableId = parseTableLeaf(selectedTablePath.value);
     if (tableId === null) return;
-    emit("picked", { source_type: "table", table_id: tableId });
+    const table = store.findTableInTree(tableId);
+    emit("picked", table ? chartSource(table) : { source_type: "table", table_id: tableId });
   } else {
     const trimmed = sql.value.trim();
     if (!trimmed) return;

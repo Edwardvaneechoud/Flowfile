@@ -12,8 +12,11 @@ import logging
 import time
 import uuid
 import zoneinfo
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 
 from croniter import croniter
 from sqlalchemy.orm import Session, sessionmaker
@@ -30,7 +33,7 @@ from shared.database import create_catalog_engine
 from shared.notifications.processor import process_pending_notifications
 from shared.run_completion import reap_orphaned_runs, terminate_pid
 from shared.run_logs import cleanup_old_logs
-from shared.storage_config import get_database_url
+from shared.storage_config import get_database_url, require_flow_in_storage
 
 logger = logging.getLogger("flowfile.scheduler")
 
@@ -54,15 +57,40 @@ class LaunchOutcome(Enum):
     FAILED = "failed"
 
 
+@dataclass(frozen=True)
+class Launch:
+    """What a launcher answers for one fire of a schedule.
+
+    ``pid`` is the process it started on this machine. ``remote_run_id`` is the run's id where it was sent instead:
+    such a run has no process here, and the id on its record keeps the orphan reaper from closing it as dead.
+    ``refused`` is the reason the schedule may not run at all: the scheduler disables it with that reason and
+    records no run. ``error`` is why this one fire failed; so does an answer with neither a pid nor a run id.
+    """
+
+    pid: int | None = None
+    remote_run_id: str | None = None
+    refused: str | None = None
+    error: str | None = None
+
+
+Launcher = Callable[[Session, FlowSchedule, FlowRegistration, datetime], Launch]
+"""Starts one run of a due schedule's flow, given the session, the schedule, the flow and the fire time."""
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
 class FlowScheduler:
-    """Async scheduler that polls for due schedules and launches flows."""
+    """Async scheduler that polls for due schedules and launches flows.
 
-    def __init__(self, poll_interval: int = DEFAULT_POLL_INTERVAL):
+    ``launcher`` starts a due schedule's run in place of the subprocess spawned here; without one a run is spawned
+    on this machine from the flow's file.
+    """
+
+    def __init__(self, poll_interval: int = DEFAULT_POLL_INTERVAL, launcher: Launcher | None = None):
         self._poll_interval = poll_interval
+        self._launcher = launcher
         self._holder_id = uuid.uuid4().hex[:12]
         self._task: asyncio.Task | None = None
         self._stopping = False
@@ -502,6 +530,28 @@ class FlowScheduler:
             logger.info("Skipping schedule %s — flow '%s' already has an active run", sched.id, reg.name)
             return LaunchOutcome.SKIPPED
 
+        launch: Launch | None = None
+        flow_path = reg.flow_path
+        if self._launcher is not None:
+            try:
+                launch = self._launcher(db, sched, reg, now)
+            except Exception as exc:
+                logger.exception("Launcher raised for schedule %s", sched.id)
+                launch = Launch(error=str(exc))
+            if launch.refused is not None:
+                logger.warning("Schedule %s disabled — %s", sched.id, launch.refused)
+                sched.enabled = False
+                sched.disabled_reason = launch.refused
+                db.commit()
+                return LaunchOutcome.FAILED
+        else:
+            try:
+                flow_path = str(require_flow_in_storage(Path(reg.flow_path)))
+            except ValueError as exc:
+                # On a multi-user server a flow outside the flow folders is not run, scheduled or not.
+                logger.warning("Schedule %s not launched — flow '%s': %s", sched.id, reg.name, exc)
+                return LaunchOutcome.FAILED
+
         # Create a run record *before* spawning so it shows as active
         run = FlowRun(
             registration_id=reg.id,
@@ -513,6 +563,7 @@ class FlowScheduler:
             number_of_nodes=0,
             run_type="scheduled",
             schedule_id=sched.id,
+            remote_run_id=launch.remote_run_id if launch else None,
         )
         db.add(run)
         sched.last_triggered_at = now
@@ -525,17 +576,22 @@ class FlowScheduler:
             reg.name,
             reg.id,
             run.id,
-            reg.flow_path,
+            flow_path,
         )
 
-        try:
-            pid = self._spawn_flow(reg.flow_path, run.id)
-        except Exception:
-            logger.exception("Spawn raised for run %s", run.id)
-            pid = None
+        if launch is not None:
+            pid = launch.pid
+            launched = launch.error is None and (pid is not None or launch.remote_run_id is not None)
+        else:
+            try:
+                pid = self._spawn_flow(flow_path, run.id, backend=sched.backend)
+            except Exception:
+                logger.exception("Spawn raised for run %s", run.id)
+                pid = None
+            launched = pid is not None
 
-        if pid is None:
-            logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
+        if not launched:
+            logger.error("Failed to launch run %s — marking as failed%s", run.id, f": {launch.error}" if launch else "")
             run.ended_at = _utcnow()
             run.success = False
             db.commit()
@@ -544,16 +600,17 @@ class FlowScheduler:
         run.pid = pid
         db.commit()
         db.refresh(run)
-        if run.ended_at is not None:
+        if run.ended_at is not None and pid is not None:
             # Cancelled while it was starting: that cancel saw no pid to signal.
             logger.info("Run %s was cancelled while starting: %s", run.id, terminate_pid(pid))
         return LaunchOutcome.LAUNCHED
 
-    def _spawn_flow(self, flow_path: str, run_id: int) -> int | None:
+    def _spawn_flow(self, flow_path: str, run_id: int, backend: str | None = None) -> int | None:
         """Fire-and-forget a ``flowfile run flow`` subprocess.
 
+        ``backend`` is the schedule's backend id, passed as ``--backend``; ``None`` spawns the command unchanged.
         Returns the child PID on success, or ``None`` on failure.
         """
         from shared.subprocess_utils import spawn_flow_subprocess
 
-        return spawn_flow_subprocess(flow_path, run_id)
+        return spawn_flow_subprocess(flow_path, run_id, backend=backend)

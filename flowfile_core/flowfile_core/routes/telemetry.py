@@ -46,7 +46,7 @@ class TelemetryStatusOut(BaseModel):
 
 def _can_manage(current_user) -> bool:
     # Read per call: configs.settings caches FLOWFILE_MODE at import.
-    if os.environ.get("FLOWFILE_MODE", "electron") != "docker":
+    if os.environ.get("FLOWFILE_MODE", "electron") not in ("docker", "server"):
         return True
     return bool(getattr(current_user, "is_admin", False))
 

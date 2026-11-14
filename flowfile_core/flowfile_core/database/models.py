@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 import sqlalchemy as sa
 from sqlalchemy import (
@@ -19,7 +18,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
-RunType = Literal["in_designer_run", "scheduled", "manual", "on_demand"]
+from shared.models import RunType
 
 Base = declarative_base()
 
@@ -142,9 +141,15 @@ class ConfiguredBackend(Base):
 
     - ``id``: the backend id a flow saves, ``worker:<name>``.
     - ``url``: the worker's base URL, without a trailing slash.
-    - ``token``: the bearer token as ``encrypt_secret`` ciphertext, never the token itself.
+    - ``token``: the bearer token as ``encrypt_secret`` ciphertext, never the token itself; ``None`` on a hub-filled
+      row.
     - ``ca_cert``: the PEM of the CA core trusts for a non-public worker certificate, else ``None``.
     - ``shares_core_disk``: the worker sees core's files, so core offers it ``file`` whatever it declares.
+    - ``remote_id``: the backend's id at the controller that filled the row (a hub's compute node id); ``None`` on a
+      row added by hand. A filled row stores no token and no CA: the registry asks the controller for a short-lived
+      token when the backend is used.
+    - ``account_user_id``: on a filled row, the local user whose account the row is for, whose session at the
+      controller mints those tokens.
 
     The built-in ``local`` and ``worker`` are never rows. The registry reads a row on the first lookup of its id.
     """
@@ -153,9 +158,11 @@ class ConfiguredBackend(Base):
 
     id = Column(String, primary_key=True)
     url = Column(String, nullable=False)
-    token = Column(Text, nullable=False)
+    token = Column(Text, nullable=True)
     ca_cert = Column(Text, nullable=True)
     shares_core_disk = Column(Boolean, nullable=False, default=False, server_default=sa.false())
+    remote_id = Column(Integer, nullable=True)
+    account_user_id = Column(Integer, nullable=True)
 
 
 # ==================== Catalog Models ====================
@@ -264,6 +271,11 @@ class FlowRun(Base):
     schedule_id = Column(Integer, ForeignKey("flow_schedules.id"), nullable=True)
     # YAML snapshot of the flow definition at run time
     flow_snapshot = Column(Text, nullable=True)
+    # Where a run executed elsewhere ran, its id there, its log and its version (catalog/run_records.py).
+    executed_on = Column(String, nullable=True)
+    remote_run_id = Column(String(64), nullable=True)
+    log_ref = Column(String, nullable=True)
+    flow_version = Column(Integer, nullable=True)
     # JSON-serialised node step results
     node_results_json = Column(Text, nullable=True)
     # Set once the run is evaluated for notifications, whether or not one was sent; NULL means pending.
@@ -402,6 +414,8 @@ class FlowSchedule(Base):
     cron_expression = Column(String, nullable=True)  # 5-field cron string, used when schedule_type == "cron"
     cron_timezone = Column(String, nullable=True)  # IANA tz name (e.g. "Europe/Amsterdam") the cron runs in
     trigger_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True)
+    backend = Column(String, nullable=True)  # compute backend id passed as --backend; NULL leaves it to the flow
+    disabled_reason = Column(Text, nullable=True)  # why the scheduler disabled it; NULL when a person did
     last_triggered_at = Column(DateTime, nullable=True)
     last_cron_slot = Column(DateTime, nullable=True)  # naive LOCAL wall-clock cron cursor (NOT UTC); DST-safe
     last_trigger_table_updated_at = Column(DateTime, nullable=True)

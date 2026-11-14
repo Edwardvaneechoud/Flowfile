@@ -10,6 +10,8 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from flowfile_core.configs.settings import is_server_mode
+
 logger = logging.getLogger(__name__)
 
 
@@ -196,7 +198,7 @@ def is_master_key_configured() -> bool:
         bool: True if master key is configured and valid, False otherwise.
     """
     try:
-        if os.environ.get("FLOWFILE_MODE") == "docker":
+        if is_server_mode():
             return get_docker_secret_key() is not None
         return True
     except RuntimeError:
@@ -217,16 +219,16 @@ def get_master_key():
     """
     Get or generate the master encryption key.
 
-    If running in Docker, retrieves the key from Docker secrets or environment.
+    In docker or server mode, retrieves the key from Docker secrets or environment.
     Otherwise, retrieves or generates a key using the secure storage.
 
     Returns:
         str: The master encryption key
 
     Raises:
-        RuntimeError: If in Docker mode and no key is configured.
+        RuntimeError: If in docker or server mode and no key is configured.
     """
-    if os.environ.get("FLOWFILE_MODE") == "docker":
+    if is_server_mode():
         key = get_docker_secret_key()
         if key is None:
             raise RuntimeError(

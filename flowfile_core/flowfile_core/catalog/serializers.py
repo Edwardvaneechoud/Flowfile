@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from flowfile_core.catalog import run_records
 from flowfile_core.database.models import FlowRun, GlobalArtifact
 from flowfile_core.schemas.catalog_schema import (
     CatalogTablePreview,
@@ -62,8 +63,12 @@ def run_to_out(run: FlowRun, *, has_log: bool, display_name: str | None = None) 
         duration_seconds=run.duration_seconds,
         run_type=run.run_type,
         schedule_id=run.schedule_id,
-        has_snapshot=run.flow_snapshot is not None,
-        has_log=has_log,
+        has_snapshot=run_records.snapshot_of(run) is not None,
+        has_log=has_log or run.log_ref is not None,
+        executed_on=run.executed_on,
+        remote_run_id=run.remote_run_id,
+        log_ref=run.log_ref,
+        flow_version=run.flow_version,
     )
 
 

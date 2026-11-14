@@ -107,6 +107,26 @@ def test_both_fail_raises(calls, monkeypatch):
         read_sql_with_fallback("SELECT 1", "postgresql://u@h/boom", logger, hedge_delay=1)
 
 
+def test_both_fail_message_leads_with_connectorx_error(calls, monkeypatch):
+    monkeypatch.setattr(
+        db_reader, "_read_connectorx", lambda q, u: (_ for _ in ()).throw(RuntimeError("password failed"))
+    )
+    monkeypatch.setattr(db_reader, "_read_sqlalchemy", lambda q, u: (_ for _ in ()).throw(RuntimeError("No module")))
+    with pytest.raises(RuntimeError) as exc:
+        read_sql_with_fallback("SELECT 1", "postgresql://u@h/boom", logger, hedge_delay=1)
+    assert str(exc.value).startswith("password failed")
+    assert "No module" in str(exc.value)
+
+
+def test_psycopg_uri_falls_back_to_psycopg2_when_psycopg_missing(monkeypatch):
+    from shared import sql_utils
+
+    monkeypatch.setattr(sql_utils, "_has_module", lambda name: name == "psycopg2")
+    assert sql_utils.get_sqlalchemy_uri("postgresql+psycopg://u@h/d") == "postgresql+psycopg2://u@h/d"
+    monkeypatch.setattr(sql_utils, "_has_module", lambda name: True)
+    assert sql_utils.get_sqlalchemy_uri("postgresql+psycopg://u@h/d") == "postgresql+psycopg://u@h/d"
+
+
 def test_sqlalchemy_error_waits_for_connectorx(calls, monkeypatch):
     def slow_cx(query, uri):
         calls["cx"] += 1
@@ -141,3 +161,58 @@ def test_cancel_check_aborts_quickly(calls, monkeypatch):
             cancel_check=lambda: time.monotonic() >= cancelled_at,
         )
     assert time.monotonic() - start < 5
+
+
+def test_worker_fallback_engine_uses_psycopg2_when_psycopg_unimportable(monkeypatch):
+    import builtins
+
+    import sqlalchemy
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "psycopg" or name.startswith("psycopg."):
+            raise ModuleNotFoundError("No module named 'psycopg'")
+        return real_import(name, *args, **kwargs)
+
+    seen = []
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr(
+        sqlalchemy, "create_engine", lambda url, **kw: seen.append(url) or (_ for _ in ()).throw(RuntimeError("stop"))
+    )
+    with pytest.raises(RuntimeError, match="stop"):
+        db_reader._read_sqlalchemy("SELECT 1", "postgresql+psycopg://u:p@h/d")
+    assert seen == ["postgresql+psycopg2://u:p@h/d"]
+
+
+def test_mapped_postgres_uri_gets_psycopg2_when_psycopg_missing(monkeypatch):
+    from shared import sql_utils
+
+    monkeypatch.setattr(sql_utils, "_has_module", lambda name: name == "psycopg2")
+    monkeypatch.setitem(sql_utils.SQLALCHEMY_DRIVER_MAP, "postgresql", "postgresql+psycopg")
+    assert sql_utils.get_sqlalchemy_uri("postgresql://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
+
+
+def test_plain_postgres_uri_gets_psycopg2_when_psycopg_missing(monkeypatch):
+    from shared import sql_utils
+
+    monkeypatch.setattr(sql_utils, "_has_module", lambda name: name == "psycopg2")
+    assert sql_utils.get_sqlalchemy_uri("postgresql://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
+    assert sql_utils.get_sqlalchemy_uri("postgres://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
+
+
+def test_a_sqlalchemy_read_works_with_the_asyncio_module_polars_imports(tmp_path):
+    """Polars' read_database imports ``sqlalchemy.ext.asyncio`` for any engine, which SQLAlchemy 2.1 refuses without
+    greenlet; greenlet is a dependency of its own for that."""
+    import sqlalchemy.ext.asyncio  # noqa: F401
+
+    uri = f"sqlite:///{tmp_path / 'reads.db'}"
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(uri)
+    with engine.begin() as conn:
+        conn.execute(text("create table t (a integer)"))
+        conn.execute(text("insert into t values (1), (2)"))
+    engine.dispose()
+
+    assert db_reader._read_sqlalchemy("select a from t order by a", uri)["a"].to_list() == [1, 2]

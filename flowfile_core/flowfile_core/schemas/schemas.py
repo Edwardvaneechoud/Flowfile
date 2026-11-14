@@ -158,6 +158,18 @@ def get_prio_execution_location(
         return local_execution_location
 
 
+class HubOrigin(BaseModel):
+    """Where a flow document came from on a hub, kept in the document so it travels with the file.
+
+    ``version`` is the hub version this document was checked out from or published as last; the next
+    publish sends it as its base, which is how the hub tells a publish from a stale copy apart.
+    """
+
+    hub_url: str
+    flow_uuid: str
+    version: int
+
+
 class FlowGraphConfig(BaseModel):
     """
     Configuration model for a flow graph's basic properties.
@@ -174,6 +186,7 @@ class FlowGraphConfig(BaseModel):
         max_parallel_workers (int): Maximum number of threads used for parallel node execution within a
             stage. Set to 1 to disable parallelism. Defaults to 4.
         parameters (list[FlowParameter]): Flow-level parameters referenceable via ${name} syntax.
+        hub_origin (Optional[HubOrigin]): The hub flow and version this document came from, if any.
     """
 
     flow_id: int = Field(default_factory=create_unique_id, description="Unique identifier for the flow.")
@@ -189,6 +202,7 @@ class FlowGraphConfig(BaseModel):
     execution_location: ExecutionLocationsLiteral = Field(default_factory=default_execution_location)
     max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")
     parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
+    hub_origin: HubOrigin | None = None
 
     @field_validator("execution_mode", mode="before")
     @classmethod
@@ -252,6 +266,8 @@ class FlowSettingsResponse(FlowSettings):
 
     has_unsaved_changes: bool = False
     display_name: str | None = None
+    save_note: str | None = None
+    working_copy: bool = False
 
 
 class RawLogInput(BaseModel):
@@ -289,6 +305,7 @@ class FlowfileSettings(BaseModel):
     max_parallel_workers: int = Field(default=4, ge=1)
     source_registration_id: int | None = None
     parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
+    hub_origin: HubOrigin | None = None
 
     @field_validator("execution_mode", mode="before")
     @classmethod
@@ -296,6 +313,28 @@ class FlowfileSettings(BaseModel):
         if v not in ("Development", "Performance"):
             return "Performance"
         return v
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_origin(self, handler: SerializerFunctionWrapHandler):
+        """A flow that came from no hub is saved without ``hub_origin``, as before the field existed."""
+        data = handler(self)
+        if data.get("hub_origin") is None:
+            data.pop("hub_origin", None)
+        return data
+
+
+def _without_local_source(value, data: dict) -> dict:
+    """A catalog reader or writer of this Flowfile's own catalog is saved without ``source``, as before the field
+    existed; one of a catalog elsewhere keeps it."""
+    if isinstance(value, input_schema.NodeCatalogReader):
+        settings = data
+    elif isinstance(value, input_schema.NodeCatalogWriter):
+        settings = data.get("catalog_write_settings")
+    else:
+        return data
+    if isinstance(settings, dict) and settings.get("source") == "local":
+        del settings["source"]
+    return data
 
 
 class FlowfileInputConnection(BaseModel):
@@ -372,7 +411,7 @@ class FlowfileNode(BaseModel):
             data = value.model_dump(exclude=self._setting_input_exclude)
             data["is_user_defined"] = True
             return data
-        return value.model_dump(exclude=self._setting_input_exclude)
+        return _without_local_source(value, value.model_dump(exclude=self._setting_input_exclude))
 
     @model_serializer(mode="wrap")
     def _keep_description_provenance_in_memory(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo):

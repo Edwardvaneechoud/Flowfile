@@ -48,6 +48,7 @@ import { useEditorStore } from "../stores/editor-store";
 import { useFlowSyncStore } from "../stores/flow-sync-store";
 import { useFlowExecution, resetFlowExecutionState } from "./useFlowExecution";
 import { useNodeSettings } from "./useNodeSettings";
+import { noteAtOpen } from "../components/layout/Header/catalogNote";
 
 const openDrawerWithSave = (save: () => Promise<unknown>) => {
   const editor = useEditorStore();
@@ -77,6 +78,8 @@ const createHeaderSettingsLoader = (
     "runButton",
     "getFlowSettings",
     "getRunStatus",
+    "noteAtOpen",
+    "ElMessage",
     `let settingsLoad = null; ${body}; return loadFlowSettings;`,
   )(
     mocks.nodeState,
@@ -86,6 +89,8 @@ const createHeaderSettingsLoader = (
     ref(button),
     mocks.getFlowSettings,
     mocks.get,
+    noteAtOpen,
+    { info: vi.fn() },
   );
 };
 

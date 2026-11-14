@@ -19,7 +19,11 @@
       @click="emit('selectSchedule', schedule.id)"
     >
       <div class="col-status">
-        <ScheduleStatusBadge :running="isRunning(schedule)" :enabled="schedule.enabled" />
+        <ScheduleStatusBadge
+          :running="isRunning(schedule)"
+          :enabled="schedule.enabled"
+          :reason="schedule.disabled_reason"
+        />
       </div>
       <div v-if="showFlowColumn" class="col-flow">
         <span

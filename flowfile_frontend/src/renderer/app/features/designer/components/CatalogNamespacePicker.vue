@@ -16,6 +16,7 @@
         :selected-id="selectedId"
         :initially-expanded="true"
         :writable-only="writableOnly"
+        :catalogs-selectable="catalogsSelectable"
         @select="handleSelect"
       />
     </div>
@@ -33,6 +34,7 @@ import {
 } from "../../../types";
 import type { NamespaceTree } from "../../../types";
 import { useWritableNamespaces } from "../../../composables/useWritableNamespaces";
+import { isHubRow, isOffered, withoutHubRows } from "../../../views/CatalogView/hubRows";
 
 const { isWritableNamespace } = useWritableNamespaces();
 
@@ -44,6 +46,10 @@ const props = defineProps<{
   // Save-target mode: disable read-only (use-grant) schemas and skip them for
   // the default selection. Leave unset for browse/read use (Open dialog).
   writableOnly?: boolean;
+  // The connected hub's namespaces instead of this machine's, each with the negative of its hub id.
+  hub?: boolean;
+  // Let a catalog (a top-level row) be picked as well as its schemas, as a publish to the hub allows.
+  catalogsSelectable?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -67,10 +73,16 @@ const loadTree = async () => {
   loading.value = true;
   error.value = null;
   try {
-    const fetched = await CatalogApi.getNamespaceTree();
+    const whole = await CatalogApi.getNamespaceTree();
+    // A save target is this machine's catalog; the Open dialog browses the hub's beside it.
+    const fetched = props.hub
+      ? whole.filter(isHubRow)
+      : props.writableOnly
+        ? withoutHubRows(whole)
+        : whole.filter(isOffered);
     tree.value = props.hideSystemNamespaces ? filterSelectableNamespaces(fetched) : fetched;
     // Auto-select the most appropriate "General" child when nothing is selected.
-    if (selectedId.value === null) {
+    if (selectedId.value === null && !props.hub) {
       const defaultNs = findDefaultSaveNamespace(
         tree.value,
         (c) => !props.writableOnly || isWritableNamespace(c),
@@ -103,11 +115,14 @@ const getNamespacePath = (id: number | null): string | null => {
   return path.length ? path.join(".") : null;
 };
 
+// The hub's own id of a namespace in the tree, which the hub's routes take; null for none or a local row.
+const hubIdOf = (id: number | null): number | null => (id !== null && id < 0 ? -id : null);
+
 onMounted(() => {
   loadTree();
 });
 
-defineExpose({ reload: loadTree, getNamespacePath });
+defineExpose({ reload: loadTree, getNamespacePath, hubIdOf });
 </script>
 
 <style scoped>

@@ -51,6 +51,21 @@ describe("useFlowOpener", () => {
     expect(mocks.notify).not.toHaveBeenCalled();
   });
 
+  it("opens a remote catalog's working copy without making it a recent", async () => {
+    mocks.importFlow.mockResolvedValue(8);
+    mocks.getAllFlows.mockResolvedValue([{ flow_id: 8, working_copy: true }]);
+    const { openFlow } = useFlowOpener();
+    const { recentFlows, recordFlow } = useRecentFlows();
+    recordFlow({ path: "/cache/remote/abc.yaml" });
+
+    const result = await openFlow("/cache/remote/abc.yaml", { name: "demo-flow" });
+
+    expect(result).toBe(8);
+    expect(mocks.setFlowId).toHaveBeenCalledWith(8);
+    expect(recentFlows.value).toEqual([]);
+    mocks.getAllFlows.mockReset();
+  });
+
   it("prunes the recents entry and notifies when no flow id is returned", async () => {
     mocks.importFlow.mockResolvedValue(undefined);
     const { openFlow } = useFlowOpener();

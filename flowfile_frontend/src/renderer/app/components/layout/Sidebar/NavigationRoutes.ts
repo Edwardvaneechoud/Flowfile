@@ -23,6 +23,8 @@ export interface INavigationRoute {
   index?: string;
   disabled?: boolean;
   requiresAdmin?: boolean;
+  // An admin entry that everyone sees on a server that belongs to a hub (computeTabs.showsTab).
+  onJoinedServer?: boolean;
   hideInElectron?: boolean;
   dockerOnly?: boolean;
   // Status-colored dot overlaid on the item's icon (e.g. project sync state).
@@ -134,6 +136,7 @@ export default {
             displayName: t.sidebarKey,
             meta: { icon: t.icon },
             requiresAdmin: t.requiresAdmin,
+            onJoinedServer: t.onJoinedServer,
             group: { key: t.group, labelKey: COMPUTE_TAB_GROUP_KEYS[t.group] },
           }),
         ),

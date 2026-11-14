@@ -59,6 +59,7 @@ from flowfile_core.routes.file_manager import router as file_manager_router
 from flowfile_core.routes.flow_api import data_router as flow_api_data_router
 from flowfile_core.routes.flow_api import management_router as flow_api_management_router
 from flowfile_core.routes.ga_connections import router as ga_connections_router
+from flowfile_core.routes.hub_client import router as hub_client_router
 from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.node_requests import router as node_requests_router
@@ -77,6 +78,7 @@ from flowfile_core.routes.telemetry import router as telemetry_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
 from flowfile_core.routes.user_groups import router as user_groups_router
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
+from shared import server_extension
 from shared.parent_watcher import start_parent_death_watcher
 from shared.run_completion import reap_orphaned_runs
 from shared.run_logs import cleanup_old_logs
@@ -89,6 +91,8 @@ if "FLOWFILE_MODE" not in os.environ:
 
 should_exit = False
 server_instance = None
+serving_port: int | None = None
+"""The port ``run`` serves on, which a server's extension is told while it serves; ``None`` outside ``run``."""
 
 
 @asynccontextmanager
@@ -97,6 +101,8 @@ async def shutdown_handler(app: FastAPI):
 
     This context manager ensures that resources, such as log files and kernel
     containers, are cleaned up properly when the application is terminated.
+    A server's extension runs what it runs while core serves, on the port it
+    serves on (``server_extension``'s ``serving``).
     """
     # Ensure scheduler and subprocess loggers are visible on stdout (Electron pipes this)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -127,6 +133,7 @@ async def shutdown_handler(app: FastAPI):
         logging.getLogger(__name__).exception("Startup log retention sweep failed")
 
     publish("app_started")
+    stop_extension = server_extension.call("serving", "core", serving_port, app)
 
     # Only auto-start scheduler if explicitly opted in via env var
     if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "").lower() in ("true", "1", "yes"):
@@ -143,6 +150,8 @@ async def shutdown_handler(app: FastAPI):
         yield
     finally:
         print("Shutting down core application...")
+        if stop_extension is not None:
+            stop_extension()
         change_feed.close_all()
 
         # Stop scheduler
@@ -256,6 +265,9 @@ app.include_router(user_defined_components_router, prefix="/user_defined_compone
 app.include_router(custom_node_mounts_router, prefix="/custom-node-mounts", tags=["custom_node_mounts"])
 app.include_router(community_nodes_router, prefix="/community_nodes", tags=["community_nodes"])
 app.include_router(community_github_router, prefix="/community_nodes/github", tags=["community_nodes"])
+app.include_router(hub_client_router, prefix="/hub_client", tags=["hub_client"])
+for _extension_router, _extension_prefix in server_extension.call("routers", "core", default=()):
+    app.include_router(_extension_router, prefix=_extension_prefix, tags=["server_extension"])
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(lsp_router, tags=["lsp"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
@@ -326,21 +338,27 @@ def run(host: str = None, port: int = None):
     """Runs the FastAPI application using Uvicorn.
 
     This function configures and starts the Uvicorn server, setting up
-    signal handlers to ensure a graceful shutdown. It first marks the process
-    as serving (``registry.mark_serving``), so its compute is never the worker
-    embedded in it.
+    signal handlers to ensure a graceful shutdown. A storage dir marked for a
+    server extension is served only with it loaded (``require_marked``). An
+    extension takes a last step before requests are taken
+    (``before_serving``); when it answers a socket it bound, the server serves
+    on that socket, else uvicorn binds the port as it always has. It then marks
+    the process as serving (``registry.mark_serving``), so its compute is never
+    the worker embedded in it.
 
     Args:
         host: The host to bind the server to. Defaults to `SERVER_HOST` from settings.
         port: The port to bind the server to. Defaults to `SERVER_PORT` from settings.
     """
-    global server_instance
+    global server_instance, serving_port
 
-    compute_registry.mark_serving()
     if host is None:
         host = SERVER_HOST
     if port is None:
         port = SERVER_PORT
+    server_extension.require_marked()
+    sock = server_extension.call("before_serving", "core", host, port, app)
+    compute_registry.mark_serving()
     print(f"Starting server on {host}:{port}")
     print(
         f"Compute backend {compute_registry.default_backend_id()!r}; "
@@ -359,6 +377,7 @@ def run(host: str = None, port: int = None):
     install_access_log_redaction()
     server = _Server(config)
     server_instance = server
+    serving_port = port
 
     # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.
     start_parent_death_watcher(lambda: _stop_server(server))
@@ -367,11 +386,12 @@ def run(host: str = None, port: int = None):
     print("Core server started")
 
     try:
-        server.run()
+        server.run(sockets=[sock] if sock is not None else None)
     except KeyboardInterrupt:
         print("Received interrupt signal, shutting down...")
     finally:
         server_instance = None
+        serving_port = None
         print("Server has shut down.")
 
 
