@@ -227,7 +227,7 @@ router.onError((error, to) => {
 let setupChecked = false;
 let setupRequired = false;
 
-router.beforeEach(async (to, _from, next) => {
+router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore();
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false);
   const hideInElectron = to.matched.some((record) => record.meta.hideInElectron);
@@ -291,7 +291,12 @@ router.beforeEach(async (to, _from, next) => {
       next({ name: "login" });
     }
   } else {
-    if (to.name === "login" && (authService.isInDesktopMode() || authService.isAuthenticated())) {
+    // a signed-in tab still starts a sign-in through the hub (and drops its flag), which may sign in someone else
+    const hubSignIn = to.query.hub_signin === "1" || from.query.hub_signin === "1";
+    if (
+      to.name === "login" &&
+      (authService.isInDesktopMode() || (authService.isAuthenticated() && !hubSignIn))
+    ) {
       next({ name: "home" });
     } else {
       next();

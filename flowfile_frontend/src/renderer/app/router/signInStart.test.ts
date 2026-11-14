@@ -52,9 +52,25 @@ describe("redirectToLogin", () => {
     expect((await boot("/elsewhere")).name).toBe("login");
   });
 
-  it("keeps a signed-in tab off the sign-in page, so `#/login?hub_signin=1` starts nothing", async () => {
+  it("leaves a signed-in tab at the sign-in start, which may sign in someone else through the hub", async () => {
     mocks.isAuthenticated.mockReturnValue(true);
 
-    expect((await boot("/login?hub_signin=1")).name).toBe("home");
+    expect((await boot("/login?hub_signin=1")).fullPath).toBe("/login?hub_signin=1");
+  });
+
+  it("lets the sign-in start drop its flag without leaving the sign-in page", async () => {
+    mocks.isAuthenticated.mockReturnValue(true);
+    await boot("/login?hub_signin=1");
+    const { default: router } = await import("./index");
+
+    await router.replace({ path: "/login", query: {} });
+
+    expect(router.currentRoute.value.fullPath).toBe("/login");
+  });
+
+  it("keeps a signed-in tab off a plain sign-in page", async () => {
+    mocks.isAuthenticated.mockReturnValue(true);
+
+    expect((await boot("/login")).name).toBe("home");
   });
 });
