@@ -62,8 +62,32 @@
       </div>
     </div>
 
-    <!-- Node Results -->
-    <div v-if="nodeResults.length > 0" class="section">
+    <div
+      v-if="detailPending && detailError"
+      class="overview-error"
+      role="alert"
+      data-testid="run-detail-error"
+    >
+      <span>Couldn't load this run's details: {{ detailError }}</span>
+      <button class="btn btn-secondary btn-sm" @click="$emit('retryDetail')">Retry</button>
+    </div>
+
+    <!-- Node Results: held in place while the detail is on its way -->
+    <div
+      v-if="detailLoading && run.number_of_nodes > 0"
+      class="section"
+      data-testid="run-detail-pending"
+    >
+      <h3>Node Results</h3>
+      <div class="skeleton-list" aria-busy="true">
+        <div
+          v-for="i in Math.min(run.number_of_nodes, 5)"
+          :key="i"
+          class="skeleton-block skeleton-row"
+        ></div>
+      </div>
+    </div>
+    <div v-else-if="nodeResults.length > 0" class="section">
       <h3>Node Results</h3>
       <div class="table-wrapper">
         <table class="styled-table results-table">
@@ -135,7 +159,7 @@
           Run Log
         </h3>
         <button
-          v-if="logElsewhere && run.log_page_url"
+          v-if="logElsewhere && detail?.log_page_url"
           class="btn btn-primary btn-sm"
           data-testid="run-log-open-elsewhere"
           @click="openLogElsewhere"
@@ -144,7 +168,7 @@
           Open the run on {{ executorName }}
         </button>
         <button
-          v-else-if="!logElsewhere && !logContent && !loadingLog"
+          v-else-if="!logElsewhere && !logContent && !loadingLog && !detailLoading"
           class="btn btn-primary btn-sm"
           @click="loadLog"
         >
@@ -155,7 +179,7 @@
       <div v-if="logElsewhere" class="log-viewer">
         <pre class="snapshot-code">{{ logElsewhereNote }}</pre>
       </div>
-      <div v-else-if="loadingLog" class="log-viewer">
+      <div v-else-if="loadingLog || detailLoading" class="log-viewer">
         <pre class="snapshot-code">Loading...</pre>
       </div>
       <div v-else-if="logContent !== null" class="log-viewer">
@@ -164,7 +188,7 @@
     </div>
 
     <!-- Flow Version Snapshot -->
-    <div v-if="run.flow_snapshot" class="section">
+    <div v-if="detail?.flow_snapshot" class="section">
       <div class="snapshot-header">
         <h3>
           <i class="fa-solid fa-code-branch"></i>
@@ -179,6 +203,15 @@
         <pre class="snapshot-code">{{ formattedSnapshot }}</pre>
       </div>
     </div>
+    <div v-else-if="detailLoading && run.has_snapshot" class="section">
+      <div class="snapshot-header">
+        <h3>
+          <i class="fa-solid fa-code-branch"></i>
+          Flow Version at Run Time
+        </h3>
+      </div>
+      <div class="skeleton-block snapshot-pending" aria-busy="true"></div>
+    </div>
   </div>
 </template>
 
@@ -189,7 +222,7 @@ import { desktop } from "../../../lib/desktop";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useHubConnectionStore } from "../../stores/hub-connection-store";
-import type { FlowRunDetail } from "../../types";
+import type { FlowRun, FlowRunDetail } from "../../types";
 import {
   NODE_OUTCOME_BADGE,
   NODE_OUTCOME_LABEL,
@@ -218,10 +251,20 @@ async function copyError(text: string) {
 const catalogStore = useCatalogStore();
 
 const props = defineProps<{
-  run: FlowRunDetail;
+  /** The run's detail, or its list row while `detailPending` (the detail is still on its way). */
+  run: FlowRun | FlowRunDetail;
+  detailPending?: boolean;
+  /** Why the detail could not be fetched; the row stays shown with a Retry. */
+  detailError?: string | null;
 }>();
 
-defineEmits(["close", "openSnapshot", "viewFlow", "viewScheduleRuns"]);
+const detailLoading = computed(() => !!props.detailPending && !props.detailError);
+
+const detail = computed<FlowRunDetail | null>(() =>
+  props.detailPending ? null : (props.run as FlowRunDetail),
+);
+
+defineEmits(["close", "openSnapshot", "viewFlow", "viewScheduleRuns", "retryDetail"]);
 
 const logContent = ref<string | null>(null);
 const loadingLog = ref(false);
@@ -236,21 +279,21 @@ const logRunHere = computed<number | null>(() => {
   return named && here && named[1] === here ? Number(named[2]) : null;
 });
 const logElsewhere = computed(
-  () => !!(props.run.log_url || props.run.log_page_url) && logRunHere.value === null,
+  () => !!(detail.value?.log_url || detail.value?.log_page_url) && logRunHere.value === null,
 );
 const executorName = computed(() => props.run.executed_on ?? "the server that ran it");
 const logElsewhereNote = computed(() => {
   const where = `The log is kept on ${executorName.value}`;
-  if (props.run.log_page_url) {
+  if (detail.value?.log_page_url) {
     return `${where}. Open the run there to read it; you sign in there as you do here.`;
   }
   // an older core sends no page at all; only null says the executor serves no editor
-  return props.run.log_page_url === null
+  return detail.value?.log_page_url === null
     ? `${where}, which has no editor to read it in.`
     : `${where}. Open it in that server's editor to read it.`;
 });
 const openLogElsewhere = () => {
-  if (props.run.log_page_url) void desktop.openExternal(props.run.log_page_url);
+  if (detail.value?.log_page_url) void desktop.openExternal(detail.value?.log_page_url);
 };
 
 async function loadLog() {
@@ -264,12 +307,12 @@ async function loadLog() {
   }
 }
 
-// Auto-load log when viewing a scheduled run
+// Auto-load log when viewing a scheduled run; where it lives is known once the detail arrived
 watch(
-  [() => props.run.id, logElsewhere],
+  [() => props.run.id, logElsewhere, () => props.detailPending],
   () => {
     logContent.value = null;
-    if (props.run.has_log && !logElsewhere.value) {
+    if (props.run.has_log && !props.detailPending && !logElsewhere.value) {
       loadLog();
     }
   },
@@ -302,20 +345,21 @@ const statusClass = computed(() => RUN_OUTCOME_TEXT[outcome.value]);
 const statusText = computed(() => RUN_OUTCOME_LABEL[outcome.value]);
 
 const nodeResults = computed<NodeResultData[]>(() => {
-  if (!props.run.node_results_json) return [];
+  if (!detail.value?.node_results_json) return [];
   try {
-    return JSON.parse(props.run.node_results_json);
+    return JSON.parse(detail.value.node_results_json);
   } catch {
     return [];
   }
 });
 
 const formattedSnapshot = computed(() => {
-  if (!props.run.flow_snapshot) return "";
+  const snapshot = detail.value?.flow_snapshot;
+  if (!snapshot) return "";
   try {
-    return JSON.stringify(JSON.parse(props.run.flow_snapshot), null, 2);
+    return JSON.stringify(JSON.parse(snapshot), null, 2);
   } catch {
-    return props.run.flow_snapshot;
+    return snapshot;
   }
 });
 </script>
@@ -480,6 +524,10 @@ const formattedSnapshot = computed(() => {
 }
 
 /* Snapshot Viewer */
+.snapshot-pending {
+  height: 240px;
+}
+
 .snapshot-viewer {
   background: var(--color-background-secondary);
   border: 1px solid var(--color-border-light);

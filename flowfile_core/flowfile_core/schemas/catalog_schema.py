@@ -675,6 +675,19 @@ class CatalogTableKeyColumnResponse(BaseModel):
     new_version: int | None = None
 
 
+class CatalogTableRestoreRequest(BaseModel):
+    """Request to restore a table to an earlier Delta version."""
+
+    version: int = Field(ge=0)
+    expected_version: int | None = None
+
+
+class CatalogTableRestoreResponse(BaseModel):
+    table: CatalogTableOut
+    restored_version: int
+    new_version: int | None = None
+
+
 # ==================== SQL Query Schemas ====================
 
 
