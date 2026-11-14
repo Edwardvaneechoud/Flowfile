@@ -8,6 +8,7 @@ from pydantic import (
     SerializationInfo,
     SerializerFunctionWrapHandler,
     ValidationInfo,
+    computed_field,
     field_serializer,
     field_validator,
     model_serializer,
@@ -727,6 +728,22 @@ class NodeTag(str, Enum):
     METRICS = "metrics"
 
 
+class NodeOutputPort(BaseModel):
+    """An effective output handle."""
+
+    id: str
+    name: str | None = None
+
+
+class NodePort(NodeOutputPort):
+    """An effective input handle; readiness is not connect-time validation."""
+
+    kind: Literal["data", "parameter"] = "data"
+    required: bool = False
+    multiple: bool = False
+    hidden: bool = False
+
+
 class NodeTemplate(BaseModel):
     """
     Defines the template for a node type, specifying its UI and functional characteristics.
@@ -773,6 +790,40 @@ class NodeTemplate(BaseModel):
     # Connections keyed by target handle instead of all onto input-0 (run_flow); see input_handles.py.
     dynamic_inputs: bool = False
     tags: list[NodeTag] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def inputs(self) -> list[NodePort]:
+        """Derive handles without duplicating the node registry."""
+        names = getattr(self, "input_names", None)
+        if self.dynamic_inputs or names is not None:
+            return [
+                NodePort(id=f"input-{i}", name=name, kind="parameter" if i == 0 else "data", hidden=i == 0 and not name)
+                for i, name in enumerate(names or [""])
+            ]
+        return [
+            NodePort(
+                id=f"input-{i}",
+                name=self.input_labels[i] if self.input_labels and i < len(self.input_labels) else None,
+                kind="parameter" if i in (self.control_input_indices or []) else "data",
+                required=i < (self.min_inputs if self.min_inputs is not None else self.input),
+                multiple=self.multi,
+            )
+            for i in range(1 if self.multi else self.input)
+        ]
+
+    @computed_field
+    @property
+    def outputs(self) -> list[NodeOutputPort]:
+        dynamic = self.dynamic_inputs or getattr(self, "input_names", None) is not None
+        count = len(self.output_names or []) if dynamic else max(self.output, len(self.output_names or []))
+        return [
+            NodeOutputPort(
+                id=f"output-{i}",
+                name=self.output_names[i] if self.output_names and i < len(self.output_names) else None,
+            )
+            for i in range(count)
+        ]
 
     @property
     def writes(self) -> bool:

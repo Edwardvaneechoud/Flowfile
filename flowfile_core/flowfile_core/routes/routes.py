@@ -978,7 +978,7 @@ def connect_node(
     from_id = node_connection.output_connection.node_id
     to_id = node_connection.input_connection.node_id
     with edit_flow(flow, f"Connect {from_id} -> {to_id}", HistoryActionType.ADD_CONNECTION) as txn:
-        add_connection(flow, node_connection)
+        add_connection(flow, node_connection, validate_ports=True)
     return OperationResponse(success=True, history=txn.history)
 
 

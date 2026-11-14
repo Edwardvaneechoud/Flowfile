@@ -1,7 +1,7 @@
 // Handle derivation shared by drop / copy / import paths. Pure (no VueFlow
 // instance access) so it stays unit-testable in the node environment.
 import { Position } from "@vue-flow/core";
-import type { NodeHandle } from "../types/flow.types";
+import type { InputPort, NodeHandle, OutputPort } from "../types/flow.types";
 import { handleLetters, outputHandle } from "./outputHandle";
 
 // Fixed parameter-data handle on dynamic-input nodes (run_flow).
@@ -102,6 +102,8 @@ export function buildDynamicOutputHandles(outputNames: string[]): NodeHandle[] {
 }
 
 export interface HandleSource {
+  inputs?: InputPort[];
+  outputs?: OutputPort[];
   input: number;
   output: number;
   multi?: boolean;
@@ -125,6 +127,51 @@ export interface DerivedHandles {
 // them from per-instance input_names/output_names (a fresh run_flow shows no
 // handles until a flow is picked); static nodes keep today's behavior.
 export function deriveHandles(node: HandleSource): DerivedHandles {
+  if (node.inputs !== undefined && node.outputs !== undefined) {
+    const dynamic = node.dynamic_inputs || node.input_names != null;
+    const side = node.inputs.filter((port) => port.kind === "data");
+    const inputLetters = handleLetters(
+      side.length,
+      side.map((port) => port.name ?? ""),
+    );
+    const outputLetters = handleLetters(
+      node.outputs.length,
+      node.outputs.map((port) => port.name ?? ""),
+    );
+    let sideIndex = 0;
+    return {
+      inputs: node.inputs
+        .filter((port) => !port.hidden)
+        .map((port): NodeHandle => {
+          if (port.kind === "parameter") {
+            return {
+              id: port.id,
+              position: Position.Bottom,
+              kind: "parameter",
+              multiple: port.multiple,
+              required: port.required,
+              title: dynamic ? "Parameter data (optional)" : (port.name ?? undefined),
+            };
+          }
+          return {
+            id: port.id,
+            position: Position.Left,
+            kind: dynamic ? "data" : undefined,
+            multiple: port.multiple,
+            required: port.required,
+            label: dynamic ? (port.name ?? undefined) : inputLetters[sideIndex++],
+            title: port.name ?? undefined,
+          };
+        }),
+      outputs: node.outputs.map((port, i) => ({
+        id: port.id,
+        position: Position.Right,
+        label: dynamic ? (port.name ?? undefined) : outputLetters[i],
+        title: dynamic || node.outputs!.length > 1 ? (port.name ?? undefined) : undefined,
+      })),
+    };
+  }
+  // Compatibility for old clipboard snapshots and unsaved settings previews.
   if (node.dynamic_inputs || node.input_names != null) {
     return {
       inputs: buildDynamicInputHandles(node.input_names ?? [""]),

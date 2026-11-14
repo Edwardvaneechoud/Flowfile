@@ -1,7 +1,5 @@
-
 import polars as pl
 import pytest
-
 from fastapi import HTTPException
 
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, validate_connection
@@ -26,7 +24,9 @@ def create_flowfile_handler():
 
 def create_graph(flow_id: int = 1, execution_mode: str = 'Development') -> FlowGraph:
     handler = create_flowfile_handler()
-    handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name=f'flow_{flow_id}', path='.', execution_mode=execution_mode))
+    handler.register_flow(
+        schemas.FlowSettings(flow_id=flow_id, name=f'flow_{flow_id}', path='.', execution_mode=execution_mode)
+    )
     graph = handler.get_flow(flow_id)
     return graph
 
@@ -489,8 +489,10 @@ def test_add_connection_rejects_transitive_back_edge():
 def test_add_connection_allows_valid_downstream_edge():
     """Adding a parallel feed-forward edge (skip-connection) must still be permitted."""
     graph = _build_chain_for_cycle_tests()
-    # 1 -> 3 adds a skip connection, no cycle.
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
+    # Use a multi-input target so the skip edge does not replace an occupied single input.
+    add_node_promise_on_type(graph, "union", 4)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 4))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 4))
     # Sanity: the topological ordering still works.
     graph.run_graph()
 
@@ -861,3 +863,43 @@ def test_combine_never_runs_a_deferred_zero_input_node(custom_node_store):
     assert node.node_schema.result_schema == seed_schema
     assert node.get_resulting_data().collect().height == 0
     assert ZERO_INPUT_PROCESS_CALLS == []
+
+
+@pytest.mark.parametrize("node_type", ["filter", "union"])
+def test_public_connection_occupancy_preserves_internal_replacement(node_type):
+    graph = create_graph()
+    add_manual_input(graph, [{"value": 1}], node_id=1)
+    add_manual_input(graph, [{"value": 2}], node_id=2)
+    add_node_promise_on_type(graph, node_type, 3)
+    first = input_schema.NodeConnection.create_from_simple_input(1, 3)
+    second = input_schema.NodeConnection.create_from_simple_input(2, 3)
+    add_connection(graph, first, validate_ports=True)
+    add_connection(graph, first, validate_ports=True)
+    if node_type == "filter":
+        with pytest.raises(HTTPException, match="already has a connection"):
+            add_connection(graph, second, validate_ports=True)
+        assert [node.node_id for node in graph.get_node(3).all_inputs] == [1]
+        add_connection(graph, second)
+        assert [node.node_id for node in graph.get_node(3).all_inputs] == [2]
+    else:
+        add_connection(graph, second)
+        assert [node.node_id for node in graph.get_node(3).all_inputs] == [1, 2]
+
+
+def test_reserved_parameter_port_is_declared_without_parameters():
+    graph = create_graph()
+    add_manual_input(graph, [{"value": 1}], node_id=1)
+    add_node_promise_on_type(graph, "run_flow", 2)
+    node = graph.get_node(2)
+    node.setting_input = input_schema.NodeRunFlow(
+        flow_id=1,
+        node_id=2,
+        flow_reference=input_schema.SubflowReference(registration_id=1),
+        input_slots=[],
+        output_slots=[],
+    )
+    port = next(port for port in node.get_node_input().inputs if port.id == "input-0")
+    assert port.hidden
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    assert node.input_edge_handle(1, "input-0") == "output-0"
