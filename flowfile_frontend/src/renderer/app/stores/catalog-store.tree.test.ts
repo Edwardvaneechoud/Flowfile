@@ -202,6 +202,46 @@ describe("catalog-store first load versus refresh", () => {
     expect(store.tree.map((n) => n.id)).toEqual([1, 2]);
   });
 
+  it("stops loading when the newest of two overlapping overviews fails, whichever lands last", async () => {
+    const first = deferred<CatalogOverview>();
+    const second = deferred<CatalogOverview>();
+    getOverview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const store = useCatalogStore();
+
+    const older = store.initialize(true);
+    const newer = store.initialize(true);
+    expect(store.loading).toBe(true);
+    second.reject(new Error("boom"));
+    await newer;
+    expect(store.loading).toBe(false);
+    expect(store.overviewFailed).toBe(true);
+
+    first.resolve(overview());
+    await older;
+    expect(store.loading).toBe(false);
+    expect(store.overviewLoaded).toBe(false);
+    expect(store.overviewError).toBe("boom");
+  });
+
+  it("stops loading when the older of two overlapping overviews fails first", async () => {
+    const first = deferred<CatalogOverview>();
+    const second = deferred<CatalogOverview>();
+    getOverview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const store = useCatalogStore();
+
+    const older = store.initialize(true);
+    const newer = store.initialize(true);
+    first.reject(new Error("boom"));
+    await older;
+    expect(store.loading).toBe(true);
+    expect(store.overviewError).toBeNull();
+
+    second.resolve(overview());
+    await newer;
+    expect(store.loading).toBe(false);
+    expect(store.overviewLoaded).toBe(true);
+  });
+
   it("keeps a slice its own loader refreshed while the overview was out", async () => {
     const slow = deferred<CatalogOverview>();
     getOverview.mockReturnValueOnce(slow.promise);

@@ -448,6 +448,8 @@ export const useCatalogStore = defineStore("catalog", {
     /**
      * Opens a flow's page: its runs, schedules and artifacts load, and a slice still holding
      * another flow's data is emptied first so the page shows a placeholder, never that flow's rows.
+     * Nothing is awaited: each load fills its own slice and handles its own failure, and a view
+     * reads readiness off the slice's owner id (`flowRunsPageFor`, `flowSchedulesFlowId`, …).
      */
     loadFlowDetail(flowId: number) {
       if (this.flowRunsFlowId !== flowId) {
