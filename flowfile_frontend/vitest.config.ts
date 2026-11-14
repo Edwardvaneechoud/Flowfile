@@ -10,6 +10,7 @@ import Path from "path";
 import { fileURLToPath } from "url";
 import vuePlugin from "@vitejs/plugin-vue";
 import { defineConfig } from "vitest/config";
+import vue from "@vitejs/plugin-vue";
 
 const __dirname = Path.dirname(fileURLToPath(import.meta.url));
 

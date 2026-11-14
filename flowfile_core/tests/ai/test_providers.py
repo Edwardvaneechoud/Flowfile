@@ -181,7 +181,7 @@ def test_unknown_surface_falls_back_to_default() -> None:
 
 @pytest.mark.parametrize("surface", [None, "unrecognised_surface", *OpenAIProvider.surface_models])
 def test_openai_defaults_use_gpt_6_luna(surface: str | None) -> None:
-    assert provider_factory("openai", surface=surface).model == "gpt-6-luna"
+    assert provider_factory("openai", surface=surface).model == "openai/gpt-6-luna"
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -196,7 +196,7 @@ def test_openai_default_request_params(stream: bool, max_tokens: int | None) -> 
         stream=stream,
         response_format={"type": "json_object"},
     )
-    assert kwargs["model"] == "gpt-6-luna"
+    assert kwargs["model"] == "openai/gpt-6-luna"
     assert kwargs["custom_llm_provider"] == "openai"
     assert kwargs["allowed_openai_params"] == ["reasoning_effort"]
     assert kwargs["reasoning_effort"] == "none"
@@ -211,7 +211,7 @@ def test_openai_default_request_params(stream: bool, max_tokens: int | None) -> 
 def test_openai_explicit_model_keeps_request_params() -> None:
     p = provider_factory("openai", model="gpt-4.1", surface="cmd_k")
     kwargs = p._build_kwargs([Message(role="user", content="hi")], None, 128, stream=False)
-    assert kwargs["model"] == "gpt-4.1"
+    assert kwargs["model"] == "openai/gpt-4.1"
     assert kwargs["max_tokens"] == 128
     assert "max_completion_tokens" not in kwargs
     assert "reasoning_effort" not in kwargs
@@ -228,6 +228,7 @@ def test_openai_explicit_model_keeps_request_params() -> None:
         ("anthropic", "claude-haiku-4-5", "anthropic/"),
         ("google", "gemini-2.5-flash", "gemini/"),
         ("groq", "llama-3.3-70b-versatile", "groq/"),
+        ("openai", "gpt-4.1", "openai/"),
         ("ollama", "llama3.1:8b", "ollama_chat/"),
         ("openrouter", "anthropic/claude-haiku-4.5", "openrouter/"),
     ],
@@ -241,12 +242,6 @@ def test_prefix_not_double_applied() -> None:
     p = provider_factory("anthropic", model="anthropic/claude-haiku-4-5")
     assert p.model == "anthropic/claude-haiku-4-5"
     assert p.model.count("anthropic/") == 1
-
-
-def test_openai_no_prefix() -> None:
-    # OpenAI models in litellm are routed by bare name (no "openai/" prefix).
-    p = provider_factory("openai", model="gpt-4.1")
-    assert p.model == "gpt-4.1"
 
 
 # -------- api_base + api_key --------
@@ -300,6 +295,17 @@ def test_lazy_litellm_import() -> None:
     assert "litellm" not in sys.modules, (
         "Importing flowfile_core.ai.providers must not eagerly import litellm"
     )
+
+
+def test_openai_model_unknown_to_litellm_still_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model newer than litellm's bundled list resolves through the prefix."""
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    import litellm
+
+    p = provider_factory("openai", model="gpt-6.1-sol")
+    assert p.model == "openai/gpt-6.1-sol"
+    _, provider, _, _ = litellm.get_llm_provider(p.model)
+    assert provider == "openai"
 
 
 # -------- chat() translation --------

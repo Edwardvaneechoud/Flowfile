@@ -15,7 +15,7 @@ from flowfile_core.ai.providers.base import Message, ToolSpec
 class OpenAIProvider(LiteLLMProvider):
     name: ClassVar[str] = "openai"
     default_model: ClassVar[str] = "gpt-6-luna"
-    model_prefix: ClassVar[str] = ""
+    model_prefix: ClassVar[str] = "openai/"
     supports_tools: ClassVar[bool] = True
     supports_streaming: ClassVar[bool] = True
     surface_models: ClassVar[dict[str, str]] = {
@@ -41,7 +41,7 @@ class OpenAIProvider(LiteLLMProvider):
         response_format: dict[str, Any] | None = None,
     ) -> LiteLLMKwargs:
         kwargs = super()._build_kwargs(messages, tools, max_tokens, stream=stream, response_format=response_format)
-        if self.model == "gpt-6-luna":
+        if self.model == "openai/gpt-6-luna":
             # The bundled litellm model map predates this model.
             kwargs["custom_llm_provider"] = "openai"
             kwargs["allowed_openai_params"] = ["reasoning_effort"]

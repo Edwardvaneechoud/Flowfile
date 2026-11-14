@@ -2904,19 +2904,37 @@ def get_flow_settings_validation(flow_id: int, current_user=Depends(get_current_
         return validate_flow_settings(flow)
 
 
+def _cached_node_ids(flow, placement) -> list[int]:
+    """Known materialised caches on the next run's backends; advisory and safe to omit."""
+    try:
+        assignment = placement.assignment if placement is not None else {}
+        default = current_context(flow).backend_id
+        return [node.node_id for node in flow.nodes if node.is_cached_on(assignment.get(node.node_id, default))]
+    except Exception:
+        logger.exception("Could not determine cached nodes for flow %s", flow.flow_id)
+        return []
+
+
 @router.get("/flow/placement", tags=["editor"], response_model=output_model.PlacementPreview)
-def get_flow_placement(flow_id: int, current_user=Depends(get_current_active_user)) -> output_model.PlacementPreview:
+def get_flow_placement(
+    flow_id: int, current_user=Depends(get_current_active_user), probe: bool = True
+) -> output_model.PlacementPreview:
     """Where a run would place each node now: the backend it would run on, the nodes moved to the default backend
     because theirs cannot run them, and the nodes no backend can run. Runs nothing and changes nothing.
+    Also reports materialised cached nodes on their assigned backends.
+    With probe=false, use cached capabilities only; fallback warnings may wait for a live check.
 
     On a server joined with keys of its own the preview takes the exchange store the hub sets, asked as a run of the
     caller asks it (``store_for_run``), so a node a run would carry through that store is not shown refused."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
-    placement = flow.preview_placement(hub_store=store_for_run(flow, current_user.id))
+    placement = flow.preview_placement(hub_store=store_for_run(flow, current_user.id), probe=probe)
+    cached = _cached_node_ids(flow, placement)
     if placement is None:
-        return output_model.PlacementPreview(available=False)
+        return output_model.PlacementPreview(available=False, cached_node_ids=cached)
     return output_model.PlacementPreview(
         available=True,
+        cached_node_ids=cached,
+        unchecked_backend_ids=placement.unchecked_backend_ids,
         assignment=placement.assignment,
         fallbacks=[output_model.PlacementFallback(**dataclasses.asdict(f)) for f in placement.fallbacks],
         refusals=[output_model.PlacementRefusal(**dataclasses.asdict(r)) for r in placement.refusals],

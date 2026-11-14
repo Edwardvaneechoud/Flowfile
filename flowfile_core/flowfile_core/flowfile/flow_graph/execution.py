@@ -29,7 +29,7 @@ from flowfile_core.flowfile.catalog_cdc import (
 )
 from flowfile_core.flowfile.execution import registry, run_secrets
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
-from flowfile_core.flowfile.execution.errors import ComputeError, VersionMismatch
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.flowfile.execution.placement import (
     Fallback,
@@ -1190,7 +1190,7 @@ class ExecutionMixin(GraphMixinBase):
         return closed
 
     def _place_run(
-        self, execution_plan: ExecutionPlan, exchange_run: ExchangeRun, *, log: bool = True
+        self, execution_plan: ExecutionPlan, exchange_run: ExchangeRun, *, log: bool = True, probe: bool = True
     ) -> tuple[Placement | None, list[BoundaryEdge]]:
         """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
@@ -1208,6 +1208,9 @@ class ExecutionMixin(GraphMixinBase):
         when the store cannot be used, when the limit is not a whole number, or when core knows the output holds more
         rows than ``FLOWFILE_EXCHANGE_MAX_ROWS`` (``BoundaryEdge.cost``). An edge of unknown size crosses. Every refusal
         carries its ``remedy_for``. ``log`` false (the placement preview) writes no warnings to core's log.
+        ``probe=False`` reads only cached handshake verdicts, leaving unchecked backends unreachable.
+        Cached ``ComputeUnavailable`` verdicts stay unreachable, not refused, just as on the live path.
+        Known negative verdicts are not unchecked; subsequent live refreshes retry them through ``verdict_for``.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1218,6 +1221,7 @@ class ExecutionMixin(GraphMixinBase):
         absent: dict[str, dict[str, str]] = {}
         refused: dict[str, str] = {}
         unreachable: dict[str, ComputeError] = {}
+        unchecked_backend_ids: list[str] = []
         named = dict.fromkeys(policy.backend_for(node) for node in nodes)
         if isinstance(policy, MixedPlacementPolicy) and nodes:
             named.setdefault(fallback_id)
@@ -1226,7 +1230,14 @@ class ExecutionMixin(GraphMixinBase):
             if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
                 continue
             try:
-                verdict = handshake.verdict_for(registry.backend(backend_id))
+                backend = registry.backend(backend_id)
+                verdict = handshake.verdict_for(backend) if probe else handshake.cached_verdict(backend)
+                if verdict is None:
+                    unchecked_backend_ids.append(backend_id)
+                    unreachable[backend_id] = ComputeUnavailable(
+                        "No cached handshake verdict; preview did not check this backend", backend_id=backend_id
+                    )
+                    continue
             except VersionMismatch as e:
                 refused[backend_id] = str(e)
                 continue
@@ -1239,9 +1250,13 @@ class ExecutionMixin(GraphMixinBase):
             if verdict.ok:
                 declared[backend_id] = verdict.offered
                 absent[backend_id] = verdict.absent
+            elif verdict.error_kind == "ComputeUnavailable":
+                unreachable[backend_id] = ComputeUnavailable(verdict.error, backend_id=backend_id)
             else:
                 refused[backend_id] = verdict.error
         placement = place(self, declared, policy, nodes=nodes, absent=absent, unreachable=unreachable, log=log)
+        if unchecked_backend_ids:
+            placement = replace(placement, unchecked_backend_ids=unchecked_backend_ids)
         if refused:
             refusals = [
                 Refusal(node.node_id, policy.backend_for(node), refused[policy.backend_for(node)])
@@ -1329,13 +1344,14 @@ class ExecutionMixin(GraphMixinBase):
             placement = replace(placement, refusals=[*placement.refusals, *added])
         return placement, edges
 
-    def preview_placement(self, hub_store: ExchangeConfig | None = None) -> Placement | None:
+    def preview_placement(self, hub_store: ExchangeConfig | None = None, *, probe: bool = True) -> Placement | None:
         """Where a run would place each of the flow's nodes now, without running, logging or changing anything.
 
         ``None`` with the protocol flag off. Every node is placed as if every gate were open, under an exchange run that
         is never collected, and the boundary edges are dropped. Placement reads a resolved copy of each node's settings,
         so a preview beside an edit or a run leaves both as they are. Nothing is vended: crossings are checked against
-        the servers a run's vend would be sealed to (``_seal_targets``).
+        the servers a run's vend would be sealed to (``_seal_targets``). With ``probe=False`` no worker is contacted;
+        unknown backends retain their assigned nodes until a live check establishes capabilities or refusals.
         """
         nodes = list(self.nodes)
         exchange_run = ExchangeRun(self.flow_id, "preview", hub_store=hub_store)
@@ -1350,7 +1366,9 @@ class ExecutionMixin(GraphMixinBase):
             if exchange and registry.server_name(registry.WORKER_BACKEND_ID) is None:
                 exchange_run.own = EncryptedCredential(hub_store.uri, {}, "")
         stage = ExecutionStage(nodes=nodes)
-        placement, _ = self._place_run(ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run, log=False)
+        placement, _ = self._place_run(
+            ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run, log=False, probe=probe
+        )
         if placement is not None and unsealable is not None:
             refused = [node for node in nodes if remote_table_schema(node.setting_input)] or nodes
             placement = replace(

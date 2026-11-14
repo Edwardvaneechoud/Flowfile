@@ -94,7 +94,10 @@ export interface PlacementRefusal {
 }
 
 export interface PlacementPreview {
+  /** Backends needing a live check, including cached negative verdicts. */
+  unchecked_backend_ids?: string[];
   available: boolean;
+  cached_node_ids?: number[];
   assignment: Record<number, string>;
   fallbacks: PlacementFallback[];
   refusals: PlacementRefusal[];
