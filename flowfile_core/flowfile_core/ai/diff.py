@@ -620,6 +620,28 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
             _apply_update_node_settings(flow, mod.node_type, settings)
             modified_node_ids.append(int(mod.node_id))
 
+        # Remove staged wires before validating their replacements in the same transaction.
+        for c in diff.connections_removed:
+            connection = input_schema.NodeConnection.model_validate(c.connection)
+            try:
+                delete_connection(flow, connection)
+            except HTTPException as exc:
+                # Narrow catch: only the "Connection does not exist" 422 gets
+                # swallowed. ``add_connection``'s cycle-detection 422 lives in
+                # the other loop and is unaffected; any other HTTPException
+                # (genuine errors) bubbles up to the transaction rollback.
+                if exc.status_code == 422 and "Connection does not exist" in str(exc.detail):
+                    logger.info(
+                        "apply_diff: connection %s -> %s (%s) already absent; "
+                        "skipping redundant connections_removed op",
+                        connection.output_connection.node_id,
+                        connection.input_connection.node_id,
+                        connection.input_connection.connection_class,
+                    )
+                    continue
+                raise
+            removed_connection_count += 1
+
         # Explicit staged connections enforce the same port contract as editor
         # gestures, after additions and modifications establish the live interface.
         # Strict add_connection also treats an exact replay as idempotent.
@@ -641,26 +663,6 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
             flow.delete_node(d.delete_node_id)
             removed_node_ids.append(d.delete_node_id)
 
-        for c in diff.connections_removed:
-            connection = input_schema.NodeConnection.model_validate(c.connection)
-            try:
-                delete_connection(flow, connection)
-            except HTTPException as exc:
-                # Narrow catch: only the "Connection does not exist" 422 gets
-                # swallowed. ``add_connection``'s cycle-detection 422 lives in
-                # the other loop and is unaffected; any other HTTPException
-                # (genuine errors) bubbles up to the transaction rollback.
-                if exc.status_code == 422 and "Connection does not exist" in str(exc.detail):
-                    logger.info(
-                        "apply_diff: connection %s -> %s (%s) already absent; "
-                        "skipping redundant connections_removed op",
-                        connection.output_connection.node_id,
-                        connection.input_connection.node_id,
-                        connection.input_connection.connection_class,
-                    )
-                    continue
-                raise
-            removed_connection_count += 1
 
     return ApplyResult(
         diff_id=diff.diff_id,

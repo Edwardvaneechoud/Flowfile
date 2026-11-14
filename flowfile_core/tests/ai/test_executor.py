@@ -409,7 +409,6 @@ def test_connect_accepts_flat_shape(call_kwargs: dict[str, Any]) -> None:
     [
         ("input-1", "output-0", 1, "handle_not_available"),
         ("input-0", "output-1", 1, "handle_not_available"),
-        ("input-0", "output-0", 3, "input_occupied"),
     ],
 )
 def test_connect_rejects_invalid_live_ports_at_stage_time(
@@ -437,6 +436,43 @@ def test_connect_rejects_invalid_live_ports_at_stage_time(
     assert result.refusal_reason == reason
     assert result.staged_node_payload is None
     assert [node.node_id for node in flow.get_node(2).all_inputs] == [1]
+
+
+def test_connect_allows_reroute_after_staged_delete(call_kwargs: dict[str, Any]) -> None:
+    flow = _flow_with_orders_and_filter()
+    _add_orders_input(flow, node_id=3)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    common: dict[str, Any] = dict(insertion_context=InsertionContext(), flow=flow, mode="stage", **call_kwargs)
+    deleted = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.delete_connection",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 2},
+        **common,
+    )
+    assert deleted.status == "staged"
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 3, "to_node_id": 2},
+        **common,
+    )
+    assert result.status == "staged", result.refusal_detail
+    assert [node.node_id for node in flow.get_node(2).all_inputs] == [1]
+
+    from flowfile_core.ai.diff import GraphDiff, StagedConnection, apply_diff
+
+    graph_diff = GraphDiff(
+        session_id=call_kwargs["session_id"],
+        flow_id=flow.flow_id,
+        connections_removed=[StagedConnection(
+            connection=input_schema.NodeConnection.create_from_simple_input(1, 2).model_dump(), audit_id=1
+        )],
+        connections_added=[StagedConnection(
+            connection=input_schema.NodeConnection.create_from_simple_input(3, 2).model_dump(), audit_id=2
+        )],
+    )
+    apply_diff(flow, graph_diff)
+    assert [node.node_id for node in flow.get_node(2).all_inputs] == [3]
 
 
 def test_connect_rejects_wiring_into_live_source_node(call_kwargs: dict[str, Any]) -> None:
