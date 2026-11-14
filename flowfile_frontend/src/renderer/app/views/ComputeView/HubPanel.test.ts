@@ -65,6 +65,18 @@ describe("HubPanel", () => {
     expect(find("hub-joined")).toBeNull();
   });
 
+  it("starts folded, and says coming soon only where no hub is connected", async () => {
+    await mount(none);
+    expect(find("hub-connection-toggle")!.getAttribute("aria-expanded")).toBe("false");
+    expect(text(find("hub-summary"))).toBe("Not connected");
+    expect(text(find("hub-coming-soon"))).toBe("Coming soon.");
+
+    await mount(desktop);
+    expect(find("hub-coming-soon")).toBeNull();
+    await mount(server);
+    expect(find("hub-coming-soon")).toBeNull();
+  });
+
   it("connects when Enter is pressed in the form, once every field it needs is filled", async () => {
     await mount(none);
     const type = (testId: string, value: string) => {

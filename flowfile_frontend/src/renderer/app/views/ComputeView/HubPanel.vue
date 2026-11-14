@@ -9,9 +9,17 @@
           the password is sent to the hub and never kept here. Your local workspace stays as it is.
         </template>
       </p>
+      <p v-if="!state?.connected && !state?.joined" class="hub-note" data-testid="hub-coming-soon">
+        Coming soon.
+      </p>
     </div>
 
-    <ComputeCard card-id="hub-connection" title="Hub connection" icon="fa-solid fa-tower-broadcast">
+    <ComputeCard
+      card-id="hub-connection"
+      title="Hub connection"
+      icon="fa-solid fa-tower-broadcast"
+      :default-open="false"
+    >
       <template #meta="{ open }">
         <span
           v-if="!open && summary"
@@ -232,6 +240,12 @@ onMounted(() => {
   max-width: 1320px;
   margin: 0 auto;
   padding: var(--spacing-5);
+}
+.hub-note {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
 }
 .hub-card__facts {
   display: grid;
