@@ -42,7 +42,8 @@ def _checked_auth_method(
 ) -> str | None:
     """The sign-in method to store: Snowflake's (an access token when none is given), ``None`` for every other type.
 
-    Raises ``ValueError`` for browser sign-in, which needs the app, and for a Snowflake setting on another type.
+    Raises ``ValueError`` for browser sign-in, which needs the app, for an unknown method, and for a Snowflake
+    setting on another type.
     """
     if database_type.lower() != SNOWFLAKE:
         given = [

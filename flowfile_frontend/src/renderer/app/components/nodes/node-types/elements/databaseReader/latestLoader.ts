@@ -1,6 +1,3 @@
-// A list that only the latest load may fill: framework-free, so the drawers pass a reactive state
-// and the tests a plain object.
-
 export interface ListState<T> {
   options: T[];
   loading: boolean;
@@ -16,6 +13,10 @@ export interface LatestLoader<T> {
   invalidate(): void;
 }
 
+/**
+ * A list that only the latest load may fill. Framework-free, so the drawers pass a reactive state
+ * and the tests a plain object.
+ */
 export function createLatestLoader<T>(state: ListState<T>): LatestLoader<T> {
   let seq = 0;
   return {

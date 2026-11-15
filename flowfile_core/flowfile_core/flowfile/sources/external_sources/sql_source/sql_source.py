@@ -29,7 +29,8 @@ MISSING_SCHEMA_MESSAGE = "Choose a schema when a database is set."
 def qualified_schema(database_name: str | None, schema_name: str | None) -> str | None:
     """The schema path a table lives under: ``database.schema`` when a database is set, else the schema as given.
 
-    Concatenated verbatim, like ``schema.table`` always was; a database without a schema is refused.
+    Concatenated verbatim, as ``schema.table`` is; a database without a schema raises ``ValueError``
+    (``MISSING_SCHEMA_MESSAGE``).
     """
     if database_name:
         if not schema_name:

@@ -1,6 +1,4 @@
-// Mirrors the backend rule (shared/db_dialects: DbDialect.checked_identifier_path). Every dialect takes dotted
-// parts of letters, digits and underscores; one with quoted_identifiers (Snowflake) also takes $ and parts in
-// double quotes whose inner quotes are doubled, joined by dots outside the quotes.
+// Mirrors the backend rule: DbDialect.checked_identifier_path in shared/db_dialects.
 const SQL_IDENTIFIER_PART = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 export const QUOTED_IDENTIFIER_PART = String.raw`(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")`;
 export const QUOTED_IDENTIFIER_PATH = new RegExp(
@@ -18,7 +16,9 @@ export interface IdentifierRule {
  * Validate a SQL identifier (table, schema or database name), allowing dotted
  * "schema.table" notation. Returns an error message string, or null when valid
  * (empty/unset is treated as valid here — required-ness is handled separately).
- * Strict unless the connection's dialect takes quoted names.
+ * Strict (dotted parts of letters, digits and underscores) unless the connection's dialect takes
+ * quoted names (Snowflake), which also allows $ and double-quoted parts whose inner quotes are
+ * doubled, joined by dots outside the quotes.
  */
 export function validateSqlIdentifier(
   value: string | null | undefined,

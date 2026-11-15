@@ -32,6 +32,7 @@ from flowfile_core.database.models import Secret
 from flowfile_core.flowfile.database_connection_manager import snowflake_signin
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     SNOWFLAKE,
+    DatabaseConnectionError,
     get_database_connection,
     is_snowflake,
     prepare_snowflake_connection,
@@ -41,6 +42,7 @@ from flowfile_core.flowfile.database_connection_manager.snowflake_callback impor
 from flowfile_core.schemas.input_schema import FullDatabaseConnection
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
 from shared.db_dialects import get_dialect
+from shared.db_dialects.snowflake import SnowflakeError
 from shared.snowflake_auth import AUTH_OAUTH, SnowflakeAuthError
 from shared.snowflake_auth import normalize_account as _normalize_account
 
@@ -135,6 +137,11 @@ def discover(
 
     A blank ``secret`` with the ``connection_name`` of a connection the caller owns or manages uses that
     connection's stored secret, always with its stored account and method.
+
+    A failure's detail is a message Flowfile wrote (``SnowflakeAuthError``, ``DatabaseConnectionError``, or the
+    dialect's ``SnowflakeError``, which translates a driver error with the secret masked). Any other exception,
+    a stdlib or driver ``ValueError`` included, is answered and logged by its type name only, since its text can
+    repeat a value of the connection URI, which holds the secret.
     """
     _require_driver()
     username = body.username.strip()
@@ -171,7 +178,7 @@ def discover(
         raise HTTPException(
             422, snowflake_unavailable_message() or "The Snowflake driver could not be loaded."
         ) from None
-    except ValueError as e:
+    except (SnowflakeAuthError, SnowflakeError, DatabaseConnectionError) as e:
         raise HTTPException(422, str(e)) from None
     except Exception as e:
         logger.warning("Snowflake discover failed: %s", type(e).__name__)

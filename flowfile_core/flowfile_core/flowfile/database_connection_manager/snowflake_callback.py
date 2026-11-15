@@ -36,6 +36,7 @@ from flowfile_core.configs.settings import ALGORITHM
 from flowfile_core.flowfile.database_connection_manager import snowflake_signin
 from flowfile_core.flowfile.database_connection_manager.db_connections import SNOWFLAKE, snowflake_unavailable_message
 from shared.db_dialects import get_dialect
+from shared.db_dialects.snowflake import SnowflakeError
 from shared.snowflake_auth import AUTH_OAUTH, SnowflakeAuthError, authorize_url, exchange_code, new_pkce_pair
 
 STATE_TYPE = "snowflake_oauth_state"
@@ -69,14 +70,15 @@ def sign_state(flow_id: str) -> str:
 
 
 def verify_state(state: str) -> dict:
+    """The payload of a sign-in state this core signed; ``SnowflakeAuthError`` with the page's message otherwise."""
     try:
         payload = jwt.decode(state, get_jwt_secret(), algorithms=[ALGORITHM])
     except PyJWTError as e:
-        raise ValueError(
+        raise SnowflakeAuthError(
             f"This sign-in link is not valid any more ({type(e).__name__}). Start again in Flowfile."
         ) from e
     if payload.get("type") != STATE_TYPE or not payload.get("flow_id"):
-        raise ValueError("This sign-in link was not made by Flowfile. Start again in Flowfile.")
+        raise SnowflakeAuthError("This sign-in link was not made by Flowfile. Start again in Flowfile.")
     return payload
 
 
@@ -112,13 +114,21 @@ def complete_sign_in(
     Exchanges the code for the tokens, then describes the session (a failure there does not fail the sign-in). A
     sign-in that already finished is never overwritten. ``flow_id``, when given, is the only sign-in this call may
     finish (the listener's own); a state naming another is refused without touching either.
+
+    The page and the stored message carry only text Flowfile wrote (``SnowflakeAuthError``, the dialect's
+    ``SnowflakeError``); any other exception is named by its type, since its text can repeat a value of the
+    connection URI, which holds the refresh token. Once the sign-in is taken for the exchange, such an exception ends
+    it as an error, so it never stays ``exchanging`` and the browser always gets a page.
     """
     if not state:
         return CallbackOutcome(False, "The sign-in link is incomplete. Start again in Flowfile.", 400, False)
     try:
         named = verify_state(state)["flow_id"]
-    except ValueError as e:
+    except SnowflakeAuthError as e:
         return CallbackOutcome(False, str(e), 400, False)
+    except Exception as e:
+        message = f"Flowfile could not check this sign-in link ({type(e).__name__}). Start again in Flowfile."
+        return CallbackOutcome(False, message, 400, False)
     if flow_id is not None and named != flow_id:
         return CallbackOutcome(
             False, "This sign-in link belongs to another sign-in. Start again in Flowfile.", 400, False
@@ -133,6 +143,13 @@ def complete_sign_in(
         if current.status == "error":
             return CallbackOutcome(False, current.message or "The sign-in failed. Start again in Flowfile.", 200, True)
         return CallbackOutcome(False, "This sign-in is already being completed.", 200, False)
+    try:
+        return _exchange(named, flow, code, error)
+    except Exception as e:
+        return _failed(named, f"Flowfile could not complete the sign-in ({type(e).__name__}). Start again in Flowfile.")
+
+
+def _exchange(named: str, flow: snowflake_signin.SignIn, code: str | None, error: str | None) -> CallbackOutcome:
     if error:
         message = (
             "The sign-in was cancelled in Snowflake. Start again in Flowfile."
@@ -162,7 +179,7 @@ def complete_sign_in(
         session = session_out(flow.host, get_dialect(SNOWFLAKE).discover(uri))
     except ImportError:
         message = snowflake_unavailable_message()
-    except ValueError as e:
+    except (SnowflakeError, SnowflakeAuthError) as e:
         message = f"Signed in, but the warehouses and databases could not be listed: {e}"
     except Exception as e:
         message = f"Signed in, but the warehouses and databases could not be listed ({type(e).__name__})."
@@ -266,14 +283,21 @@ class CallbackListener:
     def serve(self, flow_id: str, *, alive: Callable[[], bool]) -> None:
         """Start answering for ``flow_id`` in a daemon thread until closed or until ``alive()`` turns false."""
         self._flow_id = flow_id
-        self._thread = threading.Thread(target=self._loop, args=(alive,), daemon=True, name="snowflake-sign-in")
-        self._thread.start()
+        thread = threading.Thread(target=self._loop, args=(alive,), daemon=True, name="snowflake-sign-in")
+        thread.start()
+        # Recorded once started, so close() still releases the socket when start() raised.
+        self._thread = thread
 
     def handle(self, code: str | None, state: str, error: str | None) -> CallbackOutcome:
         return complete_sign_in(code, state, error, flow_id=self._flow_id)
 
     def close(self) -> None:
-        """Stop listening; the port is released within a poll interval (at once when no request is being served)."""
+        """Stop listening and release the port.
+
+        A listener that never served releases it at once. A serving one releases it when its loop next wakes, within
+        a poll interval; this call waits for that (up to 2 s) unless it runs on the serving thread itself, as a closer
+        run from the loop's own ``alive()`` check does.
+        """
         self._stop.set()
         thread = self._thread
         if thread is None:
@@ -293,23 +317,31 @@ class CallbackListener:
 def begin_sign_in(*, user_id: int, host: str, role: str | None) -> tuple[str, str]:
     """Open a listener, record the pending sign-in and answer ``(authorize URL, flow id)``.
 
-    Raises ``SignInListenerError`` when no local port can be opened.
+    The listener starts answering last, once the state and the authorize URL are made. Whatever raises on the way
+    out leaves nothing behind: before the sign-in is recorded the listener is closed, after it the sign-in is
+    forgotten, which closes the listener too. Raises ``SignInListenerError`` when no local port can be opened.
     """
     listener = CallbackListener()
-    pkce = new_pkce_pair()
-    flow = snowflake_signin.start(
-        user_id=user_id,
-        host=host,
-        role=role,
-        verifier=pkce.verifier,
-        redirect_uri=listener.redirect_uri,
-        closer=listener.close,
-    )
-    listener.serve(flow.flow_id, alive=lambda: snowflake_signin.get(flow.flow_id) is not None)
+    try:
+        pkce = new_pkce_pair()
+        flow = snowflake_signin.start(
+            user_id=user_id,
+            host=host,
+            role=role,
+            verifier=pkce.verifier,
+            redirect_uri=listener.redirect_uri,
+            closer=listener.close,
+        )
+    except BaseException:
+        listener.close()
+        raise
     try:
         state = sign_state(flow.flow_id)
-    except Exception:
+        url = authorize_url(
+            host, redirect_uri=listener.redirect_uri, state=state, code_challenge=pkce.challenge, role=role
+        )
+        listener.serve(flow.flow_id, alive=lambda: snowflake_signin.get(flow.flow_id) is not None)
+    except BaseException:
         snowflake_signin.forget(flow.flow_id)
         raise
-    url = authorize_url(host, redirect_uri=listener.redirect_uri, state=state, code_challenge=pkce.challenge, role=role)
     return url, flow.flow_id

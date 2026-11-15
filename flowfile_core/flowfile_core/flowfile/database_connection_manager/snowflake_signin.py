@@ -187,7 +187,7 @@ def forget(flow_id: str) -> None:
 
 
 def forget_all() -> None:
-    """Drop every sign-in and close every listener (tests, shutdown)."""
+    """Drop every sign-in and close every listener; the tests use it to start clean."""
     with _lock:
         closers = list(_closers.values())
         _flows.clear()

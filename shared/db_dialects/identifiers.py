@@ -30,7 +30,10 @@ def is_identifier_path(value: str) -> bool:
 
 
 def identifier_parts(value: str) -> list[str]:
-    """The parts of a path ``is_identifier_path`` accepts, split on the dots outside quotes; quotes are kept."""
+    """The parts of a path ``is_identifier_path`` accepts, split on the dots outside quotes; quotes are kept.
+
+    Any other value raises ``ValueError``.
+    """
     if not is_identifier_path(value):
         raise ValueError(f"'{value}' is not a dotted identifier path.")
     return _PART.findall(value)

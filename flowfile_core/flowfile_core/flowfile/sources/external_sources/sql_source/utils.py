@@ -422,7 +422,7 @@ def dialect_uri_options(database_connection) -> dict[str, str]:
     """The dialect-specific URI options of a saved connection, passed to ``construct_sql_uri`` as keyword arguments.
 
     Snowflake's are ``auth`` (the connection's ``auth_method``), ``role`` and ``warehouse``, each left out when unset;
-    every other dialect has none, so its URI is built exactly as before.
+    every other dialect has none.
     """
     if (getattr(database_connection, "database_type", None) or "").lower() != "snowflake":
         return {}

@@ -38,7 +38,7 @@ def _reserialised(node_type: str, setting_input: dict) -> dict:
 def test_a_saved_flow_without_a_database_round_trips_byte_for_byte(node_type):
     saved = _saved_setting_inputs()[node_type]
     reserialised = _reserialised(node_type, saved)
-    # The fixture predates the per-node execution_location, which every node now writes.
+    # The fixture has no per-node execution_location, which every node writes.
     reserialised.pop("execution_location")
     assert reserialised == saved
 

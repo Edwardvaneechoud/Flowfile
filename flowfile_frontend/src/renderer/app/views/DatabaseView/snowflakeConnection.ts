@@ -1,5 +1,4 @@
-// Framework-free helpers for the Snowflake section of the database connection form,
-// kept apart so the rules can be unit-tested without mounting the component.
+// Framework-free rules for the connection form's Snowflake section, unit-tested without mounting it.
 
 import type {
   DatabaseConnectionTestResult,
@@ -152,6 +151,10 @@ export function canDiscover(
   return !blank(connection.password) || methodUnchanged(connection, ctx);
 }
 
+/**
+ * Whether the form can be saved: a name, a valid account and what the chosen method needs (a username
+ * and a secret, a secret kept from the stored connection, or a sign-in).
+ */
 export function isSnowflakeFormValid(
   connection: FullDatabaseConnection,
   ctx: SnowflakeFormContext,
@@ -187,6 +190,7 @@ export function identityText(prefix: string, username?: string | null, role?: st
   return role ? `${who} (role ${role})` : who;
 }
 
+/** The line under the sign-in button for a browser sign-in phase. */
 export function signInStatusText(
   phase: SignInPhase,
   info: { username?: string | null; role?: string | null; message?: string | null } = {},

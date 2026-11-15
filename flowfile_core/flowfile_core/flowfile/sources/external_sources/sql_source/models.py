@@ -18,7 +18,9 @@ from flowfile_core.schemas.input_schema import (
 from shared.db_dialects import get_dialect_or_generic
 
 
-def _connection_fields(connection_mode: str | None, inline: DatabaseConnection | None, reference) -> dict[str, Any]:
+def _connection_fields(
+    connection_mode: str | None, inline: DatabaseConnection | None, reference: FullDatabaseConnection | None
+) -> dict[str, Any]:
     """The worker connection's fields, its password left out (the caller adds the encrypted one).
 
     A saved Snowflake connection travels as its URL without the secret, in ``url``; the worker merges the decrypted

@@ -318,5 +318,6 @@ def access_token_for(host: str, refresh_token: str) -> str:
 
 
 def forget_access_tokens() -> None:
+    """Drop every cached access token, so the next session asks Snowflake for a new one."""
     with _access_tokens_lock:
         _access_tokens.clear()

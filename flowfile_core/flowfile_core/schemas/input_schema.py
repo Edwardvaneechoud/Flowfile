@@ -1178,7 +1178,11 @@ def _blank_database_name(v):
 
 
 def _drop_unset_database_name(data: Any, database_name: str | None) -> Any:
-    """A node with no database of its own serialises exactly as it did before the field existed."""
+    """Leave an unset ``database_name`` out of a dump, so a node without one writes no such key.
+
+    Saved files, settings fingerprints and the share payload of such a node then match those of a file
+    written without the field.
+    """
     if isinstance(data, dict) and database_name is None:
         data.pop("database_name", None)
     return data

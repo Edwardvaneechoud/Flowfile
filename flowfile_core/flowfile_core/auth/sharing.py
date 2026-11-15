@@ -114,6 +114,7 @@ def is_personal_connection(db: Session, resource_type: str, resource_id: int) ->
 
 
 def has_grants(db: Session, resource_type: str, resource_id: int) -> bool:
+    """Whether the resource is shared with any group."""
     return (
         db.query(db_models.ResourceGrant.id)
         .filter(

@@ -189,8 +189,10 @@ def remove_stale_flow_files(root: Path, flow_uuid: str, keep: Path) -> None:
 
 
 def _db_connection_dict(db: Session, conn: DatabaseConnection) -> dict:
-    """A database connection as its project file holds it; the Snowflake fields only when set, so other files stay
-    unchanged."""
+    """A database connection as its project file holds it.
+
+    The Snowflake fields are written only when set, so every other connection's file keeps its shape.
+    """
     secret_name = _secret_name(db, conn.password_id)
     d = {"kind": "database_connection", "connection_name": conn.connection_name}
     for f in _DB_PLAIN_FIELDS:

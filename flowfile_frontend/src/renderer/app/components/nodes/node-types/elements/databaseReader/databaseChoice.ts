@@ -1,5 +1,4 @@
-// Framework-free rules for the database a reader or writer node picks (database_name), shared by
-// both drawers through useDatabaseChoice.ts.
+// Framework-free rules for a node's database_name, shared by both drawers via useDatabaseChoice.ts.
 
 import { QUOTED_IDENTIFIER_PART, QUOTED_IDENTIFIER_PATH } from "../databaseWriter/validation";
 
@@ -79,7 +78,7 @@ export interface TableReference {
 /**
  * Split a qualified name typed or picked in the Table field while no schema is chosen.
  *
- * Every dialect splits `schema.table` at its first dot, as the drawers always did. A dialect that
+ * Every dialect splits `schema.table` at its first dot. A dialect that
  * browses databases also takes `database.schema.table`, split on the dots outside double quotes, so
  * `"my.db"."My Schema".T` keeps its quoted parts. Anything else is left as typed (null).
  */

@@ -27,16 +27,17 @@ a type the map does not know arrive as Arrow gives them on read and are
 predicted as String.
 
 Identifiers listed for browsing come back usable verbatim in core's unquoted
-FROM clause: a name that is not a plain upper-case identifier is double-quoted.
+FROM clause: a name that is not a plain upper-case identifier, or is reserved, is double-quoted.
 Writes create the table from the Polars schema (unquoted column names, which
 Snowflake upper-cases, unless a name is not a plain identifier or is reserved),
 upload one Parquet file to a temporary stage in the table's schema, and
 ``COPY INTO … MATCH_BY_COLUMN_NAME=CASE_INSENSITIVE``. Driver errors become
 ``SnowflakeError`` with a plain-language reason ahead of the driver's own text.
 
-Not run against a live account yet: the connector calls, the Arrow types the
-connector hands back per Snowflake type, the Parquet load of nested and time
-columns, and the error numbers ``translate_error`` matches on.
+Only the opt-in ``shared/tests/db_dialects/test_snowflake_live.py`` (marker
+``snowflake``) reaches a live account; without it nothing checks the connector
+calls, the Arrow types the connector hands back per Snowflake type, the Parquet
+load of nested and time columns, or the error numbers ``translate_error`` matches on.
 """
 
 from __future__ import annotations
@@ -541,10 +542,11 @@ class SnowflakeDialect(DbDialect):
         return [quote_identifier(name) for name in sorted((str(row["name"]) for row in rows), key=str.lower)]
 
     def list_schemas(self, uri: str) -> list[str]:
-        """The schemas of the URI's database; with no database in the URI, every schema as ``DATABASE.SCHEMA``.
+        """The schemas of the session's database (the URI's, else the user's default); with none, ``DATABASE.SCHEMA``.
 
-        A database the URI names that the session does not land in (it does not exist, or the role may
-        not use it) is an error rather than a silent fall back to the whole account.
+        With no current database every schema in the account is listed, qualified by its database. A
+        database the URI names that the session does not land in (it does not exist, or the role may not
+        use it) is an error rather than a silent fall back to the whole account.
         """
         database = _parse_uri(uri).database
         with self._cursor(uri) as cursor:

@@ -447,8 +447,10 @@ def test_invalid_client_is_reported_in_plain_words(stub):
 
 
 def test_a_discover_failure_does_not_fail_the_sign_in(stub, monkeypatch):
+    from shared.db_dialects.snowflake import SnowflakeError
+
     def discover(self, uri):
-        raise ValueError("No warehouse is selected.")
+        raise SnowflakeError("No warehouse is selected.")
 
     monkeypatch.setattr(SnowflakeDialect, "discover", discover)
     flow_id, query = _start()
@@ -459,6 +461,62 @@ def test_a_discover_failure_does_not_fail_the_sign_in(stub, monkeypatch):
     assert status["warehouses"] == [] and status["databases"] == []
     assert "No warehouse is selected." in status["message"]
     assert _save(oauth_flow_id=flow_id).status_code == 200
+
+
+def test_an_unexpected_exchange_failure_ends_the_sign_in_with_a_page(stub, monkeypatch):
+    from flowfile_core.flowfile.database_connection_manager import snowflake_callback
+
+    leaked = "invalid literal for int() with base 10: 'acc-secret-1'"
+
+    def exchange(*args, **kwargs):
+        raise ValueError(leaked)
+
+    monkeypatch.setattr(snowflake_callback, "exchange_code", exchange)
+    flow_id, query = _start()
+    page = _callback(query, code="c", state=query["state"])
+    expected = "Flowfile could not complete the sign-in (ValueError). Start again in Flowfile."
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert "Snowflake sign-in failed" in page.text and expected in page.text
+    status = client.get(f"/snowflake/oauth/status/{flow_id}")
+    assert (status.json()["status"], status.json()["message"]) == ("error", expected)
+    for text in (page.text, status.text):
+        assert "acc-secret-1" not in text and "invalid literal" not in text
+    assert _refused(query), "the listener closes as for any other failure"
+
+
+def test_a_state_that_cannot_be_checked_answers_a_page(stub, monkeypatch):
+    from flowfile_core.flowfile.database_connection_manager import snowflake_callback
+
+    flow_id, query = _start()
+
+    def no_secret():
+        raise Exception("JWT_SECRET_KEY environment variable must be set in Docker mode")
+
+    monkeypatch.setattr(snowflake_callback, "get_jwt_secret", no_secret)
+    page = _callback(query, code="c", state=query["state"])
+    assert page.status_code == 400
+    assert "Flowfile could not check this sign-in link (Exception). Start again in Flowfile." in page.text
+    assert "JWT_SECRET_KEY" not in page.text
+    assert stub.requests == []
+    assert client.get(f"/snowflake/oauth/status/{flow_id}").json()["status"] == "pending"
+
+
+def test_a_foreign_session_lookup_error_is_named_by_its_type_only(stub, monkeypatch):
+    leaked = "snowflake://ME:ref-1@evil.example.com:443 could not be parsed"
+
+    def discover(self, uri):
+        raise ValueError(leaked)
+
+    monkeypatch.setattr(SnowflakeDialect, "discover", discover)
+    flow_id, query = _start()
+    page = _callback(query, code="c", state=query["state"])
+    assert page.status_code == 200
+    assert "Signed in to Snowflake" in page.text
+    status = client.get(f"/snowflake/oauth/status/{flow_id}")
+    assert status.json()["status"] == "ok"
+    assert status.json()["message"] == "Signed in, but the warehouses and databases could not be listed (ValueError)."
+    for text in (page.text, status.text):
+        assert "ref-1" not in text and "evil.example.com" not in text and "could not be parsed" not in text
 
 
 def test_an_expired_sign_in_closes_its_listener(stub, discovered, monkeypatch):
@@ -484,6 +542,75 @@ def test_forget_all_and_claim_close_listeners(stub, discovered):
     assert _callback(query, "/favicon.ico").status_code == 404, "a refused claim leaves the listener open"
     snowflake_signin.forget(flow_id)
     assert _refused(query)
+
+
+@pytest.fixture
+def listeners(monkeypatch):
+    """Every ``CallbackListener`` ``begin_sign_in`` opens during the test."""
+    from flowfile_core.flowfile.database_connection_manager import snowflake_callback
+
+    made = []
+
+    class Recorded(snowflake_callback.CallbackListener):
+        def __init__(self):
+            super().__init__()
+            made.append(self)
+
+    monkeypatch.setattr(snowflake_callback, "CallbackListener", Recorded)
+    return made
+
+
+def _begin_sign_in():
+    from flowfile_core.flowfile.database_connection_manager.snowflake_callback import begin_sign_in
+
+    return begin_sign_in(user_id=1, host=HOST, role="ANALYST")
+
+
+def _assert_nothing_left(listeners):
+    (listener,) = listeners
+    assert listener.closed
+    assert _refused({"redirect_uri": listener.redirect_uri}), "the port no longer accepts connections"
+    assert snowflake_signin._flows == {} and snowflake_signin._closers == {}
+
+
+def test_a_start_that_fails_before_the_sign_in_is_recorded_closes_the_listener(stub, listeners, monkeypatch):
+    def refuse(**kwargs):
+        raise RuntimeError("the table refused")
+
+    monkeypatch.setattr(snowflake_signin, "start", refuse)
+    with pytest.raises(RuntimeError, match="the table refused"):
+        _begin_sign_in()
+    _assert_nothing_left(listeners)
+
+
+def test_a_start_that_fails_after_the_sign_in_is_recorded_forgets_it(stub, listeners, monkeypatch):
+    from flowfile_core.flowfile.database_connection_manager import snowflake_callback
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("no authorize URL")
+
+    monkeypatch.setattr(snowflake_callback, "authorize_url", refuse)
+    with pytest.raises(RuntimeError, match="no authorize URL"):
+        _begin_sign_in()
+    _assert_nothing_left(listeners)
+
+
+def test_a_listener_that_cannot_start_serving_releases_its_port(stub, listeners, monkeypatch):
+    import threading as real_threading
+
+    from flowfile_core.flowfile.database_connection_manager import snowflake_callback
+
+    class Unstartable(real_threading.Thread):
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    fake = SimpleNamespace(
+        Thread=Unstartable, Event=real_threading.Event, current_thread=real_threading.current_thread
+    )
+    monkeypatch.setattr(snowflake_callback, "threading", fake)
+    with pytest.raises(RuntimeError, match="can't start new thread"):
+        _begin_sign_in()
+    _assert_nothing_left(listeners)
 
 
 def test_browser_sign_in_is_refused_on_a_multi_user_server(monkeypatch):
@@ -512,9 +639,6 @@ def test_browser_sign_in_is_refused_on_a_multi_user_server(monkeypatch):
         assert snowflake_routes.oauth_start(body, current_user=user)["flow_id"]
     finally:
         snowflake_signin.forget_all()
-
-
-# ---------- POST /snowflake/discover ----------
 
 
 def _discover(**overrides):
@@ -582,3 +706,19 @@ def test_discover_with_a_stored_secret_uses_the_stored_account(stub, discovered)
 
     unknown = _discover(secret="", connection_name="no_such_connection")
     assert unknown.status_code == 422
+
+
+def test_discover_answers_a_foreign_value_error_by_its_type_only(stub, monkeypatch):
+    leaked = "snowflake://ME:pat-secret-1@evil.example.com:443 could not be parsed"
+
+    def failing(uri):
+        raise ValueError(leaked)
+
+    logged = []
+    monkeypatch.setattr(snowflake_routes, "_discover", failing)
+    monkeypatch.setattr(snowflake_routes.logger, "warning", lambda msg, *args: logged.append(msg % args))
+    response = _discover(secret="pat-secret-1")
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Could not connect to Snowflake (ValueError)."
+    assert "pat-secret-1" not in response.text and "evil.example.com" not in response.text
+    assert logged == ["Snowflake discover failed: ValueError"]
