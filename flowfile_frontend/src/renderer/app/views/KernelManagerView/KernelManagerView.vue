@@ -149,7 +149,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import type { KernelConfig, KernelInfo } from "../../types";
 import { useKernelManager } from "./useKernelManager";
@@ -183,13 +184,34 @@ const detailsKernel = computed<KernelInfo | null>(
   () => kernels.value.find((k) => k.id === detailsKernelId.value) ?? null,
 );
 
+const route = useRoute();
+const router = useRouter();
+const linkedKernelId = (): string | null => {
+  const kernelId = route.query.kernelId;
+  return typeof kernelId === "string" && kernelId ? kernelId : null;
+};
+
 const openDetails = (kernelId: string) => {
   detailsKernelId.value = kernelId;
 };
 
 const closeDetails = () => {
   detailsKernelId.value = null;
+  if (linkedKernelId() === null) return;
+  const rest = { ...route.query };
+  delete rest.kernelId;
+  void router.replace({ query: rest });
 };
+
+// `?kernelId=` (the global search) opens that kernel's details and stays in the URL until they close.
+watch(
+  linkedKernelId,
+  (kernelId, previous) => {
+    if (kernelId !== null) openDetails(kernelId);
+    else if (previous && detailsKernelId.value === previous) detailsKernelId.value = null;
+  },
+  { immediate: true },
+);
 
 // ---- stats derivations --------------------------------------------------
 

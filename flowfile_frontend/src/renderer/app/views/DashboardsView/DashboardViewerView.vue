@@ -126,6 +126,10 @@ const load = async () => {
 };
 
 onMounted(load);
+// A link to another dashboard (the global search) reuses this page.
+watch(dashboardId, (id, previous) => {
+  if (id !== previous) void load();
+});
 
 const onBack = () => {
   router.push({ name: "catalog", query: { tab: "visuals", kind: "dashboards" } });
