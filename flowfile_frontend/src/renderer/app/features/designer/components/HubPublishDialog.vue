@@ -87,7 +87,7 @@
           />
         </div>
         <div v-if="!hubOrigin || asNew" class="form-group">
-          <label>Namespace</label>
+          <label>Schema</label>
           <catalog-namespace-picker
             ref="picker"
             v-model="namespaceId"
@@ -95,7 +95,7 @@
             data-testid="hub-publish-namespace"
           />
           <p v-if="namespaceId === null" class="hub-dialog-hint">
-            With none picked, the flow goes to the hub's default namespace.
+            With none picked, the flow goes to the hub's default schema.
           </p>
           <el-button
             v-else
@@ -106,7 +106,7 @@
             data-testid="hub-publish-default-namespace"
             @click="namespaceId = null"
           >
-            Use the hub's default namespace instead
+            Use the hub's default schema instead
           </el-button>
         </div>
         <template v-if="asNew">

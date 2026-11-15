@@ -28,6 +28,7 @@ vi.mock("./CatalogNamespacePicker.vue", async () => {
   const { h: el } = await import("vue");
   return {
     default: {
+      inheritAttrs: false,
       props: { modelValue: { type: Number, default: null }, hub: Boolean },
       emits: ["update:modelValue"],
       setup(_: unknown, { emit, expose }: SetupContext) {
@@ -132,7 +133,8 @@ describe("HubPublishDialog for a flow already on the hub", () => {
     expect(text(byTestId("hub-publish-new-note"))).toBe(
       "A new flow at version 1 in the schema you pick. This tab becomes the new flow; the original stays on the hub as it is, with its versions, schedules and run history.",
     );
-    expect(text(host)).toContain("With none picked, the flow goes to the hub's default namespace.");
+    expect(text(host)).toContain("With none picked, the flow goes to the hub's default schema.");
+    expect(text(host)).not.toContain("amespace");
     expect(text(byTestId("hub-publish"))).toBe("Publish as new flow");
 
     name.value = "Sales by region";
