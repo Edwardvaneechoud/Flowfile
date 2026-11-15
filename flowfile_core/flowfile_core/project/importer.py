@@ -122,6 +122,7 @@ def _flow_uuid_lock(flow_uuid: str):
 # flow/viz hits this map instead of a fresh session+query. Only create=False results are cached.
 _ns_resolve_cache: contextvars.ContextVar[dict | None] = contextvars.ContextVar("_ns_resolve_cache", default=None)
 
+
 @dataclass
 class _Deferred:
     """What an import does outside the database, held until its transaction has committed: each step with

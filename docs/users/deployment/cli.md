@@ -114,7 +114,7 @@ flowfile project plan <sha|.>        # list what a restore of <sha>, or a reload
 flowfile project apply               # reload: apply the folder's edits to the database
 ```
 
-These are the headless equivalents of the app's project controls. Opening a project reports what it imported and how many secret values still need to be set. `plan` prints one line per object it would add, change or remove, a removal with its consequence; `apply` runs the reload and prints what it imported per kind, and stops with the message and exit code 1 when the database holds changes the last version does not (save a version first). See [Projects](../projects.md) for the full workflow, and note that in Docker mode the project commands require `FLOWFILE_ENABLE_PROJECTS` to be set.
+These are the headless equivalents of the app's project controls. Opening a project reports what it imported and how many secret values still need to be set. `plan` prints one line per object it would add, change or remove, a removal with its consequence; `apply` runs the reload and prints what it imported per kind, and stops with the message and exit code 1 when the database holds changes the last version does not (save a version first). `open` and `apply` also exit with code 1, after printing them, when steps that run once the database is updated did not finish (a flow file that could not be moved into place, a flow that did not load); run `apply` again to finish them. See [Projects](../projects.md) for the full workflow, and note that in Docker mode the project commands require `FLOWFILE_ENABLE_PROJECTS` to be set.
 
 ## Scheduling
 

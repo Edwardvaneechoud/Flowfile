@@ -82,7 +82,9 @@ def test_version_lifecycle_via_routes(tmp_path):
             "recovery_sha",
             "unknown_kinds",
             "not_applied",
+            "incomplete",
         }
+        assert restored.json()["incomplete"] == []
         assert client.get("/project/active").json()["dirty"] is False  # the restore commit is the export after it
         # A standalone secret is never deleted, so the export after the restore is version b and no version is added.
         assert client.get("/project/versions").json()["versions"][0]["message"] == "version b"
@@ -97,6 +99,7 @@ def test_version_lifecycle_via_routes(tmp_path):
             "recovery_sha",
             "unknown_kinds",
             "not_applied",
+            "incomplete",
         }
 
         assert client.post("/project/close").json() == {"ok": True}

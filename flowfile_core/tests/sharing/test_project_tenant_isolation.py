@@ -10,6 +10,7 @@ Runs in docker-mode via the `multi_user_mode` autouse fixture from conftest.py.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from uuid import uuid4
@@ -516,9 +517,9 @@ class TestH3_H6_FlowUuidCollisionMintsFresh:
                 reg.flow_path = str(b_file)
                 db.commit()
 
-        # Redirect Alice's new-flow storage to a tmp dir so the write doesn't hit /data.
-        alice_flows_dir = tmp_path / "alice_flows"
-        alice_flows_dir.mkdir()
+        # Redirect Alice's new-flow storage to a tmp dir inside the server's flow folders, where it may register.
+        storage.temp_directory_for_flows.mkdir(parents=True, exist_ok=True)
+        alice_flows_dir = Path(tempfile.mkdtemp(prefix="alice_flows_", dir=storage.temp_directory_for_flows))
         mock_storage = MagicMock()
         type(mock_storage).flows_directory = PropertyMock(return_value=alice_flows_dir)
 
@@ -548,6 +549,7 @@ class TestH3_H6_FlowUuidCollisionMintsFresh:
             if returned_uuid and returned_uuid != b_flow_uuid:
                 _cleanup_flows(returned_uuid)
             project_sync.close_project(alice_id)
+            shutil.rmtree(alice_flows_dir, ignore_errors=True)
 
 
 class TestH5_VizDashboardCollisionMintsFresh:
