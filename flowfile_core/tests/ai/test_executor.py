@@ -582,6 +582,7 @@ def test_connect_flat_shape_with_explicit_classes(call_kwargs: dict[str, Any]) -
     """``input_class`` / ``output_class`` from the flat shape must round-trip
     into the staged ``NodeConnection`` payload — i.e. they actually reach the
     constructed connection model and are not silently defaulted."""
+    # Join has a valid input-1; Filter only has input-0.
     flow = _flow_with_orders()
     flow.add_node_promise(input_schema.NodePromise(flow_id=flow.flow_id, node_id=2, node_type="join"))
     result = execute_tool_call(

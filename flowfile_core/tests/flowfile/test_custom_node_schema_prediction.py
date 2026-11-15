@@ -217,6 +217,37 @@ def test_concurrent_prediction_executes_once():
     assert results[0] == results[1]
 
 
+def test_prediction_preserves_unmaterialized_execution_output():
+    """A prediction resumed after execution must not replace the output its plan scans."""
+    process_calls: list[str] = []
+
+    class MaterializedNode(CustomNodeBase):
+        node_name: str = "Materialized Prediction Node"
+        node_category: str = "Testing"
+        settings_schema: NodeSettings = NodeSettings(
+            main_section=Section(title="Config", note=TextInput(label="Note")),
+        )
+
+        def process(self, *inputs):
+            process_calls.append("ran")
+            return inputs[0].with_columns(pl.lit("executed").alias("value")).collect()
+
+    flow = build_flow_with_custom_node(MaterializedNode)
+    node = flow.get_node(2)
+    result = node.get_resulting_data()
+    assert node.node_schema.predicted_schema is None
+
+    # This is the state a preview sees after waiting for get_resulting_data's lock.
+    predicted = node.get_predicted_schema()
+
+    assert result.data_frame.collect().to_dicts() == [
+        {"a": 1, "value": "executed"},
+        {"a": 2, "value": "executed"},
+    ]
+    assert [column.column_name for column in predicted] == ["a", "value"]
+    assert process_calls == ["ran"]
+
+
 def test_data_dependent_hook_sees_real_upstream_data():
     """One-hot style hooks get real upstream data: pre-run via in-core
     materialization of the kernel-free chain, and the actual results after a run."""
