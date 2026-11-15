@@ -382,7 +382,10 @@ const saveSettings = async (): Promise<boolean> => {
 
   const paramLabel = node.parameter_specs.length > 0 ? "Parameters" : "";
   const inputs = buildDynamicInputHandles([paramLabel, ...node.input_slots]);
-  const outputs = buildDynamicOutputHandles(node.output_slots);
+  // Match core's effective outputs without storing the summary as a child slot.
+  const outputs = buildDynamicOutputHandles(
+    node.output_slots.length ? node.output_slots : ["Run summary"],
+  );
   if (
     handleSignature(vfNode.data.inputs) === handleSignature(inputs) &&
     handleSignature(vfNode.data.outputs) === handleSignature(outputs)

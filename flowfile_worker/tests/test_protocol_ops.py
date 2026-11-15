@@ -786,3 +786,15 @@ def test_a_write_body_naming_an_unknown_field_is_422_and_runs_nothing(jobs, tmp_
     assert response.status_code == 422
     assert job_id not in status_dict
     assert not (tmp_path / "x.csv").exists()
+
+
+def test_a_rejected_apply_releases_the_previous_runs_output(jobs):
+    model = _answer(_post_op("ml_train", jobs(), _train_body())).outputs["model"]
+    job_id = jobs()
+    scored = _answer(_post_op("ml_apply", job_id, _apply_body(model.result_id))).outputs["result"]
+    assert client.head(f"/v1/results/{scored.result_id}").status_code == 200
+    assert client.delete(f"/v1/results/{model.result_id}").status_code == 204
+
+    assert _post_op("ml_apply", job_id, _apply_body(model.result_id)).status_code == 404
+
+    assert client.head(f"/v1/results/{scored.result_id}").status_code == 404

@@ -7,7 +7,8 @@ carrying a child's ``status``, ``error_message`` and ``error_kind`` (``_failure`
 
 A submit's job id is its result id; an operation holds its outputs as ``<job_id>_<i>``. One job runs under an id at a
 time (``_claim``): a later job under the id, or a release of it, replaces the running one, which is stopped and holds
-nothing. Every submit, import and operation first drops what has been held for ``CACHE_EXPIRATION_TIME``.
+nothing. Every submit and import first drops what has been held for ``CACHE_EXPIRATION_TIME``; an operation does not,
+since it cannot name the held results its plans scan.
 
 A credential crosses as a stored connection's id and user, resolved where the plan runs. A blob takes none: the
 presigned URL it is copied to or from carries its own authorisation. With ``spawner.in_process`` set, every job runs in
@@ -456,11 +457,9 @@ def _run_child(record: ResultRecord, plan: bytes, operation: str, kwargs: dict |
 def _op_outputs(job_id: str, count: int) -> list[str]:
     """The ids the *count* outputs of operation *job_id* are held under, ``<job_id>_<i>``, none of them held yet.
 
-    Expired results are swept first. What an earlier run under the job id held is released and its end stamp dropped,
-    so a rerun replaces its outputs and is not swept while it runs. The ids are recorded on the job's claim, so
-    releasing one while the job runs stops it.
+    What an earlier run under the job id held is released. No sweep: it could take a result the operation's plans
+    scan. The ids are recorded on the job's claim, so releasing one while the job runs stops it.
     """
-    sweep_expired()
     output_ids = [f"{job_id}_{i}" for i in range(count)]
     with status_dict_lock:
         claim = _claims.get(job_id)
@@ -821,9 +820,21 @@ def google_analytics_read(settings: GoogleAnalyticsReadSettings, job_id: str) ->
 
 @_claimed
 def rest_api_read(settings: RestApiReadSettings, job_id: str) -> OpOutputs:
-    """Fetch from a REST API in a child as job *job_id* and hold the rows as ``result``."""
-    kwargs = {"settings": settings}
-    return _read(job_id, read_rest_api, kwargs, settings.flowfile_flow_id, settings.flowfile_node_id)
+    """Fetch from a REST API in a child as job *job_id* and hold the rows as ``result``.
+
+    The ``metadata`` is the ``trace`` (each request as sent, secrets masked, and what came back) and, for a test
+    request (settings with a ``sample_size``), the first response's ``suggested_paths``, ``response_tree`` and
+    ``response_text``.
+    """
+    flow_id, node_id = settings.flowfile_flow_id, settings.flowfile_node_id
+    (result_id,) = _op_outputs(job_id, 1)
+    path = _output_file(flow_id, result_id)
+    sidecar = Path(f"{path}.debug.json")
+    kwargs = {"settings": settings, "debug_file": str(sidecar)}
+    ref = _read_into(job_id, result_id, path, read_rest_api, kwargs, flow_id, node_id, also_written=(str(sidecar),))
+    metadata = json.loads(sidecar.read_text()) if sidecar.is_file() else {}
+    sidecar.unlink(missing_ok=True)
+    return OpOutputs(outputs={"result": ref}, metadata=metadata)
 
 
 @_claimed

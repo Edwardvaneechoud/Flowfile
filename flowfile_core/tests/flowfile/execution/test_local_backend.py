@@ -280,7 +280,7 @@ def test_a_delta_write_and_merge_report_the_rows_they_wrote(backend, tmp_path, e
     assert pl.read_delta(path).sort("id").rows() == [(1, "ada"), (2, "grace"), (3, "dijkstra"), (4, "barbara")]
 
 
-def test_an_append_reports_the_rows_it_appended_and_an_append_of_none_a_skip(backend, tmp_path):
+def test_an_append_reports_the_table_total_and_an_append_of_none_a_skip(backend, tmp_path):
     path = str(tmp_path / "numbers")
     backend.run_op(
         OperationKind.delta_write, op_payload(delta_write(path, plan=pl.LazyFrame({"x": [1, 2]}), enable_cdf=False))
@@ -298,7 +298,7 @@ def test_an_append_reports_the_rows_it_appended_and_an_append_of_none_a_skip(bac
         metadata={
             "table_path": path,
             "schema": [{"name": "x", "dtype": "Int64"}],
-            "row_count": 3,
+            "row_count": 5,
             "column_count": 1,
             "size_bytes": get_delta_size_bytes(path),
         },

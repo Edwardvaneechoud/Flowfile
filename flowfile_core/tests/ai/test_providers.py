@@ -179,6 +179,46 @@ def test_unknown_surface_falls_back_to_default() -> None:
     assert "sonnet" in p.model.lower()
 
 
+@pytest.mark.parametrize("surface", [None, "unrecognised_surface", *OpenAIProvider.surface_models])
+def test_openai_defaults_use_gpt_6_luna(surface: str | None) -> None:
+    assert provider_factory("openai", surface=surface).model == "openai/gpt-6-luna"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("max_tokens", [None, 128])
+def test_openai_default_request_params(stream: bool, max_tokens: int | None) -> None:
+    p = provider_factory("openai")
+    tools = [ToolSpec(name="lookup", description="Look up a value", parameters={"type": "object"})]
+    kwargs = p._build_kwargs(
+        [Message(role="user", content="hi")],
+        tools,
+        max_tokens,
+        stream=stream,
+        response_format={"type": "json_object"},
+    )
+    assert kwargs["model"] == "openai/gpt-6-luna"
+    assert kwargs["custom_llm_provider"] == "openai"
+    assert kwargs["allowed_openai_params"] == ["reasoning_effort"]
+    assert kwargs["reasoning_effort"] == "none"
+    assert "max_tokens" not in kwargs
+    assert kwargs.get("max_completion_tokens") == max_tokens
+    assert ("max_completion_tokens" in kwargs) == (max_tokens is not None)
+    assert kwargs["tools"][0]["function"]["name"] == "lookup"
+    assert kwargs.get("stream", False) == stream
+    assert kwargs["response_format"] == {"type": "json_object"}
+
+
+def test_openai_explicit_model_keeps_request_params() -> None:
+    p = provider_factory("openai", model="gpt-4.1", surface="cmd_k")
+    kwargs = p._build_kwargs([Message(role="user", content="hi")], None, 128, stream=False)
+    assert kwargs["model"] == "openai/gpt-4.1"
+    assert kwargs["max_tokens"] == 128
+    assert "max_completion_tokens" not in kwargs
+    assert "reasoning_effort" not in kwargs
+    assert "custom_llm_provider" not in kwargs
+    assert "allowed_openai_params" not in kwargs
+
+
 # -------- Model prefix normalisation --------
 
 
@@ -188,6 +228,7 @@ def test_unknown_surface_falls_back_to_default() -> None:
         ("anthropic", "claude-haiku-4-5", "anthropic/"),
         ("google", "gemini-2.5-flash", "gemini/"),
         ("groq", "llama-3.3-70b-versatile", "groq/"),
+        ("openai", "gpt-4.1", "openai/"),
         ("ollama", "llama3.1:8b", "ollama_chat/"),
         ("openrouter", "anthropic/claude-haiku-4.5", "openrouter/"),
     ],
@@ -201,12 +242,6 @@ def test_prefix_not_double_applied() -> None:
     p = provider_factory("anthropic", model="anthropic/claude-haiku-4-5")
     assert p.model == "anthropic/claude-haiku-4-5"
     assert p.model.count("anthropic/") == 1
-
-
-def test_openai_no_prefix() -> None:
-    # OpenAI models in litellm are routed by bare name (no "openai/" prefix).
-    p = provider_factory("openai", model="gpt-4.1")
-    assert p.model == "gpt-4.1"
 
 
 # -------- api_base + api_key --------
@@ -260,6 +295,17 @@ def test_lazy_litellm_import() -> None:
     assert "litellm" not in sys.modules, (
         "Importing flowfile_core.ai.providers must not eagerly import litellm"
     )
+
+
+def test_openai_model_unknown_to_litellm_still_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model newer than litellm's bundled list resolves through the prefix."""
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    import litellm
+
+    p = provider_factory("openai", model="gpt-6.1-sol")
+    assert p.model == "openai/gpt-6.1-sol"
+    _, provider, _, _ = litellm.get_llm_provider(p.model)
+    assert provider == "openai"
 
 
 # -------- chat() translation --------
@@ -369,6 +415,53 @@ async def test_chat_omits_optional_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_default_reaches_http_transport() -> None:
+    from functools import partial
+
+    import httpx
+    import litellm
+    from litellm.types.llms.openai import ChatCompletionReasoningSummaryTextBlock  # noqa: F401
+    from litellm.types.utils import Message as LiteLLMMessage
+    from openai import AsyncOpenAI
+
+    # On Python 3.10 litellm's Message model is left with an unresolved forward
+    # reference; rebuild it with the referenced type in scope.
+    LiteLLMMessage.model_rebuild()
+
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-6-luna",
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}
+                ],
+            },
+        )
+
+    p = provider_factory("openai")
+    tools = [ToolSpec(name="lookup", description="Look up a value", parameters={"type": "object"})]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
+        client = AsyncOpenAI(api_key="sk-test", http_client=http_client)
+        with patch("litellm.acompletion", new=partial(litellm.acompletion, client=client)):
+            result = await p.chat([Message(role="user", content="hi")], tools=tools, max_tokens=128)
+
+    assert result.content == "hello"
+    assert len(requests) == 1
+    assert requests[0]["model"] == "gpt-6-luna"
+    assert requests[0]["reasoning_effort"] == "none"
+    assert requests[0]["max_completion_tokens"] == 128
+    assert "max_tokens" not in requests[0]
+    assert requests[0]["tools"][0]["function"]["name"] == "lookup"
+
+
+@pytest.mark.asyncio
 async def test_ollama_turns_thinking_off_via_extra_params() -> None:
     """Ollama's class-level ``extra_params`` ride on every call (litellm maps
     ``reasoning_effort="none"`` to Ollama's ``think: false``); an explicit
@@ -386,7 +479,10 @@ def test_other_providers_have_no_extra_params(name: str) -> None:
     p = provider_factory(name)
     assert p.extra_params == {}
     kwargs = p._build_kwargs([Message(role="user", content="hi")], None, None, stream=False)
-    assert "reasoning_effort" not in kwargs
+    if name == "openai":
+        assert kwargs["reasoning_effort"] == "none"
+    else:
+        assert "reasoning_effort" not in kwargs
 
 
 # -------- Message translation helpers (unit-level) --------

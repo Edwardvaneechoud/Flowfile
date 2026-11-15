@@ -31,7 +31,7 @@ The events that can fire:
 | **Run recovered** | The run succeeded after the previous run of the same flow had failed |
 | **Run succeeded** | Every successful run (off by default — noisy) |
 
-Runs started from the flow designer canvas are never alerted (you are already watching them), and cancelling a run yourself does not fire a failure alert.
+Runs started from the flow designer canvas are never alerted (you are already watching them), and cancelling a run yourself fires no alert: a cancelled run is neither a failure nor a success, and a success that follows it is a recovery only when the run before the cancel had failed.
 
 ---
 

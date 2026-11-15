@@ -297,6 +297,8 @@ class CatalogRepository(Protocol):
 
     def list_active_runs(self) -> list[FlowRun]: ...
 
+    def cancel_active_run(self, run_id: int, now: datetime) -> bool: ...
+
     def has_active_run(self, registration_id: int) -> bool: ...
 
     def list_due_interval_schedules(self) -> list[FlowSchedule]: ...
@@ -772,13 +774,14 @@ class SQLAlchemyCatalogRepository:
         run_type: RunType | None = None,
         search: str | None = None,
     ) -> dict[str, int]:
-        from sqlalchemy import case, func
+        from sqlalchemy import and_, case, func
 
         q = self._apply_run_filters(
             self._db.query(
                 func.count().label("total"),
                 func.count(case((FlowRun.success.is_(True), 1))).label("success"),
-                func.count(case((FlowRun.success.is_(False), 1))).label("failed"),
+                func.count(case((and_(FlowRun.success.is_(False), FlowRun.cancelled.is_(False)), 1))).label("failed"),
+                func.count(case((and_(FlowRun.success.is_(False), FlowRun.cancelled.is_(True)), 1))).label("cancelled"),
                 func.count(case((FlowRun.success.is_(None), 1))).label("running"),
             ),
             registration_id=registration_id,
@@ -787,7 +790,13 @@ class SQLAlchemyCatalogRepository:
             search=search,
         )
         row = q.one()
-        return {"total": row.total, "success": row.success, "failed": row.failed, "running": row.running}
+        return {
+            "total": row.total,
+            "success": row.success,
+            "failed": row.failed,
+            "running": row.running,
+            "cancelled": row.cancelled,
+        }
 
     # -- Favorites -----------------------------------------------------------
 
@@ -1298,6 +1307,34 @@ class SQLAlchemyCatalogRepository:
     def list_active_runs(self) -> list[FlowRun]:
         """Return runs that have not yet ended (ended_at IS NULL)."""
         return self._db.query(FlowRun).filter(FlowRun.ended_at.is_(None)).order_by(FlowRun.started_at.desc()).all()
+
+    def cancel_active_run(self, run_id: int, now: datetime) -> bool:
+        """Close run *run_id* as cancelled at *now* if it has not ended; False when it already had.
+
+        A keyed conditional UPDATE, so a completion that landed first keeps its outcome. The run is stamped as
+        evaluated for notifications in the same statement: a cancel is deliberate and alerts nobody.
+        """
+        run = self._db.get(FlowRun, run_id)
+        if run is None:
+            return False
+        values = {
+            FlowRun.ended_at: now,
+            FlowRun.success: False,
+            FlowRun.cancelled: True,
+            FlowRun.notification_processed_at: now,
+        }
+        if run.started_at:
+            # SQLite stores naive datetimes, so compare both sides without tzinfo.
+            started = run.started_at.replace(tzinfo=None)
+            values[FlowRun.duration_seconds] = (now.replace(tzinfo=None) - started).total_seconds()
+        matched = (
+            self._db.query(FlowRun)
+            .filter(FlowRun.id == run_id, FlowRun.ended_at.is_(None))
+            .update(values, synchronize_session=False)
+        )
+        self._db.commit()
+        self._db.refresh(run)
+        return bool(matched)
 
     def has_active_run(self, registration_id: int) -> bool:
         """Check if a flow already has an active (unfinished) run."""

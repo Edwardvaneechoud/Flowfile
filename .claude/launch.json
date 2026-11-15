@@ -104,6 +104,16 @@
       "port": 8083
     },
     {
+      "name": "web-alt-8087",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_CORE_PORT=63590 npm run dev:web --prefix flowfile_frontend -- --port 8087"
+      ],
+      "port": 8087,
+      "autoPort": false
+    },
+    {
       "name": "web-verify",
       "runtimeExecutable": "sh",
       "runtimeArgs": [

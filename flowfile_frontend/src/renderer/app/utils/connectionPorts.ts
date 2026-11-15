@@ -3,13 +3,12 @@ import type { NodeHandle, NodeTemplate } from "../types/flow.types";
 import { DEFAULT_OUTPUT_HANDLE } from "./outputHandle";
 
 type PortNode = {
-  inputs?: NodeHandle[];
+  inputHandles?: NodeHandle[];
   outputs?: NodeHandle[];
   nodeTemplate?: Pick<NodeTemplate, "name" | "multi" | "dynamic_inputs" | "inputs">;
 };
 
-// Validate the live instance handles, not the palette's counts. Omitted arrays
-// are supported for legacy snapshots; an explicit empty array means no ports.
+// Validate live handles; omitted arrays support legacy snapshots, while empty arrays mean no ports.
 export function connectionPortError(
   connection: Connection,
   source: PortNode | undefined,
@@ -24,11 +23,11 @@ export function connectionPortError(
   }
   // The reserved dynamic parameter port is legal even when its canvas pip is hidden.
   const input =
-    target.inputs?.find((port) => port.id === targetHandle) ??
+    target.inputHandles?.find((port) => port.id === targetHandle) ??
     (target.nodeTemplate?.dynamic_inputs
       ? target.nodeTemplate.inputs?.find((port) => port.id === targetHandle && port.hidden)
       : undefined);
-  if (target.inputs && !input) return "Input is not available on this node";
+  if (target.inputHandles && !input) return "Input is not available on this node";
   if (
     !target.nodeTemplate?.dynamic_inputs &&
     edges.some(

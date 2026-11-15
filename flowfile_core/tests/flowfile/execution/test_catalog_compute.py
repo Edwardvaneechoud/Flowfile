@@ -722,6 +722,23 @@ def test_a_write_by_identity_carries_no_path(delta_mode):
     assert (write.path, write.table) == (None, table)
 
 
+def test_append_persists_whole_table_count(execution_location, protocol, clean_catalog, writes):
+    namespace_id = create_test_namespace()
+    for index, (write_mode, ids, total) in enumerate(
+        [("overwrite", range(200), 200), ("append", range(200, 210), 210), ("append", range(200, 210), 220)]
+    ):
+        graph = write_flow(
+            writes,
+            9390 + index,
+            execution_location,
+            namespace_id,
+            [{"id": value} for value in ids],
+            write_mode,
+        )
+        run_test_graph(graph)
+        assert registered(namespace_id).row_count == total
+
+
 def test_the_catalog_writer_names_a_local_table_by_identity_when_the_flag_is_on(
     execution_location, protocol, clean_catalog, writes, worker_kwargs
 ):

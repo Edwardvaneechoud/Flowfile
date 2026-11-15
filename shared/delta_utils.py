@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import polars as pl
+    import pyarrow as pa
+    from deltalake import DeltaTable
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +119,39 @@ def _delta_log_size_bytes(path: str, storage_options: dict[str, str] | None) -> 
     dt = DeltaTable(path, storage_options=storage_options)
     size_col = dt.get_add_actions(flatten=True).column("size_bytes")
     return sum(v for v in size_col.to_pylist() if v is not None)
+
+
+def delta_row_count(dt: DeltaTable, storage_options: dict[str, str] | None = None) -> int:
+    """Count snapshot rows from complete log stats, or through Polars when stats are incomplete or include deletions."""
+    import polars as pl_
+
+    if "deletionVectors" not in (dt.protocol().reader_features or []):
+        actions = dt.get_add_actions(flatten=True)
+        if "num_records" in actions.column_names:
+            counts = actions.column("num_records").to_pylist()
+            if all(isinstance(count, int) and count >= 0 for count in counts):
+                return sum(counts)
+    return (
+        pl_.scan_delta(dt.table_uri, version=dt.version(), storage_options=storage_options)
+        .select(pl_.len())
+        .collect()
+        .item()
+    )
+
+
+def read_delta_preview(
+    dt: DeltaTable, n_rows: int, storage_options: dict[str, str] | None = None
+) -> tuple[pa.Table, int]:
+    """Read bounded rows and the logical total from the same pinned snapshot, including deletion-vector tables."""
+    import polars as pl_
+
+    preview = (
+        pl_.scan_delta(dt.table_uri, version=dt.version(), storage_options=storage_options)
+        .head(n_rows)
+        .collect()
+        .to_arrow()
+    )
+    return preview, delta_row_count(dt, storage_options)
 
 
 def _open_delta_or_none(output_path: str, storage_options: dict[str, str] | None):

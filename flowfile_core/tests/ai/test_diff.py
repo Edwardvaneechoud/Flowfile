@@ -783,6 +783,92 @@ def test_end_to_end_stage_then_accept(authed_client: TestClient, registered_flow
     _ = connection_payload  # Keep the helper exercised for the future path.
 
 
+@pytest.mark.parametrize(
+    ("output_handle", "target_id", "expected_error"),
+    [
+        ("output-1", 4, "Handle output-1 is not available on node 3"),
+        ("output-0", 2, "Handle input-0 already has a connection"),
+        ("output-0", 4, None),
+    ],
+    ids=["unavailable-output-free-input", "occupied-input", "valid-explicit-connection"],
+)
+def test_staged_connection_accept_enforces_ports_and_occupancy(
+    authed_client: TestClient,
+    registered_flow: FlowGraph,
+    output_handle: str,
+    target_id: int,
+    expected_error: str | None,
+) -> None:
+    from flowfile_core.schemas.history_schema import in_scope_hash
+
+    # Node 2 is only staged; its implicit main input will be occupied by node 1.
+    # Node 4 is an unconfigured filter with a free input, like a canvas placement.
+    _add_orders_input(registered_flow, node_id=3)
+    registered_flow.add_node_promise(
+        input_schema.NodePromise(flow_id=registered_flow.flow_id, node_id=4, node_type="filter")
+    )
+    staged_filter = _stage_filter(registered_flow, node_id=2, upstream=1)
+    assert staged_filter.status == "staged"
+    connection = input_schema.NodeConnection.create_from_simple_input(
+        from_id=3, to_id=target_id, input_type="input-0", output_handle=output_handle
+    ).model_dump(mode="json")
+    before_hash = in_scope_hash(registered_flow.get_flowfile_data().model_dump())
+    before_history = registered_flow.get_history_state()
+    before_settings = registered_flow.get_node(3).setting_input.model_dump()
+    before_audit_action = next(
+        row for row in audit.query_events(session_id="test-session-w41") if row.id == staged_filter.audit_id
+    ).diff_action
+    assert before_audit_action != "accepted"
+    assert registered_flow.get_node(4).all_inputs == []
+    stage = authed_client.post(
+        "/ai/diff/stage",
+        json={
+            "session_id": "port-contract-regression",
+            "flow_id": registered_flow.flow_id,
+            "rationale": "verify explicit connection acceptance boundary",
+            "staged_results": [
+                {
+                    "tool_name": staged_filter.tool_name,
+                    "audit_id": staged_filter.audit_id,
+                    "staged_node_payload": staged_filter.staged_node_payload,
+                },
+                {"tool_name": "flowfile.graph.connect", "staged_node_payload": {"connection": connection}},
+            ],
+        },
+    )
+    assert stage.status_code == 200, stage.text
+    diff_id = stage.json()["diff_id"]
+    accept = authed_client.post(f"/ai/diff/{diff_id}/accept", json={"flow_id": registered_flow.flow_id})
+    if expected_error is None:
+        assert accept.status_code == 200, accept.text
+        assert accept.json()["applied_connection_count"] == 1
+        added_filter = registered_flow.get_node(2)
+        target = registered_flow.get_node(4)
+        assert added_filter is not None and target is not None
+        assert [node.node_id for node in added_filter.node_inputs.main_inputs] == [1]
+        assert target.input_edge_handle(3, "input-0") == "output-0"
+        assert registered_flow.get_history_state().undo_count == before_history.undo_count + 1
+        assert diff.get_diff(diff_id) is None
+    else:
+        assert accept.status_code == 422, accept.text
+        assert accept.json()["detail"] == f"apply_diff failed: 422: {expected_error}"
+        assert in_scope_hash(registered_flow.get_flowfile_data().model_dump()) == before_hash
+        assert registered_flow.get_node(2) is None
+        # Rollback may rebuild nodes: reacquire and compare state, not object identity.
+        assert registered_flow.get_node(3).setting_input.model_dump() == before_settings
+        assert registered_flow.get_node(4).all_inputs == []
+        after_history = registered_flow.get_history_state()
+        assert after_history.undo_count == before_history.undo_count
+        assert after_history.redo_count == before_history.redo_count
+        assert after_history.redo_description == before_history.redo_description
+        retained = diff.get_diff(diff_id)
+        assert retained is not None
+        assert retained.diff_id == diff_id
+    rows = audit.query_events(session_id="test-session-w41")
+    row = next(row for row in rows if row.id == staged_filter.audit_id)
+    assert row.diff_action == ("accepted" if expected_error is None else before_audit_action)
+
+
 # modifications bucket
 
 

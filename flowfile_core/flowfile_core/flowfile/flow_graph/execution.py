@@ -26,7 +26,7 @@ from flowfile_core.flowfile.catalog_cdc import (
 )
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
-from flowfile_core.flowfile.execution.errors import ComputeError, VersionMismatch
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.flowfile.execution.placement import (
     Fallback,
@@ -515,8 +515,8 @@ class ExecutionMixin(GraphMixinBase):
             node_result.finish(success=errors is None, error="" if errors is None else str(errors))
             if errors is not None:
                 node_result.compute_error = _compute_error(flow_node)
-            if self.flow_settings.is_canceled:
-                node_result.success = None
+            if self._stopped_by_cancel(flow_node):
+                node_result.stop()
             if node_result.success:
                 self.latest_run_info.nodes_completed += 1
             self.latest_run_info.end_time = datetime.datetime.now()
@@ -694,10 +694,8 @@ class ExecutionMixin(GraphMixinBase):
             )
         try:
             errors = node.results.errors
-            if self.flow_settings.is_canceled:
-                node_result.error = "" if errors is None else str(errors)
-                node_result.success = None
-                node_result.is_running = False
+            if self._stopped_by_cancel(node):
+                node_result.stop()
                 return node_result, node
             node_result.finish(success=errors is None, error="" if errors is None else str(errors))
             if errors is not None:
@@ -824,6 +822,8 @@ class ExecutionMixin(GraphMixinBase):
             for stage in execution_plan.stages:
                 if self.flow_settings.is_canceled:
                     self.flow_logger.info("Flow canceled")
+                    # Stages are left unrun, so the run did not finish even if every node so far succeeded.
+                    self.latest_run_info.cancelled = True
                     break
 
                 nodes_to_run: list[FlowNode] = []
@@ -1063,7 +1063,7 @@ class ExecutionMixin(GraphMixinBase):
         return closed
 
     def _place_run(
-        self, execution_plan: ExecutionPlan, exchange_run: ExchangeRun, *, log: bool = True
+        self, execution_plan: ExecutionPlan, exchange_run: ExchangeRun, *, log: bool = True, probe: bool = True
     ) -> tuple[Placement | None, list[BoundaryEdge]]:
         """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
@@ -1079,6 +1079,9 @@ class ExecutionMixin(GraphMixinBase):
         when the store cannot be used, when the limit is not a whole number, or when core knows the output holds more
         rows than ``FLOWFILE_EXCHANGE_MAX_ROWS`` (``BoundaryEdge.cost``). An edge of unknown size crosses. Every refusal
         carries its ``remedy_for``. ``log`` false (the placement preview) writes no warnings to core's log.
+        ``probe=False`` reads only cached handshake verdicts, leaving unchecked backends unreachable.
+        Cached ``ComputeUnavailable`` verdicts stay unreachable, not refused, just as on the live path.
+        Known negative verdicts are not unchecked; subsequent live refreshes retry them through ``verdict_for``.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1093,6 +1096,7 @@ class ExecutionMixin(GraphMixinBase):
         absent: dict[str, dict[str, str]] = {}
         refused: dict[str, str] = {}
         unreachable: dict[str, ComputeError] = {}
+        unchecked_backend_ids: list[str] = []
         named = dict.fromkeys(policy.backend_for(node) for node in nodes)
         if isinstance(policy, MixedPlacementPolicy) and nodes:
             named.setdefault(fallback_id)
@@ -1100,7 +1104,14 @@ class ExecutionMixin(GraphMixinBase):
             if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
                 continue
             try:
-                verdict = handshake.verdict_for(registry.backend(backend_id))
+                backend = registry.backend(backend_id)
+                verdict = handshake.verdict_for(backend) if probe else handshake.cached_verdict(backend)
+                if verdict is None:
+                    unchecked_backend_ids.append(backend_id)
+                    unreachable[backend_id] = ComputeUnavailable(
+                        "No cached handshake verdict; preview did not check this backend", backend_id=backend_id
+                    )
+                    continue
             except VersionMismatch as e:
                 refused[backend_id] = str(e)
                 continue
@@ -1113,9 +1124,13 @@ class ExecutionMixin(GraphMixinBase):
             if verdict.ok:
                 declared[backend_id] = verdict.offered
                 absent[backend_id] = verdict.absent
+            elif verdict.error_kind == "ComputeUnavailable":
+                unreachable[backend_id] = ComputeUnavailable(verdict.error, backend_id=backend_id)
             else:
                 refused[backend_id] = verdict.error
         placement = place(self, declared, policy, nodes=nodes, absent=absent, unreachable=unreachable, log=log)
+        if unchecked_backend_ids:
+            placement = replace(placement, unchecked_backend_ids=unchecked_backend_ids)
         if refused:
             refusals = [
                 Refusal(node.node_id, policy.backend_for(node), refused[policy.backend_for(node)])
@@ -1184,16 +1199,17 @@ class ExecutionMixin(GraphMixinBase):
             )
         return placement, edges
 
-    def preview_placement(self) -> Placement | None:
+    def preview_placement(self, *, probe: bool = True) -> Placement | None:
         """Where a run would place each of the flow's nodes now, without running, logging or changing anything.
 
         ``None`` with the protocol flag off. Every node is placed as if every gate were open, under an exchange run that
         is never collected, and the boundary edges are dropped. Placement reads a resolved copy of each node's settings,
-        so a preview beside an edit or a run leaves both as they are.
+        so a preview beside an edit or a run leaves both as they are. With ``probe=False`` no worker is contacted;
+        unknown backends retain their assigned nodes until a live check establishes capabilities or refusals.
         """
         stage = ExecutionStage(nodes=list(self.nodes))
         placement, _ = self._place_run(
-            ExecutionPlan(skip_nodes=[], stages=[stage]), ExchangeRun(self.flow_id, "preview"), log=False
+            ExecutionPlan(skip_nodes=[], stages=[stage]), ExchangeRun(self.flow_id, "preview"), log=False, probe=probe
         )
         return placement
 
@@ -1607,8 +1623,19 @@ class ExecutionMixin(GraphMixinBase):
         except Exception as e:
             self.flow_logger.warning(f"Could not remove the run's exchange-store prefix: {type(e).__name__}: {e}")
 
+    def _stopped_by_cancel(self, node: FlowNode) -> bool:
+        """Whether the run's cancel ended ``node``, rather than a failure of its own.
+
+        The executor records a failure on the node and none for one a cancel stopped, whose stopped job may still
+        have left its error text on the node's results. A node that failed before the cancel stays failed.
+        """
+        return self.flow_settings.is_canceled and node.node_stats.error is None
+
     def get_run_info(self) -> RunInformation:
         """Gets a summary of the most recent graph execution.
+
+        A run a cancel stopped (a node marked cancelled, or stages left unrun) is unsuccessful, and cancelled unless
+        a node failed on its own. A cancel that arrives once every node has run changes nothing.
 
         Returns:
             A RunInformation object with details about the last run.
@@ -1621,7 +1648,10 @@ class ExecutionMixin(GraphMixinBase):
         run_info.is_running = is_running
         run_info.execution_mode = self.flow_settings.execution_mode
         if not is_running and run_info.success is None:
-            run_info.success = all(nr.success for nr in run_info.node_step_result)
+            results = run_info.node_step_result
+            stopped = run_info.cancelled or any(nr.cancelled for nr in results)
+            run_info.success = not stopped and all(nr.success for nr in results)
+            run_info.cancelled = stopped and not any(nr.success is False for nr in results)
         return run_info
 
     def cancel(self):

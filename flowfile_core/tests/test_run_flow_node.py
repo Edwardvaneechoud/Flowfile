@@ -405,6 +405,21 @@ def test_zero_output_subflow_returns_run_summary(tmp_path):
     assert "run_index" in summary.columns
     assert summary["success"].to_list() == [True]
 
+    # A real summary result must also be advertised and connectable by the editor.
+    serialized = parent.get_node(9).get_node_input().model_dump(mode="json")
+    assert [port["id"] for port in serialized["outputs"]] == ["output-0"]
+    add_promise(parent, 10, "flow_output")
+    parent.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=parent.flow_id, node_id=10, output_name="summary", depending_on_id=9)
+    )
+    add_connection(
+        parent,
+        input_schema.NodeConnection.create_from_simple_input(9, 10),
+        validate_ports=True,
+    )
+    run_and_assert_ok(parent)
+    assert parent.get_node(10).get_resulting_data().collect()["success"].to_list() == [True]
+
 
 def test_run_summary_schema_prediction_matches_a_real_run(tmp_path):
     graph = make_graph(440, "no_output_params_subflow")
@@ -510,7 +525,7 @@ def test_two_port_routing_and_order_independent_connections(two_port_subflow, tm
     assert reloaded.get_node(9).get_output("output-1").collect().height == 2
 
 
-def test_remap_on_slot_change_drops_vanished_and_follows_renames(two_port_subflow):
+def test_remap_on_slot_change_drops_vanished_and_follows_renames(two_port_subflow, tmp_path):
     graph = make_graph(412)
     add_promise(graph, 1, "manual_input")
     graph.add_manual_input(
@@ -536,14 +551,52 @@ def test_remap_on_slot_change_drops_vanished_and_follows_renames(two_port_subflo
     connect(graph, 1, 9, "input-1")
     connect(graph, 2, 9, "input-2")
 
-    # New interface: 'a' vanished, 'b' moved to slot 0.
-    graph.add_run_flow(input_schema.NodeRunFlow(input_slots=["b"], **base))
+    add_promise(graph, 10, "flow_output")
+    graph.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=graph.flow_id, node_id=10, output_name="result", depending_on_id=9)
+    )
+    connect(graph, 9, 10, "input-0", "output-1")
+    run_and_assert_ok(graph)
+    assert graph.get_node(10).get_resulting_data().collect()["x"].to_list() == [2]
+
+    # The child replaces a with c. Resync also moves surviving b to the first data slot.
+    child = open_flow(two_port_subflow["path"])
+    child.add_flow_input(
+        input_schema.NodeFlowInput(
+            flow_id=child.flow_id,
+            node_id=1,
+            input_name="c",
+            raw_data_format=input_schema.RawData.from_pylist([{"x": 3}]),
+        )
+    )
+    child.save_flow(str(two_port_subflow["path"]))
+    graph.add_run_flow(input_schema.NodeRunFlow(input_slots=["b", "c"], **base))
     node = graph.get_node(9)
     keyed = node.node_inputs.keyed_inputs
     assert list(keyed.keys()) == ["input-1"]
     assert keyed["input-1"].node_id == 2
-    # Node 1's edge was dropped entirely.
+    # Node 1's edge was dropped entirely; a renamed port is not the same port.
     assert all(lead.node_id != 9 for lead in graph.get_node(1).leads_to_nodes)
+
+    parent_path = tmp_path / "parent_remapped.yaml"
+    graph.save_flow(str(parent_path))
+    reloaded = open_flow(parent_path)
+    restored = reloaded.get_node(9)
+    assert restored.node_inputs.keyed_inputs["input-1"].node_id == 2
+    assert set(restored.node_inputs.keyed_inputs) == {"input-1"}
+    assert {(e.source, e.targetHandle) for e in restored.get_edge_input()} == {("2", "input-1")}
+    assert {e.sourceHandle for e in reloaded.get_node(10).get_edge_input()} == {"output-1"}
+    serialized = restored.get_node_input().model_dump(mode="json")
+    assert [(p["id"], p["name"], p["hidden"]) for p in serialized["inputs"]] == [
+        ("input-0", "", True),
+        ("input-1", "b", False),
+        ("input-2", "c", False),
+    ]
+    assert [(p["id"], p["name"]) for p in serialized["outputs"]] == [("output-0", "out_a"), ("output-1", "out_b")]
+    run_and_assert_ok(reloaded)
+    assert reloaded.get_node(10).get_resulting_data().collect()["x"].to_list() == [2]
+    # The replacement port is unconnected and therefore uses the child's sample data.
+    assert restored.get_output("output-0").collect()["x"].to_list() == [3]
 
 
 def test_recursion_guard(tmp_path):

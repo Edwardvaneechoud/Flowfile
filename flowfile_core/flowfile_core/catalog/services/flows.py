@@ -18,6 +18,7 @@ from flowfile_core.catalog.exceptions import (
     NamespaceNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
+from flowfile_core.catalog.serializers import run_cancelled
 from flowfile_core.catalog.services.namespaces import NamespaceService, bulk_enrich_artifacts
 from flowfile_core.database.models import CatalogNamespace, FlowRegistration
 from flowfile_core.schemas.catalog_schema import (
@@ -101,6 +102,7 @@ class FlowRegistrationService:
             run_count=run_count,
             last_run_at=last_run.started_at if last_run else None,
             last_run_success=last_run.success if last_run else None,
+            last_run_cancelled=run_cancelled(last_run),
             file_exists=file_exists,
             is_api_compatible=flow.is_api_compatible,
             artifact_count=artifact_count,
@@ -150,6 +152,7 @@ class FlowRegistrationService:
                     run_count=run_count,
                     last_run_at=last_run.started_at if last_run else None,
                     last_run_success=last_run.success if last_run else None,
+                    last_run_cancelled=run_cancelled(last_run),
                     file_exists=file_exists,
                     is_api_compatible=flow.is_api_compatible,
                     artifact_count=artifact_counts.get(flow.id, 0),

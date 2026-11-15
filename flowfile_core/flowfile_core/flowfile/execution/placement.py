@@ -114,6 +114,8 @@ class Placement:
     refusals: list[Refusal]
     unreachable: dict[str, Exception] = field(default_factory=dict)
     fallbacks: list[Fallback] = field(default_factory=list)
+    # Preview-only: backends needing a live check, including cached negative verdicts.
+    unchecked_backend_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

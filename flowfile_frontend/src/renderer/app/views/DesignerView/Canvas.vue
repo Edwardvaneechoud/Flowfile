@@ -641,10 +641,11 @@ function isValidConnection(connection: Connection): boolean {
 
   const currentEdges = instance.getEdges.value;
 
+  const targetData = instance.findNode(target)?.data;
   const portError = connectionPortError(
     connection,
     instance.findNode(source)?.data,
-    instance.findNode(target)?.data,
+    targetData ? { ...targetData, inputHandles: targetData.inputs } : undefined,
     currentEdges,
   );
   if (portError) return rejectConnection(portError);
@@ -1371,6 +1372,7 @@ onMounted(() => {
       if (!running && wasRunning) {
         flowStore.fetchArtifacts();
         flowStore.fetchSettingsValidation();
+        flowStore.fetchPlacement();
       }
     },
   );
@@ -1487,6 +1489,7 @@ defineExpose({
         :default-viewport="{ zoom: 1 }"
         :zoom-on-double-click="false"
         :multi-selection-key-code="null"
+        :delete-key-code="['Backspace', 'Delete']"
         :is-valid-connection="isValidConnection"
         @edge-update="onEdgeUpdate"
         @edge-mouse-enter="onEdgeMouseEnter"

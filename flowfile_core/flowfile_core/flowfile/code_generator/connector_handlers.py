@@ -294,6 +294,8 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         elif pagination.pagination_type == "cursor":
             if pagination.cursor_param != "cursor":
                 p["cursor_param"] = pagination.cursor_param
+            if pagination.cursor_request_location != "query":
+                p["cursor_request_location"] = pagination.cursor_request_location
             if pagination.cursor_location != "body":
                 p["cursor_location"] = pagination.cursor_location
             if pagination.cursor_response_path:

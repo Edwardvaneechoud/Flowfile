@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-import os
-import signal
 from datetime import datetime, timezone
+
+from sqlalchemy.orm.attributes import flag_modified
 
 from flowfile_core.catalog.exceptions import (
     FlowAlreadyRunningError,
@@ -14,7 +14,7 @@ from flowfile_core.catalog.exceptions import (
     RunNotFoundError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
-from flowfile_core.catalog.serializers import run_to_out
+from flowfile_core.catalog.serializers import run_cancelled, run_to_out
 from flowfile_core.database.models import FlowRegistration, FlowRun, RunType
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
@@ -22,6 +22,7 @@ from flowfile_core.schemas.catalog_schema import (
     FlowRunOut,
     PaginatedFlowRuns,
 )
+from shared.run_completion import terminate_pid
 from shared.run_logs import SUBPROCESS_RUN_TYPES, run_log_path
 from shared.subprocess_utils import spawn_flow_subprocess
 
@@ -91,6 +92,7 @@ class FlowRunService:
             total_success=counts["success"],
             total_failed=counts["failed"],
             total_running=counts["running"],
+            total_cancelled=counts["cancelled"],
         )
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
@@ -113,6 +115,7 @@ class FlowRunService:
             started_at=run.started_at,
             ended_at=run.ended_at,
             success=run.success,
+            cancelled=run_cancelled(run),
             nodes_completed=run.nodes_completed,
             number_of_nodes=run.number_of_nodes,
             duration_seconds=run.duration_seconds,
@@ -171,14 +174,23 @@ class FlowRunService:
         nodes_completed: int,
         number_of_nodes: int | None = None,
         node_results_json: str | None = None,
+        cancelled: bool = False,
     ) -> FlowRun:
-        """Mark a run as completed."""
+        """Mark a run as completed with the outcome the run itself reports.
+
+        ``cancelled`` says the run was stopped on purpose and nothing in it failed. It is kept only with
+        ``success`` False, and it replaces a cancel recorded earlier: a run that reports its own end was not
+        stopped by that cancel.
+        """
         run = self.repo.get_run(run_id)
         if run is None:
             raise RunNotFoundError(run_id=run_id)
         now = datetime.now(timezone.utc)
         run.ended_at = now
         run.success = success
+        run.cancelled = cancelled and not success
+        # Written even when it equals the loaded value: a cancel may have been recorded since the load.
+        flag_modified(run, "cancelled")
         run.nodes_completed = nodes_completed
         if number_of_nodes is not None and number_of_nodes > 0:
             run.number_of_nodes = number_of_nodes
@@ -206,6 +218,7 @@ class FlowRunService:
         node_results_json: str | None = None,
         flow_snapshot: str | None = None,
         flow_uuid: str | None = None,
+        cancelled: bool = False,
     ) -> FlowRun:
         """Record a fully completed run in one step (fallback when start_run was skipped)."""
         duration = None
@@ -224,6 +237,7 @@ class FlowRunService:
             started_at=started_at,
             ended_at=ended_at,
             success=success,
+            cancelled=cancelled and not success,
             nodes_completed=nodes_completed,
             number_of_nodes=number_of_nodes,
             duration_seconds=duration,
@@ -295,6 +309,9 @@ class FlowRunService:
             run.ended_at = datetime.now(timezone.utc)
             run.success = False
         self.repo.update_run(run)
+        if pid is not None and run.ended_at is not None:
+            # Cancelled while it was starting: that cancel saw no pid to signal.
+            logger.info("Run %s was cancelled while starting: %s", run.id, terminate_pid(pid))
         return run
 
     def run_flow_now(self, registration_id: int, user_id: int) -> FlowRunOut:
@@ -329,28 +346,19 @@ class FlowRunService:
         ]
 
     def cancel_run(self, run_id: int) -> None:
-        """Cancel a running flow by terminating its subprocess and marking
-        the database record as failed."""
+        """Cancel a run that has not ended: record it as cancelled, then terminate its subprocess.
+
+        The record is closed first, as cancelled and already evaluated for notifications, so nothing that polls
+        for dead runs can close it as a failure between the signal and the write. A run that already ended keeps
+        its outcome and nothing is signalled: its pid may belong to another process by now.
+        """
         run = self.repo.get_run(run_id)
         if run is None:
             raise RunNotFoundError(run_id=run_id)
 
-        if run.pid is not None:
-            try:
-                os.kill(run.pid, signal.SIGTERM)
-                logger.info("Sent SIGTERM to pid %s for run %s", run.pid, run_id)
-            except ProcessLookupError:
-                logger.info("Process %s for run %s already exited", run.pid, run_id)
-            except OSError:
-                logger.warning("Failed to kill pid %s for run %s", run.pid, run_id, exc_info=True)
+        if not self.repo.cancel_active_run(run_id, datetime.now(timezone.utc)):
+            logger.info("Run %s already ended; not cancelling", run_id)
+            return
 
-        now = datetime.now(timezone.utc)
-        run.ended_at = now
-        run.success = False
-        # A user-initiated cancel is deliberate; alerting on it is noise.
-        run.notification_processed_at = now
-        if run.started_at:
-            started_utc = run.started_at.replace(tzinfo=None)
-            now_utc = now.replace(tzinfo=None)
-            run.duration_seconds = (now_utc - started_utc).total_seconds()
-        self.repo.update_run(run)
+        if run.pid is not None:
+            logger.info("Cancelled run %s: %s", run_id, terminate_pid(run.pid))

@@ -1601,7 +1601,7 @@ def cancel_run(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Cancel a running flow by marking it as failed."""
+    """Cancel a running flow: its record reads cancelled, not failed. A run that already ended is left as it is."""
     service.cancel_run(run_id)
 
 

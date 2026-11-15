@@ -11,7 +11,7 @@ Only columns required by non-core consumers are mapped here.
 import uuid
 from typing import Literal
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -63,6 +63,8 @@ class FlowRun(Base):
     started_at = Column(DateTime, nullable=False)
     ended_at = Column(DateTime, nullable=True)
     success = Column(Boolean, nullable=True)
+    # Stopped on purpose before it finished; a cancelled run keeps success False.
+    cancelled = Column(Boolean, nullable=False, default=False, server_default=false())
     nodes_completed = Column(Integer, default=0)
     number_of_nodes = Column(Integer, default=0)
     duration_seconds = Column(Float, nullable=True)

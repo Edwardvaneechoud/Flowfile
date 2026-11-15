@@ -97,11 +97,13 @@ def validate_connection(
     input_handle: str | None = None,
     *,
     replacing: bool = False,
+    staged: bool = False,
     validate_ports: bool = True,
 ) -> ConnectionValidationError | None:
     """Non-mutating topology check for from_node -> to_node; None when valid.
 
     ``replacing`` is reserved for an explicit splice of an existing edge.
+    ``staged`` defers live-wire conflicts until AI diff acceptance.
     Low-level add_node_connection retains its replacement semantics.
 
     ``output_handle`` is the source handle the new edge would read. Pass it to
@@ -120,18 +122,16 @@ def validate_connection(
             "would_create_cycle",
             f"Connecting node {from_node.node_id} -> {to_node.node_id} would create a cycle",
         )
-    inputs = to_node.get_node_input().inputs if input_handle is not None else []
-    for node, handle, ports in (
-        (from_node, output_handle, from_node.get_node_input().outputs if output_handle is not None else []),
-        (to_node, input_handle, inputs),
-    ):
+    inputs = to_node.get_node_input().inputs if validate_ports and input_handle is not None else []
+    outputs = from_node.get_node_input().outputs if validate_ports and output_handle is not None else []
+    for node, handle, ports in ((from_node, output_handle, outputs), (to_node, input_handle, inputs)):
         if validate_ports and handle is not None and not any(port.id == handle for port in ports):
             return ConnectionValidationError(
                 "handle_not_available",
                 f"Handle {handle} is not available on node {node.node_id}",
             )
-    if input_handle is not None and not replacing:
-        port = next(port for port in inputs if port.id == input_handle)
+    port = next((port for port in inputs if port.id == input_handle), None)
+    if port is not None and input_handle is not None and not (replacing or staged):
         for occupant in to_node.all_inputs:
             existing = to_node.input_edge_handle(occupant.node_id, input_handle)
             if (
@@ -140,7 +140,8 @@ def validate_connection(
                 and (occupant.node_id != from_node.node_id or existing != (output_handle or DEFAULT_OUTPUT_HANDLE))
             ):
                 return ConnectionValidationError("input_occupied", f"Handle {input_handle} already has a connection")
-    if output_handle is not None:
+    # Staged replacements are validated against the final graph during acceptance.
+    if output_handle is not None and not staged:
         existing_handle = live_source_handle(to_node, from_node.node_id)
         if existing_handle is not None and existing_handle != output_handle:
             return ConnectionValidationError(
@@ -177,8 +178,7 @@ def add_connection(
             if not n
         ]
         raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
-    # Internal graph assembly retains replacement, positional fan-in and legacy
-    # handles. Editor connections and explicit dynamic slots enforce port contracts.
+    # Port checks are opt-in, except that dynamic-input targets always check their slots.
     check_ports = validate_ports or to_node.accepts_dynamic_inputs
     error = validate_connection(
         from_node,

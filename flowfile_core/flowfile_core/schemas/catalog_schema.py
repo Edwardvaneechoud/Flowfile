@@ -99,6 +99,7 @@ class FlowRegistrationOut(BaseModel):
     run_count: int = 0
     last_run_at: datetime | None = None
     last_run_success: bool | None = None
+    last_run_cancelled: bool = False
     file_exists: bool = True
     is_api_compatible: bool = False
     artifact_count: int = 0
@@ -167,6 +168,10 @@ class FlowRunOut(BaseModel):
     started_at: datetime
     ended_at: datetime | None = None
     success: bool | None = None
+    cancelled: bool = Field(
+        default=False,
+        description="The run was stopped on purpose before it finished; success is False and it did not fail.",
+    )
     nodes_completed: int = 0
     number_of_nodes: int = 0
     duration_seconds: float | None = None
@@ -186,6 +191,7 @@ class PaginatedFlowRuns(BaseModel):
     total_success: int = 0
     total_failed: int = 0
     total_running: int = 0
+    total_cancelled: int = 0
 
 
 class FlowRunDetail(FlowRunOut):

@@ -112,6 +112,7 @@ class _RunSummary:
     nodes_completed: int
     number_of_nodes: int
     run_type: str
+    cancelled: bool = False
 
 
 @dataclass(slots=True)
@@ -284,6 +285,7 @@ def _run_summary_from_out(run_out: Any) -> _RunSummary:
         nodes_completed=int(getattr(run_out, "nodes_completed", 0) or 0),
         number_of_nodes=int(getattr(run_out, "number_of_nodes", 0) or 0),
         run_type=str(getattr(run_out, "run_type", "in_designer_run") or "in_designer_run"),
+        cancelled=bool(getattr(run_out, "cancelled", False)),
     )
 
 
@@ -312,6 +314,7 @@ def _summary_from_in_memory_run(flow: Any, run_info: Any) -> _RunSummary:
         nodes_completed=nodes_completed,
         number_of_nodes=number_of_nodes,
         run_type=str(getattr(run_info, "run_type", "in_designer_run") or "in_designer_run"),
+        cancelled=bool(getattr(run_info, "cancelled", False)),
     )
 
 
@@ -415,11 +418,11 @@ def _format_duration(seconds: float | None) -> str:
     return f"{int(seconds * 1000)}ms"
 
 
-def _format_success(success: bool | None) -> str:
+def _format_success(success: bool | None, cancelled: bool = False) -> str:
     if success is True:
         return "OK"
     if success is False:
-        return "FAIL"
+        return "CANCELLED" if cancelled else "FAIL"
     return "RUNNING"
 
 
@@ -460,7 +463,7 @@ def _format_run_history_block(
         started = _format_iso(run.started_at)
         ended = _format_iso(run.ended_at)
         duration = _format_duration(run.duration_seconds)
-        success = _format_success(run.success)
+        success = _format_success(run.success, run.cancelled)
         nodes = f"{run.nodes_completed}/{run.number_of_nodes}"
         lines.append(f"| {run_id_label} | {started} | {ended} | {duration} | {success} | {nodes} | {run.run_type} |")
 

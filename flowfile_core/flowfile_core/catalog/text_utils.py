@@ -36,9 +36,9 @@ def rewrite_qualified_references(query: str, qualified_names: Iterable[str]) -> 
             esc = re.escape(part)
             bare = esc
             if i == 0:
-                bare = rf'(?<![\w"\']){bare}'
+                bare = rf'(?<![\w"\'.-]){bare}'
             if i == len(parts) - 1:
-                bare = rf'{bare}(?![\w"\'])'
+                bare = rf'{bare}(?![\w"\'-])'
             segments.append(rf"""(?:"{esc}"|'{esc}'|{bare})""")
         pattern = re.compile(r"\s*\.\s*".join(segments))
         query = pattern.sub(f'"{qualified_name}"', query)

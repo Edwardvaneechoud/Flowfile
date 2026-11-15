@@ -472,11 +472,11 @@ export class FlowApi {
   }
 
   /**
-   * Get where a run would place each node now: the nodes moved to the default backend and the ones refused.
+   * Preview cached capabilities by default; explicitly probe cold backends off the fast preview path.
    */
-  static async getPlacement(flowId: number): Promise<PlacementPreview> {
+  static async getPlacement(flowId: number, probe = false): Promise<PlacementPreview> {
     const response = await axios.get<PlacementPreview>("/flow/placement", {
-      params: { flow_id: flowId },
+      params: { flow_id: flowId, probe },
       headers: { accept: "application/json" },
     });
     return response.data;
