@@ -29,16 +29,16 @@ describe("validateSqlIdentifier for a dialect that takes quoted names", () => {
   const quoted = { quoted: true };
 
   it("stays strict by default, so a quoted or $ name is refused", () => {
-    expect(validateSqlIdentifier('"USER$evaneechoud"')).toContain("Only letters, numbers");
+    expect(validateSqlIdentifier('"USER$analyst"')).toContain("Only letters, numbers");
     expect(validateSqlIdentifier("A$B")).toContain("Only letters, numbers");
-    expect(validateSqlIdentifier('"USER$evaneechoud"', { quoted: false })).toContain(
+    expect(validateSqlIdentifier('"USER$analyst"', { quoted: false })).toContain(
       "Only letters, numbers",
     );
   });
 
   it("accepts plain, $ and double-quoted parts", () => {
     for (const name of [
-      '"USER$evaneechoud"',
+      '"USER$analyst"',
       '"my.db"."My Schema".T',
       "A$B",
       "ORDERS",

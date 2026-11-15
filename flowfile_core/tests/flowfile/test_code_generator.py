@@ -4560,7 +4560,7 @@ def test_database_export_writes_quoted_names_as_valid_python_literals():
             query_mode="table",
             table_name='"My ""odd"" table"',
             schema_name='"Raw"',
-            database_name='"USER$evaneechoud"',
+            database_name='"USER$analyst"',
         ),
     )
     lines = _database_export_lines(reader)
@@ -4569,7 +4569,7 @@ def test_database_export_writes_quoted_names_as_valid_python_literals():
     assert keywords == {
         "table_name": '"My ""odd"" table"',
         "schema_name": '"Raw"',
-        "database_name": '"USER$evaneechoud"',
+        "database_name": '"USER$analyst"',
     }
 
     writer = input_schema.NodeDatabaseWriter(

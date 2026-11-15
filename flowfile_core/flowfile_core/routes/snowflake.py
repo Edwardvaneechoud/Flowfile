@@ -146,8 +146,8 @@ def discover(
     _require_driver()
     username = body.username.strip()
     role = _blank_to_none(body.role)
-    stored = _stored_target(db, current_user, body.connection_name) if not body.secret.get_secret_value() else None
     try:
+        stored = _stored_target(db, current_user, body.connection_name) if not body.secret.get_secret_value() else None
         if stored is not None:
             host, method, secret, stored_user, stored_role = stored
             username = username or (stored_user or "")

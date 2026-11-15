@@ -113,8 +113,8 @@ describe("databaseChoice", () => {
   it("splits a quoted name on the dots outside the quotes", () => {
     expect(identifierParts('"my.db"."My Schema".T')).toEqual(['"my.db"', '"My Schema"', "T"]);
     expect(identifierParts('"open.T')).toBeNull();
-    expect(splitTableReference('"USER$evaneechoud"."Raw".orders', true)).toEqual({
-      database: '"USER$evaneechoud"',
+    expect(splitTableReference('"USER$analyst"."Raw".orders', true)).toEqual({
+      database: '"USER$analyst"',
       schema: '"Raw"',
       table: "orders",
     });

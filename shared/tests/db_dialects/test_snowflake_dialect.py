@@ -11,6 +11,8 @@ import base64
 import datetime as dt
 import hashlib
 import json
+import re
+import sys
 import threading
 from contextlib import contextmanager
 from decimal import Decimal
@@ -548,10 +550,53 @@ def test_missing_secret_is_reported_before_the_driver_is_needed():
         dialect._connect("snowflake://u@h:443/D")
 
 
-@pytest.mark.skipif(_connector_installed(), reason="checks the message shown when the connector is absent")
-def test_missing_connector_names_the_install_hint():
-    with pytest.raises(ImportError, match="pip install snowflake-connector-python"):
+def test_missing_connector_names_the_install_hint(monkeypatch):
+    monkeypatch.setitem(sys.modules, "snowflake.connector", None)
+    with pytest.raises(ImportError, match=re.escape(SnowflakeDialect.install_hint)):
         dialect._connect("snowflake://u:tok@h:443/D")
+
+
+def test_the_access_token_a_browser_sign_in_minted_is_masked_out_of_driver_errors(monkeypatch):
+    refresh, access = "refresh-token-1", "minted-access-token-1"
+    snowflake_auth.forget_access_tokens()
+    snowflake_auth.remember_access_token("h", refresh, access, 3600)
+    failure = {"stage": "connect"}
+
+    class _Cursor:
+        def execute(self, sql):
+            raise _driver_error(f"query failed for token {access} and {refresh}")
+
+        def close(self):
+            pass
+
+    class _Connection:
+        def cursor(self):
+            return _Cursor()
+
+        def close(self):
+            pass
+
+    class _Connector:
+        @staticmethod
+        def connect(**kwargs):
+            assert kwargs["token"] == access
+            if failure["stage"] == "connect":
+                raise _driver_error(f"login refused for token {access} and {refresh}")
+            return _Connection()
+
+    monkeypatch.setattr("shared.db_dialects.snowflake._import_connector", lambda: _Connector)
+    uri = f"snowflake://u:{refresh}@h:443/D?auth=oauth"
+    try:
+        with pytest.raises(SnowflakeError) as at_connect:
+            dialect._connect(uri)
+        failure["stage"] = "query"
+        with pytest.raises(SnowflakeError) as at_query:
+            dialect.list_databases(uri)
+    finally:
+        snowflake_auth.forget_access_tokens()
+    for caught in (at_connect, at_query):
+        message = str(caught.value)
+        assert access not in message and refresh not in message and "***" in message
 
 
 def _driver_error(message: str, errno: int | None = None) -> Exception:
@@ -878,12 +923,12 @@ def test_a_quoted_database_round_trips_through_the_uri_and_reaches_connect(monke
         host="myorg-acct.snowflakecomputing.com",
         port=443,
         username="me",
-        database='"USER$evaneechoud"',
+        database='"USER$analyst"',
         warehouse='"my_wh"',
         auth=AUTH_ACCESS_TOKEN,
     )
     target = _parse_uri(dialect.with_credentials(uri, "tok"))
-    assert (target.database, target.warehouse, target.secret) == ('"USER$evaneechoud"', '"my_wh"', "tok")
+    assert (target.database, target.warehouse, target.secret) == ('"USER$analyst"', '"my_wh"', "tok")
     assert construct_sql_uri(database_type="snowflake", url=uri, password="tok") == dialect.with_credentials(uri, "tok")
 
     seen: dict = {}
@@ -896,7 +941,7 @@ def test_a_quoted_database_round_trips_through_the_uri_and_reaches_connect(monke
 
     monkeypatch.setattr("shared.db_dialects.snowflake._import_connector", lambda: _Connector)
     dialect._connect(dialect.with_credentials(uri, "tok"))
-    assert seen["database"] == '"USER$evaneechoud"'
+    assert seen["database"] == '"USER$analyst"'
     assert seen["warehouse"] == '"my_wh"'
 
 
@@ -941,7 +986,7 @@ def test_write_to_a_quoted_target_keeps_each_part_and_stages_beside_it(monkeypat
 
 def test_write_to_a_quoted_database_on_the_connection(monkeypatch):
     cursor = _record_writes(monkeypatch)
-    uri = dialect.build_uri(host="h", port=443, username="u", password="p", database='"USER$evaneechoud"')
+    uri = dialect.build_uri(host="h", port=443, username="u", password="p", database='"USER$analyst"')
     dialect.write(pl.DataFrame({"a": [1]}), uri=uri, table_name='"Raw".T', if_exists="append")
     assert cursor.executed[0] == 'CREATE TABLE IF NOT EXISTS "Raw".T (a NUMBER(38,0))'
 
@@ -966,10 +1011,10 @@ class _DiscoverCursor:
         answers = {
             "SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_WAREHOUSE(), CURRENT_DATABASE()": (
                 ["u", "r", "w", "d"],
-                [("ME", "SYSADMIN", "my_wh", "USER$evaneechoud")],
+                [("ME", "SYSADMIN", "my_wh", "USER$analyst")],
             ),
             "SHOW WAREHOUSES": (["name"], [("COMPUTE_WH",), ("my_wh",)]),
-            "SHOW DATABASES": (["name"], [("SALES",), ("USER$evaneechoud",), ("My.DB",)]),
+            "SHOW DATABASES": (["name"], [("SALES",), ("USER$analyst",), ("My.DB",)]),
             "SELECT CURRENT_AVAILABLE_ROLES()": (["roles"], [('["SYSADMIN","PUBLIC"]',)]),
         }
         columns, self._rows = answers[sql]
@@ -990,6 +1035,6 @@ def test_discover_answers_warehouses_and_databases_as_they_work_verbatim(monkeyp
     monkeypatch.setattr(SnowflakeDialect, "_cursor", fake_cursor)
     info = dialect.discover("snowflake://u:t@h:443")
     assert info["warehouses"] == ["COMPUTE_WH", '"my_wh"']
-    assert info["databases"] == ["SALES", '"USER$evaneechoud"', '"My.DB"']
-    assert (info["warehouse"], info["database"]) == ('"my_wh"', '"USER$evaneechoud"')
+    assert info["databases"] == ["SALES", '"USER$analyst"', '"My.DB"']
+    assert (info["warehouse"], info["database"]) == ('"my_wh"', '"USER$analyst"')
     assert (info["user"], info["role"], info["roles"]) == ("ME", "SYSADMIN", ["PUBLIC", "SYSADMIN"])

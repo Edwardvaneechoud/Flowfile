@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 from urllib.parse import parse_qsl, quote, quote_plus, unquote, unquote_plus, urlencode, urlsplit
 
 from shared.db_dialects.base import DbDialect
-from shared.db_dialects.identifiers import IDENTIFIER, IDENTIFIER_PATH, identifier_parts
+from shared.db_dialects.identifiers import IDENTIFIER, IDENTIFIER_PATH, QUOTED_NAME_HINT, identifier_parts
 from shared.snowflake_auth import (
     AUTH_ACCESS_TOKEN,
     AUTH_KEY_PAIR,
@@ -78,8 +78,6 @@ _PLAIN_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 _PLAIN_UPPER_IDENTIFIER = re.compile(r"^[A-Z_][A-Z0-9_$]*$")
 _IDENTIFIER_PATH = IDENTIFIER_PATH
 _IDENTIFIER = IDENTIFIER
-
-QUOTED_NAME_HINT = "Use letters, numbers, _ and $, or put the name in double quotes."
 
 # Snowflake's reserved keywords: unquoted, these cannot name a column or table.
 _RESERVED = frozenset(
@@ -116,7 +114,7 @@ def _import_connector():
     except ImportError as exc:
         raise ImportError(
             "snowflake-connector-python is required for Snowflake connections. "
-            "Install with: pip install snowflake-connector-python"
+            f"Install with: {SnowflakeDialect.install_hint}"
         ) from exc
     return snowflake.connector
 
@@ -342,18 +340,19 @@ def _plain_reason(errno: int | None, text: str) -> str | None:
     return None
 
 
-def translate_error(exc: BaseException, *, secret: str | None = None) -> str:
+def translate_error(exc: BaseException, *, secret: str | None = None, secrets: tuple[str, ...] = ()) -> str:
     """A plain-language message for a driver error, with the driver's own text appended.
 
     Matches conservatively on the error number and text and falls through to the
-    driver's message. ``secret``, when given, is masked out of the result.
+    driver's message. ``secret`` and each of ``secrets``, when given, are masked out of the result.
     """
     errno = getattr(exc, "errno", None)
     driver_text = str(exc).strip() or type(exc).__name__
     reason = _plain_reason(errno if isinstance(errno, int) else None, driver_text.lower())
     message = f"{reason} Snowflake said: {driver_text}" if reason else driver_text
-    if secret and len(secret) >= 4:
-        message = message.replace(secret, "***")
+    for value in (secret, *secrets):
+        if value and len(value) >= 4:
+            message = message.replace(value, "***")
     return message
 
 
@@ -362,16 +361,21 @@ def _is_driver_error(exc: BaseException) -> bool:
 
 
 @contextmanager
-def _translated(secret: str | None) -> Iterator[None]:
-    """Turn a connector error raised inside the block into a ``SnowflakeError``; anything else passes."""
+def _translated(secret: str | None) -> Iterator[list[str]]:
+    """Turn a connector error raised inside the block into a ``SnowflakeError``; anything else passes.
+
+    The block may add to the list it is given the other secrets its session was opened with (the access
+    token a browser sign-in minted), and those are masked too.
+    """
+    minted: list[str] = []
     try:
-        yield
+        yield minted
     except SnowflakeAuthError:
         raise
     except Exception as exc:
         if not _is_driver_error(exc):
             raise
-        raise SnowflakeError(translate_error(exc, secret=secret)) from exc
+        raise SnowflakeError(translate_error(exc, secret=secret, secrets=tuple(minted))) from exc
 
 
 def _already_exists(exc: BaseException) -> bool:
@@ -451,10 +455,10 @@ class SnowflakeDialect(DbDialect):
     def _connect(self, uri: str):
         """A connector session for ``uri``; raises ``SnowflakeError`` with the reason when sign-in fails."""
         target = _parse_uri(uri)
-        with _translated(target.secret):
-            return self._connect_target(target)
+        with _translated(target.secret) as minted:
+            return self._connect_target(target, minted)
 
-    def _connect_target(self, target: _Target):
+    def _connect_target(self, target: _Target, minted: list[str] | None = None):
         if not target.secret:
             if target.auth == AUTH_OAUTH:
                 raise SnowflakeError("This Snowflake connection has no sign-in saved. Sign in again.")
@@ -475,7 +479,10 @@ class SnowflakeDialect(DbDialect):
         if target.auth == AUTH_KEY_PAIR:
             kwargs.update(authenticator="SNOWFLAKE_JWT", private_key=private_key_der(target.secret))
         elif target.auth == AUTH_OAUTH:
-            kwargs.update(authenticator="oauth", token=access_token_for(target.host, target.secret))
+            token = access_token_for(target.host, target.secret)
+            if minted is not None:
+                minted.append(token)
+            kwargs.update(authenticator="oauth", token=token)
         else:
             kwargs.update(authenticator="PROGRAMMATIC_ACCESS_TOKEN", token=target.secret)
         return connector.connect(**{key: value for key, value in kwargs.items() if value is not None})
@@ -483,8 +490,8 @@ class SnowflakeDialect(DbDialect):
     @contextmanager
     def _cursor(self, uri: str) -> Iterator[Any]:
         target = _parse_uri(uri)
-        with _translated(target.secret):
-            conn = self._connect_target(target)
+        with _translated(target.secret) as minted:
+            conn = self._connect_target(target, minted)
             try:
                 cursor = conn.cursor()
                 try:
@@ -526,10 +533,10 @@ class SnowflakeDialect(DbDialect):
         qualified = f"{schema_name}.{table_name}" if schema_name else table_name
         return self.query_schema(uri, f"SELECT * FROM {qualified}")
 
-    def checked_identifier_path(self, value: str, what: str = "name") -> str:
+    def checked_identifier_path(self, value: str, what: str = "identifier") -> str:
         """Dotted parts, each plain (``$`` allowed) or double-quoted with inner quotes doubled; as given."""
         if not isinstance(value, str) or not _IDENTIFIER_PATH.match(value):
-            raise ValueError(f"Invalid SQL identifier: '{value}'. {QUOTED_NAME_HINT}")
+            raise ValueError(f"Invalid SQL {what}: '{value}'. {QUOTED_NAME_HINT}")
         return value
 
     def checked_database(self, name: str) -> str:

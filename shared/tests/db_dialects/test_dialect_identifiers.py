@@ -16,7 +16,7 @@ from shared.db_writer import write_dataframe_to_database
 PLAIN_DIALECTS = ("postgresql", "mysql", "sqlite", "duckdb", "mssql", "denodo")
 
 SNOWFLAKE_ACCEPTS = [
-    '"USER$evaneechoud"',
+    '"USER$analyst"',
     '"my.db"."My Schema".T',
     "A$B",
     "ORDERS",
@@ -33,7 +33,7 @@ def test_plain_dialects_keep_the_historical_rule(name):
     assert dialect.quoted_identifiers is False
     for ok in ("users", "public.users", "analytics.public.credits", "_x", "Table1"):
         assert dialect.checked_identifier_path(ok) == ok
-    for bad in ['"USER$evaneechoud"', "A$B", '"t"', "a b", "a;b", "a--b", "1st", "a.", "", 'x"y']:
+    for bad in ['"USER$analyst"', "A$B", '"t"', "a b", "a;b", "a--b", "1st", "a.", "", 'x"y']:
         with pytest.raises(ValueError, match="Only letters, numbers, and underscores are allowed"):
             dialect.checked_identifier_path(bad)
 
@@ -47,6 +47,15 @@ def test_snowflake_accepts_plain_dollar_and_quoted_parts(value):
 def test_snowflake_refuses_anything_that_could_end_a_quote_or_a_statement(value):
     with pytest.raises(ValueError, match="put the name in double quotes"):
         get_dialect("snowflake").checked_identifier_path(value)
+
+
+@pytest.mark.parametrize("name", [*PLAIN_DIALECTS, "snowflake"])
+def test_the_message_names_what_was_refused(name):
+    dialect = get_dialect_or_generic(name)
+    with pytest.raises(ValueError, match=r"^Invalid SQL table name: 'a;b'\. "):
+        dialect.checked_identifier_path("a;b", "table name")
+    with pytest.raises(ValueError, match=r"^Invalid SQL identifier: 'a;b'\. "):
+        dialect.checked_identifier_path("a;b")
 
 
 def test_the_shapes_and_the_quote_aware_split():

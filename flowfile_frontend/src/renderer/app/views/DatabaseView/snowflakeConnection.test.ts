@@ -57,7 +57,6 @@ describe("previewAccount", () => {
       "xy12345.eu-west-1.snowflakecomputing.com",
     ],
     ["app.snowflake.com/myorg/myaccount", HOST],
-    ["https://evil.com/x", "evil.com.snowflakecomputing.com"],
   ])("resolves %s", (text, host) => {
     expect(previewAccount(text)).toEqual({ host });
   });
@@ -68,6 +67,63 @@ describe("previewAccount", () => {
       expect(previewAccount(text)).toHaveProperty("error");
     },
   );
+
+  // The cases of shared/tests/db_dialects/test_snowflake_dialect.py::test_normalize_account_*.
+  it.each([
+    ["myorg-myaccount", HOST],
+    ["  MyOrg-MyAccount  ", HOST],
+    ["xy12345.eu-west-1", "xy12345.eu-west-1.snowflakecomputing.com"],
+    ["xy12345.us-east-2.aws", "xy12345.us-east-2.aws.snowflakecomputing.com"],
+    [HOST, HOST],
+    [`${HOST}:443`, HOST],
+    [`https://${HOST}/console/login#/`, HOST],
+    [`${HOST}/`, HOST],
+    ["https://app.snowflake.com/myorg/myaccount/#/homepage", HOST],
+    [
+      "https://app.snowflake.com/eu-west-1/xy12345/worksheets",
+      "xy12345.eu-west-1.snowflakecomputing.com",
+    ],
+    [
+      "https://app.snowflake.com/us-east-2.aws/xy12345/",
+      "xy12345.us-east-2.aws.snowflakecomputing.com",
+    ],
+    ["myorg-my_account", "myorg-my-account.snowflakecomputing.com"],
+    ["myorg-myaccount.snowflakecomputing.cn", "myorg-myaccount.snowflakecomputing.cn"],
+    ["https://app.snowflake.cn/myorg/myaccount/", "myorg-myaccount.snowflakecomputing.cn"],
+    [
+      "myorg-myaccount.privatelink.snowflakecomputing.com",
+      "myorg-myaccount.privatelink.snowflakecomputing.com",
+    ],
+  ])("resolves %s as the server does", (text, host) => {
+    expect(previewAccount(text)).toEqual({ host });
+  });
+
+  it.each([
+    "",
+    "   ",
+    "evil.com/x.snowflakecomputing.com",
+    "https://evil.com/myorg-myaccount",
+    "https://evil.com/x.snowflakecomputing.com",
+    "https://evil.com/x",
+    "evil.com:443",
+    "my org",
+    "user@myorg-myaccount",
+    "https://user@myorg-myaccount.snowflakecomputing.com",
+    "https://app.snowflake.com/",
+    "https://app.snowflake.com/myorg",
+    "-myorg",
+    "myorg..acct",
+  ])("refuses %j as the server does", (text) => {
+    expect(previewAccount(text)).toHaveProperty("error");
+  });
+
+  it("words a refusal as the server does", () => {
+    expect(previewAccount("https://evil.com/x")).toEqual({
+      error:
+        "'https://evil.com/x' is not a Snowflake account. Use the form myorg-myaccount, " +
+        "or paste the link of your account.",
+    });
+  });
 
   it("explains a Snowsight link without an account", () => {
     expect(previewAccount("https://app.snowflake.com/myorg")).toEqual({

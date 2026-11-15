@@ -11,7 +11,10 @@ export type SnowflakeAuthMethod = "oauth" | "access_token" | "key_pair";
 
 const HOST_SUFFIXES = [".snowflakecomputing.com", ".snowflakecomputing.cn"];
 const DEFAULT_SUFFIX = HOST_SUFFIXES[0];
-const SNOWSIGHT_HOSTS = new Set(["app.snowflake.com", "app.snowflake.cn"]);
+const SNOWSIGHT_SUFFIXES = new Map([
+  ["app.snowflake.com", HOST_SUFFIXES[0]],
+  ["app.snowflake.cn", HOST_SUFFIXES[1]],
+]);
 const HOST_LABELS = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
 export const MAX_KEY_FILE_BYTES = 64 * 1024;
@@ -20,22 +23,38 @@ export const SIGN_IN_TIMEOUT_MS = 5 * 60 * 1000;
 
 export type AccountPreview = { host: string } | { error: string };
 
-function hostnameOf(value: string): string {
-  try {
-    return new URL(value.includes("://") ? value : `https://${value}`).hostname.toLowerCase();
-  } catch {
-    return "";
+/**
+ * The hostname and path of a URL as Python's `urllib.parse.urlsplit` reads them, which is what the
+ * server parses. The browser's `URL` differs (it validates the port, decodes and IDNA-encodes the
+ * host), so it would accept or refuse other inputs than the server does. null where `urlsplit`
+ * raises (unbalanced or bracketed hosts, which never name a Snowflake account).
+ */
+function splitUrl(value: string): { host: string; path: string } | null {
+  let rest = (value.includes("://") ? value : `https://${value}`).replace(/[\t\r\n]/g, "");
+  const colon = rest.indexOf(":");
+  if (colon > 0 && /^[A-Za-z][A-Za-z0-9+.-]*$/.test(rest.slice(0, colon))) {
+    rest = rest.slice(colon + 1);
   }
+  let netloc = "";
+  if (rest.startsWith("//")) {
+    const end = rest.slice(2).search(/[/?#]/);
+    netloc = end < 0 ? rest.slice(2) : rest.slice(2, end + 2);
+    rest = end < 0 ? "" : rest.slice(end + 2);
+  }
+  if (netloc.includes("[") || netloc.includes("]")) return null;
+  const path = rest.split("#")[0].split("?")[0];
+  const host = netloc
+    .slice(netloc.lastIndexOf("@") + 1)
+    .split(":")[0]
+    .toLowerCase();
+  return { host, path };
 }
 
-function pathSegmentsOf(value: string): string[] {
-  try {
-    const url = new URL(value.includes("://") ? value : `https://${value}`);
-    return url.pathname.split("/").filter((segment) => segment);
-  } catch {
-    return [];
-  }
-}
+const notAnAccount = (text: string): AccountPreview => ({
+  error:
+    `'${text}' is not a Snowflake account. Use the form myorg-myaccount, ` +
+    "or paste the link of your account.",
+});
 
 function stripSuffix(host: string): string {
   const lowered = host.toLowerCase();
@@ -50,14 +69,20 @@ function stripSuffix(host: string): string {
  * Account field; the server stays authoritative on save.
  */
 export function previewAccount(text: string): AccountPreview {
-  let value = (text || "").trim();
-  if (!value) {
+  const original = (text || "").trim();
+  if (!original) {
     return { error: "Enter your Snowflake account, for example myorg-myaccount." };
   }
-  if (value.includes("://") || value.includes("/")) {
-    const host = hostnameOf(value);
-    if (SNOWSIGHT_HOSTS.has(host)) {
-      const segments = pathSegmentsOf(value);
+  let value = original;
+  let suffix = DEFAULT_SUFFIX;
+  if (value.includes("@")) return notAnAccount(original);
+  if (value.includes("/") || value.includes(":")) {
+    const parts = splitUrl(value);
+    if (!parts) return notAnAccount(original);
+    const { host, path } = parts;
+    const snowsightSuffix = SNOWSIGHT_SUFFIXES.get(host);
+    if (snowsightSuffix) {
+      const segments = path.split("/").filter((segment) => segment);
       if (segments.length < 2) {
         return {
           error:
@@ -65,23 +90,21 @@ export function previewAccount(text: string): AccountPreview {
         };
       }
       const [first, second] = segments;
-      // An organization name holds no hyphen, so a hyphen marks the older region/locator link.
-      value = first.includes("-") ? `${second}.${first}` : `${first}-${second}`;
-    } else {
+      // An organization name holds no hyphen or dot, so either marks the older region/locator link.
+      value =
+        first.includes("-") || first.includes(".") ? `${second}.${first}` : `${first}-${second}`;
+      suffix = snowsightSuffix;
+    } else if (HOST_SUFFIXES.some((s) => host.endsWith(s)) || (host && !host.includes("."))) {
       value = host;
+    } else {
+      return notAnAccount(original);
     }
   }
   let host = value.toLowerCase().replace(/\.+$/, "").replace(/_/g, "-");
-  if (!HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
-    host += DEFAULT_SUFFIX;
+  if (!HOST_SUFFIXES.some((s) => host.endsWith(s))) {
+    host += suffix;
   }
-  if (!stripSuffix(host) || !HOST_LABELS.test(host)) {
-    return {
-      error:
-        `'${text.trim()}' is not a Snowflake account. Use the form myorg-myaccount, ` +
-        "or paste the link of your Snowflake account.",
-    };
-  }
+  if (!stripSuffix(host) || !HOST_LABELS.test(host)) return notAnAccount(original);
   return { host };
 }
 

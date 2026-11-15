@@ -4,6 +4,7 @@ import { ElMessage } from "element-plus";
 import type { DatabaseSettings, DatabaseWriteSettings } from "../../../baseNode/nodeInput";
 import type { FullDatabaseConnectionInterface } from "../../../../../views/DatabaseView/databaseConnectionTypes";
 import { useDbDialects } from "../../../../../composables/useDbDialects";
+import { detailOf } from "../../../../../utils/apiDetail";
 import { fetchDbDatabases, fetchDbSchemas, fetchDbTables } from "./api";
 import {
   connectionOptionLabel,
@@ -98,7 +99,7 @@ export function useDatabaseChoice(options: {
   );
 
   const reportError = (silent: boolean, fallback: string) =>
-    silent ? undefined : (error: any) => ElMessage.error(error?.response?.data?.detail || fallback);
+    silent ? undefined : (error: unknown) => ElMessage.error(detailOf(error, fallback));
 
   const fetchDatabases = async (silent = false) => {
     const settings = options.settings();

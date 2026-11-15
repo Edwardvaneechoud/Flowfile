@@ -727,16 +727,16 @@ def test_quoted_snowflake_names_reach_the_uri_and_the_schema_path_as_given(snowf
         SnowflakeDialect, "list_tables", lambda self, uri, schema: seen.append(("tables", uri, schema)) or ["T"]
     )
     assert client.post("/db_connection_lib", json=_sf_body()).status_code == 200
-    database = '"USER$evaneechoud"'
+    database = '"USER$analyst"'
     response = client.post("/db_schemas", json=_sf_reference_settings(database_name=database))
     assert response.status_code == 200, response.text
     settings = _sf_reference_settings(database_name=database, schema_name='"My Schema"')
     response = client.post("/db_tables", json=settings)
     assert response.status_code == 200, response.text
-    path = "/%22USER%24evaneechoud%22?"
+    path = "/%22USER%24analyst%22?"
     assert seen[0][0] == "schemas" and path in seen[0][1]
     assert seen[1][0] == "tables" and path in seen[1][1]
-    assert seen[1][2] == '"USER$evaneechoud"."My Schema"'
+    assert seen[1][2] == '"USER$analyst"."My Schema"'
 
 
 @pytest.mark.parametrize("schema_name", ['"main"', "ma$in"])
@@ -746,7 +746,7 @@ def test_a_quoted_schema_is_refused_for_a_dialect_that_does_not_take_one(tmp_pat
     response = client.post("/db_tables", json=_browse_settings("sqlite", db_path) | {"schema_name": schema_name})
     assert response.status_code == 422, response.text
     assert response.json() == {
-        "detail": f"Invalid SQL identifier: '{schema_name}'. Only letters, numbers, and underscores are allowed."
+        "detail": f"Invalid SQL schema name: '{schema_name}'. Only letters, numbers, and underscores are allowed."
     }
 
 

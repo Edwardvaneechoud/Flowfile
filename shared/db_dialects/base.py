@@ -166,15 +166,14 @@ class DbDialect:
         """Fast schema for an arbitrary query without executing it; None = generic path."""
         return None
 
-    def checked_identifier_path(self, value: str, what: str = "name") -> str:
+    def checked_identifier_path(self, value: str, what: str = "identifier") -> str:
         """``value`` as given when it is safe to put verbatim into this dialect's SQL, else ``ValueError``.
 
         The base rule: each dot-separated part letters, digits and underscores, not starting with a digit.
-        ``what`` names the value for a dialect whose message says what it is; the base message is the
-        historical one.
+        ``what`` names the value in the message (``Invalid SQL table name: …``).
         """
         if not isinstance(value, str) or not is_plain_path(value):
-            raise ValueError(f"Invalid SQL identifier: '{value}'. Only letters, numbers, and underscores are allowed.")
+            raise ValueError(f"Invalid SQL {what}: '{value}'. Only letters, numbers, and underscores are allowed.")
         return value
 
     def checked_database(self, name: str) -> str:

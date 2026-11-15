@@ -37,7 +37,7 @@ from flowfile_core.schemas.yaml_types import (
 )
 from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
-from shared.db_dialects.identifiers import IDENTIFIER, is_identifier_path
+from shared.db_dialects.identifiers import IDENTIFIER, QUOTED_NAME_HINT, is_identifier_path
 from shared.path_utils import default_scan_extension, ensure_glob_pattern, file_name, is_cloud_path, is_url
 
 keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", default=False)
@@ -1166,7 +1166,7 @@ def _check_sql_identifier(v, *, single_part: bool = False):
     if v is not None and v != "":
         fits = isinstance(v, str) and (IDENTIFIER.match(v) if single_part else is_identifier_path(v))
         if not fits:
-            raise ValueError(f"Invalid SQL identifier: '{v}'. Only letters, numbers, and underscores are allowed.")
+            raise ValueError(f"Invalid SQL identifier: '{v}'. {QUOTED_NAME_HINT}")
     return v
 
 

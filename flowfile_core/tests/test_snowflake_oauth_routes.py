@@ -708,6 +708,26 @@ def test_discover_with_a_stored_secret_uses_the_stored_account(stub, discovered)
     assert unknown.status_code == 422
 
 
+def test_discover_answers_a_stored_secret_that_cannot_be_decrypted_with_422(stub, discovered, monkeypatch):
+    saved = _save(auth_method="access_token", username="ME@EXAMPLE.COM", password="stored-pat", role="ANALYST")
+    assert saved.status_code == 200, saved.text
+    unreadable = "$ffsec$1$1$not-a-fernet-token"
+    with get_db_context() as db:
+        row = get_database_connection(db, NAME, 1)
+        secret = db.query(Secret).filter(Secret.id == row.password_id).one()
+        secret.encrypted_value = unreadable
+        db.commit()
+    logged = []
+    monkeypatch.setattr(snowflake_routes.logger, "warning", lambda msg, *args: logged.append(msg % args))
+    response = _discover(secret="", connection_name=NAME, username="")
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail.startswith("Could not connect to Snowflake (") and detail.endswith(").")
+    assert unreadable not in response.text and "not-a-fernet-token" not in response.text
+    assert len(logged) == 1 and logged[0].startswith("Snowflake discover failed: ")
+    assert discovered == []
+
+
 def test_discover_answers_a_foreign_value_error_by_its_type_only(stub, monkeypatch):
     leaked = "snowflake://ME:pat-secret-1@evil.example.com:443 could not be parsed"
 

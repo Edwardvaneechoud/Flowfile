@@ -17,6 +17,7 @@ IDENTIFIER_PART = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")'
 IDENTIFIER_PATH = re.compile(rf"^{IDENTIFIER_PART}(?:\.{IDENTIFIER_PART})*$")
 IDENTIFIER = re.compile(rf"^{IDENTIFIER_PART}$")
 _PART = re.compile(IDENTIFIER_PART)
+QUOTED_NAME_HINT = "Use letters, numbers, _ and $, or put the name in double quotes."
 
 
 def is_plain_path(value: str) -> bool:

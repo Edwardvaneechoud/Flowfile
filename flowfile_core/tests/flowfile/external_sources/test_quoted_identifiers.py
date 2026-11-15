@@ -1,6 +1,6 @@
 """Quoted and ``$`` names: the settings take the widest shape, the connection's dialect decides where it is used.
 
-Only Snowflake (``quoted_identifiers``) lets ``"USER$evaneechoud"`` or ``"my.db"."My Schema".T`` into its SQL; every
+Only Snowflake (``quoted_identifiers``) lets ``"USER$analyst"`` or ``"my.db"."My Schema".T`` into its SQL; every
 other dialect, and a source whose dialect is unknown, keeps the plain rule with the historical message.
 """
 
@@ -21,6 +21,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 )
 from flowfile_core.schemas import input_schema, schemas
 from shared.db_dialects import get_dialect
+from shared.db_dialects.identifiers import QUOTED_NAME_HINT
 from shared.sql_validation import UnsafeSQLError
 
 PLAIN_MESSAGE = "Only letters, numbers, and underscores are allowed"
@@ -32,11 +33,11 @@ BASE = {"connection_mode": "reference", "database_connection_name": "c"}
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("table_name", '"USER$evaneechoud"'),
+        ("table_name", '"USER$analyst"'),
         ("table_name", '"my.db"."My Schema".T'),
         ("table_name", "A$B"),
         ("schema_name", '"My Schema"'),
-        ("database_name", '"USER$evaneechoud"'),
+        ("database_name", '"USER$analyst"'),
     ],
 )
 def test_the_settings_accept_the_widest_shape(model, field, value):
@@ -49,8 +50,10 @@ def test_the_settings_accept_the_widest_shape(model, field, value):
 @pytest.mark.parametrize("value", ['a"b', '"unterminated', "a;b", "a b", "a--b", '""', "a..b", "t; DROP TABLE x"])
 def test_the_settings_refuse_malformed_names(model, value):
     for field in ("table_name", "schema_name", "database_name"):
-        with pytest.raises(ValueError, match="Invalid SQL identifier"):
+        with pytest.raises(ValueError, match="Invalid SQL identifier") as caught:
             model(**BASE, **({"table_name": "T"} | {field: value}))
+        assert QUOTED_NAME_HINT in str(caught.value)
+        assert PLAIN_MESSAGE not in str(caught.value)
 
 
 @pytest.mark.parametrize("database_type", ["postgresql", "mysql", "sqlite", "duckdb", "mssql", "denodo", None])
@@ -60,7 +63,7 @@ def test_the_settings_refuse_malformed_names(model, value):
         {"table_name": '"T"'},
         {"table_name": "A$B"},
         {"table_name": "T", "schema_name": '"My Schema"'},
-        {"table_name": "T", "schema_name": "S", "database_name": '"USER$evaneechoud"'},
+        {"table_name": "T", "schema_name": "S", "database_name": '"USER$analyst"'},
     ],
 )
 def test_other_dialects_refuse_quoted_names_in_the_from_clause(database_type, names):
@@ -70,9 +73,9 @@ def test_other_dialects_refuse_quoted_names_in_the_from_clause(database_type, na
 
 def test_snowflake_puts_quoted_names_into_the_from_clause_as_given():
     source = BaseSqlSource(
-        database_type="snowflake", table_name="orders", schema_name='"My Schema"', database_name='"USER$evaneechoud"'
+        database_type="snowflake", table_name="orders", schema_name='"My Schema"', database_name='"USER$analyst"'
     )
-    assert source.query == 'SELECT * FROM "USER$evaneechoud"."My Schema".orders'
+    assert source.query == 'SELECT * FROM "USER$analyst"."My Schema".orders'
     assert BaseSqlSource(database_type="snowflake", table_name='"my.db"."S".T').query == 'SELECT * FROM "my.db"."S".T'
     with pytest.raises(UnsafeSQLError, match="double quotes"):
         BaseSqlSource(database_type="snowflake", table_name='a"b')
@@ -80,7 +83,7 @@ def test_snowflake_puts_quoted_names_into_the_from_clause_as_given():
 
 def test_qualified_table_checks_each_part_with_the_dialect():
     snowflake, sqlite = get_dialect("snowflake"), get_dialect("sqlite")
-    assert qualified_table(snowflake, '"USER$evaneechoud"', '"Raw"', "T") == '"USER$evaneechoud"."Raw".T'
+    assert qualified_table(snowflake, '"USER$analyst"', '"Raw"', "T") == '"USER$analyst"."Raw".T'
     assert qualified_table(sqlite, None, "main", "t") == "main.t"
     with pytest.raises(UnsafeSQLError, match=PLAIN_MESSAGE):
         qualified_table(sqlite, None, '"main"', "t")
@@ -135,7 +138,7 @@ def test_a_snowflake_writer_sends_the_quoted_target_as_given(tmp_path, monkeypat
             database_write_settings=input_schema.DatabaseWriteSettings(
                 connection_mode="reference",
                 database_connection_name="sf",
-                database_name='"USER$evaneechoud"',
+                database_name='"USER$analyst"',
                 schema_name='"Raw"',
                 table_name="orders",
             ),
@@ -144,7 +147,7 @@ def test_a_snowflake_writer_sends_the_quoted_target_as_given(tmp_path, monkeypat
     connection = SimpleNamespace(database_type="snowflake", granted=False, connection_name="sf")
     monkeypatch.setattr(connectors, "_resolve_database_credentials", lambda settings, user_id: (connection, "x", None))
     (payload,) = _run_writer(monkeypatch, graph)
-    assert unpack(payload, DatabaseWritePayload).table_name == '"USER$evaneechoud"."Raw".orders'
+    assert unpack(payload, DatabaseWritePayload).table_name == '"USER$analyst"."Raw".orders'
 
 
 def _reader_payload(database_type: str, **names) -> DatabaseReadPayload:
@@ -187,5 +190,5 @@ def test_the_worker_read_builds_its_query_with_the_connection_dialect():
 def test_an_export_writes_a_quoted_name_as_a_valid_python_literal():
     from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 
-    literal = ConverterMixinBase._py_str('"USER$evaneechoud"."My ""odd"" Schema"')
-    assert eval(literal) == '"USER$evaneechoud"."My ""odd"" Schema"'  # noqa: S307
+    literal = ConverterMixinBase._py_str('"USER$analyst"."My ""odd"" Schema"')
+    assert eval(literal) == '"USER$analyst"."My ""odd"" Schema"'  # noqa: S307
