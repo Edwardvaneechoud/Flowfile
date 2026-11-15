@@ -345,6 +345,7 @@ const browseDisabledReason = computed<string | null>(() => {
     return browseUnsupportedReason(
       selectedConnection.value.storageType,
       selectedConnection.value.authMethod,
+      selectedConnection.value.source,
     );
   }
   const currentPath = nodeCloudStorageWriter.value?.cloud_storage_settings.resource_path ?? "";

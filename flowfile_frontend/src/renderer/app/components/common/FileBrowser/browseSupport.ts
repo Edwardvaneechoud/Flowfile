@@ -14,11 +14,16 @@ const ADLS_UNSUPPORTED_AUTH: Record<string, string> = {
     "Browsing Azure storage with managed-identity auth is not supported. Use an account key or SAS token, or enter the path manually.",
 };
 
+export const HUB_CONNECTION_BROWSE =
+  "This connection is from your hub, whose keys never reach this server, so it cannot be browsed here. Type the path.";
+
 /** Why this connection cannot be browsed, or null when it can. */
 export function browseUnsupportedReason(
   storageType: string | null | undefined,
   authMethod: string | null | undefined,
+  source?: "local" | "hub",
 ): string | null {
+  if (source === "hub") return HUB_CONNECTION_BROWSE;
   if (!storageType) return null;
   if (!BROWSABLE_STORAGE_TYPES.includes(storageType)) {
     return `Browsing is not supported for ${storageType} storage.`;
