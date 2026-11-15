@@ -879,6 +879,8 @@ export interface DatabaseSettings {
   database_connection?: DatabaseConnection;
   database_connection_name?: string;
   query_mode: "query" | "table";
+  // Unset (absent or null) = the connection's default database.
+  database_name?: string | null;
   schema_name?: string;
   table_name?: string;
   query: string;
@@ -888,6 +890,8 @@ export interface DatabaseWriteSettings {
   connection_mode: ConnectionModeOption;
   database_connection?: DatabaseConnection;
   database_connection_name?: string;
+  // Unset (absent or null) = the connection's default database.
+  database_name?: string | null;
   schema_name?: string;
   table_name?: string;
   if_exists: IfExistAction;

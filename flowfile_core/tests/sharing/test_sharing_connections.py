@@ -398,3 +398,111 @@ def test_user_deletion_cleans_all_owned_resources_and_grants(users, client_for, 
             .count()
         )
         assert leftover == 0
+
+
+# ---------- Snowflake: a browser-signed-in connection is personal ----------
+
+
+def _snowflake_body(name, **overrides):
+    return {
+        "connection_name": name,
+        "database_type": "snowflake",
+        "username": "svc_user",
+        "password": "pat-secret",
+        "host": "myorg-myaccount",
+        "database": "ANALYTICS",
+        "auth_method": "access_token",
+        "role": "ANALYST",
+    } | overrides
+
+
+@pytest.fixture
+def snowflake_driver(monkeypatch):
+    from shared.db_dialects import SnowflakeDialect
+
+    monkeypatch.setattr(SnowflakeDialect, "is_available", lambda self: True)
+
+
+def test_a_browser_signed_in_connection_cannot_be_shared(users, client_for, team, snowflake_driver):
+    from pydantic import SecretStr
+
+    from flowfile_core.flowfile.database_connection_manager.db_connections import store_database_connection
+    from flowfile_core.schemas.input_schema import FullDatabaseConnection
+
+    with get_db_context() as db:
+        store_database_connection(
+            db,
+            FullDatabaseConnection(
+                connection_name="sf_personal",
+                database_type="snowflake",
+                username="ME@EXAMPLE.COM",
+                password=SecretStr("refresh-token"),
+                host="myorg-myaccount",
+                auth_method="oauth",
+            ),
+            users["alice"].id,
+        )
+    conn_id, _ = _db_connection_row("sf_personal", users["alice"].id)
+    response = client_for("alice").post(
+        "/shares",
+        json={"resource_type": "database_connection", "resource_id": conn_id, "group_id": team, "permission": "use"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "A connection signed in through the browser is personal and cannot be shared. "
+        "Use an access token or a key-pair for a shared connection."
+    )
+    with get_db_context() as db:
+        assert db.query(db_models.ResourceGrant).filter_by(resource_id=conn_id).count() == 0
+
+    # A token connection shares as any other.
+    alice = client_for("alice")
+    assert alice.post("/db_connection_lib", json=_snowflake_body("sf_token")).status_code == 200
+    token_id, _ = _db_connection_row("sf_token", users["alice"].id)
+    _share(alice, "database_connection", token_id, team)
+    with get_db_context() as db:
+        schema = get_database_connection_schema(db, "sf_token", users["bob"].id)
+    assert schema.auth_method == "access_token"
+    assert decrypt_secret(schema.password.get_secret_value()).get_secret_value() == "pat-secret"
+
+
+def test_a_shared_connection_cannot_switch_to_browser_sign_in(users, client_for, team, snowflake_driver, monkeypatch):
+    alice = client_for("alice")
+    assert alice.post("/db_connection_lib", json=_snowflake_body("sf_shared")).status_code == 200
+    conn_id, _ = _db_connection_row("sf_shared", users["alice"].id)
+    _share(alice, "database_connection", conn_id, team)
+
+    # docker: the browser sign-in does not exist here at all
+    refused = alice.put("/db_connection_lib", json=_snowflake_body("sf_shared", auth_method="oauth", password=""))
+    assert refused.status_code == 422
+    assert "not available on this server" in refused.json()["detail"]
+
+    # a single-machine multi-user install (package) has the sign-in, but the grant stops the switch
+    monkeypatch.setenv("FLOWFILE_MODE", "package")
+    refused = alice.put(
+        "/db_connection_lib",
+        json=_snowflake_body("sf_shared", auth_method="oauth", password="", oauth_flow_id="any"),
+    )
+    assert refused.status_code == 422
+    assert refused.json()["detail"].startswith("A connection signed in through the browser is personal")
+    with get_db_context() as db:
+        row = db.query(db_models.DatabaseConnection).filter_by(id=conn_id).one()
+        assert row.auth_method == "access_token"
+
+
+def test_manage_grantee_repointing_a_snowflake_account_needs_credentials(users, client_for, team, snowflake_driver):
+    alice = client_for("alice")
+    bob = client_for("bob")
+    assert alice.post("/db_connection_lib", json=_snowflake_body("sf_managed")).status_code == 200
+    conn_id, _ = _db_connection_row("sf_managed", users["alice"].id)
+    _share(alice, "database_connection", conn_id, team, permission="manage")
+
+    # The same account typed another way is no change of target.
+    same = bob.put(
+        "/db_connection_lib",
+        json=_snowflake_body("sf_managed", password="", host="https://myorg-myaccount.snowflakecomputing.com"),
+    )
+    assert same.status_code == 200, same.text
+    repoint = bob.put("/db_connection_lib", json=_snowflake_body("sf_managed", password="", host="evilorg-evil"))
+    assert repoint.status_code == 422
+    assert "re-entering the credentials" in repoint.json()["detail"]
