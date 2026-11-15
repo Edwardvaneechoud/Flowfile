@@ -73,3 +73,23 @@ def test_a_recorded_write_names_where_the_main_thread_was():
 def test_the_opt_out_fixture_drops_the_writes_of_its_test(allow_off_thread_environ_writes):
     run_in_thread(lambda: os.environ.__setitem__(KEY, "1"))
     del os.environ[KEY]
+
+
+def test_gitpython_env_hold_keeps_git_calls_from_writing_the_environment(monkeypatch):
+    import git.cmd
+
+    name = "NoDefaultCurrentDirectoryInExePath"
+    monkeypatch.setattr(git.cmd, "patch_env", git.cmd.patch_env)
+    monkeypatch.delenv(name, raising=False)
+    environ_thread_guard.hold_gitpython_env()
+    monkeypatch.setenv(name, "1")
+    seen = []
+
+    def call_git():
+        with git.cmd.patch_env(name, "1"):
+            seen.append(os.environ.get(name))
+
+    run_in_thread(call_git)
+
+    assert seen == ["1"]
+    assert environ_thread_guard.take_writes() == []

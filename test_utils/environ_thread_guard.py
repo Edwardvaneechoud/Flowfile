@@ -80,6 +80,32 @@ def take_writes() -> list[str]:
 install()
 
 
+def hold_gitpython_env() -> None:
+    """Stop GitPython from writing ``os.environ`` around every git call; call it on the main thread.
+
+    On Windows each git subprocess runs inside ``git.util.patch_env("NoDefaultCurrentDirectoryInExePath", "1")``,
+    which sets and then deletes the variable, from whatever thread runs git (a request thread, in the route tests).
+    This sets it once here and gives ``git.cmd`` a ``patch_env`` that writes nothing while the variable already
+    holds the value asked for, so git sees the same environment and no thread writes it.
+    """
+    import contextlib
+
+    import git.cmd
+
+    original = git.cmd.patch_env
+
+    @contextlib.contextmanager
+    def patch_env(name, value):
+        if os.environ.get(name) == value:
+            yield
+            return
+        with original(name, value):
+            yield
+
+    os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+    git.cmd.patch_env = patch_env
+
+
 @pytest.fixture
 def allow_off_thread_environ_writes():
     """Drop the writes made during this test, for one that exercises a write production makes on its main thread.

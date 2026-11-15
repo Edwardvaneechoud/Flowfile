@@ -84,6 +84,7 @@ import socket
 from test_utils.environ_thread_guard import (  # noqa: F401
     allow_off_thread_environ_writes,
     fail_on_off_main_thread_environ_writes,
+    hold_gitpython_env,
 )
 from test_utils.mssql import fixtures as mssql_fixtures
 from test_utils.mysql import fixtures as mysql_fixtures
@@ -102,6 +103,9 @@ try:
     import connectorx  # noqa: F401  # its import sets os.environ; do it here, not on a db-read thread
 except ImportError:
     pass
+
+if sys.platform == "win32":
+    hold_gitpython_env()
 
 _NOT_ISOLATED_MSG = (
     'Secure store NOT isolated: a flowfile_worker is already running, so tests use the real '
