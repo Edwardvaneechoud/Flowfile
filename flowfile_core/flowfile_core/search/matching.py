@@ -56,8 +56,8 @@ def has_inner_separator(token: str) -> bool:
 
 
 def _fold(text: str, token: str) -> str:
-    # An ASCII token is matched the way SQL's LIKE folds case, ASCII letters only, so the SQL filter keeps every row
-    # the scorer accepts; any other token gets full Unicode lower-casing.
+    """Fold ASCII letters only for an ASCII token, as SQL's LIKE does, so the SQL filter keeps every row the scorer
+    accepts; any other token gets full Unicode lower-casing."""
     return text.translate(_ASCII_LOWER) if token.isascii() else text.lower()
 
 

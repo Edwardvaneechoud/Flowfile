@@ -1,9 +1,10 @@
 import type { RouteLocationRaw } from "vue-router";
+import type { CatalogItemKind } from "../../stores/catalog-store";
 import type { SearchHit } from "../../types/search.types";
 
 /** The catalog item a route opens, which the catalog page finds in its cached overview. */
 export interface CatalogTarget {
-  kind: "namespace" | "table" | "flow" | "schedule" | "artifact";
+  kind: CatalogItemKind;
   id: number;
 }
 
@@ -40,8 +41,7 @@ export function primaryAction(hit: SearchHit): SearchHitAction {
   const id = String(hit.id);
   switch (hit.kind) {
     case "namespace": {
-      // The catalog page's detail is a catalog's; a schema opens its catalog (the catalog refresh still looks for
-      // the schema itself, which may be newer than the page's tree).
+      // A schema opens its catalog's detail; the refresh still looks for the schema itself.
       const catalogId = hit.details.level === 0 ? numericId(hit.id) : numericId(hit.namespace_id);
       const shown = catalogId ?? numericId(hit.id);
       return inCatalog(

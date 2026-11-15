@@ -3,7 +3,8 @@
 A provider narrows its rows in SQL with the scoring rule's own shape (``SearchContext.match_filter``: every token in
 one of the row's text columns, or the row living in a namespace whose name holds that token), applies the caller's
 visibility with the same rule as the kind's list endpoint, and returns ``Candidate``s. The SQL filter is a superset of
-what scores, so the candidate cap only ever cuts rows that really match. The service scores them
+what scores, so it never drops a real match, but rows it keeps that do not score can still take candidate-cap slots;
+a kind whose cap was reached is therefore reported as truncated. The service scores them
 (``matching.score_fields``); a provider never scores. Every provider reads metadata columns only: no table data, no
 file on disk, no Docker.
 
@@ -41,12 +42,12 @@ from flowfile_core.search.models import SearchKind
 from flowfile_core.search.resources import resource_uri
 
 MAX_CANDIDATES = 2000
-# Columns are found by scanning stored schemas, whose JSON keys match common words ("name", "type"), so up to this
-# many times the candidate cap is read to find the tables that really hold a matching column.
+# Stored-schema JSON keys match common words, so up to this many times the cap is scanned for columns.
 COLUMN_SCAN_FACTOR = 10
+# A one-letter word matches every stored schema's JSON keys, so columns need a word at least this long.
+MIN_COLUMN_TOKEN_LENGTH = 2
 
-# The kinds the catalog tree nests under namespaces; what a restricted caller may read of them decides which
-# namespaces the tree shows that caller.
+# The kinds the catalog tree nests under namespaces, which decide the namespaces it shows a restricted caller.
 _TREE_ITEM_MODELS = (
     ("catalog_table", CatalogTable),
     ("flow", FlowRegistration),
@@ -102,8 +103,17 @@ class SearchContext:
 
     @classmethod
     def build(
-        cls, db: Session, access: AccessResolver, user_id: int, tokens: list[str], max_candidates: int
+        cls,
+        db: Session,
+        access: AccessResolver,
+        user_id: int,
+        tokens: list[str],
+        max_candidates: int,
+        namespaced: bool = True,
     ) -> SearchContext:
+        """``namespaced`` false (only kinds that live outside the catalog tree are searched) skips namespace work."""
+        if not namespaced:
+            return cls(db, access, user_id, tokens, {}, max_candidates=max_candidates)
         rows = db.query(
             CatalogNamespace.id,
             CatalogNamespace.name,
@@ -134,10 +144,10 @@ class SearchContext:
             readable = self.access.accessible_ids(resource_type)
             if not readable:
                 continue
-            query = self.db.query(model.id, model.namespace_id).filter(model.namespace_id.isnot(None))
+            query = self.db.query(model.namespace_id).filter(model.namespace_id.isnot(None), model.id.in_(readable))
             if model is GlobalArtifact:
                 query = query.filter(GlobalArtifact.status == "active")
-            holding |= {namespace_id for item_id, namespace_id in query if item_id in readable}
+            holding |= {namespace_id for (namespace_id,) in query.distinct()}
         shown = self._with_ancestors(visible | holding)
         self.known = shown
         self.namespace_hits = visible | (set(self.access.namespace_permissions()) & self._with_ancestors(holding))
@@ -164,14 +174,16 @@ class SearchContext:
         return self.access.accessible_ids(resource_type) if self.restricted else None
 
     def path(self, namespace_id: int | None) -> list[str]:
-        """The catalog and schema names of ``namespace_id`` the caller may see, outermost first."""
+        """The catalog and schema names of ``namespace_id``, outermost first; empty when the caller may not see
+        ``namespace_id`` itself, so a hidden schema never reads as its catalog."""
         names: list[str] = []
         seen: set[int] = set()
         while namespace_id is not None and namespace_id in self.namespaces and namespace_id not in seen:
+            if not self.knows(namespace_id):
+                return []
             seen.add(namespace_id)
             ns = self.namespaces[namespace_id]
-            if self.knows(namespace_id):
-                names.insert(0, ns.name)
+            names.insert(0, ns.name)
             namespace_id = ns.parent_id
         return names
 
@@ -360,8 +372,11 @@ def columns(ctx: SearchContext) -> list[Candidate]:
 
     Tables are read newest first until ``max_candidates`` of them hold a matching column, reading at most
     ``COLUMN_SCAN_FACTOR`` times that many: a stored schema's JSON keys match common words, so the SQL filter alone
-    would let tables without a matching column fill the cap.
+    would let tables without a matching column fill the cap. A query whose words are all shorter than
+    ``MIN_COLUMN_TOKEN_LENGTH`` finds no columns, since such a word matches every stored schema.
     """
+    if all(len(token) < MIN_COLUMN_TOKEN_LENGTH for token in ctx.tokens):
+        return []
     query = ctx.db.query(
         CatalogTable.id, CatalogTable.name, CatalogTable.namespace_id, CatalogTable.schema_json, CatalogTable.updated_at
     ).filter(
@@ -767,7 +782,9 @@ def kernels(ctx: SearchContext) -> list[Candidate]:
             "kind": SearchKind.KERNEL,
             "id": row.id,
             "name": row.name,
-            "subtitle": " · ".join(p for p in ("Python kernel", image, _count(len(packages), "extra package")) if p),
+            "subtitle": " · ".join(
+                p for p in ("Python kernel", image, _count(len(packages) or None, "extra package")) if p
+            ),
             "uri": resource_uri(SearchKind.KERNEL, row.id),
             "updated_at": row.created_at,
             "details": {

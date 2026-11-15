@@ -203,8 +203,7 @@ const closeDetails = () => {
   void router.replace({ query: rest });
 };
 
-// `?kernelId=` (the global search) opens that kernel's details and stays in the URL until they close, so the
-// Compute page's own tab update cannot drop it before it was read.
+// `?kernelId=` (the global search) opens that kernel's details and stays in the URL until they close.
 watch(
   linkedKernelId,
   (kernelId, previous) => {

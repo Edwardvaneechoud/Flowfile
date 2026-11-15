@@ -3,13 +3,22 @@ export interface TextSegment {
   match: boolean;
 }
 
+/** Lower case and separators (`-`, `_`, `.`, whitespace) as one, keeping every offset of `text` in place. */
+function foldForMatch(text: string): string {
+  return Array.from(text, (ch) => {
+    if (/[\s_.-]/.test(ch)) return " ";
+    const lower = ch.toLowerCase();
+    return lower.length === ch.length ? lower : ch;
+  }).join("");
+}
+
 /** `text` split into runs that do and do not contain one of `tokens` (case-insensitive); overlaps merge. */
 export function highlightSegments(text: string, tokens: readonly string[]): TextSegment[] {
   if (!text) return [];
-  const lower = text.toLowerCase();
+  const lower = foldForMatch(text);
   const ranges: Array<[number, number]> = [];
   for (const token of tokens) {
-    const needle = token.toLowerCase();
+    const needle = foldForMatch(token);
     if (!needle) continue;
     for (let at = lower.indexOf(needle); at >= 0; at = lower.indexOf(needle, at + 1)) {
       ranges.push([at, at + needle.length]);

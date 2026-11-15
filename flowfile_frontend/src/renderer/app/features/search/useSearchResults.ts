@@ -87,7 +87,11 @@ export function useSearchResults(
   }
 
   watch(
-    () => [toValue(query), toValue(options.kinds)?.join(","), toValue(options.limitPerKind)],
+    [
+      () => toValue(query),
+      () => toValue(options.kinds)?.join(","),
+      () => toValue(options.limitPerKind),
+    ],
     () => schedule(),
     { immediate: true },
   );

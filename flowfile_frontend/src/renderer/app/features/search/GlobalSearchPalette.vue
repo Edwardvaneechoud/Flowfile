@@ -32,15 +32,21 @@ const { response, loading, error, refresh } = useSearchResults(
     limitPerKind: () => (kindFilter.value ? 25 : 5),
   },
 );
-// While a kind is picked, the chips' counts come from one cheap all-kinds request.
-const countsSearch = useSearchResults(() => (store.isOpen && kindFilter.value ? store.query : ""), {
-  limitPerKind: 1,
-});
+const allKindsAnswer = ref<{ query: string; counts: Partial<Record<SearchKind, number>> } | null>(
+  null,
+);
+// While a kind is picked, the chips' counts come from an all-kinds request unless this query's are already known.
+const countsSearch = useSearchResults(
+  () =>
+    store.isOpen && kindFilter.value && allKindsAnswer.value?.query !== trimmed.value
+      ? store.query
+      : "",
+  { limitPerKind: 1 },
+);
 
 const answersAllKinds = (answer: SearchResponse | null): answer is SearchResponse =>
   !!answer && answer.kinds.length === SEARCH_KINDS.length;
-// The answer kept from before a filter change is another filter's, and one kept past a failed search is no longer
-// what the input asks, so neither is shown.
+// Neither another filter's answer nor one kept past a failed search is shown.
 const shown = computed<SearchResponse | null>(() => {
   const answer = response.value;
   if (!answer || error.value) return null;
@@ -64,9 +70,6 @@ const activeOptionId = computed(() => (activeHit.value ? optionId(activeIndex.va
 const modEnter = `${MODIFIER_LABEL}${IS_MAC ? "" : "+"}↵`;
 const shiftEnter = `${SHIFT_LABEL}${IS_MAC ? "" : "+"}↵`;
 
-const allKindsAnswer = ref<{ query: string; counts: Partial<Record<SearchKind, number>> } | null>(
-  null,
-);
 watch([response, countsSearch.response], ([answer, counts]) => {
   for (const candidate of [answer, counts]) {
     if (answersAllKinds(candidate)) {
@@ -190,8 +193,7 @@ function yieldToDialog(): void {
   store.close();
 }
 
-// Focus stays in the palette: anything that would take it out hands it back to the input, except another dialog
-// taking focus (one that opened on its own, such as the update prompt), which the palette then makes way for.
+/** Focus stays in the palette, handed back to the input, unless another dialog (the update prompt) takes it. */
 function onFocusOut(event: FocusEvent): void {
   const next = event.relatedTarget;
   if (next instanceof Node && panelEl.value?.contains(next)) return;

@@ -654,7 +654,7 @@
 import { computed, h, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElCheckbox, ElLoading, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
-import { useCatalogStore } from "../../stores/catalog-store";
+import { useCatalogStore, type CatalogItemKind } from "../../stores/catalog-store";
 import { useProjectStore } from "../../stores/project-store";
 import { useNotebookStore } from "../../stores/notebook-store";
 import { useSqlEditorStore } from "../../stores/sql-editor-store";
@@ -1978,14 +1978,14 @@ function cachedOverviewHoldsRoute(): boolean {
   if (!catalogStore.overviewLoaded) return false;
   const id = (key: (typeof SELECTION_QUERY_KEYS)[number]) =>
     route.query[key] ? Number(route.query[key]) : null;
-  const holds = (value: number | null, known: (value: number) => boolean) =>
-    value === null || known(value);
+  const holds = (value: number | null, kind: CatalogItemKind) =>
+    value === null || catalogStore.holdsItem(kind, value);
   return (
-    holds(id("tableId"), (v) => catalogStore.findTableInTree(v) !== null) &&
-    holds(id("namespaceId"), (v) => catalogStore.findNamespaceInTree(v) !== null) &&
-    holds(id("artifactId"), (v) => catalogStore.findArtifactInTree(v) !== null) &&
-    holds(id("scheduleId"), (v) => catalogStore.getScheduleById(v) !== undefined) &&
-    holds(id("flowId"), (v) => catalogStore.allFlows.some((flow) => flow.id === v))
+    holds(id("tableId"), "table") &&
+    holds(id("namespaceId"), "namespace") &&
+    holds(id("artifactId"), "artifact") &&
+    holds(id("scheduleId"), "schedule") &&
+    holds(id("flowId"), "flow")
   );
 }
 

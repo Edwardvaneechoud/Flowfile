@@ -2,18 +2,10 @@ import { useRouter } from "vue-router";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useNotebookStore } from "../../stores/notebook-store";
-import type { NamespaceTree } from "../../types";
 import type { CatalogTarget, SearchHitAction } from "./searchNavigation";
 
-// Shared by the palette and the results page: only the newest open may navigate, so a slow catalog refresh never
-// pulls the user back after they opened something else.
+// Only the newest open (palette or results page) may navigate, so a slow refresh never pulls the user back.
 let openSeq = 0;
-
-function treeHolds(nodes: readonly NamespaceTree[], namespaceId: number): boolean {
-  return nodes.some(
-    (node) => node.id === namespaceId || treeHolds(node.children ?? [], namespaceId),
-  );
-}
 
 /** Carries out a hit's action; resolves false when it could not (the flow opener has already said why). */
 export function useOpenSearchHit() {
@@ -22,24 +14,10 @@ export function useOpenSearchHit() {
   const catalogStore = useCatalogStore();
   const { openFlow } = useFlowOpener();
 
-  function catalogKnows(target: CatalogTarget): boolean {
-    switch (target.kind) {
-      case "namespace":
-        return treeHolds(catalogStore.tree, target.id);
-      case "table":
-        return catalogStore.findTableInTree(target.id) !== null;
-      case "flow":
-        return catalogStore.allFlows.some((flow) => flow.id === target.id);
-      case "schedule":
-        return catalogStore.getScheduleById(target.id) !== undefined;
-      case "artifact":
-        return catalogStore.findArtifactInTree(target.id) !== null;
-    }
-  }
-
   // The catalog page reuses an overview up to 30 s old, which may predate the item search just found.
   async function refreshCatalogFor(target: CatalogTarget | undefined): Promise<void> {
-    if (!target || !catalogStore.overviewLoaded || catalogKnows(target)) return;
+    if (!target || !catalogStore.overviewLoaded || catalogStore.holdsItem(target.kind, target.id))
+      return;
     await catalogStore.initialize(true);
   }
 

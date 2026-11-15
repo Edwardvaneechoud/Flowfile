@@ -24,13 +24,12 @@ const emit = defineEmits<{
 const location = computed(() => (props.hit.path.length ? props.hit.path.join(" › ") : null));
 const matches = computed(() => extraMatches(props.hit).slice(0, props.detailed ? 6 : 3));
 const secondary = computed(() => secondaryAction(props.hit));
-// Core's timestamps are naive UTC.
 // In the palette a row is an option of its listbox; on the results page its name is the button that opens it.
 const openEvent = (event: MouseEvent) => event.metaKey || event.ctrlKey;
 const updated = computed(() => {
   const raw = props.hit.updated_at;
   if (!props.detailed || !raw) return null;
-  const date = new Date(/(Z|[+-]\d\d:\d\d)$/i.test(raw) ? raw : `${raw}Z`);
+  const date = new Date(raw);
   return Number.isNaN(date.getTime()) ? null : date.toLocaleDateString();
 });
 </script>

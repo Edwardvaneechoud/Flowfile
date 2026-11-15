@@ -15,6 +15,7 @@ from flowfile_core.search.models import SearchHit, SearchKind, SearchMatch, Sear
 from flowfile_core.search.providers import MAX_CANDIDATES, PROVIDERS, SearchContext
 
 KIND_ORDER: dict[SearchKind, int] = {kind: index for index, kind in enumerate(SearchKind)}
+_OUTSIDE_THE_TREE = frozenset({SearchKind.KERNEL, SearchKind.CUSTOM_NODE})
 
 
 def _sort_key(hit: SearchHit) -> tuple:
@@ -39,7 +40,8 @@ def search_catalog(
     kinds = list(dict.fromkeys(request.kinds)) if request.kinds else list(SearchKind)
     if not tokens:
         return SearchResponse(query=request.query, tokens=[], kinds=kinds, hits=[], counts={k: 0 for k in kinds})
-    ctx = SearchContext.build(db, AccessResolver(db, user), user.id, tokens, max_candidates)
+    namespaced = any(kind not in _OUTSIDE_THE_TREE for kind in kinds)
+    ctx = SearchContext.build(db, AccessResolver(db, user), user.id, tokens, max_candidates, namespaced=namespaced)
     hits: list[SearchHit] = []
     counts: dict[SearchKind, int] = {}
     for kind in kinds:
