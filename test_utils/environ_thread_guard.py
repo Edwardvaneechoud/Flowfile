@@ -17,6 +17,7 @@ reads it instead (see ``as_server`` in ``flowfile_core/tests/flowfile_core_test_
 """
 
 import os
+import sys
 import threading
 import traceback
 from collections import Counter
@@ -34,8 +35,13 @@ def _record(action: str, key) -> None:
     if threading.current_thread() is threading.main_thread():
         return
     stack = "".join(traceback.format_stack()[:-2][-_STACK_DEPTH:])
+    main_frame = sys._current_frames().get(threading.main_thread().ident)
+    main_stack = "".join(traceback.format_stack(main_frame)[-_STACK_DEPTH:]) if main_frame else "  (unknown)\n"
     with _lock:
-        _writes.append(f"{action} {key!r} on thread {threading.current_thread().name!r}:\n{stack}")
+        _writes.append(
+            f"{action} {key!r} on thread {threading.current_thread().name!r}:\n{stack}"
+            f"  ...while the main thread was at:\n{main_stack}"
+        )
 
 
 def install() -> None:
@@ -72,6 +78,17 @@ def take_writes() -> list[str]:
 
 
 install()
+
+
+@pytest.fixture
+def allow_off_thread_environ_writes():
+    """Drop the writes made during this test, for one that exercises a write production makes on its main thread.
+
+    uvicorn runs the app's lifespan on the main thread, a ``TestClient`` on its portal thread, so a test of what the
+    lifespan writes would otherwise fail on the test client's thread rather than on anything the server does.
+    """
+    yield
+    take_writes()
 
 
 @pytest.fixture(autouse=True)

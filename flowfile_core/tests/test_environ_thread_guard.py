@@ -59,3 +59,17 @@ def test_a_write_to_os_environb_on_another_thread_is_recorded():
     run_in_thread(write)
 
     assert len(environ_thread_guard.take_writes()) == 2
+
+
+def test_a_recorded_write_names_where_the_main_thread_was():
+    run_in_thread(lambda: os.environ.__setitem__(KEY, "1"))
+    del os.environ[KEY]
+
+    (found,) = environ_thread_guard.take_writes()
+    main_part = found.split("...while the main thread was at:", 1)[1]
+    assert "in run_in_thread" in main_part
+
+
+def test_the_opt_out_fixture_drops_the_writes_of_its_test(allow_off_thread_environ_writes):
+    run_in_thread(lambda: os.environ.__setitem__(KEY, "1"))
+    del os.environ[KEY]
