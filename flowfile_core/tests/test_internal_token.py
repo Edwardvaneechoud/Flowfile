@@ -171,7 +171,7 @@ def test_stale_lock_is_broken(isolated_token, monkeypatch):
 # --- B. eager mint in the lifespan ----------------------------------------------
 
 
-def test_lifespan_mints_token_before_children_can_spawn(isolated_token):
+def test_lifespan_mints_token_before_children_can_spawn(isolated_token, allow_off_thread_environ_writes):
     """Any Popen child spawned after startup inherits the server's own token."""
     from fastapi.testclient import TestClient
 
