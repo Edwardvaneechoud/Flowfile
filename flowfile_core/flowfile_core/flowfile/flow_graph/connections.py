@@ -97,11 +97,13 @@ def validate_connection(
     input_handle: str | None = None,
     *,
     replacing: bool = False,
+    staged: bool = False,
     validate_ports: bool = True,
 ) -> ConnectionValidationError | None:
     """Non-mutating topology check for from_node -> to_node; None when valid.
 
     ``replacing`` is reserved for an explicit splice of an existing edge.
+    ``staged`` defers live-wire conflicts until AI diff acceptance.
     Low-level add_node_connection retains its replacement semantics.
 
     ``output_handle`` is the source handle the new edge would read. Pass it to
@@ -129,7 +131,7 @@ def validate_connection(
                 f"Handle {handle} is not available on node {node.node_id}",
             )
     port = next((port for port in inputs if port.id == input_handle), None)
-    if port is not None and input_handle is not None and not replacing:
+    if port is not None and input_handle is not None and not (replacing or staged):
         for occupant in to_node.all_inputs:
             existing = to_node.input_edge_handle(occupant.node_id, input_handle)
             if (
@@ -138,7 +140,8 @@ def validate_connection(
                 and (occupant.node_id != from_node.node_id or existing != (output_handle or DEFAULT_OUTPUT_HANDLE))
             ):
                 return ConnectionValidationError("input_occupied", f"Handle {input_handle} already has a connection")
-    if output_handle is not None:
+    # Staged replacements are validated against the final graph during acceptance.
+    if output_handle is not None and not staged:
         existing_handle = live_source_handle(to_node, from_node.node_id)
         if existing_handle is not None and existing_handle != output_handle:
             return ConnectionValidationError(

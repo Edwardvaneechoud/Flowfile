@@ -318,7 +318,7 @@ def _handle_connect(
             to_node,
             connection.output_connection.connection_class,
             connection.input_connection.connection_class,
-            replacing=mode == "stage",
+            staged=mode == "stage",
         )
         if connection_error is not None:
             return _reject_and_audit(
