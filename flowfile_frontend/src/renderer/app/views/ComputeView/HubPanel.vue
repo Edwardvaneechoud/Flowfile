@@ -55,7 +55,14 @@
               <strong
                 >This server belongs to
                 {{ state.org_name ? `${state.org_name}'s hub` : "the hub" }} at
-                {{ state.hub_url ?? "an unknown address" }}.</strong
+                <a
+                  v-if="state.hub_url"
+                  :href="state.hub_url"
+                  class="hub-card__link"
+                  data-testid="hub-url-link"
+                  @click.prevent="openHub(state.hub_url)"
+                  >{{ state.hub_url }}</a
+                ><template v-else>an unknown address</template>.</strong
               >
               <p v-if="state.account" data-testid="hub-account">
                 Signed in as {{ state.account }}.

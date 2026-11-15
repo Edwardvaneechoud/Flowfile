@@ -132,6 +132,7 @@ describe("HubPanel", () => {
       "This server belongs to Acme Data's hub at https://hub.acme.test:8443.",
     );
     expect(text(find("hub-account"))).toBe("Signed in as Ana Lima.");
+    expect(find("hub-url-link")?.getAttribute("href")).toBe("https://hub.acme.test:8443");
     expect(host.querySelector(".hub-card__facts")).toBeNull();
     expect(find("hub-url")).toBeNull();
     expect(find("hub-connect")).toBeNull();
