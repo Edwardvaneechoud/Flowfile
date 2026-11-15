@@ -25,13 +25,14 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Qu
 from fastapi.responses import FileResponse, JSONResponse, Response
 from polars.exceptions import ColumnNotFoundError
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
 from flowfile_core import change_feed, events, flow_file_handler
 
 # Core modules
+from flowfile_core.auth import sharing
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository, table_sources
 from flowfile_core.catalog.access import AccessResolver
@@ -82,9 +83,13 @@ from flowfile_core.flowfile.code_generator.project_exporter import (
     project_to_zip_bytes,
 )
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    DatabaseConnectionError,
     delete_database_connection,
     get_all_database_connections_interface,
     get_database_connection,
+    get_local_database_connection,
+    is_snowflake,
+    snowflake_unavailable_message,
     store_database_connection,
     update_database_connection,
 )
@@ -115,7 +120,9 @@ from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
     resolve_auth_secret_encrypted,
 )
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
+    connection_uri,
     create_sql_source_from_db_settings,
+    list_db_databases,
     list_db_schemas,
     list_db_tables,
 )
@@ -138,10 +145,12 @@ from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_
 from flowfile_core.schemas.catalog_schema import VisualizationComputeResponse, VisualizationFieldsResponse
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
 from flowfile_core.secret_manager import credential_sources
+from flowfile_core.secret_manager.secret_manager import decrypt_secret
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
-from shared.db_dialects import KNOWN_DIALECT_NAMES, DialectInfo, dialect_catalog
+from shared.db_dialects import KNOWN_DIALECT_NAMES, DialectInfo, dialect_catalog, get_dialect_or_generic, read_sql
+from shared.snowflake_auth import AUTH_METHODS, AUTH_OAUTH, SnowflakeAuthError, normalize_account
 from shared.storage_config import registered_flow_path, require_flow_in_storage, storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
@@ -872,8 +881,17 @@ def delete_node_connection(
 
 @router.get("/db_dialects", tags=["db_connections"], response_model=list[DialectInfo])
 def get_db_dialects() -> list[DialectInfo]:
-    """Returns the supported database dialects (drives the frontend's dialect dropdowns)."""
-    return dialect_catalog()
+    """Returns the supported database dialects (drives the frontend's dialect dropdowns).
+
+    The browser sign-in (``oauth``) is left out of a dialect's methods where it cannot run (a multi-user server).
+    """
+    dialects = dialect_catalog()
+    if sharing.browser_sign_in_allowed():
+        return dialects
+    return [
+        d.model_copy(update={"auth_methods": [m for m in d.auth_methods if m != AUTH_OAUTH]}) if d.auth_methods else d
+        for d in dialects
+    ]
 
 
 def _require_known_database_type(database_type: str) -> None:
@@ -884,17 +902,55 @@ def _require_known_database_type(database_type: str) -> None:
         )
 
 
+class DatabaseConnectionInput(input_schema.FullDatabaseConnection):
+    """The body of a database connection save: the connection plus write-only inputs that are never stored.
+
+    ``private_key_passphrase`` opens a Snowflake private key once; ``oauth_flow_id`` names the browser sign-in whose
+    refresh token becomes the secret. Kept off ``FullDatabaseConnection``, whose secret fields others derive from.
+    """
+
+    private_key_passphrase: SecretStr | None = None
+    oauth_flow_id: str | None = None
+
+
+def _snowflake_save_inputs(connection: DatabaseConnectionInput) -> dict:
+    """Check a Snowflake save can run here and answer the write-only inputs as keyword arguments; {} otherwise."""
+    if not is_snowflake(connection.database_type):
+        return {}
+    unavailable = snowflake_unavailable_message()
+    if unavailable:
+        raise HTTPException(422, unavailable)
+    if connection.auth_method not in AUTH_METHODS:
+        raise HTTPException(422, "Choose how to sign in to Snowflake: browser sign-in, access token or key-pair.")
+    if connection.auth_method == AUTH_OAUTH and not sharing.browser_sign_in_allowed():
+        raise HTTPException(422, "Signing in with Snowflake in the browser is not available on this server.")
+    passphrase = connection.private_key_passphrase
+    return {
+        "private_key_passphrase": passphrase.get_secret_value() if passphrase else None,
+        "oauth_flow_id": connection.oauth_flow_id or None,
+    }
+
+
+def _stored_connection(connection: DatabaseConnectionInput) -> input_schema.FullDatabaseConnection:
+    """The connection without its write-only inputs."""
+    fields = connection.model_dump(exclude={"private_key_passphrase", "oauth_flow_id", "password"})
+    return input_schema.FullDatabaseConnection(**fields, password=connection.password)
+
+
 @router.post("/db_connection_lib", tags=["db_connections"])
 def create_db_connection(
-    input_connection: input_schema.FullDatabaseConnection,
+    input_connection: DatabaseConnectionInput,
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     """Creates and securely stores a new database connection."""
     logger.info(f"Creating database connection {input_connection.connection_name}")
     _require_known_database_type(input_connection.database_type)
+    extra = _snowflake_save_inputs(input_connection)
     try:
-        store_database_connection(db, input_connection, current_user.id)
+        store_database_connection(db, _stored_connection(input_connection), current_user.id, **extra)
+    except (SnowflakeAuthError, DatabaseConnectionError) as e:
+        raise HTTPException(422, str(e)) from None
     except ValueError:
         raise HTTPException(422, "Connection name already exists") from None
     except Exception as e:
@@ -905,7 +961,7 @@ def create_db_connection(
 
 @router.put("/db_connection_lib", tags=["db_connections"])
 def update_db_connection(
-    input_connection: input_schema.FullDatabaseConnection,
+    input_connection: DatabaseConnectionInput,
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -917,24 +973,106 @@ def update_db_connection(
     # Only a changed type is checked, so legacy rows (e.g. redshift) stay updatable.
     if input_connection.database_type.lower() != (db_connection.database_type or "").lower():
         _require_known_database_type(input_connection.database_type)
+    extra = _snowflake_save_inputs(input_connection)
+    incoming = input_connection
+    if extra:
+        try:
+            # Compared as stored, so the same account typed another way is no change of target.
+            incoming = input_connection.model_copy(
+                update={
+                    "host": normalize_account(input_connection.host or ""),
+                    "port": None,
+                    "ssl_enabled": False,
+                    "database": (input_connection.database or "").strip() or None,
+                }
+            )
+        except SnowflakeAuthError as e:
+            raise HTTPException(422, str(e)) from None
+        if input_connection.auth_method == AUTH_OAUTH and sharing.has_grants(
+            db, "database_connection", db_connection.id
+        ):
+            raise HTTPException(422, sharing.PERSONAL_CONNECTION_MESSAGE)
     if authorize_connection_mutation(db, current_user, "database_connection", db_connection):
         changed = changed_target_fields(
-            db_connection, input_connection, ("host", "port", "database", "database_type", "ssl_enabled")
+            db_connection, incoming, ("host", "port", "database", "database_type", "ssl_enabled")
         )
         require_credentials_on_target_change(
             changed,
-            has_new_credentials=bool(input_connection.password.get_secret_value()),
+            has_new_credentials=bool(input_connection.password.get_secret_value() or extra.get("oauth_flow_id")),
             has_bundled_secrets=db_connection.password_id is not None,
         )
     try:
         # Owner's user_id keeps a rotated password encrypted under the OWNER's key.
-        update_database_connection(db, input_connection, db_connection.user_id)
+        update_database_connection(db, _stored_connection(input_connection), db_connection.user_id, **extra)
+    except (SnowflakeAuthError, DatabaseConnectionError) as e:
+        raise HTTPException(422, str(e)) from None
     except ValueError:
         raise HTTPException(404, "Database connection not found") from None
     except Exception as e:
         logger.error(e)
         raise HTTPException(422, str(e)) from e
     return {"message": "Database connection updated successfully"}
+
+
+class DatabaseConnectionTestRequest(BaseModel):
+    connection_name: str
+
+
+class DatabaseConnectionTestResult(BaseModel):
+    success: bool
+    message: str
+    details: dict[str, str] | None = None
+
+
+def _masked(message: str, secret: str | None) -> str:
+    if secret and len(secret) >= 4:
+        return message.replace(secret, "***")
+    return message
+
+
+def _connected_message(details: dict[str, str]) -> str:
+    parts = [f"Connected as {details['user']}" if details.get("user") else "Connected"]
+    parts += [f"{key} {details[key]}" for key in ("role", "warehouse", "database") if details.get(key)]
+    return ", ".join(parts) + "."
+
+
+@router.post("/db_connection_lib/test", tags=["db_connections"], response_model=DatabaseConnectionTestResult)
+def check_db_connection(
+    body: DatabaseConnectionTestRequest, current_user=Depends(get_current_active_user)
+) -> DatabaseConnectionTestResult:
+    """Opens a saved connection the caller may use and reports whether it works; HTTP 200 either way.
+
+    A dialect that can describe its session (Snowflake) answers who and where; any other runs ``SELECT 1``
+    through its read path. 404 only for a connection the caller cannot see.
+    """
+    connection = get_local_database_connection(body.connection_name, current_user.id)
+    if connection is None:
+        raise HTTPException(404, "Database connection not found")
+    if connection.granted:
+        from flowfile_core.flowfile.execution import run_secrets
+
+        return DatabaseConnectionTestResult(success=False, message=run_secrets.refusal(connection.connection_name))
+    dialect = get_dialect_or_generic(connection.database_type)
+    if is_snowflake(connection.database_type):
+        unavailable = snowflake_unavailable_message()
+        if unavailable:
+            return DatabaseConnectionTestResult(success=False, message=unavailable)
+    password = None
+    try:
+        password = decrypt_secret(connection.password.get_secret_value()).get_secret_value()
+        if dialect.file_based and connection.database and connection.database != ":memory:":
+            if not Path(connection.database).exists():
+                return DatabaseConnectionTestResult(success=False, message=f"File not found: {connection.database}")
+        uri = connection_uri(connection, password)
+        info = dialect.session_info(uri)
+        if info is None:
+            read_sql("SELECT 1", uri, logger, database_type=connection.database_type)
+            return DatabaseConnectionTestResult(success=True, message="Connection successful.")
+        details = {key: str(value) for key, value in info.items() if value}
+        return DatabaseConnectionTestResult(success=True, message=_connected_message(details), details=details)
+    except Exception as e:
+        text = str(e).strip() or type(e).__name__
+        return DatabaseConnectionTestResult(success=False, message=_masked(text, password))
 
 
 @router.delete("/db_connection_lib", tags=["db_connections"])
@@ -3143,11 +3281,25 @@ async def validate_db_settings(
         raise HTTPException(status_code=422, detail=str(e)) from e
 
 
+@router.post("/db_databases", tags=["db_connections"], response_model=list[str])
+async def get_db_databases(
+    database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
+) -> list[str]:
+    """Returns the databases a node may pick on this connection; empty for a dialect with one database."""
+    try:
+        return list_db_databases(database_settings, user_id=current_user.id)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
 @router.post("/db_schemas", tags=["db_connections"], response_model=list[str])
 async def get_db_schemas(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ) -> list[str]:
-    """Returns available schema names for the given database connection."""
+    """Returns available schema names for the given database connection.
+
+    With ``database_name`` set, a dialect that browses databases (Snowflake) lists that database's schemas.
+    """
     try:
         return list_db_schemas(database_settings, user_id=current_user.id)
     except Exception as e:
@@ -3163,6 +3315,7 @@ async def get_db_tables(
     When schema_name is provided, returns plain table names.
     When schema_name is not provided, returns schema-qualified names (schema.table) across all
     accessible schemas (skipping any that the user cannot read).
+    With database_name set, the schema is browsed as database.schema.
     """
     try:
         return list_db_tables(database_settings, user_id=current_user.id)

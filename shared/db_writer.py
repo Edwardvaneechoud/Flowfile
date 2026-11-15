@@ -165,8 +165,14 @@ def write_dataframe_to_database(
     if_exists: str = "append",
 ) -> None:
     """Write ``df`` to ``table_name``. ``uri`` is a base URI (``sqlite:///<path>`` or
-    a base scheme; the SQLAlchemy driver suffix is applied internally)."""
+    a base scheme; the SQLAlchemy driver suffix is applied internally).
+
+    ``table_name`` is checked against the dialect's identifier rule before anything opens: the
+    writers wrap or split it themselves, so a name only a quoting dialect takes never reaches another.
+    """
     from shared.db_dialects import get_dialect_or_generic
 
+    dialect = get_dialect_or_generic(database_type)
+    dialect.checked_identifier_path(table_name, "table name")
     if_exists = if_exists or "append"
-    get_dialect_or_generic(database_type).write(df, uri=uri, table_name=table_name, if_exists=if_exists)
+    dialect.write(df, uri=uri, table_name=table_name, if_exists=if_exists)

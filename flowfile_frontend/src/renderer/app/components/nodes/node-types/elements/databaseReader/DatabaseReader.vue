@@ -45,9 +45,8 @@
                   :key="conn.connectionName"
                   :value="conn.connectionName"
                 >
-                  {{ conn.connectionName }} ({{ conn.databaseType }} - {{ conn.database }}){{
-                    conn.source === "hub" ? " · from your hub" : ""
-                  }}
+                  {{ databaseChoice.optionLabel(conn)
+                  }}{{ conn.source === "hub" ? " · from your hub" : "" }}
                 </option>
               </select>
             </div>
@@ -76,6 +75,42 @@
           class="query-section"
         >
           <h4 class="section-subtitle">Table Selection</h4>
+          <div v-if="databaseChoice.showDatabase.value" class="form-group">
+            <label for="database-name">Database</label>
+            <div class="input-with-fetch">
+              <el-select
+                v-model="nodeDatabaseReader.database_settings.database_name"
+                data-testid="db-database-select"
+                filterable
+                allow-create
+                clearable
+                default-first-option
+                :placeholder="databaseChoice.placeholder.value"
+                :loading="databaseChoice.databases.loading"
+                loading-text="Loading…"
+                class="flex-input"
+                @change="databaseChoice.handleDatabaseChange"
+              >
+                <el-option
+                  v-for="d in databaseChoice.databases.options"
+                  :key="d"
+                  :label="d"
+                  :value="d"
+                />
+              </el-select>
+              <button
+                type="button"
+                class="btn-fetch-icon"
+                :disabled="databaseChoice.databases.loading"
+                title="Refresh databases"
+                @click="databaseChoice.fetchDatabases()"
+              >
+                <i v-if="databaseChoice.databases.loading" class="fa-solid fa-spinner fa-spin"></i>
+                <i v-else class="fa-solid fa-refresh"></i>
+              </button>
+            </div>
+            <p v-if="databaseNameError" class="field-error">{{ databaseNameError }}</p>
+          </div>
           <div class="form-row">
             <div class="form-group half">
               <label for="schema-name">Schema</label>
@@ -87,24 +122,41 @@
                   allow-create
                   clearable
                   default-first-option
-                  :placeholder="schemasAreLoading ? 'Loading...' : 'Schema'"
+                  :placeholder="databaseChoice.schemas.loading ? 'Loading...' : 'Schema'"
+                  :loading="databaseChoice.schemas.loading"
+                  loading-text="Loading…"
                   class="flex-input"
                   @change="handleSchemaChange"
                   @blur="handleSchemaBlur"
                 >
-                  <el-option v-for="s in availableSchemas" :key="s" :label="s" :value="s" />
+                  <el-option
+                    v-for="s in databaseChoice.schemas.options"
+                    :key="s"
+                    :label="s"
+                    :value="s"
+                  />
                 </el-select>
                 <button
                   type="button"
                   class="btn-fetch-icon"
-                  :disabled="schemasAreLoading"
+                  :disabled="databaseChoice.schemas.loading"
                   title="Refresh schemas"
-                  @click="handleFetchSchemas()"
+                  @click="databaseChoice.loadSchemas()"
                 >
-                  <i v-if="schemasAreLoading" class="fa-solid fa-spinner fa-spin"></i>
+                  <i v-if="databaseChoice.schemas.loading" class="fa-solid fa-spinner fa-spin"></i>
                   <i v-else class="fa-solid fa-refresh"></i>
                 </button>
               </div>
+              <p v-if="schemaNameError" class="field-error">{{ schemaNameError }}</p>
+              <p
+                v-else-if="databaseChoice.schemaNotice.value"
+                :class="
+                  databaseChoice.schemaNotice.value.tone === 'error' ? 'field-error' : 'field-hint'
+                "
+                data-testid="db-schema-notice"
+              >
+                {{ databaseChoice.schemaNotice.value.text }}
+              </p>
             </div>
 
             <div class="form-group half">
@@ -117,24 +169,33 @@
                   allow-create
                   clearable
                   default-first-option
-                  :placeholder="tablesAreLoading ? 'Loading...' : 'Table'"
+                  :placeholder="databaseChoice.tables.loading ? 'Loading...' : 'Table'"
+                  :loading="databaseChoice.tables.loading"
+                  loading-text="Loading…"
+                  :no-data-text="databaseChoice.tablesNoDataText.value"
                   class="flex-input"
                   @change="handleTableSelect"
                   @blur="handleTableBlur"
                 >
-                  <el-option v-for="t in availableTables" :key="t" :label="t" :value="t" />
+                  <el-option
+                    v-for="t in databaseChoice.tables.options"
+                    :key="t"
+                    :label="t"
+                    :value="t"
+                  />
                 </el-select>
                 <button
                   type="button"
                   class="btn-fetch-icon"
-                  :disabled="tablesAreLoading"
+                  :disabled="databaseChoice.tables.loading"
                   title="Refresh tables"
-                  @click="handleFetchTables()"
+                  @click="databaseChoice.loadTables()"
                 >
-                  <i v-if="tablesAreLoading" class="fa-solid fa-spinner fa-spin"></i>
+                  <i v-if="databaseChoice.tables.loading" class="fa-solid fa-spinner fa-spin"></i>
                   <i v-else class="fa-solid fa-refresh"></i>
                 </button>
               </div>
+              <p v-if="tableNameError" class="field-error">{{ tableNameError }}</p>
             </div>
           </div>
         </div>
@@ -181,7 +242,7 @@
 //   - Schema/table fetch logic (~lines 321-348) → useDatabaseSchema composable
 //   - Inline connection mode toggle + watcher (~lines 199-241, 375-398) is duplicated in Writer
 import { CodeLoader } from "vue-content-loader";
-import { ref, onMounted, watch } from "vue";
+import { computed, ref, onMounted, watch } from "vue";
 import {
   NodeDatabaseReader,
   ConnectionModeOption,
@@ -196,7 +257,7 @@ import { ElMessage, ElOption, ElRadio, ElSelect } from "element-plus";
 import DatabaseConnectionSettings from "./DatabaseConnectionSettings.vue";
 import SqlQueryComponent from "./SQLQueryComponent.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
-import { fetchDbSchemas, fetchDbTables } from "./api";
+import { useDatabaseChoice } from "./useDatabaseChoice";
 import axios from "axios";
 
 interface Props {
@@ -226,6 +287,7 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
     if (!nodeDatabaseReader.value || !nodeDatabaseReader.value.database_settings) {
       return false;
     }
+    databaseChoice.markAttempted();
     if (nodeDatabaseReader.value.database_settings.connection_mode === "reference") {
       nodeDatabaseReader.value.database_settings.database_connection = undefined;
     } else {
@@ -238,12 +300,24 @@ const validationError = ref<string | null>(null);
 const validationSuccess = ref<string | null>(null);
 const isValidating = ref(false);
 const connectionsAreLoading = ref(false);
-const availableSchemas = ref<string[]>([]);
-const schemasAreLoading = ref(false);
-const availableTables = ref<string[]>([]);
-const tablesAreLoading = ref(false);
 const schemaSelectRef = ref();
 const tableSelectRef = ref();
+
+const databaseChoice = useDatabaseChoice({
+  settings: () => nodeDatabaseReader.value?.database_settings,
+  connections: connectionInterfaces,
+  onDatabaseChange: () => resetFields(),
+});
+
+const databaseNameError = computed(() =>
+  databaseChoice.identifierError(nodeDatabaseReader.value?.database_settings?.database_name),
+);
+const schemaNameError = computed(() =>
+  databaseChoice.identifierError(nodeDatabaseReader.value?.database_settings?.schema_name),
+);
+const tableNameError = computed(() =>
+  databaseChoice.identifierError(nodeDatabaseReader.value?.database_settings?.table_name),
+);
 
 const handleQueryModeChange = (event: Event) => {
   const target = event.target as HTMLSelectElement;
@@ -272,6 +346,7 @@ const loadNodeData = async (nodeId: number) => {
       nodeDatabaseReader.value = hasValidSetup
         ? nodeData.setting_input
         : createNodeDatabaseReader(nodeStore.flow_id, nodeId);
+      databaseChoice.syncDatabase();
       dataLoaded.value = true;
     }
   } catch (error) {
@@ -294,16 +369,14 @@ const resetFields = () => {
   if (nodeDatabaseReader.value) {
     nodeDatabaseReader.value.fields = [];
   }
-  availableSchemas.value = [];
-  availableTables.value = [];
+  databaseChoice.clearLists();
 };
 
 const handleSchemaChange = () => {
-  availableTables.value = [];
   if (nodeDatabaseReader.value) {
     nodeDatabaseReader.value.fields = [];
   }
-  handleFetchTables(true);
+  databaseChoice.handleSchemaChange();
 };
 
 // Commit typed text on blur so custom values aren't discarded by el-select
@@ -323,51 +396,17 @@ const handleTableBlur = () => {
   }
 };
 
-const handleFetchSchemas = async (silent = false) => {
-  if (!nodeDatabaseReader.value?.database_settings) return;
-  schemasAreLoading.value = true;
-  try {
-    availableSchemas.value = await fetchDbSchemas(nodeDatabaseReader.value.database_settings);
-  } catch (error: any) {
-    if (!silent) {
-      const detail = error.response?.data?.detail || "Failed to fetch schemas";
-      ElMessage.error(detail);
-    }
-  } finally {
-    schemasAreLoading.value = false;
-  }
-};
-
-const handleFetchTables = async (silent = false) => {
-  if (!nodeDatabaseReader.value?.database_settings) return;
-  tablesAreLoading.value = true;
-  try {
-    availableTables.value = await fetchDbTables(nodeDatabaseReader.value.database_settings);
-  } catch (error: any) {
-    if (!silent) {
-      const detail = error.response?.data?.detail || "Failed to fetch tables";
-      ElMessage.error(detail);
-    }
-  } finally {
-    tablesAreLoading.value = false;
-  }
-};
-
 const handleTableSelect = (value: string) => {
   if (!nodeDatabaseReader.value) return;
   // When no schema was selected, tables come as "schema.table" — split them
-  if (value && value.includes(".") && !nodeDatabaseReader.value.database_settings.schema_name) {
-    const dotIndex = value.indexOf(".");
-    nodeDatabaseReader.value.database_settings.schema_name = value.substring(0, dotIndex);
-    nodeDatabaseReader.value.database_settings.table_name = value.substring(dotIndex + 1);
-  }
+  if (value) databaseChoice.applyTableReference(value);
   if (nodeDatabaseReader.value) {
     nodeDatabaseReader.value.fields = [];
   }
 };
 
 // Auto-fetch schemas/tables when connection details change.
-// Reference mode: fetch immediately on selection.
+// Reference mode: useDatabaseChoice fetches immediately on selection.
 // Inline mode: debounce so we don't fire on every keystroke, and only when the
 // connection looks complete (all required fields filled).
 const isInlineConnectionComplete = () => {
@@ -380,23 +419,13 @@ const isInlineConnectionComplete = () => {
 let inlineDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 watch(
-  () => nodeDatabaseReader.value?.database_settings?.database_connection_name,
-  (name) => {
-    if (name) {
-      handleFetchSchemas(true);
-      handleFetchTables(true);
-    }
-  },
-);
-
-watch(
   () => nodeDatabaseReader.value?.database_settings?.database_connection,
   () => {
     if (inlineDebounceTimer) clearTimeout(inlineDebounceTimer);
     if (!isInlineConnectionComplete()) return;
     inlineDebounceTimer = setTimeout(() => {
-      handleFetchSchemas(true);
-      handleFetchTables(true);
+      databaseChoice.loadSchemas(true);
+      databaseChoice.loadTables(true);
     }, 1500);
   },
   { deep: true },
@@ -410,6 +439,7 @@ const validateDatabaseSettings = async () => {
   }
   validationError.value = null;
   validationSuccess.value = null;
+  databaseChoice.markAttempted();
   isValidating.value = true;
 
   resetFields();
@@ -465,6 +495,18 @@ defineExpose({
   font-family: var(--font-family-base);
   max-width: 100%;
   color: var(--color-text-primary);
+}
+
+.field-error {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.75rem;
+  color: var(--color-danger, #f56c6c);
+}
+
+.field-hint {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
 }
 
 .section-subtitle {

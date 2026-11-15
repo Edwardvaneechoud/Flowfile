@@ -48,3 +48,32 @@ def test_write_database_duckdb_roundtrip(duckdb_connection):
         assert con.execute("SELECT count(*) FROM written_from_frame").fetchone()[0] == 3
     finally:
         con.close()
+
+
+def test_read_database_with_a_database_name(duckdb_connection):
+    # A DuckDB file's catalog is its stem, so "frame.main.movies" is a real three-part name.
+    frame = read_database(CONNECTION_NAME, table_name="movies", schema_name="main", database_name="frame")
+    settings = frame.flow_graph.get_node(frame.node_id).setting_input.database_settings
+    assert (settings.database_name, settings.schema_name, settings.table_name) == ("frame", "main", "movies")
+    assert frame.collect().height == 2
+
+
+def test_write_database_stores_the_database_name(duckdb_connection):
+    from flowfile_frame.database.frame_helpers import add_write_to_database
+
+    source = read_database(CONNECTION_NAME, table_name="movies")
+    node_id = add_write_to_database(
+        source.flow_graph,
+        source.node_id,
+        connection_name=CONNECTION_NAME,
+        table_name="copy",
+        schema_name="main",
+        database_name="frame",
+    )
+    settings = source.flow_graph.get_node(node_id).setting_input.database_write_settings
+    assert (settings.database_name, settings.schema_name, settings.table_name) == ("frame", "main", "copy")
+
+
+def test_a_database_name_without_a_schema_is_refused(duckdb_connection):
+    with pytest.raises(ValueError, match="Choose a schema when a database is set."):
+        read_database(CONNECTION_NAME, table_name="movies", database_name="frame").collect()

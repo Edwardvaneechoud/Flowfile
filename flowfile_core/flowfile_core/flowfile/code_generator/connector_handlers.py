@@ -136,6 +136,8 @@ class ConnectorHandlersMixin(ConverterMixinBase):
             for line in query.split("\n"):
                 self._add_code(f"        {line}")
             self._add_code('    """,')
+            if db_settings.database_name:
+                self._add_code(f"    database_name={self._py_str(db_settings.database_name)},")
             self._add_code(f"){suffix}")
         else:
             self._add_code(f"{var_name} = {self.flowfile_alias}.read_database(")
@@ -144,6 +146,8 @@ class ConnectorHandlersMixin(ConverterMixinBase):
                 self._add_code(f"    table_name={self._py_str(db_settings.table_name)},")
             if db_settings.schema_name:
                 self._add_code(f"    schema_name={self._py_str(db_settings.schema_name)},")
+            if db_settings.database_name:
+                self._add_code(f"    database_name={self._py_str(db_settings.database_name)},")
             self._add_code(f"){suffix}")
 
         self._add_code("")
@@ -180,6 +184,8 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code(f"    {self._py_str(db_settings.table_name)},")
         if db_settings.schema_name:
             self._add_code(f"    schema_name={self._py_str(db_settings.schema_name)},")
+        if db_settings.database_name:
+            self._add_code(f"    database_name={self._py_str(db_settings.database_name)},")
         if db_settings.if_exists:
             self._add_code(f"    if_exists={self._py_str(db_settings.if_exists)},")
         self._add_code(")")

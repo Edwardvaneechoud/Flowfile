@@ -32,6 +32,9 @@ EXEMPT_ROUTES = {
     ("POST", "/notebook/session/node_result"): "kernel callback; a user is refused first, the flow is the kernel's",
     ("POST", "/notebook/session/node_run"): "kernel callback; a user is refused first, the flow is the kernel's",
     ("POST", "/notebook/session/lookup"): "kernel callback; a user is refused first, the flow is the kernel's",
+    ("POST", "/db_connection_lib"): "oauth_flow_id names a Snowflake sign-in, claimed only by its owner",
+    ("PUT", "/db_connection_lib"): "oauth_flow_id names a Snowflake sign-in, claimed only by its owner",
+    ("GET", "/snowflake/oauth/status/{flow_id}"): "a Snowflake sign-in id, answered only to its owner",
 }
 EXEMPT_PREFIXES = {
     "/catalog/flows/{flow_id}": "a catalog registration id, authorized by the catalog AccessResolver",

@@ -1,3 +1,4 @@
+from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
@@ -5,13 +6,123 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CloudStorageConnection as DBCloudStorageConnection
 from flowfile_core.database.models import DatabaseConnection as DBConnectionModel
 from flowfile_core.database.models import Secret
+from flowfile_core.flowfile.database_connection_manager import snowflake_signin
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager import credential_sources
 from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, encrypt_secret, store_secret
+from shared.snowflake_auth import (
+    AUTH_ACCESS_TOKEN,
+    AUTH_KEY_PAIR,
+    AUTH_METHODS,
+    AUTH_OAUTH,
+    normalize_account,
+    normalize_private_key,
+)
 
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
+
+SNOWFLAKE = "snowflake"
+_DIALECT_ONLY_FIELDS = {"auth_method": None, "role": None, "warehouse": None}
+_MISSING_SECRET = {
+    AUTH_ACCESS_TOKEN: "Paste a Snowflake access token.",
+    AUTH_KEY_PAIR: "Choose your private key file (.p8).",
+    AUTH_OAUTH: "Sign in with Snowflake to save this connection.",
+}
+
+
+class DatabaseConnectionError(ValueError):
+    """A connection cannot be saved as given; the message says why in the user's terms."""
+
+
+def is_snowflake(database_type: str | None) -> bool:
+    return (database_type or "").lower() == SNOWFLAKE
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    value = (value or "").strip()
+    return value or None
+
+
+def prepare_snowflake_connection(
+    connection: FullDatabaseConnection,
+    *,
+    user_id: int,
+    private_key_passphrase: str | None = None,
+    oauth_flow_id: str | None = None,
+    stored: DBConnectionModel | None = None,
+    allow_blank_secret: bool = False,
+) -> FullDatabaseConnection:
+    """The Snowflake connection as it is stored: normalised account, one secret in ``password``, checked combination.
+
+    ``host`` may be the account as typed (identifier, hostname or Snowsight link) and becomes the hostname;
+    ``port`` is dropped (TLS on 443 always). ``password`` is the access token, the private key file's text (stored
+    as unencrypted PKCS8 DER in base64, opened with ``private_key_passphrase``, which is not kept) or, for a browser
+    sign-in, empty with ``oauth_flow_id``: the sign-in is claimed and its refresh token and username are taken.
+    A blank secret means "keep the stored one" and is allowed only for an existing connection (``stored``) whose
+    method is unchanged, and for a browser sign-in only while the account and role are unchanged too.
+    ``allow_blank_secret`` skips that check (a project import whose secret could not be resolved): the connection is
+    stored without a credential and fails at use with the dialect's "no credential saved" message.
+
+    Raises ``SnowflakeAuthError`` or ``DatabaseConnectionError`` (both ``ValueError``) with the reason. The sign-in
+    is claimed last, so a connection refused for another reason leaves it claimable.
+    """
+    host = normalize_account(connection.host or "")
+    method = connection.auth_method
+    if method not in AUTH_METHODS:
+        raise DatabaseConnectionError("Choose how to sign in to Snowflake: browser sign-in, access token or key-pair.")
+    role = _blank_to_none(connection.role)
+    username = (connection.username or "").strip()
+    secret = connection.password.get_secret_value().strip()
+    if method != AUTH_OAUTH and not username:
+        raise DatabaseConnectionError("Enter your Snowflake username.")
+    if method == AUTH_OAUTH and oauth_flow_id:
+        sign_in = snowflake_signin.claim(oauth_flow_id, user_id=user_id, host=host, role=role)
+        secret = sign_in.refresh_token or ""
+        username = sign_in.username or username
+    elif secret:
+        if method == AUTH_KEY_PAIR:
+            secret = normalize_private_key(secret, private_key_passphrase)
+    elif not allow_blank_secret:
+        _require_kept_secret(stored, method, host, role)
+    return connection.model_copy(
+        update={
+            "database_type": SNOWFLAKE,
+            "host": host,
+            "port": None,
+            "username": username,
+            "password": SecretStr(secret),
+            "database": _blank_to_none(connection.database),
+            "ssl_enabled": False,
+            "url": None,
+            "auth_method": method,
+            "role": role,
+            "warehouse": _blank_to_none(connection.warehouse),
+        }
+    )
+
+
+def snowflake_unavailable_message() -> str | None:
+    """Why Snowflake connections cannot be used in this install (its driver is an optional extra), or None."""
+    from shared.db_dialects import get_dialect
+
+    dialect = get_dialect(SNOWFLAKE)
+    if dialect.is_available():
+        return None
+    return f"The Snowflake driver is not installed. Install it with: {dialect.install_hint}, then restart Flowfile."
+
+
+def _require_kept_secret(stored: DBConnectionModel | None, method: str, host: str, role: str | None) -> None:
+    """Refuse a blank Snowflake secret unless the stored one still applies to the connection as edited."""
+    if stored is None or stored.password_id is None or not is_snowflake(stored.database_type):
+        raise DatabaseConnectionError(_MISSING_SECRET[method])
+    if stored.auth_method != method:
+        raise DatabaseConnectionError(f"You changed how this connection signs in. {_MISSING_SECRET[method]}")
+    if method == AUTH_OAUTH and (stored.host != host or (stored.role or None) != role):
+        raise DatabaseConnectionError(
+            "The account or role changed, so the saved sign-in no longer applies. Sign in with Snowflake again."
+        )
 
 
 def _project_sync_connection(kind: str, name: str, user_id: int, deleted: bool = False) -> None:
@@ -21,9 +132,21 @@ def _project_sync_connection(kind: str, name: str, user_id: int, deleted: bool =
     project_sync.connection_changed(kind=kind, connection_name=name, user_id=user_id, deleted=deleted)
 
 
-def store_database_connection(db: Session, connection: FullDatabaseConnection, user_id: int) -> DBConnectionModel:
+def store_database_connection(
+    db: Session,
+    connection: FullDatabaseConnection,
+    user_id: int,
+    *,
+    private_key_passphrase: str | None = None,
+    oauth_flow_id: str | None = None,
+    allow_blank_secret: bool = False,
+) -> DBConnectionModel:
     """
     Store a database connection in the database.
+
+    A Snowflake connection goes through ``prepare_snowflake_connection`` first (``private_key_passphrase`` and
+    ``oauth_flow_id`` are its write-only inputs, ``allow_blank_secret`` its project-import escape); every other dialect
+    stores no ``auth_method``/``role``/``warehouse``.
     """
     # Own-only check: a granted connection with the same name must not block creation
     # (an own connection shadows a shared one, mirroring secrets).
@@ -33,6 +156,16 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
             f"Database connection with name '{connection.connection_name}' already exists for user {user_id}."
             f" Please use a unique connection name or delete the existing connection first."
         )
+    if is_snowflake(connection.database_type):
+        connection = prepare_snowflake_connection(
+            connection,
+            user_id=user_id,
+            private_key_passphrase=private_key_passphrase,
+            oauth_flow_id=oauth_flow_id,
+            allow_blank_secret=allow_blank_secret,
+        )
+    else:
+        connection = connection.model_copy(update=_DIALECT_ONLY_FIELDS)
 
     password_id = store_secret(db, SecretInput(name=connection.connection_name, value=connection.password), user_id).id
 
@@ -46,6 +179,9 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
         password_id=password_id,
         ssl_enabled=connection.ssl_enabled,
         user_id=user_id,
+        auth_method=connection.auth_method,
+        role=connection.role,
+        warehouse=connection.warehouse,
     )
 
     db.add(db_connection)
@@ -56,16 +192,35 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
     return db_connection
 
 
-def update_database_connection(db: Session, connection: FullDatabaseConnection, user_id: int) -> DBConnectionModel:
+def update_database_connection(
+    db: Session,
+    connection: FullDatabaseConnection,
+    user_id: int,
+    *,
+    private_key_passphrase: str | None = None,
+    oauth_flow_id: str | None = None,
+    allow_blank_secret: bool = False,
+) -> DBConnectionModel:
     """
     Update an existing database connection. If password is provided (non-empty), update it;
-    otherwise keep the existing password.
+    otherwise keep the existing password (for Snowflake only as ``prepare_snowflake_connection`` allows).
     """
     # Own-only: routes authorize manage-grantees and then pass the OWNER's user_id,
     # so the password below is always re-encrypted under the owner's key.
     db_connection = _get_own_database_connection(db, connection.connection_name, user_id)
     if db_connection is None:
         raise ValueError(f"Database connection with name '{connection.connection_name}' not found for user {user_id}.")
+    if is_snowflake(connection.database_type):
+        connection = prepare_snowflake_connection(
+            connection,
+            user_id=user_id,
+            private_key_passphrase=private_key_passphrase,
+            oauth_flow_id=oauth_flow_id,
+            stored=db_connection,
+            allow_blank_secret=allow_blank_secret,
+        )
+    else:
+        connection = connection.model_copy(update=_DIALECT_ONLY_FIELDS)
 
     # Update non-secret fields
     db_connection.host = connection.host
@@ -74,6 +229,9 @@ def update_database_connection(db: Session, connection: FullDatabaseConnection, 
     db_connection.database_type = connection.database_type
     db_connection.username = connection.username
     db_connection.ssl_enabled = connection.ssl_enabled
+    db_connection.auth_method = connection.auth_method
+    db_connection.role = connection.role
+    db_connection.warehouse = connection.warehouse
 
     password_value = connection.password.get_secret_value()
     if password_value:
@@ -172,6 +330,9 @@ def get_database_connection_schema(db: Session, connection_name: str, user_id: i
             username=db_connection.username,
             password=password_secret.encrypted_value,
             ssl_enabled=db_connection.ssl_enabled,
+            auth_method=db_connection.auth_method,
+            role=db_connection.role,
+            warehouse=db_connection.warehouse,
         )
 
     return None
@@ -239,6 +400,9 @@ def database_connection_interface_from_db_connection(
         port=db_connection.port,
         database=db_connection.database,
         ssl_enabled=db_connection.ssl_enabled,
+        auth_method=db_connection.auth_method,
+        role=db_connection.role,
+        warehouse=db_connection.warehouse,
         id=db_connection.id,
         access=access,
     )
