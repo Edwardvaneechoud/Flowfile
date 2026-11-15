@@ -1,5 +1,10 @@
 import { ElMessage } from "element-plus";
-import { createRouter, createWebHashHistory, RouteRecordRaw } from "vue-router";
+import {
+  createRouter,
+  createWebHashHistory,
+  RouteLocationNormalized,
+  RouteRecordRaw,
+} from "vue-router";
 import AppLayout from "../layouts/AppLayout.vue";
 import authService from "../services/auth.service";
 import setupService from "../services/setup.service";
@@ -227,6 +232,10 @@ router.onError((error, to) => {
 let setupChecked = false;
 let setupRequired = false;
 
+/** What brings a sign-in back to `to`; nothing for the app's plain entry, so a plain visit signs in as before. */
+const returnQuery = (to: RouteLocationNormalized) =>
+  to.name === "designer" && Object.keys(to.query).length === 0 ? {} : { redirect: to.fullPath };
+
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false);
@@ -288,10 +297,15 @@ router.beforeEach(async (to, _from, next) => {
     if (authService.isAuthenticated()) {
       next();
     } else {
-      next({ name: "login" });
+      next({ name: "login", query: returnQuery(to) });
     }
   } else {
-    if (to.name === "login" && (authService.isInDesktopMode() || authService.isAuthenticated())) {
+    // a signed-in tab still starts a sign-in through the hub, which may sign in someone else
+    const hubSignIn = to.query.hub_signin === "1";
+    if (
+      to.name === "login" &&
+      (authService.isInDesktopMode() || (authService.isAuthenticated() && !hubSignIn))
+    ) {
       next({ name: "home" });
     } else {
       next();

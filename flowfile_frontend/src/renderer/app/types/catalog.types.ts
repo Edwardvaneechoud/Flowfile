@@ -228,6 +228,8 @@ export interface FlowRunDetail extends FlowRun {
   node_results_json: string | null;
   // The executor's log route for a run whose log is kept elsewhere, when core can name it.
   log_url?: string | null;
+  // The run's page in the executor's editor, which a person opens to read that log; absent from an older core.
+  log_page_url?: string | null;
 }
 
 // Global Artifact
@@ -467,6 +469,17 @@ export interface CatalogTableKeyColumnRequest {
 export interface CatalogTableKeyColumnResponse {
   table: CatalogTable;
   column_name: string;
+  new_version: number | null;
+}
+
+export interface CatalogTableRestoreRequest {
+  version: number;
+  expected_version?: number | null;
+}
+
+export interface CatalogTableRestoreResponse {
+  table: CatalogTable;
+  restored_version: number;
   new_version: number | null;
 }
 

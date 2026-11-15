@@ -894,6 +894,37 @@ def trigger_add_key_column(
     return response.json()
 
 
+def trigger_restore_version(
+    table_name: str,
+    table_id: int,
+    version: int,
+    expected_version: int | None = None,
+    commit_metadata: dict[str, str] | None = None,
+    storage: dict | None = None,
+    *,
+    worker_url: str,
+) -> dict:
+    """Ask the worker to restore a Delta catalog table to an earlier version."""
+    payload = {
+        "table_path": table_name,
+        "version": version,
+        "expected_version": expected_version,
+        "commit_metadata": commit_metadata,
+    }
+    if storage is not None:
+        payload["storage"] = storage
+    try:
+        response = _worker_session.post("/catalog/restore_version", worker_url=worker_url, json=payload, timeout=600)
+    except (requests.RequestException, ComputeError) as exc:
+        from flowfile_core.catalog.exceptions import WorkerUnavailableError
+
+        raise WorkerUnavailableError(f"worker unavailable while restoring a table version: {exc}") from exc
+    _raise_for_edit_response(response, table_id)
+    if not response.ok:
+        raise RuntimeError(f"Worker restore_version failed: {response.text}")
+    return response.json()
+
+
 def get_results(file_ref: str, *, worker_url: str) -> Status | None:
     f = _worker_session.get(f"/status/{file_ref}", worker_url=worker_url, timeout=_WORKER_TIMEOUT)
     if f.status_code == 200:

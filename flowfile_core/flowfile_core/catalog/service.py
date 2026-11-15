@@ -108,6 +108,7 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableMaterializeResult,
     CatalogTableOut,
     CatalogTablePreview,
+    CatalogTableRestoreResponse,
     CdcCursorCommitRequest,
     CdcCursorOut,
     CdcStatusOut,
@@ -1359,6 +1360,25 @@ class CatalogService:
         return CatalogTableKeyColumnResponse(
             table=self._reloaded_table_out(table_id, user_id),
             column_name=column_name,
+            new_version=result.get("new_version"),
+        )
+
+    def restore_table_version(
+        self,
+        table_id: int,
+        version: int,
+        expected_version: int | None = None,
+        restored_by: str | None = None,
+        user_id: int | None = None,
+    ) -> CatalogTableRestoreResponse:
+        """Restore a table to an earlier Delta version (manage-gated, like overwrite)."""
+        self._require_manage("catalog_table", table_id)
+        _, result = self._tables.restore_table_version(
+            table_id, version, expected_version=expected_version, restored_by=restored_by
+        )
+        return CatalogTableRestoreResponse(
+            table=self._reloaded_table_out(table_id, user_id),
+            restored_version=result.get("restored_version", version),
             new_version=result.get("new_version"),
         )
 

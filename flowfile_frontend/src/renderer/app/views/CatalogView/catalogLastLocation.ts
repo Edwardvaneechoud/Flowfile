@@ -4,19 +4,16 @@
 
 import { ref } from "vue";
 
+import { resolveStorage, type StorageLike } from "./browserStorage";
 import { CATALOG_TAB_KEYS } from "./catalogTabs";
 
 export const LAST_LOCATION_KEY = "flowfile.catalog.lastLocation.v1";
+export const LAST_BY_TAB_KEY = "flowfile.catalog.lastLocationByTab.v1";
 
 export type CatalogLocation = Record<string, string>;
 
-export interface StorageLike {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-}
-
 const ID_KEYS = ["flowId", "runId", "artifactId", "tableId", "scheduleId", "namespaceId"] as const;
+export type CatalogSelectionKey = (typeof ID_KEYS)[number];
 
 // Ids are opaque and server-authorized; the length cap only stops a hand-edited entry
 // reaching the API as 1e20.
@@ -25,15 +22,6 @@ const ID_PATTERN = /^\d{1,9}$/;
 const ENUM_KEYS: Record<string, readonly string[]> = {
   kind: ["charts", "dashboards"],
   apiView: ["endpoints", "consumers"],
-};
-
-const resolveStorage = (storage?: StorageLike | null): StorageLike | null => {
-  if (storage) return storage;
-  try {
-    return (globalThis as { sessionStorage?: StorageLike }).sessionStorage ?? null;
-  } catch {
-    return null;
-  }
 };
 
 /**
@@ -67,7 +55,7 @@ export const sanitizeCatalogQuery = (raw: unknown): CatalogLocation | null => {
 };
 
 export const loadLastCatalogLocation = (storage?: StorageLike | null): CatalogLocation | null => {
-  const store = resolveStorage(storage);
+  const store = resolveStorage(storage, "sessionStorage");
   if (!store) return null;
 
   let raw: string | null;
@@ -98,7 +86,7 @@ export const persistLastCatalogLocation = (
   location: CatalogLocation,
   storage?: StorageLike | null,
 ): void => {
-  const store = resolveStorage(storage);
+  const store = resolveStorage(storage, "sessionStorage");
   if (!store) return;
 
   try {
@@ -114,12 +102,92 @@ export const isSameLocation = (a: CatalogLocation | null, b: CatalogLocation): b
   return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
 };
 
-// Module singleton so the sidebar's `items` computed re-resolves when this changes.
+export type CatalogLocationsByTab = Record<string, CatalogLocation>;
+
+/** Where each tab was left, re-validated like the single location; an entry filed under another tab is dropped. */
+export const loadCatalogLocationsByTab = (storage?: StorageLike | null): CatalogLocationsByTab => {
+  const store = resolveStorage(storage, "sessionStorage");
+  if (!store) return {};
+
+  let parsed: unknown;
+  try {
+    const raw = store.getItem(LAST_BY_TAB_KEY);
+    if (raw === null) return {};
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+
+  const byTab: CatalogLocationsByTab = {};
+  for (const [tab, raw] of Object.entries(parsed as Record<string, unknown>)) {
+    const location = sanitizeCatalogQuery(raw);
+    if (location && location.tab === tab) byTab[tab] = location;
+  }
+  return byTab;
+};
+
+export const persistCatalogLocationsByTab = (
+  byTab: CatalogLocationsByTab,
+  storage?: StorageLike | null,
+): void => {
+  const store = resolveStorage(storage, "sessionStorage");
+  if (!store) return;
+
+  try {
+    store.setItem(LAST_BY_TAB_KEY, JSON.stringify(byTab));
+  } catch {
+    // QuotaExceededError or storage disabled — the in-memory ref still works this session.
+  }
+};
+
+/**
+ * Where a switch to `tab` lands: where that tab was left (its open table, flow, run…), or its
+ * root when nothing is remembered or `tab` is the tab already shown, so clicking the active tab
+ * still closes what is open on it.
+ */
+export const catalogTabLocation = (
+  tab: string,
+  currentTab: string | null | undefined,
+  byTab: CatalogLocationsByTab,
+): CatalogLocation => (tab === currentTab ? { tab } : (byTab[tab] ?? { tab }));
+
+// Module singletons so the sidebar's `items` computed re-resolves when these change.
 export const lastCatalogQuery = ref<CatalogLocation | null>(loadLastCatalogLocation());
+export const lastCatalogQueryByTab = ref<CatalogLocationsByTab>(loadCatalogLocationsByTab());
+
+/** A location that names the given item, back at its tab's root; any other location unchanged. */
+export const withoutSelection = (
+  location: CatalogLocation,
+  key: CatalogSelectionKey,
+  id: number,
+): CatalogLocation => (location[key] === String(id) ? { tab: location.tab } : location);
+
+/** Forgets a deleted item, so no tab or the rail's catalog icon reopens it. */
+export const forgetCatalogSelection = (key: CatalogSelectionKey, id: number): void => {
+  const byTab = lastCatalogQueryByTab.value;
+  const next = Object.fromEntries(
+    Object.entries(byTab).map(([tab, location]) => [tab, withoutSelection(location, key, id)]),
+  );
+  if (Object.keys(byTab).some((tab) => next[tab] !== byTab[tab])) {
+    lastCatalogQueryByTab.value = next;
+    persistCatalogLocationsByTab(next);
+  }
+  const last = lastCatalogQuery.value;
+  if (last && withoutSelection(last, key, id) !== last) {
+    lastCatalogQuery.value = { tab: last.tab };
+    persistLastCatalogLocation(lastCatalogQuery.value);
+  }
+};
 
 export const rememberCatalogLocation = (query: unknown): void => {
   const location = sanitizeCatalogQuery(query);
-  if (!location || isSameLocation(lastCatalogQuery.value, location)) return;
+  if (!location) return;
+  if (!isSameLocation(lastCatalogQueryByTab.value[location.tab] ?? null, location)) {
+    lastCatalogQueryByTab.value = { ...lastCatalogQueryByTab.value, [location.tab]: location };
+    persistCatalogLocationsByTab(lastCatalogQueryByTab.value);
+  }
+  if (isSameLocation(lastCatalogQuery.value, location)) return;
   lastCatalogQuery.value = location;
   persistLastCatalogLocation(location);
 };

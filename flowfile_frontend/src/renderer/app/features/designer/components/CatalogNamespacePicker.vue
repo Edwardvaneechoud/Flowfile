@@ -16,7 +16,6 @@
         :selected-id="selectedId"
         :initially-expanded="true"
         :writable-only="writableOnly"
-        :catalogs-selectable="catalogsSelectable"
         @select="handleSelect"
       />
     </div>
@@ -48,8 +47,6 @@ const props = defineProps<{
   writableOnly?: boolean;
   // The connected hub's namespaces instead of this machine's, each with the negative of its hub id.
   hub?: boolean;
-  // Let a catalog (a top-level row) be picked as well as its schemas, as a publish to the hub allows.
-  catalogsSelectable?: boolean;
 }>();
 
 const emit = defineEmits<{

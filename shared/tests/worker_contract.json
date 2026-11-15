@@ -54,6 +54,7 @@
     "route POST /catalog/delta_version_preview": "8bd22b16b3d066a82c651be38dc3e88c3e15e83811ca83d0e0e84257d3d4c3c0",
     "route POST /catalog/materialize": "6955e54949e1da74937c66c1d69863ad5da9b9c511753b890ae4be7a8bf80b55",
     "route POST /catalog/optimize": "6d3701c9a5ce68acc05d5f305203f16462e266bc0e7a43c6aa1a056706d2e3ad",
+    "route POST /catalog/restore_version": "6ef85f99604f6100a3d006abd9eca07619e45129dfed34d41de10e1a1bc196df",
     "route POST /catalog/sql_query": "ccb9087912fb8851e36e744c5c5bf80a3b9748e8cf3756a751dc100054d41c81",
     "route POST /catalog/table_metadata": "950614f8bfd0e42daebfe8fcaadb527a73b01033597f705b7d65cf5792340338",
     "route POST /catalog/vacuum": "8627085bceee9ed65777b87746ffc9bab503cd9b92866b37c0a9080c428f37c1",

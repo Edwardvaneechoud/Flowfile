@@ -177,6 +177,7 @@ class FlowRunService:
             log_ref=run.log_ref,
             flow_version=run.flow_version,
             log_url=run_records.log_location(run.log_ref) if run.log_ref else None,
+            log_page_url=run_records.log_page(run.log_ref) if run.log_ref else None,
         )
 
     def get_run(self, run_id: int) -> FlowRun:

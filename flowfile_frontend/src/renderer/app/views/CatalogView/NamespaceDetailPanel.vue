@@ -122,6 +122,7 @@ import { useResourceSharing } from "../../composables/useResourceSharing";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import EditCatalogStorageModal from "./EditCatalogStorageModal.vue";
 import { HUB_MANAGED_NOTE, isHubRow } from "./hubRows";
+import { forgetCatalogSelection } from "./catalogLastLocation";
 import { deleteBlockedReason, storageLockedReason } from "./catalogStorageEdit";
 import { fetchCloudStorageConnectionsInterfaces } from "../CloudConnectionView/api";
 import {
@@ -167,6 +168,7 @@ async function deleteCatalog() {
   try {
     for (const schema of catalog.children) await CatalogApi.deleteNamespace(schema.id);
     await CatalogApi.deleteNamespace(catalog.id);
+    forgetCatalogSelection("namespaceId", catalog.id);
     catalogStore.clearNamespaceSelection();
     ElMessage.success(`Deleted ${catalog.name}`);
     emit("close");

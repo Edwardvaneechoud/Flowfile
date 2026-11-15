@@ -101,13 +101,13 @@ if sys.argv[1] == "populated":
                 ),
                 {"r": reg, "o": owner, "i": interval},
             )
-    command.upgrade(cfg, "041")
+    command.upgrade(cfg, "042")
     with engine.connect() as conn:
         uuids = conn.execute(text("SELECT schedule_uuid FROM flow_schedules")).scalars().all()
     assert len(uuids) == 2 and all(uuids) and len(set(uuids)) == 2
     [column] = [c for c in inspect(engine).get_columns("flow_schedules") if c["name"] == "schedule_uuid"]
     assert column["nullable"] is False
-    command.downgrade(cfg, "040")
+    command.downgrade(cfg, "041")
     assert "schedule_uuid" not in {c["name"] for c in inspect(engine).get_columns("flow_schedules")}
     command.downgrade(cfg, "039")
     with engine.connect() as conn:

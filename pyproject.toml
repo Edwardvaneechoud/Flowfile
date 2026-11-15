@@ -97,10 +97,13 @@ psutil = ">=5.9.0"
 
 # Optional: reading Alteryx .yxdb data files (`flowfile convert yxdb`). Pure Python, MIT.
 yxdb = {version = ">=1.1.1", optional = true}
+# Optional: the Snowflake dialect, bundled in the desktop app and Docker images. <5: 5.x needs Python 3.11+ and protobuf<7.
+snowflake-connector-python = {version = ">=4.7.5,<5", optional = true}
 
 
 [tool.poetry.extras]
 yxdb = ["yxdb"]
+snowflake = ["snowflake-connector-python"]
 # Deprecated alias for the `yxdb` extra; kept so existing installs keep working.
 alteryx = ["yxdb"]
 
@@ -157,6 +160,7 @@ griffe = ">=1.0,<2"
 griffe-pydantic = ">=1.1.6,<1.3"
 ruff = "^0.8.0"
 mkdocs-redirects = "^1.2.3"
+snowflake-connector-python = ">=4.7.5,<5"
 
 [build-system]
 requires = ["poetry-core"]
@@ -179,6 +183,7 @@ markers = [
     "lsp: Tests for the notebook LSP (Jedi) code-intelligence surface",
     "slow: Tests with a heavy workload or long runtime (deselect with -m 'not slow')",
     "cloud_e2e: Real core + worker processes driven over HTTP against MinIO (Docker)",
+    "snowflake: Tests against a live Snowflake account (opt-in via FLOWFILE_TEST_SNOWFLAKE_* env vars)",
 ]
 
 [tool.coverage.run]

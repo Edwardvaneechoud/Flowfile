@@ -858,6 +858,61 @@ def add_delta_row_id_column(
     }
 
 
+def restore_delta_version(
+    table_path: str,
+    version: int,
+    expected_version: int | None = None,
+    storage_options: dict[str, str] | None = None,
+    commit_metadata: dict[str, str] | None = None,
+) -> dict:
+    """Restore a Delta table to an earlier *version* with one ``RESTORE`` commit.
+
+    The commit points the table back at that version's files and metadata (schema and table
+    properties included), so nothing is copied and the versions after it stay in the history.
+    A version whose files a vacuum removed, or whose log entry was cleaned up, cannot be restored.
+    """
+    import polars as pl_
+    from deltalake import CommitProperties, DeltaTable
+
+    dt = _open_delta_or_none(table_path, storage_options)
+    if dt is None:
+        raise DeltaEditError(f"No Delta table found at {table_path}")
+    current_version = dt.version()
+    if expected_version is not None and current_version != expected_version:
+        raise DeltaEditStaleError(expected=expected_version, current=current_version)
+    if version < 0 or version > current_version:
+        raise DeltaEditError(f"Version {version} does not exist; the table is at version {current_version}")
+    if version == current_version:
+        raise DeltaEditError(f"Version {version} is already the current version")
+    oldest = min(entry["version"] for entry in dt.history())
+    if version < oldest:
+        raise DeltaEditError(
+            f"Version {version} can no longer be restored: the table's log only goes back to version {oldest}"
+        )
+
+    commit_properties = CommitProperties(custom_metadata=commit_metadata) if commit_metadata else None
+    try:
+        dt.restore(version, commit_properties=commit_properties)
+    except Exception as e:
+        if "missing file" in str(e).lower():
+            raise DeltaEditError(
+                f"Version {version} can no longer be restored: its data files were removed by a vacuum"
+            ) from e
+        raise
+
+    refreshed = pl_.scan_delta(table_path, storage_options=storage_options)
+    schema = dict(refreshed.collect_schema())
+    row_count = int(refreshed.select(pl_.len()).collect().item())
+    return {
+        "restored_version": version,
+        "new_version": DeltaTable(table_path, without_files=True, storage_options=storage_options).version(),
+        "schema": [{"name": name, "dtype": str(dtype)} for name, dtype in schema.items()],
+        "row_count": row_count,
+        "column_count": len(schema),
+        "size_bytes": get_delta_size_bytes(table_path, storage_options=storage_options),
+    }
+
+
 # SCD2 (slowly changing dimension, type 2)
 
 SCD2_SK_ALGORITHM = "sha256-v1"

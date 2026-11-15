@@ -7,8 +7,8 @@ import replaced every schedule of a flow, losing its notification rules and run 
 The column is added nullable, every row is given a uuid, and it is then made ``NOT NULL`` as the models
 declare it, the way migration 026 did for ``viz_uuid`` and ``dashboard_uuid``.
 
-Revision ID: 041
-Revises: 040
+Revision ID: 042
+Revises: 041
 Create Date: 2026-11-12
 """
 
@@ -19,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision: str = "041"
-down_revision: str | None = "040"
+revision: str = "042"
+down_revision: str | None = "041"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

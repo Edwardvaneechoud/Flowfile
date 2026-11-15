@@ -7,12 +7,12 @@ describe("extractSaveErrorMessage", () => {
       response: {
         data: {
           detail:
-            "table_name: Invalid SQL identifier: 'tesst-2'. Only letters, numbers, and underscores are allowed.",
+            "table_name: Invalid SQL identifier: 'tesst-2'. Use letters, numbers, _ and $, or put the name in double quotes.",
         },
       },
     };
     expect(extractSaveErrorMessage(error)).toBe(
-      "table_name: Invalid SQL identifier: 'tesst-2'. Only letters, numbers, and underscores are allowed.",
+      "table_name: Invalid SQL identifier: 'tesst-2'. Use letters, numbers, _ and $, or put the name in double quotes.",
     );
   });
 

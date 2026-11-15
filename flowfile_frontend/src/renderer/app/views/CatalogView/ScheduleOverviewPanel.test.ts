@@ -95,4 +95,34 @@ describe("ScheduleOverviewPanel", () => {
     expect(text(bars()[0])).not.toContain(":");
     expect(host.querySelector(".scheduler-warning")).not.toBeNull();
   });
+
+  const pending = () => host.querySelector('[data-testid="schedules-pending"]');
+
+  it("holds the list's place instead of the empty state until the overview lands", async () => {
+    await mount({ schedules: [], schedulers: [], ownOffered: true });
+
+    expect(pending()).not.toBeNull();
+    expect(host.querySelector(".scheduler-pending")).not.toBeNull();
+    expect(text(host)).not.toContain("No schedules configured");
+    expect(total()).toBe("");
+  });
+
+  it("shows the empty state once the overview loaded no schedules", async () => {
+    useCatalogStore(pinia).overviewLoadedAt = Date.now();
+    await mount({ schedules: [], schedulers: [{ active: true }], ownOffered: true });
+
+    expect(pending()).toBeNull();
+    expect(host.querySelector(".scheduler-pending")).toBeNull();
+    expect(text(host)).toContain("No schedules configured");
+    expect(total()).toBe("0");
+  });
+
+  it("offers a retry instead of a placeholder when the first overview failed", async () => {
+    useCatalogStore(pinia).overviewError = "boom";
+    await mount({ schedules: [], schedulers: [], ownOffered: true });
+
+    expect(pending()).toBeNull();
+    expect(host.querySelector(".scheduler-pending")).toBeNull();
+    expect(text(host)).toContain("Couldn't load schedules: boom");
+  });
 });

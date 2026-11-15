@@ -32,6 +32,9 @@ const HUB_SIGN_IN_FAILED =
 // This tab's one-time state for the sign-in through the hub it started.
 const HUB_SIGN_IN_STATE = "hub_signin_state";
 
+// The page in this app that sign-in returns to, kept beside its state.
+const HUB_SIGN_IN_RETURN = "hub_signin_return";
+
 // Set on a session that came through the hub, the only kind whose sign-out the server is told of.
 const HUB_SESSION = "auth_hub_session";
 
@@ -146,42 +149,49 @@ class AuthService {
   /**
    * Take a hub's one-time sign-in token, `#signin=<token>&state=<state>`, out of the URL and keep it in memory only
    * when its state is the one this tab made (`hubSignInUrl`); any other is dropped, so a link carrying someone's
-   * token signs nobody in. Runs at construction, before the router's hash history could keep the fragment.
+   * token signs nobody in; one it keeps leaves the tab at the route the sign-in started from. Runs at construction,
+   * before the router's hash history could keep the fragment.
    */
   private takeTokenFromFragment(): void {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const signInToken = fragment.get("signin");
     if (signInToken === null) return;
 
-    const { pathname, search } = window.location;
-    window.history.replaceState(window.history.state, "", pathname + search);
     const expected = sessionStorage.getItem(HUB_SIGN_IN_STATE);
+    const returnTo = sessionStorage.getItem(HUB_SIGN_IN_RETURN);
     sessionStorage.removeItem(HUB_SIGN_IN_STATE);
-    if (signInToken && expected && fragment.get("state") === expected) {
-      this.hubSignInToken = signInToken;
-    }
+    sessionStorage.removeItem(HUB_SIGN_IN_RETURN);
+    const ours = !!signInToken && !!expected && fragment.get("state") === expected;
+    const { pathname, search } = window.location;
+    const route = ours && returnTo ? `#${returnTo}` : "";
+    window.history.replaceState(window.history.state, "", pathname + search + route);
+    if (ours) this.hubSignInToken = signInToken;
   }
 
   /**
    * The hub's Open page for this server, `openUrl`, with a new one-time `state` that
    * this tab keeps in sessionStorage; the hub carries it back beside the sign-in token.
+   * `returnTo`, a route in this app, is where the tab opens once that token is back.
    */
-  hubSignInUrl(openUrl: string): string {
+  hubSignInUrl(openUrl: string, returnTo?: string): string {
     const state = newSignInState();
     sessionStorage.setItem(HUB_SIGN_IN_STATE, state);
+    if (returnTo) sessionStorage.setItem(HUB_SIGN_IN_RETURN, returnTo);
+    else sessionStorage.removeItem(HUB_SIGN_IN_RETURN);
     const url = new URL(openUrl, window.location.href);
     url.searchParams.set("state", state);
     return url.toString();
   }
 
   /** Start a sign-in through the hub: send this tab to the hub's Open page, replacing the entry so Back skips it. */
-  startHubSignIn(openUrl: string): void {
-    window.location.replace(this.hubSignInUrl(openUrl));
+  startHubSignIn(openUrl: string, returnTo?: string): void {
+    window.location.replace(this.hubSignInUrl(openUrl, returnTo));
   }
 
   /**
    * Trade the hub's sign-in token for this server's session, marked as the hub's. Posted once on a client without
-   * the retrying interceptors, since the hub takes it only once; a refusal keeps the server's sentence.
+   * the retrying interceptors, since the hub takes it only once. A refusal keeps the server's sentence and the
+   * session this tab already had, so a link that starts a sign-in the server refuses signs nobody out.
    */
   private async signInThroughHub(signInToken: string): Promise<boolean> {
     try {
@@ -200,9 +210,8 @@ class AuthService {
       this.hubSignInError = null;
       return true;
     } catch (error) {
-      this.logout();
       this.hubSignInError = refusalSentence(error, HUB_SIGN_IN_FAILED);
-      return false;
+      return this.hasValidToken();
     }
   }
 
