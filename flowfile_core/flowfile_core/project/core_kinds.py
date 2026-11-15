@@ -8,6 +8,7 @@ import json
 
 import yaml
 
+from flowfile_core.catalog.constants import is_seeded_namespace
 from flowfile_core.project import importer, projection
 from flowfile_core.project.kinds import Entry, ExportContext, Kind, register
 from flowfile_core.project.normalize import dump_yaml
@@ -80,14 +81,19 @@ def _secret_entries(files: dict[str, str]) -> dict:
 
 
 def _namespace_entries(files: dict[str, str]) -> dict:
-    """A catalog without its ``schemas`` list and each schema, so a schema change is one row."""
+    """A catalog without its ``schemas`` list and each schema, so a schema change is one row. The namespaces the
+    catalog never deletes are ``kept``, so no plan lists one as removed."""
     out = {}
     for path, text in files.items():
         for catalog in (_load(text) or {}).get("namespaces") or []:
             name = catalog.get("catalog")
-            out[(name,)] = Entry(name, path, _canonical({k: v for k, v in catalog.items() if k != "schemas"}))
+            body = _canonical({k: v for k, v in catalog.items() if k != "schemas"})
+            out[(name,)] = Entry(name, path, body, kept=is_seeded_namespace(name))
             for schema in catalog.get("schemas") or []:
-                out[(name, schema.get("name"))] = Entry(_dotted(name, schema.get("name")), path, _canonical(schema))
+                child = schema.get("name")
+                out[(name, child)] = Entry(
+                    _dotted(name, child), path, _canonical(schema), kept=is_seeded_namespace(name, child)
+                )
     return out
 
 

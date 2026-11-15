@@ -41,11 +41,13 @@ class ExportContext:
 @dataclass(frozen=True)
 class Entry:
     """One object of a kind as a comparison sees it: its label in a summary, the file it lives in and the
-    canonical text it is compared by."""
+    canonical text it is compared by. ``kept`` marks an object the install never deletes, so a comparison
+    reports no removal for it."""
 
     label: str
     path: str
     text: str
+    kept: bool = False
 
 
 @dataclass(frozen=True)
@@ -247,7 +249,7 @@ def _file_entries(files: dict[str, str]) -> dict[str, Entry]:
 def compare(a: dict[str, str], b: dict[str, str], *, kinds=None, strict=False) -> list[Change]:
     """What turns tree ``a`` into tree ``b``, per kind and key: ``added`` (in ``b`` only), ``modified`` (in both,
     different text that the kind's ``same`` does not call the same object) and ``removed`` (in ``a`` only, reported
-    only for a kind with a ``delete_label``).
+    only for a kind with a ``delete_label`` and an entry that is not ``kept``).
 
     Kinds come in ``ordered()`` order, keys sorted within a kind; ``kinds`` restricts it to those names. A kind
     whose files do not parse (a version committed by hand) is compared per file instead, so status still answers;
@@ -271,7 +273,7 @@ def compare(a: dict[str, str], b: dict[str, str], *, kinds=None, strict=False) -
             if old is None:
                 changes.append(Change(kind.name, key, "added", new.label, new.path))
             elif new is None:
-                if kind.delete_label is not None:
+                if kind.delete_label is not None and not old.kept:
                     changes.append(Change(kind.name, key, "removed", old.label, old.path, kind.delete_label))
             elif old.text != new.text and not (kind.same is not None and kind.same(old.text, new.text)):
                 changes.append(Change(kind.name, key, "modified", new.label, new.path))

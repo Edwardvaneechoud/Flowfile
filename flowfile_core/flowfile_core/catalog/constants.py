@@ -49,3 +49,13 @@ SEEDED_SCHEMAS: tuple[SeededNamespace, ...] = (DEFAULT_SCHEMA, UNNAMED_FLOWS, LO
 SYSTEM_SCHEMA_NAMES: frozenset[str] = frozenset(
     {UNNAMED_FLOWS.name, LOCAL_FLOWS.name, PYTHON_EDITOR_FLOWS.name, KAFKA_SYNC.name}
 )
+
+
+def is_seeded_namespace(catalog: str | None, schema: str | None = None) -> bool:
+    """Whether the name is ``ROOT_CATALOG`` or one of the schemas the application keeps under it.
+
+    By name alone, so a project's files and the catalog's rows are judged by one rule: these are the
+    namespaces a delete refuses and a project plan never lists as removed."""
+    if catalog != ROOT_CATALOG.name:
+        return False
+    return schema is None or schema in {s.name for s in SEEDED_SCHEMAS} | SYSTEM_SCHEMA_NAMES

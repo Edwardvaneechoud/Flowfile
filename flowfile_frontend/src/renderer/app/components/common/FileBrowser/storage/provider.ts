@@ -40,4 +40,6 @@ export interface StorageProvider {
   parent(path: string): string;
   join(path: string, child: string): string;
   isRoot(path: string): boolean;
+  /** Local storage only: an object store has no empty folders. */
+  createDirectory?(parentPath: string, name: string): Promise<void>;
 }

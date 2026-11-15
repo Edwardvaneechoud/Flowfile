@@ -27,7 +27,7 @@ from flowfile_core import flow_file_handler
 from flowfile_core.auth import sharing
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.catalog.delta_utils import table_exists
-from flowfile_core.catalog.exceptions import NamespaceExistsError, NamespaceNotEmptyError
+from flowfile_core.catalog.exceptions import NamespaceExistsError, NamespaceNotEmptyError, SeededNamespaceError
 from flowfile_core.catalog.services import notebook_store
 from flowfile_core.catalog.services.tables import _is_managed_table_path
 from flowfile_core.catalog.validators import validate_schedule_create
@@ -1112,13 +1112,13 @@ def _delete_cloud_connection(ctx: kinds.ExportContext, keys: list) -> None:
 
 
 def _delete_namespaces(ctx: kinds.ExportContext, keys: list) -> None:
-    """Schemas before catalogs, public (seeded) ones never; a namespace still holding tables or flows stays."""
+    """Schemas before catalogs. A namespace still holding tables or flows stays, whoever owns them, and so does
+    one the catalog never deletes (``is_seeded_namespace``), which a plan does not list."""
     wanted = set(keys)
     rows = (
         ctx.db.query(CatalogNamespace)
         .filter(
             CatalogNamespace.owner_id == ctx.owner_id,
-            CatalogNamespace.is_public.is_(False),
             CatalogNamespace.name.in_({key[-1] for key in wanted}),
         )
         .all()
@@ -1135,6 +1135,8 @@ def _delete_namespaces(ctx: kinds.ExportContext, keys: list) -> None:
             service.delete_namespace(ns_id)
         except NamespaceNotEmptyError:
             logger.info("Project apply: namespace %s still has tables/flows; skipping", ns_id)
+        except SeededNamespaceError:
+            logger.info("Project apply: namespace %s is one the catalog keeps; skipping", ns_id)
 
 
 def _delete_flow(ctx: kinds.ExportContext, keys: list) -> None:

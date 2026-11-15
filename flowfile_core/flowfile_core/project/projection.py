@@ -383,9 +383,10 @@ def namespace_manifest_data(db: Session, owner_id: int) -> dict:
     (General + default/Unnamed Flows/Local Flows/...) and custom catalogs/schemas alike — as a
     nested ``catalog -> schemas`` structure so the hierarchy is visible and versioned.
 
-    ``is_public`` marks the seeder-managed system namespaces: the import path resolves those to
-    existing rows (never recreating them as private duplicates) and the prune path never deletes
-    them. Custom (non-public) namespaces are the ones import recreates and restore/reload prune."""
+    ``is_public`` marks a namespace every user sees (the seeded system ones, the demo catalog's): the
+    import path resolves one to an existing row, never recreating it as a private duplicate, and
+    creates a missing one public. A restore or reload removes an emptied namespace public or not,
+    except the built-in ones the catalog never deletes (``catalog.constants.is_seeded_namespace``)."""
     rows = db.query(CatalogNamespace).filter(CatalogNamespace.owner_id == owner_id).all()
     catalogs: dict[str, dict] = {}
     schemas: dict[str, list[dict]] = {}

@@ -503,7 +503,7 @@ def test_reload_prunes_emptied_custom_namespace(tmp_path):
             assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None
             assert db.query(CatalogNamespace).filter_by(name="DelSchema").first() is None
             assert db.query(CatalogNamespace).filter_by(name="DelCat", parent_id=None).first() is None
-            # Seeded public namespaces are never pruned.
+            # The built-in namespaces are never pruned.
             general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
             assert general is not None
             assert db.query(CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first() is not None

@@ -1302,3 +1302,58 @@ class TestH8_PruneGrantCleanup:
         finally:
             _cleanup_vizs(a_vuuid)
             project_sync.close_project(alice_id)
+
+
+class TestPublicNamespaceRemoval:
+    """An apply removes an emptied public namespace of its owner; another user's table in it keeps it."""
+
+    def test_another_users_table_keeps_a_public_namespace(self, users):
+        from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+        from flowfile_core.catalog.demo_seed import _ensure_namespace
+        from flowfile_core.project import importer, kinds, projection
+
+        alice_id, bob_id = users["alice"].id, users["bob"].id
+        catalog, schema = f"shared_{uuid4().hex[:8]}", f"shared_schema_{uuid4().hex[:8]}"
+
+        def rows() -> tuple[int, int]:
+            with get_db_context() as db:
+                namespaces = db.query(db_models.CatalogNamespace).filter(
+                    db_models.CatalogNamespace.name.in_([catalog, schema])
+                )
+                return namespaces.count(), db.query(db_models.CatalogTable).filter_by(owner_id=bob_id).count()
+
+        try:
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                service = CatalogService(repo)
+                catalog_id = _ensure_namespace(service, repo, db, catalog, None, alice_id, None).id
+                schema_id = _ensure_namespace(service, repo, db, schema, catalog_id, alice_id, None).id
+                db.add(
+                    db_models.CatalogTable(
+                        name="bobs_view",
+                        owner_id=bob_id,
+                        namespace_id=schema_id,
+                        storage_format="delta",
+                        table_type="virtual",
+                        sql_query="SELECT 1 AS id",
+                    )
+                )
+                db.commit()
+                held = {"namespaces.yaml": dump_yaml(projection.namespace_manifest_data(db, alice_id))}
+            target = {"namespaces.yaml": dump_yaml({"namespaces": []})}
+            removed = [c for c in kinds.compare(held, target) if c.change == "removed"]
+            assert {c.label for c in removed} == {catalog, f"{catalog}.{schema}"}
+
+            importer._delete_removed(alice_id, removed)
+            assert rows() == (2, 1), "a namespace holding another user's table was deleted"
+
+            with get_db_context() as db:
+                db.query(db_models.CatalogTable).filter_by(owner_id=bob_id).delete()
+                db.commit()
+            importer._delete_removed(alice_id, removed)
+            assert rows() == (0, 0), "an emptied public namespace was kept"
+        finally:
+            with get_db_context() as db:
+                db.query(db_models.CatalogTable).filter_by(owner_id=bob_id).delete()
+                db.commit()
+            _cleanup_namespaces(schema, catalog)

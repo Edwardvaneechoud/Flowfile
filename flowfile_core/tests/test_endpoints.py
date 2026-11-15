@@ -3693,6 +3693,47 @@ def test_directory_contents_invalid_directory():
     assert response.status_code == 404, "Non-existent directory should return 404"
 
 
+def test_create_directory_creates_the_folder(tmp_path):
+    response = client.post("/files/create_directory", json={"source_path": str(tmp_path), "dir_name": "exports"})
+    assert response.status_code == 200
+    assert response.json() is True
+    assert (tmp_path / "exports").is_dir()
+
+
+def test_create_directory_refuses_a_taken_name(tmp_path):
+    (tmp_path / "exports").mkdir()
+    response = client.post("/files/create_directory", json={"source_path": str(tmp_path), "dir_name": "exports"})
+    assert response.status_code == 409
+    assert "already exists" in response.json()["detail"]
+
+
+def test_create_directory_refuses_a_missing_parent(tmp_path):
+    response = client.post(
+        "/files/create_directory", json={"source_path": str(tmp_path / "missing"), "dir_name": "exports"}
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("name", ["a/b", "a\\b", ".", " "])
+def test_create_directory_refuses_a_name_that_is_not_one_folder(tmp_path, name):
+    (tmp_path / "a").mkdir()
+    response = client.post("/files/create_directory", json={"source_path": str(tmp_path), "dir_name": name})
+    assert response.status_code == 400
+    assert not (tmp_path / "a" / "b").exists()
+
+
+def test_create_directory_off_desktop_stays_in_the_user_data_directory(monkeypatch, tmp_path):
+    from flowfile_core.configs import settings
+
+    monkeypatch.setattr(settings, "is_electron_mode", lambda: False)
+    monkeypatch.setattr(storage, "_user_data_dir", tmp_path / "user")
+    (tmp_path / "user").mkdir()
+    monkeypatch.chdir(tmp_path)
+    response = client.post("/files/create_directory", json={"source_path": str(tmp_path), "dir_name": "outside"})
+    assert response.status_code == 403
+    assert not (tmp_path / "outside").exists()
+
+
 def test_explorer_without_a_sandbox_is_bounded_by_the_filesystem_roots(monkeypatch, tmp_path):
     """No sandbox means the desktop's whole machine, the filesystem roots, never an unchecked path."""
     from flowfile_core.fileExplorer import funcs
