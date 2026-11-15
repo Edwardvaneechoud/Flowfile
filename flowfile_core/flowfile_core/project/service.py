@@ -398,10 +398,8 @@ class ProjectSyncService:
         clean with no dangling unsaved state. Unsaved work is never silently lost: a dirty tree or a
         database that differs from the last version is 409'd unless ``force``, and on ``force`` both
         are committed into history first (``_guard_before_apply``). The target is checked before any of
-        that, and an import that fails rolls the database back and resets the folder to HEAD again. An
-        import that committed but left steps unfinished (``incomplete``) records no version: an export
-        now would leave out what those steps did not write, so the folder keeps the target's files for a
-        reload to finish.
+        that, and an import that fails rolls the database back and resets the folder to HEAD again. One left
+        ``incomplete`` records no version, so the folder keeps the target's files for a reload to finish.
         """
         proj = self.get_active_project(user_id)
         if proj is None:

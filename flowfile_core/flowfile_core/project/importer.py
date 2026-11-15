@@ -125,8 +125,7 @@ _ns_resolve_cache: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
 
 @dataclass
 class _Deferred:
-    """What an import does outside the database, held until its transaction has committed: each step with
-    the words that say what it does, and the staged files a step moves into place."""
+    """An import's side effects outside the database, run once its transaction has committed."""
 
     steps: list[tuple[str, Callable, tuple, dict]] = field(default_factory=list)
     staged: list[Path] = field(default_factory=list)
@@ -195,8 +194,7 @@ def _manifest_entries(root: Path, kind_name: str) -> list:
 
 def _after_commit(label: str, action, *args, **kwargs) -> None:
     """Queue a disk or in-memory side effect of the import until the database has committed; run it
-    at once when no import transaction is open (a direct call of one import function). ``label`` says
-    what it does ("write the flow file of 'x'"), for the import's ``incomplete`` list."""
+    at once when no import transaction is open (a direct call of one import function)."""
     deferred = _after_commit_queue.get()
     if deferred is None:
         action(*args, **kwargs)
@@ -209,9 +207,7 @@ def _move_into_place(staged: Path, path: Path) -> None:
 
 
 def _stage_file(path: Path, text: str, label: str) -> None:
-    """Write ``text`` beside ``path`` now and move it into place once the import has committed, so a write
-    that fails (a full disk, a folder it may not write) fails the import before anything is committed; with
-    no import transaction open, write it at once."""
+    """Write ``text`` beside ``path`` now and move it into place after the commit, so a failed write rolls back."""
     deferred = _after_commit_queue.get()
     if deferred is None:
         atomic_write(path, text)
@@ -226,8 +222,7 @@ def _stage_file(path: Path, text: str, label: str) -> None:
 
 
 def _run_after_commit(deferred: _Deferred) -> list[str]:
-    """Run the queued side effects in order and answer one line for each that failed. The database has
-    committed, so a failing one does not stop the rest."""
+    """Run the queued side effects in order; answer one line per step that failed."""
     failed = []
     for label, action, args, kwargs in deferred.steps:
         try:
@@ -1354,10 +1349,7 @@ def import_project(root: Path, owner_id: int, removed=()) -> SetupResult:
 
     Every flow is built from a temp copy first (``_check_flows_load``). The database changes are then one
     transaction (``apply_transaction``): a failure anywhere rolls all of them back. Flow and notebook files
-    are written beside their paths inside it, so a write that fails rolls the import back too, and moved
-    into place once it has committed. The rest (empty tables, removed files, the flow handler's loads and
-    evictions, the kernel reconcile) is queued for then as well. A step that fails after the commit does not
-    undo it: the result's ``incomplete`` names each one, and another reload of the folder runs it again.
+    are staged inside it; a step that fails after the commit is listed in ``incomplete``.
     """
     _check_flows_load(root, owner_id)
     deferred = _Deferred()
