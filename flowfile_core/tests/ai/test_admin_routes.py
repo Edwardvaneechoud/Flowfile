@@ -2,11 +2,11 @@
 
 Cases:
 
-* ``test_admin_enable_flag_sets_state_and_env`` — admin POSTs ``{"enabled":
+* ``test_admin_enable_flag_sets_state_and_leaves_env`` — admin POSTs ``{"enabled":
   True}``: 200, ``FEATURE_FLAG_AI`` MutableBool flips True, ``os.environ``
-  shows ``"true"``, ``is_ai_enabled()`` returns True immediately.
-* ``test_admin_disable_flag_sets_state_and_env`` — admin POSTs ``{"enabled":
-  False}``: 200, MutableBool flips False, env shows ``"false"``,
+  unchanged, ``is_ai_enabled()`` returns True immediately.
+* ``test_admin_disable_flag_sets_state_and_leaves_env`` — admin POSTs ``{"enabled":
+  False}``: 200, MutableBool flips False, env unchanged,
   ``is_ai_enabled()`` returns False.
 * ``test_non_admin_cannot_toggle_returns_403`` — authenticated non-admin →
   403 Forbidden; ``os.environ`` and the MutableBool unchanged.
@@ -127,32 +127,34 @@ def restore_flag_state() -> Iterator[None]:
 # ---------- happy paths ----------
 
 
-def test_admin_enable_flag_sets_state_and_env(
+def test_admin_enable_flag_sets_state_and_leaves_env(
     admin_client: TestClient,
     restore_flag_state: None,
 ) -> None:
-    """Admin enable: 200, body matches contract, MutableBool + env in sync."""
+    """Admin enable: 200, body matches contract, MutableBool flips, env untouched (a request-thread setenv segfaults)."""
     core_settings.FEATURE_FLAG_AI.set(False)
+    pre_env = os.environ.get("FEATURE_FLAG_AI")
 
     response = admin_client.post("/system/feature_flags/ai", json={"enabled": True})
 
     assert response.status_code == 200, response.text
     assert response.json() == {"enabled": True, "persisted": False}
-    assert os.environ["FEATURE_FLAG_AI"] == "true"
+    assert os.environ.get("FEATURE_FLAG_AI") == pre_env
     assert is_ai_enabled() is True
 
 
-def test_admin_disable_flag_sets_state_and_env(
+def test_admin_disable_flag_sets_state_and_leaves_env(
     admin_client: TestClient,
     restore_flag_state: None,
 ) -> None:
     core_settings.FEATURE_FLAG_AI.set(True)
+    pre_env = os.environ.get("FEATURE_FLAG_AI")
 
     response = admin_client.post("/system/feature_flags/ai", json={"enabled": False})
 
     assert response.status_code == 200, response.text
     assert response.json() == {"enabled": False, "persisted": False}
-    assert os.environ["FEATURE_FLAG_AI"] == "false"
+    assert os.environ.get("FEATURE_FLAG_AI") == pre_env
     assert is_ai_enabled() is False
 
 

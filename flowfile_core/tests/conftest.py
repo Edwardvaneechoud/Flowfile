@@ -81,6 +81,7 @@ if 'FLOWFILE_SHARED_DIR' not in os.environ:
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import socket
 
+from test_utils.environ_thread_guard import fail_on_off_main_thread_environ_writes  # noqa: F401
 from test_utils.mssql import fixtures as mssql_fixtures
 from test_utils.mysql import fixtures as mysql_fixtures
 from test_utils.postgres import fixtures as pg_fixtures
@@ -170,6 +171,10 @@ def setup_test_db():
     from flowfile_core.database.models import Base
 
     init_db()
+    if os.environ.get("FLOWFILE_MODE") == "electron":
+        from flowfile_core.auth.jwt import get_internal_token
+
+        get_internal_token()  # caches the token into os.environ here, not on a TestClient portal thread
 
     yield
 

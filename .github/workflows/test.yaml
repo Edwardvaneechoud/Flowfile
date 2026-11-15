@@ -134,17 +134,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # core_marks: the Docker auth E2E (docker_integration, ~200s image build) runs on one entry only.
         include:
           - os: ubuntu-latest
             python-version: "3.10"
+            core_marks: "not kernel and not docker_integration"
           - os: ubuntu-latest
             python-version: "3.11"
+            core_marks: "not kernel"
           - os: ubuntu-latest
             python-version: "3.12"
+            core_marks: "not kernel and not docker_integration"
           - os: ubuntu-latest
             python-version: "3.13"
+            core_marks: "not kernel and not docker_integration"
           - os: macos-latest
             python-version: "3.11"
+            core_marks: "not kernel and not docker_integration"
 
     steps:
       - uses: actions/checkout@v4
@@ -212,7 +218,7 @@ jobs:
           needs.detect-changes.outputs.shared == 'true' ||
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
-        run: poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --durations=300 --durations-min=0.05
+        run: poetry run pytest flowfile_core/tests -m "${{ matrix.core_marks }}" --disable-warnings --durations=300 --durations-min=0.05
 
       - name: Run pytest for flowfile_worker
         if: |
@@ -313,7 +319,7 @@ jobs:
           COVERAGE_CORE: sysmon
           FLOWFILE_WORKER_POOL_SIZE: "2"
         run: |
-          poetry run pytest flowfile_core/tests -m "not kernel" --disable-warnings --cov --cov-append --cov-report=
+          poetry run pytest flowfile_core/tests -m "not kernel and not docker_integration" --disable-warnings --cov --cov-append --cov-report=
           poetry run pytest flowfile_worker/tests --disable-warnings --cov --cov-append --cov-report=
 
       - name: Generate coverage report
