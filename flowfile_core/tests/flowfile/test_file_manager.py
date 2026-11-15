@@ -36,7 +36,7 @@ class TestCreateDir:
         (tmp_path / "inner").mkdir()
         success, error = create_dir(NewDirectory(source_path=str(tmp_path / "inner"), dir_name="../escaped"))
         assert success is False
-        assert getattr(error, "status_code", None) == 403
+        assert getattr(error, "status_code", None) == 400
         assert not (tmp_path / "escaped").exists()
 
     def test_create_outside_the_allowed_roots_is_refused_off_desktop(self, tmp_path, monkeypatch):

@@ -267,21 +267,31 @@ async def get_directory_contents(
         raise HTTPException(404, "Could not access the directory") from e
 
 
-@router.post("/files/create_directory", response_model=output_model.OutputDir, tags=["file manager"])
+@router.post("/files/create_directory", response_model=bool, tags=["file manager"])
 def create_directory(new_directory: input_schema.NewDirectory) -> bool:
-    """Creates a new directory at the specified path.
+    """Creates the folder `dir_name` inside `source_path`, for the file browser's New folder.
 
     Args:
         new_directory: An `input_schema.NewDirectory` object with the path and name.
 
     Returns:
-        `True` if the directory was created successfully.
+        `True` once the folder exists. A name already taken is a 409, a missing parent folder a 404, a target
+        outside the allowed roots or one the server may not write a 403, and a name that is not one folder
+        name a 400.
     """
     result, error = create_dir(new_directory)
     if result:
         return True
-    else:
+    if isinstance(error, HTTPException):
         raise error
+    if isinstance(error, FileExistsError):
+        raise HTTPException(409, f'"{new_directory.dir_name}" already exists in this folder') from error
+    if isinstance(error, FileNotFoundError):
+        raise HTTPException(404, "The folder to create it in does not exist") from error
+    if isinstance(error, PermissionError):
+        raise HTTPException(403, "No permission to create a folder here") from error
+    logger.error(f"Could not create folder {new_directory.dir_name!r}: {error}")
+    raise HTTPException(400, "Could not create the folder") from error
 
 
 @router.post("/flow/register/", tags=["editor"])
@@ -2689,7 +2699,6 @@ def _save_flow_impl(
         except NamespaceNotFoundError:
             raise HTTPException(status_code=404, detail="Namespace not found") from None
         sync_api_compatibility(flow_file_handler.get_flow(new_flow_id))
-        _project_flow_saved(flow_path, user_id)
         return new_flow_id
 
     resolve_source_registration_id(flow)
@@ -2714,15 +2723,7 @@ def _save_flow_impl(
         except NamespaceNotFoundError:
             raise HTTPException(status_code=404, detail="Namespace not found") from None
     sync_api_compatibility(flow)
-    _project_flow_saved(flow_path, current_user.id if current_user else None)
     return flow_id
-
-
-def _project_flow_saved(flow_path: str, user_id: int | None) -> None:
-    """Mirror the saved flow into the active project folder (no-op when none active)."""
-    from flowfile_core.project import project_sync
-
-    project_sync.flow_saved(flow_path, user_id)
 
 
 @router.get("/save_flow", tags=["editor"])

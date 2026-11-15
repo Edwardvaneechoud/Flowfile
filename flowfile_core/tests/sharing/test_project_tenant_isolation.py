@@ -10,6 +10,7 @@ Runs in docker-mode via the `multi_user_mode` autouse fixture from conftest.py.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from uuid import uuid4
@@ -516,9 +517,9 @@ class TestH3_H6_FlowUuidCollisionMintsFresh:
                 reg.flow_path = str(b_file)
                 db.commit()
 
-        # Redirect Alice's new-flow storage to a tmp dir so the write doesn't hit /data.
-        alice_flows_dir = tmp_path / "alice_flows"
-        alice_flows_dir.mkdir()
+        # Redirect Alice's new-flow storage to a tmp dir inside the server's flow folders, where it may register.
+        storage.temp_directory_for_flows.mkdir(parents=True, exist_ok=True)
+        alice_flows_dir = Path(tempfile.mkdtemp(prefix="alice_flows_", dir=storage.temp_directory_for_flows))
         mock_storage = MagicMock()
         type(mock_storage).flows_directory = PropertyMock(return_value=alice_flows_dir)
 
@@ -548,6 +549,7 @@ class TestH3_H6_FlowUuidCollisionMintsFresh:
             if returned_uuid and returned_uuid != b_flow_uuid:
                 _cleanup_flows(returned_uuid)
             project_sync.close_project(alice_id)
+            shutil.rmtree(alice_flows_dir, ignore_errors=True)
 
 
 class TestH5_VizDashboardCollisionMintsFresh:
@@ -1265,6 +1267,7 @@ class TestH8_PruneGrantCleanup:
     def test_prune_viz_cleans_grants(self, tmp_path, users, group_factory, grant_factory):
         # Finding H8: grants must not survive a prune of their resource.
         from flowfile_core.auth import sharing
+        from flowfile_core.project import kinds
         from flowfile_core.project.importer import import_project
 
         alice_id = users["alice"].id
@@ -1288,7 +1291,7 @@ class TestH8_PruneGrantCleanup:
         project_sync.close_project(alice_id)
 
         try:
-            import_project(root, alice_id, prune=True)
+            import_project(root, alice_id, [kinds.Change("visualizations", a_vuuid, "removed", "", "")])
 
             # The viz should be gone.
             with get_db_context() as db:
@@ -1301,3 +1304,58 @@ class TestH8_PruneGrantCleanup:
         finally:
             _cleanup_vizs(a_vuuid)
             project_sync.close_project(alice_id)
+
+
+class TestPublicNamespaceRemoval:
+    """An apply removes an emptied public namespace of its owner; another user's table in it keeps it."""
+
+    def test_another_users_table_keeps_a_public_namespace(self, users):
+        from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+        from flowfile_core.catalog.demo_seed import _ensure_namespace
+        from flowfile_core.project import importer, kinds, projection
+
+        alice_id, bob_id = users["alice"].id, users["bob"].id
+        catalog, schema = f"shared_{uuid4().hex[:8]}", f"shared_schema_{uuid4().hex[:8]}"
+
+        def rows() -> tuple[int, int]:
+            with get_db_context() as db:
+                namespaces = db.query(db_models.CatalogNamespace).filter(
+                    db_models.CatalogNamespace.name.in_([catalog, schema])
+                )
+                return namespaces.count(), db.query(db_models.CatalogTable).filter_by(owner_id=bob_id).count()
+
+        try:
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                service = CatalogService(repo)
+                catalog_id = _ensure_namespace(service, repo, db, catalog, None, alice_id, None).id
+                schema_id = _ensure_namespace(service, repo, db, schema, catalog_id, alice_id, None).id
+                db.add(
+                    db_models.CatalogTable(
+                        name="bobs_view",
+                        owner_id=bob_id,
+                        namespace_id=schema_id,
+                        storage_format="delta",
+                        table_type="virtual",
+                        sql_query="SELECT 1 AS id",
+                    )
+                )
+                db.commit()
+                held = {"namespaces.yaml": dump_yaml(projection.namespace_manifest_data(db, alice_id))}
+            target = {"namespaces.yaml": dump_yaml({"namespaces": []})}
+            removed = [c for c in kinds.compare(held, target) if c.change == "removed"]
+            assert {c.label for c in removed} == {catalog, f"{catalog}.{schema}"}
+
+            importer._delete_removed(alice_id, removed)
+            assert rows() == (2, 1), "a namespace holding another user's table was deleted"
+
+            with get_db_context() as db:
+                db.query(db_models.CatalogTable).filter_by(owner_id=bob_id).delete()
+                db.commit()
+            importer._delete_removed(alice_id, removed)
+            assert rows() == (0, 0), "an emptied public namespace was kept"
+        finally:
+            with get_db_context() as db:
+                db.query(db_models.CatalogTable).filter_by(owner_id=bob_id).delete()
+                db.commit()
+            _cleanup_namespaces(schema, catalog)
