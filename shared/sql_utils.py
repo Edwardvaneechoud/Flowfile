@@ -41,7 +41,8 @@ def construct_sql_uri(
         username: Database username
         password: Database password as a plain string (caller handles decryption)
         database: Database name
-        url: Complete database URL (overrides other parameters if provided)
+        url: Complete database URL (overrides other parameters if provided); the dialect's
+            ``with_credentials`` merges ``password`` into it, which only Snowflake uses
         ssl_enabled: Adds sslmode=require for postgres-family databases
         connect_timeout: Connection timeout in seconds (postgres-family only)
         **kwargs: Additional connection parameters appended as query string
@@ -53,7 +54,7 @@ def construct_sql_uri(
         ValueError: If insufficient information is provided
     """
     if url:
-        return url
+        return get_dialect_or_generic(database_type).with_credentials(url, password)
 
     return get_dialect_or_generic(database_type).build_uri(
         host=host,

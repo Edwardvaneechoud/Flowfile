@@ -70,6 +70,7 @@ from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.routes import router
 from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.shares import router as shares_router
+from flowfile_core.routes.snowflake import router as snowflake_router
 from flowfile_core.routes.storage_browser import router as storage_browser_router
 from flowfile_core.routes.system_backups import router as system_backups_router
 from flowfile_core.routes.system_exchange import router as system_exchange_router
@@ -260,6 +261,7 @@ app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=[
 app.include_router(storage_browser_router, prefix="/storage_browser", tags=["storage_browser"])
 app.include_router(cloud_delta_router, prefix="/cloud_storage/delta", tags=["cloud_delta"])
 app.include_router(ga_connections_router, prefix="/ga_connections", tags=["ga_connections"])
+app.include_router(snowflake_router, prefix="/snowflake", tags=["snowflake"])
 app.include_router(kafka_router)
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])
 app.include_router(custom_node_mounts_router, prefix="/custom-node-mounts", tags=["custom_node_mounts"])

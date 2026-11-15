@@ -1,7 +1,9 @@
-//flowfile_frontend/src/renderer/app/pages/databaseManager/api.ts
+//flowfile_frontend/src/renderer/app/views/DatabaseView/api.ts
 
 import axios from "axios";
+import { detailOf } from "../../utils/apiDetail";
 import type {
+  DatabaseConnectionTestResult,
   FullDatabaseConnection,
   FullDatabaseConnectionInterface,
   PythonFullDatabaseConnection,
@@ -16,7 +18,7 @@ const API_BASE_URL = "/db_connection_lib";
 const toPythonFormat = (connection: FullDatabaseConnection): PythonFullDatabaseConnection => {
   return {
     connection_name: connection.connectionName,
-    database_type: connection.databaseType as "postgresql",
+    database_type: connection.databaseType,
     username: connection.username,
     password: connection.password,
     host: connection.host,
@@ -24,6 +26,11 @@ const toPythonFormat = (connection: FullDatabaseConnection): PythonFullDatabaseC
     database: connection.database,
     ssl_enabled: connection.sslEnabled,
     url: connection.url,
+    auth_method: connection.authMethod ?? null,
+    role: connection.role ?? null,
+    warehouse: connection.warehouse ?? null,
+    private_key_passphrase: connection.privateKeyPassphrase ?? null,
+    oauth_flow_id: connection.oauthFlowId ?? null,
   };
 };
 
@@ -58,6 +65,9 @@ export const convertConnectionInterfacePytoTs = (
     id: pythonConnectionInterface.id,
     access: pythonConnectionInterface.access,
     source: pythonConnectionInterface.source ?? "local",
+    authMethod: pythonConnectionInterface.auth_method ?? null,
+    role: pythonConnectionInterface.role ?? null,
+    warehouse: pythonConnectionInterface.warehouse ?? null,
   };
 };
 
@@ -72,6 +82,9 @@ export const convertConnectionInterfaceTstoPy = (
     port: dbConnectionInterface.port,
     ssl_enabled: dbConnectionInterface.sslEnabled,
     url: dbConnectionInterface.url,
+    auth_method: dbConnectionInterface.authMethod ?? null,
+    role: dbConnectionInterface.role ?? null,
+    warehouse: dbConnectionInterface.warehouse ?? null,
   };
 };
 
@@ -88,9 +101,7 @@ export const createDatabaseConnectionApi = async (
     await axios.post(API_BASE_URL, pythonFormattedData);
   } catch (error) {
     console.error("API Error: Failed to create database connection:", error);
-    const errorMsg =
-      (error as any).response?.data?.detail || "Failed to create database connection";
-    throw new Error(errorMsg);
+    throw new Error(detailOf(error, "Failed to create database connection"));
   }
 };
 
@@ -107,9 +118,7 @@ export const updateDatabaseConnectionApi = async (
     await axios.put(API_BASE_URL, pythonFormattedData);
   } catch (error) {
     console.error("API Error: Failed to update database connection:", error);
-    const errorMsg =
-      (error as any).response?.data?.detail || "Failed to update database connection";
-    throw new Error(errorMsg);
+    throw new Error(detailOf(error, "Failed to update database connection"));
   }
 };
 
@@ -128,24 +137,19 @@ export const deleteDatabaseConnectionApi = async (connectionName: string): Promi
 };
 
 /**
- * Tests a database connection via the API.
- * Note: Add this function if your backend provides a connection testing endpoint
- * @param connectionData - The database connection configuration to test.
- * @returns A promise that resolves to a success/failure message.
+ * Tests a saved connection. A failed test is still HTTP 200 with `success: false`;
+ * a request error (unknown connection, server down) is reported the same way.
  */
 export const testDatabaseConnectionApi = async (
-  connectionData: FullDatabaseConnection,
-): Promise<{ success: boolean; message: string }> => {
+  connectionName: string,
+): Promise<DatabaseConnectionTestResult> => {
   try {
-    const pythonFormattedData = toPythonFormat(connectionData);
-    const response = await axios.post<{ success: boolean; message: string }>(
-      `${API_BASE_URL}/test`,
-      pythonFormattedData,
-    );
-    return response.data;
+    const response = await axios.post<DatabaseConnectionTestResult>(`${API_BASE_URL}/test`, {
+      connection_name: connectionName,
+    });
+    return { ...response.data, details: response.data.details ?? null };
   } catch (error) {
     console.error("API Error: Failed to test database connection:", error);
-    const errorMsg = (error as any).response?.data?.detail || "Connection test failed";
-    return { success: false, message: errorMsg };
+    return { success: false, message: detailOf(error, "Connection test failed"), details: null };
   }
 };
