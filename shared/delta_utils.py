@@ -142,15 +142,24 @@ def delta_row_count(dt: DeltaTable, storage_options: dict[str, str] | None = Non
 def read_delta_preview(
     dt: DeltaTable, n_rows: int, storage_options: dict[str, str] | None = None
 ) -> tuple[pa.Table, int]:
-    """Read bounded rows and the logical total from the same pinned snapshot, including deletion-vector tables."""
+    """Read bounded rows and the logical total from the same pinned snapshot, including deletion-vector tables.
+
+    A data file the snapshot names that is gone (vacuumed away) is ``FileNotFoundError`` on object storage too, where
+    the store reports it as a plain ``OSError``.
+    """
     import polars as pl_
 
-    preview = (
-        pl_.scan_delta(dt.table_uri, version=dt.version(), storage_options=storage_options)
-        .head(n_rows)
-        .collect()
-        .to_arrow()
-    )
+    try:
+        preview = (
+            pl_.scan_delta(dt.table_uri, version=dt.version(), storage_options=storage_options)
+            .head(n_rows)
+            .collect()
+            .to_arrow()
+        )
+    except OSError as exc:
+        if isinstance(exc, FileNotFoundError) or "not found" not in str(exc).lower():
+            raise
+        raise FileNotFoundError(str(exc)) from exc
     return preview, delta_row_count(dt, storage_options)
 
 
