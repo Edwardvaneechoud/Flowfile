@@ -20,16 +20,12 @@ const mocks = vi.hoisted(() => {
     updateSettings: vi.fn(),
     restore: vi.fn(),
     reload: vi.fn(),
+    plan: vi.fn(),
     setSecrets: vi.fn(),
     close: vi.fn(),
-    warning: vi.fn(),
     setFlowId: vi.fn(),
   };
 });
-
-vi.mock("element-plus", () => ({
-  ElMessage: { warning: mocks.warning },
-}));
 
 // Mock the flow store: the real module pulls in the `../api` barrel (axios.config),
 // which reaches DOM globals at import time and would crash under the node env.
@@ -48,6 +44,7 @@ vi.mock("../api/project.api", () => ({
     updateSettings: mocks.updateSettings,
     restore: mocks.restore,
     reload: mocks.reload,
+    plan: mocks.plan,
     setSecrets: mocks.setSecrets,
     close: mocks.close,
   },
@@ -106,23 +103,24 @@ describe("status getter", () => {
 });
 
 describe("refreshActive", () => {
-  it("captures the projection_failed flag", async () => {
-    mocks.getActive.mockResolvedValue({ project: PROJECT, projection_failed: true });
+  it("captures the external_edits flag", async () => {
+    mocks.getActive.mockResolvedValue({ project: PROJECT, external_edits: true });
     const store = useProjectStore();
     await store.refreshActive();
-    expect(store.projectionFailed).toBe(true);
+    expect(store.externalEdits).toBe(true);
+    expect(store.status).toBe("external");
   });
 
   it("clears all status when no project is active", async () => {
     mocks.getActive.mockResolvedValue({ project: null });
     const store = useProjectStore();
     store.hasExternalChanges = true;
-    store.projectionFailed = true;
+    store.externalEdits = true;
     store.dirty = true;
     await store.refreshActive();
     expect(store.activeProject).toBeNull();
     expect(store.hasExternalChanges).toBe(false);
-    expect(store.projectionFailed).toBe(false);
+    expect(store.externalEdits).toBe(false);
     expect(store.dirty).toBe(false);
   });
 
@@ -168,13 +166,13 @@ describe("initProject", () => {
     mocks.init.mockResolvedValue(PROJECT);
     const store = useProjectStore();
     store.hasExternalChanges = true;
-    store.projectionFailed = true;
+    store.externalEdits = true;
 
     const project = await store.initProject("/p", "Demo");
     expect(project).toEqual(PROJECT);
     expect(store.activeProject).toEqual(PROJECT);
     expect(store.status).toBe("clean");
-    expect(store.projectionFailed).toBe(false);
+    expect(store.externalEdits).toBe(false);
     expect(store.loading).toBe(false);
   });
 });
@@ -197,25 +195,43 @@ describe("openProject", () => {
 });
 
 describe("restoreVersion", () => {
-  it("warns on prune errors and refreshes status", async () => {
+  it("refreshes status after a restore", async () => {
     mocks.restore.mockResolvedValue({
       imported: { flows: 0, connections: 0, schedules: 0 },
       placeholder_secrets: [],
-      prune_errors: ["table x"],
     });
     mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
     const store = useProjectStore();
     store.activeProject = PROJECT;
 
     await store.restoreVersion("deadbeef", "rollback");
-    expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback");
-    expect(mocks.warning).toHaveBeenCalled();
+    expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback", false);
     expect(mocks.getActive).toHaveBeenCalled();
     expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
+  });
+
+  it("sends force when the caller keeps a recovery point", async () => {
+    mocks.restore.mockResolvedValue({ imported: {}, placeholder_secrets: [] });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.restoreVersion("deadbeef", "rollback", true);
+    expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback", true);
   });
 });
 
 describe("reloadFromDisk", () => {
+  it("sends force when the caller keeps a recovery point", async () => {
+    mocks.reload.mockResolvedValue({ imported: {}, placeholder_secrets: [] });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.reloadFromDisk(true);
+    expect(mocks.reload).toHaveBeenCalledWith(true);
+  });
+
   it("rebuilds from disk and reconciles status", async () => {
     mocks.reload.mockResolvedValue({
       imported: { flows: 2, connections: 1, schedules: 0 },
@@ -239,6 +255,15 @@ describe("reloadFromDisk", () => {
 
     await expect(store.reloadFromDisk()).rejects.toBeInstanceOf(mocks.ProjectFeatureUnavailable);
     expect(store.reloadAvailable).toBe(false);
+  });
+});
+
+describe("loadPlan", () => {
+  it("asks for the plan of the sha and returns its rows", async () => {
+    const rows = [{ change: "removed", kind: "flow", label: "a", path: "flows/a.flow.yaml" }];
+    mocks.plan.mockResolvedValue(rows);
+    expect(await useProjectStore().loadPlan("abc123")).toEqual(rows);
+    expect(mocks.plan).toHaveBeenCalledWith("abc123");
   });
 });
 
@@ -281,8 +306,9 @@ describe("closeProject", () => {
 });
 
 describe("saveVersion", () => {
-  it("clears unsaved state and refreshes history", async () => {
+  it("re-reads status after the save and refreshes history", async () => {
     mocks.saveVersion.mockResolvedValue({ sha: "abc123" });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
     const store = useProjectStore();
     store.activeProject = PROJECT;
     store.dirty = true;
@@ -290,9 +316,37 @@ describe("saveVersion", () => {
 
     const sha = await store.saveVersion("note");
     expect(sha).toBe("abc123");
+    expect(mocks.getActive).toHaveBeenCalledTimes(1);
+    expect(mocks.saveVersion.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.getActive.mock.invocationCallOrder[0],
+    );
     expect(store.dirty).toBe(false);
     expect(store.hasUnsavedChanges).toBe(false);
     expect(mocks.getVersions).toHaveBeenCalled();
+  });
+
+  it("passes overwrite to the api, false unless asked", async () => {
+    mocks.saveVersion.mockResolvedValue({ sha: "abc123" });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.saveVersion("m", true);
+    expect(mocks.saveVersion).toHaveBeenLastCalledWith("m", true);
+    await store.saveVersion("m");
+    expect(mocks.saveVersion).toHaveBeenLastCalledWith("m", false);
+  });
+
+  it("keeps the server's dirty answer when nothing was committed", async () => {
+    mocks.saveVersion.mockResolvedValue({ sha: null });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: true });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+    store.dirty = true;
+
+    expect(await store.saveVersion("note")).toBeNull();
+    expect(store.dirty).toBe(true);
+    expect(store.status).toBe("unsaved");
   });
 });
 

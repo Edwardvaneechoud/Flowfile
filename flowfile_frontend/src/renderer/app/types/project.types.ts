@@ -17,7 +17,7 @@ export interface ImportedCounts {
 export interface ImportResult {
   imported: ImportedCounts;
   placeholder_secrets: string[];
-  prune_errors?: string[]; // resources that failed to prune during restore/reload
+  incomplete?: string[]; // steps that failed after the database committed, e.g. a flow file it could not write
   recovery_sha?: string | null; // autosave commit made before a forced restore/reload
 }
 
@@ -29,7 +29,7 @@ export interface ActiveProjectResult {
   project: ProjectInfo | null;
   has_external_changes?: boolean; // present only when a project is active
   dirty?: boolean; // working tree has changes to save as a version
-  projection_failed?: boolean; // last DB→files sync hook errored — folder may have drifted
+  external_edits?: boolean | null; // the folder holds edits that were never applied
 }
 
 export interface SaveVersionResult {
@@ -47,6 +47,7 @@ export interface ProjectVersionChange {
   kind: string; // "flow" | "database connection" | "cloud connection" | "schedule" | "settings"
   label: string;
   path: string;
+  consequence?: string | null;
 }
 
 export interface PlaceholderSecretInput {

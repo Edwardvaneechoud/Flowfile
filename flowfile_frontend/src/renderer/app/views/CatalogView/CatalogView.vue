@@ -116,7 +116,7 @@
         <!-- Catalog Tree -->
         <div class="tree-container">
           <div class="sidebar-filters">
-            <input v-model="searchQuery" class="search-input" placeholder="Search..." />
+            <input v-model="searchQuery" class="search-input" placeholder="Filter catalog…" />
             <label class="unavailable-toggle">
               <input v-model="showUnavailable" type="checkbox" />
               <span>Show unavailable</span>
@@ -654,7 +654,7 @@
 import { computed, h, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElCheckbox, ElLoading, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
-import { useCatalogStore } from "../../stores/catalog-store";
+import { useCatalogStore, type CatalogItemKind } from "../../stores/catalog-store";
 import { useProjectStore } from "../../stores/project-store";
 import { useNotebookStore } from "../../stores/notebook-store";
 import { useSqlEditorStore } from "../../stores/sql-editor-store";
@@ -1964,9 +1964,30 @@ const SELECTION_QUERY_KEYS = [
   "runId",
 ] as const;
 
+// False until this mount applied the route: the store still holds the previous visit's selection.
+const routeApplied = ref(false);
+
 const selectionAwaitsOverview = computed(
-  () => !catalogStore.overviewLoaded && SELECTION_QUERY_KEYS.some((key) => !!route.query[key]),
+  () =>
+    (!catalogStore.overviewLoaded || !routeApplied.value) &&
+    SELECTION_QUERY_KEYS.some((key) => !!route.query[key]),
 );
+
+/** Whether the overview already in the store holds every item the URL selects (a run loads by itself). */
+function cachedOverviewHoldsRoute(): boolean {
+  if (!catalogStore.overviewLoaded) return false;
+  const id = (key: (typeof SELECTION_QUERY_KEYS)[number]) =>
+    route.query[key] ? Number(route.query[key]) : null;
+  const holds = (value: number | null, kind: CatalogItemKind) =>
+    value === null || catalogStore.holdsItem(kind, value);
+  return (
+    holds(id("tableId"), "table") &&
+    holds(id("namespaceId"), "namespace") &&
+    holds(id("artifactId"), "artifact") &&
+    holds(id("scheduleId"), "schedule") &&
+    holds(id("flowId"), "flow")
+  );
+}
 
 function retryOverview() {
   void catalogStore.initialize(true);
@@ -2001,6 +2022,7 @@ const pendingDetail = computed(() => {
 });
 
 function applyRouteToStore() {
+  routeApplied.value = true;
   // A nested page owns its own state; only its tab is pinned.
   if (nestedPageTab.value) {
     catalogStore.activeTab = nestedPageTab.value;
@@ -2015,6 +2037,7 @@ function applyRouteToStore() {
   const scheduleId = q.scheduleId ? Number(q.scheduleId) : null;
   const scheduleFlowId = q.scheduleFlowId ? Number(q.scheduleFlowId) : null;
   const namespaceId = q.namespaceId ? Number(q.namespaceId) : null;
+  const vizId = q.vizId ? Number(q.vizId) : null;
 
   // Update tab (set directly to avoid setActiveTab clearing selections)
   if (catalogStore.activeTab !== tab) {
@@ -2085,6 +2108,14 @@ function applyRouteToStore() {
     delete rest.scheduleFlowId;
     router.replace({ query: rest });
   }
+
+  // Deep link from the global search: open that chart in the viewer, then strip the param the same way.
+  if (vizId !== null) {
+    if (Number.isFinite(vizId)) openVisualization(vizId);
+    const rest = { ...route.query };
+    delete rest.vizId;
+    router.replace({ query: rest });
+  }
 }
 
 // Watch route changes (handles browser back/forward)
@@ -2110,9 +2141,13 @@ onMounted(async () => {
   // Pin the route's tab before the overview loads, or the store's previous (or default)
   // tab renders first and the page visibly jumps once the data arrives.
   catalogStore.activeTab = routeTab();
+  // A cached overview that holds the route's items shows them now; a stale one refreshes underneath.
+  const appliedFromCache = cachedOverviewHoldsRoute();
+  if (appliedFromCache) applyRouteToStore();
   await catalogStore.initialize();
   if (unmounted) return;
   pollInterval = setInterval(pollActiveRuns, 20_000);
+  if (appliedFromCache) return;
   if (catalogStore.overviewLoaded) applyRouteToStore();
   else routeAwaitsOverview = true;
 });

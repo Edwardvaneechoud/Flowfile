@@ -1,4 +1,4 @@
-import { getDefaultPath, getDirectoryContents } from "../fileSystemApi";
+import { createDirectory, getDefaultPath, getDirectoryContents } from "../fileSystemApi";
 import { isRootPath, joinPath, parentPath } from "../../../../utils/storagePath";
 import { LOCAL_CAPABILITIES, type StorageProvider } from "./provider";
 
@@ -26,4 +26,8 @@ export const localStorageProvider: StorageProvider = {
   parent: parentPath,
   join: joinPath,
   isRoot: isRootPath,
+
+  async createDirectory(parent, name) {
+    await createDirectory(parent, name);
+  },
 };

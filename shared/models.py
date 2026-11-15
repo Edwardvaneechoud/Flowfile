@@ -23,6 +23,7 @@ class FlowSchedule(Base):
     __tablename__ = "flow_schedules"
 
     id = Column(Integer, primary_key=True)
+    schedule_uuid = Column(String(36), nullable=False, unique=True, default=lambda: str(uuid.uuid4()))
     registration_id = Column(Integer, nullable=False)
     owner_id = Column(Integer, nullable=False)
     enabled = Column(Boolean, default=True, nullable=False)

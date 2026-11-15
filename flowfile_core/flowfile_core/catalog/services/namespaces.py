@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from flowfile_core.catalog.constants import DEFAULT_SCHEMA, ROOT_CATALOG, SEEDED_SCHEMAS, SYSTEM_SCHEMA_NAMES
+from flowfile_core.catalog.constants import DEFAULT_SCHEMA, ROOT_CATALOG, is_seeded_namespace
 from flowfile_core.catalog.exceptions import (
     InvalidNamespaceStorageError,
     NamespaceExistsError,
@@ -82,14 +82,6 @@ def _validate_namespace_storage(owner_id: int, storage_uri: str | None, storage_
             f"storage_uri {storage_uri!r} does not match connection {storage_connection_name!r} "
             f"(provider {provider!r})."
         )
-
-
-def _project_sync_namespace(owner_id: int) -> None:
-    """Mirror a namespace create/update/delete into the active project's namespaces.yaml (no-op
-    when none active)."""
-    from flowfile_core.project import project_sync
-
-    project_sync.namespace_changed(owner_id)
 
 
 def bulk_enrich_artifacts(
@@ -229,7 +221,6 @@ class NamespaceService:
             storage_connection_name=storage_connection_name,
         )
         created = self.repo.create_namespace(namespace)
-        _project_sync_namespace(owner_id)
         return created
 
     def update_namespace(
@@ -275,17 +266,16 @@ class NamespaceService:
                 namespace.storage_connection_name = new_conn
 
         updated = self.repo.update_namespace(namespace)
-        _project_sync_namespace(updated.owner_id)
         return updated
 
     def _is_seeded(self, namespace: CatalogNamespace) -> bool:
         """Whether ``namespace`` is the root catalog or one of the schemas the application keeps under it."""
         if namespace.parent_id is None:
-            return namespace.name == ROOT_CATALOG.name
-        if namespace.name not in {schema.name for schema in SEEDED_SCHEMAS} | SYSTEM_SCHEMA_NAMES:
+            return is_seeded_namespace(namespace.name)
+        if not is_seeded_namespace(ROOT_CATALOG.name, namespace.name):
             return False
         parent = self.repo.get_namespace(namespace.parent_id)
-        return parent is not None and parent.parent_id is None and parent.name == ROOT_CATALOG.name
+        return parent is not None and parent.parent_id is None and is_seeded_namespace(parent.name)
 
     def delete_namespace(self, namespace_id: int) -> None:
         """Delete a namespace if it has no children, flows, tables or notebooks."""
@@ -302,9 +292,7 @@ class NamespaceService:
             raise NamespaceNotEmptyError(
                 namespace_id=namespace_id, children=children, flows=flows, tables=tables, notebooks=notebooks
             )
-        owner_id = namespace.owner_id
         self.repo.delete_namespace(namespace_id)
-        _project_sync_namespace(owner_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:
         """Retrieve a single namespace by ID."""

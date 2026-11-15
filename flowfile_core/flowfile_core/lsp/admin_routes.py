@@ -4,17 +4,15 @@ Mounted under ``/system`` in :mod:`flowfile_core.main`. Unlike the AI gate, the
 ``/lsp/*`` surfaces never 503 when off (they degrade to empty 200), so this endpoint
 exists purely so an admin can flip ``FLOWFILE_LSP_ENABLED`` live without a restart.
 
-Mutates the same two pieces of state the AI endpoint does: the ``MutableBool`` in
-``settings`` (so :func:`flowfile_core.lsp.feature_flag.is_lsp_enabled` sees it on its
-next call) and ``os.environ`` (so a hypothetical ``importlib.reload(settings)`` stays
-consistent). ``persisted`` is always ``False`` — surviving a restart is the env-var's
-job. Note: open editors cache ``/lsp/capabilities`` for the session, so a live flip
+Mutates the same state the AI endpoint does: the ``MutableBool`` in ``settings`` (so
+:func:`flowfile_core.lsp.feature_flag.is_lsp_enabled` sees it on its next call), never
+``os.environ``, whose write from a threadpool thread races native ``getenv`` calls and
+can segfault the process. ``persisted`` is always ``False`` — surviving a restart is the
+env-var's job. Note: open editors cache ``/lsp/capabilities`` for the session, so a live flip
 reaches them only on reload.
 """
 
 from __future__ import annotations
-
-import os
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -53,7 +51,6 @@ def set_lsp_feature_flag(
 ) -> FeatureFlagState:
     """Toggle the notebook LSP feature flag for the running process (admin-only)."""
     _settings.FLOWFILE_LSP_ENABLED.set(payload.enabled)
-    os.environ["FLOWFILE_LSP_ENABLED"] = "true" if payload.enabled else "false"
     return FeatureFlagState(enabled=bool(_settings.FLOWFILE_LSP_ENABLED), persisted=False)
 
 

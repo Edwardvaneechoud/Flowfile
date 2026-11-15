@@ -3,6 +3,18 @@
     <div class="center-container">
       <Logo width="50px" :app-name="''" position-app-name="left" :click-action="goHome" />
     </div>
+    <div class="sidebar-search">
+      <div class="footer-btn-wrapper" :data-tooltip="`Search (${searchShortcut})`">
+        <button
+          class="info-button"
+          aria-label="Search"
+          data-testid="sidebar-search"
+          @click="globalSearch.open()"
+        >
+          <i class="fa-solid fa-magnifying-glass"></i>
+        </button>
+      </div>
+    </div>
     <div class="sidebar-container">
       <menu-accordion :items="items" :is-collapse="true" />
     </div>
@@ -100,6 +112,9 @@ import { useTheme } from "../../../composables/useTheme";
 import { useAppUpdate } from "../../../composables/useAppUpdate";
 import { useProjectStore } from "../../../stores/project-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
+import { useGlobalSearchStore } from "../../../stores/global-search-store";
+import { globalSearchShortcutLabel } from "../../../features/search/globalSearchHotkey";
+import { IS_MAC } from "../../../utils/shortcuts";
 import { gettingStartedTutorial } from "../../tutorial/tutorials";
 import { designerHelp } from "../../../views/DesignerView/designerHelp";
 import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
@@ -131,6 +146,8 @@ const authStore = useAuthStore();
 const hub = useHubConnectionStore();
 const projectStore = useProjectStore();
 const tutorialStore = useTutorialStore();
+const globalSearch = useGlobalSearchStore();
+const searchShortcut = globalSearchShortcutLabel(IS_MAC);
 const { isMultiUser } = useMultiUser();
 const { isDark, toggleTheme } = useTheme();
 
@@ -283,6 +300,12 @@ const handleLogout = async () => {
   justify-content: center;
   width: 100%;
   padding: var(--spacing-8) 0;
+}
+
+.sidebar-search {
+  display: flex;
+  justify-content: center;
+  padding-bottom: var(--spacing-2);
 }
 
 .sidebar-footer {

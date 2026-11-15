@@ -28,8 +28,8 @@
           A new folder will be created at <code>{{ fullPath }}</code>
         </p>
         <p class="picker-hint">
-          Nothing is overwritten — your flows and connections are mirrored as files you can save
-          versions of.
+          Nothing is overwritten — your flows and connections are written as files when you save a
+          version.
         </p>
         <div class="picker-actions">
           <el-button @click="pickedFolder = null">Choose another folder</el-button>
@@ -71,6 +71,7 @@ import { joinPath } from "../../components/common/FileBrowser/fileSystemApi";
 import { useProjectStore } from "../../stores/project-store";
 import { useMultiUser } from "../../composables/useMultiUser";
 import { ProjectApi } from "../../api/project.api";
+import { alertIncomplete } from "../../components/project/importNotice";
 
 const props = defineProps<{ modelValue: boolean; mode: "create" | "open" }>();
 const emit = defineEmits<{
@@ -159,6 +160,7 @@ const handleOpen = async (folder: string) => {
       position: "top-left",
       duration: 6000,
     });
+    await alertIncomplete(res, "Open not finished");
     close();
     emit("done");
   } catch (e: any) {

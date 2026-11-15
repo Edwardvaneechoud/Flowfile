@@ -71,6 +71,9 @@ function triggerFilterParams(filter: string | null): { scheduleId?: number; runT
 // Re-entering the catalog within this window reuses the last overview instead of refetching.
 export const OVERVIEW_TTL_MS = 30_000;
 
+/** The catalog items a route can select, which `holdsItem` looks up in the loaded overview. */
+export type CatalogItemKind = "namespace" | "table" | "flow" | "schedule" | "artifact";
+
 interface CatalogState {
   tree: NamespaceTree[];
   allFlows: FlowRegistration[];
@@ -1004,6 +1007,22 @@ export const useCatalogStore = defineStore("catalog", {
 
     findNamespaceInTree(namespaceId: number): NamespaceTree | null {
       return this.tree.find((c) => c.id === namespaceId) ?? null;
+    },
+
+    /** Whether the loaded overview holds this item (a namespace at any depth of the tree). */
+    holdsItem(kind: CatalogItemKind, id: number): boolean {
+      switch (kind) {
+        case "namespace":
+          return this.tree.some((c) => c.id === id || (c.children ?? []).some((s) => s.id === id));
+        case "table":
+          return this.findTableInTree(id) !== null;
+        case "flow":
+          return this.allFlows.some((flow) => flow.id === id);
+        case "schedule":
+          return this.getScheduleById(id) !== undefined;
+        case "artifact":
+          return this.findArtifactInTree(id) !== null;
+      }
     },
 
     selectNamespace(namespaceId: number) {
