@@ -63,6 +63,7 @@ import { ref, watch } from "vue";
 import { ElMessage, ElNotification } from "element-plus";
 import ChangeList from "./ChangeList.vue";
 import { ProjectUnsavedChanges } from "../../api/project.errors";
+import { alertIncomplete } from "../../components/project/importNotice";
 import { useProjectStore } from "../../stores/project-store";
 import type { ProjectVersion, ProjectVersionChange } from "../../types";
 
@@ -99,14 +100,20 @@ const confirm = async () => {
   if (!props.version) return;
   restoring.value = true;
   try {
-    await store.restoreVersion(props.version.sha, props.version.message, unsaved.value !== null);
-    ElNotification({
-      title: "Version restored",
-      message: "Reopen any flows you had open to see the restored version.",
-      type: "success",
-      position: "top-left",
-      duration: 6000,
-    });
+    const res = await store.restoreVersion(
+      props.version.sha,
+      props.version.message,
+      unsaved.value !== null,
+    );
+    if (!(await alertIncomplete(res, "Restore not finished"))) {
+      ElNotification({
+        title: "Version restored",
+        message: "Reopen any flows you had open to see the restored version.",
+        type: "success",
+        position: "top-left",
+        duration: 6000,
+      });
+    }
     emit("restored");
     close();
   } catch (e: any) {

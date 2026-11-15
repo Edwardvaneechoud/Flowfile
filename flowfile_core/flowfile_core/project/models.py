@@ -28,6 +28,7 @@ class SetupResult:
     unknown_kinds: list[str] = field(default_factory=list)
     not_applied: list[str] = field(default_factory=list)
     placeholder_secrets: list[str] = field(default_factory=list)
+    incomplete: list[str] = field(default_factory=list)
     recovery_sha: str | None = None
 
     def to_dict(self) -> dict:
@@ -41,5 +42,6 @@ class SetupResult:
             "unknown_kinds": sorted(self.unknown_kinds),
             "not_applied": sorted(self.not_applied),
             "placeholder_secrets": sorted(set(self.placeholder_secrets)),
+            "incomplete": list(self.incomplete),
             "recovery_sha": self.recovery_sha,
         }

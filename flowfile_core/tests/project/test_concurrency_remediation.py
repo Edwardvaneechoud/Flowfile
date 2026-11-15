@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from flowfile_core.project.service import ProjectSyncService
 
@@ -231,9 +232,9 @@ class TestFlowUuidLock:
 
         captured: dict = {}
 
-        def fake_write_yaml(path, payload):
+        def fake_stage_file(path, text, label):
             captured["path"] = path
-            captured["uuid"] = payload["flow_uuid"]
+            captured["uuid"] = yaml.safe_load(text)["flow_uuid"]
 
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=db)
@@ -241,9 +242,9 @@ class TestFlowUuidLock:
 
         with patch.object(importer, "get_db_context", return_value=ctx), patch.object(
             importer.repository, "owned_or_none", return_value=None
-        ), patch.object(importer, "write_yaml", side_effect=fake_write_yaml), patch.object(
+        ), patch.object(importer, "_stage_file", side_effect=fake_stage_file), patch.object(
             importer.flow_file_handler, "import_flow"
-        ), patch.object(importer, "auto_register_flow"):
+        ), patch.object(importer, "CatalogService"):
             returned = importer._import_flow(data, owner_id=7)
 
         assert returned != crafted  # a fresh uuid was minted
@@ -265,9 +266,9 @@ class TestFlowUuidLock:
 
         captured: dict = {}
 
-        def fake_write_yaml(path, payload):
+        def fake_stage_file(path, text, label):
             captured["path"] = path
-            captured["uuid"] = payload["flow_uuid"]
+            captured["uuid"] = yaml.safe_load(text)["flow_uuid"]
 
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=db)
@@ -275,9 +276,9 @@ class TestFlowUuidLock:
 
         with patch.object(importer, "get_db_context", return_value=ctx), patch.object(
             importer.repository, "owned_or_none", return_value=None
-        ), patch.object(importer, "write_yaml", side_effect=fake_write_yaml), patch.object(
+        ), patch.object(importer, "_stage_file", side_effect=fake_stage_file), patch.object(
             importer.flow_file_handler, "import_flow"
-        ), patch.object(importer, "auto_register_flow"):
+        ), patch.object(importer, "CatalogService"):
             returned = importer._import_flow(data, owner_id=7)
 
         assert returned == original

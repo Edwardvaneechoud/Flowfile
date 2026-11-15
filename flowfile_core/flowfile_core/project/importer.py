@@ -11,9 +11,11 @@ import contextvars
 import copy
 import json
 import logging
+import os
 import tempfile
 import threading
 import uuid
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
@@ -45,7 +47,6 @@ from flowfile_core.database.models import (
     User,
 )
 from flowfile_core.fileExplorer.funcs import _is_contained
-from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     _get_own_cloud_connection,
     _get_own_database_connection,
@@ -61,7 +62,7 @@ from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
 from flowfile_core.project import kinds, manifest, projection, repository
 from flowfile_core.project.manifest_entries import CloudConnectionEntry, DatabaseConnectionEntry, SchemaColumn
 from flowfile_core.project.models import SetupResult
-from flowfile_core.project.normalize import atomic_write, dump_yaml, safe_stem, write_yaml
+from flowfile_core.project.normalize import atomic_write, dump_yaml, safe_stem
 from flowfile_core.project.projection import _CLOUD_PLAIN_FIELDS, _CLOUD_SECRETS, _PROJECTABLE_SCHEDULE_TYPES
 from flowfile_core.project.secrets_resolver import load_dotenv, placeholder_name, resolve
 from flowfile_core.schemas.catalog_schema import DashboardLayout, NotebookCellModel
@@ -121,8 +122,18 @@ def _flow_uuid_lock(flow_uuid: str):
 # flow/viz hits this map instead of a fresh session+query. Only create=False results are cached.
 _ns_resolve_cache: contextvars.ContextVar[dict | None] = contextvars.ContextVar("_ns_resolve_cache", default=None)
 
-# What an import does outside the database, held until its transaction has committed.
-_after_commit_queue: contextvars.ContextVar[list | None] = contextvars.ContextVar("_after_commit_queue", default=None)
+@dataclass
+class _Deferred:
+    """What an import does outside the database, held until its transaction has committed: each step with
+    the words that say what it does, and the staged files a step moves into place."""
+
+    steps: list[tuple[str, Callable, tuple, dict]] = field(default_factory=list)
+    staged: list[Path] = field(default_factory=list)
+
+
+_after_commit_queue: contextvars.ContextVar[_Deferred | None] = contextvars.ContextVar(
+    "_after_commit_queue", default=None
+)
 
 
 # The project owner's username and the import's ``not_applied`` list, for the length of one import.
@@ -181,25 +192,49 @@ def _manifest_entries(root: Path, kind_name: str) -> list:
     return _applied_entries(rel, entries, _ENTRY_NAME_KEYS[kind_name])
 
 
-def _after_commit(action, *args, **kwargs) -> None:
+def _after_commit(label: str, action, *args, **kwargs) -> None:
     """Queue a disk or in-memory side effect of the import until the database has committed; run it
-    at once when no import transaction is open (a direct call of one import function)."""
-    queue = _after_commit_queue.get()
-    if queue is None:
+    at once when no import transaction is open (a direct call of one import function). ``label`` says
+    what it does ("write the flow file of 'x'"), for the import's ``incomplete`` list."""
+    deferred = _after_commit_queue.get()
+    if deferred is None:
         action(*args, **kwargs)
     else:
-        queue.append((action, args, kwargs))
+        deferred.steps.append((label, action, args, kwargs))
 
 
-def _run_after_commit(queue: list) -> None:
-    """Run the queued side effects in order. The database has committed, so a failing one is logged
-    and the rest still run."""
-    for action, args, kwargs in queue:
+def _move_into_place(staged: Path, path: Path) -> None:
+    os.replace(staged, path)
+
+
+def _stage_file(path: Path, text: str, label: str) -> None:
+    """Write ``text`` beside ``path`` now and move it into place once the import has committed, so a write
+    that fails (a full disk, a folder it may not write) fails the import before anything is committed; with
+    no import transaction open, write it at once."""
+    deferred = _after_commit_queue.get()
+    if deferred is None:
+        atomic_write(path, text)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".staged")
+    staged = Path(tmp)
+    deferred.staged.append(staged)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    deferred.steps.append((label, _move_into_place, (staged, path), {}))
+
+
+def _run_after_commit(deferred: _Deferred) -> list[str]:
+    """Run the queued side effects in order and answer one line for each that failed. The database has
+    committed, so a failing one does not stop the rest."""
+    failed = []
+    for label, action, args, kwargs in deferred.steps:
         try:
             action(*args, **kwargs)
-        except Exception:
-            name = getattr(action, "__name__", action)
-            logger.warning("Project import: %s failed after the commit", name, exc_info=True)
+        except Exception as e:
+            logger.warning("Project import: could not %s after the commit", label, exc_info=True)
+            failed.append(f"Could not {label}: {e}")
+    return failed
 
 
 # Per-file YAML size cap; each kind's entry cap is its ``Kind.cap``.
@@ -584,7 +619,7 @@ def _import_tables(root: Path, owner_id: int) -> set[int]:
                 # Rebuild a real, empty Delta table from the stored schema when the managed data is
                 # absent on this machine (never overwrite existing data; never write external paths).
                 if resolved and pointer.get("type") == "managed" and schema and not table_exists(resolved):
-                    _after_commit(_materialize_empty_delta, resolved, schema)
+                    _after_commit(f"create the empty table {name!r}", _materialize_empty_delta, resolved, schema)
                     table.row_count = 0
                     table.size_bytes = 0
                 if resolved is not None or existing is None:
@@ -866,15 +901,17 @@ def _import_notebooks(root: Path, owner_id: int, kernel_ids: dict[str, str] | No
                 logger.warning("Project import: notebook %r collides on (name, namespace) uniqueness; skipping", name)
                 continue
             ns_name = db.get(CatalogNamespace, ns_id).name if ns_id is not None else None
-        _after_commit(
-            notebook_store.write_notebook_file,
-            owner_id,
-            notebook_uuid,
-            name=name,
-            description=data.get("description"),
-            namespace_name=ns_name,
-            default_kernel_id=default_kernel_id,
-            cells=cells,
+        _stage_file(
+            notebook_store._notebook_path(owner_id, notebook_uuid),
+            notebook_store.serialize_notebook(
+                notebook_uuid=notebook_uuid,
+                name=name,
+                description=data.get("description"),
+                namespace=ns_name,
+                default_kernel_id=default_kernel_id,
+                cells=cells,
+            ),
+            f"write the notebook {name!r}",
         )
         kept.add(notebook_uuid)
     return kept
@@ -900,13 +937,12 @@ def _check_flows_load(root: Path, owner_id: int) -> None:
                 pass
 
 
-def _write_runtime_flow(path: Path, data: dict) -> None:
-    """Write a flow's runtime file in the format its path names: a flow registered from a ``.json``
-    path stays JSON. ``flow_uuid``, ``catalog_name`` and ``namespace`` are ignored by the loader."""
+def _runtime_flow_text(path: Path, data: dict) -> str:
+    """A flow's runtime file in the format its path names: a flow registered from a ``.json`` path
+    stays JSON. ``flow_uuid``, ``catalog_name`` and ``namespace`` are ignored by the loader."""
     if path.suffix.lower() == ".json":
-        atomic_write(path, json.dumps(data, indent=2, ensure_ascii=False))
-    else:
-        write_yaml(path, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    return dump_yaml(data)
 
 
 def _import_flow(data: dict, owner_id: int) -> str | None:
@@ -948,12 +984,22 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
                     # On a multi-user server the import never writes outside the flow folders; the flow is skipped.
                     logger.warning("Project import: flow %s not written — %s", flow_uuid, exc)
                     return None
-        _after_commit(_write_runtime_flow, runtime_path, data)
+        _stage_file(runtime_path, _runtime_flow_text(runtime_path, data), f"write the flow file of {catalog_name!r}")
         # Load (with owner_id so cloud connections resolve) but don't open an editor session: project
         # import must not auto-open flows on the canvas. The user opens a flow explicitly via /import_flow/.
-        _after_commit(flow_file_handler.import_flow, runtime_path, user_id=owner_id, register_session=False)
+        _after_commit(
+            f"load the flow {catalog_name!r}",
+            flow_file_handler.import_flow,
+            runtime_path,
+            user_id=owner_id,
+            register_session=False,
+        )
         if existing is None:
-            auto_register_flow(str(runtime_path), catalog_name, owner_id)
+            # The service, not catalog_helpers.auto_register_flow, which logs a failure and carries on.
+            with get_db_context() as db:
+                CatalogService(SQLAlchemyCatalogRepository(db)).auto_register_flow(
+                    str(runtime_path), catalog_name, owner_id
+                )
         # Reconcile identity + display name + namespace placement to the file (keeps flow_uuid stable for
         # determinism, the catalog name round-tripping, and the flow landing in its real schema on import).
         with get_db_context() as db:
@@ -1168,8 +1214,8 @@ def _delete_flow(ctx: kinds.ExportContext, keys: list) -> None:
             service.delete_schedule(s.id)
         service.delete_flow(reg_id, delete_file=False)
         if service.repo.count_flows_by_path(reg_flow_path) == 0:
-            _after_commit(Path(reg_flow_path).unlink, missing_ok=True)
-        _after_commit(flow_file_handler.evict_flow_by_path, reg_flow_path)
+            _after_commit(f"remove the flow file {reg_flow_path}", Path(reg_flow_path).unlink, missing_ok=True)
+        _after_commit(f"close the flow {reg_flow_path}", flow_file_handler.evict_flow_by_path, reg_flow_path)
 
 
 def _delete_schedule(ctx: kinds.ExportContext, keys: list) -> None:
@@ -1254,7 +1300,9 @@ def _delete_notebook(ctx: kinds.ExportContext, keys: list) -> None:
     ):
         sharing.delete_grants_for_resource(ctx.db, "catalog_notebook", nb_id)
         ctx.db.query(CatalogNotebook).filter_by(id=nb_id).delete()
-        _after_commit(notebook_store.delete_notebook_file, ctx.owner_id, nb_uuid)
+        _after_commit(
+            f"remove the notebook file of {nb_uuid}", notebook_store.delete_notebook_file, ctx.owner_id, nb_uuid
+        )
     ctx.db.commit()
 
 
@@ -1304,19 +1352,25 @@ def import_project(root: Path, owner_id: int, removed=()) -> SetupResult:
     objects are deleted after every kind's import; open passes none.
 
     Every flow is built from a temp copy first (``_check_flows_load``). The database changes are then one
-    transaction (``apply_transaction``): a failure anywhere rolls all of them back. Flow, notebook and
-    empty-table files, the flow handler's loads and evictions and the kernel reconcile are queued and run
-    only once it has committed.
+    transaction (``apply_transaction``): a failure anywhere rolls all of them back. Flow and notebook files
+    are written beside their paths inside it, so a write that fails rolls the import back too, and moved
+    into place once it has committed. The rest (empty tables, removed files, the flow handler's loads and
+    evictions, the kernel reconcile) is queued for then as well. A step that fails after the commit does not
+    undo it: the result's ``incomplete`` names each one, and another reload of the folder runs it again.
     """
     _check_flows_load(root, owner_id)
-    queue: list = []
-    token = _after_commit_queue.set(queue)
+    deferred = _Deferred()
     try:
-        with apply_transaction():
-            result = _do_import_project(root, owner_id, removed)
+        token = _after_commit_queue.set(deferred)
+        try:
+            with apply_transaction():
+                result = _do_import_project(root, owner_id, removed)
+        finally:
+            _after_commit_queue.reset(token)
+        result.incomplete = _run_after_commit(deferred)
     finally:
-        _after_commit_queue.reset(token)
-    _run_after_commit(queue)
+        for staged in deferred.staged:
+            staged.unlink(missing_ok=True)
     return result
 
 
@@ -1742,7 +1796,7 @@ def _do_import_project_inner(root: Path, owner_id: int, removed=(), result: Setu
     # A flow's schedule file that is present was reconciled by its import; an entry without an id has another key.
     _delete_removed(owner_id, [c for c in removed if not (c.kind == "schedule" and c.key[0] in run.scheduled_flows)])
 
-    _after_commit(_reconcile_kernel_manager, owner_id)
+    _after_commit("refresh the kernels", _reconcile_kernel_manager, owner_id)
 
     from flowfile_core.project import git_ops
 

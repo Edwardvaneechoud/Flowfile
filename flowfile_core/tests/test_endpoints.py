@@ -3714,7 +3714,7 @@ def test_create_directory_refuses_a_missing_parent(tmp_path):
     assert response.status_code == 404
 
 
-@pytest.mark.parametrize("name", ["a/b", "a\\b", ".", " "])
+@pytest.mark.parametrize("name", ["a/b", "a\\b", ".", "..", " "])
 def test_create_directory_refuses_a_name_that_is_not_one_folder(tmp_path, name):
     (tmp_path / "a").mkdir()
     response = client.post("/files/create_directory", json={"source_path": str(tmp_path), "dir_name": name})
@@ -3732,6 +3732,18 @@ def test_create_directory_off_desktop_stays_in_the_user_data_directory(monkeypat
     response = client.post("/files/create_directory", json={"source_path": str(tmp_path), "dir_name": "outside"})
     assert response.status_code == 403
     assert not (tmp_path / "outside").exists()
+
+
+def test_create_directory_reads_a_bad_name_before_the_path(monkeypatch, tmp_path):
+    """``..`` at the top of the user data directory would point outside it; it is a 400, not that 403."""
+    from flowfile_core.configs import settings
+
+    monkeypatch.setattr(settings, "is_electron_mode", lambda: False)
+    monkeypatch.setattr(storage, "_user_data_dir", tmp_path / "user")
+    (tmp_path / "user").mkdir()
+    monkeypatch.chdir(tmp_path)
+    response = client.post("/files/create_directory", json={"source_path": str(tmp_path / "user"), "dir_name": ".."})
+    assert response.status_code == 400
 
 
 def test_explorer_without_a_sandbox_is_bounded_by_the_filesystem_roots(monkeypatch, tmp_path):

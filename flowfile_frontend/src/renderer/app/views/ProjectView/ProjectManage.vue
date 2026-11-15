@@ -199,12 +199,13 @@ import SaveVersionForm from "../../components/project/SaveVersionForm.vue";
 import ChangeList from "./ChangeList.vue";
 import { ProjectUnsavedChanges } from "../../api/project.errors";
 import { confirmRecoveryPoint } from "../../components/project/recoveryPoint";
+import { alertIncomplete } from "../../components/project/importNotice";
 import ProjectVersionHistory from "./ProjectVersionHistory.vue";
 import ProjectSettingsDialog from "./ProjectSettingsDialog.vue";
 import { useProjectStore } from "../../stores/project-store";
 import { useMultiUser } from "../../composables/useMultiUser";
 import { timeAgoShort } from "../../utils/time";
-import type { ProjectVersionChange } from "../../types";
+import type { ImportResult, ProjectVersionChange } from "../../types";
 
 const store = useProjectStore();
 const { gitAvailable } = useMultiUser();
@@ -268,8 +269,7 @@ const handleReload = async () => {
         return;
       }
     }
-    await store.reloadFromDisk();
-    ElMessage.success("Project reloaded from disk");
+    await reportReload(await store.reloadFromDisk());
   } catch (e: any) {
     if (e instanceof ProjectUnsavedChanges) {
       await reloadKeepingRecoveryPoint(e);
@@ -281,11 +281,16 @@ const handleReload = async () => {
   }
 };
 
+const reportReload = async (res: ImportResult) => {
+  if (!(await alertIncomplete(res, "Reload not finished"))) {
+    ElMessage.success("Project reloaded from disk");
+  }
+};
+
 const reloadKeepingRecoveryPoint = async (unsaved: ProjectUnsavedChanges) => {
   if (!(await confirmRecoveryPoint(unsaved))) return;
   try {
-    await store.reloadFromDisk(true);
-    ElMessage.success("Project reloaded from disk");
+    await reportReload(await store.reloadFromDisk(true));
   } catch (e: any) {
     ElMessage.error(e?.message || "Could not reload project");
   }

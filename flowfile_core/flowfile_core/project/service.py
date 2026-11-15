@@ -398,7 +398,10 @@ class ProjectSyncService:
         clean with no dangling unsaved state. Unsaved work is never silently lost: a dirty tree or a
         database that differs from the last version is 409'd unless ``force``, and on ``force`` both
         are committed into history first (``_guard_before_apply``). The target is checked before any of
-        that, and an import that fails rolls the database back and resets the folder to HEAD again.
+        that, and an import that fails rolls the database back and resets the folder to HEAD again. An
+        import that committed but left steps unfinished (``incomplete``) records no version: an export
+        now would leave out what those steps did not write, so the folder keeps the target's files for a
+        reload to finish.
         """
         proj = self.get_active_project(user_id)
         if proj is None:
@@ -418,11 +421,12 @@ class ProjectSyncService:
                     git_ops.restore(proj.root, head)
                 raise
             self._sync_track_setting_from_manifest(proj)
-            write_export(proj.root, proj.owner_id)
-            message = f"Restore: {label}" if label else f"Restore version {sha[:8]}"
-            new_sha = git_ops.commit_all(proj.root, message)
-            with get_db_context() as db:
-                repository.set_head_sha(db, proj.id, new_sha or git_ops.head_sha(proj.root))
+            if not result.incomplete:
+                write_export(proj.root, proj.owner_id)
+                message = f"Restore: {label}" if label else f"Restore version {sha[:8]}"
+                new_sha = git_ops.commit_all(proj.root, message)
+                with get_db_context() as db:
+                    repository.set_head_sha(db, proj.id, new_sha or git_ops.head_sha(proj.root))
         result.recovery_sha = recovery_sha
         return result
 

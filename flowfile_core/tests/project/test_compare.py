@@ -196,3 +196,16 @@ def test_plan_of_a_malformed_folder_is_a_422_that_changes_nothing(project):
 
 def test_plan_with_a_malformed_sha_is_a_422(project):
     assert client.post("/project/plan", json={"sha": "not-a-sha"}).status_code == 422
+
+
+def test_the_older_version_changes_route_answers_the_plan(project):
+    """``GET /versions/{sha}/changes`` (v0.24) stays, deprecated, as the restore plan."""
+    root, before, name = project
+    plan = client.post("/project/plan", json={"sha": before}).json()["changes"]
+    assert client.get(f"/project/versions/{before}/changes").json()["changes"] == plan
+    assert _rows_for(client.get(f"/project/versions/{before}/changes"), name)[0]["change"] == "removed"
+    assert main.app.openapi()["paths"]["/project/versions/{sha}/changes"]["get"]["deprecated"] is True
+
+
+def test_active_keeps_the_older_projection_failed_field(project):
+    assert client.get("/project/active").json()["projection_failed"] is False

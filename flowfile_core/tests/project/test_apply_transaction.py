@@ -101,6 +101,10 @@ def _add_flow_copy(root: Path, source_uuid: str, file_stem: str, **changes) -> t
     return new_uuid, name, storage.flows_directory / "project" / f"{safe_stem(name)}_{new_uuid[:8]}.flow.yaml"
 
 
+def _staged_leftovers(*folders: Path) -> list[Path]:
+    return [p for folder in folders if folder.is_dir() for p in folder.glob(".*.staged")]
+
+
 def _committed_path_registered(flow_path: str) -> bool:
     """Read on a connection of the app's engine, so only committed rows are seen."""
     with engine.connect() as connection:
@@ -159,6 +163,7 @@ def test_a_failing_reload_changes_no_row_and_no_file(tmp_path, monkeypatch):
         assert nb_content.read_bytes() == nb_bytes
         assert pruned_nb_content.read_bytes() == pruned_nb_bytes
         assert not new_runtime.exists()
+        assert not _staged_leftovers(runtime_flow.parent, new_runtime.parent, nb_content.parent)
         assert not any(f.flow_settings.path == str(new_runtime) for f in flow_file_handler._flows.values())
     finally:
         monkeypatch.undo()
@@ -176,11 +181,12 @@ def test_a_reload_writes_flow_files_and_evicts_only_after_the_commit(tmp_path, m
     new_uuid = None
     writes: list[tuple[str, bool]] = []
     evictions: list[tuple[str, bool]] = []
-    write_yaml, evict = importer.write_yaml, flow_file_handler.evict_flow_by_path
+    move, evict = importer._move_into_place, flow_file_handler.evict_flow_by_path
 
-    def recording_write(path, data):
-        writes.append((str(path), _committed_path_registered(str(path))))
-        write_yaml(path, data)
+    def recording_write(staged, path):
+        if not Path(path).is_relative_to(storage.notebooks_directory):
+            writes.append((str(path), _committed_path_registered(str(path))))
+        move(staged, path)
 
     def recording_evict(flow_path):
         evictions.append((flow_path, _committed_path_registered(flow_path)))
@@ -192,7 +198,7 @@ def test_a_reload_writes_flow_files_and_evicts_only_after_the_commit(tmp_path, m
         _project_flow_file(root, pruned_uuid).unlink()
         new_uuid, _, new_runtime = _add_flow_copy(root, kept_uuid, "zz_new")
 
-        monkeypatch.setattr(importer, "write_yaml", recording_write)
+        monkeypatch.setattr(importer, "_move_into_place", recording_write)
         monkeypatch.setattr(flow_file_handler, "evict_flow_by_path", recording_evict)
         project_sync.reload_from_disk(OWNER)
 
@@ -235,3 +241,141 @@ def test_a_flow_that_does_not_load_rolls_the_apply_back(tmp_path):
     finally:
         project_sync.close_project(OWNER)
         _cleanup([flow_uuid], [])
+
+
+def test_a_flow_file_that_cannot_be_written_rolls_the_apply_back(tmp_path, monkeypatch):
+    """The runtime file is written beside its path inside the transaction, so a full disk is a failed reload."""
+    project_sync.close_project(OWNER)
+    root = tmp_path / "project"
+    flow_uuid = _make_flow(tmp_path, f"tx_disk_{uuid4().hex[:6]}", 656565)
+    new_uuid = None
+    try:
+        project_sync.init_project(str(root), "Apply Disk Full", OWNER)
+        project_sync.save_version(OWNER, "baseline")
+        flow_file = _project_flow_file(root, flow_uuid)
+        flow_file.write_text(
+            flow_file.read_text(encoding="utf-8").replace("catalog_name: tx_disk_", "catalog_name: renamed_"),
+            encoding="utf-8",
+        )
+        new_uuid, _, new_runtime = _add_flow_copy(root, flow_uuid, "zz_disk")
+        with get_db_context() as db:
+            runtime_flow = Path(db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).one().flow_path)
+        flow_bytes = runtime_flow.read_bytes()
+        before = _dump()
+        mkstemp = importer.tempfile.mkstemp
+
+        def disk_full_for_the_new_flow(*args, **kwargs):
+            if kwargs.get("prefix", "").startswith(f".{new_runtime.name}."):
+                raise OSError(28, "No space left on device")
+            return mkstemp(*args, **kwargs)
+
+        monkeypatch.setattr(importer.tempfile, "mkstemp", disk_full_for_the_new_flow)
+        with pytest.raises(OSError, match="No space left"):
+            project_sync.reload_from_disk(OWNER)
+
+        assert _dump() == before
+        assert runtime_flow.read_bytes() == flow_bytes
+        assert not new_runtime.exists()
+        assert not _staged_leftovers(runtime_flow.parent, new_runtime.parent)
+    finally:
+        monkeypatch.undo()
+        project_sync.close_project(OWNER)
+        _cleanup([u for u in (flow_uuid, new_uuid) if u], [])
+
+
+def test_a_step_that_fails_after_the_commit_is_reported_and_a_reload_finishes_it(tmp_path, monkeypatch):
+    project_sync.close_project(OWNER)
+    root = tmp_path / "project"
+    flow_uuid = _make_flow(tmp_path, f"tx_late_{uuid4().hex[:6]}", 666666)
+    new_uuid = None
+    try:
+        project_sync.init_project(str(root), "Apply Late Failure", OWNER)
+        project_sync.save_version(OWNER, "baseline")
+        new_uuid, new_name, new_runtime = _add_flow_copy(root, flow_uuid, "zz_late")
+        move = importer._move_into_place
+
+        def failing_move(staged, path):
+            if Path(path) == new_runtime:
+                raise OSError("the move failed")
+            move(staged, path)
+
+        monkeypatch.setattr(importer, "_move_into_place", failing_move)
+        result = project_sync.reload_from_disk(OWNER)
+
+        assert f"Could not write the flow file of {new_name!r}: the move failed" in result.incomplete
+        assert any(line.startswith(f"Could not load the flow {new_name!r}") for line in result.incomplete)
+        assert result.to_dict()["incomplete"] == result.incomplete
+        assert _committed_path_registered(str(new_runtime))
+        assert not new_runtime.exists()
+        assert not _staged_leftovers(new_runtime.parent)
+
+        monkeypatch.undo()
+        assert project_sync.reload_from_disk(OWNER).incomplete == []
+        assert new_runtime.exists()
+    finally:
+        monkeypatch.undo()
+        project_sync.close_project(OWNER)
+        _cleanup([u for u in (flow_uuid, new_uuid) if u], [])
+
+
+def test_a_restore_left_unfinished_records_no_version_and_keeps_the_folder(tmp_path, monkeypatch):
+    """The export after it would leave the flow out; the folder keeps the version's file for a reload instead."""
+    project_sync.close_project(OWNER)
+    root = tmp_path / "project"
+    kept_uuid = _make_flow(tmp_path, f"tx_rkept_{uuid4().hex[:6]}", 676767)
+    gone_uuid = None
+    try:
+        project_sync.init_project(str(root), "Restore Late Failure", OWNER)
+        gone_uuid = _make_flow(tmp_path, f"tx_rgone_{uuid4().hex[:6]}", 686868)
+        with_gone = project_sync.save_version(OWNER, "with the flow")
+        gone_file = _project_flow_file(root, gone_uuid).name
+        _cleanup([gone_uuid], [])
+        without_gone = project_sync.save_version(OWNER, "without the flow")
+        move = importer._move_into_place
+
+        def failing_move(staged, path):
+            if gone_uuid[:8] in Path(path).name:
+                raise OSError("the move failed")
+            move(staged, path)
+
+        monkeypatch.setattr(importer, "_move_into_place", failing_move)
+        result = project_sync.restore_version(OWNER, with_gone)
+
+        assert any(line.startswith("Could not write the flow file of") for line in result.incomplete)
+        assert git_ops.head_sha(root) == without_gone
+        assert (manifest.flows_dir(root) / gone_file).exists()
+
+        monkeypatch.undo()
+        assert project_sync.reload_from_disk(OWNER).incomplete == []
+        with get_db_context() as db:
+            assert Path(db.query(FlowRegistration).filter_by(flow_uuid=gone_uuid).one().flow_path).exists()
+    finally:
+        monkeypatch.undo()
+        project_sync.close_project(OWNER)
+        _cleanup([u for u in (kept_uuid, gone_uuid) if u], [])
+
+
+def test_a_registration_that_fails_rolls_the_apply_back(tmp_path, monkeypatch):
+    project_sync.close_project(OWNER)
+    root = tmp_path / "project"
+    flow_uuid = _make_flow(tmp_path, f"tx_reg_{uuid4().hex[:6]}", 696969)
+    new_uuid = None
+    try:
+        project_sync.init_project(str(root), "Apply Registration", OWNER)
+        project_sync.save_version(OWNER, "baseline")
+        new_uuid, _, new_runtime = _add_flow_copy(root, flow_uuid, "zz_reg")
+        before = _dump()
+
+        def refuse(*args, **kwargs):
+            raise RuntimeError("the registration failed")
+
+        monkeypatch.setattr(CatalogService, "auto_register_flow", refuse)
+        with pytest.raises(RuntimeError, match="the registration failed"):
+            project_sync.reload_from_disk(OWNER)
+
+        assert _dump() == before
+        assert not new_runtime.exists()
+    finally:
+        monkeypatch.undo()
+        project_sync.close_project(OWNER)
+        _cleanup([u for u in (flow_uuid, new_uuid) if u], [])

@@ -129,6 +129,7 @@ class SetupResultOut(BaseModel):
     placeholder_secrets: list[str]
     unknown_kinds: list[str] = []
     not_applied: list[str] = []
+    incomplete: list[str] = []
     recovery_sha: str | None = None
 
 
@@ -145,6 +146,9 @@ class ActiveProjectOut(BaseModel):
     has_external_changes: bool | None = None
     dirty: bool | None = None
     external_edits: bool | None = None
+    projection_failed: bool | None = Field(
+        default=None, deprecated="Always false: no save writes into the project folder any more."
+    )
 
 
 class SettingsOut(BaseModel):
@@ -251,6 +255,7 @@ def get_active(current_user=Depends(get_current_active_user)) -> ActiveProjectOu
         has_external_changes=project_sync.has_external_changes(current_user.id),
         dirty=project_sync.has_uncommitted_changes(current_user.id),
         external_edits=project_sync.external_edits(current_user.id),
+        projection_failed=False,
     )
 
 
@@ -299,6 +304,21 @@ def restore_version(req: RestoreRequest, current_user=Depends(get_current_active
 
 
 _SHA_PATH = FPath(..., pattern=r"^[0-9a-fA-F]{7,40}$")
+
+
+@router.get("/versions/{sha}/changes", response_model=ChangesOut, deprecated=True)
+def version_changes(
+    sha: str = _SHA_PATH,
+    current_user=Depends(get_current_active_user),
+) -> ChangesOut:
+    """What restoring ``sha`` would change: ``POST /project/plan`` with ``{"sha": ...}``, kept for older clients."""
+    try:
+        changes = project_sync.plan(current_user.id, sha)
+    except NoActiveProjectError as e:
+        raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
+    return ChangesOut(changes=changes)
 
 
 @router.get("/versions/{sha}/diff", response_model=ChangesOut)

@@ -374,6 +374,14 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
             print(str(e), file=sys.stderr)
         sys.exit(1)
 
+    def _exit_if_incomplete(result) -> None:
+        if result.incomplete:
+            print("The database was updated, but these steps did not finish:", file=sys.stderr)
+            for line in result.incomplete:
+                print(f"  {line}", file=sys.stderr)
+            print("Run `flowfile project apply` to finish them.", file=sys.stderr)
+            sys.exit(1)
+
     def _validated_folder(usage: str) -> str:
         if not arg:
             print(usage, file=sys.stderr)
@@ -400,6 +408,7 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
         missing = len(result.placeholder_secrets)
         if missing:
             print(f"{missing} value(s) need to be set (FLOWFILE_SECRET_<NAME> or update them in the app).")
+        _exit_if_incomplete(result)
     elif action == "save":
         if not arg:
             print('Usage: flowfile project save "<message>"', file=sys.stderr)
@@ -416,6 +425,7 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
     elif action == "apply":
         result = _or_exit(project_sync.reload_from_disk, owner_id)
         print(f"Imported: {', '.join(f'{k}={n}' for k, n in result.by_kind.items()) or 'nothing'}")
+        _exit_if_incomplete(result)
     else:
         print("Usage: flowfile project {init|open|save|plan|apply} <folder-message-or-sha>", file=sys.stderr)
         sys.exit(1)

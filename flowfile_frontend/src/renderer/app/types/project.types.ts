@@ -17,6 +17,7 @@ export interface ImportedCounts {
 export interface ImportResult {
   imported: ImportedCounts;
   placeholder_secrets: string[];
+  incomplete?: string[]; // steps that failed after the database committed, e.g. a flow file it could not write
   recovery_sha?: string | null; // autosave commit made before a forced restore/reload
 }
 

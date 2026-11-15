@@ -25,12 +25,12 @@ def create_dir(new_directory: NewDirectory) -> tuple[bool, Exception | None]:
     the ``OSError`` of the ``mkdir``.
     """
     try:
+        _check_folder_name(new_directory.dir_name)
         full_path = validate_path_under_cwd(os.path.join(new_directory.source_path, new_directory.dir_name))
         if not settings.is_electron_mode():
             full_path = contained_path(storage.user_data_directory, full_path)
             if full_path is None:
                 raise HTTPException(403, "Access denied: path is outside the allowed directory")
-        _check_folder_name(new_directory.dir_name)
         os.mkdir(full_path)
         logger.info("Successfully created a new folder")
         return True, None
