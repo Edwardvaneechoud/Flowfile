@@ -68,6 +68,7 @@ from flowfile_core.routes.notifications import router as notifications_router
 from flowfile_core.routes.project import router as project_router
 from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.routes import router
+from flowfile_core.routes.search import router as search_router
 from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.shares import router as shares_router
 from flowfile_core.routes.snowflake import router as snowflake_router
@@ -243,6 +244,7 @@ app.add_middleware(change_feed.ClientOriginMiddleware)
 app.include_router(public_router)
 app.include_router(router)
 app.include_router(catalog_router)
+app.include_router(search_router)
 # Flow-as-API: public key-authenticated data endpoint + JWT management endpoints.
 app.include_router(flow_api_data_router)
 app.include_router(flow_api_management_router)

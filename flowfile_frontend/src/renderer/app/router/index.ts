@@ -140,6 +140,11 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/CatalogView/CatalogView.vue"),
       },
       {
+        name: "search",
+        path: "search",
+        component: () => import("../views/SearchView/SearchView.vue"),
+      },
+      {
         // Dashboards are catalog pages: CatalogView keeps its tab bar (pinned to
         // meta.catalogTab) and mounts the viewer/editor in its nested <router-view>.
         path: "dashboards",

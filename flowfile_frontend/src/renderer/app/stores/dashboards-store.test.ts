@@ -2,13 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import type { Dashboard, DashboardLayout } from "../types";
 
-const { updateDashboardMock } = vi.hoisted(() => ({
+const { updateDashboardMock, getDashboardMock } = vi.hoisted(() => ({
   updateDashboardMock: vi.fn(),
+  getDashboardMock: vi.fn(),
 }));
 
 vi.mock("../api/catalog.api", () => ({
   CatalogApi: {
     updateDashboard: updateDashboardMock,
+    getDashboard: getDashboardMock,
   },
 }));
 
@@ -113,5 +115,37 @@ describe("dashboards-store autosaveDashboard", () => {
     updateDashboardMock.mockRejectedValue(conflict);
 
     await expect(store.autosaveDashboard(5, { name: "Sales" })).rejects.toBe(conflict);
+  });
+});
+
+describe("dashboards-store loadDashboard", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    getDashboardMock.mockReset();
+  });
+
+  it("keeps only the newest load's answer", async () => {
+    let answerFirst!: (value: Dashboard) => void;
+    getDashboardMock
+      .mockReturnValueOnce(new Promise<Dashboard>((resolve) => (answerFirst = resolve)))
+      .mockResolvedValueOnce(dashboard({ id: 2, name: "Second" }));
+    const store = useDashboardsStore();
+    const first = store.loadDashboard(1);
+    await store.loadDashboard(2);
+    answerFirst(dashboard({ id: 1, name: "First" }));
+    await first;
+    expect(store.current?.id).toBe(2);
+    expect(store.loadingCurrent).toBe(false);
+  });
+
+  it("drops another dashboard when this one fails to load", async () => {
+    getDashboardMock
+      .mockResolvedValueOnce(dashboard({ id: 1 }))
+      .mockRejectedValueOnce(new Error("gone"));
+    const store = useDashboardsStore();
+    await store.loadDashboard(1);
+    await expect(store.loadDashboard(2)).rejects.toThrow("gone");
+    expect(store.current).toBeNull();
+    expect(store.error).toBe("gone");
   });
 });
