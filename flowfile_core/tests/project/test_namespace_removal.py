@@ -80,6 +80,19 @@ def _built_in_rows(db) -> dict[str, CatalogNamespace]:
     return rows
 
 
+@pytest.fixture
+def built_ins_made_here():
+    """Delete the built-in schemas the test made, so a later test that makes its own ``General/sync`` can."""
+    with get_db_context() as db:
+        existing = {name for name, row in _built_in_rows(db).items() if row is not None}
+    yield
+    with get_db_context() as db:
+        for name, row in _built_in_rows(db).items():
+            if row is not None and name not in existing:
+                db.delete(row)
+        db.commit()
+
+
 def test_a_restore_to_before_a_seeded_public_catalog_removes_it(tmp_path, every_kind):  # noqa: F811
     root = tmp_path / "project"
     project_sync.init_project(str(root), "seeded", every_kind)
@@ -105,7 +118,7 @@ def test_a_restore_to_before_a_seeded_public_catalog_removes_it(tmp_path, every_
     assert restored == git_ops.read_tree_at(root, before)["namespaces.yaml"]
 
 
-def test_a_reload_keeps_the_built_in_namespaces_and_plans_no_removal(tmp_path):
+def test_a_reload_keeps_the_built_in_namespaces_and_plans_no_removal(tmp_path, built_ins_made_here):
     """The files drop ``General`` whole, as a folder from an install without ``Python Editor`` or ``sync`` drops
     those two: none of them is in the plan, and the reload leaves every one in place."""
     owner = _local_user_id()
