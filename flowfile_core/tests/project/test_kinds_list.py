@@ -24,6 +24,7 @@ from flowfile_core.database.models import (
     CatalogNotebook,
     CatalogTable,
     FlowRegistration,
+    FlowSchedule,
     Kernel,
     User,
     WorkspaceProject,
@@ -431,3 +432,36 @@ def test_project_yaml_keeps_its_list_style_whatever_yaml_dumper_was_given(monkey
     with get_db_context() as db:
         tree = kinds.snapshot(kinds.ExportContext(db=db, owner_id=recorded))
     assert tree == json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_a_flow_with_no_file_does_not_take_a_flows_schedule_file(tmp_path, every_kind):
+    exported, missing = "0c000000-0000-4000-8000-000000000001", "fc000000-0000-4000-8000-000000000001"
+    path = tmp_path / "sched_dup.yaml"
+    _flow_file(path, "sched_dup", [])
+    with get_db_context() as db:
+        reg = FlowRegistration(flow_uuid=exported, name="sched_dup", flow_path=str(path), owner_id=every_kind)
+        db.add(reg)
+        db.add(
+            FlowRegistration(
+                flow_uuid=missing, name="sched_dup", flow_path=str(tmp_path / "gone.yaml"), owner_id=every_kind
+            )
+        )
+        db.flush()
+        db.add(FlowSchedule(registration_id=reg.id, owner_id=every_kind, schedule_type="interval", interval_seconds=60))
+        db.commit()
+
+    tree = _project_all(tmp_path / "project", every_kind)
+
+    assert yaml.safe_load(tree["schedules/sched_dup.yaml"])["flow_uuid"] == exported
+    assert not any(missing in text for text in tree.values())
+
+
+def test_a_folder_without_project_yaml_leaves_a_kind_it_has_no_file_for_alone(tmp_path, every_kind):
+    root = tmp_path / "project"
+    _init(root, every_kind)
+    (root / "project.yaml").unlink()
+    (root / "kernels.yaml").unlink()
+
+    assert not [c for c in project_sync.plan(every_kind) if c["change"] == "removed"]
+    project_sync.reload_from_disk(every_kind, force=True)
+    assert _kernel_ids(every_kind) == {KERNEL_ID}

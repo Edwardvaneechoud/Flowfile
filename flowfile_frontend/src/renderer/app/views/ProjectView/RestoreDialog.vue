@@ -62,7 +62,7 @@
 import { ref, watch } from "vue";
 import { ElMessage, ElNotification } from "element-plus";
 import ChangeList from "./ChangeList.vue";
-import { ProjectUnsavedChanges } from "./unsavedChanges";
+import { ProjectUnsavedChanges } from "../../api/project.errors";
 import { useProjectStore } from "../../stores/project-store";
 import type { ProjectVersion, ProjectVersionChange } from "../../types";
 

@@ -21,9 +21,9 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { ProjectFolderEdited } from "../../api/project.api";
+import { ProjectFolderEdited, ProjectUnsavedChanges } from "../../api/project.errors";
 import { useProjectStore } from "../../stores/project-store";
-import { ProjectUnsavedChanges } from "../../views/ProjectView/unsavedChanges";
+import { changeLines, confirmRecoveryPoint } from "./recoveryPoint";
 
 withDefaults(
   defineProps<{
@@ -57,10 +57,9 @@ const save = async (text: string, overwrite = false) => {
 type FolderChoice = "apply" | "overwrite" | null;
 
 const askApplyOrOverwrite = async (edited: ProjectFolderEdited): Promise<FolderChoice> => {
-  const lines = edited.changes.map((c) => `${c.kind} “${c.label}”`).join("\n");
   try {
     await ElMessageBox.confirm(
-      `${edited.message}\n\n${lines}\n\nApply makes Flowfile match the folder's files, then saves. Overwrite saves what Flowfile holds over those files.`,
+      `${edited.message}\n\n${changeLines(edited.changes)}\n\nApply makes Flowfile match the folder's files, then saves. Overwrite saves what Flowfile holds over those files.`,
       "Files changed outside Flowfile",
       {
         confirmButtonText: "Apply and save",
@@ -76,34 +75,13 @@ const askApplyOrOverwrite = async (edited: ProjectFolderEdited): Promise<FolderC
   }
 };
 
-const confirmReplaceUnsaved = async (unsaved: ProjectUnsavedChanges): Promise<boolean> => {
-  const lines = unsaved.changes.map((c) => `${c.kind} “${c.label}”`).join("\n");
-  const snapshot = unsaved.databaseSnapshot
-    ? "A snapshot of the catalog database is also written to db_backups/ first."
-    : "This catalog database is not snapshotted: the recovery point is the only copy, and it holds definitions, not stored passwords.";
-  try {
-    await ElMessageBox.confirm(
-      `Applying the folder replaces these unsaved changes:\n\n${lines}\n\nA recovery point of them is kept first. ${snapshot}\n\nTo keep them instead, cancel and choose Overwrite.`,
-      "Unsaved changes",
-      {
-        confirmButtonText: "Keep a recovery point and apply",
-        cancelButtonText: "Cancel",
-        type: "warning",
-        customStyle: { whiteSpace: "pre-line" },
-      },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 const applyFolderAndSave = async (text: string) => {
   try {
     await store.reloadFromDisk();
   } catch (e) {
     if (!(e instanceof ProjectUnsavedChanges)) throw e;
-    if (!(await confirmReplaceUnsaved(e))) return;
+    if (!(await confirmRecoveryPoint(e, "To keep them instead, cancel and choose Overwrite.")))
+      return;
     await store.reloadFromDisk(true);
   }
   await save(text);

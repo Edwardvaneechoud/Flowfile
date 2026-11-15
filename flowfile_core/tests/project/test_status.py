@@ -227,16 +227,46 @@ def loads(monkeypatch):
     return seen
 
 
+def _age_flow_files(tmp_path) -> None:
+    """Date the install's flow files a minute back, as files not just written are."""
+    for path in tmp_path.glob("*.yaml"):
+        stat = path.stat()
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns - 60_000_000_000))
+
+
 def test_a_warm_read_parses_no_flow_file(tmp_path, every_kind, loads):
     project_sync.init_project(str(tmp_path / "project"), "status", every_kind, True)
+    _age_flow_files(tmp_path)
     project_sync.unsaved_changes(every_kind)
     loads.clear()
     assert project_sync.unsaved_changes(every_kind) == []
     assert loads == []
 
 
+def test_a_same_size_rewrite_of_a_fresh_flow_file_is_re_rendered(tmp_path, every_kind, loads):
+    project_sync.init_project(str(tmp_path / "project"), "status", every_kind, True)
+    _age_flow_files(tmp_path)
+    path = tmp_path / "flow_b.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    def write(description: str) -> None:
+        data["nodes"][0]["description"] = description
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    write("first")
+    stamp = path.stat().st_mtime_ns
+    project_sync.unsaved_changes(every_kind)
+    loads.clear()
+    write("again")
+    os.utime(path, ns=(stamp, stamp))
+    rows = project_sync.unsaved_changes(every_kind)
+    assert loads == ["flow_b.yaml"]
+    assert [(r["kind"], r["label"]) for r in rows] == [("flow", "flow_b")]
+
+
 def test_a_renamed_table_re_renders_the_flow_that_names_it(tmp_path, every_kind, loads):
     project_sync.init_project(str(tmp_path / "project"), "status", every_kind, True)
+    _age_flow_files(tmp_path)
     project_sync.unsaved_changes(every_kind)
     loads.clear()
     with get_db_context() as db:
@@ -249,6 +279,7 @@ def test_a_renamed_table_re_renders_the_flow_that_names_it(tmp_path, every_kind,
 
 def test_a_flow_file_rewritten_elsewhere_is_re_rendered(tmp_path, every_kind, loads):
     project_sync.init_project(str(tmp_path / "project"), "status", every_kind, True)
+    _age_flow_files(tmp_path)
     project_sync.unsaved_changes(every_kind)
     loads.clear()
     path = tmp_path / "flow_b.yaml"

@@ -197,7 +197,8 @@ import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import SaveVersionForm from "../../components/project/SaveVersionForm.vue";
 import ChangeList from "./ChangeList.vue";
-import { ProjectUnsavedChanges } from "./unsavedChanges";
+import { ProjectUnsavedChanges } from "../../api/project.errors";
+import { confirmRecoveryPoint } from "../../components/project/recoveryPoint";
 import ProjectVersionHistory from "./ProjectVersionHistory.vue";
 import ProjectSettingsDialog from "./ProjectSettingsDialog.vue";
 import { useProjectStore } from "../../stores/project-store";
@@ -281,17 +282,7 @@ const handleReload = async () => {
 };
 
 const reloadKeepingRecoveryPoint = async (unsaved: ProjectUnsavedChanges) => {
-  const lines = unsaved.changes.map((c) => `${c.kind} “${c.label}”`).join("\n");
-  try {
-    await ElMessageBox.confirm(`${unsaved.message}\n\n${lines}`, "Unsaved changes", {
-      confirmButtonText: "Keep a recovery point and continue",
-      cancelButtonText: "Cancel",
-      type: "warning",
-      customStyle: { whiteSpace: "pre-line" },
-    });
-  } catch {
-    return;
-  }
+  if (!(await confirmRecoveryPoint(unsaved))) return;
   try {
     await store.reloadFromDisk(true);
     ElMessage.success("Project reloaded from disk");

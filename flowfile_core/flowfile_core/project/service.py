@@ -121,7 +121,8 @@ def write_export(root: Path, owner_id: int) -> None:
 def _plan_changes(root: Path, owner_id: int, sha: str | None) -> list[kinds.Change]:
     """``compare(snapshot, target)`` for the tree at ``sha``, or the folder when ``None``, over the kinds the
     target lists, the snapshot exporting those same kinds, so a kind the folder no longer lists is compared too.
-    A target without a ``kinds`` list is compared over the kinds it holds a file for."""
+    A target without a ``kinds`` list, or without a ``project.yaml``, is compared over the kinds it holds a
+    file for, so a kind it has no file for is left alone."""
     if sha is None:
         target = kinds.read_tree(root)
         manifest_file = root / MANIFEST_NAME
@@ -129,15 +130,12 @@ def _plan_changes(root: Path, owner_id: int, sha: str | None) -> list[kinds.Chan
     else:
         target = git_ops.read_tree_at(root, sha)
         manifest_text = target.get(MANIFEST_NAME)
-    listed = None
-    if manifest_text is not None:
-        data = yaml.safe_load(manifest_text) or {}
-        listed = parse_manifest(data, root.name).kinds
-        if "kinds" not in data:  # a version from before the list: a kind it has no file for is left alone
-            held = {owned[0].name for owned in map(kinds.kind_for_path, target) if owned is not None}
-            listed = [name for name in listed if name in held]
-    snapshot = _snapshot(root, owner_id, [k.name for k in kinds.registered()] if listed is None else listed)
-    return kinds.compare(snapshot, target, kinds=listed, strict=True)
+    data = (yaml.safe_load(manifest_text) or {}) if manifest_text is not None else {}
+    listed = parse_manifest(data, root.name).kinds
+    if "kinds" not in data:
+        held = {owned[0].name for owned in map(kinds.kind_for_path, target) if owned is not None}
+        listed = [name for name in listed if name in held]
+    return kinds.compare(_snapshot(root, owner_id, listed), target, kinds=listed, strict=True)
 
 
 def _change_rows(changes: list[kinds.Change]) -> list[dict]:
@@ -263,18 +261,17 @@ class ProjectSyncService:
         root = _confine_project_root(folder_path, owner_id)
         _assert_not_foreign_owned(root, owner_id)
         root.mkdir(parents=True, exist_ok=True)
-        existing = read_manifest(root)
-        # A new project takes the requested toggle; re-initializing an existing one keeps its manifest value.
-        m = existing
-        if m is None:
-            m = ProjectManifest(name=name, project_id=str(uuid.uuid4()), created_with_version=__version__)
-            m.track_data_artifacts = track_data_artifacts
-        _save_manifest(root, m)
-        write_gitignore(root)
         if not git_ops.git_available():
             logger.warning("git is unavailable; project %r is created without version tracking", name)
         git_ops.init(root)
-        with git_ops.repo_lock(root):
+        with git_ops.project_lock(root):
+            # A new project takes the requested toggle; re-initializing an existing one keeps its manifest value.
+            m = read_manifest(root)
+            if m is None:
+                m = ProjectManifest(name=name, project_id=str(uuid.uuid4()), created_with_version=__version__)
+                m.track_data_artifacts = track_data_artifacts
+            _save_manifest(root, m)
+            write_gitignore(root)
             with get_db_context() as db:
                 row = repository.upsert_active(db, m.name, str(root), owner_id, m.track_data_artifacts)
                 project = ActiveProject(row.id, m.name, root, owner_id, m.track_data_artifacts)
@@ -400,21 +397,26 @@ class ProjectSyncService:
         the reset), and the export after the apply is committed as "Restore: …", so history stays
         clean with no dangling unsaved state. Unsaved work is never silently lost: a dirty tree or a
         database that differs from the last version is 409'd unless ``force``, and on ``force`` both
-        are committed into history first (``_guard_before_apply``).
+        are committed into history first (``_guard_before_apply``). The target is checked before any of
+        that, and an import that fails rolls the database back and resets the folder to HEAD again.
         """
         proj = self.get_active_project(user_id)
         if proj is None:
             raise NoActiveProjectError("No active project")
         with git_ops.project_lock(proj.root):
-            # Check the target tree before the autosave, the file reset or the DB rebuild, so a bad
-            # target aborts with nothing changed, history included.
             preflight_import_caps(proj.root, sha)
             preflight_import_files(proj.root, sha)
             removed = [c for c in _plan_changes(proj.root, proj.owner_id, sha) if c.change == "removed"]
             recovery_sha = self._guard_before_apply(proj, force, "restore")
+            head = git_ops.head_sha(proj.root)
             git_ops.restore(proj.root, sha)
-            self._snapshot_database()
-            result = import_project(proj.root, proj.owner_id, removed)
+            try:
+                self._snapshot_database()
+                result = import_project(proj.root, proj.owner_id, removed)
+            except BaseException:
+                if head:  # the database rolled back, so the folder goes back to the last version too
+                    git_ops.restore(proj.root, head)
+                raise
             self._sync_track_setting_from_manifest(proj)
             write_export(proj.root, proj.owner_id)
             message = f"Restore: {label}" if label else f"Restore version {sha[:8]}"
@@ -494,10 +496,10 @@ class ProjectSyncService:
         proj = self.get_active_project(user_id)
         if proj is None:
             raise NoActiveProjectError("No active project")
-        m = read_manifest(proj.root)
-        if m is None:
-            raise NoActiveProjectError("No active project")
-        with git_ops.repo_lock(proj.root):
+        with git_ops.project_lock(proj.root):
+            m = read_manifest(proj.root)
+            if m is None:
+                raise NoActiveProjectError("No active project")
             m.track_data_artifacts = track_data_artifacts
             _save_manifest(proj.root, m)
             with get_db_context() as db:

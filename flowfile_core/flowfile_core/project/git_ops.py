@@ -152,13 +152,30 @@ def _managed_status(repo) -> list[tuple[str, str]]:
     return rows
 
 
-def commit_all(root: Path, message: str) -> str | None:
-    """Stage the managed files that changed and commit them.
+def _is_managed(path: str) -> bool:
+    return path in (manifest.MANIFEST_NAME, ".gitignore") or kinds.kind_for_path(path) is not None
 
-    Only the managed pathspecs are staged, so files Flowfile did not write never reach the index
-    or the object store. Each path changed in the working tree is staged by name, since ``git add``
-    refuses a pathspec that matches nothing (a first commit with no ``flows/``, or a deletion a
-    restore's ``read-tree`` already staged)."""
+
+def _unstage_unmanaged(repo) -> None:
+    """Take every staged path outside the managed set back out of the index, so a file someone staged by
+    hand is not committed with a version."""
+    staged = repo.git.diff("--cached", "--name-only", "--no-renames", "-z").split("\0")
+    stray = [f":(literal){p}" for p in staged if p and not _is_managed(p)]
+    if not stray:
+        return
+    if repo.head.is_valid():
+        repo.git.reset("-q", "--", *stray)
+    else:
+        repo.git.rm("--cached", "-q", "--", *stray)
+
+
+def commit_all(root: Path, message: str) -> str | None:
+    """Stage the managed files that changed and commit them, and nothing else.
+
+    Only the managed pathspecs are staged, and any other path staged by hand is unstaged first, so files
+    Flowfile did not write never reach a version. Each path changed in the working tree is staged by name,
+    since ``git add`` refuses a pathspec that matches nothing (a first commit with no ``flows/``, or a
+    deletion a restore's ``read-tree`` already staged)."""
     if not is_repo(root):
         return None
     with repo_lock(root):
@@ -166,6 +183,7 @@ def commit_all(root: Path, message: str) -> str | None:
         paths = [path for code, path in _managed_status(repo) if code[1] != " "]
         if paths:
             repo.git.add("-A", "--", *(f":(literal){p}" for p in paths))
+        _unstage_unmanaged(repo)
         has_head = repo.head.is_valid()
         if has_head and not repo.index.diff("HEAD"):
             return None

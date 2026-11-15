@@ -1,6 +1,6 @@
 """Core's twelve project kinds, registered in the order an import applies them.
 
-Each export is a thin call into ``projection``; the caps are the importer's own constants."""
+Each export is a thin call into ``projection``; each ``cap`` is the most files or entries an import accepts."""
 
 from __future__ import annotations
 
@@ -124,7 +124,7 @@ def _schedule_entries(files: dict[str, str]) -> dict:
     for path, text in files.items():
         data = _load(text) or {}
         for entry in data.get("schedules") or []:
-            key = (data.get("flow_uuid"), entry.get("id") or importer._schedule_signature(entry))
+            key = (data.get("flow_uuid"), entry.get("id") or importer.schedule_signature(entry))
             label = f"{_file_stem(path)} {entry.get('name') or entry.get('schedule_type')}"
             out[key] = Entry(label, path, _canonical(entry))
     return out
@@ -147,7 +147,7 @@ register(
         ("connections/database/*.yaml",),
         lambda ctx: projection.export_connections(ctx.db, ctx.owner_id, "database"),
         after=("secrets",),
-        cap=importer._MAX_CONNECTIONS,
+        cap=200,
         entries=_per_file_entries("connection_name"),
         delete_label="its stored password is not in any version",
         delete=importer._delete_database_connection,
@@ -161,7 +161,7 @@ register(
         ("connections/cloud/*.yaml",),
         lambda ctx: projection.export_connections(ctx.db, ctx.owner_id, "cloud"),
         after=("secrets",),
-        cap=importer._MAX_CONNECTIONS,
+        cap=200,
         entries=_per_file_entries("connection_name"),
         delete_label="its stored password is not in any version",
         delete=importer._delete_cloud_connection,
@@ -174,7 +174,7 @@ register(
         "namespaces",
         ("namespaces.yaml",),
         _manifest("namespaces.yaml", projection.namespace_manifest_data),
-        cap=importer._MAX_NAMESPACES,
+        cap=200,
         entries_key="namespaces",
         entries=_namespace_entries,
         delete_label="it is deleted once empty",
@@ -188,7 +188,7 @@ register(
         ("flows/*.flow.yaml",),
         _export_flows,
         after=("namespaces", "database_connection", "cloud_connection"),
-        cap=importer._MAX_FLOWS,
+        cap=500,
         entries=_flow_entries,
         delete_label="its flow file is removed",
         delete=importer._delete_flow,
@@ -202,7 +202,7 @@ register(
         ("schedules/*.yaml",),
         _export_schedules,
         after=("flow",),
-        cap=importer._MAX_FLOWS,
+        cap=500,
         entries=_schedule_entries,
         delete_label="it no longer runs",
         delete=importer._delete_schedule,
@@ -215,7 +215,7 @@ register(
         ("tables.yaml",),
         _manifest("tables.yaml", projection.tables_manifest_data),
         after=("namespaces", "flow"),
-        cap=importer._MAX_TABLES,
+        cap=500,
         entries_key="tables",
         tracked_by_data_flag=True,
         entries=_list_entries("tables", lambda e: (*_ns(e), e.get("name")), lambda e: _dotted(*_ns(e), e.get("name"))),
@@ -230,7 +230,7 @@ register(
         ("models.yaml",),
         _manifest("models.yaml", projection.models_manifest_data),
         after=("namespaces", "flow"),
-        cap=importer._MAX_ARTIFACTS,
+        cap=500,
         entries_key="models",
         tracked_by_data_flag=True,
         entries=_list_entries(
@@ -248,7 +248,7 @@ register(
         "kernels",
         ("kernels.yaml",),
         _manifest("kernels.yaml", projection.kernels_manifest_data),
-        cap=importer._MAX_KERNELS,
+        cap=50,
         entries_key="kernels",
         entries=_list_entries("kernels", lambda e: e.get("id"), lambda e: str(e.get("name") or e.get("id"))),
         delete_label="its configuration is deleted",
@@ -262,7 +262,7 @@ register(
         ("visualizations.yaml",),
         _manifest("visualizations.yaml", projection.visualizations_manifest_data),
         after=("namespaces", "tables"),
-        cap=importer._MAX_VISUALIZATIONS,
+        cap=500,
         entries_key="visualizations",
         entries=_list_entries("visualizations", lambda e: e.get("viz_uuid"), lambda e: str(e.get("name"))),
         delete_label="the chart is deleted",
@@ -276,7 +276,7 @@ register(
         ("dashboards.yaml",),
         _manifest("dashboards.yaml", projection.dashboards_manifest_data),
         after=("visualizations",),
-        cap=importer._MAX_DASHBOARDS,
+        cap=200,
         entries_key="dashboards",
         entries=_list_entries("dashboards", lambda e: e.get("dashboard_uuid"), lambda e: str(e.get("name"))),
         delete_label="the dashboard is deleted",
@@ -290,7 +290,7 @@ register(
         ("notebooks/*.notebook.yaml",),
         lambda ctx: projection.export_notebooks(ctx.db, ctx.owner_id),
         after=("namespaces", "kernels"),
-        cap=importer._MAX_NOTEBOOKS,
+        cap=500,
         entries=_per_file_entries("notebook_uuid", "name"),
         delete_label="its content file is removed",
         delete=importer._delete_notebook,

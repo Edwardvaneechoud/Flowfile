@@ -161,6 +161,25 @@ def _applied_entries(rel: str, entries: list, name_key: str) -> list:
     return out
 
 
+# The field that names an entry of each core root kind; the list it sits in is the kind's ``entries_key``.
+_ENTRY_NAME_KEYS = {
+    "namespaces": "catalog",
+    "tables": "name",
+    "models": "name",
+    "kernels": "name",
+    "visualizations": "name",
+    "dashboards": "name",
+}
+
+
+def _manifest_entries(root: Path, kind_name: str) -> list:
+    """The entries a root kind's file lists under its ``entries_key``, less those another user owns."""
+    kind = kinds.get(kind_name)
+    rel = kind.paths[0]
+    entries = _read_yaml(root / rel).get(kind.entries_key, []) or []
+    return _applied_entries(rel, entries, _ENTRY_NAME_KEYS[kind_name])
+
+
 def _after_commit(action, *args, **kwargs) -> None:
     """Queue a disk or in-memory side effect of the import until the database has committed; run it
     at once when no import transaction is open (a direct call of one import function)."""
@@ -182,18 +201,8 @@ def _run_after_commit(queue: list) -> None:
             logger.warning("Project import: %s failed after the commit", name, exc_info=True)
 
 
-# Import-size caps. Per-manifest-file YAML size cap (bytes); 5 MB is unreasonably large for a manifest.
-_MAX_YAML_BYTES = 5 * 1024 * 1024  # 5 MB
-# Per-import caps on individual resource kinds.
-_MAX_FLOWS = 500
-_MAX_TABLES = 500
-_MAX_CONNECTIONS = 200
-_MAX_NAMESPACES = 200
-_MAX_ARTIFACTS = 500
-_MAX_KERNELS = 50
-_MAX_VISUALIZATIONS = 500
-_MAX_DASHBOARDS = 200
-_MAX_NOTEBOOKS = 500
+# Per-file YAML size cap; each kind's entry cap is its ``Kind.cap``.
+_MAX_YAML_BYTES = 5 * 1024 * 1024
 _MAX_SCHEDULES_PER_FLOW = 50
 
 
@@ -410,10 +419,7 @@ def _import_namespaces(root: Path, owner_id: int) -> set[int]:
     system namespaces resolve in place, while project-specific ones (custom catalogs/schemas and
     demo-seeded ``is_public`` ones the seeder didn't create on this machine) are recreated, preserving
     ``is_public`` so flows/tables can attach to their real schema."""
-    catalogs = _applied_entries(
-        "namespaces.yaml", _read_yaml(manifest.namespaces_manifest_path(root)).get("namespaces", []) or [], "catalog"
-    )
-    _assert_within_cap(catalogs, _MAX_NAMESPACES, "namespaces")
+    catalogs = _manifest_entries(root, "namespaces")
     kept: set[int] = set()
     for catalog in sorted(catalogs, key=lambda c: c.get("catalog") or ""):
         catalog_name = catalog.get("catalog")
@@ -539,11 +545,7 @@ def _import_tables(root: Path, owner_id: int) -> set[int]:
     repopulates when its flow runs). Existing data is never overwritten. A SQL view is rebuilt from
     its stored query + schema without executing it."""
     kept: set[int] = set()
-    tables_entries = _applied_entries(
-        "tables.yaml", _read_yaml(manifest.tables_manifest_path(root)).get("tables", []) or [], "name"
-    )
-    _assert_within_cap(tables_entries, _MAX_TABLES, "catalog tables")
-    for entry in tables_entries:
+    for entry in _manifest_entries(root, "tables"):
         name = entry.get("name")
         if not name:
             continue
@@ -597,11 +599,7 @@ def _import_artifacts(root: Path, owner_id: int) -> set[int]:
     flow re-runs. An artifact whose source flow isn't present is skipped (its FK can't be satisfied), and a
     version deleted locally is left deleted — import must never resurrect a deletion."""
     kept: set[int] = set()
-    artifact_entries = _applied_entries(
-        "models.yaml", _read_yaml(manifest.models_manifest_path(root)).get("models", []) or [], "name"
-    )
-    _assert_within_cap(artifact_entries, _MAX_ARTIFACTS, "models")
-    for entry in artifact_entries:
+    for entry in _manifest_entries(root, "models"):
         name, version = entry.get("name"), entry.get("version")
         if not name or version is None:
             continue
@@ -644,11 +642,7 @@ def _import_kernels(root: Path, owner_id: int, ids_used: dict[str, str] | None =
     ``resolved_packages`` stays empty until the kernel is next baked on this machine. ``ids_used``
     receives ``{id in the file: id stored}``, so a notebook follows a kernel whose id was re-minted."""
     kept: set[str] = set()
-    kernel_entries = _applied_entries(
-        "kernels.yaml", _read_yaml(manifest.kernels_manifest_path(root)).get("kernels", []) or [], "name"
-    )
-    _assert_within_cap(kernel_entries, _MAX_KERNELS, "kernels")
-    for entry in kernel_entries:
+    for entry in _manifest_entries(root, "kernels"):
         name = entry.get("name")
         if not name:
             continue
@@ -703,13 +697,7 @@ def _import_visualizations(root: Path, owner_id: int) -> set[str]:
     table is still absent keeps its definition with a null source rather than being dropped. The
     PNG thumbnail isn't restored — it re-exports on the next view."""
     kept: set[str] = set()
-    viz_entries = _applied_entries(
-        "visualizations.yaml",
-        _read_yaml(manifest.visualizations_manifest_path(root)).get("visualizations", []) or [],
-        "name",
-    )
-    _assert_within_cap(viz_entries, _MAX_VISUALIZATIONS, "visualizations")
-    for entry in viz_entries:
+    for entry in _manifest_entries(root, "visualizations"):
         name = entry.get("name")
         if not name:
             continue
@@ -768,11 +756,7 @@ def _import_dashboards(root: Path, owner_id: int) -> set[str]:
     dashboard_uuid; the localized layout is validated through ``DashboardLayout`` and stored with the
     keys the file holds, so a row written before a field existed exports the same file again."""
     kept: set[str] = set()
-    dashboard_entries = _applied_entries(
-        "dashboards.yaml", _read_yaml(manifest.dashboards_manifest_path(root)).get("dashboards", []) or [], "name"
-    )
-    _assert_within_cap(dashboard_entries, _MAX_DASHBOARDS, "dashboards")
-    for entry in dashboard_entries:
+    for entry in _manifest_entries(root, "dashboards"):
         name = entry.get("name")
         if not name:
             continue
@@ -818,9 +802,7 @@ def _import_notebooks(root: Path, owner_id: int, kernel_ids: dict[str, str] | No
     intact. A row that would collide on the global (name, namespace) uniqueness is skipped+logged so
     import always completes."""
     kept: set[str] = set()
-    files = sorted(manifest.notebooks_dir(root).glob("*.notebook.yaml"))
-    _assert_within_cap(files, _MAX_NOTEBOOKS, "notebooks")
-    for f in files:
+    for f in sorted(manifest.notebooks_dir(root).glob("*.notebook.yaml")):
         data = _read_yaml(f)
         if not _applies(f.relative_to(root).as_posix(), data):
             continue
@@ -887,14 +869,24 @@ def _import_notebooks(root: Path, owner_id: int, kernel_ids: dict[str, str] | No
     return kept
 
 
-def _check_flow_loads(data: dict, owner_id: int, flowfile_name: str) -> None:
-    """Build the flow from a temp copy, so a flow that does not load fails the import before its
-    transaction commits; the runtime file is written only after the commit."""
+def _check_flows_load(root: Path, owner_id: int) -> None:
+    """Build each flow file the import would apply from a temp copy, before its transaction opens, so a flow
+    that does not load fails the import with nothing written and the database's write lock is not held while
+    flows are built. A flow the project's ``kinds`` leaves out, or whose ``owner`` names another user, is
+    not built, as the import does not apply it."""
+    m = manifest.read_manifest(root)
+    if m is not None and "flow" not in m.kinds:
+        return
+    owner = _owner_username(owner_id)
     with tempfile.TemporaryDirectory(prefix="flowfile-import-") as tmp:
-        path = Path(tmp) / f"{safe_stem(flowfile_name)}.flow.yaml"
-        path.write_text(dump_yaml(data), encoding="utf-8")
-        with ephemeral_flow_graph(path, owner_id):
-            pass
+        for rel in kinds.kind_files(root, kinds.get("flow")):
+            data = _read_yaml(root / rel)
+            if not data.get("flow_uuid") or data.get("owner") not in (None, owner):
+                continue
+            path = Path(tmp) / Path(rel).name
+            path.write_text(dump_yaml(data), encoding="utf-8")
+            with ephemeral_flow_graph(path, owner_id):
+                pass
 
 
 def _write_runtime_flow(path: Path, data: dict) -> None:
@@ -945,8 +937,6 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
                     # On a multi-user server the import never writes outside the flow folders; the flow is skipped.
                     logger.warning("Project import: flow %s not written — %s", flow_uuid, exc)
                     return None
-        if _after_commit_queue.get() is not None:  # loaded now otherwise, which is the same check
-            _check_flow_loads(data, owner_id, flowfile_name)
         _after_commit(_write_runtime_flow, runtime_path, data)
         # Load (with owner_id so cloud connections resolve) but don't open an editor session: project
         # import must not auto-open flows on the canvas. The user opens a flow explicitly via /import_flow/.
@@ -1012,29 +1002,25 @@ def _import_schedules(data: dict, owner_id: int) -> int:
         )
         by_uuid = {r.schedule_uuid: r for r in rows}
         entries = [sd for sd in schedules if sd.get("schedule_type") in _PROJECTABLE_SCHEDULE_TYPES]
-        matched: dict[int, FlowSchedule] = {}
+        to_apply: list[dict] = []
         seen_ids: set[str] = set()
-        with_ids: list[dict] = []
+        seen_sigs: set[tuple] = set()
         for sd in entries:
             sid = sd.get("id")
-            if sid is None or sid in seen_ids:
-                continue
-            seen_ids.add(sid)
-            with_ids.append(sd)
-            if sid in by_uuid:
-                matched[id(sd)] = by_uuid[sid]
+            if sid is not None and sid not in seen_ids:
+                seen_ids.add(sid)
+                to_apply.append(sd)
+            elif sid is None and schedule_signature(sd) not in seen_sigs:  # duplicated entries collapse
+                seen_sigs.add(schedule_signature(sd))
+                to_apply.append(sd)
+        matched = {id(sd): by_uuid[sd["id"]] for sd in to_apply if sd.get("id") in by_uuid}
         claimed = {r.id for r in matched.values()}
-        seen_sigs: set[tuple] = set()
-        to_apply: list[dict] = list(with_ids)
-        for sd in entries:
-            if sd.get("id") is not None:
+        # An id another install minted matches no row here, so it falls back to the signature too.
+        for sd in to_apply:
+            if id(sd) in matched:
                 continue
-            sig = _schedule_signature(sd)
-            if sig in seen_sigs:  # collapse already-duplicated entries so existing dupes self-heal
-                continue
-            seen_sigs.add(sig)
-            to_apply.append(sd)
-            row = next((r for r in rows if r.id not in claimed and _schedule_signature(r) == sig), None)
+            sig = schedule_signature(sd)
+            row = next((r for r in rows if r.id not in claimed and schedule_signature(r) == sig), None)
             if row is not None:
                 matched[id(sd)] = row
                 claimed.add(row.id)
@@ -1069,7 +1055,7 @@ def _import_schedules(data: dict, owner_id: int) -> int:
     return count
 
 
-def _schedule_signature(s) -> tuple:
+def schedule_signature(s) -> tuple:
     """What an entry without an ``id`` (a file written before schedules had one) is matched on."""
     get = s.get if isinstance(s, dict) else lambda k: getattr(s, k)
     return (
@@ -1084,7 +1070,8 @@ def _schedule_signature(s) -> tuple:
 
 def _update_schedule_in_place(db, row: FlowSchedule, sd: dict) -> None:
     """Set a schedule's definition from its file entry, keeping the row, its run state and the
-    notification rules and trigger rows that point at it."""
+    notification rules and trigger rows that point at it. A row matched by its signature takes the entry's
+    ``id`` unless another schedule holds it, so the next export names it as the file does."""
     validate_schedule_create(
         schedule_type=sd["schedule_type"],
         interval_seconds=sd.get("interval_seconds"),
@@ -1102,6 +1089,11 @@ def _update_schedule_in_place(db, row: FlowSchedule, sd: dict) -> None:
     row.name = sd.get("name")
     row.description = sd.get("description")
     row.backend = sd.get("backend")
+    sid = sd.get("id")
+    if sid is not None and sid != row.schedule_uuid:
+        held = db.query(FlowSchedule.id).filter(FlowSchedule.schedule_uuid == sid, FlowSchedule.id != row.id).first()
+        if held is None:
+            row.schedule_uuid = sid
     db.commit()
 
 
@@ -1124,7 +1116,11 @@ def _delete_namespaces(ctx: kinds.ExportContext, keys: list) -> None:
     wanted = set(keys)
     rows = (
         ctx.db.query(CatalogNamespace)
-        .filter(CatalogNamespace.owner_id == ctx.owner_id, CatalogNamespace.is_public.is_(False))
+        .filter(
+            CatalogNamespace.owner_id == ctx.owner_id,
+            CatalogNamespace.is_public.is_(False),
+            CatalogNamespace.name.in_({key[-1] for key in wanted}),
+        )
         .all()
     )
     found = []
@@ -1170,7 +1166,7 @@ def _delete_schedule(ctx: kinds.ExportContext, keys: list) -> None:
         if reg is None:
             continue
         for s in ctx.db.query(FlowSchedule).filter_by(registration_id=reg.id).all():
-            if (s.schedule_uuid == ident) if isinstance(ident, str) else (_schedule_signature(s) == tuple(ident)):
+            if (s.schedule_uuid == ident) if isinstance(ident, str) else (schedule_signature(s) == tuple(ident)):
                 service.delete_schedule(s.id)
 
 
@@ -1187,7 +1183,10 @@ def _delete_tables(ctx: kinds.ExportContext, keys: list) -> None:
     """The row only, its data kept; a flow-produced virtual table is never in the files, so never deleted."""
     wanted = set(keys)
     service = CatalogService(SQLAlchemyCatalogRepository(ctx.db))
-    for table in ctx.db.query(CatalogTable).filter(CatalogTable.owner_id == ctx.owner_id).all():
+    rows = ctx.db.query(CatalogTable).filter(
+        CatalogTable.owner_id == ctx.owner_id, CatalogTable.name.in_({key[-1] for key in wanted})
+    )
+    for table in rows.all():
         if table.table_type == "virtual" and not table.sql_query:
             continue
         if (*_ns_key(ctx, table.namespace_id), table.name) in wanted:
@@ -1198,7 +1197,9 @@ def _delete_models(ctx: kinds.ExportContext, keys: list) -> None:
     """Soft-deleted: the version is marked deleted and its file stays."""
     wanted = set(keys)
     rows = ctx.db.query(GlobalArtifact).filter(
-        GlobalArtifact.owner_id == ctx.owner_id, GlobalArtifact.status == "active"
+        GlobalArtifact.owner_id == ctx.owner_id,
+        GlobalArtifact.status == "active",
+        GlobalArtifact.name.in_({key[-2] for key in wanted}),
     )
     for a in rows.all():
         if (*_ns_key(ctx, a.namespace_id), a.name, a.version) in wanted:
@@ -1247,7 +1248,8 @@ def _delete_notebook(ctx: kinds.ExportContext, keys: list) -> None:
 def _delete_removed(owner_id: int, removed) -> None:
     """Delete what the comparison found removed, each kind's keys through its ``delete``, in reverse kind order
     (models and tables before flows, namespaces after them), a longer key first, so a schema goes before its
-    catalog. A delete that fails raises, naming the kind and the object, so the apply rolls back whole."""
+    catalog. Each kind's session is committed after its deletes, so a ``delete`` need not commit, as ``apply``
+    need not. A delete that fails raises, naming the kind and the object, so the apply rolls back whole."""
     by_kind: dict[str, list] = {}
     for change in removed:
         by_kind.setdefault(change.kind, []).append(change)
@@ -1262,6 +1264,7 @@ def _delete_removed(owner_id: int, removed) -> None:
                     kind.delete(ctx, [c.key])
                 except Exception as e:
                     raise ValueError(f'Could not delete {kind.label} "{c.label}": {e}') from e
+            db.commit()
 
 
 def _reconcile_kernel_manager(owner_id: int) -> None:
@@ -1282,15 +1285,17 @@ def _reconcile_kernel_manager(owner_id: int) -> None:
 
 
 def import_project(root: Path, owner_id: int, removed=()) -> SetupResult:
-    """Rebuild this install's environment from the project folder. Always completes.
+    """Rebuild this install's environment from the project folder, or raise with nothing changed.
 
     ``removed`` is the ``removed`` rows of ``kinds.compare(snapshot, target)`` (restore / reload): those
-    objects are deleted after every kind's import, and nothing else is; open passes none and is additive.
+    objects are deleted after every kind's import; open passes none.
 
-    The database changes are one transaction (``apply_transaction``): a failure anywhere rolls all of
-    them back. Flow, notebook and empty-table files, the flow handler's loads and evictions and the
-    kernel reconcile are queued and run only once it has committed.
+    Every flow is built from a temp copy first (``_check_flows_load``). The database changes are then one
+    transaction (``apply_transaction``): a failure anywhere rolls all of them back. Flow, notebook and
+    empty-table files, the flow handler's loads and evictions and the kernel reconcile are queued and run
+    only once it has committed.
     """
+    _check_flows_load(root, owner_id)
     queue: list = []
     token = _after_commit_queue.set(queue)
     try:
@@ -1325,9 +1330,10 @@ def _by_kind(rels) -> dict[str, list[str]]:
     return out
 
 
-def _assert_kind_caps(files: dict[str, list[str]], entries) -> None:
-    """Each folder kind's file count, then each root file's list (``entries(path)``), against its cap."""
-    capped = [k for k in kinds.ordered() if k.cap is not None]
+def _assert_kind_caps(files: dict[str, list[str]], entries, only=None) -> None:
+    """Each folder kind's file count, then each root file's list (``entries(path)``), against its cap; with
+    ``only``, of the kinds it names."""
+    capped = [k for k in kinds.ordered() if k.cap is not None and (only is None or k.name in only)]
     for kind in capped:
         if kind.entries_key is None:
             _assert_within_cap(files.get(kind.name, []), kind.cap, _cap_noun(kind))
@@ -1384,16 +1390,6 @@ def preflight_import_caps_worktree(root: Path) -> None:
                 f"Project import: schedule file {rel.split('/')[-1]!r} has {len(schedules)} entries, "
                 f"exceeding the {_MAX_SCHEDULES_PER_FLOW}-entry cap. Import aborted."
             )
-
-
-_LIST_MANIFESTS = {
-    "namespaces": ("namespaces", "catalog"),
-    "tables": ("tables", "name"),
-    "models": ("models", "name"),
-    "kernels": ("kernels", "name"),
-    "visualizations": ("visualizations", "name"),
-    "dashboards": ("dashboards", "name"),
-}
 
 
 def _file_kind(rel: str) -> str | None:
@@ -1462,7 +1458,7 @@ def _dashboard_layout_shape(layout: dict) -> dict:
 
 
 def _validate_manifest_entries(rel: str, stem: str, data: dict) -> None:
-    key, name_key = _LIST_MANIFESTS[stem]
+    key, name_key = kinds.get(stem).entries_key, _ENTRY_NAME_KEYS[stem]
     entries = data.get(key)
     _check_file(rel, _is_mapping_list(entries), f"must list its {key} as mappings under {key!r}")
     for i, entry in enumerate(entries or []):
@@ -1507,13 +1503,13 @@ def _validate_project_file(rel: str, kind: str, text: str) -> None:
     """Raise ``ProjectFileError`` when one file's content would make the import skip an entry as if it
     were absent, or raise half-way through."""
     data = _parse_project_file(rel, text)
-    if kind not in ("secrets", *_LIST_MANIFESTS):
+    if kind not in ("secrets", *_ENTRY_NAME_KEYS):
         _check_file(rel, _optional(data.get("owner"), str), "has an 'owner' that is not text")
     if kind == "secrets":
         names = data.get("required_secrets")
         ok = names is None or (isinstance(names, list) and all(_is_text(n) for n in names))
         _check_file(rel, ok, "must list 'required_secrets' as names")
-    elif kind in _LIST_MANIFESTS:
+    elif kind in _ENTRY_NAME_KEYS:
         _validate_manifest_entries(rel, kind, data)
     elif kind == "flow":
         _check_file(rel, _is_text(data.get("flow_uuid")), "has no string 'flow_uuid'")
@@ -1717,6 +1713,7 @@ def _do_import_project_inner(root: Path, owner_id: int, removed=(), result: Setu
     if m is not None:
         result.unknown_kinds = kinds.unknown(m.kinds)
     _report_reserved(root, listed)
+    _assert_kind_caps(_by_kind(kinds.owned_paths(root)), lambda rel: _read_yaml(root / rel), only=listed)
     for kind in kinds.ordered():
         if kind.name not in listed:
             continue
@@ -1725,8 +1722,6 @@ def _do_import_project_inner(root: Path, owner_id: int, removed=(), result: Setu
             continue
         step = _IMPORT_STEPS.get(kind.name)
         if step is not None:
-            if kind.cap is not None and kind.entries_key is None:
-                _assert_within_cap(paths, kind.cap, _cap_noun(kind))
             result.by_kind[kind.name] = step(run, paths)
         elif kind.entries is not None and kind.apply is not None:
             result.by_kind[kind.name] = _apply_kind(run, kind, paths)

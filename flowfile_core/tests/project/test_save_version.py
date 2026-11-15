@@ -6,6 +6,7 @@ commit or the object store, so a save with nothing managed to record answers ``s
 status reads clean.
 """
 
+import os
 import pathlib
 from collections import Counter
 from pathlib import Path
@@ -104,6 +105,8 @@ def test_the_export_reads_each_flow_file_at_most_twice(tmp_path, monkeypatch):
             else:
                 path = src / f"flow_{i}.yaml"
                 path.write_text(yaml.safe_dump({"flowfile_name": f"flow_{i}", "nodes": []}), encoding="utf-8")
+                age = path.stat().st_mtime - 60  # a file seconds old is not cached
+                os.utime(path, (age, age))
             reg = FlowRegistration(name=f"save_version_{i}", flow_path=str(path), owner_id=OWNER)
             db.add(reg)
             db.flush()

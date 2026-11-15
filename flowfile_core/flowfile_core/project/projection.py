@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time
 from pathlib import Path
 
 import yaml
@@ -181,6 +182,7 @@ def _reference_lookup(db: Session):
 
 # flow_path -> (owner_id, stamp, [(kind, settings, answer)], (stem, text))
 _flow_texts: dict[str, tuple] = {}
+_FRESH_MTIME_NS = 2_000_000_000  # younger files are not cached: coarse mtimes can hide a same-size rewrite
 
 
 def flow_file(db: Session, reg: FlowRegistration, namespace: dict | None = None) -> tuple[str, str] | None:
@@ -188,7 +190,9 @@ def flow_file(db: Session, reg: FlowRegistration, namespace: dict | None = None)
 
     The result is cached per flow path, keyed on the file's mtime and size, the registration's uuid, name and
     namespace, and the answers the reference lookup gave while rendering. A hit asks those lookups again (database
-    reads only), so a renamed table or namespace re-renders the flow while an unchanged flow is never parsed."""
+    reads only), so a renamed table or namespace re-renders the flow while an unchanged flow is never parsed. A
+    file modified in the last ``_FRESH_MTIME_NS`` is rendered every time, so a same-size edit inside one mtime
+    tick is never served stale."""
     if not exportable(reg.flow_path):
         return None
     st = Path(reg.flow_path).stat()
@@ -209,7 +213,10 @@ def flow_file(db: Session, reg: FlowRegistration, namespace: dict | None = None)
         return None
     stem = _name_stem(data.get("flowfile_name") or reg.name)
     result = stem, dump_yaml(normalize_flow_data(data, reg.flow_uuid, reg.name, namespace, lookup=recording))
-    _flow_texts[reg.flow_path] = (reg.owner_id, stamp, asked, result)
+    if time.time_ns() - st.st_mtime_ns >= _FRESH_MTIME_NS:
+        _flow_texts[reg.flow_path] = (reg.owner_id, stamp, asked, result)
+    else:
+        _flow_texts.pop(reg.flow_path, None)
     return result
 
 
@@ -313,9 +320,10 @@ def _schedule_file(reg: FlowRegistration, schedules: list[FlowSchedule]) -> dict
 
 
 def export_schedules(db: Session, owner_id: int, stems: dict[str, str]) -> dict[str, str]:
-    """``{path: text}`` of the owner's schedule files, each named after its flow's stem in ``stems``
-    (a flow with no file after its name). Flows are taken in ``flow_uuid`` order and a flow with no
-    schedule drops a file an earlier one wrote under the same stem, as a write over the folder did."""
+    """``{path: text}`` of the owner's schedule files, each named after its flow's stem in ``stems``.
+
+    A flow with no stem has no file in the export, so its schedules have none either: they could not be
+    applied without the flow, and its name could collide with an exported flow's stem."""
     tree: dict[str, str] = {}
     by_flow: dict[int, list[FlowSchedule]] = {}
     for s in (
@@ -326,12 +334,9 @@ def export_schedules(db: Session, owner_id: int, stems: dict[str, str]) -> dict[
     ):
         by_flow.setdefault(s.registration_id, []).append(s)
     for reg in _owner_flows(db, owner_id):
-        rel = f"schedules/{stems.get(reg.flow_uuid) or _name_stem(reg.name)}.yaml"
-        schedules = by_flow.get(reg.id)
-        if schedules:
-            tree[rel] = dump_yaml(_schedule_file(reg, schedules))
-        else:
-            tree.pop(rel, None)
+        stem, schedules = stems.get(reg.flow_uuid), by_flow.get(reg.id)
+        if stem is not None and schedules:
+            tree[f"schedules/{stem}.yaml"] = dump_yaml(_schedule_file(reg, schedules))
     return tree
 
 

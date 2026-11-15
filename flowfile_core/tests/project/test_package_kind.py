@@ -178,10 +178,12 @@ def test_a_package_kind_is_saved_previewed_applied_and_deleted(tmp_path, every_k
 def test_a_cycle_and_a_path_clash_are_rejected_and_core_keeps_working(monkeypatch):
     loop = dataclasses.replace(WIDGET, name="loop", paths=("loops/*.yaml",), after=("flow",), before=("namespaces",))
     ledger = dataclasses.replace(WIDGET, name="ledger", paths=("tables.yaml",), after=(), before=())
-    _rescan(monkeypatch, loop, ledger)
+    mute = dataclasses.replace(WIDGET, name="mute", paths=("mutes/*.yaml",), after=(), before=(), apply=None)
+    _rescan(monkeypatch, loop, ledger, mute)
     rejected = kinds.rejected()
     assert "cycle" in rejected["loop"]
     assert "'tables.yaml'" in rejected["ledger"]
+    assert "no apply" in rejected["mute"]
     assert [k.name for k in kinds.ordered()] == TWELVE
 
 
@@ -208,3 +210,43 @@ def test_a_failing_apply_rolls_the_reload_back(tmp_path, monkeypatch, every_kind
         assert db.query(DatabaseConnection).filter_by(user_id=every_kind).one().host == "localhost"
     assert flow_file.read_text(encoding="utf-8") == flow_text
     assert _rows(every_kind) == {"w1": "a"}
+
+
+def test_a_delete_that_does_not_commit_still_deletes(tmp_path, monkeypatch, every_kind, table):  # noqa: F811
+    def delete_uncommitted(ctx, keys):
+        ctx.db.execute(TABLE.delete().where(TABLE.c.owner_id == ctx.owner_id, TABLE.c.name.in_(keys)))
+
+    _rescan(monkeypatch, dataclasses.replace(WIDGET, delete=delete_uncommitted))
+    _put(every_kind, "w1", "a")
+    _put(every_kind, "w2", "b")
+    root = tmp_path / "proj"
+    project_sync.init_project(str(root), "package", every_kind)
+    (root / "widgets" / "w2.yaml").unlink()
+
+    project_sync.reload_from_disk(every_kind)
+
+    assert _rows(every_kind) == {"w1": "a"}
+
+
+def test_a_restore_whose_apply_fails_leaves_the_folder_at_the_last_version(
+    tmp_path, monkeypatch, every_kind, table  # noqa: F811
+):
+    def fail(ctx, entries):
+        raise RuntimeError("refused")
+
+    _rescan(monkeypatch, dataclasses.replace(WIDGET, after=("flow",), before=(), apply=fail))
+    _put(every_kind, "w1", "a")
+    root = tmp_path / "proj"
+    project_sync.init_project(str(root), "package", every_kind)
+    first = git_ops.head_sha(root)
+    with get_db_context() as db:
+        db.execute(TABLE.update().where(TABLE.c.name == "w1").values(value="b"))
+        db.commit()
+    project_sync.save_version(every_kind, "w1 is b")
+
+    with pytest.raises(ValueError, match="Could not apply widget: refused"):
+        project_sync.restore_version(every_kind, first)
+
+    assert yaml.safe_load((root / "widgets" / "w1.yaml").read_text(encoding="utf-8"))["value"] == "b"
+    assert not git_ops.is_dirty(root)
+    assert _rows(every_kind) == {"w1": "b"}

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -85,7 +86,9 @@ ENTRY_POINT_GROUP = "flowfile.project_kinds"
 logger = logging.getLogger(__name__)
 _KINDS: dict[str, Kind] = {}
 _REJECTED: dict[str, str] = {}
-_core_loaded = False
+_core_loaded = False  # set once core's kinds and the entry points' are registered
+_loading = False
+_load_lock = threading.RLock()
 
 
 def register(kind: Kind) -> None:
@@ -96,6 +99,8 @@ def _refusal(kind: Kind) -> str | None:
     """Why a package's kind cannot join the registry, or ``None`` when it can."""
     if kind.name in _KINDS:
         return f"the name {kind.name!r} is already registered"
+    if kind.entries is None or kind.apply is None:
+        return "it has no entries or no apply, so an import could not write it"
     for other in _KINDS.values():
         for p in kind.paths:
             for q in other.paths:
@@ -125,13 +130,22 @@ def _scan_entry_points() -> None:
 
 
 def registered() -> list[Kind]:
-    """Core's kinds, then those the ``flowfile.project_kinds`` entry points add, scanned on the first call."""
-    global _core_loaded
-    if not _core_loaded:
-        from flowfile_core.project import core_kinds  # noqa: F401
+    """Core's kinds, then those the ``flowfile.project_kinds`` entry points add, scanned on the first call.
 
-        _core_loaded = True
-        _scan_entry_points()
+    The first call loads them under a lock, so a concurrent call waits for the whole registry and no entry point
+    is scanned twice; a call made while loading, from a kind's own module, gets the kinds registered so far."""
+    global _core_loaded, _loading
+    if not _core_loaded:
+        with _load_lock:
+            if not _core_loaded and not _loading:
+                _loading = True
+                try:
+                    from flowfile_core.project import core_kinds  # noqa: F401
+
+                    _scan_entry_points()
+                    _core_loaded = True
+                finally:
+                    _loading = False
     return list(_KINDS.values())
 
 

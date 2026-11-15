@@ -115,3 +115,24 @@ def test_status_and_commit_cover_managed_files_only(tmp_path):
     assert third
     assert {b.path for b in repo.commit(third).tree.traverse() if b.type == "blob"} == {"project.yaml"}
     assert git_ops.is_dirty(tmp_path) is False
+
+
+@pytest.mark.skipif(not git_ops.git_available(), reason="git not available")
+def test_a_file_staged_by_hand_is_not_committed_with_a_version(tmp_path):
+    from git import Repo
+
+    git_ops.init(tmp_path)
+    repo = Repo(str(tmp_path))
+    (tmp_path / "project.yaml").write_text("name: t\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("mine\n", encoding="utf-8")
+    repo.git.add("notes.txt")
+    first = git_ops.commit_all(tmp_path, "init")
+    assert {b.path for b in repo.commit(first).tree.traverse() if b.type == "blob"} == {"project.yaml"}
+
+    (tmp_path / "credentials.json").write_text("{}\n", encoding="utf-8")
+    repo.git.add("credentials.json", "notes.txt")
+    assert git_ops.commit_all(tmp_path, "nothing managed changed") is None
+    (tmp_path / "project.yaml").write_text("name: renamed\n", encoding="utf-8")
+    second = git_ops.commit_all(tmp_path, "rename")
+    assert {b.path for b in repo.commit(second).tree.traverse() if b.type == "blob"} == {"project.yaml"}
+    assert (tmp_path / "credentials.json").exists() and (tmp_path / "notes.txt").exists()

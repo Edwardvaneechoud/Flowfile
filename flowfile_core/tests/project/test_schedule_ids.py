@@ -8,6 +8,7 @@ an id another flow's schedule already holds is minted afresh.
 
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 import yaml
@@ -192,3 +193,17 @@ def test_an_id_held_by_another_flows_schedule_is_minted_afresh(project, tmp_path
     assert row.interval_seconds == 7200
     assert row.schedule_uuid and row.schedule_uuid != taken
     assert [r.schedule_uuid for r in _rows(other_reg) if r.id == other_interval] == [taken]
+
+
+def test_ids_another_install_minted_keep_the_rows_and_are_taken_over(project, tmp_path):
+    root, created, _ = project
+    reg_id, interval_id, cron_id = _two_schedules(tmp_path, created, 818107)
+    project_sync.save_version(OWNER, "schedules")
+
+    theirs = [{**e, "id": str(uuid4())} for e in _entries(root)]
+    _write_entries(root, theirs)
+    project_sync.reload_from_disk(OWNER)
+
+    rows = _rows(reg_id)
+    assert [r.id for r in rows] == [interval_id, cron_id]
+    assert [r.schedule_uuid for r in rows] == [e["id"] for e in theirs]

@@ -42,6 +42,7 @@ An import applies the kinds in `kinds.ordered()` order, and deletes them in reve
 A package's kind is left out when:
 
 - its name is already registered;
+- it has no `entries` or no `apply`, so an import could not write it;
 - one of its patterns matches, or is matched by, a pattern of another kind;
 - adding it would put the order in a cycle;
 - the entry point does not load, or loads to something that is not a `Kind`.
@@ -50,7 +51,7 @@ The reason is logged as a warning and `kinds.rejected()` returns it by kind name
 
 ## The transaction
 
-A restore or reload applies the whole folder in one database transaction. For a package's kind the importer reads the files its patterns match, calls `apply(ctx, kind.entries(files))` in a session that joins that transaction, then commits the session. `apply` need not commit itself. When `apply` raises, the import fails with `Could not apply <label>: <error>` and nothing it or any other kind wrote is kept. A failing `delete` rolls the apply back in the same way.
+A restore or reload applies the whole folder in one database transaction. For a package's kind the importer reads the files its patterns match, calls `apply(ctx, kind.entries(files))` in a session that joins that transaction, then commits the session. `apply` need not commit itself. When `apply` raises, the import fails with `Could not apply <label>: <error>` and nothing it or any other kind wrote is kept. A restore or reload calls `delete(ctx, [key])` once per removed key and commits the session after the kind's last one, so `delete` need not commit either. A failing `delete` rolls the apply back in the same way.
 
 ## Testing a kind
 

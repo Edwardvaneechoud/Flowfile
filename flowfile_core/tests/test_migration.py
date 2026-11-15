@@ -1396,8 +1396,8 @@ class TestFlowSchedulesBackendMigration:
             conn.execute(
                 text(
                     "INSERT INTO flow_schedules (registration_id, owner_id, enabled, schedule_type, interval_seconds, "
-                    "backend, created_at, updated_at) VALUES (1, 1, 1, 'interval', 60, 'worker:team', "
-                    "'2026-11-01 00:00:00', '2026-11-01 00:00:00')"
+                    "backend, schedule_uuid, created_at, updated_at) VALUES (1, 1, 1, 'interval', 60, 'worker:team', "
+                    "'7d0c0a6e-0000-4000-8000-000000000040', '2026-11-01 00:00:00', '2026-11-01 00:00:00')"
                 )
             )
             conn.commit()

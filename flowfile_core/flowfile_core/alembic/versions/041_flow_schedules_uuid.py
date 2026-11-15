@@ -4,6 +4,9 @@ A schedule had only its integer primary key, so a project's schedule file could 
 import replaced every schedule of a flow, losing its notification rules and run state. With
 ``schedule_uuid`` written as each entry's ``id``, an import updates the row it names in place.
 
+The column is added nullable, every row is given a uuid, and it is then made ``NOT NULL`` as the models
+declare it, the way migration 026 did for ``viz_uuid`` and ``dashboard_uuid``.
+
 Revision ID: 041
 Revises: 040
 Create Date: 2026-11-12
@@ -26,15 +29,18 @@ _COLUMN = "schedule_uuid"
 _INDEX = f"ix_{_TABLE}_{_COLUMN}"
 
 
-def _has_column(table: str, column: str) -> bool:
-    return column in {c["name"] for c in inspect(op.get_bind()).get_columns(table)}
+def _column(table: str, column: str) -> dict | None:
+    return next((c for c in inspect(op.get_bind()).get_columns(table) if c["name"] == column), None)
+
+
+def _has_index(table: str, index: str) -> bool:
+    return index in {i["name"] for i in inspect(op.get_bind()).get_indexes(table)}
 
 
 def upgrade() -> None:
-    if _has_column(_TABLE, _COLUMN):
-        return
-    with op.batch_alter_table(_TABLE) as batch:
-        batch.add_column(sa.Column(_COLUMN, sa.String(length=36), nullable=True))
+    if _column(_TABLE, _COLUMN) is None:
+        with op.batch_alter_table(_TABLE) as batch:
+            batch.add_column(sa.Column(_COLUMN, sa.String(length=36), nullable=True))
     bind = op.get_bind()
     rows = bind.execute(sa.text(f"SELECT id FROM {_TABLE} WHERE {_COLUMN} IS NULL")).fetchall()
     for (row_id,) in rows:
@@ -42,11 +48,16 @@ def upgrade() -> None:
             sa.text(f"UPDATE {_TABLE} SET {_COLUMN} = :value WHERE id = :id"),
             {"value": str(uuid.uuid4()), "id": row_id},
         )
-    op.create_index(_INDEX, _TABLE, [_COLUMN], unique=True)
+    if _column(_TABLE, _COLUMN).get("nullable", True):
+        with op.batch_alter_table(_TABLE) as batch:
+            batch.alter_column(_COLUMN, existing_type=sa.String(length=36), nullable=False)
+    if not _has_index(_TABLE, _INDEX):
+        op.create_index(_INDEX, _TABLE, [_COLUMN], unique=True)
 
 
 def downgrade() -> None:
-    if _has_column(_TABLE, _COLUMN):
-        op.drop_index(_INDEX, table_name=_TABLE)
+    if _column(_TABLE, _COLUMN) is not None:
+        if _has_index(_TABLE, _INDEX):
+            op.drop_index(_INDEX, table_name=_TABLE)
         with op.batch_alter_table(_TABLE) as batch:
             batch.drop_column(_COLUMN)

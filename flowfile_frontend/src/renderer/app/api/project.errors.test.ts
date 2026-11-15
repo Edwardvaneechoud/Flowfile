@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ProjectUnsavedChanges, unsavedChangesFrom } from "./unsavedChanges";
+import {
+  ProjectFolderEdited,
+  ProjectUnsavedChanges,
+  folderEditedFrom,
+  unsavedChangesFrom,
+} from "./project.errors";
 
 const change = { change: "added", kind: "flow", label: "orders", path: "flows/orders.flow.yaml" };
 
@@ -43,5 +48,22 @@ describe("unsavedChangesFrom", () => {
     ).toBeNull();
     expect(unsavedChangesFrom(new Error("network"))).toBeNull();
     expect(unsavedChangesFrom(undefined)).toBeNull();
+  });
+});
+
+describe("folderEditedFrom", () => {
+  it("reads a 409 FOLDER_EDITED answer", () => {
+    const error = folderEditedFrom(
+      axiosError(409, { code: "FOLDER_EDITED", message: "1 file(s)", changes: [change] }),
+    );
+    expect(error).toBeInstanceOf(ProjectFolderEdited);
+    expect(error?.message).toBe("1 file(s)");
+    expect(error?.changes).toEqual([change]);
+  });
+
+  it("ignores an unsaved-changes answer and other failures", () => {
+    expect(folderEditedFrom(axiosError(409, { code: "UNSAVED_CHANGES" }))).toBeNull();
+    expect(folderEditedFrom(axiosError(500, { code: "FOLDER_EDITED" }))).toBeNull();
+    expect(folderEditedFrom(undefined)).toBeNull();
   });
 });
