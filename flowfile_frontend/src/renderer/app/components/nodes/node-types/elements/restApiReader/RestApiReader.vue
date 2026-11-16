@@ -573,7 +573,9 @@ import {
   limitsSummary,
   nextRequestExample,
   testErrorText,
+  testFailure,
   type SampleDebug,
+  type SentRequest,
 } from "./restApiView";
 import { SecretsApi } from "../../../../../api";
 import type { Secret } from "../../../../../types";
@@ -605,8 +607,10 @@ const settings = computed(() => nodeRestApi.value!.rest_api_settings);
 
 // What the last test request sent and got back; never saved with the node.
 const sample = ref<SampleDebug | null>(null);
+// The request a failed test sent, so its cURL is there when it is needed most.
+const failedRequest = ref<SentRequest | null>(null);
 const detectedRecords = ref<boolean>(false);
-const sentRequest = computed(() => sample.value?.trace?.[0] ?? null);
+const sentRequest = computed(() => sample.value?.trace?.[0] ?? failedRequest.value);
 
 const recordSuggestions = computed(() =>
   (sample.value?.suggested_paths?.record_paths ?? []).filter(
@@ -783,6 +787,7 @@ const fetchSample = async (afterDetection = false) => {
   const firstTest = !columnCount.value;
   sampling.value = true;
   sampleError.value = "";
+  failedRequest.value = null;
   try {
     const response = await axios.post("/rest_api/sample", nodeRestApi.value, {
       params: { sample_size: 50 },
@@ -811,9 +816,10 @@ const fetchSample = async (afterDetection = false) => {
       sampleError.value = "The request worked, but no columns were found. Check the record path.";
     }
   } catch (error: any) {
-    const detail = error?.response?.data?.detail ?? error?.message ?? "Unknown error";
+    const { message, request } = testFailure(error);
     sample.value = null;
-    sampleError.value = testErrorText(String(detail), settings.value.auth.secret_name);
+    failedRequest.value = request;
+    sampleError.value = testErrorText(message, settings.value.auth.secret_name);
   } finally {
     sampling.value = false;
   }
@@ -1027,13 +1033,22 @@ defineExpose({
 
 .form-control {
   width: 100%;
-  padding: 6px 8px;
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
   border: 1px solid var(--color-border, #d0d0d0);
   border-radius: 4px;
   font-size: 13px;
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   box-sizing: border-box;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.form-control:focus {
+  border-color: var(--input-border-focus, var(--color-primary));
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
 }
 
 .code-area {
@@ -1152,6 +1167,10 @@ defineExpose({
 
 .secret-select {
   width: 100%;
+}
+
+.has-error .form-control:focus {
+  box-shadow: 0 0 0 3px var(--color-focus-ring-error);
 }
 
 .has-error .form-control {

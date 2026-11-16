@@ -10,9 +10,7 @@
       @keydown.space.prevent="open = !open"
     >
       <i class="fa-solid fa-chevron-right trace-chevron" :class="{ 'is-open': open }"></i>
-      <span class="trace-status" :class="{ 'is-ok': entry.status < 400 }">{{
-        responseLine(entry)
-      }}</span>
+      <span class="trace-status" :class="{ 'is-ok': traceOk(entry) }">{{ traceLine(entry) }}</span>
       <span class="trace-toggle">{{ open ? "Hide request" : "Show request" }}</span>
     </div>
 
@@ -23,12 +21,18 @@
           <i class="fa-regular fa-copy"></i> Copy as cURL
         </button>
       </div>
-      <pre class="trace-block" data-testid="trace-request">{{ requestText }}</pre>
-      <div class="trace-head">
-        <span class="trace-label">Response</span>
-        <span v-if="truncated" class="trace-note">first part shown</span>
-      </div>
-      <pre class="trace-block trace-response" data-testid="trace-response">{{ responseText }}</pre>
+      <pre class="trace-block" :class="{ 'is-last': !responseText }" data-testid="trace-request">{{
+        requestText
+      }}</pre>
+      <template v-if="responseText">
+        <div class="trace-head">
+          <span class="trace-label">Response</span>
+          <span v-if="truncated" class="trace-note">first part shown</span>
+        </div>
+        <pre class="trace-block trace-response" data-testid="trace-response">{{
+          responseText
+        }}</pre>
+      </template>
     </div>
   </div>
 </template>
@@ -37,10 +41,17 @@
 import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { copyTextEverywhere } from "../../../../../utils/clipboardUtils";
-import { responseLine, showSecret, toCurl, type TraceEntry } from "./restApiView";
+import {
+  showSecret,
+  toCurl,
+  traceLine,
+  traceOk,
+  type SentRequest,
+  type TraceEntry,
+} from "./restApiView";
 
 const props = defineProps<{
-  entry: TraceEntry;
+  entry: SentRequest | TraceEntry;
   secretName: string;
   responseText: string;
   truncated: boolean;
@@ -148,6 +159,10 @@ const copyCurl = async () => {
   word-break: break-all;
   max-height: 160px;
   overflow: auto;
+}
+
+.trace-block.is-last {
+  margin-bottom: 0;
 }
 
 .trace-response {
