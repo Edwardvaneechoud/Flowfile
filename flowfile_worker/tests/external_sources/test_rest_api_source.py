@@ -19,6 +19,7 @@ from shared.rest_api.fetch import (
     _parse_retry_after,
     describe_response,
     fetch_rest_api,
+    first_request,
     suggest_paths,
 )
 from shared.rest_api.models import AuthConfig, PaginationConfig, RestApiReadSettings
@@ -414,6 +415,36 @@ def test_network_error_is_retried_then_raised(monkeypatch):
     assert len(sleeps) == 2
 
 
+def test_a_sample_does_not_retry_a_network_error(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("shared.rest_api.fetch.time.sleep", sleeps.append)
+    with pytest.raises(RestApiRequestError, match="failed: ConnectError"):
+        fetch_rest_api(RestApiReadSettings(url=closed_port_url(), max_retries=3, sample_size=5))
+    assert sleeps == []
+
+
+def test_a_sample_does_not_retry_a_5xx(api, no_sleep):
+    with pytest.raises(RestApiRequestError, match="answered 503"):
+        fetch_rest_api(RestApiReadSettings(url=api.url("/fail-once"), max_retries=3, sample_size=5))
+    assert api.request_count == 1
+
+
+def test_a_sample_gives_up_connecting_sooner_than_a_run(api, monkeypatch):
+    timeouts = []
+    real_client = httpx.Client
+
+    def recording_client(*args, **kwargs):
+        timeouts.append(httpx.Timeout(kwargs["timeout"]))
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr("shared.rest_api.fetch.httpx.Client", recording_client)
+    fetch_rest_api(RestApiReadSettings(url=api.url("/items"), timeout_seconds=30, sample_size=5))
+    fetch_rest_api(RestApiReadSettings(url=api.url("/items"), timeout_seconds=30))
+    sample, run = timeouts
+    assert (sample.connect, sample.read) == (10.0, 30.0)
+    assert (run.connect, run.read) == (30.0, 30.0)
+
+
 def test_post_sends_json_body(api):
     fetch_rest_api(RestApiReadSettings(url=api.url("/items"), method="POST", json_body={"q": "search"}))
     assert api.requests[0].method == "POST"
@@ -605,6 +636,47 @@ def test_the_shown_url_is_the_one_sent_with_only_the_secret_replaced(api):
     ]
     shown = [dict(httpx.URL(entry["url"]).params) for entry in entries]
     assert shown == [{**query, "api_key": SECRET_MASK} for query in sent]
+
+
+@pytest.mark.parametrize(
+    ("settings", "secret"),
+    [
+        (RestApiReadSettings(url="/items", headers={"X-Team": "data"}, query_params={"team": "data"}), None),
+        (RestApiReadSettings(url="/offset", pagination=PaginationConfig(pagination_type="offset", page_size=2)), None),
+        (RestApiReadSettings(url="/page", pagination=PaginationConfig(pagination_type="page", start_page=2)), None),
+        (
+            RestApiReadSettings(
+                url="/cursor",
+                record_path="rows",
+                pagination=PaginationConfig(pagination_type="cursor", cursor_response_path="next", initial_cursor="c2"),
+            ),
+            None,
+        ),
+        (_keyset(initial_cursor="id02"), None),
+        (_with(_keyset(), sample_size=2), None),
+        (RestApiReadSettings(url="/items", auth=AuthConfig(auth_type="api_key", api_key_name="api_key")), None),
+        (
+            RestApiReadSettings(
+                url="/items", auth=AuthConfig(auth_type="api_key", api_key_name="api_key", api_key_location="query")
+            ),
+            "s3cr3t-value",
+        ),
+        (RestApiReadSettings(url="/items", auth=AuthConfig(auth_type="api_key", api_key_name="X-Key")), "s3cr3t"),
+        (RestApiReadSettings(url="/items", auth=AuthConfig(auth_type="bearer")), "s3cr3t-value"),
+        (RestApiReadSettings(url="/items", auth=AuthConfig(auth_type="basic", basic_username="alice")), "s3cr3t"),
+    ],
+)
+def test_first_request_is_the_request_the_read_sends_first(api, settings, secret):
+    settings = _at(api, settings)
+    sent = _trace(settings, secret=secret)[0]
+    assert first_request(settings, has_secret=secret is not None) == {
+        key: sent[key] for key in ("method", "url", "headers", "body")
+    }
+
+
+def test_first_request_refuses_what_the_read_refuses():
+    with pytest.raises(ValueError, match="needs the POST method"):
+        first_request(_with(_keyset(), method="GET", url="http://api.test/keyset"), has_secret=False)
 
 
 def test_a_failed_request_names_itself_and_the_answer_without_the_secret(api):

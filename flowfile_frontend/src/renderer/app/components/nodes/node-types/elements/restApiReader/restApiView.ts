@@ -3,12 +3,16 @@ import type { RestApiSettings } from "../../../../../types/node.types";
 /** What core's fetch engine writes where a secret was sent (`shared/rest_api/fetch.py::SECRET_MASK`). */
 export const SECRET_MASK = "REDACTED";
 
-export interface TraceEntry {
-  page: number;
+/** A request as the engine sent it, the secret masked. */
+export interface SentRequest {
   method: string;
   url: string;
   headers: Record<string, string>;
   body: unknown | null;
+}
+
+export interface TraceEntry extends SentRequest {
+  page: number;
   status: number;
   elapsed_ms: number;
   bytes: number;
@@ -225,10 +229,28 @@ const formatBytes = (bytes: number): string =>
 export const responseLine = (entry: TraceEntry): string =>
   `${entry.status} · ${entry.elapsed_ms} ms · ${formatBytes(entry.bytes)} · ${plural(entry.records, "record")}`;
 
+const gotResponse = (entry: SentRequest | TraceEntry): entry is TraceEntry => "status" in entry;
+
+/** The trace's one-line summary: what came back, or that nothing did. */
+export const traceLine = (entry: SentRequest | TraceEntry): string =>
+  gotResponse(entry) ? responseLine(entry) : "No response";
+
+export const traceOk = (entry: SentRequest | TraceEntry): boolean =>
+  gotResponse(entry) && entry.status < 400;
+
+/** A failed test's 422 detail: the engine's message and, from a current core, the request it sent. */
+export const testFailure = (detail: unknown): { message: string; request: SentRequest | null } => {
+  if (detail && typeof detail === "object" && !Array.isArray(detail) && "message" in detail) {
+    const { message, request } = detail as { message: unknown; request?: SentRequest | null };
+    return { message: String(message), request: request ?? null };
+  }
+  return { message: String(detail ?? "Unknown error"), request: null };
+};
+
 const shellQuote = (text: string): string => `'${text.split("'").join("'\\''")}'`;
 
 /** The request as a curl command; the secret is an environment variable, never a value. */
-export const toCurl = (entry: TraceEntry, secretName: string): string => {
+export const toCurl = (entry: SentRequest, secretName: string): string => {
   const variable = `$${(secretName || "secret").replace(/[^A-Za-z0-9_]/g, "_").toUpperCase()}`;
   const withVariable = (text: string) => text.split(SECRET_MASK).join(variable);
   const quote = (text: string) =>

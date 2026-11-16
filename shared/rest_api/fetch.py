@@ -37,6 +37,8 @@ from shared.rest_api.models import (
 # without a Retry-After hint).
 _BACKOFF_BASE_SECONDS = 0.5
 _BACKOFF_CAP_SECONDS = 30.0
+# A sample is the drawer's test request: someone is waiting, so it gives up on an unreachable host sooner.
+_SAMPLE_CONNECT_TIMEOUT_SECONDS = 10.0
 
 SECRET_MASK = "REDACTED"
 _SUBSTRING_MASK_MIN_CHARS = 4
@@ -327,31 +329,15 @@ def describe_response(body: Any, max_children: int = 40, max_depth: int = 6) -> 
     return node(body, "", "", 0)
 
 
-def fetch_rest_api(
-    settings: RestApiReadSettings,
-    *,
-    secret: str | None = None,
-    on_page: Callable[[dict, Any], None] | None = None,
-) -> pl.DataFrame:
-    """Fetch all (or a capped sample of) records from a REST API as a typed frame.
+def _authorized(
+    settings: RestApiReadSettings, secret: str | None
+) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str], httpx.Auth | None]:
+    """The headers and query every request sends, their shown copies, and the httpx auth for Basic.
 
-    ``secret`` is the plaintext credential matching ``settings.auth.auth_type``
-    (the API key, bearer token, or basic password); the caller decrypts it.
-    ``on_page`` is called after every response with the request as sent and what
-    came back (method, url, headers, body, status, elapsed_ms, bytes, records,
-    next_cursor, and ``stopped``, a ``STOP_REASONS`` key on the last page), the
-    secret replaced by ``SECRET_MASK``, and with the response's JSON.
+    The shown copies are built beside the real ones and never from them, so they cannot hold the secret.
     """
-    pagination = settings.pagination
-    is_sample = settings.sample_size is not None
-
-    # A sample fetch is a single page, capped to ``sample_size`` records.
-    max_pages = 1 if is_sample else max(1, pagination.max_pages)
-    max_records = settings.sample_size if is_sample else pagination.max_records
-
     headers = dict(settings.headers)
     base_params: dict[str, str] = {k: str(v) for k, v in settings.query_params.items()}
-    # The shown copies are built beside the real ones and never from them, so they cannot hold the secret.
     shown_headers = dict(headers)
     shown_base_params = dict(base_params)
     httpx_auth: httpx.Auth | None = None
@@ -370,12 +356,15 @@ def fetch_rest_api(
     elif auth.auth_type == AuthType.BASIC:
         httpx_auth = httpx.BasicAuth(auth.basic_username, secret or "")
         shown_headers["Authorization"] = f"Basic {SECRET_MASK}"
+    return headers, base_params, shown_headers, shown_base_params, httpx_auth
 
-    forms = secret_forms(settings, secret)
 
-    def scrub(text: str) -> str:
-        return mask_secrets(text, forms)
+def _starting_body(settings: RestApiReadSettings, max_pages: int) -> tuple[Any | None, bool]:
+    """The JSON body requests start from and whether the cursor goes into it.
 
+    Refuses pagination no request could carry, before anything is sent.
+    """
+    pagination = settings.pagination
     method = settings.method.value
     json_body = settings.json_body if method == "POST" else None
     ptype = pagination.pagination_type
@@ -388,6 +377,98 @@ def fetch_rest_api(
         if json_body is not None and not isinstance(json_body, dict):
             raise ValueError("A cursor sent in the JSON body needs the body to be a JSON object.")
         json_body = json_body or {}
+    return json_body, cursor_in_body
+
+
+def _page_request(
+    pagination, json_body: Any | None, cursor_in_body: bool, *, offset: int, page_number: int, cursor: Any
+) -> tuple[dict[str, str], Any | None]:
+    """The query parameters a page's request adds and the body it sends, for where the read is in its pages."""
+    page_params: dict[str, str] = {}
+    request_body = json_body
+    ptype = pagination.pagination_type
+    if ptype == PaginationType.OFFSET:
+        page_params[pagination.offset_param] = str(offset)
+        page_params[pagination.limit_param] = str(pagination.page_size)
+    elif ptype == PaginationType.PAGE:
+        page_params[pagination.page_param] = str(page_number)
+    elif ptype == PaginationType.CURSOR and cursor is not None:
+        if cursor_in_body:
+            request_body = copy.deepcopy(json_body)
+            _set_by_path(request_body, pagination.cursor_param, cursor)
+        else:
+            page_params[pagination.cursor_param] = str(cursor)
+    return page_params, request_body
+
+
+def first_request(settings: RestApiReadSettings, *, has_secret: bool) -> dict:
+    """The first request a read of *settings* sends, as its trace entry names it: method, url, headers and body.
+
+    Built by the read's own steps without sending anything, the secret shown as ``SECRET_MASK`` when
+    *has_secret*, so a test request that got no answer can still show what it sent. Raises ``ValueError``
+    for settings the read refuses before any request.
+    """
+    _, _, shown_headers, shown_base_params, _ = _authorized(settings, SECRET_MASK if has_secret else None)
+    pagination = settings.pagination
+    max_pages = 1 if settings.sample_size is not None else max(1, pagination.max_pages)
+    json_body, cursor_in_body = _starting_body(settings, max_pages)
+    page_params, body = _page_request(
+        pagination,
+        json_body,
+        cursor_in_body,
+        offset=0,
+        page_number=pagination.start_page,
+        cursor=pagination.initial_cursor or None,
+    )
+    method = settings.method.value
+    return {
+        "method": method,
+        "url": _url_with(settings.url, {**shown_base_params, **page_params}),
+        "headers": shown_headers,
+        "body": body if method == "POST" else None,
+    }
+
+
+def fetch_rest_api(
+    settings: RestApiReadSettings,
+    *,
+    secret: str | None = None,
+    on_page: Callable[[dict, Any], None] | None = None,
+) -> pl.DataFrame:
+    """Fetch all (or a capped sample of) records from a REST API as a typed frame.
+
+    ``secret`` is the plaintext credential matching ``settings.auth.auth_type``
+    (the API key, bearer token, or basic password); the caller decrypts it.
+    ``on_page`` is called after every response with the request as sent and what
+    came back (method, url, headers, body, status, elapsed_ms, bytes, records,
+    next_cursor, and ``stopped``, a ``STOP_REASONS`` key on the last page), the
+    secret replaced by ``SECRET_MASK``, and with the response's JSON.
+
+    A sample (``sample_size`` set) is the drawer's test request: it is sent once, without retries, and stops
+    trying to connect after ``_SAMPLE_CONNECT_TIMEOUT_SECONDS``, so an unreachable host fails in seconds.
+    """
+    pagination = settings.pagination
+    is_sample = settings.sample_size is not None
+
+    # A sample fetch is a single page, capped to ``sample_size`` records.
+    max_pages = 1 if is_sample else max(1, pagination.max_pages)
+    max_records = settings.sample_size if is_sample else pagination.max_records
+    max_retries = 0 if is_sample else settings.max_retries
+    timeout: httpx.Timeout | float = settings.timeout_seconds
+    if is_sample:
+        timeout = httpx.Timeout(
+            settings.timeout_seconds, connect=min(settings.timeout_seconds, _SAMPLE_CONNECT_TIMEOUT_SECONDS)
+        )
+
+    headers, base_params, shown_headers, shown_base_params, httpx_auth = _authorized(settings, secret)
+    forms = secret_forms(settings, secret)
+
+    def scrub(text: str) -> str:
+        return mask_secrets(text, forms)
+
+    method = settings.method.value
+    json_body, cursor_in_body = _starting_body(settings, max_pages)
+    ptype = pagination.pagination_type
 
     all_records: list[dict] = []
     cursor: Any = pagination.initial_cursor or None
@@ -397,22 +478,13 @@ def fetch_rest_api(
     page_number = pagination.start_page
     page_index = 0
 
-    with httpx.Client(timeout=settings.timeout_seconds, auth=httpx_auth, follow_redirects=True) as client:
+    with httpx.Client(timeout=timeout, auth=httpx_auth, follow_redirects=True) as client:
         while True:
-            page_params: dict[str, str] = {}
-            request_body = json_body
-            if ptype == PaginationType.OFFSET:
-                page_params[pagination.offset_param] = str(offset)
-                page_params[pagination.limit_param] = str(pagination.page_size)
-            elif ptype == PaginationType.PAGE:
-                page_params[pagination.page_param] = str(page_number)
-            elif ptype == PaginationType.CURSOR and cursor is not None:
+            if ptype == PaginationType.CURSOR and cursor is not None:
                 sent_cursors.add(str(cursor))
-                if cursor_in_body:
-                    request_body = copy.deepcopy(json_body)
-                    _set_by_path(request_body, pagination.cursor_param, cursor)
-                else:
-                    page_params[pagination.cursor_param] = str(cursor)
+            page_params, request_body = _page_request(
+                pagination, json_body, cursor_in_body, offset=offset, page_number=page_number, cursor=cursor
+            )
 
             params = {**base_params, **page_params}
             shown_url = _url_with(settings.url, {**shown_base_params, **page_params})
@@ -423,7 +495,7 @@ def fetch_rest_api(
                 headers=headers,
                 params=params,
                 json_body=request_body,
-                max_retries=settings.max_retries,
+                max_retries=max_retries,
                 shown=f"{method} {shown_url}",
                 scrub=scrub,
             )

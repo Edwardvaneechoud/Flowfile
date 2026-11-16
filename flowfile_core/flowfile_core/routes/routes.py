@@ -150,6 +150,7 @@ from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared.db_dialects import KNOWN_DIALECT_NAMES, DialectInfo, dialect_catalog, get_dialect_or_generic, read_sql
+from shared.rest_api.fetch import first_request
 from shared.snowflake_auth import AUTH_METHODS, AUTH_OAUTH, SnowflakeAuthError, normalize_account
 from shared.storage_config import registered_flow_path, require_flow_in_storage, storage
 
@@ -2172,6 +2173,9 @@ def fetch_rest_api_sample(
     "Fetch sample" button. Defined as a sync endpoint so the blocking worker
     round-trip runs in FastAPI's threadpool rather than the event loop. With
     ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows come from ``_rest_api_sample_rows``.
+    A failed fetch answers 422 with ``{message, request}``: the failure, and the
+    first request as the trace shows it (secret masked; ``None`` when the
+    settings were refused before anything was sent).
     """
     input_data["user_id"] = current_user.id
     try:
@@ -2200,7 +2204,13 @@ def fetch_rest_api_sample(
             )
             sample_df = fetcher.get_result().head(sample_size).collect()
     except Exception as e:
-        raise HTTPException(422, f"Failed to fetch sample from REST API: {e}") from e
+        raise HTTPException(
+            422,
+            {
+                "message": f"Failed to fetch sample from REST API: {e}",
+                "request": _rest_api_sample_request(node, secret_encrypted, sample_size),
+            },
+        ) from e
 
     fields = [c.get_minimal_field_info() for c in infer_schema_from_sample(sample_df)]
     # Cache onto the live node so schema prediction is immediately available.
@@ -2208,6 +2218,17 @@ def fetch_rest_api_sample(
     if live is not None and isinstance(live.setting_input, input_schema.NodeRestApiReader):
         live.setting_input.fields = fields
     return RestApiSampleResponse(fields=fields, **debug)
+
+
+def _rest_api_sample_request(
+    node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
+) -> dict[str, Any] | None:
+    """The request a failed sample sent, its secret masked, for the drawer's trace; ``None`` when none was sent."""
+    settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
+    try:
+        return first_request(settings, has_secret=secret_encrypted is not None)
+    except ValueError:
+        return None
 
 
 def _rest_api_sample_rows(

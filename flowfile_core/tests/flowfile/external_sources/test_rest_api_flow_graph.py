@@ -33,7 +33,7 @@ from flowfile_core.routes.routes import flow_file_handler
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.transform_schema import SelectInput
 from shared.compute_protocol import WorkerLocation
-from test_utils.rest_api_server import KEYSET_RECORDS, SECURE_TOKEN, start_api_server
+from test_utils.rest_api_server import KEYSET_RECORDS, SECURE_TOKEN, closed_port_url, start_api_server
 from tests.conftest import protocol_states
 
 # Windows has no 0.0.0.0 loopback alias for connects; the worker binds 127.0.0.1 there.
@@ -486,9 +486,38 @@ def test_a_failed_sample_names_the_request_and_the_answer_without_the_secret(
 
     assert resp.status_code == 422
     detail = resp.json()["detail"]
-    assert f"GET {url}?api_key=REDACTED answered 401 Unauthorized" in detail
-    assert '{"error": "unauthorized"}' in detail
+    assert f"GET {url}?api_key=REDACTED answered 401 Unauthorized" in detail["message"]
+    assert '{"error": "unauthorized"}' in detail["message"]
+    assert detail["request"] == {"method": "GET", "url": f"{url}?api_key=REDACTED", "headers": {}, "body": None}
     assert "wrong-key-value" not in resp.text
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_failed_sample_of_an_unreachable_host_names_the_request_it_sent(api_client, protocol_flag):
+    flow_id, node_id = 7008, 1
+    url = closed_port_url()
+    auth = input_schema.RestApiAuthSettings(auth_type="bearer", secret="a-token-value")
+    _register_rest_node_in_global_handler(flow_id, node_id, url, auth=auth, max_retries=3)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        user_id=1,
+        rest_api_settings=input_schema.RestApiSettings(url=url, auth=auth, max_retries=3, headers={"X-Team": "data"}),
+    ).model_dump()
+    payload["rest_api_settings"]["auth"]["secret"] = "a-token-value"
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "failed: ConnectError" in detail["message"]
+    assert detail["request"] == {
+        "method": "GET",
+        "url": url,
+        "headers": {"X-Team": "data", "Authorization": "Bearer REDACTED"},
+        "body": None,
+    }
+    assert "a-token-value" not in resp.text
     flow_file_handler.delete_flow(flow_id)
 
 
