@@ -537,6 +537,31 @@ def test_settings_refused_before_any_request_name_no_request(api_client, api_ser
     flow_file_handler.delete_flow(flow_id)
 
 
+def test_a_secret_the_worker_cannot_open_names_no_request_and_no_traceback(
+    api_client, api_server, protocol_flag, monkeypatch
+):
+    from cryptography.fernet import Fernet
+
+    foreign = f"$ffsec$1$1${Fernet(Fernet.generate_key()).encrypt(b'a-token-value').decode()}"
+    monkeypatch.setattr("flowfile_core.routes.routes.resolve_auth_secret_encrypted", lambda *_a: foreign)
+    url = api_server.route("/never-asked", lambda _r, _s: Reply(200, {"data": []}))
+    auth = input_schema.RestApiAuthSettings(auth_type="bearer", secret_name="elsewhere")
+    flow_id, node_id = 7013, 1
+    _register_rest_node_in_global_handler(flow_id, node_id, url, auth=auth)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url, auth=auth)
+    ).model_dump()
+    api_server.reset()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    assert resp.json()["request"] is None
+    assert "Traceback" not in resp.text and foreign.split("$")[-1] not in resp.text
+    assert api_server.requests_to("/never-asked") == []
+    flow_file_handler.delete_flow(flow_id)
+
+
 def test_a_test_request_retries_an_error_answer_once_whatever_the_node_allows(api_client, api_server, protocol_flag):
     url = api_server.route("/always-503", lambda _r, _s: Reply(503, {"error": "unavailable"}))
     flow_id, node_id = 7011, 1
