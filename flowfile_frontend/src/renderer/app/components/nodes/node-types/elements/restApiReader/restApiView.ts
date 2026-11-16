@@ -239,15 +239,16 @@ export const traceLine = (entry: SentRequest | TraceEntry): string =>
 export const traceOk = (entry: SentRequest | TraceEntry): boolean =>
   gotResponse(entry) && entry.status < 400;
 
-/** A failed test: core's message, and the request it sent when the request itself failed (`request` beside `detail`). */
+/** A failed test: core's message, and the request it sent when the request itself failed (`detail.request`). */
 export const testFailure = (error: unknown): { message: string; request: SentRequest | null } => {
   const failure = error as {
     message?: string;
-    response?: { data?: { request?: SentRequest | null } };
+    response?: { data?: { detail?: { request?: SentRequest | null } | string } };
   };
+  const detail = failure?.response?.data?.detail;
   return {
     message: detailOf(error, failure?.message ?? "Unknown error"),
-    request: failure?.response?.data?.request ?? null,
+    request: (typeof detail === "object" ? detail?.request : null) ?? null,
   };
 };
 

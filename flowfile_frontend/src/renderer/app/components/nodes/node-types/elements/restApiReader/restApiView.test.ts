@@ -201,16 +201,15 @@ describe("the request as shown", () => {
       message: "Request failed with status code 422",
       response: { data },
     });
-    expect(testFailure(answered({ detail: "Failed: no route", request }))).toEqual({
+    expect(testFailure(answered({ detail: { message: "Failed: no route", request } }))).toEqual({
       message: "Failed: no route",
       request,
     });
-    expect(testFailure(answered({ detail: "Failed: no worker", request: null }))).toEqual({
-      message: "Failed: no worker",
-      request: null,
-    });
-    expect(testFailure(answered({ detail: "From an older core" }))).toEqual({
-      message: "From an older core",
+    expect(
+      testFailure(answered({ detail: { message: "Failed: no worker", request: null } })),
+    ).toEqual({ message: "Failed: no worker", request: null });
+    expect(testFailure(answered({ detail: "Flow not found" }))).toEqual({
+      message: "Flow not found",
       request: null,
     });
     expect(testFailure(answered({ detail: [{ msg: "sample_size: not an integer" }] }))).toEqual({

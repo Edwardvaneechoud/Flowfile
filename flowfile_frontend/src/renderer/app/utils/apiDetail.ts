@@ -1,4 +1,4 @@
-/** A failed request's detail: a string as is, FastAPI's validation list as its messages. */
+/** A failed request's detail: a string as is, FastAPI's validation list as its messages, an object's `message`. */
 export function detailOf(error: unknown, fallback: string): string {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
   if (typeof detail === "string") return detail;
@@ -7,6 +7,8 @@ export function detailOf(error: unknown, fallback: string): string {
       .map((entry) => (entry as { msg?: unknown })?.msg)
       .filter((msg): msg is string => typeof msg === "string");
     if (messages.length) return messages.join("; ");
+    return fallback;
   }
-  return fallback;
+  const message = (detail as { message?: unknown } | null | undefined)?.message;
+  return typeof message === "string" ? message : fallback;
 }

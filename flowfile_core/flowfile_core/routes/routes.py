@@ -95,7 +95,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.flowfile.execution.context import current_context
-from flowfile_core.flowfile.execution.errors import RESULT_GONE
+from flowfile_core.flowfile.execution.errors import RESULT_GONE, ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.execution.payloads import FileWritePayload, RestApiReadPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
@@ -2148,6 +2148,8 @@ def require_node_id_free(flow, node_id: int) -> None:
 # The test request's budget; its connect cap is shared.rest_api.fetch._SAMPLE_CONNECT_TIMEOUT_SECONDS.
 _TEST_REQUEST_TIMEOUT_SECONDS = 30.0
 _TEST_REQUEST_MAX_RETRIES = 1
+# The failures whose text a test request answers: the fetch engine's, worded for the person testing.
+_SHOWN_FAILURE_CLASSES = frozenset({RestApiRequestError.__name__, "ValueError"})
 
 
 class RestApiSampleResponse(BaseModel):
@@ -2180,9 +2182,8 @@ def fetch_rest_api_sample(
     round-trip runs in FastAPI's threadpool rather than the event loop. With
     ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows come from ``_rest_api_sample_rows``.
     The test is capped (``_cap_for_test_request``). A failed fetch answers 422
-    with ``detail``, the failure as a string, and ``request``: the first request
-    as the trace shows it (secret masked) when the request itself failed, else
-    ``None``.
+    with ``detail`` as ``_sample_failure`` builds it: ``message`` and the
+    ``request`` it sent (secret masked) when the request itself failed.
     """
     input_data["user_id"] = current_user.id
     try:
@@ -2212,10 +2213,7 @@ def fetch_rest_api_sample(
             )
             sample_df = fetcher.get_result().head(sample_size).collect()
     except Exception as e:
-        request = _rest_api_sample_request(node, secret_encrypted, sample_size) if _is_request_failure(e) else None
-        return JSONResponse(
-            status_code=422, content={"detail": f"Failed to fetch sample from REST API: {e}", "request": request}
-        )
+        raise HTTPException(422, _sample_failure(e, node, secret_encrypted, sample_size)) from None
 
     fields = [c.get_minimal_field_info() for c in infer_schema_from_sample(sample_df)]
     # Cache onto the live node so schema prediction is immediately available.
@@ -2232,18 +2230,43 @@ def _cap_for_test_request(settings: input_schema.RestApiSettings) -> None:
     settings.max_retries = min(settings.max_retries, _TEST_REQUEST_MAX_RETRIES)
 
 
-def _is_request_failure(error: BaseException) -> bool:
-    """Whether *error* is the fetch engine's ``RestApiRequestError``: the request was tried and failed or was refused.
+def _sample_failure(
+    error: Exception, node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
+) -> dict[str, Any]:
+    """The 422 detail of a failed test request: ``message`` and ``request``.
 
-    Raised in this process, or named first in a worker's description. Any other failure (no worker, a secret the
-    worker could not open, a step after a good answer) sent no request worth showing.
+    ``message`` carries the failure's text only when it was worded for the person testing: the fetch engine's
+    (``_SHOWN_FAILURE_CLASSES``) or compute that could not be reached. Any other failure is named by its class alone,
+    so no other exception's text reaches the answer. ``request`` is the request as the trace shows it when the request
+    itself failed, else ``None``: no worker, a secret the worker could not open, a step after a good answer.
+    """
+    failure = _failure_class(error)
+    if failure in _SHOWN_FAILURE_CLASSES or isinstance(error, ComputeUnavailable | VersionMismatch):
+        message = f"Failed to fetch sample from REST API: {error}"
+    else:
+        name = failure or type(error).__name__
+        logger.warning("REST API test request failed: %s", name)
+        message = f"Failed to fetch sample from REST API: The test request could not run ({name})."
+    request = (
+        _rest_api_sample_request(node, secret_encrypted, sample_size)
+        if failure == RestApiRequestError.__name__
+        else None
+    )
+    return {"message": message, "request": request}
+
+
+def _failure_class(error: BaseException) -> str | None:
+    """The class a test request's failure started as.
+
+    One of ``_SHOWN_FAILURE_CLASSES`` raised in this process (by exact class, so a pydantic ``ValidationError`` is not
+    a ``ValueError`` here), else the class a worker's description names first (``ClassName: message``).
     """
     cause: BaseException | None = error
     while cause is not None:
-        if isinstance(cause, RestApiRequestError):
-            return True
+        if type(cause).__name__ in _SHOWN_FAILURE_CLASSES:
+            return type(cause).__name__
         cause = cause.__cause__
-    return recover_error_class(None, str(error)) == RestApiRequestError.__name__
+    return recover_error_class(None, str(error))
 
 
 def _rest_api_sample_request(

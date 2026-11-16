@@ -29,7 +29,8 @@ from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.routes.routes import _cap_for_test_request, flow_file_handler
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
+from flowfile_core.routes.routes import _cap_for_test_request, _sample_failure, flow_file_handler
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.transform_schema import SelectInput
 from shared.compute_protocol import WorkerLocation
@@ -485,15 +486,15 @@ def test_a_failed_sample_names_the_request_and_the_answer_without_the_secret(
     resp = api_client.post("/rest_api/sample", json=payload)
 
     assert resp.status_code == 422
-    detail = resp.json()["detail"]
+    detail = resp.json()["detail"]["message"]
     assert f"GET {url}?api_key=REDACTED answered 401 Unauthorized" in detail
     assert '{"error": "unauthorized"}' in detail
-    assert resp.json()["request"] == {"method": "GET", "url": f"{url}?api_key=REDACTED", "headers": {}, "body": None}
+    assert resp.json()["detail"]["request"] == {"method": "GET", "url": f"{url}?api_key=REDACTED", "headers": {}, "body": None}
     assert "wrong-key-value" not in resp.text
     flow_file_handler.delete_flow(flow_id)
 
 
-def test_a_failure_after_a_good_answer_names_no_request(api_client, local_api_server, monkeypatch):
+def test_a_failure_after_a_good_answer_names_its_class_and_no_request(api_client, local_api_server, monkeypatch):
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
 
     def _unreadable(*_args, **_kwargs):
@@ -510,8 +511,11 @@ def test_a_failure_after_a_good_answer_names_no_request(api_client, local_api_se
     resp = api_client.post("/rest_api/sample", json=payload)
 
     assert resp.status_code == 422
-    assert "the sample could not be read" in resp.json()["detail"]
-    assert resp.json()["request"] is None
+    assert resp.json()["detail"] == {
+        "message": "Failed to fetch sample from REST API: The test request could not run (RuntimeError).",
+        "request": None,
+    }
+    assert "the sample could not be read" not in resp.text
     flow_file_handler.delete_flow(flow_id)
 
 
@@ -531,8 +535,8 @@ def test_settings_refused_before_any_request_name_no_request(api_client, api_ser
     resp = api_client.post("/rest_api/sample", json=payload)
 
     assert resp.status_code == 422
-    assert "needs the body to be a JSON object" in resp.json()["detail"]
-    assert resp.json()["request"] is None
+    assert "needs the body to be a JSON object" in resp.json()["detail"]["message"]
+    assert resp.json()["detail"]["request"] is None
     assert api_server.requests_to("/never-asked") == []
     flow_file_handler.delete_flow(flow_id)
 
@@ -556,8 +560,11 @@ def test_a_secret_the_worker_cannot_open_names_no_request_and_no_traceback(
     resp = api_client.post("/rest_api/sample", json=payload)
 
     assert resp.status_code == 422
-    assert resp.json()["request"] is None
-    assert "Traceback" not in resp.text and foreign.split("$")[-1] not in resp.text
+    assert resp.json()["detail"] == {
+        "message": "Failed to fetch sample from REST API: The test request could not run (InvalidToken).",
+        "request": None,
+    }
+    assert foreign.split("$")[-1] not in resp.text
     assert api_server.requests_to("/never-asked") == []
     flow_file_handler.delete_flow(flow_id)
 
@@ -577,9 +584,31 @@ def test_a_test_request_retries_an_error_answer_once_whatever_the_node_allows(ap
     resp = api_client.post("/rest_api/sample", json=payload)
 
     assert resp.status_code == 422
-    assert "answered 503" in resp.json()["detail"]
+    assert "answered 503" in resp.json()["detail"]["message"]
     assert len(api_server.requests_to("/always-503")) == 2
     flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_failed_test_request_answers_only_the_text_worded_for_it():
+    from pydantic import BaseModel, ValidationError
+
+    class _Strict(BaseModel):
+        n: int
+
+    try:
+        _Strict(n="ciphertext-like-input")
+    except ValidationError as error:
+        refused = error
+
+    def message(error: Exception) -> str:
+        return _sample_failure(error, None, None, 1)["message"].removeprefix("Failed to fetch sample from REST API: ")
+
+    assert message(refused) == "The test request could not run (ValidationError)."
+    worker_refusal = "ValueError: Cursor pagination needs a cursor path."
+    assert message(RuntimeError(worker_refusal)) == worker_refusal
+    unreachable = ComputeUnavailable("Cannot reach the worker", backend_id="worker")
+    assert message(unreachable) == str(unreachable)
+    assert message(RuntimeError("KeyError: 'internal'")) == "The test request could not run (KeyError)."
 
 
 def test_a_test_request_reads_within_its_cap_and_keeps_a_shorter_timeout():
@@ -610,8 +639,8 @@ def test_a_failed_sample_keeps_its_message_when_its_request_cannot_be_described(
     resp = api_client.post("/rest_api/sample", json=payload)
 
     assert resp.status_code == 422
-    assert f"GET {url} answered 404" in resp.json()["detail"]
-    assert resp.json()["request"] is None
+    assert f"GET {url} answered 404" in resp.json()["detail"]["message"]
+    assert resp.json()["detail"]["request"] is None
     flow_file_handler.delete_flow(flow_id)
 
 
@@ -631,8 +660,8 @@ def test_a_failed_sample_of_an_unreachable_host_names_the_request_it_sent(api_cl
     resp = api_client.post("/rest_api/sample", json=payload)
 
     assert resp.status_code == 422
-    assert "failed: ConnectError" in resp.json()["detail"]
-    assert resp.json()["request"] == {
+    assert "failed: ConnectError" in resp.json()["detail"]["message"]
+    assert resp.json()["detail"]["request"] == {
         "method": "GET",
         "url": url,
         "headers": {"X-Team": "data", "Authorization": "Bearer REDACTED"},
