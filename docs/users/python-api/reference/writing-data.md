@@ -307,8 +307,9 @@ Returns a new child `FlowFrame`.
     other tools using the file while a flow writes to it.
 
 !!! note "Snowflake"
-    A write to a `database_type="snowflake"` connection uploads the rows to a temporary stage and
-    copies them into the table, so the connection's role needs `CREATE STAGE` on the schema.
+    A write to a `database_type="snowflake"` connection uploads the rows to a temporary stage, which
+    needs no grant of its own, and copies them into the table, so the connection's role needs `INSERT`
+    on the table, and `CREATE TABLE` on the schema when the write creates it.
     Unquoted names are upper-cased by Snowflake (`order_id` becomes `ORDER_ID`), and
     `if_exists="replace"` recreates the table. A connection without a default database needs
     `database_name=` (for example `df.write_database("snowflake-sales", "ORDERS_COPY", schema_name="PUBLIC",
