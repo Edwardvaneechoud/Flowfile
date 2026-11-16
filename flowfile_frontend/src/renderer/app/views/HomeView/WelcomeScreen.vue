@@ -267,23 +267,13 @@
       <footer class="welcome-footer">
         <button class="welcome-link" @click="aboutVisible = true">About</button>
         <span class="footer-sep" aria-hidden="true">·</span>
-        <a
-          class="welcome-link"
-          href="https://github.com/edwardvaneechoud/Flowfile"
-          target="_blank"
-          rel="noopener"
-        >
-          GitHub
-        </a>
+        <button class="welcome-link" @click="openLink(REPO_URL)">GitHub</button>
         <span class="footer-sep" aria-hidden="true">·</span>
-        <a
-          class="welcome-link"
-          href="https://github.com/edwardvaneechoud/Flowfile/discussions"
-          target="_blank"
-          rel="noopener"
-        >
-          Discussions
-        </a>
+        <button class="welcome-link" @click="openLink(DISCUSSIONS_URL)">Discussions</button>
+        <span class="footer-sep" aria-hidden="true">·</span>
+        <button class="welcome-link" data-testid="welcome-report-issue" @click="reportIssue">
+          Report an issue
+        </button>
         <template v-if="version">
           <span class="footer-sep" aria-hidden="true">·</span>
           <el-popover
@@ -327,7 +317,8 @@ import { ref, reactive, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { MODIFIER_LABEL } from "../../utils/shortcuts";
 import { desktop, isDesktop } from "../../../lib/desktop";
-import { DOCS_BASE_URL } from "../../lib/docsLinks";
+import { DISCUSSIONS_URL, DOCS_BASE_URL, REPO_URL } from "../../lib/docsLinks";
+import { openBugReport } from "../../composables/useBugReport";
 import { recentDisplayName, type RecentFlow } from "../../composables/useRecentFlows";
 import type { FlowSettings } from "../../types";
 import { useTutorialStore } from "../../stores/tutorial-store";
@@ -415,6 +406,8 @@ const goVisuals = () => router.push({ name: "catalog", query: { tab: "visuals" }
 const goSchedules = () => router.push({ name: "catalog", query: { tab: "schedules" } });
 const goSecrets = () => router.push({ name: "connections", query: { tab: "secrets" } });
 const goDocs = () => void desktop.openExternal(DOCS_BASE_URL);
+const openLink = (url: string) => void desktop.openExternal(url);
+const reportIssue = () => openBugReport(version.value);
 
 const viewInCatalog = (flow: RecentFlow) => {
   if (flow.catalogId === undefined) return;

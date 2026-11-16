@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_opener::OpenerExt;
 
 const DOCS_URL: &str = "https://edwardvaneechoud.github.io/Flowfile/";
-const ISSUES_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile/issues";
+const NEW_ISSUE_URL: &str = "https://github.com/edwardvaneechoud/Flowfile/issues/new";
 const REPO_URL: &str = "https://github.com/Edwardvaneechoud/Flowfile";
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -141,7 +141,10 @@ pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
             }
         }
         "help-docs" => open_external(app, DOCS_URL),
-        "help-issues" => open_external(app, ISSUES_URL),
+        "help-issues" => {
+            let version = app.package_info().version.to_string();
+            open_external(app, &bug_report_url(&version, std::env::consts::OS));
+        }
         "help-request-node" => emit_help_request_node(app),
         "help-repo" => open_external(app, REPO_URL),
         _ => {}
@@ -165,6 +168,20 @@ fn emit_help_request_node<R: Runtime>(app: &AppHandle<R>) {
     let _ = app.emit("help:request-node", ());
 }
 
+/// New-issue URL prefilled like the renderer's `bugReportUrl` (`app/lib/docsLinks.ts`); built
+/// here so the menu still works when the renderer does not.
+fn bug_report_url(version: &str, os: &str) -> String {
+    let body = format!(
+        "**Describe the bug**\n\n\n**To reproduce**\n1. \n\n**Expected behavior**\n\n\n\
+         **Screenshots / flow file**\n\
+         If applicable, attach a screenshot or the flow (.yaml) that shows the problem.\n\n\
+         **Environment**\n- Flowfile version: {version}\n- Environment: Desktop app ({os})\n"
+    );
+    url::Url::parse_with_params(NEW_ISSUE_URL, &[("body", body)])
+        .map(String::from)
+        .unwrap_or_else(|_| NEW_ISSUE_URL.to_string())
+}
+
 fn open_external<R: Runtime>(app: &AppHandle<R>, url: &str) {
     if let Err(err) = app.opener().open_url(url, None::<&str>) {
         log::warn!("failed to open external url {}: {}", url, err);
@@ -176,4 +193,23 @@ fn open_external<R: Runtime>(app: &AppHandle<R>, url: &str) {
 #[cfg(target_os = "macos")]
 fn chrono_year() -> i32 {
     2025
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bug_report_url_prefills_version_and_os() {
+        let url = url::Url::parse(&bug_report_url("1.2.3", "macos")).unwrap();
+        assert_eq!(url.path(), "/edwardvaneechoud/Flowfile/issues/new");
+        let body = url
+            .query_pairs()
+            .find(|(key, _)| key == "body")
+            .map(|(_, value)| value.into_owned())
+            .unwrap();
+        assert!(body.contains("- Flowfile version: 1.2.3"));
+        assert!(body.contains("- Environment: Desktop app (macos)"));
+        assert!(body.starts_with("**Describe the bug**"));
+    }
 }
