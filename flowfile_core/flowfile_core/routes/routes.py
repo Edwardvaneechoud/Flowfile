@@ -2245,7 +2245,7 @@ def _sample_failure(
         message = f"Failed to fetch sample from REST API: {error}"
     else:
         name = failure or type(error).__name__
-        logger.warning("REST API test request failed: %s", name)
+        logger.warning("REST API test request failed: %s", name, exc_info=error)
         message = f"Failed to fetch sample from REST API: The test request could not run ({name})."
     request = (
         _rest_api_sample_request(node, secret_encrypted, sample_size)
