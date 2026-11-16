@@ -493,6 +493,31 @@ def test_a_failed_sample_names_the_request_and_the_answer_without_the_secret(
     flow_file_handler.delete_flow(flow_id)
 
 
+def test_a_failed_sample_keeps_its_message_when_its_request_cannot_be_described(
+    api_client, local_api_server, monkeypatch
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+
+    def _refuse(*_args, **_kwargs):
+        raise RuntimeError("settings could not be built")
+
+    monkeypatch.setattr("flowfile_core.routes.routes.build_rest_api_worker_settings", _refuse)
+    flow_id, node_id = 7009, 1
+    url = f"{local_api_server}/nope"
+    _register_rest_node_in_global_handler(flow_id, node_id, url)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url)
+    ).model_dump()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert f"GET {url} answered 404" in detail["message"]
+    assert detail["request"] is None
+    flow_file_handler.delete_flow(flow_id)
+
+
 def test_a_failed_sample_of_an_unreachable_host_names_the_request_it_sent(api_client, protocol_flag):
     flow_id, node_id = 7008, 1
     url = closed_port_url()

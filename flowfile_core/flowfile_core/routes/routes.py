@@ -2223,11 +2223,15 @@ def fetch_rest_api_sample(
 def _rest_api_sample_request(
     node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
 ) -> dict[str, Any] | None:
-    """The request a failed sample sent, its secret masked, for the drawer's trace; ``None`` when none was sent."""
-    settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
+    """The request a failed sample sent, its secret masked, for the drawer's trace.
+
+    ``None`` when none was sent or it cannot be built: it is an extra beside the failure, never a reason to lose it.
+    """
     try:
+        settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
         return first_request(settings, has_secret=secret_encrypted is not None)
-    except ValueError:
+    except Exception:
+        logger.debug("Could not describe the failed REST API sample's request", exc_info=True)
         return None
 
 
