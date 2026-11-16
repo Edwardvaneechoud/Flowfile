@@ -2,6 +2,9 @@
 
 import base64
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -17,6 +20,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_database_connection,
     store_database_connection,
 )
+from flowfile_core.routes import routes
 from flowfile_core.schemas import input_schema
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
 from shared.db_dialects import KNOWN_DIALECT_NAMES, SnowflakeDialect
@@ -761,3 +765,40 @@ def test_db_databases_failure_is_a_422_with_a_string_detail(snowflake_available,
     response = client.post("/db_databases", json=_sf_reference_settings())
     assert response.status_code == 422
     assert response.json() == {"detail": "No warehouse is selected."}
+
+
+@pytest.mark.parametrize("path", ["/db_databases", "/db_schemas", "/db_tables", "/validate_db_settings"])
+def test_a_slow_database_does_not_hold_up_other_requests(monkeypatch, path):
+    """A browse or validate call that waits on the database (a Snowflake sign-in) runs off the event loop.
+
+    The client is entered, so every request shares one event loop: had the route run its blocking work on it,
+    the second request could not be answered until the first one returned.
+    """
+    entered, release = threading.Event(), threading.Event()
+
+    def slow(*_args, **_kwargs):
+        entered.set()
+        release.wait(10)
+        return []
+
+    class _SlowSource:
+        validate = staticmethod(slow)
+
+    for name in ("list_db_databases", "list_db_schemas", "list_db_tables"):
+        monkeypatch.setattr(routes, name, slow)
+    monkeypatch.setattr(routes, "create_sql_source_from_db_settings", lambda *_args, **_kwargs: _SlowSource())
+    settings = {"connection_mode": "reference", "database_connection_name": "slow", "query_mode": "table"}
+
+    with TestClient(main.app) as shared, ThreadPoolExecutor(2) as pool:
+        shared.headers = client.headers
+        pending = pool.submit(shared.post, path, json=settings)
+        try:
+            assert entered.wait(5), f"{path} never reached the database call"
+            other = pool.submit(shared.get, "/db_dialects")
+            try:
+                assert other.result(timeout=5).status_code == 200
+            except FutureTimeout:
+                pytest.fail(f"{path} held the event loop: another request waited for the database call")
+        finally:
+            release.set()
+        assert pending.result(timeout=10).status_code == 200

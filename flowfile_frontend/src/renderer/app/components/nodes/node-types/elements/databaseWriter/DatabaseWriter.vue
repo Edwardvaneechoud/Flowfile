@@ -77,6 +77,7 @@
               loading-text="Loading…"
               class="flex-input"
               @change="databaseChoice.handleDatabaseChange"
+              @visible-change="databaseChoice.ensureDatabases"
             >
               <el-option
                 v-for="d in databaseChoice.databases.options"
@@ -114,6 +115,7 @@
                 loading-text="Loading…"
                 class="flex-input"
                 @change="handleSchemaChange"
+                @visible-change="databaseChoice.ensureSchemas"
                 @blur="handleSchemaBlur"
               >
                 <el-option
@@ -162,6 +164,7 @@
                 :no-data-text="databaseChoice.tablesNoDataText.value"
                 class="flex-input"
                 @change="handleTableSelect"
+                @visible-change="databaseChoice.ensureTables"
                 @blur="handleTableBlur"
               >
                 <el-option
@@ -349,7 +352,8 @@ const handleTableSelect = (value: string) => {
 // Inline mode: debounce so we don't fire on every keystroke, and only when the
 // connection looks complete (all required fields filled).
 const isInlineConnectionComplete = () => {
-  const conn = nodeData.value?.database_write_settings?.database_connection;
+  const settings = nodeData.value?.database_write_settings;
+  const conn = settings?.connection_mode === "inline" ? settings.database_connection : undefined;
   if (!conn) return false;
   if (conn.database_type === "sqlite") return !!conn.database;
   return !!(conn.host && conn.port && conn.database && conn.username && conn.password_ref);

@@ -3270,7 +3270,7 @@ async def get_excel_sheet_names(path: str) -> list[str] | None:
 
 
 @router.post("/validate_db_settings")
-async def validate_db_settings(
+def validate_db_settings(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ):
     """Validates that a connection can be made to a database with the given settings."""
@@ -3283,7 +3283,7 @@ async def validate_db_settings(
 
 
 @router.post("/db_databases", tags=["db_connections"], response_model=list[str])
-async def get_db_databases(
+def get_db_databases(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ) -> list[str]:
     """Returns the databases a node may pick on this connection; empty for a dialect with one database."""
@@ -3294,7 +3294,7 @@ async def get_db_databases(
 
 
 @router.post("/db_schemas", tags=["db_connections"], response_model=list[str])
-async def get_db_schemas(
+def get_db_schemas(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ) -> list[str]:
     """Returns available schema names for the given database connection.
@@ -3308,7 +3308,7 @@ async def get_db_schemas(
 
 
 @router.post("/db_tables", tags=["db_connections"], response_model=list[str])
-async def get_db_tables(
+def get_db_tables(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ) -> list[str]:
     """Returns available table names for the given database connection and optional schema.
