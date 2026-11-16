@@ -2145,6 +2145,7 @@ def require_node_id_free(flow, node_id: int) -> None:
         )
 
 
+# The test request's budget; its connect cap is shared.rest_api.fetch._SAMPLE_CONNECT_TIMEOUT_SECONDS.
 _TEST_REQUEST_TIMEOUT_SECONDS = 30.0
 _TEST_REQUEST_MAX_RETRIES = 1
 

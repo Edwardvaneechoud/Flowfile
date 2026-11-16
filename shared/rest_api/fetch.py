@@ -39,7 +39,7 @@ from shared.rest_api.models import (
 # without a Retry-After hint).
 _BACKOFF_BASE_SECONDS = 0.5
 _BACKOFF_CAP_SECONDS = 30.0
-# A sample is the drawer's test request: someone is waiting, so it gives up on an unreachable host sooner.
+# A sample is the drawer's test request: it gives up on an unreachable host sooner (core caps its read and retries).
 _SAMPLE_CONNECT_TIMEOUT_SECONDS = 10.0
 
 SECRET_MASK = "REDACTED"
