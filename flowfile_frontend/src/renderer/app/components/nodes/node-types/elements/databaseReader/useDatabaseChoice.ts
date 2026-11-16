@@ -1,4 +1,4 @@
-import { computed, reactive, ref, watch, type Ref } from "vue";
+import { computed, reactive, ref, toRaw, watch, type Ref } from "vue";
 import { ElMessage } from "element-plus";
 
 import type { DatabaseSettings, DatabaseWriteSettings } from "../../../baseNode/nodeInput";
@@ -26,6 +26,10 @@ import { validateSqlIdentifier } from "../databaseWriter/validation";
  * whenever the node already names a database, so it can be cleared). The node stores the pick in
  * `database_name`; empty means the connection's default database. Each list is filled only by its
  * latest load, so a slow answer for an earlier connection, database or schema never lands.
+ *
+ * Every list asks the database for a fresh session (a sign-in on Snowflake), so a loaded node asks
+ * for none: a list loads when its dropdown opens (`ensure*`) or its refresh button is pressed, and
+ * eagerly only after the user picks another connection, database or schema.
  */
 export function useDatabaseChoice(options: {
   settings: () => DatabaseSettings | DatabaseWriteSettings | undefined;
@@ -51,6 +55,11 @@ export function useDatabaseChoice(options: {
 
   const connectionBrowses = computed(() =>
     browsesDatabases(selectedConnection.value?.databaseType),
+  );
+
+  // A saved connection is known once the connection list holds it; until then its dialect is not.
+  const connectionKnown = computed(
+    () => options.settings()?.connection_mode !== "reference" || !!selectedConnection.value,
   );
 
   // Databases are browsed only through a saved connection.
@@ -116,6 +125,10 @@ export function useDatabaseChoice(options: {
   const loadSchemas = async (silent = false) => {
     const settings = options.settings();
     if (!settings) return;
+    if (!connectionKnown.value) {
+      schemaLoader.invalidate();
+      return;
+    }
     await schemaLoader.load(
       () => fetchDbSchemas(settings),
       reportError(silent, "Failed to fetch schemas"),
@@ -125,7 +138,8 @@ export function useDatabaseChoice(options: {
   const loadTables = async (silent = false) => {
     const settings = options.settings();
     if (!settings) return;
-    if (!shouldLoadTables(browsing.value, settings.schema_name)) {
+    // An unknown connection may browse databases, where a schema-less listing spans the whole account.
+    if (!connectionKnown.value || !shouldLoadTables(browsing.value, settings.schema_name)) {
       tableLoader.invalidate();
       return;
     }
@@ -133,6 +147,20 @@ export function useDatabaseChoice(options: {
       () => fetchDbTables(settings),
       reportError(silent, "Failed to fetch tables"),
     );
+  };
+
+  /**
+   * Load a list when its dropdown opens (`visible`), once for what the node names now; a no-op
+   * while the list holds that answer or is loading. Pass these as an el-select's `visible-change`.
+   */
+  const ensureDatabases = (visible = true) => {
+    if (visible && !databaseLoader.hasAnswer() && !databases.loading) fetchDatabases();
+  };
+  const ensureSchemas = (visible = true) => {
+    if (visible && !schemaLoader.hasAnswer() && !schemas.loading) loadSchemas();
+  };
+  const ensureTables = (visible = true) => {
+    if (visible && !tableLoader.hasAnswer() && !tables.loading) loadTables();
   };
 
   /** Empty the schema and table lists and drop any answer still on its way. */
@@ -189,18 +217,20 @@ export function useDatabaseChoice(options: {
   const optionLabel = (connection: FullDatabaseConnectionInterface): string =>
     connectionOptionLabel(connection, browsesDatabases(connection.databaseType));
 
+  // Element-wise sources: replacing the node object (a General-tab edit) keeps its settings and fires nothing.
   watch(
-    () => [options.settings()?.database_connection_name, connectionBrowses.value] as const,
-    ([name], previous) => {
+    [() => options.settings()?.database_connection_name, () => toRaw(options.settings())],
+    ([name, loaded], [previousName, previousLoaded]) => {
+      databaseLoader.invalidate();
+      clearLists();
+      // Another node was loaded: its lists wait until a dropdown asks for them.
+      if (loaded !== previousLoaded) return;
       const settings = options.settings();
-      const previousName = previous?.[0];
       // A database belongs to the connection it was picked on.
-      if (settings && previousName && name !== previousName && settings.database_name) {
+      if (settings && previousName && settings.database_name) {
         settings.database_name = null;
         previousDatabase = null;
       }
-      databaseLoader.invalidate();
-      clearLists();
       if (!name) return;
       fetchDatabases(true);
       loadSchemas(true);
@@ -222,6 +252,9 @@ export function useDatabaseChoice(options: {
     fetchDatabases,
     loadSchemas,
     loadTables,
+    ensureDatabases,
+    ensureSchemas,
+    ensureTables,
     clearLists,
     syncDatabase,
     handleDatabaseChange,
