@@ -2,12 +2,15 @@
 
 No hub state ever answers 401, which the frontend reads as an expired local session: refused credentials answer 400,
 an unreachable hub 502, an unsupported version 426. The password is sent once, on connect, and never stored, logged
-or answered. Connect and disconnect write the backends table every user shares, so they need an admin.
+or answered. A hub that offers it is also connected through the system browser (``/connection/browser``), where the
+person signs in on the hub's own page and this side never sees a password. Connect and disconnect write the backends
+table every user shares, so they need an admin.
 """
 
 import os
 import re
 import socket
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +22,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user
-from flowfile_core.auth.sharing import sharing_enabled
+from flowfile_core.auth.sharing import browser_sign_in_allowed, sharing_enabled
 from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.exceptions import FlowExistsError, NamespaceNotFoundError, NotAuthorizedError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -39,7 +42,7 @@ from flowfile_core.flowfile.catalog_helpers import (
 )
 from flowfile_core.flowfile.manage.io_flowfile import is_working_copy, working_copy_directory
 from flowfile_core.flowfile.utils import create_unique_id
-from flowfile_core.hub_client import client, node_addresses, session
+from flowfile_core.hub_client import browser_sign_in, client, node_addresses, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.routes import compute_backends
 from flowfile_core.routes.routes import flow_file_handler, get_flow_or_404
@@ -67,13 +70,11 @@ class HubConnection(BaseModel):
     joined: bool = False
     server_name: str | None = None
     organisation_storage: str | None = None
+    browser_sign_in: bool = False
 
 
-class HubConnectRequest(BaseModel):
+class _HubAddress(BaseModel):
     hub_url: str
-    username: str
-    password: str
-    device_name: str | None = None
 
     @field_validator("hub_url")
     @classmethod
@@ -85,11 +86,36 @@ class HubConnectRequest(BaseModel):
         return url
 
 
+class HubConnectRequest(_HubAddress):
+    username: str
+    password: str
+    device_name: str | None = None
+
+
+class HubBrowserConnectRequest(_HubAddress):
+    device_name: str | None = None
+
+
+class HubBrowserSignIn(BaseModel):
+    flow_id: str
+    authorize_url: str
+
+
+class HubBrowserSignInStatus(BaseModel):
+    """``connection`` is what connect answers, once ``status`` is ``connected``."""
+
+    status: str
+    detail: str | None = None
+    connection: HubConnection | None = None
+
+
 def _account(stored: dict | None, current_user) -> str | None:
     if stored is None:
         return None
     if stored.get("kind") == "delegation":
         return current_user.full_name or current_user.username
+    if stored.get("kind") == "browser":
+        return stored.get("full_name") or session.account(stored)
     return session.account(stored)
 
 
@@ -107,6 +133,7 @@ def _connection(
         reachable=info is not None,
         error=error,
         account=account,
+        browser_sign_in=browser_sign_in_allowed(),
     )
 
 
@@ -131,6 +158,28 @@ def get_connection(current_user=Depends(get_current_active_user)) -> HubConnecti
     return connection
 
 
+def _device_name(requested: str | None) -> str:
+    return (requested or "").strip() or socket.gethostname()
+
+
+def _finish_connect(
+    db: Session, user_id: int, hub_url: str, info: dict, access_token: str, device_name: str, keep, current_user=None
+) -> tuple[HubConnection, list[str] | None]:
+    """What both ways of connecting do once signed in: register this machine as a device, keep the session
+    (``keep(device name)``), then sync the hub's compute nodes, best effort. A hub error before ``keep`` propagates
+    with nothing stored. Answers the connection and the synced backend ids, ``None`` when the nodes were not read."""
+    device = client.register_device(hub_url, access_token, device_name, get_version())
+    keep(device["name"])
+    stored = session.load(user_id)
+    connection = _connection(stored, info, account=_account(stored, current_user))
+    try:
+        synced = node_addresses.sync_nodes(db, user_id, hub_url, access_token)
+    except (HubUnreachable, HubRefused, HubVersionRefused) as e:
+        logger.warning("Connected to the hub at %s, but its compute nodes could not be read: %s", hub_url, e)
+        return connection, None
+    return connection, synced
+
+
 @router.post("/connection", summary="Connect to a hub")
 def connect(
     request: HubConnectRequest,
@@ -140,41 +189,131 @@ def connect(
 ) -> HubConnection:
     """Sign in, register this machine as a device and store the session, nothing stored unless every step succeeded;
     then sync the hub's compute nodes, best effort."""
-    device_name = (request.device_name or "").strip() or socket.gethostname()
+
+    def keep(device_name: str) -> None:
+        session.save(
+            current_user.id,
+            {
+                "hub_url": request.hub_url,
+                "refresh_token": tokens["refresh_token"],
+                "device_name": device_name,
+                "org_name": info["org_name"],
+            },
+        )
+
     try:
         info = client.get_info(request.hub_url)
         tokens = client.sign_in(request.hub_url, request.username, request.password)
-        device = client.register_device(request.hub_url, tokens["access_token"], device_name, get_version())
+        connection, synced = _finish_connect(
+            db,
+            current_user.id,
+            request.hub_url,
+            info,
+            tokens["access_token"],
+            _device_name(request.device_name),
+            keep,
+            current_user,
+        )
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         raise _hub_error(e, connecting=True) from e
-    session.save(
-        current_user.id,
-        {
-            "hub_url": request.hub_url,
-            "refresh_token": tokens["refresh_token"],
-            "device_name": device["name"],
-            "org_name": info["org_name"],
-        },
-    )
-    stored = session.load(current_user.id)
-    connection = _connection(stored, info, account=_account(stored, current_user))
-    try:
-        synced = node_addresses.sync_nodes(db, current_user.id, request.hub_url, tokens["access_token"])
-    except (HubUnreachable, HubRefused, HubVersionRefused) as e:
-        logger.warning("Connected to the hub at %s, but its compute nodes could not be read: %s", request.hub_url, e)
-        return connection
-    background.add_task(compute_backends.check_unchecked, synced)
+    if synced is not None:
+        background.add_task(compute_backends.check_unchecked, synced)
     return connection
+
+
+_PASSWORD_ONLY = "password_only"
+
+
+def _password_only(message: str) -> HTTPException:
+    """A browser sign-in this machine or this hub cannot do; the frontend offers the password form instead."""
+    return HTTPException(status_code=400, detail={"kind": _PASSWORD_ONLY, "message": message})
+
+
+@router.post("/connection/browser", summary="Connect to a hub by signing in through the system browser")
+def connect_in_browser(
+    request: HubBrowserConnectRequest, current_user=Depends(get_current_admin_user)
+) -> HubBrowserSignIn:
+    """Start a sign-in through the browser: answers the hub's page to open and ``flow_id``, the sign-in's id (no
+    flow's) to poll ``GET /connection/browser/{sign_in_id}`` with. Refused on a multi-user server, whose loopback is
+    not the person's, and for a hub that does not offer it (``detail.kind`` ``password_only``)."""
+    if not browser_sign_in_allowed():
+        raise _password_only(
+            "Signing in through the browser works only where Flowfile runs on your own computer; "
+            "use a username and password here."
+        )
+    try:
+        info = client.get_info(request.hub_url)
+    except (HubUnreachable, HubRefused, HubVersionRefused) as e:
+        raise _hub_error(e, connecting=True) from e
+    if info.get("browser_sign_in") is not True:
+        raise _password_only(
+            f"The hub at {request.hub_url} does not offer signing in through the browser; "
+            "use a username and password instead."
+        )
+    user_id, hub_url, device_name = current_user.id, request.hub_url, _device_name(request.device_name)
+
+    def complete(tokens: dict) -> dict:
+        def keep(registered: str) -> None:
+            session.save_browser(user_id, hub_url, tokens, device_name=registered, org_name=info["org_name"])
+
+        try:
+            with get_db_context() as db:
+                connection, synced = _finish_connect(
+                    db, user_id, hub_url, info, tokens["access_token"], device_name, keep
+                )
+        except (HubUnreachable, HubRefused, HubVersionRefused):
+            # Nothing was kept, so the sign-in the hub just granted is ended there too.
+            _revoke_quietly(hub_url, tokens["refresh_token"])
+            raise
+        if synced:
+            threading.Thread(target=compute_backends.check_unchecked, args=(synced,), daemon=True).start()
+        return connection.model_dump(mode="json")
+
+    try:
+        flow_id, url = browser_sign_in.start(
+            user_id=user_id, hub_url=hub_url, device_name=device_name, complete=complete
+        )
+    except browser_sign_in.SignInUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e)) from None
+    return HubBrowserSignIn(flow_id=flow_id, authorize_url=url)
+
+
+@router.get("/connection/browser/{sign_in_id}", summary="A sign-in through the browser, as it stands")
+def browser_sign_in_status(sign_in_id: str, current_user=Depends(get_current_admin_user)) -> HubBrowserSignInStatus:
+    """``waiting`` until the browser came back, then ``connected`` with the connection or ``failed`` with why;
+    ``sign_in_id`` is the ``flow_id`` the start answered."""
+    found = browser_sign_in.status(sign_in_id, current_user.id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No such sign-in; start again.")
+    return HubBrowserSignInStatus(**found)
+
+
+@router.delete("/connection/browser/{sign_in_id}", summary="Stop waiting for a sign-in through the browser")
+def cancel_browser_sign_in(sign_in_id: str, current_user=Depends(get_current_admin_user)) -> dict:
+    if not browser_sign_in.cancel(sign_in_id, current_user.id):
+        raise HTTPException(status_code=404, detail="No such sign-in.")
+    return {"cancelled": True}
+
+
+def _revoke_quietly(hub_url: str, refresh_token: str) -> None:
+    try:
+        client.revoke(hub_url, refresh_token)
+    except (HubUnreachable, HubRefused, HubVersionRefused) as e:
+        logger.warning("The hub at %s could not be told to end the sign-in: %s", hub_url, e)
 
 
 @router.delete("/connection", summary="Disconnect from the hub")
 def disconnect(current_user=Depends(get_current_admin_user), db: Session = Depends(get_db)) -> dict:
-    """Forget the session, its node tokens and the backends rows it filled; the hub is not told."""
+    """Forget the session, its node tokens and the backends rows it filled. A sign-in through the browser is also
+    ended on the hub, best effort; a password connection's hub is not told."""
+    stored = session.load(current_user.id)
     rows = db.query(ConfiguredBackend).filter(ConfiguredBackend.account_user_id == current_user.id).all()
     for row in rows:
         node_addresses.drop_row(db, row)
     db.commit()
     session.clear(current_user.id)
+    if stored is not None and stored.get("kind") == "browser":
+        _revoke_quietly(stored["hub_url"], stored["refresh_token"])
     return {"connected": False}
 
 

@@ -5,8 +5,9 @@
       <p class="page-description">
         <template v-if="state?.joined">The hub this server belongs to.</template>
         <template v-else>
-          Connect this Flowfile to your organisation's hub. You sign in once with your hub account;
-          the password is sent to the hub and never kept here. Your local workspace stays as it is.
+          Connect this Flowfile to your organisation's hub. You sign in once with your hub account,
+          in your browser or with a username and password; no password is kept here. Your local
+          workspace stays as it is.
         </template>
       </p>
       <p v-if="!state?.connected && !state?.joined" class="hub-note" data-testid="hub-coming-soon">
@@ -104,7 +105,7 @@
         </p>
       </template>
 
-      <div v-else-if="state" class="hub-card__fields" @keyup.enter="onConnect">
+      <div v-else-if="state" class="hub-card__fields" @keyup.enter="onSubmit">
         <label class="compute-field hub-card__wide">
           <span class="compute-field__label">Hub URL</span>
           <el-input
@@ -114,20 +115,22 @@
             data-testid="hub-url"
           />
         </label>
-        <label class="compute-field">
-          <span class="compute-field__label">Username</span>
-          <el-input v-model="form.username" autocomplete="username" data-testid="hub-username" />
-        </label>
-        <label class="compute-field">
-          <span class="compute-field__label">Password</span>
-          <el-input
-            v-model="form.password"
-            type="password"
-            show-password
-            autocomplete="current-password"
-            data-testid="hub-password"
-          />
-        </label>
+        <template v-if="usePassword">
+          <label class="compute-field">
+            <span class="compute-field__label">Username</span>
+            <el-input v-model="form.username" autocomplete="username" data-testid="hub-username" />
+          </label>
+          <label class="compute-field">
+            <span class="compute-field__label">Password</span>
+            <el-input
+              v-model="form.password"
+              type="password"
+              show-password
+              autocomplete="current-password"
+              data-testid="hub-password"
+            />
+          </label>
+        </template>
         <label class="compute-field hub-card__wide">
           <span class="compute-field__label">Device name</span>
           <el-input v-model="form.deviceName" v-bind="NO_AUTOFILL" data-testid="hub-device-name" />
@@ -136,6 +139,49 @@
             device.
           </span>
         </label>
+        <p
+          v-if="hub.waitingForBrowser"
+          class="hub-card__wide hub-card__waiting"
+          data-testid="hub-browser-waiting"
+        >
+          <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+          <span>Waiting for you to sign in in your browser…</span>
+          <a
+            v-if="hub.browserSignInUrl"
+            :href="hub.browserSignInUrl"
+            class="hub-card__link"
+            data-testid="hub-browser-reopen"
+            @click.prevent="openHub(hub.browserSignInUrl)"
+            >Open the sign-in page again</a
+          >
+        </p>
+        <p
+          v-if="passwordNote && usePassword"
+          class="compute-field__hint hub-card__wide"
+          data-testid="hub-password-only"
+        >
+          {{ passwordNote }}
+        </p>
+        <div v-if="!hub.waitingForBrowser" class="hub-card__wide">
+          <button
+            v-if="!usePassword"
+            type="button"
+            class="hub-card__switch"
+            data-testid="hub-use-password"
+            @click="mode = 'password'"
+          >
+            Use a username and password instead
+          </button>
+          <button
+            v-else-if="browserAvailable"
+            type="button"
+            class="hub-card__switch"
+            data-testid="hub-use-browser"
+            @click="mode = 'browser'"
+          >
+            Sign in with your browser instead
+          </button>
+        </div>
       </div>
 
       <template v-if="state && !state.joined" #footer>
@@ -150,7 +196,7 @@
           Disconnect
         </el-button>
         <el-button
-          v-else
+          v-else-if="usePassword"
           type="primary"
           size="small"
           :loading="hub.busy"
@@ -160,18 +206,38 @@
         >
           Connect
         </el-button>
+        <el-button
+          v-else-if="hub.waitingForBrowser"
+          size="small"
+          plain
+          data-testid="hub-browser-cancel"
+          @click="onCancelBrowser"
+        >
+          Cancel
+        </el-button>
+        <el-button
+          v-else
+          type="primary"
+          size="small"
+          :loading="hub.busy"
+          :disabled="!canStartBrowser"
+          data-testid="hub-browser-sign-in"
+          @click="onBrowserSignIn"
+        >
+          Sign in with your browser
+        </el-button>
       </template>
     </ComputeCard>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import ComputeCard from "./ComputeCard.vue";
 import { desktop } from "../../../lib/desktop";
-import { useHubConnectionStore } from "../../stores/hub-connection-store";
+import { BrowserSignInUnavailable, useHubConnectionStore } from "../../stores/hub-connection-store";
 import type { StatusSummary } from "../../components/settings/handshakeStatus";
 
 const hub = useHubConnectionStore();
@@ -182,6 +248,23 @@ const form = reactive({ hubUrl: "", username: "", password: "", deviceName: "" }
 watch(state, (next) => {
   if (next && !next.connected && !form.deviceName) form.deviceName = next.device_name ?? "";
 });
+
+const mode = ref<"browser" | "password">("browser");
+/** Why the password form is shown: the hub's or this machine's refusal of a sign-in through the browser. */
+const passwordNote = ref("");
+const hubRefusedBrowser = ref(false);
+const browserAvailable = computed(
+  () => state.value?.browser_sign_in !== false && !hubRefusedBrowser.value,
+);
+const usePassword = computed(() => mode.value === "password" || !browserAvailable.value);
+
+watch(
+  () => form.hubUrl,
+  () => {
+    hubRefusedBrowser.value = false;
+    passwordNote.value = "";
+  },
+);
 
 const summary = computed<StatusSummary | null>(() => {
   if (!state.value) return null;
@@ -202,6 +285,36 @@ const expiresLabel = computed(() =>
 const canConnect = computed(
   () => form.hubUrl.trim() !== "" && form.username.trim() !== "" && form.password !== "",
 );
+
+const canStartBrowser = computed(() => form.hubUrl.trim() !== "");
+
+const onBrowserSignIn = async () => {
+  if (!canStartBrowser.value || hub.busy || hub.waitingForBrowser) return;
+  try {
+    const next = await hub.signInWithBrowser(
+      { hub_url: form.hubUrl.trim(), device_name: form.deviceName.trim() || undefined },
+      (url) => desktop.openExternal(url),
+    );
+    if (next) ElMessage.success(`Connected to ${next.org_name ?? next.hub_url}.`);
+  } catch (error) {
+    if (error instanceof BrowserSignInUnavailable) {
+      hubRefusedBrowser.value = true;
+      mode.value = "password";
+      passwordNote.value = error.message;
+      return;
+    }
+    ElMessage.error((error as Error).message);
+  }
+};
+
+const onCancelBrowser = () => {
+  void hub.cancelBrowserSignIn();
+};
+
+const onSubmit = () => {
+  if (usePassword.value) void onConnect();
+  else void onBrowserSignIn();
+};
 
 const onConnect = async () => {
   if (!canConnect.value || hub.busy) return;
@@ -279,5 +392,23 @@ onMounted(() => {
 }
 .hub-card__wide {
   grid-column: 1 / -1;
+}
+.hub-card__waiting {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+.hub-card__switch {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-accent);
+  text-decoration: underline;
+  cursor: pointer;
 }
 </style>
