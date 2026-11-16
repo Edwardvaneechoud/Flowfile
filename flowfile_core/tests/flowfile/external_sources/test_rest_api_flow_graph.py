@@ -29,11 +29,11 @@ from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.routes.routes import flow_file_handler
+from flowfile_core.routes.routes import _cap_for_test_request, flow_file_handler
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.transform_schema import SelectInput
 from shared.compute_protocol import WorkerLocation
-from test_utils.rest_api_server import KEYSET_RECORDS, SECURE_TOKEN, closed_port_url, start_api_server
+from test_utils.rest_api_server import KEYSET_RECORDS, SECURE_TOKEN, Reply, closed_port_url, start_api_server
 from tests.conftest import protocol_states
 
 # Windows has no 0.0.0.0 loopback alias for connects; the worker binds 127.0.0.1 there.
@@ -486,11 +486,62 @@ def test_a_failed_sample_names_the_request_and_the_answer_without_the_secret(
 
     assert resp.status_code == 422
     detail = resp.json()["detail"]
-    assert f"GET {url}?api_key=REDACTED answered 401 Unauthorized" in detail["message"]
-    assert '{"error": "unauthorized"}' in detail["message"]
-    assert detail["request"] == {"method": "GET", "url": f"{url}?api_key=REDACTED", "headers": {}, "body": None}
+    assert f"GET {url}?api_key=REDACTED answered 401 Unauthorized" in detail
+    assert '{"error": "unauthorized"}' in detail
+    assert resp.json()["request"] == {"method": "GET", "url": f"{url}?api_key=REDACTED", "headers": {}, "body": None}
     assert "wrong-key-value" not in resp.text
     flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_failure_after_a_good_answer_names_no_request(api_client, local_api_server, monkeypatch):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+
+    def _unreadable(*_args, **_kwargs):
+        raise RuntimeError("the sample could not be read")
+
+    monkeypatch.setattr(WorkerBackend, "sample", _unreadable)
+    flow_id, node_id = 7010, 1
+    url = f"{local_api_server}/items"
+    _register_rest_node_in_global_handler(flow_id, node_id, url)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url)
+    ).model_dump()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    assert "the sample could not be read" in resp.json()["detail"]
+    assert resp.json()["request"] is None
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_test_request_retries_an_error_answer_once_whatever_the_node_allows(api_client, api_server, protocol_flag):
+    url = api_server.route("/always-503", lambda _r, _s: Reply(503, {"error": "unavailable"}))
+    flow_id, node_id = 7011, 1
+    _register_rest_node_in_global_handler(flow_id, node_id, url, max_retries=3)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        user_id=1,
+        rest_api_settings=input_schema.RestApiSettings(url=url, max_retries=3),
+    ).model_dump()
+    api_server.reset()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    assert "answered 503" in resp.json()["detail"]
+    assert len(api_server.requests_to("/always-503")) == 2
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_test_request_reads_within_its_cap_and_keeps_a_shorter_timeout():
+    capped = input_schema.RestApiSettings(url="https://api.test/items", timeout_seconds=300, max_retries=5)
+    _cap_for_test_request(capped)
+    assert (capped.timeout_seconds, capped.max_retries) == (30.0, 1)
+    short = input_schema.RestApiSettings(url="https://api.test/items", timeout_seconds=5, max_retries=0)
+    _cap_for_test_request(short)
+    assert (short.timeout_seconds, short.max_retries) == (5, 0)
 
 
 def test_a_failed_sample_keeps_its_message_when_its_request_cannot_be_described(
@@ -512,9 +563,8 @@ def test_a_failed_sample_keeps_its_message_when_its_request_cannot_be_described(
     resp = api_client.post("/rest_api/sample", json=payload)
 
     assert resp.status_code == 422
-    detail = resp.json()["detail"]
-    assert f"GET {url} answered 404" in detail["message"]
-    assert detail["request"] is None
+    assert f"GET {url} answered 404" in resp.json()["detail"]
+    assert resp.json()["request"] is None
     flow_file_handler.delete_flow(flow_id)
 
 
@@ -534,9 +584,8 @@ def test_a_failed_sample_of_an_unreachable_host_names_the_request_it_sent(api_cl
     resp = api_client.post("/rest_api/sample", json=payload)
 
     assert resp.status_code == 422
-    detail = resp.json()["detail"]
-    assert "failed: ConnectError" in detail["message"]
-    assert detail["request"] == {
+    assert "failed: ConnectError" in resp.json()["detail"]
+    assert resp.json()["request"] == {
         "method": "GET",
         "url": url,
         "headers": {"X-Team": "data", "Authorization": "Bearer REDACTED"},

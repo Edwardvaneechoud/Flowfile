@@ -111,6 +111,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalRestApiFetcher,
 )
 from flowfile_core.flowfile.flow_graph import GraphTransaction, add_connection, delete_connection, insert_node_on_edge
+from flowfile_core.flowfile.flow_node.models import recover_error_class
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.settings_validation import FlowSettingsValidation, validate_flow_settings
 from flowfile_core.flowfile.share import build_share_link
@@ -150,7 +151,7 @@ from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared.db_dialects import KNOWN_DIALECT_NAMES, DialectInfo, dialect_catalog, get_dialect_or_generic, read_sql
-from shared.rest_api.fetch import first_request
+from shared.rest_api.fetch import RestApiRequestError, first_request
 from shared.snowflake_auth import AUTH_METHODS, AUTH_OAUTH, SnowflakeAuthError, normalize_account
 from shared.storage_config import registered_flow_path, require_flow_in_storage, storage
 
@@ -2144,6 +2145,10 @@ def require_node_id_free(flow, node_id: int) -> None:
         )
 
 
+_TEST_REQUEST_TIMEOUT_SECONDS = 30.0
+_TEST_REQUEST_MAX_RETRIES = 1
+
+
 class RestApiSampleResponse(BaseModel):
     """Inferred output columns from a REST API sample fetch, and what the request sent and got back.
 
@@ -2173,9 +2178,10 @@ def fetch_rest_api_sample(
     "Fetch sample" button. Defined as a sync endpoint so the blocking worker
     round-trip runs in FastAPI's threadpool rather than the event loop. With
     ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows come from ``_rest_api_sample_rows``.
-    A failed fetch answers 422 with ``{message, request}``: the failure, and the
-    first request as the trace shows it (secret masked; ``None`` when the
-    settings were refused before anything was sent).
+    The test is capped (``_cap_for_test_request``). A failed fetch answers 422
+    with ``detail``, the failure as a string, and ``request``: the first request
+    as the trace shows it (secret masked) when the request itself failed, else
+    ``None``.
     """
     input_data["user_id"] = current_user.id
     try:
@@ -2191,6 +2197,7 @@ def fetch_rest_api_sample(
     auth = node.rest_api_settings.auth
     secret_encrypted = resolve_auth_secret_encrypted(auth, node.user_id)
     auth.secret = None
+    _cap_for_test_request(node.rest_api_settings)
 
     sample_size = max(1, sample_size)
     debug: dict[str, Any] = {}
@@ -2204,13 +2211,10 @@ def fetch_rest_api_sample(
             )
             sample_df = fetcher.get_result().head(sample_size).collect()
     except Exception as e:
-        raise HTTPException(
-            422,
-            {
-                "message": f"Failed to fetch sample from REST API: {e}",
-                "request": _rest_api_sample_request(node, secret_encrypted, sample_size),
-            },
-        ) from e
+        request = _rest_api_sample_request(node, secret_encrypted, sample_size) if _is_request_failure(e) else None
+        return JSONResponse(
+            status_code=422, content={"detail": f"Failed to fetch sample from REST API: {e}", "request": request}
+        )
 
     fields = [c.get_minimal_field_info() for c in infer_schema_from_sample(sample_df)]
     # Cache onto the live node so schema prediction is immediately available.
@@ -2218,6 +2222,27 @@ def fetch_rest_api_sample(
     if live is not None and isinstance(live.setting_input, input_schema.NodeRestApiReader):
         live.setting_input.fields = fields
     return RestApiSampleResponse(fields=fields, **debug)
+
+
+def _cap_for_test_request(settings: input_schema.RestApiSettings) -> None:
+    """Cap *settings* for the drawer's test request, where someone is waiting: it reads within
+    ``_TEST_REQUEST_TIMEOUT_SECONDS`` and retries a 429 or 5xx at most ``_TEST_REQUEST_MAX_RETRIES`` times."""
+    settings.timeout_seconds = min(settings.timeout_seconds, _TEST_REQUEST_TIMEOUT_SECONDS)
+    settings.max_retries = min(settings.max_retries, _TEST_REQUEST_MAX_RETRIES)
+
+
+def _is_request_failure(error: BaseException) -> bool:
+    """Whether *error* is the fetch engine's ``RestApiRequestError``: the request was tried and failed or was refused.
+
+    Raised in this process, or named first in a worker's description. Any other failure (no worker, a secret the
+    worker could not open, a step after a good answer) sent no request worth showing.
+    """
+    cause: BaseException | None = error
+    while cause is not None:
+        if isinstance(cause, RestApiRequestError):
+            return True
+        cause = cause.__cause__
+    return recover_error_class(None, str(error)) == RestApiRequestError.__name__
 
 
 def _rest_api_sample_request(

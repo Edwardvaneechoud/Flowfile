@@ -17,6 +17,7 @@ import copy
 import json
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import quote, quote_plus
@@ -29,6 +30,7 @@ from shared.rest_api.models import (
     AuthType,
     CursorLocation,
     CursorRequestLocation,
+    PaginationConfig,
     PaginationType,
     RestApiReadSettings,
 )
@@ -187,12 +189,14 @@ def _request_with_retries(
     max_retries: int,
     shown: str,
     scrub: Callable[[str], str],
+    retry_connect_failures: bool = True,
 ) -> httpx.Response:
     """Issue one request, retrying transient failures with backoff.
 
     Retries network errors and 5xx responses with exponential backoff, and 429
     responses honoring ``Retry-After`` when present. 4xx (other than 429) are
-    raised immediately — they are not transient. A failure is a
+    raised immediately — they are not transient. A connection that could not be
+    made is raised at once when not *retry_connect_failures*. A failure is a
     ``RestApiRequestError`` built from *shown*, the request with its secret masked,
     never from httpx's own message, which repeats the URL with its query.
     """
@@ -206,7 +210,8 @@ def _request_with_retries(
                 json=json_body if (method == "POST" and json_body is not None) else None,
             )
         except httpx.HTTPError as exc:
-            if attempt >= max_retries:
+            gave_up = not retry_connect_failures and isinstance(exc, httpx.ConnectError | httpx.ConnectTimeout)
+            if attempt >= max_retries or gave_up:
                 detail = scrub(str(exc))
                 reason = f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
                 raise RestApiRequestError(f"{shown} failed: {reason}") from None
@@ -329,10 +334,23 @@ def describe_response(body: Any, max_children: int = 40, max_depth: int = 6) -> 
     return node(body, "", "", 0)
 
 
-def _authorized(
-    settings: RestApiReadSettings, secret: str | None
-) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str], httpx.Auth | None]:
+@dataclass(frozen=True)
+class _Authorized:
     """The headers and query every request sends, their shown copies, and the httpx auth for Basic.
+
+    Named fields, never a tuple: the real and shown copies have the same type, and swapping them would send the
+    mask or show the secret.
+    """
+
+    headers: dict[str, str]
+    params: dict[str, str]
+    shown_headers: dict[str, str]
+    shown_params: dict[str, str]
+    auth: httpx.Auth | None
+
+
+def _authorized(settings: RestApiReadSettings, secret: str | None) -> _Authorized:
+    """What every request sends for *settings* and *secret*, and how it is shown.
 
     The shown copies are built beside the real ones and never from them, so they cannot hold the secret.
     """
@@ -356,7 +374,20 @@ def _authorized(
     elif auth.auth_type == AuthType.BASIC:
         httpx_auth = httpx.BasicAuth(auth.basic_username, secret or "")
         shown_headers["Authorization"] = f"Basic {SECRET_MASK}"
-    return headers, base_params, shown_headers, shown_base_params, httpx_auth
+    return _Authorized(
+        headers=headers,
+        params=base_params,
+        shown_headers=shown_headers,
+        shown_params=shown_base_params,
+        auth=httpx_auth,
+    )
+
+
+def _page_limits(settings: RestApiReadSettings) -> tuple[int, int | None]:
+    """The pages and records a read of *settings* may take: a sample is one page of at most ``sample_size``."""
+    if settings.sample_size is not None:
+        return 1, settings.sample_size
+    return max(1, settings.pagination.max_pages), settings.pagination.max_records
 
 
 def _starting_body(settings: RestApiReadSettings, max_pages: int) -> tuple[Any | None, bool]:
@@ -381,7 +412,13 @@ def _starting_body(settings: RestApiReadSettings, max_pages: int) -> tuple[Any |
 
 
 def _page_request(
-    pagination, json_body: Any | None, cursor_in_body: bool, *, offset: int, page_number: int, cursor: Any
+    pagination: PaginationConfig,
+    json_body: Any | None,
+    cursor_in_body: bool,
+    *,
+    offset: int,
+    page_number: int,
+    cursor: Any,
 ) -> tuple[dict[str, str], Any | None]:
     """The query parameters a page's request adds and the body it sends, for where the read is in its pages."""
     page_params: dict[str, str] = {}
@@ -408,9 +445,9 @@ def first_request(settings: RestApiReadSettings, *, has_secret: bool) -> dict:
     *has_secret*, so a test request that got no answer can still show what it sent. Raises ``ValueError``
     for settings the read refuses before any request.
     """
-    _, _, shown_headers, shown_base_params, _ = _authorized(settings, SECRET_MASK if has_secret else None)
+    shown = _authorized(settings, SECRET_MASK if has_secret else None)
     pagination = settings.pagination
-    max_pages = 1 if settings.sample_size is not None else max(1, pagination.max_pages)
+    max_pages, _ = _page_limits(settings)
     json_body, cursor_in_body = _starting_body(settings, max_pages)
     page_params, body = _page_request(
         pagination,
@@ -423,8 +460,8 @@ def first_request(settings: RestApiReadSettings, *, has_secret: bool) -> dict:
     method = settings.method.value
     return {
         "method": method,
-        "url": _url_with(settings.url, {**shown_base_params, **page_params}),
-        "headers": shown_headers,
+        "url": _url_with(settings.url, {**shown.shown_params, **page_params}),
+        "headers": shown.shown_headers,
         "body": body if method == "POST" else None,
     }
 
@@ -444,23 +481,20 @@ def fetch_rest_api(
     next_cursor, and ``stopped``, a ``STOP_REASONS`` key on the last page), the
     secret replaced by ``SECRET_MASK``, and with the response's JSON.
 
-    A sample (``sample_size`` set) is the drawer's test request: it is sent once, without retries, and stops
-    trying to connect after ``_SAMPLE_CONNECT_TIMEOUT_SECONDS``, so an unreachable host fails in seconds.
+    A sample (``sample_size`` set) stops trying to connect after ``_SAMPLE_CONNECT_TIMEOUT_SECONDS`` and does not
+    retry a connection it could not make, so an unreachable host fails in seconds; its other retries and its
+    timeout are the settings' own, which core's test request caps before it sends them.
     """
     pagination = settings.pagination
     is_sample = settings.sample_size is not None
-
-    # A sample fetch is a single page, capped to ``sample_size`` records.
-    max_pages = 1 if is_sample else max(1, pagination.max_pages)
-    max_records = settings.sample_size if is_sample else pagination.max_records
-    max_retries = 0 if is_sample else settings.max_retries
+    max_pages, max_records = _page_limits(settings)
     timeout: httpx.Timeout | float = settings.timeout_seconds
     if is_sample:
         timeout = httpx.Timeout(
             settings.timeout_seconds, connect=min(settings.timeout_seconds, _SAMPLE_CONNECT_TIMEOUT_SECONDS)
         )
 
-    headers, base_params, shown_headers, shown_base_params, httpx_auth = _authorized(settings, secret)
+    authorized = _authorized(settings, secret)
     forms = secret_forms(settings, secret)
 
     def scrub(text: str) -> str:
@@ -478,7 +512,7 @@ def fetch_rest_api(
     page_number = pagination.start_page
     page_index = 0
 
-    with httpx.Client(timeout=timeout, auth=httpx_auth, follow_redirects=True) as client:
+    with httpx.Client(timeout=timeout, auth=authorized.auth, follow_redirects=True) as client:
         while True:
             if ptype == PaginationType.CURSOR and cursor is not None:
                 sent_cursors.add(str(cursor))
@@ -486,18 +520,19 @@ def fetch_rest_api(
                 pagination, json_body, cursor_in_body, offset=offset, page_number=page_number, cursor=cursor
             )
 
-            params = {**base_params, **page_params}
-            shown_url = _url_with(settings.url, {**shown_base_params, **page_params})
+            params = {**authorized.params, **page_params}
+            shown_url = _url_with(settings.url, {**authorized.shown_params, **page_params})
             response = _request_with_retries(
                 client,
                 method=method,
                 url=settings.url,
-                headers=headers,
+                headers=authorized.headers,
                 params=params,
                 json_body=request_body,
-                max_retries=max_retries,
+                max_retries=settings.max_retries,
                 shown=f"{method} {shown_url}",
                 scrub=scrub,
+                retry_connect_failures=not is_sample,
             )
 
             try:
@@ -545,7 +580,7 @@ def fetch_rest_api(
                         "page": page_index,
                         "method": method,
                         "url": shown_url,
-                        "headers": shown_headers,
+                        "headers": authorized.shown_headers,
                         "body": request_body if method == "POST" else None,
                         "status": response.status_code,
                         "elapsed_ms": round(response.elapsed.total_seconds() * 1000),

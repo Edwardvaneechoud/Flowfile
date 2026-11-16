@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+import socket
+import time
 
 import httpx
 import polars as pl
@@ -423,26 +425,27 @@ def test_a_sample_does_not_retry_a_network_error(monkeypatch):
     assert sleeps == []
 
 
-def test_a_sample_does_not_retry_a_5xx(api, no_sleep):
-    with pytest.raises(RestApiRequestError, match="answered 503"):
-        fetch_rest_api(RestApiReadSettings(url=api.url("/fail-once"), max_retries=3, sample_size=5))
-    assert api.request_count == 1
+def test_a_sample_still_retries_an_error_answer(api, no_sleep):
+    df = fetch_rest_api(RestApiReadSettings(url=api.url("/fail-once"), max_retries=3, sample_size=5))
+    assert api.request_count == 2
+    assert df.height == 1
 
 
-def test_a_sample_gives_up_connecting_sooner_than_a_run(api, monkeypatch):
-    timeouts = []
-    real_client = httpx.Client
+def test_a_sample_gives_up_on_a_connection_that_never_completes_and_a_run_waits(monkeypatch):
+    monkeypatch.setattr("shared.rest_api.fetch._SAMPLE_CONNECT_TIMEOUT_SECONDS", 0.3)
+    # A listening socket nobody serves: TCP connects, the TLS handshake (under httpx's connect timeout) never ends.
+    with socket.create_server(("127.0.0.1", 0)) as silent:
+        url = f"https://127.0.0.1:{silent.getsockname()[1]}/items"
 
-    def recording_client(*args, **kwargs):
-        timeouts.append(httpx.Timeout(kwargs["timeout"]))
-        return real_client(*args, **kwargs)
+        started = time.monotonic()
+        with pytest.raises(RestApiRequestError, match="ConnectTimeout"):
+            fetch_rest_api(RestApiReadSettings(url=url, timeout_seconds=30, max_retries=3, sample_size=5))
+        assert time.monotonic() - started < 3
 
-    monkeypatch.setattr("shared.rest_api.fetch.httpx.Client", recording_client)
-    fetch_rest_api(RestApiReadSettings(url=api.url("/items"), timeout_seconds=30, sample_size=5))
-    fetch_rest_api(RestApiReadSettings(url=api.url("/items"), timeout_seconds=30))
-    sample, run = timeouts
-    assert (sample.connect, sample.read) == (10.0, 30.0)
-    assert (run.connect, run.read) == (30.0, 30.0)
+        started = time.monotonic()
+        with pytest.raises(RestApiRequestError, match="ConnectTimeout"):
+            fetch_rest_api(RestApiReadSettings(url=url, timeout_seconds=1.2, max_retries=0))
+        assert time.monotonic() - started >= 1.0
 
 
 def test_post_sends_json_body(api):

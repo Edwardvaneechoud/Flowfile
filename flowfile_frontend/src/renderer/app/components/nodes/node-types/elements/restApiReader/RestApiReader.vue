@@ -816,9 +816,7 @@ const fetchSample = async (afterDetection = false) => {
       sampleError.value = "The request worked, but no columns were found. Check the record path.";
     }
   } catch (error: any) {
-    const { message, request } = testFailure(
-      error?.response?.data?.detail ?? error?.message ?? "Unknown error",
-    );
+    const { message, request } = testFailure(error);
     sample.value = null;
     failedRequest.value = request;
     sampleError.value = testErrorText(message, settings.value.auth.secret_name);
@@ -1169,6 +1167,10 @@ defineExpose({
 
 .secret-select {
   width: 100%;
+}
+
+.has-error .form-control:focus {
+  box-shadow: 0 0 0 3px var(--color-focus-ring-error);
 }
 
 .has-error .form-control {

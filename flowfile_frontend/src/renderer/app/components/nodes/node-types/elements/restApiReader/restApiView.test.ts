@@ -181,9 +181,9 @@ describe("the request as shown", () => {
     expect(responseLine(entry({ bytes: 72, records: 1 }))).toBe("200 · 312 ms · 72 B · 1 record");
   });
 
-  it("says when a request got no response", () => {
+  it("says when a test's request failed", () => {
     const sent = { method: "GET", url: "https://x.test/a", headers: {}, body: null };
-    expect(traceLine(sent)).toBe("No response");
+    expect(traceLine(sent)).toBe("Request failed");
     expect(traceOk(sent)).toBe(false);
     expect(traceLine(entry())).toBe("200 · 312 ms · 4.2 KB · 50 records");
     expect(traceOk(entry())).toBe(true);
@@ -197,16 +197,28 @@ describe("the request as shown", () => {
       headers: {},
       body: null,
     };
-    expect(testFailure({ message: "Failed: no route", request })).toEqual({
+    const answered = (data: unknown) => ({
+      message: "Request failed with status code 422",
+      response: { data },
+    });
+    expect(testFailure(answered({ detail: "Failed: no route", request }))).toEqual({
       message: "Failed: no route",
       request,
     });
-    expect(testFailure({ message: "refused before sending", request: null })).toEqual({
-      message: "refused before sending",
+    expect(testFailure(answered({ detail: "Failed: no worker", request: null }))).toEqual({
+      message: "Failed: no worker",
       request: null,
     });
-    expect(testFailure("Failed to fetch sample from REST API: boom")).toEqual({
-      message: "Failed to fetch sample from REST API: boom",
+    expect(testFailure(answered({ detail: "From an older core" }))).toEqual({
+      message: "From an older core",
+      request: null,
+    });
+    expect(testFailure(answered({ detail: [{ msg: "sample_size: not an integer" }] }))).toEqual({
+      message: "sample_size: not an integer",
+      request: null,
+    });
+    expect(testFailure({ message: "Network Error" })).toEqual({
+      message: "Network Error",
       request: null,
     });
     expect(testFailure(undefined)).toEqual({ message: "Unknown error", request: null });

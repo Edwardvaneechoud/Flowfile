@@ -1,4 +1,5 @@
 import type { RestApiSettings } from "../../../../../types/node.types";
+import { detailOf } from "../../../../../utils/apiDetail";
 
 /** What core's fetch engine writes where a secret was sent (`shared/rest_api/fetch.py::SECRET_MASK`). */
 export const SECRET_MASK = "REDACTED";
@@ -231,20 +232,23 @@ export const responseLine = (entry: TraceEntry): string =>
 
 const gotResponse = (entry: SentRequest | TraceEntry): entry is TraceEntry => "status" in entry;
 
-/** The trace's one-line summary: what came back, or that nothing did. */
+/** The trace's one-line summary: what came back, or, for a failed test, that the request failed. */
 export const traceLine = (entry: SentRequest | TraceEntry): string =>
-  gotResponse(entry) ? responseLine(entry) : "No response";
+  gotResponse(entry) ? responseLine(entry) : "Request failed";
 
 export const traceOk = (entry: SentRequest | TraceEntry): boolean =>
   gotResponse(entry) && entry.status < 400;
 
-/** A failed test's 422 detail: the engine's message and, from a current core, the request it sent. */
-export const testFailure = (detail: unknown): { message: string; request: SentRequest | null } => {
-  if (detail && typeof detail === "object" && !Array.isArray(detail) && "message" in detail) {
-    const { message, request } = detail as { message: unknown; request?: SentRequest | null };
-    return { message: String(message), request: request ?? null };
-  }
-  return { message: String(detail ?? "Unknown error"), request: null };
+/** A failed test: core's message, and the request it sent when the request itself failed (`request` beside `detail`). */
+export const testFailure = (error: unknown): { message: string; request: SentRequest | null } => {
+  const failure = error as {
+    message?: string;
+    response?: { data?: { request?: SentRequest | null } };
+  };
+  return {
+    message: detailOf(error, failure?.message ?? "Unknown error"),
+    request: failure?.response?.data?.request ?? null,
+  };
 };
 
 const shellQuote = (text: string): string => `'${text.split("'").join("'\\''")}'`;
