@@ -642,6 +642,10 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
                 raise
             removed_connection_count += 1
 
+        for d in diff.deletions:
+            flow.delete_node(d.delete_node_id)
+            removed_node_ids.append(d.delete_node_id)
+
         # Explicit staged connections enforce the same port contract as editor
         # gestures, after additions and modifications establish the live interface.
         # Strict add_connection also treats an exact replay as idempotent.
@@ -658,10 +662,6 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
             add_connection(flow, connection, validate_ports=True)
             if not already_present:
                 applied_connection_count += 1
-
-        for d in diff.deletions:
-            flow.delete_node(d.delete_node_id)
-            removed_node_ids.append(d.delete_node_id)
 
 
     return ApplyResult(

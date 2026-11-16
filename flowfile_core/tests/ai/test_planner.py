@@ -44,10 +44,10 @@ from flowfile_core.ai.agents.planner import (
     _summarise_result_for_llm,
     run_planner_session,
 )
-from flowfile_core.ai.tools.executor import ToolExecutionResult
 from flowfile_core.ai.context.builder import SURFACE_TO_LEVEL
 from flowfile_core.ai.providers.base import ChatResponse, Message, ToolCall, Usage
 from flowfile_core.ai.scheduler import RateLimitScheduler
+from flowfile_core.ai.tools.executor import ToolExecutionResult
 from flowfile_core.ai.tools.registry import SURFACE_PRESETS
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, schemas
@@ -1917,13 +1917,46 @@ async def test_planner_stages_modification_with_existing_node_target() -> None:
 
 
 @pytest.mark.asyncio
+async def test_planner_connects_output_enabled_by_staged_modification() -> None:
+    flow = _make_flow_with_filter()
+    downstream = flow.get_node(2).setting_input.model_dump(mode="json")
+    downstream.update(node_id=3, depending_on_id=2)
+    flow.add_filter(input_schema.NodeFilter(**downstream))
+    sess = _make_session(flow, surface="agent_complex")
+    settings = flow.get_node(2).setting_input.model_dump(mode="json")
+    settings["split_mode"] = True
+    provider = _ScriptedProvider([
+        _Step(tool_calls=[ToolCall(
+            id="modify", name="flowfile.graph.update_node_settings",
+            arguments={"flow_id": flow.flow_id, "node_id": 2, "settings": settings},
+        )]),
+        _Step(tool_calls=[ToolCall(
+            id="connect", name="flowfile.graph.connect",
+            arguments={"flow_id": flow.flow_id, "from_node_id": 2, "to_node_id": 3, "output_class": "output-1"},
+        )]),
+        _Step(tool_calls=[], content="done", finish_reason="stop"),
+    ])
+    events = await _drain(run_planner_session(
+        session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler(),
+    ))
+    assert len([event for event in events if event.event == "tool_call_staged"]) == 2
+    graph_diff = diff_module.get_diff(sess.diff_id)
+    assert graph_diff is not None
+    assert len(graph_diff.modifications) == 1
+    assert len(graph_diff.connections_added) == 1
+    assert flow.get_node(2).setting_input.split_mode is False
+    diff_module.apply_diff(flow, graph_diff)
+    assert flow.get_node(3).input_edge_handle(2, "input-0") == "output-1"
+
+
+@pytest.mark.asyncio
 async def test_planner_modification_does_not_pollute_staged_node_ids_when_chained() -> None:
     """back-to-back modifications on the same flow keep
     ``staged_node_ids`` empty. Defends the drift invariant against
     accidental drift from modification-heavy sessions.
     """
-    from flowfile_core.schemas import transform_schema
     from flowfile_core.flowfile.flow_graph import add_connection
+    from flowfile_core.schemas import transform_schema
 
     flow = _make_flow_with_filter()
     # Add a second filter at id=3 so we have two modification targets.
@@ -1997,6 +2030,105 @@ async def test_planner_modification_does_not_pollute_staged_node_ids_when_chaine
     assert diff is not None
     assert len(diff.modifications) == 2
     assert {m.node_id for m in diff.modifications} == {2, 3}
+
+
+@pytest.mark.asyncio
+async def test_planner_staged_delete_reroutes_on_accept() -> None:
+    from flowfile_core.flowfile.flow_graph import add_connection
+
+    flow = _make_flow_with_filter()
+    downstream = flow.get_node(2).setting_input.model_dump(mode="json")
+    downstream.update(node_id=3, depending_on_id=2)
+    flow.add_filter(input_schema.NodeFilter(**downstream))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    sess = _make_session(flow)
+    sess.user_prompt = "Delete filter 2 and connect orders directly to filter 3."
+    provider = _ScriptedProvider([
+        _Step(tool_calls=[ToolCall(
+            id="delete", name="flowfile.graph.delete_node",
+            arguments={"flow_id": flow.flow_id, "node_id": 2},
+        )]),
+        _Step(tool_calls=[ToolCall(
+            id="reroute", name="flowfile.graph.connect",
+            arguments={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 3},
+        )]),
+        _Step(content="Done.", finish_reason="stop"),
+    ])
+
+    events = await _drain(run_planner_session(
+        session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler(),
+    ))
+    assert len([event for event in events if event.event == "tool_call_staged"]) == 2
+    graph_diff = diff_module.get_diff(sess.diff_id)
+    assert graph_diff is not None
+    assert len(graph_diff.deletions) == len(graph_diff.connections_added) == 1
+    assert flow.get_node(2) is not None
+    assert [node.node_id for node in flow.get_node(3).all_inputs] == [2]
+    pre_undo = flow.get_history_state().undo_count
+
+    result = diff_module.apply_diff(flow, graph_diff)
+
+    assert flow.get_node(2) is None
+    assert [node.node_id for node in flow.get_node(3).all_inputs] == [1]
+    assert result.removed_node_ids == [2]
+    assert result.applied_connection_count == 1
+    assert flow.get_history_state().undo_count == pre_undo + 1
+    flow.undo()
+    assert flow.get_node(2) is not None
+    assert [node.node_id for node in flow.get_node(3).all_inputs] == [2]
+
+
+@pytest.mark.asyncio
+async def test_planner_staged_join_connects_both_tables_on_accept() -> None:
+    flow = _make_flow()
+    _add_orders(flow, node_id=2)
+    sess = _make_session(flow)
+    sess.user_prompt = "Join the two orders tables on order_id."
+    provider = _ScriptedProvider([
+        _Step(tool_calls=[ToolCall(
+            id="join", name="flowfile.graph.add_join",
+            arguments={
+                "flow_id": flow.flow_id, "node_id": 3,
+                "upstream_node_ids": [1], "right_input_node_id": 2,
+                "join_input": {
+                    "join_mapping": [{"left_col": "order_id", "right_col": "order_id"}],
+                    "left_select": [], "right_select": [], "how": "inner",
+                },
+            },
+        )]),
+        _Step(content="Done.", finish_reason="stop"),
+    ])
+
+    events = await _drain(run_planner_session(
+        session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler(),
+    ))
+    assert len([event for event in events if event.event == "tool_call_staged"]) == 1, [
+        (event.event, event.payload) for event in events if event.event == "tool_call_rejected"
+    ]
+    graph_diff = diff_module.get_diff(sess.diff_id)
+    assert graph_diff is not None
+    assert len(graph_diff.additions) == 1
+    assert flow.get_node(3) is None
+    pre_undo = flow.get_history_state().undo_count
+
+    result = diff_module.apply_diff(flow, graph_diff)
+
+    join = flow.get_node(3)
+    assert join is not None
+    assert [node.node_id for node in join.node_inputs.main_inputs] == [1]
+    assert join.node_inputs.right_input.node_id == 2
+    assert {node.node_id for node in join.all_inputs} == {1, 2}
+    assert join.input_edge_handle(1, "input-0") == "output-0"
+    assert join.input_edge_handle(2, "input-1") == "output-0"
+    assert join.setting_input.join_input.how == "inner"
+    assert [(key.left_col, key.right_col) for key in join.setting_input.join_input.join_mapping] == [
+        ("order_id", "order_id"),
+    ]
+    assert result.applied_node_ids == [3]
+    assert flow.get_history_state().undo_count == pre_undo + 1
+    flow.undo()
+    assert flow.get_node(3) is None
+    assert flow.get_node(1) is not None and flow.get_node(2) is not None
 
 
 # staged settings echo in tool reply #

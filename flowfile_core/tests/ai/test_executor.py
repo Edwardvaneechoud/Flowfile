@@ -519,6 +519,57 @@ def test_connect_allows_staged_output_reroute(call_kwargs: dict[str, Any]) -> No
     assert [node.node_id for node in flow.get_node(3).all_inputs] == [2]
 
 
+@pytest.mark.parametrize("output_class", ["output-1", "output-2"])
+def test_connect_uses_staged_settings_for_modified_node_ports(
+    call_kwargs: dict[str, Any], output_class: str,
+) -> None:
+    from fastapi import HTTPException
+
+    from flowfile_core.ai.diff import apply_diff, bundle_staged_results
+    from flowfile_core.ai.sessions import StagedToolEntry
+
+    flow = _flow_with_orders_and_filter()
+    flow.add_filter(input_schema.NodeFilter(**_filter_args(node_id=3, depending_on_id=2)))
+    settings = _filter_args()
+    settings["split_mode"] = True
+    common = dict(insertion_context=InsertionContext(), flow=flow, **call_kwargs)
+    modified = execute_tool_call(
+        flow_id=flow.flow_id, tool_name="flowfile.graph.update_node_settings",
+        tool_args=_update_settings_args(node_id=2, settings=settings, flow_id=flow.flow_id),
+        mode="stage", **common,
+    )
+    assert modified.status == "staged", modified.refusal_detail
+    args = {"flow_id": flow.flow_id, "from_node_id": 2, "to_node_id": 3, "output_class": output_class}
+    meta = {"staged_modified_node_ids_at_stage": [2]}
+    immediate = execute_tool_call(
+        flow_id=flow.flow_id, tool_name="flowfile.graph.connect", tool_args=args,
+        mode="apply", audit_meta=meta, **common,
+    )
+    assert immediate.status == "rejected"
+    connected = execute_tool_call(
+        flow_id=flow.flow_id, tool_name="flowfile.graph.connect", tool_args=args,
+        mode="stage", audit_meta=meta, **common,
+    )
+    assert connected.status == "staged", connected.refusal_detail
+    assert flow.get_node(2).setting_input.split_mode is False
+    graph_diff = bundle_staged_results([
+        StagedToolEntry(tool_name=result.tool_name, staged_node_payload=result.staged_node_payload)
+        for result in [modified, connected]
+    ])
+    graph_diff.session_id = call_kwargs["session_id"]
+    graph_diff.flow_id = flow.flow_id
+    if output_class == "output-2":
+        with pytest.raises(HTTPException) as error:
+            apply_diff(flow, graph_diff)
+        assert error.value.status_code == 422
+        assert flow.get_node(2).setting_input.split_mode is False
+        assert not flow.get_node(3).all_inputs
+    else:
+        apply_diff(flow, graph_diff)
+        assert flow.get_node(2).setting_input.split_mode is True
+        assert flow.get_node(3).input_edge_handle(2, "input-0") == "output-1"
+
+
 def test_connect_rejects_wiring_into_live_source_node(call_kwargs: dict[str, Any]) -> None:
     """Wiring INTO a live source node (node 1 = manual_input) must be refused at
     stage time with ``target_is_source`` so the planner can self-correct, instead

@@ -38,6 +38,9 @@ export interface UseNodeSettingsOptions<T extends NodeBase> {
    */
   onAfterSave?: () => void | Promise<void>;
 
+  /** Edges invalidated by the draft; save and remove them as one undo step. */
+  getEdgesToDrop?: () => EdgeLike[];
+
   /**
    * Whether to automatically set is_setup to true before saving.
    * Defaults to true.
@@ -220,7 +223,10 @@ export function useNodeSettings<T extends NodeBase>(
     }
   };
 
-  const saveSettings = (): Promise<boolean> => save();
+  const saveSettings = (): Promise<boolean> =>
+    options.getEdgesToDrop
+      ? saveSettingsDroppingEdges("Update node settings", options.getEdgesToDrop())
+      : save();
 
   const saveSettingsWithOperations = (
     label: string,

@@ -1119,6 +1119,42 @@ def test_validate_diff_against_flow_tolerates_modification_on_in_batch_addition(
     diff.validate_diff_against_flow(flow, graph_diff)
 
 
+@pytest.mark.parametrize("replace_node", [False, True], ids=["bypass", "replace"])
+def test_apply_diff_deletes_node_before_rerouting(replace_node: bool) -> None:
+    from flowfile_core.flowfile.flow_graph import add_connection
+
+    flow = _flow_with_orders_and_filter()
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_filter(input_schema.NodeFilter(**_filter_args(node_id=3, depending_on_id=2)))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    pre_undo = flow.get_history_state().undo_count
+    source_id = 4 if replace_node else 1
+    graph_diff = diff.GraphDiff(
+        session_id="s",
+        flow_id=flow.flow_id,
+        additions=[
+            diff.StagedAddition(
+                node_type="filter",
+                settings=_filter_args(node_id=4, depending_on_id=1),
+                insertion_context=diff.StagedInsertionContext(upstream_node_ids=[1]),
+            ),
+        ] if replace_node else [],
+        deletions=[diff.StagedDeletion(delete_node_id=2)],
+        connections_added=[diff.StagedConnection(
+            connection=input_schema.NodeConnection.create_from_simple_input(source_id, 3).model_dump(),
+        )],
+    )
+
+    result = diff.apply_diff(flow, graph_diff)
+
+    assert flow.get_node(2) is None
+    assert [node.node_id for node in flow.get_node(3).all_inputs] == [source_id]
+    assert result.removed_node_ids == [2]
+    assert result.applied_connection_count == 1
+    assert result.applied_node_ids == ([4] if replace_node else [])
+    assert flow.get_history_state().undo_count == pre_undo + 1
+
+
 def test_apply_diff_modification_mutates_settings_and_single_undo_point() -> None:
     """applying a single modification mutates the live node's
     ``setting_input`` to the new value and registers exactly one BATCH

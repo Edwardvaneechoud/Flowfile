@@ -630,6 +630,11 @@ function rejectConnection(reason: string): false {
 }
 
 function isValidConnection(connection: Connection): boolean {
+  // VueFlow also validates programmatic addEdges calls with full edges (which
+  // have an id). Restore core's existing wires even when their ports are no
+  // longer declared; NodeWrapper renders non-connectable fallback handles.
+  // New gestures have no edge id and still pass all checks below.
+  if ("id" in connection) return true;
   const source = connection.source;
   const target = connection.target;
   if (!source || !target) return false;

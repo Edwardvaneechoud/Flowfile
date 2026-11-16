@@ -354,7 +354,8 @@ def _add_node_promise(graph: FlowGraph, node_info: schemas.NodeInformation) -> N
     if (is_user_defined and node_info.type not in CUSTOM_NODE_STORE) or node_info.type not in node_dict:
         # Before wiring: a node file written since the last scan must lend its real template, not the placeholder.
         registry.refresh()
-    if is_user_defined and node_info.type not in CUSTOM_NODE_STORE:
+    if (is_user_defined and node_info.type not in CUSTOM_NODE_STORE) or node_info.type not in node_dict:
+        # Unconfigured custom nodes have no settings marker; preserve unknown types too.
         register_missing_node_template(node_info.type)
     node_promise = input_schema.NodePromise(
         flow_id=graph.flow_id,
