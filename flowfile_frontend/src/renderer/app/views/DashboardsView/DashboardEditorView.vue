@@ -198,7 +198,13 @@ import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
 import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
 import { upgradeLayoutGrid } from "./gridVersion";
-import { deleteFilter, placeFilter, placedFilterIds, withFilters } from "./filterPlacement";
+import {
+  deleteFilter,
+  placeFilter,
+  placedFilterIds,
+  pruneFilterTargets,
+  withFilters,
+} from "./filterPlacement";
 import { KPI_DEFAULT_SIZE } from "./kpi";
 import { TABLE_DEFAULT_SIZE } from "./tableTile";
 import {
@@ -308,7 +314,7 @@ const onRestoreDraft = () => {
   if (!pendingDraft) return;
   nameDraft.value = pendingDraft.name;
   descriptionDraft.value = pendingDraft.description ?? "";
-  store.setLayout(upgradeLayoutGrid(pendingDraft.layout));
+  store.setLayout(pruneFilterTargets(upgradeLayoutGrid(pendingDraft.layout)));
   draftDirty.value = true;
   restoreAvailable.value = false;
 };
@@ -379,17 +385,17 @@ const findFreeRow = (layout: DashboardLayout): number => {
   return Math.max(...layout.tiles.map((t) => t.y + t.h));
 };
 
+// Every edit passes here, so a removed tile leaves no filter target behind and a stale one heals.
 const onLayoutChange = (next: DashboardLayout) => {
   if (!store.current) return;
-  store.setLayout(next);
+  store.setLayout(pruneFilterTargets(next));
   markChanged();
 };
 
 // A filter removed from the strip or its dialog takes its canvas tile with it.
 const onFiltersChange = (next: DashboardFilter[]) => {
   if (!store.current) return;
-  store.setLayout(withFilters(store.current.layout, next));
-  markChanged();
+  onLayoutChange(withFilters(store.current.layout, next));
 };
 
 const filterBarRef = ref<InstanceType<typeof DashboardFilterBar> | null>(null);

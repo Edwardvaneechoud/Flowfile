@@ -197,4 +197,48 @@ test.describe("Dashboards", () => {
       await placed.cleanup(request);
     }
   });
+
+  test("removing a tile a filter targets keeps the dashboard saving", async ({ page, request }) => {
+    const seededTargets = await seedDashboard(request, token, `e2e filter target ${Date.now()}`);
+    const url = `${API_URL}/catalog/dashboards/${seededTargets.dashboardId}`;
+    const headers = authHeaders(token);
+    try {
+      const current = await (await request.get(url, { headers })).json();
+      const layout = {
+        ...current.layout,
+        filters: current.layout.filters.map((f: Record<string, unknown>) => ({
+          ...f,
+          target: "tiles",
+          target_tile_ids: ["t-table"],
+        })),
+      };
+      const put = await request.put(url, { headers, data: { layout } });
+      expect(put.ok()).toBe(true);
+
+      await login(page, token, `#/main/dashboards/${seededTargets.dashboardId}/edit`);
+      const tableHeader = page.locator(".tile-header", { hasText: "Orders" });
+      await expect(tableHeader).toBeVisible({ timeout: 30000 });
+      await tableHeader.locator(".tile-menu").click();
+      await page
+        .locator(".el-dropdown-menu__item:visible", { hasText: "Remove from dashboard" })
+        .click();
+      await expect(page.locator(".filter-chip", { hasText: "Region" })).toContainText("no tiles");
+
+      await expect
+        .poll(
+          async () => {
+            const saved = await (await request.get(url, { headers })).json();
+            return [
+              saved.layout.tiles.some((t: { id: string }) => t.id === "t-table"),
+              saved.layout.filters[0].target,
+              saved.layout.filters[0].target_tile_ids,
+            ];
+          },
+          { timeout: 20000 },
+        )
+        .toEqual([false, "tiles", []]);
+    } finally {
+      await seededTargets.cleanup(request);
+    }
+  });
 });

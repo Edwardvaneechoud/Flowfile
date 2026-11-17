@@ -190,6 +190,12 @@
           <span class="tile-filter-name">{{
             tileFilter ? tileFilter.label || tileFilter.field_name : "Filter removed"
           }}</span>
+          <span
+            v-if="mode === 'edit' && tileFilter && targetsNoTile(tileFilter)"
+            class="tile-filter-no-tiles"
+            title="The tiles this filter applied to were removed, so it filters nothing — edit it to choose tiles"
+            >no tiles</span
+          >
           <el-dropdown v-if="mode === 'edit'" trigger="click" @click.stop>
             <el-icon class="tile-menu" @click.stop><MoreFilled /></el-icon>
             <template #dropdown>
@@ -444,7 +450,7 @@ import type {
   SeparatorOrientation,
 } from "../../types";
 import DashboardFilterControl from "./DashboardFilterControl.vue";
-import { filterOfTile } from "./filterPlacement";
+import { filterOfTile, targetsNoTile } from "./filterPlacement";
 import KpiTile from "./KpiTile.vue";
 import TableTile from "./TableTile.vue";
 import { isKpiComplete } from "./kpi";
@@ -947,6 +953,12 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
+}
+.tile-filter-no-tiles {
+  color: var(--el-color-warning);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
 }
 .tile-filter-missing {
   font-size: 12px;

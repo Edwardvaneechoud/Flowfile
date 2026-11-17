@@ -85,3 +85,24 @@ export const deleteFilter = (layout: DashboardLayout, filterId: string): Dashboa
     layout,
     layout.filters.filter((f) => f.id !== filterId),
   );
+
+/** True for a filter whose explicit target list is empty: it filters no tile. */
+export const targetsNoTile = (filter: DashboardFilter): boolean =>
+  filter.target === "tiles" && filter.target_tile_ids.length === 0;
+
+/**
+ * Drop every filter target that names a tile the layout no longer holds, the rule the server
+ * enforces at save. A filter whose last target goes stays `target: "tiles"` with an empty list,
+ * so it filters no tile rather than all of them. The same layout comes back when nothing changed.
+ */
+export const pruneFilterTargets = (layout: DashboardLayout): DashboardLayout => {
+  const tileIds = new Set(layout.tiles.map((t) => t.id));
+  let changed = false;
+  const filters = layout.filters.map((f) => {
+    const kept = f.target_tile_ids.filter((id) => tileIds.has(id));
+    if (kept.length === f.target_tile_ids.length) return f;
+    changed = true;
+    return { ...f, target_tile_ids: kept };
+  });
+  return changed ? { ...layout, filters } : layout;
+};

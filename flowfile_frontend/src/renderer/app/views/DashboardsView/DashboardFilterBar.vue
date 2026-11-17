@@ -34,6 +34,13 @@
         >
           untied
         </span>
+        <span
+          v-else-if="mode === 'edit' && targetsNoTile(f)"
+          class="filter-chip-source-untied"
+          title="The tiles this filter applied to were removed, so it filters nothing — click the pencil to choose tiles"
+        >
+          no tiles
+        </span>
         <span class="filter-chip-colon">:</span>
 
         <DashboardFilterControl
@@ -252,6 +259,7 @@ import { dtypeToDefaultFilterKind, isNumericDtype, isTemporalDtype } from "../..
 import { useDashboardDragAndDrop } from "../../composables/useDashboardDragAndDrop";
 import { moveFilter, type DropPosition } from "./filterOrder";
 import DashboardFilterControl from "./DashboardFilterControl.vue";
+import { targetsNoTile } from "./filterPlacement";
 
 const props = defineProps<{
   /** Every filter of the dashboard; the dialog edits any of them. */

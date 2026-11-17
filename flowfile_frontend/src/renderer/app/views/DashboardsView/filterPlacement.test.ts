@@ -12,6 +12,8 @@ import {
   moveFilterToBar,
   placeFilter,
   placedFilterIds,
+  pruneFilterTargets,
+  targetsNoTile,
   unplacedFilters,
   withFilters,
 } from "./filterPlacement";
@@ -148,5 +150,39 @@ describe("deleteFilter / withFilters", () => {
     const edited = { ...filter("a"), label: "Region" };
     expect(withFilters(l, [edited]).tiles).toBe(l.tiles);
     expect(ids(withFilters(l, []).tiles)).toEqual(["t-chart"]);
+  });
+});
+
+describe("pruneFilterTargets", () => {
+  const kpi: DashboardTile = { ...chart, id: "t-kpi", type: "kpi", x: 24 };
+  const targeting = (id: string, targets: string[]): DashboardFilter => ({
+    ...filter(id),
+    target: "tiles",
+    target_tile_ids: targets,
+  });
+
+  it("drops the id of a removed tile from every filter that targets it", () => {
+    const l = layout([kpi], [targeting("a", ["t-chart", "t-kpi"]), targeting("b", ["t-chart"])]);
+    const next = pruneFilterTargets(l);
+    expect(next.filters.map((f) => f.target_tile_ids)).toEqual([["t-kpi"], []]);
+    expect(next.tiles).toBe(l.tiles);
+  });
+
+  it("leaves a filter whose last target went filtering no tile, not every tile", () => {
+    const next = pruneFilterTargets(layout([kpi], [targeting("a", ["t-chart"])]));
+    expect(next.filters[0]).toMatchObject({ target: "tiles", target_tile_ids: [] });
+    expect(targetsNoTile(next.filters[0])).toBe(true);
+    expect(targetsNoTile(filter("x"))).toBe(false);
+  });
+
+  it("returns the same layout and filters when every target is still there", () => {
+    const l = layout([chart, kpi], [targeting("a", ["t-chart"]), filter("b")]);
+    expect(pruneFilterTargets(l)).toBe(l);
+  });
+
+  it("heals a stale id with any later change, whatever removed the tile", () => {
+    const stale = layout([chart], [targeting("a", ["gone", "t-chart"])]);
+    const placed = placeFilter(stale, "a", { x: 0, y: -1 }, "ft");
+    expect(pruneFilterTargets(placed).filters[0].target_tile_ids).toEqual(["t-chart"]);
   });
 });
