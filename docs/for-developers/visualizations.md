@@ -90,6 +90,14 @@ A visualization never embeds the data — it embeds *how to find the data*. That
 
 ---
 
+## Dashboard tiles that read rows
+
+A dashboard tile reaches data through a saved visualization (`viz_id`) or, for a KPI or a table tile, through a catalog table directly (`table_id`, never both: `DashboardTile` refuses a layout that sets the two). A table-backed tile uses the same hot path as the chart builder's live preview, `POST /catalog/visualizations/compute` with a `table` source, so it gets the same session pool and the same access check (`use` on the table where sharing is on). A table tile sends three polars-gw payloads, each with the dashboard's filter step first: a page of rows (a `sort` step, a `raw` view of the shown columns, the payload's `limit` and `offset`), an empty-`groupBy` count for the total, and a capped CSV download. Rows never come back in bulk except for that download.
+
+A layout's `table_id` is machine-local, so project export writes it as the portable `source_table` `{catalog, schema, name}` handle (`projection._portable_layout`) and import resolves it back (`importer._localize_layout`), as it does for a filter's `datasource_id`.
+
+---
+
 ## The Explore Data node
 
 The designer's **Explore Data** node is the same machinery pointed at a flow node instead of a catalog row. It has no saved visualization: the chart spec lives in the node's own settings (`NodeExploreData.graphic_walker_input.specList`), and there is nothing to look up in the database.

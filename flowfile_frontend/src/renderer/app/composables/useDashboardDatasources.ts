@@ -1,7 +1,7 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
 import { CatalogApi } from "../api/catalog.api";
-import type { ColumnSchema, ColumnStatsResponse, DashboardLayout } from "../types";
-import type { TileField } from "./useDashboardComputation";
+import type { ColumnSchema, ColumnStatsResponse, DashboardLayout, DashboardTile } from "../types";
+import { tileSourceOf, type TileField } from "./useDashboardComputation";
 import { createDashboardVizCache, type DashboardVizCache } from "./useDashboardVizCache";
 
 export interface DashboardDatasource {
@@ -14,11 +14,11 @@ export interface DashboardDatasource {
 
 /** Resolves dashboard tiles → catalog tables.
  *
- * A tile carries ``viz_id`` only; we walk viz → ``catalog_table_id`` →
- * ``CatalogTable`` to discover (a) which catalog tables back the
- * dashboard and (b) the columns + dtypes available on each. SQL-source
- * visualizations have no ``catalog_table_id`` and therefore do not
- * surface as filterable datasources.
+ * A KPI or table tile may name its table directly (``table_id``); every other
+ * tile goes through its chart: viz → ``catalog_table_id`` → ``CatalogTable``.
+ * Together they say (a) which catalog tables back the dashboard and (b) the
+ * columns + dtypes available on each. SQL-source visualizations have no
+ * ``catalog_table_id`` and therefore do not surface as filterable datasources.
  *
  * Per-id fetches are cached for the lifetime of the composable.
  */
@@ -57,7 +57,7 @@ export function useDashboardDatasources(
     if (pending) return pending;
     const request = (async () => {
       try {
-        const table = await CatalogApi.getTable(tableId);
+        const table = await vizCache.getTable(tableId);
         tableCache.value[tableId] = {
           id: table.id,
           name: table.full_table_name ?? table.name,
@@ -96,20 +96,49 @@ export function useDashboardDatasources(
     }
   };
 
+  // table_id → columns of a table read directly; filled on demand by loadTileFields
+  const directTableFields = ref<Record<number, TileField[]>>({});
+
+  const fetchTableFields = async (tableId: number) => {
+    if (tableId in directTableFields.value) return;
+    try {
+      const resp = await vizCache.getTableFields(tableId);
+      directTableFields.value[tableId] = (resp.fields ?? []).map((f) => ({
+        fid: String(f.fid),
+        semanticType: f.semanticType,
+      }));
+    } catch (err) {
+      console.warn(`[dashboard] could not fetch fields for table ${tableId}:`, err);
+    }
+  };
+
+  const sourceIds = () => {
+    const vizIds = new Set<number>();
+    const tableIds = new Set<number>();
+    for (const tile of layout.value.tiles) {
+      const source = tileSourceOf(tile);
+      if (source?.kind === "viz") vizIds.add(source.vizId);
+      else if (source?.kind === "table") tableIds.add(source.tableId);
+    }
+    return { vizIds: [...vizIds], tableIds: [...tableIds] };
+  };
+
   const refresh = async (force = false) => {
     if (force) {
       statsCache.clear();
       vizFields.value = {};
+      directTableFields.value = {};
       vizCache.invalidate();
     }
-    const vizIds = Array.from(
-      new Set(layout.value.tiles.map((t) => t.viz_id).filter((id): id is number => id != null)),
-    );
+    const { vizIds, tableIds: direct } = sourceIds();
     loading.value = true;
     try {
       await Promise.all(vizIds.map((id) => fetchViz(id, force)));
       const tableIds = Array.from(
-        new Set(vizIds.map((v) => vizToTable.value[v]).filter((id): id is number => id != null)),
+        new Set([
+          ...direct,
+          ...vizIds.map((v) => vizToTable.value[v]).filter((id): id is number => id != null),
+        ]),
       );
       await Promise.all(tableIds.map((id) => fetchTable(id, force)));
     } finally {
@@ -118,18 +147,24 @@ export function useDashboardDatasources(
   };
 
   watch(
-    () => layout.value.tiles.map((t) => t.viz_id).filter((id): id is number => id != null),
+    () => JSON.stringify(sourceIds()),
     () => {
       refresh();
     },
     { immediate: true },
   );
 
+  /** The catalog table a tile reads, directly or through its chart. */
+  const tableOfTile = (tile: DashboardTile): number | null => {
+    const source = tileSourceOf(tile);
+    if (source == null) return null;
+    return source.kind === "table" ? source.tableId : (vizToTable.value[source.vizId] ?? null);
+  };
+
   const datasourcesInUse = computed<DashboardDatasource[]>(() => {
     const seen = new Set<number>();
     for (const tile of layout.value.tiles) {
-      if (tile.viz_id == null) continue;
-      const tid = vizToTable.value[tile.viz_id];
+      const tid = tableOfTile(tile);
       if (tid != null) seen.add(tid);
     }
     return Array.from(seen)
@@ -141,23 +176,21 @@ export function useDashboardDatasources(
   const tilesByDatasource = computed<Record<number, string[]>>(() => {
     const acc: Record<number, string[]> = {};
     for (const tile of layout.value.tiles) {
-      if (tile.viz_id == null) continue;
-      const tid = vizToTable.value[tile.viz_id];
+      const tid = tableOfTile(tile);
       if (tid == null) continue;
       (acc[tid] ??= []).push(tile.id);
     }
     return acc;
   });
 
-  /** Every tile that renders a visualization, whatever its source. */
+  /** Every tile that reads data (a chart, a KPI or a table), whatever its source. */
   const vizTileIds = computed<string[]>(() =>
-    layout.value.tiles.filter((t) => t.viz_id != null).map((t) => t.id),
+    layout.value.tiles.filter((t) => tileSourceOf(t) != null).map((t) => t.id),
   );
 
   const tileDatasource = (tileId: string): number | null => {
     const tile = layout.value.tiles.find((t) => t.id === tileId);
-    if (!tile || tile.viz_id == null) return null;
-    return vizToTable.value[tile.viz_id] ?? null;
+    return tile ? tableOfTile(tile) : null;
   };
 
   const getSchema = (tableId: number): ColumnSchema[] =>
@@ -185,19 +218,22 @@ export function useDashboardDatasources(
     return entry;
   };
 
-  /** Columns of every viz tile, for the filter dialog's reach preview. */
+  /** Columns of every tile that reads data, for the filter dialog's reach preview. */
   const loadTileFields = async () => {
-    const vizIds = Array.from(
-      new Set(layout.value.tiles.map((t) => t.viz_id).filter((id): id is number => id != null)),
-    );
-    await Promise.all(vizIds.map((id) => fetchFields(id)));
+    const { vizIds, tableIds } = sourceIds();
+    await Promise.all([...vizIds.map(fetchFields), ...tableIds.map(fetchTableFields)]);
   };
 
   const tileFields = (tileId: string): TileField[] | null => {
     const tile = layout.value.tiles.find((t) => t.id === tileId);
-    if (!tile || tile.viz_id == null) return null;
-    return vizFields.value[tile.viz_id] ?? null;
+    const source = tile ? tileSourceOf(tile) : null;
+    if (source == null) return null;
+    return source.kind === "table"
+      ? (directTableFields.value[source.tableId] ?? null)
+      : (vizFields.value[source.vizId] ?? null);
   };
+
+  const KIND_LABEL: Partial<Record<DashboardTile["type"], string>> = { kpi: "KPI", table: "Table" };
 
   const tileLabel = (tileId: string): string => {
     const tile = layout.value.tiles.find((t) => t.id === tileId);
@@ -205,9 +241,15 @@ export function useDashboardDatasources(
     if (tile.type === "text") return "Text tile";
     if (tile.type === "separator") return "Separator";
     if (tile.type === "kpi" && tile.kpi?.label) return tile.kpi.label;
-    if (tile.viz_id == null) return tile.type === "kpi" ? "KPI" : `Tile ${tileId.slice(0, 6)}`;
-    const vizName = vizNameById.value[tile.viz_id] ?? `Viz #${tile.viz_id}`;
-    return tile.type === "kpi" ? `KPI · ${vizName}` : tile.title?.trim() || vizName;
+    if (tile.type === "table" && tile.title?.trim()) return tile.title.trim();
+    const kind = KIND_LABEL[tile.type];
+    const source = tileSourceOf(tile);
+    if (source == null) return kind ?? `Tile ${tileId.slice(0, 6)}`;
+    const sourceName =
+      source.kind === "table"
+        ? (tableCache.value[source.tableId]?.name ?? `Table #${source.tableId}`)
+        : (vizNameById.value[source.vizId] ?? `Viz #${source.vizId}`);
+    return kind ? `${kind} · ${sourceName}` : tile.title?.trim() || sourceName;
   };
 
   return {

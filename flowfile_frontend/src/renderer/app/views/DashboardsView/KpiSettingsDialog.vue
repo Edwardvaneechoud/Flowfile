@@ -8,19 +8,13 @@
   >
     <el-form label-width="100px" size="small" @submit.prevent>
       <el-form-item label="Source">
-        <el-select
-          v-model="draft.viz_id"
-          placeholder="Select a visualization"
-          filterable
-          :loading="catalogStore.loadingVisualizationLibrary"
-          @change="onVizChange"
-        >
-          <el-option-group v-for="group in sourceGroups" :key="group.label" :label="group.label">
-            <el-option v-for="v in group.items" :key="v.id" :value="v.id" :label="v.name" />
-          </el-option-group>
-        </el-select>
+        <TileSourcePicker
+          :viz-id="draft.viz_id"
+          :table-id="draft.table_id"
+          @change="onSourceChange"
+        />
         <div class="kpi-hint">
-          Aggregates this visualization's data source with the dashboard filters applied.
+          Aggregates this table, or the chart's data source, with the dashboard filters applied.
         </div>
       </el-form-item>
       <el-form-item label="Aggregation">
@@ -36,7 +30,7 @@
       <el-form-item label="Field">
         <el-select
           v-model="fieldModel"
-          :disabled="draft.viz_id == null"
+          :disabled="!hasSource"
           :loading="fieldsLoading"
           :placeholder="fieldsError ?? 'Select a column'"
           filterable
@@ -118,10 +112,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useDashboardVizCache } from "../../composables/useDashboardVizCache";
-import { useCatalogStore } from "../../stores/catalog-store";
 import type { TileField } from "../../composables/useDashboardComputation";
 import type { DashboardFilter, DashboardKpi, DashboardTile } from "../../types";
 import { resolveDateRange } from "./dateRange";
+import TileSourcePicker from "./TileSourcePicker.vue";
 import {
   DEFAULT_KPI,
   KPI_AGG_OPTIONS,
@@ -140,7 +134,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: boolean): void;
-  (e: "save", patch: { viz_id: number; kpi: DashboardKpi }): void;
+  (e: "save", patch: { viz_id: number | null; table_id: number | null; kpi: DashboardKpi }): void;
 }>();
 
 // el-select treats null as "no selection", so null-valued choices use sentinels.
@@ -148,27 +142,32 @@ const ALL_ROWS = "__kpi_all_rows__";
 const AUTO_DECIMALS = -1;
 const DECIMAL_CHOICES = [0, 1, 2, 3, 4, 5, 6];
 
-const catalogStore = useCatalogStore();
 const vizCache = useDashboardVizCache();
 
-const draft = reactive<{ viz_id: number | null; kpi: DashboardKpi }>({
+const draft = reactive<{ viz_id: number | null; table_id: number | null; kpi: DashboardKpi }>({
   viz_id: null,
+  table_id: null,
   kpi: { ...DEFAULT_KPI },
 });
+
+const hasSource = computed(() => draft.viz_id != null || draft.table_id != null);
 
 const fields = ref<TileField[]>([]);
 const fieldsLoading = ref(false);
 const fieldsError = ref<string | null>(null);
 let fieldsSeq = 0;
 
-const loadFields = async (vizId: number | null) => {
+const loadFields = async () => {
   const seq = ++fieldsSeq;
   fields.value = [];
   fieldsError.value = null;
-  if (vizId == null) return;
+  if (!hasSource.value) return;
   fieldsLoading.value = true;
   try {
-    const resp = await vizCache.getFields(vizId);
+    const resp =
+      draft.table_id != null
+        ? await vizCache.getTableFields(draft.table_id)
+        : await vizCache.getFields(draft.viz_id as number);
     if (seq !== fieldsSeq) return;
     fields.value = (resp.fields ?? []).map((f) => ({
       fid: String(f.fid),
@@ -183,11 +182,9 @@ const loadFields = async (vizId: number | null) => {
 
 const onOpen = () => {
   draft.viz_id = props.tile.viz_id;
+  draft.table_id = props.tile.table_id ?? null;
   draft.kpi = { ...DEFAULT_KPI, ...(props.tile.kpi ?? {}) };
-  if (!catalogStore.visualizationLibrary.length) {
-    catalogStore.loadVisualizationLibrary().catch(() => undefined);
-  }
-  void loadFields(draft.viz_id);
+  void loadFields();
 };
 
 // Mounted already open (v-if + v-model in one tick), so el-dialog's @open never fires.
@@ -199,21 +196,6 @@ watch(
   { immediate: true },
 );
 
-const sourceGroups = computed(() => {
-  const groups = new Map<string, { label: string; items: { id: number; name: string }[] }>();
-  for (const v of catalogStore.visualizationLibrary) {
-    const label =
-      v.source_type === "sql"
-        ? "SQL"
-        : (v.table_full_name ?? v.table_name ?? `Table #${v.catalog_table_id}`);
-    if (!groups.has(label)) groups.set(label, { label, items: [] });
-    groups.get(label)!.items.push({ id: v.id, name: v.name });
-  }
-  return [...groups.values()].sort((a, b) =>
-    a.label === "SQL" ? 1 : b.label === "SQL" ? -1 : a.label.localeCompare(b.label),
-  );
-});
-
 const fieldOptions = computed(() =>
   fields.value.filter((f) => fieldEligible(draft.kpi.agg, f.semanticType)),
 );
@@ -223,14 +205,16 @@ const onAggChange = () => {
   if (field && !fieldOptions.value.some((f) => f.fid === field)) draft.kpi.field = null;
 };
 
-const onVizChange = async (vizId: number | null) => {
-  await loadFields(vizId);
+const onSourceChange = async (next: { viz_id: number | null; table_id: number | null }) => {
+  draft.viz_id = next.viz_id;
+  draft.table_id = next.table_id;
+  await loadFields();
   onAggChange();
 };
 
 const fieldModel = computed<string | undefined>({
   get: () =>
-    draft.kpi.field ?? (draft.kpi.agg === "count" && draft.viz_id != null ? ALL_ROWS : undefined),
+    draft.kpi.field ?? (draft.kpi.agg === "count" && hasSource.value ? ALL_ROWS : undefined),
   set: (v) => {
     draft.kpi.field = !v || v === ALL_ROWS ? null : v;
   },
@@ -278,7 +262,7 @@ const previousPeriodStatus = computed(() => {
 
 const canSave = computed(
   () =>
-    draft.viz_id != null &&
+    hasSource.value &&
     (!kpiNeedsField(draft.kpi.agg) || !!draft.kpi.field) &&
     (draft.kpi.comparison !== "target" || draft.kpi.target != null),
 );
@@ -286,9 +270,10 @@ const canSave = computed(
 const blankToNull = (s: string | null | undefined): string | null => (s && s.trim() ? s : null);
 
 const onSave = () => {
-  if (!canSave.value || draft.viz_id == null) return;
+  if (!canSave.value) return;
   emit("save", {
     viz_id: draft.viz_id,
+    table_id: draft.table_id,
     kpi: {
       ...draft.kpi,
       label: blankToNull(draft.kpi.label?.trim()),

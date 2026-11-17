@@ -2,14 +2,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 import type { DashboardLayout } from "../types";
 
-const { getVisualizationMock, getTableMock, getTableColumnStatsMock, getFieldsMock } = vi.hoisted(
-  () => ({
-    getVisualizationMock: vi.fn(),
-    getTableMock: vi.fn(),
-    getTableColumnStatsMock: vi.fn(),
-    getFieldsMock: vi.fn(),
-  }),
-);
+const {
+  getVisualizationMock,
+  getTableMock,
+  getTableColumnStatsMock,
+  getFieldsMock,
+  getSourceFieldsMock,
+} = vi.hoisted(() => ({
+  getVisualizationMock: vi.fn(),
+  getTableMock: vi.fn(),
+  getTableColumnStatsMock: vi.fn(),
+  getFieldsMock: vi.fn(),
+  getSourceFieldsMock: vi.fn(),
+}));
 
 vi.mock("../api/catalog.api", () => ({
   CatalogApi: {
@@ -17,6 +22,7 @@ vi.mock("../api/catalog.api", () => ({
     getTable: getTableMock,
     getTableColumnStats: getTableColumnStatsMock,
     getSavedVisualizationFields: getFieldsMock,
+    getVisualizationFields: getSourceFieldsMock,
   },
 }));
 
@@ -51,6 +57,11 @@ describe("useDashboardDatasources", () => {
     getTableColumnStatsMock.mockReset().mockResolvedValue(statsResponse);
     getFieldsMock.mockReset().mockResolvedValue({
       fields: [{ fid: "region", semanticType: "nominal" }],
+      cache_hit: false,
+      error: null,
+    });
+    getSourceFieldsMock.mockReset().mockResolvedValue({
+      fields: [{ fid: "amount", semanticType: "quantitative" }],
       cache_hit: false,
       error: null,
     });
@@ -192,5 +203,76 @@ describe("useDashboardDatasources", () => {
 
     expect(tileDatasource(TILE_ID)).toBe(5);
     warn.mockRestore();
+  });
+
+  it("resolves a table or KPI tile that names its table, without a chart", async () => {
+    getTableMock.mockImplementation(async (id: number) =>
+      id === 9 ? { id: 9, name: "orders", full_table_name: "main.orders" } : tableResponse,
+    );
+    const layout = layoutOf();
+    layout.tiles.push(
+      {
+        id: "tbl",
+        type: "table",
+        viz_id: null,
+        table_id: 9,
+        chart_index: 0,
+        x: 0,
+        y: 9,
+        w: 6,
+        h: 6,
+      },
+      {
+        id: "tbl-titled",
+        type: "table",
+        viz_id: 1,
+        title: "Latest orders",
+        chart_index: 0,
+        x: 6,
+        y: 9,
+        w: 6,
+        h: 6,
+      },
+      {
+        id: "kpi-t",
+        type: "kpi",
+        viz_id: null,
+        table_id: 9,
+        kpi: { field: null, agg: "count" },
+        chart_index: 0,
+        x: 12,
+        y: 9,
+        w: 6,
+        h: 3,
+      },
+      { id: "tbl-empty", type: "table", viz_id: null, chart_index: 0, x: 18, y: 9, w: 6, h: 6 },
+    );
+    const {
+      datasourcesInUse,
+      tilesByDatasource,
+      vizTileIds,
+      tileDatasource,
+      tileLabel,
+      tileFields,
+      loadTileFields,
+    } = useDashboardDatasources(ref(layout));
+    await flush();
+
+    expect(datasourcesInUse.value.map((d) => d.id)).toEqual([9, 5]);
+    expect(tilesByDatasource.value).toEqual({ 5: [TILE_ID, "tbl-titled"], 9: ["tbl", "kpi-t"] });
+    expect(vizTileIds.value).toEqual([TILE_ID, "tbl", "tbl-titled", "kpi-t"]);
+    expect(tileDatasource("tbl")).toBe(9);
+    expect(tileDatasource("tbl-empty")).toBeNull();
+    expect(tileLabel("tbl")).toBe("Table · main.orders");
+    expect(tileLabel("tbl-titled")).toBe("Latest orders");
+    expect(tileLabel("kpi-t")).toBe("KPI · main.orders");
+    expect(tileLabel("tbl-empty")).toBe("Table");
+
+    await loadTileFields();
+    expect(getSourceFieldsMock).toHaveBeenCalledTimes(1);
+    expect(getSourceFieldsMock).toHaveBeenCalledWith({ source_type: "table", table_id: 9 });
+    expect(tileFields("tbl")).toEqual([{ fid: "amount", semanticType: "quantitative" }]);
+    expect(tileFields("kpi-t")).toEqual([{ fid: "amount", semanticType: "quantitative" }]);
+    expect(tileFields("tbl-titled")).toEqual([{ fid: "region", semanticType: "nominal" }]);
   });
 });

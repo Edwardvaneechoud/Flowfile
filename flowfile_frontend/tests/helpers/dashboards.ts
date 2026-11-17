@@ -59,10 +59,17 @@ export const regionBarChart = () => ({
   },
 });
 
-// West 150, East 70, North 30, South 20: 270 in all.
-const ORDERS_CSV = ["region,amount", "West,100", "West,50", "East,70", "North,30", "South,20"].join(
-  "\n",
-);
+// West 150, East 70, North 30, South 20, Central 0: 270 in all, over 7 rows.
+const ORDERS_CSV = [
+  "region,amount",
+  "West,100",
+  "West,50",
+  "East,70",
+  "North,30",
+  "South,20",
+  "Central,0",
+  "Central,0",
+].join("\n");
 
 export interface SeededDashboard {
   tableId: number;
@@ -73,7 +80,8 @@ export interface SeededDashboard {
 
 /**
  * A catalog table, one chart on it and a dashboard with a titled chart tile, a KPI, a KPI still to
- * be set up, a text tile and a region filter. Core reads the CSV from this machine's temp dir.
+ * be set up, a text tile, a table tile that reads the table directly (five rows a page, largest
+ * amount first) and a region filter. Core reads the CSV from this machine's temp dir.
  */
 export async function seedDashboard(
   request: APIRequestContext,
@@ -92,15 +100,56 @@ export async function seedDashboard(
     return response.json();
   };
 
+  const created: Created = {};
+  // Removes what was made so far, newest first, so a failed seed leaves nothing behind.
+  const cleanup = async (req: APIRequestContext) => {
+    if (created.dashboard != null)
+      await req.delete(`${API_URL}/catalog/dashboards/${created.dashboard}`, { headers });
+    if (created.viz != null)
+      await req.delete(`${API_URL}/catalog/visualizations/${created.viz}`, { headers });
+    if (created.table != null)
+      await req.delete(`${API_URL}/catalog/tables/${created.table}`, { headers });
+    rmSync(dir, { recursive: true, force: true });
+  };
+
+  try {
+    await seedRows(post, name, csvPath, created);
+  } catch (err) {
+    await cleanup(request).catch(() => undefined);
+    throw err;
+  }
+  return {
+    tableId: created.table!,
+    vizId: created.viz!,
+    dashboardId: created.dashboard!,
+    cleanup,
+  };
+}
+
+interface Created {
+  table?: number;
+  viz?: number;
+  dashboard?: number;
+}
+
+/** Creates the table, the chart and the dashboard, noting each id in `created` once it exists. */
+async function seedRows(
+  post: (path: string, data: unknown) => Promise<{ id: number }>,
+  name: string,
+  csvPath: string,
+  created: Created,
+): Promise<void> {
   // No spaces: a chart on a table whose name has one cannot read its files.
   const tableName = `${name.replace(/\W+/g, "_")}_orders`;
   const table = await post("/catalog/tables", { name: tableName, file_path: csvPath });
+  created.table = table.id;
   const viz = await post("/catalog/visualizations", {
     name: `${name} chart`,
     spec: [regionBarChart()],
     source_type: "table",
     catalog_table_id: table.id,
   });
+  created.viz = viz.id;
   const dashboard = await post("/catalog/dashboards", {
     name,
     layout: {
@@ -128,6 +177,23 @@ export async function seedDashboard(
         },
         { id: "t-empty", type: "kpi", viz_id: null, kpi: null, x: 36, y: 0, w: 12, h: 4 },
         { id: "t-text", type: "text", viz_id: null, text_md: "## Notes", x: 24, y: 4, w: 24, h: 3 },
+        {
+          id: "t-table",
+          type: "table",
+          viz_id: null,
+          table_id: table.id,
+          title: "Orders",
+          table: {
+            columns: [{ field: "region", label: "Region" }, { field: "amount" }],
+            sort_by: ["amount"],
+            sort_direction: "descending",
+            page_size: 5,
+          },
+          x: 0,
+          y: 8,
+          w: 24,
+          h: 8,
+        },
       ],
       filters: [
         {
@@ -145,15 +211,5 @@ export async function seedDashboard(
     },
   });
 
-  return {
-    tableId: table.id,
-    vizId: viz.id,
-    dashboardId: dashboard.id,
-    cleanup: async (req) => {
-      await req.delete(`${API_URL}/catalog/dashboards/${dashboard.id}`, { headers });
-      await req.delete(`${API_URL}/catalog/visualizations/${viz.id}`, { headers });
-      await req.delete(`${API_URL}/catalog/tables/${table.id}`, { headers });
-      rmSync(dir, { recursive: true, force: true });
-    },
-  };
+  created.dashboard = dashboard.id;
 }

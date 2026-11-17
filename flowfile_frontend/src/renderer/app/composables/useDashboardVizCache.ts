@@ -1,16 +1,20 @@
 import { inject, provide, type InjectionKey } from "vue";
 import { CatalogApi } from "../api/catalog.api";
-import type { CatalogVisualization, VisualizationFieldsResponse } from "../types";
+import type { CatalogTable, CatalogVisualization, VisualizationFieldsResponse } from "../types";
 
 export interface DashboardVizCache {
   getViz(vizId: number): Promise<CatalogVisualization>;
   getFields(vizId: number): Promise<VisualizationFieldsResponse>;
-  /** Forget one chart, or every chart, so the next read asks core again. */
+  /** A catalog table's row, for its name and the filter strip's columns. */
+  getTable(tableId: number): Promise<CatalogTable>;
+  /** Columns of a catalog table a KPI or table tile reads without a chart. */
+  getTableFields(tableId: number): Promise<VisualizationFieldsResponse>;
+  /** Forget one chart, or every chart and table, so the next read asks core again. */
   invalidate(vizId?: number): void;
 }
 
 /**
- * One request per chart for a whole dashboard page.
+ * One request per chart or table for a whole dashboard page.
  *
  * Several tiles can show the same chart, a KPI reads its chart's columns, and the filter strip
  * reads every chart's source; each used to ask core on its own. They share the request here, the
@@ -19,15 +23,17 @@ export interface DashboardVizCache {
 export function createDashboardVizCache(): DashboardVizCache {
   const vizzes = new Map<number, Promise<CatalogVisualization>>();
   const fields = new Map<number, Promise<VisualizationFieldsResponse>>();
+  const tables = new Map<number, Promise<CatalogTable>>();
+  const tableFields = new Map<number, Promise<VisualizationFieldsResponse>>();
 
-  const shared = <T>(held: Map<number, Promise<T>>, vizId: number, load: () => Promise<T>) => {
-    const pending = held.get(vizId);
+  const shared = <T>(held: Map<number, Promise<T>>, id: number, load: () => Promise<T>) => {
+    const pending = held.get(id);
     if (pending) return pending;
     const request = load().catch((err) => {
-      if (held.get(vizId) === request) held.delete(vizId);
+      if (held.get(id) === request) held.delete(id);
       throw err;
     });
-    held.set(vizId, request);
+    held.set(id, request);
     return request;
   };
 
@@ -35,10 +41,17 @@ export function createDashboardVizCache(): DashboardVizCache {
     getViz: (vizId) => shared(vizzes, vizId, () => CatalogApi.getVisualization(vizId)),
     getFields: (vizId) =>
       shared(fields, vizId, () => CatalogApi.getSavedVisualizationFields(vizId)),
+    getTable: (tableId) => shared(tables, tableId, () => CatalogApi.getTable(tableId)),
+    getTableFields: (tableId) =>
+      shared(tableFields, tableId, () =>
+        CatalogApi.getVisualizationFields({ source_type: "table", table_id: tableId }),
+      ),
     invalidate: (vizId) => {
       if (vizId == null) {
         vizzes.clear();
         fields.clear();
+        tables.clear();
+        tableFields.clear();
         return;
       }
       vizzes.delete(vizId);

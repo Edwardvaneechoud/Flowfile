@@ -772,12 +772,15 @@ def _import_visualizations(root: Path, owner_id: int) -> set[str]:
 
 def _localize_layout(layout: dict, owner_id: int) -> dict:
     """Inverse of projection._portable_layout: each tile's ``viz_uuid`` → local ``viz_id``, each
-    filter's ``datasource`` → local ``datasource_id``. Unresolvable references become ``None`` (the
-    tile renders a placeholder), matching the decoupled-tile design."""
+    tile's ``source_table`` → local ``table_id``, each filter's ``datasource`` → local
+    ``datasource_id``. Unresolvable references become ``None`` (the tile renders a placeholder),
+    matching the decoupled-tile design."""
     out = copy.deepcopy(layout)
     for tile in out.get("tiles") or []:
         if "viz_uuid" in tile:
             tile["viz_id"] = _resolve_viz_id_by_uuid(tile.pop("viz_uuid"), owner_id)
+        if "source_table" in tile:
+            tile["table_id"] = _resolve_table_ref(tile.pop("source_table"), owner_id)
     for flt in out.get("filters") or []:
         if "datasource" in flt:
             flt["datasource_id"] = _resolve_table_ref(flt.pop("datasource"), owner_id)
@@ -1508,7 +1511,11 @@ def _dashboard_layout_shape(layout: dict) -> dict:
     """A layout with its portable references replaced by unresolved local ids, the shape
     ``_localize_layout`` hands to ``DashboardLayout`` (a reference that does not resolve is ``None``)."""
     out = copy.deepcopy(layout)
-    for key, portable, local in (("tiles", "viz_uuid", "viz_id"), ("filters", "datasource", "datasource_id")):
+    for key, portable, local in (
+        ("tiles", "viz_uuid", "viz_id"),
+        ("tiles", "source_table", "table_id"),
+        ("filters", "datasource", "datasource_id"),
+    ):
         items = out.get(key)
         for item in items if isinstance(items, list) else []:
             if isinstance(item, dict) and portable in item:

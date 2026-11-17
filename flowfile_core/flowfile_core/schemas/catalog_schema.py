@@ -7,7 +7,7 @@ run history, favorites and follows.
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, TypedDict
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas.sharing_schema import AccessInfo
@@ -898,6 +898,34 @@ class DashboardKpi(BaseModel):
     value_size: Literal["auto", "sm", "md", "lg", "xl"] = "auto"
 
 
+class DashboardTableColumn(BaseModel):
+    """One column a ``type == "table"`` tile shows, in display order.
+
+    ``label`` replaces the column name in the header. ``decimals`` (None =
+    auto) and ``thousands`` format the column's numbers; text cells ignore them.
+    """
+
+    field: str = Field(min_length=1)
+    label: str | None = Field(default=None, max_length=120)
+    decimals: int | None = Field(default=None, ge=0, le=6)
+    thousands: bool = True
+
+
+class DashboardTableConfig(BaseModel):
+    """Rows config for a ``type == "table"`` tile.
+
+    ``columns`` empty shows every column of the source. ``sort_by`` is the
+    default sort, applied in ``sort_direction`` to every listed column (one
+    polars-gw ``sort`` step); a viewer's header click replaces it for the
+    session and is not saved, nor is the page they are on.
+    """
+
+    columns: list[DashboardTableColumn] = Field(default_factory=list)
+    sort_by: list[str] = Field(default_factory=list)
+    sort_direction: Literal["ascending", "descending"] = "ascending"
+    page_size: int = Field(default=25, ge=5, le=500)
+
+
 class DashboardTile(BaseModel):
     """One tile on a dashboard canvas.
 
@@ -908,15 +936,20 @@ class DashboardTile(BaseModel):
     and ``show_title`` False hides the heading from viewers); ``"text"`` renders user-authored Markdown from
     ``text_md``; ``"separator"`` draws a rule to break the page into
     sections (``orientation``, ``thickness`` in px and ``line_color`` style
-    it); ``"kpi"`` shows one headline aggregate of the ``viz_id``
-    visualization's source configured by ``kpi`` (``chart_index`` is ignored;
-    ``kpi`` None is an unconfigured placeholder). Type-irrelevant fields are
-    simply ignored.
+    it); ``"kpi"`` shows one headline aggregate configured by ``kpi``
+    (``chart_index`` is ignored; ``kpi`` None is an unconfigured placeholder);
+    ``"table"`` shows the source's rows, paged and sorted on the worker,
+    configured by ``table`` (None = every column, default page size).
+
+    A KPI or table tile reads either a catalog table directly (``table_id``)
+    or a saved chart's data source (``viz_id``, how a SQL source is reached),
+    never both. Type-irrelevant fields are simply ignored.
     """
 
     id: str
-    type: Literal["viz", "text", "separator", "kpi"] = "viz"
+    type: Literal["viz", "text", "separator", "kpi", "table"] = "viz"
     viz_id: int | None = None
+    table_id: int | None = None
     chart_index: int = 0
     title: str | None = Field(default=None, max_length=120)
     show_title: bool = True
@@ -927,10 +960,17 @@ class DashboardTile(BaseModel):
     thickness: int | None = Field(default=None, ge=1, le=24)
     line_color: str | None = None
     kpi: DashboardKpi | None = None
+    table: DashboardTableConfig | None = None
     x: int
     y: int
     w: int
     h: int
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "DashboardTile":
+        if self.type in ("kpi", "table") and self.viz_id is not None and self.table_id is not None:
+            raise ValueError(f"tile '{self.id}' reads a chart or a table, not both (viz_id and table_id are set)")
+        return self
 
 
 class DashboardGrid(BaseModel):

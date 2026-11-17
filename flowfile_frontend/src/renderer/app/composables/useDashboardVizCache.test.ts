@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getVisualizationMock, getFieldsMock } = vi.hoisted(() => ({
+const { getVisualizationMock, getFieldsMock, getSourceFieldsMock } = vi.hoisted(() => ({
   getVisualizationMock: vi.fn(),
   getFieldsMock: vi.fn(),
+  getSourceFieldsMock: vi.fn(),
 }));
 
 vi.mock("../api/catalog.api", () => ({
   CatalogApi: {
     getVisualization: getVisualizationMock,
     getSavedVisualizationFields: getFieldsMock,
+    getVisualizationFields: getSourceFieldsMock,
   },
 }));
 
@@ -17,6 +19,7 @@ import { createDashboardVizCache } from "./useDashboardVizCache";
 beforeEach(() => {
   getVisualizationMock.mockReset();
   getFieldsMock.mockReset();
+  getSourceFieldsMock.mockReset();
 });
 
 describe("createDashboardVizCache", () => {
@@ -58,5 +61,23 @@ describe("createDashboardVizCache", () => {
     cache.invalidate();
     await Promise.all([cache.getViz(1), cache.getViz(2)]);
     expect(getVisualizationMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("describes a table once for every tile that reads it, until everything is invalidated", async () => {
+    getSourceFieldsMock.mockResolvedValue({ fields: [{ fid: "region" }] });
+    const cache = createDashboardVizCache();
+
+    await Promise.all([cache.getTableFields(5), cache.getTableFields(5)]);
+    await cache.getTableFields(5);
+    expect(getSourceFieldsMock).toHaveBeenCalledTimes(1);
+    expect(getSourceFieldsMock).toHaveBeenCalledWith({ source_type: "table", table_id: 5 });
+
+    cache.invalidate(5);
+    await cache.getTableFields(5);
+    expect(getSourceFieldsMock).toHaveBeenCalledTimes(1);
+
+    cache.invalidate();
+    await cache.getTableFields(5);
+    expect(getSourceFieldsMock).toHaveBeenCalledTimes(2);
   });
 });

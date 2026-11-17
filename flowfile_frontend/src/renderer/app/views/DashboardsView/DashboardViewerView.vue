@@ -54,6 +54,7 @@
         mode="view"
         :appearance="appearance"
         :viz-refresh-nonces="vizRefreshNonces"
+        :data-refresh-nonce="statsRefreshNonce"
         :tile-datasource="tileDatasource"
         @edit-viz="onEditVizFromTile"
       />

@@ -3,7 +3,7 @@
     ref="rootEl"
     class="tile"
     :class="{
-      'tile-card': (isViz || isKpi) && !blankInView,
+      'tile-card': (isViz || isKpi || isTable) && !blankInView,
       'tile-blank': blankInView,
       'tile-text': isText,
       'tile-text-view': isText && mode === 'view',
@@ -50,7 +50,15 @@
           <el-icon class="tile-menu" @click.stop><MoreFilled /></el-icon>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item :disabled="tile.viz_id == null" @click="emit('edit-viz')">
+              <template v-if="isTable">
+                <el-dropdown-item @click="tableRef?.openSettings()">
+                  <el-icon><Grid /></el-icon> Edit table
+                </el-dropdown-item>
+                <el-dropdown-item :disabled="!tableSource" @click="downloadTableCsv">
+                  <el-icon><Download /></el-icon> Download CSV
+                </el-dropdown-item>
+              </template>
+              <el-dropdown-item v-else :disabled="tile.viz_id == null" @click="emit('edit-viz')">
                 <el-icon><Edit /></el-icon> Edit chart
               </el-dropdown-item>
               <el-dropdown-item @click="renameFromMenu">
@@ -69,10 +77,42 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        <el-dropdown v-else-if="isTable && tableSource" trigger="click" @click.stop>
+          <el-icon class="tile-menu" @click.stop><MoreFilled /></el-icon>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="downloadTableCsv">
+                <el-icon><Download /></el-icon> Download CSV
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
-    <div v-if="!isViz && mode === 'edit' && !textEditing" class="tile-text-actions" @mousedown.stop>
+    <!-- A viewer of a table whose title is hidden still gets its download. -->
+    <div
+      v-if="isTable && !showHeader && tableSource && !blankInView"
+      class="tile-text-actions"
+      @mousedown.stop
+    >
+      <el-dropdown trigger="click" @click.stop>
+        <el-icon class="tile-menu"><MoreFilled /></el-icon>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item @click="downloadTableCsv">
+              <el-icon><Download /></el-icon> Download CSV
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
+
+    <div
+      v-if="!isViz && !isTable && mode === 'edit' && !textEditing"
+      class="tile-text-actions"
+      @mousedown.stop
+    >
       <el-dropdown trigger="click" @click.stop>
         <el-icon class="tile-menu"><MoreFilled /></el-icon>
         <template #dropdown>
@@ -106,7 +146,7 @@
     <div
       v-if="!blankInView"
       class="tile-body"
-      :class="{ 'tile-handle': !isViz && mode === 'edit' && !textEditing }"
+      :class="{ 'tile-handle': !isViz && !isTable && mode === 'edit' && !textEditing }"
     >
       <div v-if="isSeparator" class="tile-separator-line" :style="separatorLineStyle" />
       <template v-else-if="isText">
@@ -143,7 +183,17 @@
         :mode="mode"
         :filters="filters"
         :tile-datasource="tileDatasource"
-        :viz-refresh-nonce="vizRefreshNonce"
+        :viz-refresh-nonce="refreshNonce"
+        @update:tile="emit('update:tile', $event)"
+      />
+      <TableTile
+        v-else-if="isTable"
+        ref="tableRef"
+        :tile="tile"
+        :mode="mode"
+        :filters="filters"
+        :tile-datasource="tileDatasource"
+        :refresh-nonce="refreshNonce"
         @update:tile="emit('update:tile', $event)"
       />
       <template v-else>
@@ -318,8 +368,10 @@ import {
   Close,
   CopyDocument,
   Delete,
+  Download,
   Edit,
   EditPen,
+  Grid,
   Hide,
   MoreFilled,
   Odometer,
@@ -334,6 +386,7 @@ import {
   useDashboardComputation,
   filtersTargetingTile,
   splitChartFilters,
+  tileSourceOf,
   type TileField,
 } from "../../composables/useDashboardComputation";
 import type {
@@ -343,6 +396,7 @@ import type {
   SeparatorOrientation,
 } from "../../types";
 import KpiTile from "./KpiTile.vue";
+import TableTile from "./TableTile.vue";
 import { isKpiComplete } from "./kpi";
 import VueGraphicRenderer from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicRenderer.vue";
 
@@ -353,6 +407,8 @@ const props = defineProps<{
   filters: DashboardFilter[];
   /** Bumped by the parent after a viz edit so the renderer remounts and re-fetches. */
   vizRefreshNonce?: number;
+  /** Bumped on every dashboard refresh; KPI and table tiles that read a table follow it. */
+  dataRefreshNonce?: number;
   /** Resolver for the tile's underlying CatalogTable id (used to gate datasource-bound filters). */
   tileDatasource?: (tileId: string) => number | null;
   /** Column count of the hosting grid; a horizontal separator spans all of them. */
@@ -370,16 +426,24 @@ const isText = computed(() => props.tile.type === "text");
 const isSeparator = computed(() => props.tile.type === "separator");
 const isKpi = computed(() => props.tile.type === "kpi");
 const isViz = computed(() => props.tile.type === "viz");
+const isTable = computed(() => props.tile.type === "table");
 const rootEl = ref<HTMLElement | null>(null);
 const kpiRef = ref<InstanceType<typeof KpiTile> | null>(null);
+const tableRef = ref<InstanceType<typeof TableTile> | null>(null);
 
-// A viewer sees the space a KPI still to be set up takes, not a note about it.
+// Both only ever grow, so their sum moves whenever either does.
+const refreshNonce = computed(() => (props.vizRefreshNonce ?? 0) + (props.dataRefreshNonce ?? 0));
+const tableSource = computed(() => (isTable.value ? tileSourceOf(props.tile) : null));
+
+// A viewer sees the space a KPI or table still to be set up takes, not a note about it.
 const blankInView = computed(
   () =>
     props.mode === "view" &&
-    isKpi.value &&
-    (props.tile.viz_id == null || !isKpiComplete(props.tile.kpi)),
+    ((isKpi.value && (tileSourceOf(props.tile) == null || !isKpiComplete(props.tile.kpi))) ||
+      (isTable.value && tableSource.value == null)),
 );
+
+const downloadTableCsv = () => tableRef.value?.downloadCsv(headerTitle.value);
 
 // ---- separator branch ----
 const isVertical = computed(() => props.tile.orientation === "vertical");
@@ -471,6 +535,10 @@ const { computation, lastError } = useDashboardComputation({
 });
 
 const vizName = computed(() => {
+  if (isTable.value) {
+    if (tableRef.value?.sourceName) return tableRef.value.sourceName;
+    return tableSource.value ? "Loading…" : "Table";
+  }
   if (viz.value?.name) return viz.value.name;
   if (loading.value) return "Loading…";
   if (props.tile.viz_id != null) return `Visualization #${props.tile.viz_id}`;
@@ -585,13 +653,15 @@ const headerTitle = computed(() => props.tile.title?.trim() || vizName.value);
 // ---- chart tile title ----
 const titleHidden = computed(() => props.tile.show_title === false);
 // The header is also the drag handle and holds the menu, so the editor always shows it.
-const showHeader = computed(() => isViz.value && (props.mode === "edit" || !titleHidden.value));
+const showHeader = computed(
+  () => (isViz.value || isTable.value) && (props.mode === "edit" || !titleHidden.value),
+);
 const titleEditing = ref(false);
 const titleDraft = ref("");
 const titleInputEl = ref<HTMLInputElement | null>(null);
 
 const startTitleEdit = async () => {
-  if (props.mode !== "edit" || !isViz.value) return;
+  if (props.mode !== "edit" || !(isViz.value || isTable.value)) return;
   titleDraft.value = props.tile.title ?? "";
   titleEditing.value = true;
   await nextTick();
@@ -652,7 +722,7 @@ const closeColorMenu = () => {
 };
 
 const onTileContextMenu = (e: MouseEvent) => {
-  if (isViz.value || props.mode !== "edit" || textEditing.value) return;
+  if (isViz.value || isTable.value || props.mode !== "edit" || textEditing.value) return;
   e.preventDefault();
   colorMenu.value = {
     visible: true,

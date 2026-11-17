@@ -1,7 +1,12 @@
 import { computed, type ComputedRef, type Ref } from "vue";
 import { CatalogApi } from "../api/catalog.api";
 import { useGraphicWalkerCompute } from "./useGraphicWalkerCompute";
-import type { DashboardFilter, DashboardFilterKind, DashboardTile } from "../types";
+import type {
+  DashboardFilter,
+  DashboardFilterKind,
+  DashboardTile,
+  VisualizationComputeResponse,
+} from "../types";
 import { resolveDateRange } from "../views/DashboardsView/dateRange";
 
 type SemanticType = "quantitative" | "nominal" | "ordinal" | "temporal";
@@ -101,6 +106,41 @@ const filterToRule = (f: DashboardFilter, field?: TileField): Record<string, unk
   }
   return null;
 };
+
+/** Where a tile's rows come from: a catalog table read directly, or a saved chart's source. */
+export type TileSource = { kind: "table"; tableId: number } | { kind: "viz"; vizId: number };
+
+/** A KPI or table tile reads ``table_id`` when set, else its chart; a chart tile its chart. */
+export const tileSourceOf = (tile: DashboardTile): TileSource | null => {
+  if ((tile.type === "kpi" || tile.type === "table") && tile.table_id != null) {
+    return { kind: "table", tableId: tile.table_id };
+  }
+  return tile.viz_id != null ? { kind: "viz", vizId: tile.viz_id } : null;
+};
+
+export const sameSource = (a: TileSource | null, b: TileSource | null): boolean =>
+  JSON.stringify(a) === JSON.stringify(b);
+
+/** What a tile says when its source is gone. */
+export const missingSourceText = (source: TileSource): string =>
+  source.kind === "table"
+    ? `Table #${source.tableId} no longer exists.`
+    : `Visualization #${source.vizId} no longer exists.`;
+
+/** Run one Graphic Walker workflow payload against a source on the worker. A table goes through
+ * the ad-hoc route, which checks the caller may read that table; a chart through its own route. */
+export const computeOnSource = (
+  source: TileSource,
+  payload: Record<string, unknown>,
+  maxRows?: number,
+): Promise<VisualizationComputeResponse> =>
+  source.kind === "table"
+    ? CatalogApi.computeAdHocVisualization(
+        { source_type: "table", table_id: source.tableId },
+        payload,
+        maxRows,
+      )
+    : CatalogApi.computeSavedVisualization(source.vizId, { payload, maxRows });
 
 export type TileDatasourceResolver = (tileId: string) => number | null;
 
@@ -222,8 +262,8 @@ export function useDashboardComputation(opts: UseDashboardComputationOptions) {
   );
 
   const fetcher = async (payload: any): Promise<{ rows: any[]; error: string | null }> => {
-    const vizId = opts.tile.value.viz_id;
-    if (vizId == null) return { rows: [], error: null };
+    const source = tileSourceOf(opts.tile.value);
+    if (source == null) return { rows: [], error: null };
     const filterStep = buildFilterStep(
       effectiveFilters.value,
       opts.tileFields?.() ?? null,
@@ -234,12 +274,15 @@ export function useDashboardComputation(opts: UseDashboardComputationOptions) {
         ? { ...payload, workflow: [filterStep, ...payload.workflow] }
         : payload;
     try {
-      const resp = await CatalogApi.computeSavedVisualization(vizId, { payload: finalPayload });
+      const resp = await computeOnSource(source, finalPayload);
       return { rows: resp.rows, error: resp.error ?? null };
     } catch (err: any) {
       if (err?.response?.status === 404) {
         opts.onMissing?.();
-        return { rows: [], error: "Visualization not found" };
+        return {
+          rows: [],
+          error: source.kind === "table" ? "Table not found" : "Visualization not found",
+        };
       }
       throw err;
     }

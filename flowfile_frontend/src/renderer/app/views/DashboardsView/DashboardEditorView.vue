@@ -79,6 +79,7 @@
           @add-text="onAddTextTile"
           @add-separator="onAddSeparatorTile"
           @add-kpi="onAddKpiTile"
+          @add-table="onAddTableTile"
           @create="sourcePickerOpen = true"
         />
       </aside>
@@ -108,6 +109,7 @@
             mode="edit"
             :appearance="appearance"
             :viz-refresh-nonces="vizRefreshNonces"
+            :data-refresh-nonce="statsRefreshNonce"
             :tile-datasource="tileDatasource"
             @update:layout="onLayoutChange"
             @edit-viz="onEditViz"
@@ -115,6 +117,7 @@
             @add-text-at="onAddTextAt"
             @add-separator-at="onAddSeparatorAt"
             @add-kpi-at="onAddKpiAt"
+            @add-table-at="onAddTableAt"
           />
         </template>
       </main>
@@ -188,6 +191,7 @@ import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
 import { upgradeLayoutGrid } from "./gridVersion";
 import { KPI_DEFAULT_SIZE } from "./kpi";
+import { TABLE_DEFAULT_SIZE } from "./tableTile";
 import {
   EMPTY_DASHBOARD_LAYOUT,
   type CatalogVisualization,
@@ -556,6 +560,31 @@ const onAddKpiAt = ({ x, y }: { x: number; y: number }) => {
   const layout = store.current.layout;
   const row = y < 0 ? findFreeRow(layout) : y;
   onLayoutChange({ ...layout, tiles: [...layout.tiles, buildKpiTile(x, row)] });
+};
+
+const buildTableTile = (x: number, y: number): DashboardTile => ({
+  id: generateTileId(),
+  type: "table",
+  viz_id: null,
+  table_id: null,
+  chart_index: 0,
+  table: null,
+  x,
+  y,
+  ...TABLE_DEFAULT_SIZE,
+});
+
+const onAddTableTile = () => {
+  if (!store.current) return;
+  const layout = store.current.layout;
+  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTableTile(0, findFreeRow(layout))] });
+};
+
+const onAddTableAt = ({ x, y }: { x: number; y: number }) => {
+  if (!store.current) return;
+  const layout = store.current.layout;
+  const row = y < 0 ? findFreeRow(layout) : y;
+  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTableTile(x, row)] });
 };
 
 const buildSeparatorTile = (

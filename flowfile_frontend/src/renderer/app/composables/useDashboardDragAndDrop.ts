@@ -5,12 +5,14 @@ export const VIZ_MIME = "application/flowfile-viz";
 export const TEXT_MIME = "application/flowfile-text";
 export const SEPARATOR_MIME = "application/flowfile-separator";
 export const KPI_MIME = "application/flowfile-kpi";
+export const TABLE_MIME = "application/flowfile-table";
 
 const draggedVizId = ref<number | null>(null);
 const isDraggingViz = ref(false);
 const isDraggingText = ref(false);
 const isDraggingSeparator = ref(false);
 const isDraggingKpi = ref(false);
+const isDraggingTable = ref(false);
 
 export function useDashboardDragAndDrop() {
   const onDragEnd = () => {
@@ -18,6 +20,7 @@ export function useDashboardDragAndDrop() {
     isDraggingText.value = false;
     isDraggingSeparator.value = false;
     isDraggingKpi.value = false;
+    isDraggingTable.value = false;
     draggedVizId.value = null;
   };
 
@@ -56,16 +59,24 @@ export function useDashboardDragAndDrop() {
     armDragEnd(event);
   };
 
+  const onTableDragStart = (event: DragEvent) => {
+    event.dataTransfer?.setData(TABLE_MIME, "1");
+    isDraggingTable.value = true;
+    armDragEnd(event);
+  };
+
   return {
     draggedVizId,
     isDraggingViz,
     isDraggingText,
     isDraggingSeparator,
     isDraggingKpi,
+    isDraggingTable,
     onVizDragStart,
     onTextDragStart,
     onSeparatorDragStart,
     onKpiDragStart,
+    onTableDragStart,
     onDragEnd,
   };
 }

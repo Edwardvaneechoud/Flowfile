@@ -45,8 +45,8 @@ test.describe("Dashboards", () => {
     await login(page, token, `#/main/dashboards/${seeded.dashboardId}`);
 
     await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
-    await expect(page.locator(".tile-card")).toHaveCount(2);
-    await expect(page.locator(".tile-title")).toHaveText("Revenue by region");
+    await expect(page.locator(".tile-card")).toHaveCount(3);
+    await expect(page.locator(".tile-title")).toHaveText(["Revenue by region", "Orders"]);
     // The KPI still to be set up keeps its space and says nothing.
     await expect(page.locator(".tile-blank")).toHaveCount(1);
     await expect(page.getByText("KPI not configured")).toHaveCount(0);
@@ -84,12 +84,13 @@ test.describe("Dashboards", () => {
 
   test("a duplicated tile and a description are saved", async ({ page, request }) => {
     await login(page, token, `#/main/dashboards/${seeded.dashboardId}/edit`);
-    await expect(page.locator(".tile-header")).toHaveCount(1, { timeout: 30000 });
+    await expect(page.locator(".tile-header")).toHaveCount(2, { timeout: 30000 });
 
     await page.getByPlaceholder("Description (optional)").fill("Orders by region");
-    await page.locator(".tile-header .tile-menu").click();
+    const chartHeader = page.locator(".tile-header", { hasText: "Revenue by region" });
+    await chartHeader.locator(".tile-menu").click();
     await page.locator(".el-dropdown-menu__item:visible", { hasText: "Duplicate" }).click();
-    await expect(page.locator(".tile-header")).toHaveCount(2);
+    await expect(page.locator(".tile-header")).toHaveCount(3);
 
     await expect
       .poll(
@@ -107,5 +108,35 @@ test.describe("Dashboards", () => {
         { timeout: 20000 },
       )
       .toEqual(["Orders by region", 2, ["Revenue by region", "Revenue by region"]]);
+  });
+
+  test("a viewer pages and sorts a table tile on the worker, and the region filter narrows it", async ({
+    page,
+  }) => {
+    await login(page, token, `#/main/dashboards/${seeded.dashboardId}`);
+    const table = page.locator(".rows-grid");
+    const range = table.locator(".rows-range");
+    const firstColumn = table.locator("tbody tr td:first-child");
+    const amounts = table.locator("tbody tr td:nth-child(2)");
+
+    // The saved default: largest amount first, five rows a page.
+    await expect(range).toHaveText("1–5 of 7 rows", { timeout: 30000 });
+    await expect(table.locator("thead th")).toHaveText(["Region", "amount"]);
+    await expect(amounts).toHaveText(["100", "70", "50", "30", "20"]);
+
+    await table.locator("thead th", { hasText: "Region" }).click();
+    await expect(firstColumn).toHaveText(["Central", "Central", "East", "North", "South"]);
+    await expect(table.locator("thead th").first()).toHaveAttribute("aria-sort", "ascending");
+
+    await table.getByRole("button", { name: "Next page" }).click();
+    await expect(range).toHaveText("6–7 of 7 rows");
+    await expect(firstColumn).toHaveText(["West", "West"]);
+
+    await page.locator(".filter-chip-input").click();
+    await page.locator(".el-select-dropdown__item:visible", { hasText: "West" }).click();
+    await page.keyboard.press("Escape");
+
+    await expect(range).toHaveText("1–2 of 2 rows");
+    await expect(firstColumn).toHaveText(["West", "West"]);
   });
 });

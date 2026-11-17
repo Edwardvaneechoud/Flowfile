@@ -284,6 +284,63 @@ class TestDashboardCRUD:
         filters = client.get(f"/catalog/dashboards/{resp.json()['id']}").json()["layout"]["filters"]
         assert filters[0]["target_tile_ids"] == ["kpi-1"]
 
+    def test_create_with_table_tiles(self, client):
+        table_id = _make_table()
+        table_config = {
+            "columns": [
+                {"field": "region", "label": "Region", "decimals": None, "thousands": True},
+                {"field": "amount", "label": None, "decimals": 2, "thousands": False},
+            ],
+            "sort_by": ["amount", "region"],
+            "sort_direction": "descending",
+            "page_size": 50,
+        }
+        layout = _layout_with_two_tiles()
+        layout["tiles"] += [
+            {"id": "tbl-1", "type": "table", "table_id": table_id, "table": table_config, "x": 0, "y": 6, "w": 6, "h": 6},
+            {"id": "tbl-2", "type": "table", "viz_id": 1, "x": 6, "y": 6, "w": 6, "h": 6},
+            {"id": "tbl-3", "type": "table", "x": 0, "y": 12, "w": 6, "h": 6},
+            {"id": "kpi-t", "type": "kpi", "table_id": table_id, "kpi": {"agg": "count"}, "x": 6, "y": 12, "w": 3, "h": 2},
+        ]
+        resp = client.post("/catalog/dashboards", json={"name": "With table", "layout": layout})
+        assert resp.status_code == 201, resp.text
+        tiles = client.get(f"/catalog/dashboards/{resp.json()['id']}").json()["layout"]["tiles"]
+        assert (tiles[2]["type"], tiles[2]["table_id"], tiles[2]["viz_id"]) == ("table", table_id, None)
+        assert tiles[2]["table"] == table_config
+        # A chart's source, and a table still to be set up, keep the defaults.
+        assert (tiles[3]["viz_id"], tiles[3]["table_id"], tiles[3]["table"]) == (1, None, None)
+        assert (tiles[4]["viz_id"], tiles[4]["table_id"]) == (None, None)
+        assert (tiles[5]["table_id"], tiles[5]["viz_id"], tiles[5]["kpi"]["agg"]) == (table_id, None, "count")
+
+    def test_layout_saved_before_table_tiles_loads_unchanged(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert [(t["viz_id"], t["table_id"], t["table"]) for t in tiles] == [(1, None, None), (2, None, None)]
+
+    @pytest.mark.parametrize(
+        "bad_tile",
+        [
+            {"type": "table", "viz_id": 1, "table_id": 2},
+            {"type": "kpi", "viz_id": 1, "table_id": 2, "kpi": {"agg": "count"}},
+            {"type": "table", "table_id": 2, "table": {"page_size": 0}},
+            {"type": "table", "table_id": 2, "table": {"page_size": 501}},
+            {"type": "table", "table_id": 2, "table": {"sort_direction": "up"}},
+            {"type": "table", "table_id": 2, "table": {"columns": [{"field": "a", "decimals": 7}]}},
+            {"type": "table", "table_id": 2, "table": {"columns": [{"field": ""}]}},
+        ],
+    )
+    def test_invalid_table_tile_returns_422(self, client, bad_tile):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append({"id": "bad", **bad_tile, "x": 0, "y": 6, "w": 6, "h": 6})
+        resp = client.post("/catalog/dashboards", json={"name": "Bad table", "layout": layout})
+        assert resp.status_code == 422
+
     def test_create_with_unknown_tile_type_returns_422(self, client):
         layout = _layout_with_two_tiles()
         layout["tiles"].append({"id": "bad", "type": "image", "x": 0, "y": 6, "w": 12, "h": 1})

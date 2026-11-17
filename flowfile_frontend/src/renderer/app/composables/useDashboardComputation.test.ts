@@ -7,10 +7,12 @@ import {
   buildFilterStep,
   describeFieldFit,
   filtersTargetingTile,
+  missingSourceText,
   splitChartFilters,
+  tileSourceOf,
   type TileField,
 } from "./useDashboardComputation";
-import type { DashboardFilter } from "../types";
+import type { DashboardFilter, DashboardTile } from "../types";
 
 const filterOf = (over: Partial<DashboardFilter>): DashboardFilter => ({
   id: "f",
@@ -262,5 +264,41 @@ describe("describeFieldFit", () => {
       status: "type",
       reason: "when is a date column here; a categorical filter needs text or number",
     });
+  });
+});
+
+describe("tileSourceOf", () => {
+  const tileOf = (over: Partial<DashboardTile>): DashboardTile => ({
+    id: "t",
+    type: "table",
+    viz_id: null,
+    chart_index: 0,
+    x: 0,
+    y: 0,
+    w: 6,
+    h: 6,
+    ...over,
+  });
+
+  it("reads a table directly when the tile names one, else its chart", () => {
+    expect(tileSourceOf(tileOf({ table_id: 5 }))).toEqual({ kind: "table", tableId: 5 });
+    expect(tileSourceOf(tileOf({ type: "kpi", table_id: 5 }))).toEqual({
+      kind: "table",
+      tableId: 5,
+    });
+    expect(tileSourceOf(tileOf({ viz_id: 3 }))).toEqual({ kind: "viz", vizId: 3 });
+    expect(tileSourceOf(tileOf({}))).toBeNull();
+  });
+
+  it("never reads a table for a chart tile", () => {
+    expect(tileSourceOf(tileOf({ type: "viz", viz_id: 3, table_id: 5 }))).toEqual({
+      kind: "viz",
+      vizId: 3,
+    });
+  });
+
+  it("names the missing source", () => {
+    expect(missingSourceText({ kind: "table", tableId: 5 })).toBe("Table #5 no longer exists.");
+    expect(missingSourceText({ kind: "viz", vizId: 3 })).toBe("Visualization #3 no longer exists.");
   });
 });

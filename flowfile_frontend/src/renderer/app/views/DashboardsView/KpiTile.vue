@@ -12,9 +12,9 @@
       </el-button>
       <span v-else class="kpi-muted">KPI not configured</span>
     </div>
-    <div v-else-if="missing" class="kpi-state tile-missing">
+    <div v-else-if="missing && source" class="kpi-state tile-missing">
       <el-icon><WarningFilled /></el-icon>
-      <span>Visualization #{{ tile.viz_id }} no longer exists.</span>
+      <span>{{ missingSourceText(source) }}</span>
     </div>
     <div v-else-if="error" class="kpi-state tile-error" :title="error">
       <el-icon><Warning /></el-icon>
@@ -52,15 +52,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, toRef, watch } from "vue";
+import { computed, ref, toRef, watch } from "vue";
 import { Odometer, Warning, WarningFilled } from "@element-plus/icons-vue";
-import { useDashboardVizCache } from "../../composables/useDashboardVizCache";
 import {
   filtersTargetingTile,
+  missingSourceText,
   useDashboardComputation,
-  type TileField,
 } from "../../composables/useDashboardComputation";
-import { useCatalogStore } from "../../stores/catalog-store";
+import { useDashboardTileSource } from "../../composables/useDashboardTileSource";
 import type { DashboardFilter, DashboardTile } from "../../types";
 import KpiSettingsDialog from "./KpiSettingsDialog.vue";
 import {
@@ -94,8 +93,6 @@ const emit = defineEmits<{
 
 const DELTA_ARROW: Record<KpiDelta["direction"], string> = { up: "▲", down: "▼", flat: "■" };
 
-const catalogStore = useCatalogStore();
-const vizCache = useDashboardVizCache();
 const showSettings = ref(false);
 
 const openSettings = () => {
@@ -110,48 +107,24 @@ const onDblclick = (e: MouseEvent) => {
 
 defineExpose({ openSettings });
 
-const unconfigured = computed(() => props.tile.viz_id == null || !isKpiComplete(props.tile.kpi));
+// fields is null while unknown: compute waits for the columns so cross-source filters gate correctly.
+const {
+  source,
+  fields,
+  sourceName,
+  missing,
+  fieldsError,
+  markMissing: onMissing,
+} = useDashboardTileSource(
+  () => props.tile,
+  () => props.vizRefreshNonce ?? 0,
+);
 
-// null while unknown: compute waits for the columns so cross-source filters gate correctly.
-const fields = ref<TileField[] | null>(null);
-const missing = ref(false);
-const fieldsError = ref<string | null>(null);
-let fieldsSeq = 0;
-
-const loadFields = async () => {
-  const seq = ++fieldsSeq;
-  const vizId = props.tile.viz_id;
-  fields.value = null;
-  missing.value = false;
-  fieldsError.value = null;
-  if (vizId == null) return;
-  try {
-    const resp = await vizCache.getFields(vizId);
-    if (seq !== fieldsSeq) return;
-    fields.value = (resp.fields ?? []).map((f) => ({
-      fid: String(f.fid),
-      semanticType: f.semanticType,
-    }));
-  } catch (err: any) {
-    if (seq !== fieldsSeq) return;
-    if (err?.response?.status === 404) {
-      missing.value = true;
-    } else {
-      console.error("KPI tile field load failed:", err);
-      fieldsError.value = "Could not load the visualization's columns";
-    }
-  }
-};
-
-onMounted(loadFields);
-watch([() => props.tile.viz_id, () => props.vizRefreshNonce], loadFields);
+const unconfigured = computed(() => source.value == null || !isKpiComplete(props.tile.kpi));
 
 const tileRef = toRef(props, "tile");
 const filtersRef = toRef(props, "filters");
 const resolveDatasource = (id: string) => props.tileDatasource?.(id) ?? null;
-const onMissing = () => {
-  missing.value = true;
-};
 
 const current = useDashboardComputation({
   tile: tileRef,
@@ -204,7 +177,7 @@ const filterKey = computed(() =>
 
 const requestKey = computed(() =>
   JSON.stringify([
-    props.tile.viz_id,
+    source.value,
     props.tile.kpi ?? null,
     filterKey.value,
     props.vizRefreshNonce ?? 0,
@@ -214,7 +187,7 @@ const requestKey = computed(() =>
 const run = async () => {
   const kpi = props.tile.kpi;
   const payload = kpi ? buildKpiPayload(kpi) : null;
-  if (!kpi || !payload || props.tile.viz_id == null || !fields.value || missing.value) return;
+  if (!kpi || !payload || source.value == null || !fields.value || missing.value) return;
   const seq = ++requestSeq;
   const withPrevious = kpi.comparison === "previous_period" && comparisonFilter.value != null;
   loading.value = true;
@@ -250,10 +223,7 @@ const label = computed(() => {
   return kpi ? kpi.label || autoKpiLabel(kpi) : "";
 });
 
-const sourceTitle = computed(() => {
-  const name = catalogStore.visualizationLibrary.find((v) => v.id === props.tile.viz_id)?.name;
-  return name ? `Source: ${name}` : undefined;
-});
+const sourceTitle = computed(() => (sourceName.value ? `Source: ${sourceName.value}` : undefined));
 
 const formattedValue = computed(() => formatKpiValue(value.value, props.tile.kpi ?? {}));
 

@@ -2,7 +2,25 @@
 
 import type { AccessInfo } from "./sharing.types";
 
-export type DashboardTileType = "viz" | "text" | "separator" | "kpi";
+export type DashboardTileType = "viz" | "text" | "separator" | "kpi" | "table";
+export type TableSortDirection = "ascending" | "descending";
+
+export interface DashboardTableColumn {
+  field: string;
+  /** Header text; absent or null shows the column name. */
+  label?: string | null;
+  /** Number format; text cells ignore both. null = auto. */
+  decimals?: number | null;
+  thousands?: boolean;
+}
+
+export interface DashboardTableConfig {
+  /** Display order; empty shows every column. */
+  columns: DashboardTableColumn[];
+  sort_by: string[];
+  sort_direction: TableSortDirection;
+  page_size: number;
+}
 export type SeparatorOrientation = "horizontal" | "vertical";
 export type KpiAgg = "sum" | "mean" | "median" | "min" | "max" | "count" | "distinctCount";
 export type KpiComparison = "none" | "target" | "previous_period";
@@ -29,8 +47,10 @@ export interface DashboardTile {
   /** Client-generated UUID, stable across saves so component state survives. */
   id: string;
   type: DashboardTileType;
-  /** Required when type === "viz"; the KPI's source when type === "kpi". */
+  /** Required when type === "viz"; a KPI's or table's chart source (never with table_id). */
   viz_id: number | null;
+  /** A KPI's or table's catalog table source, read without a chart (never with viz_id). */
+  table_id?: number | null;
   /** Which entry of CatalogVisualization.spec[] to render. */
   chart_index: number;
   /** A chart tile's own title; absent or null shows the chart's name. */
@@ -46,8 +66,10 @@ export interface DashboardTile {
   orientation?: SeparatorOrientation | null;
   thickness?: number | null;
   line_color?: string | null;
-  /** Headline-number config when type === "kpi"; the source is viz_id. */
+  /** Headline-number config when type === "kpi"; the source is table_id or viz_id. */
   kpi?: DashboardKpi | null;
+  /** Rows config when type === "table"; null = every column, default page size. */
+  table?: DashboardTableConfig | null;
   x: number;
   y: number;
   w: number;

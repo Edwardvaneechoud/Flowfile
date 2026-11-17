@@ -18,7 +18,13 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogDashboard, CatalogTable, CatalogVisualization
 from flowfile_core.project import project_sync
 from flowfile_core.project.service import write_export
-from flowfile_core.schemas.catalog_schema import DashboardKpi, DashboardLayout, DashboardTile
+from flowfile_core.schemas.catalog_schema import (
+    DashboardKpi,
+    DashboardLayout,
+    DashboardTableColumn,
+    DashboardTableConfig,
+    DashboardTile,
+)
 
 OWNER = 1
 
@@ -239,6 +245,72 @@ def test_kpi_tile_round_trips_and_relinks(tmp_path):
             assert DashboardKpi.model_validate(stored_tile["kpi"]) == kpi
         write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "KPI dashboard must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_table_tile_exports_a_portable_table_and_relinks(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    tname = f"rows_{uuid4().hex[:6]}"
+    table_id = _make_table(tname)
+    config = DashboardTableConfig(
+        columns=[DashboardTableColumn(field="amount", label="Amount", decimals=2)],
+        sort_by=["amount"],
+        sort_direction="descending",
+        page_size=50,
+    )
+    layout = DashboardLayout(
+        tiles=[
+            DashboardTile(id="tbl-1", type="table", table_id=table_id, table=config, x=0, y=0, w=24, h=8),
+            DashboardTile(id="kpi-t", type="kpi", table_id=table_id, kpi=DashboardKpi(agg="count"), x=24, y=0, w=12, h=3),
+        ]
+    )
+    _, duuid = _make_dashboard("table-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Rows", OWNER)
+        tiles = _dash_yaml(root)[duuid]["layout"]["tiles"]
+        for tile in tiles:
+            assert tile["source_table"]["name"] == tname and "table_id" not in tile
+        assert tiles[0]["table"] == config.model_dump()
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        # Rebuild with a new table id: both tiles re-link to it by {catalog, schema, name}.
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        _delete_table(tname)
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            table = SQLAlchemyCatalogRepository(db).get_table_by_name(tname, None)
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert table is not None and dashboard is not None
+            stored = json.loads(dashboard.layout_json)["tiles"]
+            assert [t["table_id"] for t in stored] == [table.id, table.id]
+            assert all("source_table" not in t for t in stored)
+            assert DashboardTableConfig.model_validate(stored[0]["table"]) == config
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "table tiles must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        _delete_table(tname)
+        project_sync.close_project(OWNER)
+
+
+def test_table_tile_on_a_deleted_table_exports_no_source(tmp_path):
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    layout = DashboardLayout(tiles=[DashboardTile(id="tbl-gone", type="table", table_id=987654, x=0, y=0, w=24, h=8)])
+    _, duuid = _make_dashboard("gone-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Gone", OWNER)
+        tile = _dash_yaml(root)[duuid]["layout"]["tiles"][0]
+        assert tile["source_table"] is None and "table_id" not in tile
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)
