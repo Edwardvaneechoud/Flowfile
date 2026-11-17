@@ -2,9 +2,14 @@
   <span class="filter-control" :class="`filter-control-${variant}`">
     <template v-if="filter.kind === 'categorical'">
       <el-select
-        :model-value="selectedStrings"
-        multiple
+        :key="several ? 'several' : 'one'"
+        :model-value="several ? chosen : (chosen[0] ?? undefined)"
+        :multiple="several"
+        :clearable="!several"
         filterable
+        remote
+        :remote-method="onQuery"
+        :loading="searching"
         :allow-create="categoricalAllowCreate"
         default-first-option
         collapse-tags
@@ -14,19 +19,18 @@
         class="filter-chip-input"
         :disabled="disabled"
         :no-data-text="categoricalNoDataText"
-        @update:model-value="(v: string[]) => updateState({ selected: v })"
+        @update:model-value="(v: unknown) => updateState(selectionState(filter, v))"
+        @visible-change="onDropdownVisible"
       >
-        <el-option
-          v-for="opt in categoricalOptions"
-          :key="opt.value"
-          :value="opt.value"
-          :label="opt.label"
-        />
+        <el-option v-for="opt in categoricalOptions" :key="opt" :value="opt" :label="opt" />
+        <template v-if="cappedHint" #footer>
+          <span class="filter-values-capped">{{ cappedHint }}</span>
+        </template>
       </el-select>
       <span
-        v-if="stats?.truncated"
+        v-if="baseList?.truncated"
         class="filter-chip-hint"
-        title="More distinct values exist; type to add custom values."
+        :title="`Only the first ${VALUE_SEARCH_LIMIT} values are listed; type to search them all.`"
       >
         +more
       </span>
@@ -89,10 +93,22 @@
 import { computed, ref, watch } from "vue";
 import type { ColumnStatsResponse, DashboardFilter } from "../../types";
 import { DATE_PRESETS, presetOf, resolveDateRange } from "./dateRange";
+import {
+  formatFilterValue,
+  matchesQuery,
+  allowsSeveral,
+  selectedValues,
+  selectionState,
+  valueOptions,
+  VALUE_SEARCH_LIMIT,
+  type ValueSearchResult,
+} from "./filterValues";
 
 /**
  * The input of one dashboard filter, shared by the filter strip and a filter tile on the canvas,
- * so both drive the same filter object. It loads the column's values itself.
+ * so both drive the same filter object. It loads the column's values itself: a table's through
+ * its column stats, a SQL chart's through a value search, and either source's through a value
+ * search while the user types into a list that holds only the first values.
  */
 const props = withDefaults(
   defineProps<{
@@ -105,34 +121,66 @@ const props = withDefaults(
       column: string,
       limit?: number,
     ) => Promise<ColumnStatsResponse>;
+    /** Distinct values of the filter's field on its own source that contain the text. */
+    searchValues?: (filter: DashboardFilter, text: string) => Promise<ValueSearchResult>;
     /** Bump to load the values again (manual dashboard refresh). */
     statsRefreshNonce?: number;
   }>(),
-  { disabled: false, variant: "chip", getColumnStats: undefined, statsRefreshNonce: 0 },
+  {
+    disabled: false,
+    variant: "chip",
+    getColumnStats: undefined,
+    searchValues: undefined,
+    statsRefreshNonce: 0,
+  },
 );
 
 const emit = defineEmits<{
   (e: "update:filter", value: DashboardFilter): void;
 }>();
 
-const stats = ref<ColumnStatsResponse | null>(null);
+/** The values the input lists before anything is typed, plus a numeric column's bounds. */
+interface BaseList {
+  values: string[];
+  truncated: boolean;
+  min: unknown;
+  max: unknown;
+}
+
+const baseList = ref<BaseList | null>(null);
+
+const sourceSignature = () =>
+  `${props.filter.id}:${props.filter.datasource_id ?? ""}:${props.filter.datasource_viz_id ?? ""}:${props.filter.field_name}`;
 
 watch(
-  () => [
-    props.statsRefreshNonce,
-    `${props.filter.id}:${props.filter.datasource_id ?? ""}:${props.filter.field_name}`,
-  ],
+  () => [props.statsRefreshNonce, sourceSignature()],
   async () => {
-    const { datasource_id: tableId, field_name: column, id } = props.filter;
-    if (!props.getColumnStats || tableId == null || !column) return;
+    const {
+      datasource_id: tableId,
+      datasource_viz_id: vizId,
+      field_name: column,
+      id,
+    } = props.filter;
+    const signature = sourceSignature();
+    if (!column) return;
     try {
-      const resp = await props.getColumnStats(tableId, column, 100);
-      // getColumnStats caches per (table, column), so a refetch on rebinding is cheap.
-      if (props.filter.datasource_id === tableId && props.filter.field_name === column) {
-        stats.value = resp;
+      let next: BaseList | null = null;
+      if (tableId != null && props.getColumnStats) {
+        // getColumnStats caches per (table, column), so a refetch on rebinding is cheap.
+        const resp = await props.getColumnStats(tableId, column, VALUE_SEARCH_LIMIT);
+        next = {
+          values: (resp.values ?? []).map(formatFilterValue),
+          truncated: resp.truncated,
+          min: resp.min,
+          max: resp.max,
+        };
+      } else if (vizId != null && props.searchValues && props.filter.kind === "categorical") {
+        const resp = await props.searchValues(props.filter, "");
+        next = { values: resp.values, truncated: resp.capped, min: null, max: null };
       }
+      if (next && sourceSignature() === signature) baseList.value = next;
     } catch (err) {
-      console.warn(`[dashboard] column stats failed for filter ${id}:`, err);
+      console.warn(`[dashboard] values failed for filter ${id}:`, err);
     }
   },
   { immediate: true },
@@ -142,50 +190,87 @@ const updateState = (state: Record<string, unknown>) => {
   emit("update:filter", { ...props.filter, state: { ...props.filter.state, ...state } });
 };
 
-const selectedStrings = computed<string[]>(() =>
-  Array.isArray(props.filter.state.selected)
-    ? (props.filter.state.selected as unknown[]).map((v) => String(v))
-    : [],
-);
+const several = computed(() => allowsSeveral(props.filter));
+const chosen = computed<string[]>(() => selectedValues(props.filter));
 
-const formatStatValue = (v: unknown): string => {
-  if (v == null) return "";
-  if (v instanceof Date) return v.toISOString();
-  return String(v);
+const query = ref("");
+const searchResult = ref<(ValueSearchResult & { text: string }) | null>(null);
+const searching = ref(false);
+const searchFailed = ref(false);
+let searchSeq = 0;
+
+// A complete list is searched in the browser; only a list cut at the limit asks the source.
+const onQuery = async (text: string) => {
+  query.value = text;
+  const seq = ++searchSeq;
+  if (text === "" || !baseList.value?.truncated || !props.searchValues) {
+    searching.value = false;
+    return;
+  }
+  searching.value = true;
+  try {
+    const result = await props.searchValues(props.filter, text);
+    if (seq === searchSeq) {
+      searchResult.value = { ...result, text };
+      searchFailed.value = false;
+    }
+  } catch (err) {
+    if (seq === searchSeq) searchFailed.value = true;
+    console.warn(`[dashboard] value search failed for filter ${props.filter.id}:`, err);
+  } finally {
+    if (seq === searchSeq) searching.value = false;
+  }
 };
 
-// Values typed in that are not in the fetched list stay visible (and selected).
-const categoricalOptions = computed<{ value: string; label: string }[]>(() => {
-  const fetched = (stats.value?.values ?? []).map((v) => formatStatValue(v));
-  const seen = new Set<string>();
-  const opts: { value: string; label: string }[] = [];
-  for (const v of [...fetched, ...selectedStrings.value]) {
-    if (seen.has(v)) continue;
-    seen.add(v);
-    opts.push({ value: v, label: v });
-  }
-  return opts;
+const onDropdownVisible = (open: boolean) => {
+  if (!open) void onQuery("");
+};
+
+const searched = computed(() =>
+  query.value !== "" && searchResult.value?.text === query.value ? searchResult.value : null,
+);
+
+// The chosen values always show as chosen, whatever the search returned.
+const categoricalOptions = computed<string[]>(() => {
+  const listed = searched.value
+    ? searched.value.values
+    : (baseList.value?.values ?? []).filter((v) => matchesQuery(v, query.value));
+  return valueOptions(listed, chosen.value);
 });
 
-// Free text only while the distinct list is unknown or truncated.
-const categoricalAllowCreate = computed(() => !stats.value || stats.value.truncated);
+const cappedHint = computed<string | null>(() => {
+  if (searched.value?.capped) {
+    return `Showing the first ${VALUE_SEARCH_LIMIT} matches; type more to narrow them.`;
+  }
+  if (query.value === "" && baseList.value?.truncated) {
+    return `Showing the first ${VALUE_SEARCH_LIMIT} values; type to search them all.`;
+  }
+  return null;
+});
+
+// Free text only while the values are unknown, or cut short with no working search to find the rest.
+const categoricalAllowCreate = computed(
+  () =>
+    !baseList.value || (baseList.value.truncated && (!props.searchValues || searchFailed.value)),
+);
 
 const categoricalPlaceholder = computed(() => {
-  if (!stats.value) return "Loading values…";
-  if (!stats.value.values.length) return "No values found — type to add";
-  return "Select values…";
+  if (!baseList.value) return "Loading values…";
+  if (!baseList.value.values.length) return "No values found — type to add";
+  return several.value ? "Select values…" : "Select a value…";
 });
 
 const categoricalNoDataText = computed(() => {
-  if (!props.getColumnStats) return "Type to add a value";
-  if (!stats.value) return "Loading…";
+  if (!props.getColumnStats && !props.searchValues) return "Type to add a value";
+  if (!baseList.value) return "Loading…";
+  if (searching.value) return "Searching…";
   return "No matching values";
 });
 
 const numericPlaceholder = (which: "min" | "max"): string => {
-  const v = which === "min" ? stats.value?.min : stats.value?.max;
+  const v = which === "min" ? baseList.value?.min : baseList.value?.max;
   if (v == null) return which === "min" ? "Min" : "Max";
-  return `${which === "min" ? "≥" : "≤"} ${formatStatValue(v)}`;
+  return `${which === "min" ? "≥" : "≤"} ${formatFilterValue(v)}`;
 };
 
 const datePickerValue = computed<[Date, Date] | null>(() => {
@@ -247,6 +332,12 @@ const onDatePreset = (value: string) => {
 }
 .filter-chip-preset {
   width: 140px;
+}
+.filter-values-capped {
+  display: block;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  line-height: 1.4;
 }
 .filter-chip-hint {
   color: var(--el-text-color-secondary);

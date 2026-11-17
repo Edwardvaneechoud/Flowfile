@@ -1,24 +1,63 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
 import { CatalogApi } from "../api/catalog.api";
-import type { ColumnSchema, ColumnStatsResponse, DashboardLayout, DashboardTile } from "../types";
-import { tileSourceOf, type TileField } from "./useDashboardComputation";
+import type {
+  ColumnSchema,
+  ColumnStatsResponse,
+  DashboardFilter,
+  DashboardLayout,
+  DashboardTile,
+} from "../types";
+import {
+  computeOnSource,
+  filterSourceKey,
+  filterSourceOf,
+  tableSourceKey,
+  tileSourceOf,
+  vizSourceKey,
+  type DatasourceKey,
+  type TileField,
+} from "./useDashboardComputation";
 import { createDashboardVizCache, type DashboardVizCache } from "./useDashboardVizCache";
+import {
+  valueSearchPayload,
+  valueSearchResult,
+  VALUE_SEARCH_LIMIT,
+  type ValueSearchResult,
+} from "../views/DashboardsView/filterValues";
 
 export interface DashboardDatasource {
+  /** `table:<id>` or `viz:<id>`, the key tiles and filters are matched on. */
+  key: DatasourceKey;
+  /** A catalog table, or a SQL chart's query (a chart on a table is represented by its table). */
+  kind: "table" | "viz";
+  /** The table's id, or the chart's. */
   id: number;
   name: string;
   schema_columns: ColumnSchema[];
-  /** When the table's data last changed, as the catalog recorded it. */
+  /** When the table's data last changed, as the catalog recorded it; null for a SQL chart. */
   updated_at: string | null;
 }
+
+const SEMANTIC_DTYPE: Record<string, string> = {
+  quantitative: "number",
+  temporal: "date",
+};
+
+/** A chart's columns as the filter dialog lists them: no Polars dtype, only its kind. */
+export const fieldsAsColumns = (fields: Record<string, unknown>[]): ColumnSchema[] =>
+  fields.map((f) => ({
+    name: String(f.fid),
+    dtype: SEMANTIC_DTYPE[String(f.semanticType)] ?? "text",
+  }));
 
 /** Resolves dashboard tiles → catalog tables.
  *
  * A KPI or table tile may name its table directly (``table_id``); every other
  * tile goes through its chart: viz → ``catalog_table_id`` → ``CatalogTable``.
  * Together they say (a) which catalog tables back the dashboard and (b) the
- * columns + dtypes available on each. SQL-source visualizations have no
- * ``catalog_table_id`` and therefore do not surface as filterable datasources.
+ * columns + dtypes available on each. A SQL-source visualization has no
+ * ``catalog_table_id``; it surfaces as a datasource of its own (``viz:<id>``),
+ * its columns read from the chart's fields.
  *
  * Per-id fetches are cached for the lifetime of the composable.
  */
@@ -30,6 +69,10 @@ export function useDashboardDatasources(
   const vizToTable = ref<Record<number, number | null>>({});
   // viz_id → display name
   const vizNameById = ref<Record<number, string>>({});
+  // viz_id → its source type, set once the chart was read
+  const vizSourceType = ref<Record<number, "table" | "sql">>({});
+  // viz_id → the SQL chart's source as a datasource
+  const vizSourceCache = ref<Record<number, DashboardDatasource>>({});
   // table_id → DashboardDatasource
   const tableCache = ref<Record<number, DashboardDatasource>>({});
   const loading = ref(false);
@@ -42,6 +85,7 @@ export function useDashboardDatasources(
       const viz = await vizCache.getViz(vizId);
       vizToTable.value[vizId] = viz.source_type === "table" ? (viz.catalog_table_id ?? null) : null;
       vizNameById.value[vizId] = viz.name;
+      vizSourceType.value[vizId] = viz.source_type === "sql" ? "sql" : "table";
     } catch (err) {
       console.warn(`[dashboard] could not fetch viz ${vizId}:`, err);
       if (!(vizId in vizToTable.value)) vizToTable.value[vizId] = null;
@@ -59,6 +103,8 @@ export function useDashboardDatasources(
       try {
         const table = await vizCache.getTable(tableId);
         tableCache.value[tableId] = {
+          key: tableSourceKey(table.id),
+          kind: "table",
           id: table.id,
           name: table.full_table_name ?? table.name,
           schema_columns: table.schema_columns ?? [],
@@ -74,11 +120,31 @@ export function useDashboardDatasources(
     return request;
   };
 
+  // A chart tile reads the same fields when it mounts, so the page cache answers both.
+  const fetchVizSource = async (vizId: number, force = false) => {
+    if (!force && vizId in vizSourceCache.value) return;
+    try {
+      const resp = await vizCache.getFields(vizId);
+      vizSourceCache.value[vizId] = {
+        key: vizSourceKey(vizId),
+        kind: "viz",
+        id: vizId,
+        name: vizNameById.value[vizId] ?? `Chart #${vizId}`,
+        schema_columns: fieldsAsColumns(resp.fields ?? []),
+        updated_at: null,
+      };
+    } catch (err) {
+      console.warn(`[dashboard] could not fetch the columns of chart ${vizId}:`, err);
+    }
+  };
+
   // (table_id, column_name) -> stats. Promise caching dedupes concurrent
   // requests; the resolved Promise stays in the cache so subsequent
   // lookups are synchronous.
   const statsCache = new Map<string, Promise<ColumnStatsResponse>>();
   const statsKey = (tableId: number, column: string) => `${tableId}:${column}`;
+  // (source key, field, text) -> value search result; dropped on a force refresh.
+  const searchCache = new Map<string, Promise<ValueSearchResult>>();
 
   // viz_id → columns of the viz's data; filled on demand by loadTileFields
   const vizFields = ref<Record<number, TileField[]>>({});
@@ -126,6 +192,7 @@ export function useDashboardDatasources(
   const refresh = async (force = false) => {
     if (force) {
       statsCache.clear();
+      searchCache.clear();
       vizFields.value = {};
       directTableFields.value = {};
       vizCache.invalidate();
@@ -140,7 +207,11 @@ export function useDashboardDatasources(
           ...vizIds.map((v) => vizToTable.value[v]).filter((id): id is number => id != null),
         ]),
       );
-      await Promise.all(tableIds.map((id) => fetchTable(id, force)));
+      const sqlVizIds = vizIds.filter((v) => vizSourceType.value[v] === "sql");
+      await Promise.all([
+        ...tableIds.map((id) => fetchTable(id, force)),
+        ...sqlVizIds.map((id) => fetchVizSource(id, force)),
+      ]);
     } finally {
       loading.value = false;
     }
@@ -154,31 +225,41 @@ export function useDashboardDatasources(
     { immediate: true },
   );
 
-  /** The catalog table a tile reads, directly or through its chart. */
-  const tableOfTile = (tile: DashboardTile): number | null => {
+  /** The source a tile reads as a key: its table (directly or through its chart), else its SQL
+   * chart; null while the chart is not read yet. */
+  const keyOfTile = (tile: DashboardTile): DatasourceKey | null => {
     const source = tileSourceOf(tile);
     if (source == null) return null;
-    return source.kind === "table" ? source.tableId : (vizToTable.value[source.vizId] ?? null);
+    if (source.kind === "table") return tableSourceKey(source.tableId);
+    const tableId = vizToTable.value[source.vizId];
+    if (tableId != null) return tableSourceKey(tableId);
+    return vizSourceType.value[source.vizId] === "sql" ? vizSourceKey(source.vizId) : null;
+  };
+
+  const datasourceOfKey = (key: DatasourceKey): DashboardDatasource | null => {
+    const [kind, raw] = key.split(":");
+    const id = Number(raw);
+    return (kind === "table" ? tableCache.value[id] : vizSourceCache.value[id]) ?? null;
   };
 
   const datasourcesInUse = computed<DashboardDatasource[]>(() => {
-    const seen = new Set<number>();
+    const seen = new Set<DatasourceKey>();
     for (const tile of layout.value.tiles) {
-      const tid = tableOfTile(tile);
-      if (tid != null) seen.add(tid);
+      const key = keyOfTile(tile);
+      if (key != null) seen.add(key);
     }
     return Array.from(seen)
-      .map((id) => tableCache.value[id])
+      .map(datasourceOfKey)
       .filter((d): d is DashboardDatasource => !!d)
       .sort((a, b) => a.name.localeCompare(b.name));
   });
 
-  const tilesByDatasource = computed<Record<number, string[]>>(() => {
-    const acc: Record<number, string[]> = {};
+  const tilesByDatasource = computed<Record<DatasourceKey, string[]>>(() => {
+    const acc: Record<DatasourceKey, string[]> = {};
     for (const tile of layout.value.tiles) {
-      const tid = tableOfTile(tile);
-      if (tid == null) continue;
-      (acc[tid] ??= []).push(tile.id);
+      const key = keyOfTile(tile);
+      if (key == null) continue;
+      (acc[key] ??= []).push(tile.id);
     }
     return acc;
   });
@@ -188,9 +269,9 @@ export function useDashboardDatasources(
     layout.value.tiles.filter((t) => tileSourceOf(t) != null).map((t) => t.id),
   );
 
-  const tileDatasource = (tileId: string): number | null => {
+  const tileDatasource = (tileId: string): DatasourceKey | null => {
     const tile = layout.value.tiles.find((t) => t.id === tileId);
-    return tile ? tableOfTile(tile) : null;
+    return tile ? keyOfTile(tile) : null;
   };
 
   const getSchema = (tableId: number): ColumnSchema[] =>
@@ -214,6 +295,34 @@ export function useDashboardDatasources(
         throw err;
       });
       statsCache.set(key, entry);
+    }
+    return entry;
+  };
+
+  /** Distinct values of a filter's field on its own source that contain `text`, ignoring case.
+   * Other filters do not narrow them. */
+  const searchFilterValues = (
+    filter: DashboardFilter,
+    text: string,
+  ): Promise<ValueSearchResult> => {
+    const source = filterSourceOf(filter);
+    if (source == null || !filter.field_name) {
+      return Promise.resolve({ values: [], capped: false });
+    }
+    const field = filter.field_name;
+    const key = JSON.stringify([filterSourceKey(filter), field, text]);
+    let entry = searchCache.get(key);
+    if (!entry) {
+      entry = computeOnSource(source, valueSearchPayload(field, text), VALUE_SEARCH_LIMIT + 1)
+        .then((resp) => {
+          if (resp.error) throw new Error(resp.error);
+          return valueSearchResult(resp.rows ?? [], field);
+        })
+        .catch((err) => {
+          searchCache.delete(key);
+          throw err;
+        });
+      searchCache.set(key, entry);
     }
     return entry;
   };
@@ -263,6 +372,7 @@ export function useDashboardDatasources(
     getSchema,
     getDatasource,
     getColumnStats,
+    searchFilterValues,
     loading,
     refresh,
   };

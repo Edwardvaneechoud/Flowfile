@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { API_URL, authHeaders, getAuthToken } from "./helpers/api";
 import { login } from "./helpers/canvas";
-import { seedDashboard, type SeededDashboard } from "./helpers/dashboards";
+import { seedDashboard, seedWideFilterDashboard, type SeededDashboard } from "./helpers/dashboards";
 
 // Dashboards draw through flowfile_worker: without one every tile stays empty, so the tests
 // skip (they do not pass) when the chart's columns cannot be read.
@@ -240,5 +240,75 @@ test.describe("Dashboards", () => {
     } finally {
       await seededTargets.cleanup(request);
     }
+  });
+
+  test("typing in a filter's value box finds a value beyond the first hundred", async ({
+    page,
+    request,
+  }) => {
+    const wide = await seedWideFilterDashboard(request, token, `e2e wide filter ${Date.now()}`);
+    try {
+      await login(page, token, `#/main/dashboards/${wide.dashboardId}`);
+      const range = page.locator(".rows-grid .rows-range");
+      await expect(range).toHaveText("1–5 of 150 rows", { timeout: 30000 });
+
+      await page.locator(".filter-chip-input").click();
+      const option = (text: string) =>
+        page.locator(".el-select-dropdown__item:visible").getByText(text, { exact: true });
+      await expect(option("C001")).toBeVisible();
+      await expect(option("C149")).toHaveCount(0);
+      await expect(page.getByText("Showing the first 100 values")).toBeVisible();
+
+      const search = page.waitForRequest(
+        (req) =>
+          req.url().includes("/visualizations/compute") &&
+          req.postData()?.includes("regexp") === true,
+      );
+      await page.keyboard.type("c149");
+      await search;
+      await option("C149").click();
+      await page.keyboard.press("Escape");
+
+      await expect(range).toHaveText("1–1 of 1 row");
+    } finally {
+      await wide.cleanup(request);
+    }
+  });
+
+  // Last: it turns the shared seed's region filter single-select.
+  test("a single-select filter picks one value at a time and narrows the KPI", async ({
+    page,
+    request,
+  }) => {
+    const url = `${API_URL}/catalog/dashboards/${seeded.dashboardId}`;
+    const headers = authHeaders(token);
+    const current = await (await request.get(url, { headers })).json();
+    const layout = {
+      ...current.layout,
+      filters: current.layout.filters.map((f: Record<string, unknown>) => ({
+        ...f,
+        multiple: false,
+      })),
+    };
+    const put = await request.put(url, { headers, data: { layout } });
+    expect(put.ok()).toBe(true);
+    expect((await put.json()).layout.filters[0].multiple).toBe(false);
+
+    await login(page, token, `#/main/dashboards/${seeded.dashboardId}`);
+    await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
+    const input = page.locator(".filter-chip-input");
+
+    await input.click();
+    await page.locator(".el-select-dropdown__item:visible", { hasText: "West" }).click();
+    await expect(page.locator(".kpi-value")).toHaveText("150");
+
+    // Picking another value replaces the first: East alone is 70, both would be 220.
+    await input.click();
+    await page.locator(".el-select-dropdown__item:visible", { hasText: "East" }).click();
+    await expect(page.locator(".kpi-value")).toHaveText("70");
+    await expect(input.locator(".el-tag")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Reset" }).click();
+    await expect(page.locator(".kpi-value")).toHaveText("270");
   });
 });

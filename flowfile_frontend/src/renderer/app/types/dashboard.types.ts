@@ -102,11 +102,19 @@ export interface DashboardFilter {
    */
   datasource_id: number | null;
   /**
+   * Optional FK to a SQL-backed CatalogVisualization.id, never with
+   * `datasource_id`: the filter's fields and values come from that chart's
+   * source and scope "datasource" reaches the tiles reading that chart.
+   */
+  datasource_viz_id?: number | null;
+  /**
    * "datasource" (default, also when absent on legacy layouts) applies only
-   * to tiles reading from `datasource_id`; "all" applies to every targeted
+   * to tiles reading from the filter's source; "all" applies to every targeted
    * tile whose data has a column named `field_name` of a compatible type.
    */
   scope?: DashboardFilterScope;
+  /** False makes a categorical filter single-select (`state.selected` holds at most one value). */
+  multiple?: boolean;
 }
 
 export type DashboardFilterScope = "datasource" | "all";

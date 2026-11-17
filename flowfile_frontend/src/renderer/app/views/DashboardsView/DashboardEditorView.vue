@@ -103,6 +103,7 @@
             :tile-fields="tileFields"
             :load-tile-fields="loadTileFields"
             :get-column-stats="getColumnStats"
+            :search-values="searchFilterValues"
             :stats-refresh-nonce="statsRefreshNonce"
             @update:filters="onFiltersChange"
             @place="onPlaceFilter"
@@ -115,6 +116,7 @@
             :data-refresh-nonce="statsRefreshNonce"
             :tile-datasource="tileDatasource"
             :get-column-stats="getColumnStats"
+            :search-values="searchFilterValues"
             @update:layout="onLayoutChange"
             @edit-viz="onEditViz"
             @add-viz-at="onAddVizAt"
@@ -360,6 +362,7 @@ const {
   tileFields,
   loadTileFields,
   getColumnStats,
+  searchFilterValues,
   refresh,
 } = useDashboardDatasources(layoutRef, vizCache);
 

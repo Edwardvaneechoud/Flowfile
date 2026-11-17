@@ -8,12 +8,16 @@ const {
   getTableColumnStatsMock,
   getFieldsMock,
   getSourceFieldsMock,
+  computeSavedMock,
+  computeAdHocMock,
 } = vi.hoisted(() => ({
   getVisualizationMock: vi.fn(),
   getTableMock: vi.fn(),
   getTableColumnStatsMock: vi.fn(),
   getFieldsMock: vi.fn(),
   getSourceFieldsMock: vi.fn(),
+  computeSavedMock: vi.fn(),
+  computeAdHocMock: vi.fn(),
 }));
 
 vi.mock("../api/catalog.api", () => ({
@@ -23,10 +27,13 @@ vi.mock("../api/catalog.api", () => ({
     getTableColumnStats: getTableColumnStatsMock,
     getSavedVisualizationFields: getFieldsMock,
     getVisualizationFields: getSourceFieldsMock,
+    computeSavedVisualization: computeSavedMock,
+    computeAdHocVisualization: computeAdHocMock,
   },
 }));
 
-import { useDashboardDatasources } from "./useDashboardDatasources";
+import { fieldsAsColumns, useDashboardDatasources } from "./useDashboardDatasources";
+import type { DashboardFilter } from "../types";
 
 const TILE_ID = "tile-a";
 
@@ -126,9 +133,11 @@ describe("useDashboardDatasources", () => {
       useDashboardDatasources(ref(layout));
     await flush();
 
-    expect(tilesByDatasource.value).toEqual({ 5: [TILE_ID, "tile-kpi", "tile-kpi-labelled"] });
+    expect(tilesByDatasource.value).toEqual({
+      "table:5": [TILE_ID, "tile-kpi", "tile-kpi-labelled"],
+    });
     expect(vizTileIds.value).toEqual([TILE_ID, "tile-kpi", "tile-kpi-labelled"]);
-    expect(tileDatasource("tile-kpi")).toBe(5);
+    expect(tileDatasource("tile-kpi")).toBe("table:5");
     expect(tileDatasource("tile-kpi-empty")).toBeNull();
     expect(tileLabel("tile-kpi")).toBe("KPI · Revenue");
     expect(tileLabel("tile-kpi-labelled")).toBe("Revenue total");
@@ -177,31 +186,31 @@ describe("useDashboardDatasources", () => {
   it("keeps a resolved tile's datasource warm during a force refresh", async () => {
     const { refresh, tileDatasource } = useDashboardDatasources(ref(layoutOf()));
     await flush();
-    expect(tileDatasource(TILE_ID)).toBe(5);
+    expect(tileDatasource(TILE_ID)).toBe("table:5");
 
     let resolveViz!: (value: typeof vizResponse) => void;
     getVisualizationMock.mockImplementation(() => new Promise((resolve) => (resolveViz = resolve)));
 
     const pending = refresh(true);
-    expect(tileDatasource(TILE_ID)).toBe(5);
+    expect(tileDatasource(TILE_ID)).toBe("table:5");
     await Promise.resolve();
-    expect(tileDatasource(TILE_ID)).toBe(5);
+    expect(tileDatasource(TILE_ID)).toBe("table:5");
 
     resolveViz(vizResponse);
     await pending;
-    expect(tileDatasource(TILE_ID)).toBe(5);
+    expect(tileDatasource(TILE_ID)).toBe("table:5");
   });
 
   it("keeps the previous mapping when a force refetch fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { refresh, tileDatasource } = useDashboardDatasources(ref(layoutOf()));
     await flush();
-    expect(tileDatasource(TILE_ID)).toBe(5);
+    expect(tileDatasource(TILE_ID)).toBe("table:5");
 
     getVisualizationMock.mockRejectedValue(new Error("boom"));
     await refresh(true);
 
-    expect(tileDatasource(TILE_ID)).toBe(5);
+    expect(tileDatasource(TILE_ID)).toBe("table:5");
     warn.mockRestore();
   });
 
@@ -259,9 +268,12 @@ describe("useDashboardDatasources", () => {
     await flush();
 
     expect(datasourcesInUse.value.map((d) => d.id)).toEqual([9, 5]);
-    expect(tilesByDatasource.value).toEqual({ 5: [TILE_ID, "tbl-titled"], 9: ["tbl", "kpi-t"] });
+    expect(tilesByDatasource.value).toEqual({
+      "table:5": [TILE_ID, "tbl-titled"],
+      "table:9": ["tbl", "kpi-t"],
+    });
     expect(vizTileIds.value).toEqual([TILE_ID, "tbl", "tbl-titled", "kpi-t"]);
-    expect(tileDatasource("tbl")).toBe(9);
+    expect(tileDatasource("tbl")).toBe("table:9");
     expect(tileDatasource("tbl-empty")).toBeNull();
     expect(tileLabel("tbl")).toBe("Table · main.orders");
     expect(tileLabel("tbl-titled")).toBe("Latest orders");
@@ -274,5 +286,113 @@ describe("useDashboardDatasources", () => {
     expect(tileFields("tbl")).toEqual([{ fid: "amount", semanticType: "quantitative" }]);
     expect(tileFields("kpi-t")).toEqual([{ fid: "amount", semanticType: "quantitative" }]);
     expect(tileFields("tbl-titled")).toEqual([{ fid: "region", semanticType: "nominal" }]);
+  });
+
+  it("lists a SQL chart as a source of its own, reached by its chart, KPI and table tiles", async () => {
+    getVisualizationMock.mockImplementation(async (id: number) =>
+      id === 2
+        ? { id: 2, name: "Orders query", source_type: "sql", catalog_table_id: null }
+        : vizResponse,
+    );
+    getFieldsMock.mockImplementation(async (id: number) => ({
+      fields:
+        id === 2
+          ? [
+              { fid: "region", semanticType: "nominal" },
+              { fid: "amount", semanticType: "quantitative" },
+              { fid: "day", semanticType: "temporal" },
+            ]
+          : [{ fid: "region", semanticType: "nominal" }],
+      cache_hit: false,
+      error: null,
+    }));
+    const layout = layoutOf();
+    layout.tiles.push(
+      { id: "sql-chart", type: "viz", viz_id: 2, chart_index: 0, x: 0, y: 9, w: 6, h: 6 },
+      {
+        id: "sql-kpi",
+        type: "kpi",
+        viz_id: 2,
+        kpi: { field: "amount", agg: "sum" },
+        chart_index: 0,
+        x: 6,
+        y: 9,
+        w: 6,
+        h: 3,
+      },
+      { id: "sql-rows", type: "table", viz_id: 2, chart_index: 0, x: 12, y: 9, w: 6, h: 6 },
+    );
+    const { datasourcesInUse, tilesByDatasource, tileDatasource } = useDashboardDatasources(
+      ref(layout),
+    );
+    await flush();
+    await flush();
+
+    expect(datasourcesInUse.value.map((d) => [d.key, d.kind, d.name])).toEqual([
+      ["table:5", "table", "main.sales"],
+      ["viz:2", "viz", "Orders query"],
+    ]);
+    expect(datasourcesInUse.value[1].schema_columns).toEqual([
+      { name: "region", dtype: "text" },
+      { name: "amount", dtype: "number" },
+      { name: "day", dtype: "date" },
+    ]);
+    expect(tilesByDatasource.value["viz:2"]).toEqual(["sql-chart", "sql-kpi", "sql-rows"]);
+    expect(tileDatasource("sql-kpi")).toBe("viz:2");
+    expect(tileDatasource(TILE_ID)).toBe("table:5");
+    // The chart tile reads the same fields; one request serves both.
+    expect(getFieldsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("searches a filter's own source for values, once per text, until a force refresh", async () => {
+    computeAdHocMock.mockResolvedValue({ rows: [{ region: "West" }], error: null });
+    computeSavedMock.mockResolvedValue({
+      rows: [{ region: "North" }, { region: null }],
+      error: null,
+    });
+    const { searchFilterValues, refresh } = useDashboardDatasources(ref(layoutOf()));
+    await flush();
+    const onTable: DashboardFilter = {
+      id: "f",
+      field_name: "region",
+      kind: "categorical",
+      state: { selected: [] },
+      target: "all",
+      target_tile_ids: [],
+      datasource_id: 5,
+    };
+
+    expect(await searchFilterValues(onTable, "we")).toEqual({ values: ["West"], capped: false });
+    await searchFilterValues(onTable, "we");
+    expect(computeAdHocMock).toHaveBeenCalledTimes(1);
+    const [source, payload] = computeAdHocMock.mock.calls[0];
+    expect(source).toEqual({ source_type: "table", table_id: 5 });
+    expect(payload.workflow[0].filters[0].rule).toEqual({
+      type: "regexp",
+      value: "we",
+      caseSensitive: false,
+    });
+
+    const onChart = { ...onTable, datasource_id: null, datasource_viz_id: 2 };
+    expect(await searchFilterValues(onChart, "")).toEqual({ values: ["North"], capped: false });
+    expect(computeSavedMock.mock.calls[0][0]).toBe(2);
+
+    await refresh(true);
+    await searchFilterValues(onTable, "we");
+    expect(computeAdHocMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("lists a chart's fields as columns by their kind", () => {
+    expect(
+      fieldsAsColumns([
+        { fid: "n", semanticType: "quantitative" },
+        { fid: "o", semanticType: "ordinal" },
+        { fid: "x" },
+      ]),
+    ).toEqual([
+      { name: "n", dtype: "number" },
+      { name: "o", dtype: "text" },
+      { name: "x", dtype: "text" },
+    ]);
   });
 });

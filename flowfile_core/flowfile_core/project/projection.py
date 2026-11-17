@@ -592,10 +592,10 @@ def visualizations_manifest_data(db: Session, owner_id: int) -> dict:
 
 def _portable_layout(db: Session, layout: dict) -> dict:
     """Rewrite a dashboard layout's machine-local references to portable handles so the canvas
-    round-trips: each tile's ``viz_id`` → ``viz_uuid``, each tile's ``table_id`` and each filter's
-    ``datasource_id`` → ``{catalog, schema, name}``. A reference whose target is gone resolves to
-    ``None`` (the tile surfaces a placeholder at view time — the same decoupled behaviour as a
-    deleted viz)."""
+    round-trips: each tile's ``viz_id`` and each filter's ``datasource_viz_id`` → ``viz_uuid``, each
+    tile's ``table_id`` and each filter's ``datasource_id`` → ``{catalog, schema, name}``. A
+    reference whose target is gone resolves to ``None`` (the tile surfaces a placeholder at view
+    time — the same decoupled behaviour as a deleted viz)."""
     out = copy.deepcopy(layout)
     for tile in out.get("tiles") or []:
         if "viz_id" in tile:
@@ -605,6 +605,8 @@ def _portable_layout(db: Session, layout: dict) -> dict:
     for flt in out.get("filters") or []:
         if "datasource_id" in flt:
             flt["datasource"] = _table_ref(db, flt.pop("datasource_id"))
+        if "datasource_viz_id" in flt:
+            flt["datasource_viz_uuid"] = _viz_uuid_for_id(db, flt.pop("datasource_viz_id"))
     return out
 
 

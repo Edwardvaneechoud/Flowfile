@@ -1006,10 +1006,17 @@ class DashboardFilter(BaseModel):
     ``field_name`` of a compatible type — the datasource then only supplies
     the value list.
 
+    ``datasource_viz_id`` (optional, never with ``datasource_id``) binds the
+    filter to a saved SQL chart's source instead, for a query that has no
+    table: the fields and values come from that chart's source, and scope
+    ``"datasource"`` reaches the tiles reading that chart.
+
     ``state`` carries widget-specific values (selected categorical values,
     a date range, a numeric range). The frontend injects these as a
     ``filter`` workflow step at the front of every targeted tile's GW
     payload before forwarding to ``/visualizations/{viz_id}/compute``.
+    ``multiple`` False makes a categorical filter single-select: the state
+    keeps its ``selected`` list, holding at most one value.
     """
 
     id: str
@@ -1020,7 +1027,17 @@ class DashboardFilter(BaseModel):
     target: Literal["all", "tiles"] = "all"
     target_tile_ids: list[str] = Field(default_factory=list)
     datasource_id: int | None = None
+    datasource_viz_id: int | None = None
     scope: Literal["datasource", "all"] = "datasource"
+    multiple: bool = True
+
+    @model_validator(mode="after")
+    def _one_datasource(self) -> "DashboardFilter":
+        if self.datasource_id is not None and self.datasource_viz_id is not None:
+            raise ValueError(
+                f"filter '{self.id}' reads a table or a chart, not both (datasource_id and datasource_viz_id are set)"
+            )
+        return self
 
 
 class DashboardLayout(BaseModel):

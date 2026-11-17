@@ -773,8 +773,8 @@ def _import_visualizations(root: Path, owner_id: int) -> set[str]:
 def _localize_layout(layout: dict, owner_id: int) -> dict:
     """Inverse of projection._portable_layout: each tile's ``viz_uuid`` → local ``viz_id``, each
     tile's ``source_table`` → local ``table_id``, each filter's ``datasource`` → local
-    ``datasource_id``. Unresolvable references become ``None`` (the tile renders a placeholder),
-    matching the decoupled-tile design."""
+    ``datasource_id`` and its ``datasource_viz_uuid`` → local ``datasource_viz_id``. Unresolvable
+    references become ``None`` (the tile renders a placeholder), matching the decoupled-tile design."""
     out = copy.deepcopy(layout)
     for tile in out.get("tiles") or []:
         if "viz_uuid" in tile:
@@ -784,6 +784,8 @@ def _localize_layout(layout: dict, owner_id: int) -> dict:
     for flt in out.get("filters") or []:
         if "datasource" in flt:
             flt["datasource_id"] = _resolve_table_ref(flt.pop("datasource"), owner_id)
+        if "datasource_viz_uuid" in flt:
+            flt["datasource_viz_id"] = _resolve_viz_id_by_uuid(flt.pop("datasource_viz_uuid"), owner_id)
     return out
 
 
@@ -1515,6 +1517,7 @@ def _dashboard_layout_shape(layout: dict) -> dict:
         ("tiles", "viz_uuid", "viz_id"),
         ("tiles", "source_table", "table_id"),
         ("filters", "datasource", "datasource_id"),
+        ("filters", "datasource_viz_uuid", "datasource_viz_id"),
     ):
         items = out.get(key)
         for item in items if isinstance(items, list) else []:

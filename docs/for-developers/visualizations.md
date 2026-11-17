@@ -98,6 +98,8 @@ A layout's `table_id` is machine-local, so project export writes it as the porta
 
 A `filter` tile reads no rows: it shows the control of one of the layout's filters, named by `filter_id` (the layout-internal `DashboardFilter.id`, so it travels in a project file as is). A filter so placed is not shown in the filter strip. The create and update routes refuse a filter tile whose `filter_id` names no filter of the layout, and a filter placed by two tiles (`VisualizationService._validate_filter_datasources`); reading a stored layout checks neither, and the frontend draws such a tile as a "Filter removed" note in the editor and nothing for viewers.
 
+A dashboard filter is bound to a catalog table (`datasource_id`) or, for a query that has no table, to a saved SQL chart (`datasource_viz_id`), never both (`DashboardFilter` refuses the two). The save routes refuse an unknown chart and a chart that reads a table, which stays represented by its table. Its value list and its value search run on that source through the existing compute routes: a table's first list is its column stats, a SQL chart's an empty-text value search, and typing into a list cut at 100 values sends a search (a `regexp` rule with the typed text escaped, `caseSensitive: false`, which polars-gw runs as `str.contains` on the column cast to text, then an empty-measure aggregate, a sort and one row past the cap). Other filters never narrow the options. `multiple: false` makes a categorical filter single-select without a second state shape: `state.selected` holds at most one value, and the query builder sends only the first. Project export writes `datasource_viz_id` as `datasource_viz_uuid`, the way a tile's `viz_id` travels.
+
 ---
 
 ## The Explore Data node

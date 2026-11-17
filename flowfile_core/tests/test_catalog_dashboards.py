@@ -785,3 +785,93 @@ class TestDashboardFilterTiles:
         resp = client.post("/catalog/dashboards", json={"name": "Twice", "layout": layout})
         assert resp.status_code == 422
         assert "more than once" in resp.text
+
+
+def _make_viz(source_type: str = "sql", table_id: int | None = None) -> int:
+    with get_db_context() as db:
+        viz = CatalogVisualization(
+            name=f"chart-{source_type}-{time.time_ns()}",
+            created_by=1,
+            source_type=source_type,
+            sql_query="SELECT region, amount FROM sales" if source_type == "sql" else None,
+            catalog_table_id=table_id if source_type == "table" else None,
+            spec_json=json.dumps([{"encodings": {}}]),
+        )
+        db.add(viz)
+        db.commit()
+        db.refresh(viz)
+        return viz.id
+
+
+def _region_filter(**extra) -> dict:
+    return {
+        "id": "f1",
+        "field_name": "region",
+        "kind": "categorical",
+        "state": {"selected": []},
+        "target": "all",
+        "target_tile_ids": [],
+        **extra,
+    }
+
+
+class TestDashboardFilterSingleSelect:
+    def test_multiple_defaults_to_true_and_round_trips_false(self, client):
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(), _region_filter(id="f2", multiple=False, state={"selected": ["EU"]})]
+        created = client.post("/catalog/dashboards", json={"name": "Single", "layout": layout})
+        assert created.status_code == 201, created.text
+        filters = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["filters"]
+        assert [f["multiple"] for f in filters] == [True, False]
+        assert filters[1]["state"] == {"selected": ["EU"]}
+
+    def test_layout_saved_before_single_select_loads_unchanged(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        flt = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["filters"][0]
+        assert (flt["multiple"], flt["datasource_viz_id"], flt["state"]) == (True, None, {"selected": ["US", "EU"]})
+
+
+class TestDashboardFilterChartSource:
+    def test_filter_on_a_sql_chart_round_trips(self, client):
+        viz_id = _make_viz("sql")
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(datasource_viz_id=viz_id)]
+        created = client.post("/catalog/dashboards", json={"name": "SQL source", "layout": layout})
+        assert created.status_code == 201, created.text
+        flt = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["filters"][0]
+        assert (flt["datasource_viz_id"], flt["datasource_id"]) == (viz_id, None)
+
+    def test_table_and_chart_together_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(datasource_id=_make_table(), datasource_viz_id=_make_viz("sql"))]
+        resp = client.post("/catalog/dashboards", json={"name": "Both", "layout": layout})
+        assert resp.status_code == 422
+        assert "not both" in resp.text
+
+    def test_unknown_chart_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(datasource_viz_id=99999)]
+        resp = client.post("/catalog/dashboards", json={"name": "Gone", "layout": layout})
+        assert resp.status_code == 422
+        assert "unknown visualization_id=99999" in resp.text
+
+    def test_chart_on_a_table_returns_422(self, client):
+        viz_id = _make_viz("table", table_id=_make_table())
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(datasource_viz_id=viz_id)]
+        resp = client.post("/catalog/dashboards", json={"name": "Table chart", "layout": layout})
+        assert resp.status_code == 422
+        assert "bind the table" in resp.text
+
+    def test_update_onto_an_unknown_chart_returns_422(self, client):
+        created = client.post("/catalog/dashboards", json={"name": "Up", "layout": _layout_with_two_tiles()}).json()
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(datasource_viz_id=99999)]
+        resp = client.put(f"/catalog/dashboards/{created['id']}", json={"layout": layout})
+        assert resp.status_code == 422

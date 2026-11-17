@@ -213,3 +213,85 @@ async function seedRows(
 
   created.dashboard = dashboard.id;
 }
+
+export interface SeededWideFilter {
+  dashboardId: number;
+  cleanup: (request: APIRequestContext) => Promise<void>;
+}
+
+/**
+ * A table of 150 distinct codes (C001..C150) and a dashboard with a table tile on it and a code
+ * filter, so the filter's first value list (100 values) leaves codes out that only a search finds.
+ */
+export async function seedWideFilterDashboard(
+  request: APIRequestContext,
+  token: string,
+  name: string,
+): Promise<SeededWideFilter> {
+  const headers = authHeaders(token);
+  const dir = mkdtempSync(join(tmpdir(), "flowfile-e2e-wide-filter-"));
+  const csvPath = join(dir, "codes.csv");
+  const codes = Array.from({ length: 150 }, (_, i) => `C${String(i + 1).padStart(3, "0")},${i}`);
+  writeFileSync(csvPath, ["code,amount", ...codes].join("\n"));
+
+  let tableId: number | undefined;
+  let dashboardId: number | undefined;
+  const cleanup = async (req: APIRequestContext) => {
+    if (dashboardId != null)
+      await req.delete(`${API_URL}/catalog/dashboards/${dashboardId}`, { headers });
+    if (tableId != null) await req.delete(`${API_URL}/catalog/tables/${tableId}`, { headers });
+    rmSync(dir, { recursive: true, force: true });
+  };
+  const post = async (path: string, data: unknown) => {
+    const response = await request.post(`${API_URL}${path}`, { headers, data });
+    if (!response.ok())
+      throw new Error(`POST ${path}: ${response.status()} ${await response.text()}`);
+    return response.json();
+  };
+
+  try {
+    const table = await post("/catalog/tables", {
+      name: `${name.replace(/\W+/g, "_")}_codes`,
+      file_path: csvPath,
+    });
+    tableId = table.id;
+    const dashboard = await post("/catalog/dashboards", {
+      name,
+      layout: {
+        grid: { cols: 48, row_height: 40, version: 2 },
+        tiles: [
+          {
+            id: "t-codes",
+            type: "table",
+            viz_id: null,
+            table_id: table.id,
+            title: "Codes",
+            table: { columns: [], sort_by: ["code"], sort_direction: "ascending", page_size: 5 },
+            x: 0,
+            y: 0,
+            w: 24,
+            h: 8,
+          },
+        ],
+        filters: [
+          {
+            id: "f-code",
+            field_name: "code",
+            label: "Code",
+            kind: "categorical",
+            state: { selected: [] },
+            target: "all",
+            target_tile_ids: [],
+            datasource_id: table.id,
+            scope: "datasource",
+          },
+        ],
+      },
+    });
+    dashboardId = dashboard.id;
+  } catch (err) {
+    await cleanup(request).catch(() => undefined);
+    throw err;
+  }
+  return { dashboardId: dashboardId!, cleanup };
+}

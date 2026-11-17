@@ -83,7 +83,7 @@ const props = defineProps<{
   tile: DashboardTile;
   mode: "edit" | "view";
   filters: DashboardFilter[];
-  tileDatasource?: (tileId: string) => number | null;
+  tileDatasource?: (tileId: string) => string | null;
   vizRefreshNonce?: number;
 }>();
 

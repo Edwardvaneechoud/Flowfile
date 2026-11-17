@@ -385,8 +385,8 @@ class VisualizationService:
     # ---- Dashboards CRUD ------------------------------------------------ #
 
     def _validate_filter_datasources(self, layout: DashboardLayout) -> None:
-        """Ensure filter datasource_ids and target_tile_ids refer to known entities, and that each
-        filter tile places a filter of this layout, at most one tile per filter."""
+        """Ensure filter datasource_ids, datasource_viz_ids (a SQL chart's) and target_tile_ids refer to
+        known entities, and that each filter tile places a filter of this layout, at most one tile per filter."""
         filter_ids = {f.id for f in layout.filters}
         placed: set[str] = set()
         for tile in layout.tiles:
@@ -398,11 +398,24 @@ class VisualizationService:
                 raise ValueError(f"filter '{tile.filter_id}' is placed on the canvas more than once")
             placed.add(tile.filter_id)
         seen: dict[int, bool] = {}
+        viz_sources: dict[int, str | None] = {}
         tile_ids = {t.id for t in layout.tiles}
         for f in layout.filters:
             for tid in f.target_tile_ids:
                 if tid not in tile_ids:
                     raise ValueError(f"filter '{f.id}' targets unknown tile_id={tid}")
+            if f.datasource_viz_id is not None:
+                if f.datasource_viz_id not in viz_sources:
+                    viz = self.repo.get_visualization(f.datasource_viz_id)
+                    viz_sources[f.datasource_viz_id] = (viz.source_type or "table") if viz is not None else None
+                source_type = viz_sources[f.datasource_viz_id]
+                if source_type is None:
+                    raise ValueError(f"filter '{f.id}' references unknown visualization_id={f.datasource_viz_id}")
+                if source_type != "sql":
+                    raise ValueError(
+                        f"filter '{f.id}' takes chart {f.datasource_viz_id} as its source, but that chart reads a "
+                        "catalog table: bind the table (datasource_id) instead"
+                    )
             if f.datasource_id is None:
                 continue
             if f.datasource_id in seen:

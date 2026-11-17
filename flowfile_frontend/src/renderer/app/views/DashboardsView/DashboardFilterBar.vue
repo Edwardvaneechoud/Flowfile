@@ -28,7 +28,7 @@
         </span>
         <span class="filter-chip-name">{{ f.label || f.field_name }}</span>
         <span
-          v-if="f.datasource_id == null"
+          v-if="filterSourceKey(f) == null"
           class="filter-chip-source-untied"
           title="This filter is not bound to a datasource — click the pencil to bind one"
         >
@@ -47,6 +47,7 @@
           :filter="f"
           :disabled="mode === 'view' && readonlyView"
           :get-column-stats="getColumnStats"
+          :search-values="searchValues"
           :stats-refresh-nonce="statsRefreshNonce"
           @update:filter="replaceFilter"
         />
@@ -55,7 +56,7 @@
           v-if="mode === 'edit'"
           type="button"
           class="filter-chip-icon-btn"
-          :title="f.datasource_id == null ? 'Bind a datasource' : 'Edit filter'"
+          :title="filterSourceKey(f) == null ? 'Bind a datasource' : 'Edit filter'"
           @click="openEdit(f)"
         >
           <el-icon><EditPen /></el-icon>
@@ -87,7 +88,9 @@
         plain
         :disabled="!datasourcesInUse.length"
         :title="
-          datasourcesInUse.length ? '' : 'Add a tile backed by a catalog table to enable filters'
+          datasourcesInUse.length
+            ? ''
+            : 'Add a tile backed by a catalog table or a SQL chart to enable filters'
         "
         @click="openAdd"
       >
@@ -114,23 +117,23 @@
       <el-form label-width="100px" size="small">
         <el-form-item label="Datasource">
           <el-select
-            v-model="draft.datasource_id"
-            placeholder="Select a catalog table"
-            :disabled="dialogMode === 'edit' && draft.datasource_id != null"
+            v-model="draft.source_key"
+            placeholder="Select a table or a SQL chart"
+            :disabled="dialogMode === 'edit' && boundAtOpen"
             @change="onDatasourceChange"
           >
             <el-option
               v-for="ds in datasourcesInUse"
-              :key="ds.id"
-              :value="ds.id"
-              :label="ds.name"
+              :key="ds.key"
+              :value="ds.key"
+              :label="ds.kind === 'viz' ? `${ds.name} (SQL chart)` : ds.name"
             />
           </el-select>
         </el-form-item>
         <el-form-item label="Field">
           <el-select
             v-model="draft.field_name"
-            :disabled="draft.datasource_id == null"
+            :disabled="draft.source_key == null"
             placeholder="Select a column"
             filterable
             @change="onFieldChange"
@@ -157,7 +160,7 @@
           <el-input v-model="draft.label" placeholder="(optional)" />
         </el-form-item>
         <el-form-item label="Scope">
-          <el-radio-group v-model="draft.scope" :disabled="draft.datasource_id == null">
+          <el-radio-group v-model="draft.scope" :disabled="draft.source_key == null">
             <el-radio-button value="datasource">This datasource</el-radio-button>
             <el-radio-button value="all">All datasources</el-radio-button>
           </el-radio-group>
@@ -165,7 +168,9 @@
             {{
               draft.scope === "all"
                 ? "Applies to every targeted tile with a same-named column of a compatible type, whatever table or query it reads from."
-                : "Applies only to tiles reading from this table."
+                : draftIsChart
+                  ? "Applies only to tiles reading this chart's query."
+                  : "Applies only to tiles reading from this table."
             }}
           </div>
         </el-form-item>
@@ -204,6 +209,11 @@
             </el-radio-button>
           </el-radio-group>
         </el-form-item>
+        <el-form-item v-if="draft.kind === 'categorical'" label="Values">
+          <el-checkbox v-model="draft.multiple" data-testid="filter-allow-several">
+            Allow several values
+          </el-checkbox>
+        </el-form-item>
         <el-form-item label="Apply to">
           <el-select
             v-model="draft.target_tile_ids"
@@ -212,12 +222,15 @@
             collapse-tags-tooltip
             :disabled="!eligibleTiles.length"
             :placeholder="
-              eligibleTiles.length
-                ? draft.scope === 'all'
-                  ? 'All tiles'
-                  : 'All tiles for this datasource'
-                : 'No tiles use this datasource'
+              draft.targets_none
+                ? 'No tiles'
+                : eligibleTiles.length
+                  ? draft.scope === 'all'
+                    ? 'All tiles'
+                    : 'All tiles for this datasource'
+                  : 'No tiles use this datasource'
             "
+            @change="draft.targets_none = false"
           >
             <el-option
               v-for="t in eligibleTiles"
@@ -227,6 +240,12 @@
               :disabled="t.disabled"
             />
           </el-select>
+          <div v-if="draft.targets_none" class="scope-hint" data-testid="filter-targets-none">
+            The tiles this filter applied to were removed, so it filters nothing. Choose tiles, or
+            <el-button link type="primary" size="small" @click="draft.targets_none = false">
+              apply it to all tiles
+            </el-button>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -252,6 +271,8 @@ import type {
 import type { DashboardDatasource } from "../../composables/useDashboardDatasources";
 import {
   describeFieldFit,
+  filterSourceKey,
+  type DatasourceKey,
   type FieldFit,
   type TileField,
 } from "../../composables/useDashboardComputation";
@@ -260,6 +281,8 @@ import { useDashboardDragAndDrop } from "../../composables/useDashboardDragAndDr
 import { moveFilter, type DropPosition } from "./filterOrder";
 import DashboardFilterControl from "./DashboardFilterControl.vue";
 import { targetsNoTile } from "./filterPlacement";
+import { withMultiple, type ValueSearchResult } from "./filterValues";
+import { draftTargets, sourceFieldsOfKey, sourceIdsOfKey } from "./filterDialog";
 
 const props = defineProps<{
   /** Every filter of the dashboard; the dialog edits any of them. */
@@ -271,7 +294,8 @@ const props = defineProps<{
   /** View mode: the viewer changed a filter, so Reset is offered. */
   canReset?: boolean;
   datasourcesInUse: DashboardDatasource[];
-  tilesByDatasource: Record<number, string[]>;
+  /** Tile ids per source key (`table:<id>` or `viz:<id>`). */
+  tilesByDatasource: Record<DatasourceKey, string[]>;
   /** Every viz tile, the candidate set for scope "all". */
   vizTileIds?: string[];
   tileLabel?: (tileId: string) => string;
@@ -284,6 +308,8 @@ const props = defineProps<{
     column: string,
     limit?: number,
   ) => Promise<ColumnStatsResponse>;
+  /** Distinct values of a filter's field on its own source that contain the text. */
+  searchValues?: (filter: DashboardFilter, text: string) => Promise<ValueSearchResult>;
   /** Bump to load every shown filter's values again (manual dashboard refresh). */
   statsRefreshNonce?: number;
 }>();
@@ -303,12 +329,16 @@ const stripFilters = computed(() =>
 
 interface Draft {
   id: string | null;
-  datasource_id: number | null;
+  /** The source the filter is bound to, as a datasource key. */
+  source_key: DatasourceKey | null;
   field_name: string;
   label: string;
   kind: DashboardFilterKind;
   scope: DashboardFilterScope;
+  multiple: boolean;
   target_tile_ids: string[];
+  /** The filter targets tiles but none is left; kept until the author chooses again. */
+  targets_none: boolean;
 }
 
 const dialogOpen = ref(false);
@@ -318,37 +348,39 @@ const draft = reactive<Draft>(blankDraft());
 function blankDraft(): Draft {
   return {
     id: null,
-    datasource_id: null,
+    source_key: null,
     field_name: "",
     label: "",
     kind: "categorical",
     scope: "datasource",
+    multiple: true,
     target_tile_ids: [],
+    targets_none: false,
   };
 }
+
+/** Whether the filter being edited was bound to a source when the dialog opened. */
+const boundAtOpen = ref(false);
+const draftIsChart = computed(() => draft.source_key?.startsWith("viz:") ?? false);
 
 const generateId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `f-${Math.random().toString(36).slice(2, 10)}`;
 
-const datasourceName = (id: number | null): string => {
-  if (id == null) return "Untied";
-  const ds = props.datasourcesInUse.find((d) => d.id === id);
-  return ds?.name ?? `Table #${id}`;
-};
-
 const chipTooltip = (f: DashboardFilter): string => {
   const head = f.label ?? f.field_name;
-  if (f.datasource_id == null) return `${head} — untied (no datasource bound)`;
-  return `${head} · ${datasourceName(f.datasource_id)}`;
+  const key = filterSourceKey(f);
+  if (key == null) return `${head} — untied (no datasource bound)`;
+  const ds = props.datasourcesInUse.find((d) => d.key === key);
+  const fallback =
+    f.datasource_id != null ? `Table #${f.datasource_id}` : `Chart #${f.datasource_viz_id}`;
+  return `${head} · ${ds?.name ?? fallback}`;
 };
 
-const fieldOptions = computed<ColumnSchema[]>(() => {
-  if (draft.datasource_id == null) return [];
-  const ds = props.datasourcesInUse.find((d) => d.id === draft.datasource_id);
-  return ds?.schema_columns ?? [];
-});
+const fieldOptions = computed<ColumnSchema[]>(() =>
+  sourceFieldsOfKey(props.datasourcesInUse, draft.source_key),
+);
 
 const selectedFieldDtype = computed<string | null>(() => {
   const col = fieldOptions.value.find((c) => c.name === draft.field_name);
@@ -365,8 +397,8 @@ const modeOptions = computed<DashboardFilterKind[]>(() => {
 
 const modeOptionsVisible = computed(() => modeOptions.value.length > 1);
 
-const candidateTileIds = (datasourceId: number, scope: DashboardFilterScope): string[] =>
-  scope === "all" ? (props.vizTileIds ?? []) : (props.tilesByDatasource[datasourceId] ?? []);
+const candidateTileIds = (sourceKey: DatasourceKey, scope: DashboardFilterScope): string[] =>
+  scope === "all" ? (props.vizTileIds ?? []) : (props.tilesByDatasource[sourceKey] ?? []);
 
 const fieldsLoading = ref(false);
 
@@ -386,8 +418,8 @@ const fitFor = (tileId: string, kind: DashboardFilterKind, fieldName: string): F
     : { status: "fits" };
 
 const eligibleTiles = computed<{ id: string; label: string; disabled: boolean }[]>(() => {
-  if (draft.datasource_id == null) return [];
-  return candidateTileIds(draft.datasource_id, draft.scope).map((id) => {
+  if (draft.source_key == null) return [];
+  return candidateTileIds(draft.source_key, draft.scope).map((id) => {
     const status = draft.field_name ? fitFor(id, draft.kind, draft.field_name).status : "fits";
     return {
       id,
@@ -399,8 +431,8 @@ const eligibleTiles = computed<{ id: string; label: string; disabled: boolean }[
 
 /** Per-tile verdict for the draft, listed under Scope so the reach is visible before saving. */
 const reach = computed<{ id: string; label: string; fit: FieldFit }[]>(() => {
-  if (draft.datasource_id == null || !draft.field_name) return [];
-  return candidateTileIds(draft.datasource_id, draft.scope).map((id) => ({
+  if (draft.source_key == null || !draft.field_name) return [];
+  return candidateTileIds(draft.source_key, draft.scope).map((id) => ({
     id,
     label: props.tileLabel?.(id) ?? id,
     fit: fitFor(id, draft.kind, draft.field_name),
@@ -419,8 +451,8 @@ const reachReason = (r: { fit: FieldFit }): string => {
 /** "n/m tiles" per column under scope "all", judged by the kind its dtype defaults to. */
 const coverageByField = computed<Record<string, string>>(() => {
   const out: Record<string, string> = {};
-  if (draft.scope !== "all" || draft.datasource_id == null) return out;
-  const ids = candidateTileIds(draft.datasource_id, "all");
+  if (draft.scope !== "all" || draft.source_key == null) return out;
+  const ids = candidateTileIds(draft.source_key, "all");
   for (const col of fieldOptions.value) {
     if (fieldsLoading.value) {
       out[col.name] = "…";
@@ -444,7 +476,7 @@ watch(
   },
 );
 
-const canSave = computed(() => draft.datasource_id != null && draft.field_name.trim().length > 0);
+const canSave = computed(() => draft.source_key != null && draft.field_name.trim().length > 0);
 
 const replaceFilter = (next: DashboardFilter) => {
   emit(
@@ -514,6 +546,7 @@ const reorderHandlers = (f: DashboardFilter) => ({
 const onDatasourceChange = () => {
   draft.field_name = "";
   draft.target_tile_ids = [];
+  draft.targets_none = false;
 };
 
 const onFieldChange = () => {
@@ -530,20 +563,25 @@ const initialStateFor = (kind: DashboardFilterKind): Record<string, unknown> => 
 const openAdd = () => {
   dialogMode.value = "add";
   Object.assign(draft, blankDraft());
+  boundAtOpen.value = false;
   void ensureTileFields();
   dialogOpen.value = true;
 };
 
 const openEdit = (f: DashboardFilter) => {
   dialogMode.value = "edit";
+  const sourceKey = filterSourceKey(f);
+  boundAtOpen.value = sourceKey != null;
   Object.assign(draft, {
     id: f.id,
-    datasource_id: f.datasource_id ?? null,
+    source_key: sourceKey,
     field_name: f.field_name,
     label: f.label ?? "",
     kind: f.kind,
     scope: f.scope ?? "datasource",
+    multiple: f.multiple !== false,
     target_tile_ids: [...f.target_tile_ids],
+    targets_none: targetsNoTile(f),
   });
   void ensureTileFields();
   dialogOpen.value = true;
@@ -551,13 +589,17 @@ const openEdit = (f: DashboardFilter) => {
 
 const resetDraft = () => {
   Object.assign(draft, blankDraft());
+  boundAtOpen.value = false;
 };
 
 const confirmDialog = () => {
-  if (!canSave.value || draft.datasource_id == null) return;
-  const all = candidateTileIds(draft.datasource_id, draft.scope);
-  const explicit = draft.target_tile_ids.filter((id) => all.includes(id));
-  const useAll = explicit.length === 0 || explicit.length === all.length;
+  if (!canSave.value || draft.source_key == null) return;
+  const { target, target_tile_ids } = draftTargets(
+    candidateTileIds(draft.source_key, draft.scope),
+    draft.target_tile_ids,
+    draft.targets_none,
+  );
+  const ids = sourceIdsOfKey(draft.source_key);
 
   if (dialogMode.value === "add") {
     const next: DashboardFilter = {
@@ -566,10 +608,11 @@ const confirmDialog = () => {
       label: draft.label.trim() || null,
       kind: draft.kind,
       state: initialStateFor(draft.kind),
-      target: useAll ? "all" : "tiles",
-      target_tile_ids: useAll ? [] : explicit,
-      datasource_id: draft.datasource_id,
+      target,
+      target_tile_ids,
+      ...ids,
       scope: draft.scope,
+      multiple: draft.multiple,
     };
     emit("update:filters", [...props.filters, next]);
   } else {
@@ -580,19 +623,20 @@ const confirmDialog = () => {
         if (x.id !== id) return x;
         const kindChanged = x.kind !== draft.kind;
         const fieldChanged = x.field_name !== draft.field_name.trim();
-        const dsChanged = x.datasource_id !== draft.datasource_id;
-        return {
+        const dsChanged = filterSourceKey(x) !== draft.source_key;
+        const edited: DashboardFilter = {
           ...x,
-          datasource_id: draft.datasource_id,
+          ...ids,
           field_name: draft.field_name.trim(),
           label: draft.label.trim() || null,
           kind: draft.kind,
           scope: draft.scope,
           // Reset state when the shape changes (kind/field/datasource)
           state: kindChanged || fieldChanged || dsChanged ? initialStateFor(draft.kind) : x.state,
-          target: useAll ? "all" : "tiles",
-          target_tile_ids: useAll ? [] : explicit,
+          target,
+          target_tile_ids,
         };
+        return withMultiple(edited, draft.multiple);
       }),
     );
   }

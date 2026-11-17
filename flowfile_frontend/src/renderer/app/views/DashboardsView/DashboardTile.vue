@@ -223,6 +223,7 @@
           :filter="tileFilter"
           variant="tile"
           :get-column-stats="getColumnStats"
+          :search-values="searchValues"
           :stats-refresh-nonce="dataRefreshNonce"
           @update:filter="emit('update:filter', $event)"
         />
@@ -451,6 +452,7 @@ import type {
 } from "../../types";
 import DashboardFilterControl from "./DashboardFilterControl.vue";
 import { filterOfTile, targetsNoTile } from "./filterPlacement";
+import type { ValueSearchResult } from "./filterValues";
 import KpiTile from "./KpiTile.vue";
 import TableTile from "./TableTile.vue";
 import { isKpiComplete } from "./kpi";
@@ -465,8 +467,8 @@ const props = defineProps<{
   vizRefreshNonce?: number;
   /** Bumped on every dashboard refresh; KPI and table tiles that read a table follow it. */
   dataRefreshNonce?: number;
-  /** Resolver for the tile's underlying CatalogTable id (used to gate datasource-bound filters). */
-  tileDatasource?: (tileId: string) => number | null;
+  /** Resolver for the source key a tile reads (used to gate datasource-bound filters). */
+  tileDatasource?: (tileId: string) => string | null;
   /** Column count of the hosting grid; a horizontal separator spans all of them. */
   gridCols?: number;
   /** A filter tile's value list; the same cached lookup the filter strip uses. */
@@ -475,6 +477,8 @@ const props = defineProps<{
     column: string,
     limit?: number,
   ) => Promise<ColumnStatsResponse>;
+  /** A filter tile's value search; the same cached search the filter strip uses. */
+  searchValues?: (filter: DashboardFilter, text: string) => Promise<ValueSearchResult>;
 }>();
 
 const emit = defineEmits<{

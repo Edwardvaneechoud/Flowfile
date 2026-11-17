@@ -50,6 +50,7 @@
           :tile-datasource="tileDatasource"
           :grid-cols="layout.grid.cols"
           :get-column-stats="getColumnStats"
+          :search-values="searchValues"
           @remove="onRemoveTile(item.i)"
           @duplicate="onDuplicateTile(item.i)"
           @edit-viz="emit('edit-viz', tileById[item.i].viz_id ?? null)"
@@ -79,6 +80,7 @@ import {
 } from "../../composables/useDashboardDragAndDrop";
 import { computeDropCell } from "./gridDrop";
 import { FILTER_TILE_DEFAULT_SIZE, moveFilterToBar } from "./filterPlacement";
+import type { ValueSearchResult } from "./filterValues";
 import type {
   ColumnStatsResponse,
   DashboardFilter,
@@ -96,14 +98,16 @@ const props = defineProps<{
   vizRefreshNonces?: Record<number, number>;
   /** Bumped on every dashboard refresh, for tiles that read a table without a chart. */
   dataRefreshNonce?: number;
-  /** Resolves a tile id to its underlying CatalogTable id (if any). */
-  tileDatasource?: (tileId: string) => number | null;
+  /** Resolves a tile id to the source key it reads (`table:<id>` or `viz:<id>`), if known. */
+  tileDatasource?: (tileId: string) => string | null;
   /** The value list of a filter shown on the canvas. */
   getColumnStats?: (
     tableId: number,
     column: string,
     limit?: number,
   ) => Promise<ColumnStatsResponse>;
+  /** The value search of a filter shown on the canvas. */
+  searchValues?: (filter: DashboardFilter, text: string) => Promise<ValueSearchResult>;
 }>();
 
 const emit = defineEmits<{
@@ -242,7 +246,7 @@ const onCanvasDrop = (e: DragEvent) => {
 
 const vizRefreshNonceFor = (vizId: number): number => props.vizRefreshNonces?.[vizId] ?? 0;
 
-const tileDatasource = (tileId: string): number | null => props.tileDatasource?.(tileId) ?? null;
+const tileDatasource = (tileId: string): string | null => props.tileDatasource?.(tileId) ?? null;
 
 interface GridItemModel {
   i: string;

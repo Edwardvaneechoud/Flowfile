@@ -81,8 +81,9 @@ const categoricalValues = (selected: unknown[], field?: TileField): unknown[] =>
 
 const filterToRule = (f: DashboardFilter, field?: TileField): Record<string, unknown> | null => {
   if (f.kind === "categorical") {
-    const selected = (f.state.selected as unknown[]) ?? [];
-    if (!Array.isArray(selected) || !selected.length) return null;
+    const stored = (f.state.selected as unknown[]) ?? [];
+    if (!Array.isArray(stored) || !stored.length) return null;
+    const selected = f.multiple === false ? stored.slice(0, 1) : stored;
     const value = categoricalValues(selected, field);
     if (!value.length) return null;
     return { type: "one of", value };
@@ -144,7 +145,29 @@ export const computeOnSource = (
       )
     : CatalogApi.computeSavedVisualization(source.vizId, { payload, maxRows });
 
-export type TileDatasourceResolver = (tileId: string) => number | null;
+/**
+ * Which source a tile reads, as filters compare it: `table:<id>` for a catalog table (read
+ * directly or through a chart on it), `viz:<id>` for a chart with no table (a SQL chart).
+ */
+export type DatasourceKey = string;
+
+export const tableSourceKey = (tableId: number): DatasourceKey => `table:${tableId}`;
+export const vizSourceKey = (vizId: number): DatasourceKey => `viz:${vizId}`;
+
+/** The source a filter is bound to, or null for a legacy untied filter. */
+export const filterSourceOf = (f: DashboardFilter): TileSource | null => {
+  if (f.datasource_id != null) return { kind: "table", tableId: f.datasource_id };
+  if (f.datasource_viz_id != null) return { kind: "viz", vizId: f.datasource_viz_id };
+  return null;
+};
+
+export const filterSourceKey = (f: DashboardFilter): DatasourceKey | null => {
+  const source = filterSourceOf(f);
+  if (source == null) return null;
+  return source.kind === "table" ? tableSourceKey(source.tableId) : vizSourceKey(source.vizId);
+};
+
+export type TileDatasourceResolver = (tileId: string) => DatasourceKey | null;
 
 /** One column of a tile's data; ``semanticType`` absent or unknown means unclassified. */
 export interface TileField {
@@ -152,9 +175,9 @@ export interface TileField {
   semanticType?: string;
 }
 
-/** A filter reaches beyond its own table when scoped "all" or legacy-untied. */
+/** A filter reaches beyond its own source when scoped "all" or legacy-untied. */
 export const isCrossSourceFilter = (f: DashboardFilter): boolean =>
-  f.scope === "all" || f.datasource_id == null;
+  f.scope === "all" || filterSourceKey(f) == null;
 
 const COMPATIBLE_SEMANTIC_TYPES: Record<DashboardFilterKind, SemanticType[]> = {
   categorical: ["nominal", "ordinal", "quantitative"],
@@ -211,9 +234,9 @@ export const describeFieldFit = (
 /** Decide which dashboard filters apply to a given tile.
  *
  * Two gates:
- *   1. Source gate — a datasource-scoped filter needs the tile's underlying
- *      CatalogTable to match. A cross-source filter (scope "all", or the
- *      legacy untied null ``datasource_id``) instead needs the tile's data to
+ *   1. Source gate — a datasource-scoped filter needs the tile's source key
+ *      (its CatalogTable, or for a SQL chart the chart) to match. A
+ *      cross-source filter (scope "all", or a legacy untied one) instead needs the tile's data to
  *      have a column named ``field_name`` whose type fits the filter kind;
  *      ``tileFields`` null means the tile's columns are unknown and the gate
  *      is skipped.
@@ -234,7 +257,7 @@ export const filtersTargetingTile = (
       }
     } else {
       const tds = tileDatasource ? tileDatasource(tileId) : null;
-      if (tds !== f.datasource_id) return false;
+      if (tds !== filterSourceKey(f)) return false;
     }
     return f.target === "all" || (f.target === "tiles" && f.target_tile_ids.includes(tileId));
   });

@@ -6,6 +6,7 @@ vi.mock("./useGraphicWalkerCompute", () => ({ useGraphicWalkerCompute: vi.fn() }
 import {
   buildFilterStep,
   describeFieldFit,
+  filterSourceKey,
   filtersTargetingTile,
   missingSourceText,
   splitChartFilters,
@@ -25,8 +26,11 @@ const filterOf = (over: Partial<DashboardFilter>): DashboardFilter => ({
   ...over,
 });
 
-const datasourceOf = (map: Record<string, number | null>) => (tileId: string) =>
-  map[tileId] ?? null;
+const datasourceOf = (map: Record<string, number | string | null>) => (tileId: string) => {
+  const v = map[tileId];
+  if (v == null) return null;
+  return typeof v === "number" ? `table:${v}` : v;
+};
 
 const fieldsOf = (spec: Record<string, string | undefined>): TileField[] =>
   Object.entries(spec).map(([fid, semanticType]) => ({ fid, semanticType }));
@@ -304,5 +308,45 @@ describe("tileSourceOf", () => {
   it("names the missing source", () => {
     expect(missingSourceText({ kind: "table", tableId: 5 })).toBe("Table #5 no longer exists.");
     expect(missingSourceText({ kind: "viz", vizId: 3 })).toBe("Visualization #3 no longer exists.");
+  });
+});
+
+describe("a filter on a SQL chart's source", () => {
+  const onChart = filterOf({ datasource_id: null, datasource_viz_id: 2 });
+  const ds = datasourceOf({ chart: "viz:2", kpi: "viz:2", other: "viz:3", table: 5 });
+  const fields = fieldsOf({ region: "nominal" });
+
+  it("is keyed by its chart, a table filter by its table, an untied one by nothing", () => {
+    expect(filterSourceKey(onChart)).toBe("viz:2");
+    expect(filterSourceKey(filterOf({}))).toBe("table:5");
+    expect(filterSourceKey(filterOf({ datasource_id: null }))).toBeNull();
+  });
+
+  it("reaches the tiles reading that chart, not another chart nor a table", () => {
+    expect(filtersTargetingTile([onChart], "chart", ds, fields)).toEqual([onChart]);
+    expect(filtersTargetingTile([onChart], "kpi", ds, fields)).toEqual([onChart]);
+    expect(filtersTargetingTile([onChart], "other", ds, fields)).toEqual([]);
+    expect(filtersTargetingTile([onChart], "table", ds, fields)).toEqual([]);
+  });
+
+  it("scope all still reaches any tile with the column", () => {
+    const wide = { ...onChart, scope: "all" as const };
+    expect(filtersTargetingTile([wide], "table", ds, fields)).toEqual([wide]);
+    expect(filtersTargetingTile([wide], "other", ds, fieldsOf({ amount: "nominal" }))).toEqual([]);
+  });
+});
+
+describe("buildFilterStep with a single-select filter", () => {
+  it("sends at most one value, even from a state that holds several", () => {
+    const f = filterOf({ multiple: false, state: { selected: ["EU", "US"] } });
+    expect(buildFilterStep([f], null)?.filters).toEqual([
+      { fid: "region", rule: { type: "one of", value: ["EU"] } },
+    ]);
+  });
+
+  it("does nothing when cleared", () => {
+    expect(
+      buildFilterStep([filterOf({ multiple: false, state: { selected: [] } })], null),
+    ).toBeNull();
   });
 });

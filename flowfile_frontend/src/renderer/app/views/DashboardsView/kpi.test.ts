@@ -125,7 +125,7 @@ describe("fieldEligible", () => {
 });
 
 describe("pickComparisonFilter", () => {
-  const ds = (id: string) => (id === "k" ? 5 : null);
+  const ds = (id: string) => (id === "k" ? "table:5" : null);
 
   it("picks the first targeting date range with both bounds", () => {
     const open = filterOf({ id: "open", state: { start: "2026-07-01T00:00:00.000Z", end: null } });
@@ -143,7 +143,7 @@ describe("pickComparisonFilter", () => {
 
 describe("findDateRangeFilter", () => {
   it("finds the targeting date range even without bounds", () => {
-    const ds = (id: string) => (id === "k" ? 5 : null);
+    const ds = (id: string) => (id === "k" ? "table:5" : null);
     const region = filterOf({ id: "r", kind: "categorical", state: { selected: ["EU"] } });
     const otherTable = filterOf({ id: "x", datasource_id: 9 });
     const empty = filterOf({ id: "empty", state: {} });

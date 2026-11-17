@@ -403,3 +403,47 @@ def test_prune_removes_absent_viz_and_dashboard(tmp_path):
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)
+
+
+def test_filter_on_a_sql_chart_exports_its_viz_uuid_and_relinks(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    viz_id, vuuid = _make_viz("filter-source", source_type="sql", sql_query="SELECT 'West' AS region")
+    region = DashboardFilter(
+        id="f-region",
+        field_name="region",
+        kind="categorical",
+        state={"selected": ["West"]},
+        datasource_viz_id=viz_id,
+        multiple=False,
+    )
+    layout = DashboardLayout(
+        tiles=[DashboardTile(id="tile-1", type="viz", viz_id=viz_id, x=0, y=0, w=6, h=4)], filters=[region]
+    )
+    _, duuid = _make_dashboard("sql-filter-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "SQL filter", OWNER)
+        exported = _dash_yaml(root)[duuid]["layout"]["filters"][0]
+        assert exported["datasource_viz_uuid"] == vuuid and "datasource_viz_id" not in exported
+        assert exported["multiple"] is False
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            new_viz = db.query(CatalogVisualization).filter_by(viz_uuid=vuuid).first()
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert new_viz is not None and dashboard is not None
+            stored = json.loads(dashboard.layout_json)["filters"][0]
+            assert stored["datasource_viz_id"] == new_viz.id and "datasource_viz_uuid" not in stored
+            assert (stored["multiple"], stored["state"]) == (False, {"selected": ["West"]})
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "chart-sourced filter must round-trip"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
