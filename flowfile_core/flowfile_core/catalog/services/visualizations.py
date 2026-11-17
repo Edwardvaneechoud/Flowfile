@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
+from packaging.version import InvalidVersion, Version
 from sqlalchemy.exc import IntegrityError
 
 from flowfile_core.catalog.constants import (
@@ -106,6 +107,35 @@ def _kept_plan_source(user_id: int | None, key: str, build: Callable[[], pl.Lazy
     return source
 
 
+WORKSHEET_DEFAULT_SINCE = Version("0.6")
+"""The Graphic Walker release that made its worksheet renderer the default."""
+
+
+def spec_for_reading(spec_list: list[dict], gw_version: str | None) -> list[dict]:
+    """A saved spec as the current chart builder should read it.
+
+    Graphic Walker before 0.6 wrote its then-default renderer, ``vega-lite``, into every chart it
+    exported. A chart in a row last written by such a version, or by one that left no version,
+    therefore names a default and not a choice, and reads without it, so it is drawn by today's
+    default. A row written by 0.6 or later keeps the renderer it names, and so does one whose
+    version does not parse.
+    """
+    if gw_version is not None:
+        try:
+            if Version(gw_version) >= WORKSHEET_DEFAULT_SINCE:
+                return spec_list
+        except InvalidVersion:
+            return spec_list
+    read: list[dict] = []
+    for chart in spec_list:
+        layout = chart.get("layout")
+        if isinstance(layout, dict) and layout.get("renderer") == "vega-lite":
+            layout = {k: v for k, v in layout.items() if k != "renderer"}
+            chart = {**chart, "layout": layout}
+        read.append(chart)
+    return read
+
+
 # polars-gw workflow that returns rows un-aggregated (raw select-all).
 _GW_RAW_SELECT_ALL_PAYLOAD: dict = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
 
@@ -182,6 +212,7 @@ class VisualizationService:
             spec_list = [item for item in raw if isinstance(item, dict)]
         else:
             spec_list = []
+        spec_list = spec_for_reading(spec_list, viz.spec_gw_version)
 
         table = self.repo.get_table(viz.catalog_table_id) if viz.catalog_table_id is not None else None
         enrichment = self._resolve_viz_enrichment(viz, table)
@@ -478,17 +509,22 @@ class VisualizationService:
         must rotate whenever the Delta data changes — including out-of-band
         writes the catalog row never sees. Falls back to the ``updated_at``
         timestamp for legacy parquet / unreadable tables.
+
+        The table's storage directory is part of the key: SQLite gives a new
+        table the id of a deleted one, and a key on the id alone would serve
+        the deleted table's files, or its rows, for the new table.
         """
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
+        stored_in = Path(table.file_path).name if table.file_path else ""
         if table.file_path:
             try:
-                return f"tbl:{table_id}:v{get_live_delta_version(table.file_path)}"
+                return f"tbl:{table_id}:{stored_in}:v{get_live_delta_version(table.file_path)}"
             except Exception:
                 pass
         ts = int(table.updated_at.timestamp()) if table.updated_at else 0
-        return f"tbl:{table_id}:{ts}"
+        return f"tbl:{table_id}:{stored_in}:{ts}"
 
     def _resolve_source_for_worker(self, source: VizSourceDescriptor, user_id: int | None) -> dict:
         """Translate a frontend source descriptor into a worker source spec."""

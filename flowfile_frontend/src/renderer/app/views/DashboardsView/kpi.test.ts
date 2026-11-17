@@ -168,6 +168,15 @@ describe("shiftDateRangeBack", () => {
     expect(shiftDateRangeBack({ start: "2026-07-01", end: null })).toBeNull();
   });
 
+  it("shifts a named window by its own length, counted from today", () => {
+    const now = new Date(2026, 10, 17, 15, 30);
+    expect(shiftDateRangeBack({ preset: "last_7_days" }, now)).toEqual({
+      start: new Date(2026, 10, 4).toISOString(),
+      end: new Date(2026, 10, 10, 23, 59, 59, 999).toISOString(),
+    });
+    expect(previousPeriodLabel({ preset: "last_30_days" }, now)).toBe("vs previous 30 days");
+  });
+
   it("labels the comparison window", () => {
     const d = (day: number) => new Date(2026, 6, day).toISOString();
     expect(previousPeriodLabel({ start: d(1), end: d(7) })).toBe("vs previous 7 days");
@@ -188,6 +197,14 @@ describe("previousPeriodFilters", () => {
   it("is the identity without a comparison filter", () => {
     const filters = [filterOf({})];
     expect(previousPeriodFilters(filters, null)).toBe(filters);
+  });
+
+  it("turns a named window into the fixed window before it", () => {
+    const date = filterOf({ id: "d", state: { preset: "last_7_days", start: null, end: null } });
+    const [shifted] = previousPeriodFilters([date], "d");
+    expect(shifted.state).not.toHaveProperty("preset");
+    expect(typeof shifted.state.start).toBe("string");
+    expect(date.state.preset).toBe("last_7_days");
   });
 });
 

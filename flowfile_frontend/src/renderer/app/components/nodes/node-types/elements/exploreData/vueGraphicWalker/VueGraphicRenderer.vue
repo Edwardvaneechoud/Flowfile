@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, defineProps, toRaw, watch } from "vue";
+import { onMounted, onUnmounted, ref, toRaw, watch } from "vue";
 
-import type { IRow, IMutField, IChart, IGWProps } from "@kanaries/graphic-walker/interfaces";
+import type { IChart, IGWProps, IRow, IUIThemeConfig } from "@kanaries/graphic-walker/interfaces";
+import { flowfileVizTheme } from "./vizTheme";
 
+/**
+ * A read-only chart that fills its box.
+ *
+ * Graphic Walker draws a chart with the renderer its spec names. Its worksheet renderer ("native",
+ * the default) lives inside `GraphicRenderer` and takes its height from the box that component is
+ * given, so the box is measured here and handed over. A chart on another renderer, a map or a
+ * table goes through `PureRenderer`, which draws only the chart and fills its parent by itself.
+ */
 interface VueGRProps {
   chart: IChart;
-  fields?: IMutField[];
   appearance?: IGWProps["appearance"];
-  themeKey?: IGWProps["themeKey"];
   computation: (payload: any) => Promise<IRow[]>;
 }
 
@@ -20,147 +27,112 @@ const loadError = ref<string | null>(null);
 
 let reactRootInstance: any = null;
 let React: any = null;
-let ReactDOMClient: any = null;
 let GraphicRenderer: any = null;
+let PureRenderer: any = null;
+let handle: { current: any } | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-let measuredSize = { w: 0, h: 0 };
-let shadowReadyObserver: MutationObserver | null = null;
-let chartSiblingObserver: ResizeObserver | null = null;
-let chartMarksObserver: MutationObserver | null = null;
-// Height GW renders above the chart (error panel + filter widgets); subtracted from the fixed size.
-let chartTopOffset = 0;
-// How much smaller than the tile the size handed to GW must be for the rendered marks to fit.
-let fitInset = { w: 0, h: 0 };
-let fitPasses = 0;
+let size = { width: 0, height: 0 };
 
-const CHART_CONTAINER_CLASS = "flowfile-gw-chart";
-// Padding GW puts around the chart frame in fixed-size mode.
-const FRAME_PADDING = 12;
+// Graphic Walker refetches when these change identity, so one copy is kept per chart prop.
+let chartRaw: IChart | null = null;
+let chartList: IChart[] = [];
+let fieldList: unknown[] = [];
 
-// Inject a <style> into GW's shadow root to hide its resize frame + drag handles (no prop disables them).
-// The frame is pinned to the tile so GW's scroll container stays tile-sized while the fixed size we
-// hand GW only drives the spec (see measureFit); the inner wrapper is un-sized so marks stay visible.
-const SHADOW_STYLE_MARKER = "data-flowfile-gw-overrides";
-
-const findShadowRoot = (root: HTMLElement): ShadowRoot | null => {
-  const queue: Element[] = Array.from(root.children);
-  while (queue.length) {
-    const el = queue.shift()!;
-    if (el.shadowRoot) return el.shadowRoot;
-    queue.push(...Array.from(el.children));
+/**
+ * The first opaque background behind the chart. Graphic Walker paints its own surface, which in
+ * the dark theme is darker than a tile; a chart that sets no background gets the tile's instead.
+ */
+const surfaceColour = (): string | undefined => {
+  for (let el: HTMLElement | null = wrapper.value; el; el = el.parentElement) {
+    const colour = getComputedStyle(el).backgroundColor;
+    const alpha = colour.startsWith("rgba(") ? Number(colour.slice(5, -1).split(",")[3]) : 1;
+    if (colour !== "transparent" && alpha > 0.9) return colour;
   }
-  return null;
+  return undefined;
 };
 
-const injectShadowOverride = (shadow: ShadowRoot): void => {
-  if (shadow.querySelector(`style[${SHADOW_STYLE_MARKER}]`)) return;
-  const style = document.createElement("style");
-  style.setAttribute(SHADOW_STYLE_MARKER, "");
-  style.textContent = `
-    .border-primary.border-2 { border-width: 0 !important; width: 100% !important; height: 100% !important; }
-    [style*="-resize"] { display: none !important; }
-    .border-primary.border-2 > .w-full.h-full.relative {
-      width: auto !important;
-      height: auto !important;
-      overflow: visible !important;
-    }
-  `;
-  shadow.appendChild(style);
+// Graphic Walker's own shell around the chart: its stock colours with the tile's background.
+let stockTheme: IUIThemeConfig | undefined;
+let shellTheme: IUIThemeConfig | undefined;
+
+// Graphic Walker's theme parser reads hex, not the rgb() a computed style gives.
+const toHex = (colour: string): string | undefined => {
+  const channels = colour.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!channels) return undefined;
+  return `#${channels
+    .slice(1, 4)
+    .map((n) => Number(n).toString(16).padStart(2, "0"))
+    .join("")}`;
 };
 
-// GW re-imports the chart (and refetches its data) whenever the chart array identity changes,
-// so keep one array per props change and let size-only re-renders reuse the loaded data.
-let chartProp: IChart[] = [];
-let fieldsProp: IMutField[] | undefined;
-
-const syncDataProps = () => {
-  chartProp = [toRaw(props.chart)];
-  fieldsProp = props.fields ? toRaw(props.fields) : undefined;
+const syncChart = () => {
+  const raw = toRaw(props.chart);
+  const surface = surfaceColour();
+  const background = raw.layout?.background || surface;
+  chartRaw = background ? { ...raw, layout: { ...raw.layout, background } } : raw;
+  const shell = surface ? toHex(surface) : undefined;
+  shellTheme =
+    shell && stockTheme
+      ? {
+          light: { ...stockTheme.light, background: shell },
+          dark: { ...stockTheme.dark, background: shell },
+        }
+      : undefined;
+  chartList = [chartRaw];
+  fieldList = [...(chartRaw.encodings?.dimensions ?? []), ...(chartRaw.encodings?.measures ?? [])];
 };
 
-// Measure the tile ourselves and pass overrideSize; GW's own ResizeObserver mis-measures height.
-const getReactProps = (): Record<string, any> => {
-  const reactProps: Record<string, any> = {
-    fields: fieldsProp,
-    chart: chartProp,
-    appearance: props.appearance || "light",
-    themeKey: props.themeKey,
-    computation: props.computation,
-    containerStyle: { width: `${measuredSize.w}px`, height: `${measuredSize.h}px` },
-    containerClassName: CHART_CONTAINER_CLASS,
-    overrideSize: {
-      mode: "fixed",
-      width: Math.max(1, measuredSize.w - fitInset.w),
-      height: Math.max(1, measuredSize.h - fitInset.h),
-    },
-  };
-  Object.keys(reactProps).forEach((key) => {
-    if (reactProps[key] === undefined) delete reactProps[key];
-  });
-  return reactProps;
+/** The same split Graphic Walker's own `PureRenderer` makes. */
+const drawnByWorksheet = (chart: IChart): boolean => {
+  const dedicated =
+    chart.config?.coordSystem === "geographic" || chart.config?.geoms?.[0] === "table";
+  return !dedicated && (chart.layout?.renderer ?? "native") === "native";
 };
 
 const renderReact = () => {
-  if (reactRootInstance && GraphicRenderer && React) {
-    reactRootInstance.render(React.createElement(GraphicRenderer, getReactProps()));
+  if (!reactRootInstance || !React || !chartRaw) return;
+  const shared = {
+    ref: handle,
+    computation: props.computation,
+    appearance: props.appearance || "light",
+    vizThemeConfig: flowfileVizTheme,
+    uiTheme: shellTheme,
+    overrideSize: { mode: "full", ...size },
+  };
+  if (drawnByWorksheet(chartRaw)) {
+    reactRootInstance.render(
+      React.createElement(GraphicRenderer, {
+        ...shared,
+        chart: chartList,
+        fields: fieldList,
+        containerStyle: { width: `${size.width}px`, height: `${size.height}px` },
+      }),
+    );
+    return;
   }
+  reactRootInstance.render(
+    React.createElement(PureRenderer, {
+      ...shared,
+      type: "remote",
+      name: chartRaw.name,
+      visualState: chartRaw.encodings,
+      visualConfig: chartRaw.config,
+      visualLayout: chartRaw.layout,
+    }),
+  );
 };
 
-const measure = (el: HTMLElement) => {
-  const rect = el.getBoundingClientRect();
-  const w = Math.max(1, Math.floor(rect.width));
-  const h = Math.max(1, Math.floor(rect.height - chartTopOffset));
-  if (Math.abs(w - measuredSize.w) < 2 && Math.abs(h - measuredSize.h) < 2) return false;
-  measuredSize = { w, h };
-  fitPasses = 0;
-  return true;
-};
-
-const FIT_TOLERANCE = 3;
-const MAX_FIT_PASSES = 6;
-const MARKS_SELECTOR = "canvas.marks, svg.marks";
-
-/**
- * GW derives facet cell sizes from the fixed size without accounting for axes, headers and
- * legends, so a chart with a dimension on rows/columns renders taller or wider than the tile
- * (and GW's own post-render correction is a no-op inside our un-sized wrapper). Measure the
- * rendered marks against the tile and hand GW a size reduced by the overshoot, so the marks
- * land at the same inset a plain chart gets. The inset is derived from the frame size GW
- * rendered the marks with, which makes repeated measurements of one render idempotent; the
- * pass cap stops a jittering label layout from re-rendering forever.
- */
-const measureFit = (chartEl: HTMLElement): boolean => {
-  const marks = Array.from(chartEl.querySelectorAll<HTMLElement>(MARKS_SELECTOR));
-  if (!marks.length || fitPasses >= MAX_FIT_PASSES) return false;
-  const frame = chartEl.querySelector<HTMLElement>(".border-primary");
-  // The frame may predate the latest tile measurement, so the derived inset can dip below zero.
-  const renderedInset = {
-    w: frame ? Math.max(0, measuredSize.w - parseFloat(frame.style.width)) : fitInset.w,
-    h: frame ? Math.max(0, measuredSize.h - parseFloat(frame.style.height)) : fitInset.h,
-  };
-  const origin = chartEl.getBoundingClientRect();
-  let right = 0;
-  let bottom = 0;
-  for (const mark of marks) {
-    const rect = mark.getBoundingClientRect();
-    // Vega inserts the canvas before sizing it; wait for the sized one.
-    if (!rect.width || !rect.height) return false;
-    right = Math.max(right, rect.right - origin.left);
-    bottom = Math.max(bottom, rect.bottom - origin.top);
-  }
-  const fit = (inset: number, over: number) => {
-    if (!Number.isFinite(inset)) return 0;
-    const grow = over > FIT_TOLERANCE || (over < -FIT_TOLERANCE && inset > 0);
-    return Math.max(0, Math.round(grow ? inset + over : inset));
-  };
+const measure = (): boolean => {
+  if (!wrapper.value) return false;
+  const rect = wrapper.value.getBoundingClientRect();
   const next = {
-    w: fit(renderedInset.w, right - (measuredSize.w - FRAME_PADDING)),
-    h: fit(renderedInset.h, bottom - (measuredSize.h - FRAME_PADDING)),
+    width: Math.max(1, Math.floor(rect.width)),
+    height: Math.max(1, Math.floor(rect.height)),
   };
-  if (next.w === fitInset.w && next.h === fitInset.h) return false;
-  fitInset = next;
-  fitPasses += 1;
+  if (Math.abs(next.width - size.width) < 2 && Math.abs(next.height - size.height) < 2)
+    return false;
+  size = next;
   return true;
 };
 
@@ -170,55 +142,6 @@ const scheduleRender = () => {
     resizeTimer = null;
     renderReact();
   }, 80);
-};
-
-const updateChartTopOffset = (chartEl: HTMLElement): boolean => {
-  if (!wrapper.value) return false;
-  const top = chartEl.getBoundingClientRect().top - wrapper.value.getBoundingClientRect().top;
-  const next = Math.max(0, Math.round(top));
-  if (Math.abs(next - chartTopOffset) < 2) return false;
-  chartTopOffset = next;
-  return true;
-};
-
-// Vega replaces and then sizes the canvas on every render; measure on those mutations only, so
-// GW's frame changing size on our own re-render never triggers a measurement of a stale canvas.
-// (A ResizeObserver would do, but its callbacks wait for a paint frame a hidden tab never gets.)
-const touchesMarks = (records: MutationRecord[]): boolean =>
-  records.some((record) => {
-    if (record.type === "attributes") return (record.target as Element).matches(MARKS_SELECTOR);
-    return Array.from(record.addedNodes).some(
-      (node) =>
-        node instanceof Element &&
-        (node.matches(MARKS_SELECTOR) || node.querySelector(MARKS_SELECTOR)),
-    );
-  });
-
-// Watch what GW renders above the chart; filter widgets mount async and change height.
-const bindChartContainer = (shadow: ShadowRoot): boolean => {
-  const chartEl = shadow.querySelector<HTMLElement>(`.${CHART_CONTAINER_CLASS}`);
-  if (!chartEl) return false;
-  chartSiblingObserver?.disconnect();
-  chartSiblingObserver = new ResizeObserver(() => {
-    if (!wrapper.value || !updateChartTopOffset(chartEl)) return;
-    if (measure(wrapper.value)) scheduleRender();
-  });
-  for (const sibling of Array.from(chartEl.parentElement?.children ?? [])) {
-    if (sibling !== chartEl) chartSiblingObserver.observe(sibling);
-  }
-  if (updateChartTopOffset(chartEl) && wrapper.value && measure(wrapper.value)) scheduleRender();
-  chartMarksObserver?.disconnect();
-  chartMarksObserver = new MutationObserver((records) => {
-    if (touchesMarks(records) && measureFit(chartEl)) scheduleRender();
-  });
-  chartMarksObserver.observe(chartEl, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["style", "width", "height"],
-  });
-  if (measureFit(chartEl)) scheduleRender();
-  return true;
 };
 
 onMounted(async () => {
@@ -233,75 +156,77 @@ onMounted(async () => {
       import("react-dom/client"),
       import("@kanaries/graphic-walker"),
     ]);
+    // The component may have unmounted while the chunks loaded.
+    if (!container.value || !wrapper.value) return;
     React = reactModule.default;
-    ReactDOMClient = reactDomModule;
     GraphicRenderer = gwModule.GraphicRenderer;
-
-    measure(wrapper.value);
-    syncDataProps();
-
-    reactRootInstance = ReactDOMClient.createRoot(container.value);
+    PureRenderer = gwModule.PureRenderer;
+    stockTheme = gwModule.zincTheme;
+    handle = React.createRef();
+    measure();
+    syncChart();
+    reactRootInstance = reactDomModule.createRoot(container.value);
     renderReact();
     isLoading.value = false;
 
-    const root = container.value;
-    const tryBindShadow = (): boolean => {
-      const shadow = findShadowRoot(root);
-      if (!shadow) return false;
-      injectShadowOverride(shadow);
-      return bindChartContainer(shadow);
-    };
-    if (!tryBindShadow()) {
-      shadowReadyObserver = new MutationObserver(() => {
-        if (tryBindShadow()) {
-          shadowReadyObserver?.disconnect();
-          shadowReadyObserver = null;
-        }
-      });
-      shadowReadyObserver.observe(root, { childList: true, subtree: true });
-    }
-
     resizeObserver = new ResizeObserver(() => {
-      if (!wrapper.value) return;
-      if (measure(wrapper.value)) scheduleRender();
+      if (measure()) scheduleRender();
     });
     resizeObserver.observe(wrapper.value);
   } catch (e) {
-    console.error("[VueGR] Error mounting GraphicRenderer:", e);
+    console.error("[VueGR] Error mounting the chart:", e);
     loadError.value = e instanceof Error ? e.message : "Failed to load";
     isLoading.value = false;
   }
 });
 
 watch(
-  () => [props.chart, props.fields, props.appearance, props.themeKey],
+  () => props.chart,
   () => {
-    syncDataProps();
-    fitInset = { w: 0, h: 0 };
-    fitPasses = 0;
+    syncChart();
     renderReact();
   },
   { deep: true },
 );
 
+// A theme switch changes the surface behind the chart, so the chart is read again.
+watch(
+  () => props.appearance,
+  () => {
+    syncChart();
+    renderReact();
+  },
+);
+
+watch(() => props.computation, renderReact);
+
 onUnmounted(() => {
-  if (resizeTimer) {
-    clearTimeout(resizeTimer);
-    resizeTimer = null;
-  }
+  if (resizeTimer) clearTimeout(resizeTimer);
   resizeObserver?.disconnect();
   resizeObserver = null;
-  shadowReadyObserver?.disconnect();
-  shadowReadyObserver = null;
-  chartSiblingObserver?.disconnect();
-  chartSiblingObserver = null;
-  chartMarksObserver?.disconnect();
-  chartMarksObserver = null;
   if (reactRootInstance) {
     reactRootInstance.unmount();
     reactRootInstance = null;
   }
 });
+
+/** The drawn chart as a PNG data URL, or null while nothing is drawn. */
+const exportImage = async (): Promise<string | null> => {
+  const current = handle?.current;
+  if (!current) return null;
+  try {
+    const image =
+      typeof current.exportChart === "function"
+        ? (await current.exportChart("data-url"))?.charts?.[0]?.data
+        : (await current.getCanvasData?.())?.[0];
+    return typeof image === "string" && image.startsWith("data:image/") ? image : null;
+  } catch {
+    // Not drawn yet, or the renderer has no picture to give.
+    return null;
+  }
+};
+
+defineExpose({ exportImage });
 </script>
 
 <template>

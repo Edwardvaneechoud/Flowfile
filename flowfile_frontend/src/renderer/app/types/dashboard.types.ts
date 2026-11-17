@@ -33,6 +33,10 @@ export interface DashboardTile {
   viz_id: number | null;
   /** Which entry of CatalogVisualization.spec[] to render. */
   chart_index: number;
+  /** A chart tile's own title; absent or null shows the chart's name. */
+  title?: string | null;
+  /** False hides a chart tile's title from viewers. */
+  show_title?: boolean;
   /** Markdown source when type === "text". */
   text_md?: string | null;
   /** CSS colors for text tiles. */

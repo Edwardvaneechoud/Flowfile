@@ -218,7 +218,9 @@ const { engine, state: autosaveState } = useAutosave<VisualizationUpdatePayload>
     return { payload: { name: trimmed, spec }, serialized: serializeViz(trimmed, spec) };
   },
   save: async (payload, { reason }) => {
-    const thumb = shouldCaptureThumbnail(reason) ? await captureThumbnail(gwRef) : null;
+    const thumb = shouldCaptureThumbnail(reason)
+      ? await captureThumbnail(gwRef, computeOnWorker)
+      : null;
     const body = buildVizSaveBody(
       { name: payload.name ?? "", spec: payload.spec ?? [] },
       { reason, thumbnail: thumb, expectedUpdatedAt: expectedUpdatedAt.value },
@@ -417,7 +419,7 @@ async function onConflictOverwrite() {
       spec,
       expected_updated_at: fresh.updated_at,
     };
-    const thumb = await captureThumbnail(gwRef);
+    const thumb = await captureThumbnail(gwRef, computeOnWorker);
     if (thumb) body.thumbnail_data_url = thumb;
     const updated = await store.updateVisualization(props.vizId, body, {
       refreshLibrary: false,
@@ -486,7 +488,7 @@ async function flushAutosave(): Promise<boolean> {
   if (clean && thumbnailStale.value && gwRef.value && viz.value) {
     engine.suspend();
     try {
-      const thumb = await captureThumbnail(gwRef);
+      const thumb = await captureThumbnail(gwRef, computeOnWorker);
       if (thumb) {
         const body: VisualizationUpdatePayload = { thumbnail_data_url: thumb };
         if (expectedUpdatedAt.value) body.expected_updated_at = expectedUpdatedAt.value;

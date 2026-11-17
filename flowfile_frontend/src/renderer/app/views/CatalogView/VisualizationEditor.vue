@@ -280,7 +280,7 @@ const save = async () => {
   }
   // Save the full IChart[] so multi-tab specs round-trip.
   const spec = charts as Record<string, any>[];
-  const thumbnail_data_url = await captureThumbnail(gwRef);
+  const thumbnail_data_url = await captureThumbnail(gwRef, computeOnWorker);
   saving.value = true;
   try {
     let saved: CatalogVisualization;

@@ -2,22 +2,56 @@ import { computed, type ComputedRef, type Ref } from "vue";
 import { CatalogApi } from "../api/catalog.api";
 import { useGraphicWalkerCompute } from "./useGraphicWalkerCompute";
 import type { DashboardFilter, DashboardFilterKind, DashboardTile } from "../types";
+import { resolveDateRange } from "../views/DashboardsView/dateRange";
 
 type SemanticType = "quantitative" | "nominal" | "ordinal" | "temporal";
 
 const isSemantic = (s: unknown): s is SemanticType =>
   s === "quantitative" || s === "nominal" || s === "ordinal" || s === "temporal";
 
-interface VisFilter {
+export interface VisFilter {
   fid: string;
   rule: Record<string, unknown>;
 }
 
+/** A chart's own filter as its spec holds it. */
+interface ChartFilter {
+  fid: string;
+  rule?: Record<string, unknown> | null;
+  computed?: boolean;
+  enableAgg?: boolean;
+}
+
+interface ChartWithFilters {
+  encodings?: { filters?: ChartFilter[] };
+}
+
+/**
+ * Take a chart's row filters out of its spec, for a dashboard tile.
+ *
+ * Graphic Walker draws an input for every filter a chart holds, above the chart. A filter on a
+ * stored column is the first step of the chart's query, so it applies just the same when the tile
+ * sends it with the dashboard's own filters and the chart no longer holds it. A filter on a
+ * computed or an aggregated field runs later in the query and stays where it is.
+ */
+export const splitChartFilters = <T extends ChartWithFilters>(
+  chart: T,
+): { chart: T; filters: VisFilter[] } => {
+  const all = chart.encodings?.filters ?? [];
+  const kept = all.filter((f) => f.computed || f.enableAgg);
+  if (kept.length === all.length) return { chart, filters: [] };
+  const filters = all
+    .filter((f) => !f.computed && !f.enableAgg && f.rule != null)
+    .map((f) => ({ fid: f.fid, rule: f.rule as Record<string, unknown> }));
+  return { chart: { ...chart, encodings: { ...chart.encodings, filters: kept } }, filters };
+};
+
 export const buildFilterStep = (
   filters: DashboardFilter[],
   tileFields: TileField[] | null,
+  chartFilters: VisFilter[] = [],
 ): { type: "filter"; filters: VisFilter[] } | null => {
-  const visFilters: VisFilter[] = [];
+  const visFilters: VisFilter[] = [...chartFilters];
   for (const f of filters) {
     const rule = filterToRule(
       f,
@@ -55,12 +89,14 @@ const filterToRule = (f: DashboardFilter, field?: TileField): Record<string, unk
     return { type: "range", value: [min ?? null, max ?? null] };
   }
   if (f.kind === "date_range") {
-    const start = f.state.start as string | null | undefined;
-    const end = f.state.end as string | null | undefined;
-    if (!start && !end) return null;
+    const range = resolveDateRange(f.state);
+    if (!range) return null;
     return {
       type: "temporal range",
-      value: [start ? Date.parse(start) : null, end ? Date.parse(end) : null],
+      value: [
+        range.start ? Date.parse(range.start) : null,
+        range.end ? Date.parse(range.end) : null,
+      ],
     };
   }
   return null;
@@ -167,6 +203,8 @@ export interface UseDashboardComputationOptions {
   tileDatasource?: TileDatasourceResolver;
   /** Columns of the tile's data; null while unknown (still loading). */
   tileFields?: () => TileField[] | null;
+  /** Row filters taken out of the tile's chart (``splitChartFilters``). */
+  chartFilters?: () => VisFilter[];
   onMissing?: () => void;
 }
 
@@ -186,7 +224,11 @@ export function useDashboardComputation(opts: UseDashboardComputationOptions) {
   const fetcher = async (payload: any): Promise<{ rows: any[]; error: string | null }> => {
     const vizId = opts.tile.value.viz_id;
     if (vizId == null) return { rows: [], error: null };
-    const filterStep = buildFilterStep(effectiveFilters.value, opts.tileFields?.() ?? null);
+    const filterStep = buildFilterStep(
+      effectiveFilters.value,
+      opts.tileFields?.() ?? null,
+      opts.chartFilters?.() ?? [],
+    );
     const finalPayload =
       filterStep && payload?.workflow
         ? { ...payload, workflow: [filterStep, ...payload.workflow] }

@@ -177,13 +177,16 @@ def test_dashboard_round_trips_and_relinks_tiles(tmp_path):
     project_sync.close_project(OWNER)
     _clear_viz_dashboards()
     viz_id, vuuid = _make_viz("dash-chart", source_type="sql", sql_query="SELECT 1")
-    layout = DashboardLayout(tiles=[DashboardTile(id="tile-1", type="viz", viz_id=viz_id, x=0, y=0, w=6, h=4)])
-    _, duuid = _make_dashboard("board", layout)
+    tile_model = DashboardTile(
+        id="tile-1", type="viz", viz_id=viz_id, title="Revenue", show_title=False, x=0, y=0, w=6, h=4
+    )
+    _, duuid = _make_dashboard("board", DashboardLayout(tiles=[tile_model]))
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Dash", OWNER)
         tile = _dash_yaml(root)[duuid]["layout"]["tiles"][0]
         assert tile["viz_uuid"] == vuuid and "viz_id" not in tile  # portable tile reference
+        assert (tile["title"], tile["show_title"]) == ("Revenue", False)
 
         dash_bytes = (root / "dashboards.yaml").read_bytes()
 
@@ -197,6 +200,7 @@ def test_dashboard_round_trips_and_relinks_tiles(tmp_path):
             assert new_viz is not None and dashboard is not None
             stored_tile = json.loads(dashboard.layout_json)["tiles"][0]
             assert stored_tile["viz_id"] == new_viz.id and "viz_uuid" not in stored_tile
+            assert (stored_tile["title"], stored_tile["show_title"]) == ("Revenue", False)
         write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "dashboard must round-trip byte-identically"
     finally:

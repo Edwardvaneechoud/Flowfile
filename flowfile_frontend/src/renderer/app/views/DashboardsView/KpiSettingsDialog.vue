@@ -117,10 +117,11 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import { CatalogApi } from "../../api/catalog.api";
+import { useDashboardVizCache } from "../../composables/useDashboardVizCache";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { TileField } from "../../composables/useDashboardComputation";
 import type { DashboardFilter, DashboardKpi, DashboardTile } from "../../types";
+import { resolveDateRange } from "./dateRange";
 import {
   DEFAULT_KPI,
   KPI_AGG_OPTIONS,
@@ -148,6 +149,7 @@ const AUTO_DECIMALS = -1;
 const DECIMAL_CHOICES = [0, 1, 2, 3, 4, 5, 6];
 
 const catalogStore = useCatalogStore();
+const vizCache = useDashboardVizCache();
 
 const draft = reactive<{ viz_id: number | null; kpi: DashboardKpi }>({
   viz_id: null,
@@ -166,7 +168,7 @@ const loadFields = async (vizId: number | null) => {
   if (vizId == null) return;
   fieldsLoading.value = true;
   try {
-    const resp = await CatalogApi.getSavedVisualizationFields(vizId);
+    const resp = await vizCache.getFields(vizId);
     if (seq !== fieldsSeq) return;
     fields.value = (resp.fields ?? []).map((f) => ({
       fid: String(f.fid),
@@ -266,13 +268,12 @@ const previousPeriodStatus = computed(() => {
     );
   }
   const name = f.label || f.field_name;
-  const start = f.state?.start;
-  const end = f.state?.end;
-  if (typeof start !== "string" || !start || typeof end !== "string" || !end) {
+  const range = resolveDateRange(f.state);
+  if (!range?.start || !range.end) {
     return `Uses the ‘${name}’ date range filter. Pick a start and end date in the filter strip to see the comparison.`;
   }
   const fmt = (d: string) => new Date(d).toLocaleDateString();
-  return `Uses the ‘${name}’ date range filter (${fmt(start)} – ${fmt(end)}) and compares against the same-length window right before it.`;
+  return `Uses the ‘${name}’ date range filter (${fmt(range.start)} – ${fmt(range.end)}) and compares against the same-length window right before it.`;
 });
 
 const canSave = computed(

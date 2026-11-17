@@ -904,7 +904,8 @@ class DashboardTile(BaseModel):
     ``id`` is a client-generated UUID, stable across saves so the frontend
     can preserve component state on layout updates. ``type`` discriminates
     tile kinds: ``"viz"`` renders a saved visualization (uses ``viz_id`` /
-    ``chart_index``); ``"text"`` renders user-authored Markdown from
+    ``chart_index``; ``title`` replaces the chart's name as the tile's heading
+    and ``show_title`` False hides the heading from viewers); ``"text"`` renders user-authored Markdown from
     ``text_md``; ``"separator"`` draws a rule to break the page into
     sections (``orientation``, ``thickness`` in px and ``line_color`` style
     it); ``"kpi"`` shows one headline aggregate of the ``viz_id``
@@ -917,6 +918,8 @@ class DashboardTile(BaseModel):
     type: Literal["viz", "text", "separator", "kpi"] = "viz"
     viz_id: int | None = None
     chart_index: int = 0
+    title: str | None = Field(default=None, max_length=120)
+    show_title: bool = True
     text_md: str | None = None
     bg_color: str | None = None
     text_color: str | None = None

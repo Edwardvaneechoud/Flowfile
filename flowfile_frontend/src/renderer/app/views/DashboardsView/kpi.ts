@@ -5,6 +5,7 @@ import {
   type TileField,
 } from "../../composables/useDashboardComputation";
 import type { DashboardFilter, DashboardKpi, KpiAgg, KpiValueSize } from "../../types";
+import { resolveDateRange } from "./dateRange";
 
 /** Key the single aggregate row carries its value under. */
 const KPI_VALUE_KEY = "kpi_value";
@@ -113,12 +114,13 @@ interface DateRangeState {
   end: string;
 }
 
-const dateRangeOf = (state: Record<string, unknown> | undefined): DateRangeState | null => {
-  const start = state?.start;
-  const end = state?.end;
-  return typeof start === "string" && start && typeof end === "string" && end
-    ? { start, end }
-    : null;
+// A named window counts like a fixed one: it has both bounds once resolved.
+const dateRangeOf = (
+  state: Record<string, unknown> | undefined,
+  now?: Date,
+): DateRangeState | null => {
+  const range = resolveDateRange(state, now);
+  return range?.start && range.end ? { start: range.start, end: range.end } : null;
 };
 
 /** The date_range filter a previous-period comparison shifts: the first one
@@ -149,8 +151,11 @@ const rangeLengthDays = (range: DateRangeState): number =>
   differenceInCalendarDays(new Date(range.end), new Date(range.start)) + 1;
 
 /** The window of the same length ending the day before ``start`` (no overlap). */
-export const shiftDateRangeBack = (state: Record<string, unknown>): DateRangeState | null => {
-  const range = dateRangeOf(state);
+export const shiftDateRangeBack = (
+  state: Record<string, unknown>,
+  now?: Date,
+): DateRangeState | null => {
+  const range = dateRangeOf(state, now);
   if (!range) return null;
   const n = rangeLengthDays(range);
   return {
@@ -159,8 +164,8 @@ export const shiftDateRangeBack = (state: Record<string, unknown>): DateRangeSta
   };
 };
 
-export const previousPeriodLabel = (state: Record<string, unknown>): string | null => {
-  const range = dateRangeOf(state);
+export const previousPeriodLabel = (state: Record<string, unknown>, now?: Date): string | null => {
+  const range = dateRangeOf(state, now);
   if (!range) return null;
   const n = rangeLengthDays(range);
   return n === 1 ? "vs previous day" : `vs previous ${n} days`;
@@ -176,7 +181,11 @@ export const previousPeriodFilters = (
   return filters.map((f) => {
     if (f.id !== comparisonFilterId) return f;
     const shifted = shiftDateRangeBack(f.state);
-    return shifted ? { ...f, state: { ...f.state, ...shifted } } : f;
+    if (!shifted) return f;
+    // The shifted window is a fixed one, so a preset the filter named no longer applies.
+    const state: Record<string, unknown> = { ...f.state, ...shifted };
+    delete state.preset;
+    return { ...f, state };
   });
 };
 

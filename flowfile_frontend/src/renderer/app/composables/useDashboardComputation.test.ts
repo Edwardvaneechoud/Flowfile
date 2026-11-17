@@ -7,6 +7,7 @@ import {
   buildFilterStep,
   describeFieldFit,
   filtersTargetingTile,
+  splitChartFilters,
   type TileField,
 } from "./useDashboardComputation";
 import type { DashboardFilter } from "../types";
@@ -161,6 +162,69 @@ describe("buildFilterStep", () => {
     expect(stepValue(mixed, fieldsOf({ region: "quantitative" }))).toEqual([2020]);
     const none = filterOf({ state: { selected: ["abc"] } });
     expect(buildFilterStep([none], fieldsOf({ region: "quantitative" }))).toBeNull();
+  });
+});
+
+describe("buildFilterStep with a date filter", () => {
+  const dateFilter = (state: Record<string, unknown>) =>
+    filterOf({ field_name: "order_date", kind: "date_range", state });
+
+  it("sends a fixed window as stored", () => {
+    const start = "2026-07-01T00:00:00.000Z";
+    const end = "2026-07-07T00:00:00.000Z";
+    expect(buildFilterStep([dateFilter({ start, end })], null)?.filters[0]).toEqual({
+      fid: "order_date",
+      rule: { type: "temporal range", value: [Date.parse(start), Date.parse(end)] },
+    });
+  });
+
+  it("works a named window out when the query is built", () => {
+    const [from, to] = buildFilterStep([dateFilter({ preset: "last_7_days" })], null)?.filters[0]
+      ?.rule.value as number[];
+    expect(to).toBeGreaterThan(Date.now() - 1);
+    expect(Math.round((to - from) / 86_400_000)).toBe(7);
+  });
+});
+
+describe("splitChartFilters", () => {
+  const row = { fid: "product", rule: { type: "not in", value: ["Desk Lamp"] } };
+  const unset = { fid: "status", rule: null };
+  const computed = { fid: "gw_margin", rule: { type: "range", value: [0, 1] }, computed: true };
+  const aggregated = {
+    fid: "amount",
+    rule: { type: "range", value: [100, null] },
+    enableAgg: true,
+  };
+  const chartOf = (filters: unknown[]) =>
+    ({ name: "c", encodings: { rows: ["r"], filters } }) as any;
+
+  it("moves row filters into the query and takes them out of the chart", () => {
+    const { chart, filters } = splitChartFilters(chartOf([row, unset]));
+    expect(filters).toEqual([{ fid: "product", rule: row.rule }]);
+    expect(chart.encodings.filters).toEqual([]);
+    expect(chart.encodings.rows).toEqual(["r"]);
+  });
+
+  it("leaves filters on computed and aggregated fields where the chart runs them", () => {
+    const { chart, filters } = splitChartFilters(chartOf([row, computed, aggregated]));
+    expect(filters).toEqual([{ fid: "product", rule: row.rule }]);
+    expect(chart.encodings.filters).toEqual([computed, aggregated]);
+  });
+
+  it("hands the same chart back when there is nothing to move", () => {
+    const withLateFilters = chartOf([computed]);
+    expect(splitChartFilters(withLateFilters).chart).toBe(withLateFilters);
+    const plain = { name: "c" } as any;
+    expect(splitChartFilters(plain)).toEqual({ chart: plain, filters: [] });
+  });
+
+  it("joins the dashboard's own filters in one step", () => {
+    const { filters } = splitChartFilters(chartOf([row]));
+    expect(buildFilterStep([filterOf({})], null, filters)?.filters.map((f) => f.fid)).toEqual([
+      "product",
+      "region",
+    ]);
+    expect(buildFilterStep([], null, filters)?.filters).toHaveLength(1);
   });
 });
 

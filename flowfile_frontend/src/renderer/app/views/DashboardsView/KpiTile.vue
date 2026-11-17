@@ -54,7 +54,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, toRef, watch } from "vue";
 import { Odometer, Warning, WarningFilled } from "@element-plus/icons-vue";
-import { CatalogApi } from "../../api/catalog.api";
+import { useDashboardVizCache } from "../../composables/useDashboardVizCache";
 import {
   filtersTargetingTile,
   useDashboardComputation,
@@ -95,6 +95,7 @@ const emit = defineEmits<{
 const DELTA_ARROW: Record<KpiDelta["direction"], string> = { up: "▲", down: "▼", flat: "■" };
 
 const catalogStore = useCatalogStore();
+const vizCache = useDashboardVizCache();
 const showSettings = ref(false);
 
 const openSettings = () => {
@@ -125,7 +126,7 @@ const loadFields = async () => {
   fieldsError.value = null;
   if (vizId == null) return;
   try {
-    const resp = await CatalogApi.getSavedVisualizationFields(vizId);
+    const resp = await vizCache.getFields(vizId);
     if (seq !== fieldsSeq) return;
     fields.value = (resp.fields ?? []).map((f) => ({
       fid: String(f.fid),
@@ -305,7 +306,7 @@ const showPeriodHint = computed(
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 6px 10px;
+  padding: 10px 14px;
   box-sizing: border-box;
   overflow: hidden;
 }

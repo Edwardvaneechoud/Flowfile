@@ -13,6 +13,14 @@
           class="editor-name"
           maxlength="120"
         />
+        <el-input
+          v-if="store.current"
+          v-model="descriptionDraft"
+          size="small"
+          placeholder="Description (optional)"
+          class="editor-description"
+          maxlength="300"
+        />
         <SaveStatusIndicator v-if="!isNew" :state="autosaveState" />
         <SaveStatusIndicator v-else :state="autosaveState" mode="draft" :draft-saved="draftDirty" />
       </div>
@@ -164,6 +172,7 @@ import { useAuthStore } from "../../stores/auth-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
 import { useDashboardRefresh } from "../../composables/useDashboardRefresh";
+import { provideDashboardVizCache } from "../../composables/useDashboardVizCache";
 import { useAutosave } from "../../composables/useAutosave";
 import { classifyAutosaveError } from "../../composables/autosaveEngine";
 import { createLocalDraft, type LocalDraft } from "../../composables/localDraft";
@@ -199,12 +208,18 @@ const appearance = useGraphicWalkerAppearance();
 
 const isNew = computed(() => props.id === undefined);
 const nameDraft = ref("");
+const descriptionDraft = ref("");
+const descriptionValue = (): string | null => descriptionDraft.value.trim() || null;
 
-const serializeDashboard = (dashName: string, layout: unknown) =>
-  JSON.stringify({ name: dashName, layout });
+const serializeDashboard = (dashName: string, layout: unknown, description: string | null) =>
+  JSON.stringify({ name: dashName, description, layout });
 
 // Revert anchor: the state captured when the editor opened this dashboard.
-const openSnapshot = ref<{ name: string; layout: DashboardLayout } | null>(null);
+const openSnapshot = ref<{
+  name: string;
+  description: string | null;
+  layout: DashboardLayout;
+} | null>(null);
 const openSerialized = ref("");
 // CAS token echoed into every PUT; refreshed from each response.
 const expectedLayoutVersion = ref<number | null>(null);
@@ -218,9 +233,10 @@ const { engine, state: autosaveState } = useAutosave<DashboardUpdatePayload>({
     const trimmed = nameDraft.value.trim();
     if (!trimmed) return null;
     const layout = toPlainJson(store.current.layout) as DashboardLayout;
+    const description = descriptionValue();
     return {
-      payload: { name: trimmed, layout },
-      serialized: serializeDashboard(trimmed, layout),
+      payload: { name: trimmed, description, layout },
+      serialized: serializeDashboard(trimmed, layout, description),
     };
   },
   save: async (payload) => {
@@ -231,7 +247,8 @@ const { engine, state: autosaveState } = useAutosave<DashboardUpdatePayload>({
     const updated = await store.autosaveDashboard(Number(props.id), body);
     expectedLayoutVersion.value = updated.layout_version;
     sessionChanged.value =
-      serializeDashboard(payload.name ?? "", payload.layout) !== openSerialized.value;
+      serializeDashboard(payload.name ?? "", payload.layout, payload.description ?? null) !==
+      openSerialized.value;
   },
 });
 
@@ -245,8 +262,13 @@ const canRevert = computed(() => {
 const auth = useAuthStore();
 const draftDirty = ref(false);
 const restoreAvailable = ref(false);
-let draft: LocalDraft<{ name: string; layout: DashboardLayout }> | null = null;
-let pendingDraft: { name: string; layout: DashboardLayout } | null = null;
+interface NewDashboardDraft {
+  name: string;
+  description?: string;
+  layout: DashboardLayout;
+}
+let draft: LocalDraft<NewDashboardDraft> | null = null;
+let pendingDraft: NewDashboardDraft | null = null;
 
 const setupDraft = () => {
   const userKey = auth.currentUser?.id ?? auth.currentUser?.username ?? "anon";
@@ -257,6 +279,7 @@ const setupDraft = () => {
       draftDirty.value && store.current
         ? {
             name: nameDraft.value,
+            description: descriptionDraft.value,
             layout: toPlainJson(store.current.layout) as DashboardLayout,
           }
         : null,
@@ -271,6 +294,7 @@ const setupDraft = () => {
 const onRestoreDraft = () => {
   if (!pendingDraft) return;
   nameDraft.value = pendingDraft.name;
+  descriptionDraft.value = pendingDraft.description ?? "";
   store.setLayout(upgradeLayoutGrid(pendingDraft.layout));
   draftDirty.value = true;
   restoreAvailable.value = false;
@@ -298,14 +322,16 @@ const markChanged = () => {
 
 const startAutosaveSession = (dashboard: Dashboard) => {
   const layout = toPlainJson(dashboard.layout) as DashboardLayout;
-  openSnapshot.value = { name: dashboard.name, layout };
-  openSerialized.value = serializeDashboard(dashboard.name, layout);
+  const description = dashboard.description ?? null;
+  openSnapshot.value = { name: dashboard.name, description, layout };
+  openSerialized.value = serializeDashboard(dashboard.name, layout, description);
   expectedLayoutVersion.value = dashboard.layout_version ?? 1;
   sessionChanged.value = false;
   engine.reset(openSerialized.value);
 };
 
 const layoutRef = computed<DashboardLayout>(() => store.current?.layout ?? EMPTY_DASHBOARD_LAYOUT);
+const vizCache = provideDashboardVizCache();
 const {
   datasourcesInUse,
   tilesByDatasource,
@@ -316,7 +342,7 @@ const {
   loadTileFields,
   getColumnStats,
   refresh,
-} = useDashboardDatasources(layoutRef);
+} = useDashboardDatasources(layoutRef, vizCache);
 
 const addedVizIds = computed(() => {
   if (!store.current) return new Set<number>();
@@ -407,6 +433,7 @@ const onCloseVizDialog = () => {
   // Refresh tiles bound to this viz only when the viewer reported a save.
   if (editingVizId.value != null && vizPendingRefresh.value) {
     const id = editingVizId.value;
+    vizCache.invalidate(id);
     vizRefreshNonces.value = {
       ...vizRefreshNonces.value,
       [id]: (vizRefreshNonces.value[id] ?? 0) + 1,
@@ -578,6 +605,7 @@ const initialise = async () => {
   if (isNew.value) {
     const blank = store.newBlankDashboard();
     nameDraft.value = blank.name;
+    descriptionDraft.value = "";
     draftDirty.value = false;
     setupDraft();
     return;
@@ -586,6 +614,7 @@ const initialise = async () => {
     await store.loadDashboard(Number(props.id));
     if (store.current) {
       nameDraft.value = store.current.name;
+      descriptionDraft.value = store.current.description ?? "";
       startAutosaveSession(store.current);
     }
   } catch {
@@ -595,6 +624,10 @@ const initialise = async () => {
 
 watch(nameDraft, (v) => {
   if (store.current && v !== store.current.name) markChanged();
+});
+
+watch(descriptionDraft, () => {
+  if (store.current && descriptionValue() !== (store.current.description ?? null)) markChanged();
 });
 
 // Honour ?editViz=<id> from the route by auto-opening the chart edit dialog
@@ -694,7 +727,7 @@ const onCreate = async () => {
   try {
     const created = await store.createDashboard({
       name: trimmed,
-      description: store.current.description,
+      description: descriptionValue(),
       namespace_id: store.current.namespace_id,
       layout: store.current.layout,
     });
@@ -735,9 +768,11 @@ const onRevert = async () => {
     engine.suspend();
     await engine.flush();
     nameDraft.value = openSnapshot.value.name;
+    descriptionDraft.value = openSnapshot.value.description ?? "";
     store.setLayout(toPlainJson(openSnapshot.value.layout) as DashboardLayout);
     const body: DashboardUpdatePayload = {
       name: openSnapshot.value.name,
+      description: openSnapshot.value.description,
       layout: openSnapshot.value.layout,
     };
     if (expectedLayoutVersion.value != null) {
@@ -751,6 +786,7 @@ const onRevert = async () => {
     const nowSerialized = serializeDashboard(
       nameDraft.value.trim(),
       toPlainJson(store.current.layout),
+      descriptionValue(),
     );
     if (nowSerialized !== openSerialized.value) engine.notifyChange();
   } catch (err) {
@@ -773,9 +809,14 @@ const resyncFromServer = async () => {
   await store.loadDashboard(Number(props.id));
   if (!store.current) return;
   nameDraft.value = store.current.name;
+  descriptionDraft.value = store.current.description ?? "";
   expectedLayoutVersion.value = store.current.layout_version ?? 1;
   engine.resolveConflictReloaded(
-    serializeDashboard(store.current.name, toPlainJson(store.current.layout)),
+    serializeDashboard(
+      store.current.name,
+      toPlainJson(store.current.layout),
+      store.current.description ?? null,
+    ),
   );
 };
 
@@ -798,19 +839,22 @@ const onConflictOverwrite = async () => {
     const fresh = await CatalogApi.getDashboard(Number(props.id));
     const trimmed = nameDraft.value.trim() || fresh.name;
     const layout = toPlainJson(store.current.layout) as DashboardLayout;
+    const description = descriptionValue();
     const updated = await store.autosaveDashboard(Number(props.id), {
       name: trimmed,
+      description,
       layout,
       expected_layout_version: fresh.layout_version,
     });
     expectedLayoutVersion.value = updated.layout_version;
-    const adopted = serializeDashboard(trimmed, layout);
+    const adopted = serializeDashboard(trimmed, layout, description);
     sessionChanged.value = adopted !== openSerialized.value;
     engine.markSaved(adopted);
     // Edits made while the overwrite PUT was in flight must not vanish silently.
     const nowSerialized = serializeDashboard(
       nameDraft.value.trim(),
       toPlainJson(store.current.layout),
+      descriptionValue(),
     );
     if (nowSerialized !== adopted) engine.notifyChange();
   } catch (err) {
@@ -849,6 +893,9 @@ const onConflictOverwrite = async () => {
 }
 .editor-name {
   max-width: 320px;
+}
+.editor-description {
+  max-width: 360px;
 }
 .draft-banner {
   margin: 0 0 var(--spacing-3);

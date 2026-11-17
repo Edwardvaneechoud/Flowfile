@@ -2,11 +2,14 @@ import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
 import { CatalogApi } from "../api/catalog.api";
 import type { ColumnSchema, ColumnStatsResponse, DashboardLayout } from "../types";
 import type { TileField } from "./useDashboardComputation";
+import { createDashboardVizCache, type DashboardVizCache } from "./useDashboardVizCache";
 
 export interface DashboardDatasource {
   id: number;
   name: string;
   schema_columns: ColumnSchema[];
+  /** When the table's data last changed, as the catalog recorded it. */
+  updated_at: string | null;
 }
 
 /** Resolves dashboard tiles → catalog tables.
@@ -21,6 +24,7 @@ export interface DashboardDatasource {
  */
 export function useDashboardDatasources(
   layout: Ref<DashboardLayout> | ComputedRef<DashboardLayout>,
+  vizCache: DashboardVizCache = createDashboardVizCache(),
 ) {
   // viz_id → catalog_table_id (null for SQL-source viz, or unresolved)
   const vizToTable = ref<Record<number, number | null>>({});
@@ -35,9 +39,8 @@ export function useDashboardDatasources(
   const fetchViz = async (vizId: number, force = false) => {
     if (!force && vizId in vizToTable.value) return;
     try {
-      const viz = await CatalogApi.getVisualization(vizId);
-      vizToTable.value[vizId] =
-        viz.source_type === "table" ? (viz.catalog_table_id ?? null) : null;
+      const viz = await vizCache.getViz(vizId);
+      vizToTable.value[vizId] = viz.source_type === "table" ? (viz.catalog_table_id ?? null) : null;
       vizNameById.value[vizId] = viz.name;
     } catch (err) {
       console.warn(`[dashboard] could not fetch viz ${vizId}:`, err);
@@ -45,18 +48,30 @@ export function useDashboardDatasources(
     }
   };
 
-  const fetchTable = async (tableId: number, force = false) => {
-    if (!force && tableId in tableCache.value) return;
-    try {
-      const table = await CatalogApi.getTable(tableId);
-      tableCache.value[tableId] = {
-        id: table.id,
-        name: table.full_table_name ?? table.name,
-        schema_columns: table.schema_columns ?? [],
-      };
-    } catch (err) {
-      console.warn(`[dashboard] could not fetch table ${tableId}:`, err);
-    }
+  // Two refreshes can overlap; the second waits for the first one's request.
+  const tableRequests = new Map<number, Promise<void>>();
+
+  const fetchTable = (tableId: number, force = false): Promise<void> => {
+    if (!force && tableId in tableCache.value) return Promise.resolve();
+    const pending = tableRequests.get(tableId);
+    if (pending) return pending;
+    const request = (async () => {
+      try {
+        const table = await CatalogApi.getTable(tableId);
+        tableCache.value[tableId] = {
+          id: table.id,
+          name: table.full_table_name ?? table.name,
+          schema_columns: table.schema_columns ?? [],
+          updated_at: table.updated_at ?? null,
+        };
+      } catch (err) {
+        console.warn(`[dashboard] could not fetch table ${tableId}:`, err);
+      } finally {
+        tableRequests.delete(tableId);
+      }
+    })();
+    tableRequests.set(tableId, request);
+    return request;
   };
 
   // (table_id, column_name) -> stats. Promise caching dedupes concurrent
@@ -71,7 +86,7 @@ export function useDashboardDatasources(
   const fetchFields = async (vizId: number) => {
     if (vizId in vizFields.value) return;
     try {
-      const resp = await CatalogApi.getSavedVisualizationFields(vizId);
+      const resp = await vizCache.getFields(vizId);
       vizFields.value[vizId] = (resp.fields ?? []).map((f) => ({
         fid: String(f.fid),
         semanticType: f.semanticType,
@@ -85,21 +100,16 @@ export function useDashboardDatasources(
     if (force) {
       statsCache.clear();
       vizFields.value = {};
+      vizCache.invalidate();
     }
     const vizIds = Array.from(
-      new Set(
-        layout.value.tiles.map((t) => t.viz_id).filter((id): id is number => id != null),
-      ),
+      new Set(layout.value.tiles.map((t) => t.viz_id).filter((id): id is number => id != null)),
     );
     loading.value = true;
     try {
       await Promise.all(vizIds.map((id) => fetchViz(id, force)));
       const tableIds = Array.from(
-        new Set(
-          vizIds
-            .map((v) => vizToTable.value[v])
-            .filter((id): id is number => id != null),
-        ),
+        new Set(vizIds.map((v) => vizToTable.value[v]).filter((id): id is number => id != null)),
       );
       await Promise.all(tableIds.map((id) => fetchTable(id, force)));
     } finally {
@@ -197,7 +207,7 @@ export function useDashboardDatasources(
     if (tile.type === "kpi" && tile.kpi?.label) return tile.kpi.label;
     if (tile.viz_id == null) return tile.type === "kpi" ? "KPI" : `Tile ${tileId.slice(0, 6)}`;
     const vizName = vizNameById.value[tile.viz_id] ?? `Viz #${tile.viz_id}`;
-    return tile.type === "kpi" ? `KPI · ${vizName}` : vizName;
+    return tile.type === "kpi" ? `KPI · ${vizName}` : tile.title?.trim() || vizName;
   };
 
   return {

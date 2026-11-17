@@ -3,6 +3,8 @@
     ref="rootEl"
     class="tile"
     :class="{
+      'tile-card': (isViz || isKpi) && !blankInView,
+      'tile-blank': blankInView,
       'tile-text': isText,
       'tile-text-view': isText && mode === 'view',
       'tile-separator': isSeparator,
@@ -12,8 +14,31 @@
     :style="tileStyle"
     @contextmenu="onTileContextMenu"
   >
-    <div v-if="isViz" class="tile-header" :class="{ 'tile-handle': mode === 'edit' }">
-      <span class="tile-title">{{ headerTitle }}</span>
+    <div
+      v-if="showHeader"
+      class="tile-header"
+      :class="{ 'tile-handle': mode === 'edit' && !titleEditing }"
+    >
+      <input
+        v-if="titleEditing"
+        ref="titleInputEl"
+        v-model="titleDraft"
+        class="tile-title-input"
+        maxlength="120"
+        :placeholder="vizName"
+        @mousedown.stop
+        @keydown.enter.prevent="commitTitle"
+        @keydown.esc.prevent="titleEditing = false"
+        @blur="commitTitle"
+      />
+      <span
+        v-else
+        class="tile-title"
+        :class="{ 'tile-title-hidden': titleHidden }"
+        :title="mode === 'edit' ? 'Double-click to rename' : undefined"
+        @dblclick="startTitleEdit"
+        >{{ titleHidden ? "Title hidden" : headerTitle }}</span
+      >
       <div class="tile-header-actions">
         <span v-if="lastError" class="tile-error" :title="lastError"
           ><el-icon><Warning /></el-icon
@@ -27,6 +52,16 @@
             <el-dropdown-menu>
               <el-dropdown-item :disabled="tile.viz_id == null" @click="emit('edit-viz')">
                 <el-icon><Edit /></el-icon> Edit chart
+              </el-dropdown-item>
+              <el-dropdown-item @click="renameFromMenu">
+                <el-icon><EditPen /></el-icon> Rename
+              </el-dropdown-item>
+              <el-dropdown-item @click="toggleTitle">
+                <el-icon><component :is="titleHidden ? View : Hide" /></el-icon>
+                {{ titleHidden ? "Show title" : "Hide title" }}
+              </el-dropdown-item>
+              <el-dropdown-item @click="emit('duplicate')">
+                <el-icon><CopyDocument /></el-icon> Duplicate
               </el-dropdown-item>
               <el-dropdown-item divided @click="emit('remove')">
                 <el-icon><Delete /></el-icon> Remove from dashboard
@@ -57,6 +92,9 @@
             >
               <el-icon><Switch /></el-icon> Make {{ isVertical ? "horizontal" : "vertical" }}
             </el-dropdown-item>
+            <el-dropdown-item @click="emit('duplicate')">
+              <el-icon><CopyDocument /></el-icon> Duplicate
+            </el-dropdown-item>
             <el-dropdown-item divided @click="emit('remove')">
               <el-icon><Delete /></el-icon> Remove from dashboard
             </el-dropdown-item>
@@ -65,7 +103,11 @@
       </el-dropdown>
     </div>
 
-    <div class="tile-body" :class="{ 'tile-handle': !isViz && mode === 'edit' && !textEditing }">
+    <div
+      v-if="!blankInView"
+      class="tile-body"
+      :class="{ 'tile-handle': !isViz && mode === 'edit' && !textEditing }"
+    >
       <div v-if="isSeparator" class="tile-separator-line" :style="separatorLineStyle" />
       <template v-else-if="isText">
         <textarea
@@ -134,7 +176,6 @@
             v-else
             :key="rendererKey"
             :chart="chart as any"
-            :fields="fields as any"
             :computation="computation"
             :appearance="appearance"
           />
@@ -275,20 +316,24 @@ import DOMPurify from "dompurify";
 import {
   Brush,
   Close,
+  CopyDocument,
   Delete,
   Edit,
   EditPen,
+  Hide,
   MoreFilled,
   Odometer,
   Rank,
   Switch,
+  View,
   Warning,
   WarningFilled,
 } from "@element-plus/icons-vue";
-import { CatalogApi } from "../../api/catalog.api";
+import { useDashboardVizCache } from "../../composables/useDashboardVizCache";
 import {
   useDashboardComputation,
   filtersTargetingTile,
+  splitChartFilters,
   type TileField,
 } from "../../composables/useDashboardComputation";
 import type {
@@ -298,6 +343,7 @@ import type {
   SeparatorOrientation,
 } from "../../types";
 import KpiTile from "./KpiTile.vue";
+import { isKpiComplete } from "./kpi";
 import VueGraphicRenderer from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicRenderer.vue";
 
 const props = defineProps<{
@@ -315,6 +361,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "remove"): void;
+  (e: "duplicate"): void;
   (e: "edit-viz"): void;
   (e: "update:tile", value: DashboardTile): void;
 }>();
@@ -325,6 +372,14 @@ const isKpi = computed(() => props.tile.type === "kpi");
 const isViz = computed(() => props.tile.type === "viz");
 const rootEl = ref<HTMLElement | null>(null);
 const kpiRef = ref<InstanceType<typeof KpiTile> | null>(null);
+
+// A viewer sees the space a KPI still to be set up takes, not a note about it.
+const blankInView = computed(
+  () =>
+    props.mode === "view" &&
+    isKpi.value &&
+    (props.tile.viz_id == null || !isKpiComplete(props.tile.kpi)),
+);
 
 // ---- separator branch ----
 const isVertical = computed(() => props.tile.orientation === "vertical");
@@ -375,6 +430,7 @@ const openStyleMenu = () => {
 };
 
 // ---- viz branch (unchanged behaviour) ----
+const vizCache = useDashboardVizCache();
 const viz = ref<CatalogVisualization | null>(null);
 const fields = ref<Record<string, any>[]>([]);
 const loading = ref(true);
@@ -408,6 +464,7 @@ const { computation, lastError } = useDashboardComputation({
   filters: filtersRef,
   tileDatasource: (id) => props.tileDatasource?.(id) ?? null,
   tileFields: () => tileFields.value,
+  chartFilters: () => tileChart.value?.filters ?? [],
   onMissing: () => {
     vizMissing.value = true;
   },
@@ -420,10 +477,12 @@ const vizName = computed(() => {
   return "Untitled";
 });
 
-const chart = computed(() => {
-  if (!viz.value) return null;
-  return viz.value.spec?.[props.tile.chart_index] ?? null;
+// The chart as the tile draws it: its row filters go with the query, not into the tile.
+const tileChart = computed(() => {
+  const saved = viz.value?.spec?.[props.tile.chart_index];
+  return saved ? splitChartFilters(saved) : null;
 });
+const chart = computed(() => tileChart.value?.chart ?? null);
 
 const filterKey = computed(() => {
   const targeted = filtersTargetingTile(
@@ -453,8 +512,8 @@ const reloadViz = async () => {
   }
   try {
     const [vizResp, fieldsResp] = await Promise.all([
-      CatalogApi.getVisualization(props.tile.viz_id),
-      CatalogApi.getSavedVisualizationFields(props.tile.viz_id),
+      vizCache.getViz(props.tile.viz_id),
+      vizCache.getFields(props.tile.viz_id),
     ]);
     viz.value = vizResp;
     fields.value = fieldsResp.fields ?? [];
@@ -521,7 +580,41 @@ const toggleTextEdit = async () => {
   }
 };
 
-const headerTitle = computed(() => vizName.value);
+const headerTitle = computed(() => props.tile.title?.trim() || vizName.value);
+
+// ---- chart tile title ----
+const titleHidden = computed(() => props.tile.show_title === false);
+// The header is also the drag handle and holds the menu, so the editor always shows it.
+const showHeader = computed(() => isViz.value && (props.mode === "edit" || !titleHidden.value));
+const titleEditing = ref(false);
+const titleDraft = ref("");
+const titleInputEl = ref<HTMLInputElement | null>(null);
+
+const startTitleEdit = async () => {
+  if (props.mode !== "edit" || !isViz.value) return;
+  titleDraft.value = props.tile.title ?? "";
+  titleEditing.value = true;
+  await nextTick();
+  titleInputEl.value?.focus();
+  titleInputEl.value?.select();
+};
+
+// The menu hands focus back to its trigger as it closes, which would blur the input at once.
+const renameFromMenu = () => setTimeout(startTitleEdit, 150);
+
+// An empty title falls back to the chart's own name.
+const commitTitle = () => {
+  if (!titleEditing.value) return;
+  titleEditing.value = false;
+  const next = titleDraft.value.trim() || null;
+  if (next !== (props.tile.title ?? null)) {
+    emit("update:tile", { ...props.tile, title: next, show_title: true });
+  }
+};
+
+const toggleTitle = () => {
+  emit("update:tile", { ...props.tile, show_title: titleHidden.value });
+};
 
 const tileStyle = computed(() =>
   (isText.value || isKpi.value) && props.tile.bg_color
@@ -676,23 +769,47 @@ onBeforeUnmount(() => {
 .tile-separator-edit:hover {
   outline-color: var(--el-color-primary-light-5);
 }
+.tile-card {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+.tile-blank {
+  background: transparent;
+}
 .tile-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
-  font-size: 12px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  background: var(--el-fill-color-light);
+  gap: 8px;
+  padding: 8px 12px 0;
+  font-size: 13px;
 }
 .tile-handle {
   cursor: move;
 }
 .tile-title {
   font-weight: 600;
+  color: var(--el-text-color-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.tile-title-hidden {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--el-text-color-placeholder);
+}
+.tile-title-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--el-color-primary-light-5);
+  border-radius: 4px;
+  outline: none;
+  font: inherit;
+  font-weight: 600;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-primary);
 }
 .tile-header-actions {
   display: flex;

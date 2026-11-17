@@ -154,6 +154,22 @@ class TestDashboardCRUD:
         assert get_resp.status_code == 200
         assert get_resp.json()["layout"]["tiles"][1]["viz_id"] == 2
 
+    def test_chart_tile_title_round_trips_and_defaults(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0].update({"title": "Revenue by region", "show_title": False})
+        created = client.post("/catalog/dashboards", json={"name": "Titled", "layout": layout})
+        assert created.status_code == 201, created.text
+        tiles = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["tiles"]
+        assert (tiles[0]["title"], tiles[0]["show_title"]) == ("Revenue by region", False)
+        # A tile saved before titles existed shows its chart's own name.
+        assert (tiles[1]["title"], tiles[1]["show_title"]) == (None, True)
+
+    def test_tile_title_over_120_characters_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0]["title"] = "x" * 121
+        resp = client.post("/catalog/dashboards", json={"name": "Too long", "layout": layout})
+        assert resp.status_code == 422
+
     def test_create_with_separator_tile(self, client):
         layout = _layout_with_two_tiles()
         layout["tiles"].append({"id": "sep-1", "type": "separator", "x": 0, "y": 6, "w": 12, "h": 1})

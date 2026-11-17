@@ -94,18 +94,30 @@
           />
         </template>
 
-        <el-date-picker
-          v-else-if="f.kind === 'date_range'"
-          :model-value="datePickerValue(f)"
-          type="daterange"
-          size="small"
-          range-separator="–"
-          start-placeholder="Start"
-          end-placeholder="End"
-          class="filter-chip-date"
-          :disabled="mode === 'view' && readonlyView"
-          @update:model-value="onDateRange(f, $event)"
-        />
+        <template v-else-if="f.kind === 'date_range'">
+          <el-select
+            :model-value="presetOf(f.state) ?? CUSTOM_RANGE"
+            size="small"
+            class="filter-chip-preset"
+            :disabled="mode === 'view' && readonlyView"
+            @update:model-value="(v: string) => onDatePreset(f, v)"
+          >
+            <el-option :value="CUSTOM_RANGE" label="Custom range" />
+            <el-option v-for="p in DATE_PRESETS" :key="p.value" :value="p.value" :label="p.label" />
+          </el-select>
+          <el-date-picker
+            v-if="!presetOf(f.state)"
+            :model-value="datePickerValue(f)"
+            type="daterange"
+            size="small"
+            range-separator="–"
+            start-placeholder="Start"
+            end-placeholder="End"
+            class="filter-chip-date"
+            :disabled="mode === 'view' && readonlyView"
+            @update:model-value="onDateRange(f, $event)"
+          />
+        </template>
 
         <button
           v-if="mode === 'edit'"
@@ -138,6 +150,15 @@
         @click="openAdd"
       >
         <el-icon><Plus /></el-icon> Add filter
+      </el-button>
+      <el-button
+        v-if="mode === 'view' && canReset"
+        size="small"
+        text
+        title="Back to the filters this dashboard was saved with"
+        @click="emit('reset')"
+      >
+        Reset
       </el-button>
     </div>
 
@@ -294,11 +315,14 @@ import {
 } from "../../composables/useDashboardComputation";
 import { dtypeToDefaultFilterKind, isNumericDtype, isTemporalDtype } from "../../utils/dtype";
 import { moveFilter, type DropPosition } from "./filterOrder";
+import { DATE_PRESETS, presetOf, resolveDateRange } from "./dateRange";
 
 const props = defineProps<{
   filters: DashboardFilter[];
   mode: "edit" | "view";
   readonlyView?: boolean;
+  /** View mode: the viewer changed a filter, so Reset is offered. */
+  canReset?: boolean;
   datasourcesInUse: DashboardDatasource[];
   tilesByDatasource: Record<number, string[]>;
   /** Every viz tile, the candidate set for scope "all". */
@@ -319,6 +343,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:filters", value: DashboardFilter[]): void;
+  (e: "reset"): void;
 }>();
 
 interface Draft {
@@ -721,13 +746,26 @@ const datePickerValue = (f: DashboardFilter): [Date, Date] | null => {
 
 const onDateRange = (f: DashboardFilter, range: [Date, Date] | null) => {
   if (!range) {
-    updateState(f, { start: null, end: null });
+    updateState(f, { preset: null, start: null, end: null });
     return;
   }
   updateState(f, {
+    preset: null,
     start: range[0]?.toISOString() ?? null,
     end: range[1]?.toISOString() ?? null,
   });
+};
+
+const CUSTOM_RANGE = "custom";
+
+// Switching to a custom range starts from the window the preset was showing.
+const onDatePreset = (f: DashboardFilter, value: string) => {
+  if (value !== CUSTOM_RANGE) {
+    updateState(f, { preset: value, start: null, end: null });
+    return;
+  }
+  const shown = resolveDateRange(f.state);
+  updateState(f, { preset: null, start: shown?.start ?? null, end: shown?.end ?? null });
 };
 </script>
 
@@ -814,6 +852,9 @@ const onDateRange = (f: DashboardFilter, range: [Date, Date] | null) => {
 }
 .filter-chip-date {
   width: 240px;
+}
+.filter-chip-preset {
+  width: 140px;
 }
 .filter-chip-icon-btn {
   display: inline-flex;

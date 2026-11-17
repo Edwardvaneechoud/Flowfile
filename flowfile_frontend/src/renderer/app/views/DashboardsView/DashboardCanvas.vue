@@ -49,6 +49,7 @@
           :tile-datasource="tileDatasource"
           :grid-cols="layout.grid.cols"
           @remove="onRemoveTile(item.i)"
+          @duplicate="onDuplicateTile(item.i)"
           @edit-viz="emit('edit-viz', tileById[item.i].viz_id ?? null)"
           @update:tile="onUpdateTile"
         />
@@ -263,6 +264,25 @@ const onRemoveTile = (id: string) => {
     ...props.layout,
     tiles: props.layout.tiles.filter((t) => t.id !== id),
   });
+};
+
+const newTileId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `tile-${Math.random().toString(36).slice(2, 10)}`;
+
+// The copy lands on the first free row; the grid's compaction pulls it up where there is room.
+const onDuplicateTile = (id: string) => {
+  const source = props.layout.tiles.find((t) => t.id === id);
+  if (!source) return;
+  const freeRow = Math.max(...props.layout.tiles.map((t) => t.y + t.h));
+  const copy: DashboardTileType = {
+    ...source,
+    kpi: source.kpi ? { ...source.kpi } : source.kpi,
+    id: newTileId(),
+    y: freeRow,
+  };
+  emit("update:layout", { ...props.layout, tiles: [...props.layout.tiles, copy] });
 };
 
 const onUpdateTile = (next: DashboardTileType) => {

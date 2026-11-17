@@ -70,6 +70,14 @@ function artifactRefParams(ref: string, namespaceId: number | null): Record<stri
   return !ref.includes("::") && namespaceId !== null ? { namespace_id: namespaceId } : {};
 }
 
+/** A payload that writes a chart spec also says which Graphic Walker wrote it. */
+function stampGwVersion<T extends { spec?: unknown; spec_gw_version?: string | null }>(
+  payload: T,
+): T {
+  if (payload.spec == null || typeof __GW_VERSION__ === "undefined") return payload;
+  return { ...payload, spec_gw_version: __GW_VERSION__ };
+}
+
 export class CatalogApi {
   // ====== Namespaces ======
 
@@ -679,7 +687,10 @@ export class CatalogApi {
   static async createVisualization(
     payload: VisualizationCreatePayload,
   ): Promise<CatalogVisualization> {
-    const response = await axios.post<CatalogVisualization>("/catalog/visualizations", payload);
+    const response = await axios.post<CatalogVisualization>(
+      "/catalog/visualizations",
+      stampGwVersion(payload),
+    );
     return response.data;
   }
 
@@ -690,7 +701,7 @@ export class CatalogApi {
   ): Promise<CatalogVisualization> {
     const response = await axios.put<CatalogVisualization>(
       `/catalog/visualizations/${vizId}`,
-      payload,
+      stampGwVersion(payload),
       config,
     );
     return response.data;
