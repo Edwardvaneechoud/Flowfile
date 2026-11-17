@@ -5,6 +5,7 @@
     :class="{
       'canvas-edit': mode === 'edit',
       'canvas-view': mode === 'view',
+      'canvas-stacked': stacked,
       'canvas-drop-active': dragOver,
     }"
     @dragover="onCanvasDragOver"
@@ -21,8 +22,8 @@
       v-model:layout="gridItems"
       :col-num="layout.grid.cols"
       :row-height="layout.grid.row_height"
-      :is-draggable="mode === 'edit'"
-      :is-resizable="mode === 'edit'"
+      :is-draggable="mode === 'edit' && !stacked"
+      :is-resizable="mode === 'edit' && !stacked"
       :margin="[8, 8]"
       :use-css-transforms="true"
       :vertical-compact="true"
@@ -49,6 +50,7 @@
           :data-refresh-nonce="dataRefreshNonce"
           :tile-datasource="tileDatasource"
           :grid-cols="layout.grid.cols"
+          :can-edit-chart="canEditCharts"
           :get-column-stats="getColumnStats"
           :search-values="searchValues"
           @remove="onRemoveTile(item.i)"
@@ -66,7 +68,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, type ComponentPublicInstance } from "vue";
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+  type ComponentPublicInstance,
+} from "vue";
 import { GridItem, GridLayout } from "grid-layout-plus";
 import DashboardTile from "./DashboardTile.vue";
 import {
@@ -81,6 +90,7 @@ import {
 import { computeDropCell } from "./gridDrop";
 import { FILTER_TILE_DEFAULT_SIZE, moveFilterToBar } from "./filterPlacement";
 import type { ValueSearchResult } from "./filterValues";
+import { STACK_BREAKPOINT_PX, stackTiles } from "./stackedLayout";
 import type {
   ColumnStatsResponse,
   DashboardFilter,
@@ -108,6 +118,8 @@ const props = defineProps<{
   ) => Promise<ColumnStatsResponse>;
   /** The value search of a filter shown on the canvas. */
   searchValues?: (filter: DashboardFilter, text: string) => Promise<ValueSearchResult>;
+  /** False hides a chart tile's edit badge and double-click from viewers; default shown. */
+  canEditCharts?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -260,8 +272,34 @@ const tileById = computed<Record<string, DashboardTileType>>(() =>
   Object.fromEntries(props.layout.tiles.map((t) => [t.id, t])),
 );
 
+// Measured, not the window: the canvas shares the window with the catalog tree and paddings.
+const canvasWidth = ref(0);
+let resizeObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  if (!canvasRef.value || typeof ResizeObserver === "undefined") return;
+  resizeObserver = new ResizeObserver((entries) => {
+    canvasWidth.value = entries[0]?.contentRect.width ?? 0;
+  });
+  resizeObserver.observe(canvasRef.value);
+});
+
+onBeforeUnmount(() => resizeObserver?.disconnect());
+
+/** A narrow viewer reads the tiles in one column; the editor keeps the grid at every width. */
+const stacked = computed(
+  () => props.mode === "view" && canvasWidth.value > 0 && canvasWidth.value < STACK_BREAKPOINT_PX,
+);
+
 const buildGridItems = (): GridItemModel[] =>
-  props.layout.tiles.map((t) => ({ i: t.id, x: t.x, y: t.y, w: t.w, h: t.h }));
+  stacked.value
+    ? stackTiles(props.layout.tiles, props.layout.grid.cols, {
+        filters: props.layout.filters,
+        widthPx: canvasWidth.value,
+        rowHeight: props.layout.grid.row_height,
+        margin: 8,
+      })
+    : props.layout.tiles.map((t) => ({ i: t.id, x: t.x, y: t.y, w: t.w, h: t.h }));
 
 const sameGrid = (a: GridItemModel[], b: GridItemModel[]): boolean => {
   if (a.length !== b.length) return false;
@@ -282,7 +320,7 @@ const gridItems = ref<GridItemModel[]>(buildGridItems());
 // its `layout` prop is reassigned to an equivalent value, especially with
 // vertical-compact on).
 watch(
-  () => props.layout.tiles,
+  [() => props.layout.tiles, () => props.layout.filters, stacked],
   () => {
     const next = buildGridItems();
     if (sameGrid(gridItems.value, next)) return;
@@ -292,7 +330,7 @@ watch(
 );
 
 const onLayoutUpdated = (next: GridItemModel[]) => {
-  if (props.mode !== "edit") return;
+  if (props.mode !== "edit" || stacked.value) return;
   const byId = Object.fromEntries(next.map((it) => [it.i, it]));
   let changed = false;
   const tiles = props.layout.tiles.map((t) => {

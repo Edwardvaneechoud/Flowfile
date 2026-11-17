@@ -1,10 +1,10 @@
 <template>
-  <div class="dashboard-viewer">
+  <div class="dashboard-viewer" :class="{ 'is-presenting': presenting }">
     <div class="viewer-toolbar">
       <div class="viewer-toolbar-left">
-        <button class="back-btn" @click="onBack">All dashboards</button>
+        <button v-if="!presenting" class="back-btn" @click="onBack">All dashboards</button>
         <h2 v-if="store.current">{{ store.current.name }}</h2>
-        <span v-if="store.current?.namespace_name" class="viewer-ns">{{
+        <span v-if="!presenting && store.current?.namespace_name" class="viewer-ns">{{
           store.current.namespace_name
         }}</span>
       </div>
@@ -17,17 +17,70 @@
         >
           Reset
         </el-button>
+        <el-dropdown
+          v-if="store.current"
+          trigger="click"
+          placement="bottom-end"
+          @command="onAutoRefreshCommand"
+        >
+          <el-button
+            data-testid="dashboard-auto-refresh"
+            :title="autoRefreshTitle"
+            :class="{ 'auto-refresh-on': effectiveInterval != null }"
+          >
+            <el-icon><Timer /></el-icon> {{ autoRefreshText }}
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item
+                v-for="choice in AUTO_REFRESH_CHOICES"
+                :key="String(choice)"
+                :command="choice == null ? 'off' : String(choice)"
+                :class="{ 'auto-refresh-current': !paused && choice === selectedInterval }"
+              >
+                {{ choice == null ? "Off" : `Every ${autoRefreshLabel(choice)}` }}
+                <span v-if="choice === savedInterval" class="auto-refresh-saved">saved</span>
+              </el-dropdown-item>
+              <el-dropdown-item
+                v-if="selectedInterval != null"
+                divided
+                :command="paused ? 'resume' : 'pause'"
+              >
+                {{ paused ? "Resume" : "Pause" }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button v-if="store.current" :loading="refreshing" @click="onRefresh">
           <el-icon><Refresh /></el-icon> Refresh
         </el-button>
-        <el-button v-if="store.current" type="primary" @click="onEdit">
+        <el-button
+          v-if="store.current && !presenting"
+          data-testid="dashboard-present"
+          title="Show the dashboard without the app around it"
+          @click="onPresent"
+        >
+          <el-icon><FullScreen /></el-icon> Present
+        </el-button>
+        <el-button v-if="store.current && canEdit && !presenting" type="primary" @click="onEdit">
           <el-icon><Edit /></el-icon> Edit
+        </el-button>
+        <el-button
+          v-if="presenting"
+          data-testid="dashboard-exit-present"
+          title="Leave present mode (Esc)"
+          @click="onExitPresent"
+        >
+          <el-icon><Close /></el-icon> Exit
         </el-button>
       </div>
     </div>
 
-    <div v-if="store.current && (store.current.description || stamps.length)" class="viewer-meta">
-      <p v-if="store.current.description" class="viewer-description">
+    <div
+      v-if="store.current && ((store.current.description && !presenting) || stamps.length)"
+      class="viewer-meta"
+    >
+      <p v-if="store.current.description && !presenting" class="viewer-description">
         {{ store.current.description }}
       </p>
       <span v-for="stamp in stamps" :key="stamp.text" class="viewer-stamp" :title="stamp.title">
@@ -68,6 +121,7 @@
         :tile-datasource="tileDatasource"
         :get-column-stats="getColumnStats"
         :search-values="searchFilterValues"
+        :can-edit-charts="canEdit && !presenting"
         @edit-viz="onEditVizFromTile"
         @update:filter="onFilterChange"
       />
@@ -79,8 +133,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { Edit, Refresh } from "@element-plus/icons-vue";
+import { Close, Edit, FullScreen, Refresh, Timer } from "@element-plus/icons-vue";
 import { useDashboardsStore } from "../../stores/dashboards-store";
+import { usePresentationStore } from "../../stores/presentation-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
 import { useDashboardRefresh } from "../../composables/useDashboardRefresh";
@@ -92,6 +147,20 @@ import DashboardCanvas from "./DashboardCanvas.vue";
 import DashboardFilterBar from "./DashboardFilterBar.vue";
 import { decodeFilterState, encodeFilterState, filtersDiffer } from "./filterUrlState";
 import { placedFilterIds } from "./filterPlacement";
+import {
+  AUTO_REFRESH_CHOICES,
+  autoRefreshLabel,
+  createAutoRefresher,
+  savedAutoRefresh,
+} from "./autoRefresh";
+import { mayEdit } from "./dashboardAccess";
+import {
+  exitNativeFullscreen,
+  isPresentQuery,
+  requestNativeFullscreen,
+  withPresentQuery,
+} from "./presentMode";
+import { DEVICE_WIDTH_VIEWPORT, setViewportMeta } from "./viewportMeta";
 import { EMPTY_DASHBOARD_LAYOUT, type DashboardFilter, type DashboardLayout } from "../../types";
 
 const props = defineProps<{ id: string | number }>();
@@ -144,6 +213,115 @@ const onRefresh = async () => {
     ElMessage.error("Failed to refresh dashboard data");
   }
 };
+
+// The author's interval is the default; a viewer's pick or pause lasts this session only.
+const savedInterval = computed(() => savedAutoRefresh(store.current?.layout.auto_refresh_seconds));
+const chosenInterval = ref<number | null | undefined>(undefined);
+const paused = ref(false);
+const selectedInterval = computed(() =>
+  chosenInterval.value === undefined ? savedInterval.value : chosenInterval.value,
+);
+const effectiveInterval = computed(() => (paused.value ? null : selectedInterval.value));
+
+const autoRefreshText = computed(() => {
+  if (selectedInterval.value == null) return "Auto-refresh off";
+  return paused.value ? "Auto-refresh paused" : `Every ${autoRefreshLabel(selectedInterval.value)}`;
+});
+const autoRefreshTitle = computed(() =>
+  effectiveInterval.value == null
+    ? "Refresh the data on a timer while this page is open"
+    : `Refreshes the data every ${autoRefreshLabel(effectiveInterval.value)} while this page is open`,
+);
+
+// Quiet: a failed tick leaves its errors on the tiles instead of a toast every interval.
+const refresher = createAutoRefresher({
+  refresh: async () => {
+    await refreshAll();
+    refreshedAt.value = new Date();
+  },
+  isBusy: () => refreshing.value,
+  isHidden: () => document.hidden,
+});
+watch(effectiveInterval, (seconds) => refresher.setInterval(seconds), { immediate: true });
+
+const onAutoRefreshCommand = (command: string) => {
+  if (command === "pause") paused.value = true;
+  else if (command === "resume") paused.value = false;
+  else {
+    chosenInterval.value = command === "off" ? null : Number(command);
+    paused.value = false;
+  }
+};
+
+const onVisibilityChange = () => refresher.visibilityChanged();
+
+const presentation = usePresentationStore();
+const presenting = computed(() => presentation.presenting);
+const canEdit = computed(() => mayEdit(store.current?.access));
+// Only a fullscreen this page asked for is left again with present mode.
+let nativeFullscreen = false;
+
+// The URL is the source of truth, so ?present=1 opens a wall screen straight into it.
+watch(
+  () => isPresentQuery(route.query),
+  (on) => {
+    if (on) presentation.enter();
+    else presentation.exit();
+  },
+  { immediate: true },
+);
+
+const onPresent = () => {
+  // Asked first, inside the click: browsers only allow fullscreen from a user gesture.
+  void requestNativeFullscreen(document.documentElement).then((ok) => {
+    nativeFullscreen = ok;
+  });
+  void router.replace({ query: withPresentQuery(route.query, true) });
+};
+
+const onExitPresent = () => {
+  if (nativeFullscreen) {
+    nativeFullscreen = false;
+    void exitNativeFullscreen();
+  }
+  void router.replace({ query: withPresentQuery(route.query, false) });
+};
+
+const onFullscreenChange = () => {
+  // The browser's own Esc leaves fullscreen without a keydown reaching the page.
+  if (nativeFullscreen && !document.fullscreenElement) onExitPresent();
+};
+
+const overlayOpen = (): boolean =>
+  Array.from(
+    document.querySelectorAll<HTMLElement>(".el-overlay, .el-dropdown__popper, .el-select__popper"),
+  ).some((el) => el.style.display !== "none" && el.getClientRects().length > 0);
+
+const onPresentKeydown = (event: KeyboardEvent) => {
+  if (event.key !== "Escape" || !presentation.presenting || event.defaultPrevented) return;
+  if (overlayOpen()) return;
+  onExitPresent();
+};
+
+// Only this page asks a phone for its own width; leaving puts back what the app had.
+let restoreViewport: (() => void) | null = null;
+
+onMounted(() => {
+  restoreViewport = setViewportMeta(DEVICE_WIDTH_VIEWPORT);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  document.addEventListener("fullscreenchange", onFullscreenChange);
+  window.addEventListener("keydown", onPresentKeydown);
+});
+
+onBeforeUnmount(() => {
+  restoreViewport?.();
+  refresher.stop();
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+  document.removeEventListener("fullscreenchange", onFullscreenChange);
+  window.removeEventListener("keydown", onPresentKeydown);
+  presentation.exit();
+  if (nativeFullscreen) void exitNativeFullscreen();
+});
 
 /** When the newest table behind the dashboard last changed; null for SQL-only dashboards. */
 const dataUpdatedAt = computed<string | null>(() => {
@@ -230,7 +408,10 @@ const load = async () => {
 onMounted(load);
 // A link to another dashboard (the global search) reuses this page.
 watch(dashboardId, (id, previous) => {
-  if (id !== previous) void load();
+  if (id === previous) return;
+  chosenInterval.value = undefined;
+  paused.value = false;
+  void load();
 });
 
 const onBack = () => {
@@ -260,10 +441,22 @@ const onEditVizFromTile = (vizId: number | null) => {
   overflow: hidden;
   padding: var(--spacing-3) var(--spacing-6) 0;
 }
+.dashboard-viewer.is-presenting {
+  padding: var(--spacing-3) var(--spacing-4) 0;
+}
+/* On a phone the pane's own padding already insets the page; the tiles need the width. */
+@media (max-width: 640px) {
+  .dashboard-viewer,
+  .dashboard-viewer.is-presenting {
+    padding: var(--spacing-2) var(--spacing-2) 0;
+  }
+}
 .viewer-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 0 0 var(--spacing-4);
 }
 .viewer-toolbar .back-btn {
@@ -273,11 +466,29 @@ const onEditVizFromTile = (vizId: number | null) => {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 .viewer-toolbar-right {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+/* el-button adds a left margin to every sibling button; the gap spaces them. */
+.viewer-toolbar-right :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+.auto-refresh-on {
+  color: var(--el-color-primary);
+}
+.auto-refresh-saved {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+:global(.el-dropdown-menu__item.auto-refresh-current) {
+  color: var(--el-color-primary);
+  font-weight: 600;
 }
 .viewer-toolbar-left h2 {
   margin: 0;

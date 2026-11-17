@@ -163,6 +163,8 @@ export interface DashboardLayout {
   filters: DashboardFilter[];
   /** Absent on layouts saved before value colours existed. */
   color_assignments?: DashboardColorAssignment[];
+  /** A viewer's default refresh interval; null or absent is off, never under 60. */
+  auto_refresh_seconds?: number | null;
 }
 
 export interface Dashboard {

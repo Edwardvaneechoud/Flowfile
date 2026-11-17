@@ -602,6 +602,141 @@ test.describe("Dashboards", () => {
     }
   });
 
+  test("on a phone the viewer reads its tiles in one column, at desktop width in the grid", async ({
+    page,
+  }) => {
+    // The grid's own items, in screen order; the drag placeholder is not a tile.
+    const tileBoxes = async () => {
+      const boxes = await page
+        .locator(".vgl-item:not(.vgl-item--placeholder)")
+        .evaluateAll((items) =>
+          items.map((el) => {
+            const r = el.getBoundingClientRect();
+            return { x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height) };
+          }),
+        );
+      return boxes.sort((a, b) => a.y - b.y || a.x - b.x);
+    };
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page, token, `#/main/dashboards/${seeded.dashboardId}`);
+    await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
+    await expect(page.locator(".canvas-stacked")).toHaveCount(1);
+    await expect
+      .poll(async () => {
+        const boxes = await tileBoxes();
+        const oneLeftEdge = new Set(boxes.map((b) => b.x)).size === 1;
+        const downwards = boxes.every((b, i) => i === 0 || b.y >= boxes[i - 1].y + boxes[i - 1].h);
+        return boxes.length > 1 && oneLeftEdge && downwards;
+      })
+      .toBe(true);
+
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await expect(page.locator(".canvas-stacked")).toHaveCount(0);
+    await expect
+      .poll(async () => new Set((await tileBoxes()).map((b) => b.x)).size)
+      .toBeGreaterThan(1);
+  });
+
+  test("Present hides the app around the dashboard and Esc brings it back", async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await login(page, token, `#/main/dashboards/${seeded.dashboardId}`);
+    await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
+    const sidebar = page.locator(".app-layout__sidebar-wrapper");
+    await expect(sidebar).toBeVisible();
+
+    await page.getByTestId("dashboard-present").click();
+    await expect(sidebar).toHaveCount(0);
+    await expect(page.locator(".catalog-tabs")).toBeHidden();
+    await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("dashboard-exit-present")).toBeVisible();
+    await expect(page).toHaveURL(/[?&]present=1/);
+    await expect(page.locator(".kpi-value")).toHaveText("270");
+
+    await page.keyboard.press("Escape");
+    await expect(sidebar).toBeVisible();
+    await expect(page.locator(".catalog-tabs")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+    await expect(page).not.toHaveURL(/[?&]present=1/);
+  });
+
+  test("?present=1 opens in present mode with working filters, and Exit keeps the filter", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await login(page, token, `#/main/dashboards/${seeded.dashboardId}?present=1`);
+    await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
+    await expect(page.locator(".app-layout__sidebar-wrapper")).toHaveCount(0);
+
+    await page.locator(".filter-chip-input").click();
+    await page.locator(".el-select-dropdown__item:visible", { hasText: "West" }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".kpi-value")).toHaveText("150");
+    // Esc closed the value list, not present mode.
+    await expect(page.locator(".app-layout__sidebar-wrapper")).toHaveCount(0);
+    await expect(page).toHaveURL(/[?&]f=/);
+
+    await page.getByTestId("dashboard-exit-present").click();
+    await expect(page.locator(".app-layout__sidebar-wrapper")).toBeVisible();
+    await expect(page).not.toHaveURL(/[?&]present=1/);
+    await expect(page).toHaveURL(/[?&]f=/);
+    await expect(page.locator(".kpi-value")).toHaveText("150");
+  });
+
+  test("an author's auto-refresh interval is saved and a viewer's page refreshes on it", async ({
+    page,
+    request,
+  }) => {
+    const url = `${API_URL}/catalog/dashboards/${seeded.dashboardId}`;
+    const headers = authHeaders(token);
+    try {
+      await login(page, token, `#/main/dashboards/${seeded.dashboardId}/edit`);
+      await expect(page.locator(".tile-header").first()).toBeVisible({ timeout: 30000 });
+      await page.getByTestId("dashboard-auto-refresh-setting").click();
+      await page.locator(".el-select-dropdown__item:visible", { hasText: "Every 1 min" }).click();
+      await expect
+        .poll(
+          async () =>
+            (await (await request.get(url, { headers })).json()).layout.auto_refresh_seconds,
+          { timeout: 20000 },
+        )
+        .toBe(60);
+
+      // A fake clock, so the minute passes without waiting for it.
+      await page.clock.install();
+      await page.goto("about:blank");
+      const computes: string[] = [];
+      page.on("request", (req) => {
+        if (
+          req.method() === "POST" &&
+          req.url().includes(`/visualizations/${seeded.vizId}/compute`)
+        )
+          computes.push(req.url());
+      });
+      await login(page, token, `#/main/dashboards/${seeded.dashboardId}`);
+      await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
+      await expect(page.getByTestId("dashboard-auto-refresh")).toHaveText(/Every 1 min/);
+      await expect.poll(() => computes.length).toBeGreaterThan(0);
+      const before = computes.length;
+
+      await page.clock.runFor(61_000);
+      await expect.poll(() => computes.length, { timeout: 15000 }).toBeGreaterThan(before);
+
+      // A viewer's pause is their own: nothing is saved.
+      await page.getByTestId("dashboard-auto-refresh").click();
+      await page.locator(".el-dropdown-menu__item:visible", { hasText: "Pause" }).click();
+      await expect(page.getByTestId("dashboard-auto-refresh")).toHaveText(/paused/);
+      const layout = (await (await request.get(url, { headers })).json()).layout;
+      expect(layout.auto_refresh_seconds).toBe(60);
+    } finally {
+      const current = await (await request.get(url, { headers })).json();
+      await request.put(url, {
+        headers,
+        data: { layout: { ...current.layout, auto_refresh_seconds: null } },
+      });
+    }
+  });
+
   // Last: it turns the shared seed's region filter single-select.
   test("a single-select filter picks one value at a time and narrows the KPI", async ({
     page,

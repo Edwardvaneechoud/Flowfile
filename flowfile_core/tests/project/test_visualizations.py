@@ -296,6 +296,66 @@ def test_color_assignments_round_trip(tmp_path):
         project_sync.close_project(OWNER)
 
 
+def test_auto_refresh_interval_round_trips(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    _, timed_uuid = _make_dashboard("timed-board", DashboardLayout(auto_refresh_seconds=900))
+    _, static_uuid = _make_dashboard("static-board", DashboardLayout())
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Refresh", OWNER)
+        dashboards = _dash_yaml(root)
+        assert dashboards[timed_uuid]["layout"]["auto_refresh_seconds"] == 900
+        assert dashboards[static_uuid]["layout"]["auto_refresh_seconds"] is None
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            rows = {
+                d.dashboard_uuid: DashboardLayout.model_validate_json(d.layout_json)
+                for d in db.query(CatalogDashboard).filter_by(created_by=OWNER)
+            }
+        assert rows[timed_uuid].auto_refresh_seconds == 900
+        assert rows[static_uuid].auto_refresh_seconds is None
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "the interval must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_layout_without_auto_refresh_imports_with_it_off(tmp_path):
+    """A dashboards.yaml written before the field existed imports and exports again unchanged."""
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    _, duuid = _make_dashboard("old-board", DashboardLayout())
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Old", OWNER)
+        data = yaml.safe_load((root / "dashboards.yaml").read_text(encoding="utf-8"))
+        for entry in data["dashboards"]:
+            entry["layout"].pop("auto_refresh_seconds", None)
+        (root / "dashboards.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            row = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert row is not None
+            assert "auto_refresh_seconds" not in json.loads(row.layout_json)
+            assert DashboardLayout.model_validate_json(row.layout_json).auto_refresh_seconds is None
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
 def test_kpi_tile_round_trips_and_relinks(tmp_path):
     from flowfile_core.project.importer import import_project
 

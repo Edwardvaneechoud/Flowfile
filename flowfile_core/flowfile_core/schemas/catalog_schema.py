@@ -1107,11 +1107,25 @@ def _color_value_key(value: str | bool | int | float | None) -> tuple[str, objec
     return (type(value).__name__, value)
 
 
+DASHBOARD_AUTO_REFRESH_MIN_SECONDS = 60
+DASHBOARD_AUTO_REFRESH_MAX_SECONDS = 24 * 60 * 60
+
+
 class DashboardLayout(BaseModel):
+    """A dashboard's canvas.
+
+    ``auto_refresh_seconds`` is the interval a viewer's page refreshes its data at by default
+    (``None``: off). A viewer may change or pause it for their own session; it is never shorter
+    than a minute, so an open dashboard cannot hammer the worker.
+    """
+
     tiles: list[DashboardTile] = Field(default_factory=list)
     grid: DashboardGrid = Field(default_factory=DashboardGrid)
     filters: list[DashboardFilter] = Field(default_factory=list)
     color_assignments: list[DashboardColorAssignment] = Field(default_factory=list, max_length=5000)
+    auto_refresh_seconds: int | None = Field(
+        default=None, ge=DASHBOARD_AUTO_REFRESH_MIN_SECONDS, le=DASHBOARD_AUTO_REFRESH_MAX_SECONDS
+    )
 
     @field_validator("color_assignments")
     @classmethod

@@ -2,7 +2,11 @@
   <div class="catalog-view">
     <!-- Tab Bar. Compact mode (persisted) folds every label but the active tab's;
          the section captions stay, and hovering a section unfolds its labels. -->
-    <div class="catalog-tabs" :class="{ 'is-compact': tabsCompact }">
+    <div
+      v-show="!presentation.presenting"
+      class="catalog-tabs"
+      :class="{ 'is-compact': tabsCompact }"
+    >
       <template v-for="(group, gi) in tabGroups" :key="group.key">
         <div v-if="gi > 0" class="tab-group-divider" aria-hidden="true"></div>
         <div class="tab-group">
@@ -57,6 +61,7 @@
       <!-- Sidebar: catalog tree, collapsible to a thin rail; absent on the extension pages -->
       <div
         v-if="!isExtensionsSection"
+        v-show="!presentation.presenting"
         class="catalog-sidebar"
         :class="{ 'is-collapsed': treeCollapsed }"
       >
@@ -197,7 +202,7 @@
       </div>
 
       <!-- Detail Panel -->
-      <div class="catalog-detail">
+      <div class="catalog-detail" :class="{ 'is-presenting': presentation.presenting }">
         <!-- Nested page (dashboards); first so a lingering selection can't shadow it -->
         <router-view v-if="nestedPageTab" />
         <!-- A URL naming a selection waits for the overview rather than painting the tab's default panel first -->
@@ -660,6 +665,7 @@ import { useNotebookStore } from "../../stores/notebook-store";
 import { useSqlEditorStore } from "../../stores/sql-editor-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { usePresentationStore } from "../../stores/presentation-store";
 import type { CodeMode } from "../DesignerView/CodeGenerator/codeMode";
 import { useNotificationsStore } from "../../stores/notifications-store";
 import { CatalogApi } from "../../api/catalog.api";
@@ -750,6 +756,7 @@ const router = useRouter();
 const route = useRoute();
 
 const catalogStore = useCatalogStore();
+const presentation = usePresentationStore();
 const projectStore = useProjectStore();
 const notebookStore = useNotebookStore();
 const sqlEditorStore = useSqlEditorStore();
@@ -3239,6 +3246,10 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: var(--spacing-4) var(--spacing-6);
+}
+
+.catalog-detail.is-presenting {
+  padding: 0;
 }
 
 /* ========== Sidebar Filters ========== */

@@ -504,6 +504,7 @@ import type { ValueSearchResult } from "./filterValues";
 import KpiTile from "./KpiTile.vue";
 import TableTile from "./TableTile.vue";
 import { autoKpiLabel, isKpiComplete } from "./kpi";
+import { mayEdit } from "./dashboardAccess";
 import { tileActions, type TileAction } from "./tileActions";
 import TileActionItems from "./TileActionItems.vue";
 import TileActionsMenu from "./TileActionsMenu.vue";
@@ -533,6 +534,8 @@ const props = defineProps<{
   ) => Promise<ColumnStatsResponse>;
   /** A filter tile's value search; the same cached search the filter strip uses. */
   searchValues?: (filter: DashboardFilter, text: string) => Promise<ValueSearchResult>;
+  /** False when the viewer may not edit the dashboard, so the chart's edit shortcut is hidden. */
+  canEditChart?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -634,7 +637,13 @@ const vizMissing = ref(false);
 // jump straight into the chart editor. Edit mode already exposes "Edit chart"
 // in the tile dropdown, and dragging dominates there, so we don't compete.
 const vizClickable = computed(
-  () => isViz.value && props.mode === "view" && props.tile.viz_id != null && !vizMissing.value,
+  () =>
+    isViz.value &&
+    props.mode === "view" &&
+    props.tile.viz_id != null &&
+    !vizMissing.value &&
+    props.canEditChart !== false &&
+    mayEdit(viz.value?.access),
 );
 
 const onVizDblclick = (e: MouseEvent) => {

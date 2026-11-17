@@ -106,6 +106,8 @@ A chart tile's `chart_format` (`DashboardChartFormat`: `number_format`, `time_fo
 
 A layout's `color_assignments` (`DashboardColorAssignment`: `field`, `value`, `slot`; default empty, one entry per field and value, a value a JSON scalar) gives each value of a chart colour field one slot of the chart palette (`vizTheme.ts`, the same slot in light and dark), so every chart tile colouring by a field of that name draws the value alike and a filter repaints nothing. The browser hands slots out (`colorAssignment.ts`: first free slot, in Graphic Walker's value order, append-only, none past the palette's eight, which draw grey) and the editor writes them into the layout with the author's next edit only, so opening a dashboard saves nothing; Graphic Walker 0.6 takes no value-to-colour map, so the tile hands its worksheet renderer a category range ordered like the domain it will draw (`chartColors.ts`) and Vega-Lite an explicit scale. Field names and values only: it travels in a project file as is.
 
+A layout's `auto_refresh_seconds` (default `None`, off) is how often a viewer's page reruns its Refresh while it is open; core refuses anything under 60 seconds or over a day, so an open dashboard cannot hammer the worker. It is the author's default only: a viewer can pick another interval or pause it for their session, and nothing they pick is saved or put in the URL. A number, so it travels in a project file as is; a layout saved before it existed loads with it off.
+
 ---
 
 ## The Explore Data node

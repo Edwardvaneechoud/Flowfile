@@ -53,6 +53,23 @@
             </span>
           </el-tooltip>
         </template>
+        <el-select
+          v-if="store.current"
+          v-model="autoRefreshSetting"
+          class="editor-auto-refresh"
+          data-testid="dashboard-auto-refresh-setting"
+          title="How often a viewer's page refreshes the data; a viewer can change or pause it"
+        >
+          <template #prefix>
+            <el-icon><Timer /></el-icon>
+          </template>
+          <el-option
+            v-for="choice in AUTO_REFRESH_CHOICES"
+            :key="String(choice)"
+            :label="choice == null ? 'Auto-refresh off' : `Every ${autoRefreshLabel(choice)}`"
+            :value="choice ?? 0"
+          />
+        </el-select>
         <el-button v-if="store.current" :loading="refreshing" @click="onRefresh">
           <el-icon><Refresh /></el-icon> Refresh
         </el-button>
@@ -207,7 +224,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Refresh } from "@element-plus/icons-vue";
+import { Refresh, Timer } from "@element-plus/icons-vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useDashboardsStore } from "../../stores/dashboards-store";
 import { useAuthStore } from "../../stores/auth-store";
@@ -250,6 +267,7 @@ import {
   withFilters,
 } from "./filterPlacement";
 import { KPI_DEFAULT_SIZE } from "./kpi";
+import { AUTO_REFRESH_CHOICES, autoRefreshLabel, savedAutoRefresh } from "./autoRefresh";
 import { TABLE_DEFAULT_SIZE } from "./tableTile";
 import {
   EMPTY_DASHBOARD_LAYOUT,
@@ -488,6 +506,15 @@ const onLayoutChange = (next: DashboardLayout) => {
   store.setLayout(pruneFilterTargets(next));
   markChanged();
 };
+
+// 0 stands for off in the select, which cannot hold null as an option's value.
+const autoRefreshSetting = computed<number>({
+  get: () => savedAutoRefresh(store.current?.layout.auto_refresh_seconds) ?? 0,
+  set: (seconds) => {
+    if (!store.current) return;
+    onLayoutChange({ ...store.current.layout, auto_refresh_seconds: seconds || null });
+  },
+});
 
 // A filter removed from the strip or its dialog takes its canvas tile with it.
 const onFiltersChange = (next: DashboardFilter[]) => {
@@ -1128,6 +1155,9 @@ const onConflictOverwrite = async () => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.editor-auto-refresh {
+  width: 170px;
 }
 .history-btn-wrap {
   display: inline-flex;

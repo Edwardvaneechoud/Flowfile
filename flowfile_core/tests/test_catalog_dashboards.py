@@ -92,7 +92,13 @@ def _make_table(name: str = "Sales") -> int:
 
 
 def _empty_layout() -> dict:
-    return {"tiles": [], "grid": {"cols": 48, "row_height": 40, "version": 2}, "filters": [], "color_assignments": []}
+    return {
+        "tiles": [],
+        "grid": {"cols": 48, "row_height": 40, "version": 2},
+        "filters": [],
+        "color_assignments": [],
+        "auto_refresh_seconds": None,
+    }
 
 
 def _layout_with_two_tiles() -> dict:
@@ -250,6 +256,39 @@ class TestDashboardCRUD:
         ]
         resp = client.post("/catalog/dashboards", json={"name": "Two fields", "layout": layout})
         assert resp.status_code == 201, resp.text
+
+    def test_auto_refresh_interval_round_trips(self, client):
+        layout = _layout_with_two_tiles()
+        layout["auto_refresh_seconds"] = 300
+        created = client.post("/catalog/dashboards", json={"name": "Wall screen", "layout": layout})
+        assert created.status_code == 201, created.text
+        dash_id = created.json()["id"]
+        assert client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["auto_refresh_seconds"] == 300
+
+        layout["auto_refresh_seconds"] = None
+        updated = client.put(f"/catalog/dashboards/{dash_id}", json={"layout": layout})
+        assert updated.status_code == 200, updated.text
+        assert client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["auto_refresh_seconds"] is None
+
+    def test_layout_saved_before_auto_refresh_loads_with_it_off(self, client):
+        with get_db_context() as db:
+            row = CatalogDashboard(
+                name="Static", layout_json=json.dumps(_layout_with_two_tiles()), layout_version=1, created_by=1
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        layout = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]
+        assert layout["auto_refresh_seconds"] is None
+        assert [t["viz_id"] for t in layout["tiles"]] == [1, 2]
+
+    @pytest.mark.parametrize("bad", [0, 1, 59, -60, 24 * 60 * 60 + 1, "often"])
+    def test_auto_refresh_under_a_minute_returns_422(self, client, bad):
+        layout = _layout_with_two_tiles()
+        layout["auto_refresh_seconds"] = bad
+        resp = client.post("/catalog/dashboards", json={"name": "Too often", "layout": layout})
+        assert resp.status_code == 422
 
     def test_tile_title_over_120_characters_returns_422(self, client):
         layout = _layout_with_two_tiles()
