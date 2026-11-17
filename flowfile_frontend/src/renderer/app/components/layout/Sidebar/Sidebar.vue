@@ -24,6 +24,55 @@
           <i class="fa-solid fa-circle-info"></i>
         </button>
       </div>
+      <div class="footer-btn-wrapper" data-tooltip="Feedback &amp; community">
+        <el-popover
+          ref="feedbackPopover"
+          placement="right-end"
+          :width="240"
+          trigger="click"
+          popper-class="sidebar-more-popover"
+          :show-arrow="true"
+        >
+          <template #reference>
+            <button
+              class="info-button"
+              aria-label="Feedback and community"
+              data-testid="sidebar-feedback"
+            >
+              <i class="fa-solid fa-comment-dots"></i>
+            </button>
+          </template>
+          <div class="sidebar-more-menu">
+            <p class="sidebar-more-heading">Feedback &amp; community</p>
+            <button
+              class="sidebar-more-item"
+              data-testid="sidebar-report-issue"
+              @click="handleReportIssue"
+            >
+              <i class="fa-solid fa-bug"></i>
+              <span>Report an issue</span>
+            </button>
+            <button class="sidebar-more-item" @click="handleRequestNode">
+              <i class="fa-solid fa-lightbulb"></i>
+              <span>Request a node</span>
+            </button>
+            <button class="sidebar-more-item" @click="openLink(DISCUSSIONS_URL)">
+              <i class="fa-solid fa-comments"></i>
+              <span>Ask a question</span>
+            </button>
+            <button class="sidebar-more-item" @click="openLink(ISSUES_URL)">
+              <i class="fa-solid fa-list-check"></i>
+              <span>Browse open issues</span>
+            </button>
+            <div class="sidebar-more-divider" aria-hidden="true"></div>
+            <button class="sidebar-more-item" @click="openLink(REPO_URL)">
+              <i class="fa-brands fa-github"></i>
+              <span>Flowfile on GitHub</span>
+            </button>
+            <p class="sidebar-more-status">Opens GitHub in your browser.</p>
+          </div>
+        </el-popover>
+      </div>
       <div class="footer-btn-wrapper" data-tooltip="Help &amp; more">
         <el-popover
           ref="morePopover"
@@ -50,10 +99,6 @@
             <button class="sidebar-more-item" @click="handleOpenDocumentation">
               <i class="fa-solid fa-book"></i>
               <span>Documentation</span>
-            </button>
-            <button class="sidebar-more-item" @click="handleRequestNode">
-              <i class="fa-solid fa-lightbulb"></i>
-              <span>Request a node</span>
             </button>
             <button class="sidebar-more-item" @click="handleOpenPrivacy">
               <i class="fa-solid fa-shield-halved"></i>
@@ -103,7 +148,8 @@ import { NodeRequestDialog, PageHelpModal } from "../../common";
 import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
 import { desktop } from "../../../../lib/desktop";
-import { DOCS_BASE_URL } from "../../../lib/docsLinks";
+import { DISCUSSIONS_URL, DOCS_BASE_URL, ISSUES_URL, REPO_URL } from "../../../lib/docsLinks";
+import { openBugReport } from "../../../composables/useBugReport";
 import { useAuthStore } from "../../../stores/auth-store";
 import { useHubConnectionStore } from "../../../stores/hub-connection-store";
 import { showsTab } from "../../../views/ComputeView/computeTabs";
@@ -259,9 +305,21 @@ async function handleCheckForUpdates() {
   if (await checkForUpdates()) morePopover.value?.hide();
 }
 
+const feedbackPopover = ref<{ hide: () => void } | null>(null);
+
+const openLink = (url: string) => {
+  feedbackPopover.value?.hide();
+  void desktop.openExternal(url);
+};
+
+const handleReportIssue = () => {
+  feedbackPopover.value?.hide();
+  openBugReport(version.value);
+};
+
 const showNodeRequest = ref(false);
 const handleRequestNode = () => {
-  morePopover.value?.hide();
+  feedbackPopover.value?.hide();
   showNodeRequest.value = true;
 };
 
@@ -447,6 +505,16 @@ const handleLogout = async () => {
   height: 1px;
   margin: var(--spacing-1) var(--spacing-2);
   background-color: var(--color-border-primary);
+}
+
+.sidebar-more-heading {
+  margin: 0;
+  padding: var(--spacing-1) var(--spacing-3);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
 }
 
 .sidebar-more-status {
