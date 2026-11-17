@@ -83,7 +83,9 @@ import { ArrowLeft, ArrowRight, SortDown, SortUp, Warning } from "@element-plus/
 import {
   buildFilterStep,
   computeOnSource,
+  withFilterStep,
   type TileSource,
+  type VisFilter,
 } from "../../composables/useDashboardComputation";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 import { formatCellValue } from "../../utils/cellFormat";
@@ -126,6 +128,8 @@ const props = defineProps<{
   /** Column dtypes when the catalog knows them; columns Polars cannot sort by break no ties. */
   dtypes?: ColumnDtypes | null;
   filters: DashboardFilter[];
+  /** A chart's own row filters (``splitChartFilters``), run with the dashboard's. */
+  chartFilters?: VisFilter[];
   /** Moves when the data may have changed; the grid then reads it again. */
   refreshKey?: string | number;
 }>();
@@ -153,11 +157,11 @@ const pageLoading = ref(false);
 const loadedOnce = ref(false);
 const missing = ref(false);
 
-const withFilters = (payload: Record<string, unknown>): Record<string, unknown> => {
-  const step = buildFilterStep(props.filters, props.fields);
-  const workflow = (payload.workflow as unknown[]) ?? [];
-  return step ? { ...payload, workflow: [step, ...workflow] } : payload;
-};
+const withFilters = (payload: Record<string, unknown>): Record<string, unknown> =>
+  withFilterStep(
+    { workflow: [], ...payload },
+    buildFilterStep(props.filters, props.fields, props.chartFilters ?? []),
+  );
 
 const fetcherFor = (maxRows: () => number) => async (payload: Record<string, unknown>) => {
   const source = props.source;
@@ -192,6 +196,7 @@ const dataKey = computed(() =>
   JSON.stringify([
     props.source,
     props.filters.map((f) => [f.id, f.field_name, f.kind, f.state]),
+    props.chartFilters ?? [],
     props.refreshKey ?? 0,
     props.fields != null,
   ]),

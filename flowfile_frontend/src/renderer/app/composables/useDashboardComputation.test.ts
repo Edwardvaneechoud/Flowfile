@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../api/catalog.api", () => ({ CatalogApi: {} }));
-vi.mock("./useGraphicWalkerCompute", () => ({ useGraphicWalkerCompute: vi.fn() }));
+const { computeSavedMock } = vi.hoisted(() => ({ computeSavedMock: vi.fn() }));
+vi.mock("../api/catalog.api", () => ({
+  CatalogApi: { computeSavedVisualization: computeSavedMock },
+}));
+vi.mock("./useGraphicWalkerCompute", () => ({
+  useGraphicWalkerCompute: vi.fn(() => ({ computation: vi.fn(), lastError: { value: null } })),
+}));
 
 import {
   buildFilterStep,
@@ -11,8 +16,11 @@ import {
   missingSourceText,
   splitChartFilters,
   tileSourceOf,
+  useDashboardComputation,
+  withFilterStep,
   type TileField,
 } from "./useDashboardComputation";
+import { ref } from "vue";
 import type { DashboardFilter, DashboardTile } from "../types";
 
 const filterOf = (over: Partial<DashboardFilter>): DashboardFilter => ({
@@ -348,5 +356,67 @@ describe("buildFilterStep with a single-select filter", () => {
     expect(
       buildFilterStep([filterOf({ multiple: false, state: { selected: [] } })], null),
     ).toBeNull();
+  });
+});
+
+describe("withFilterStep", () => {
+  const view = { type: "view", query: [{ op: "raw", fields: ["region"] }] };
+  const step = { type: "filter" as const, filters: [{ fid: "region", rule: { type: "one of" } }] };
+
+  it("runs the filter step first and keeps the rest of the payload", () => {
+    expect(withFilterStep({ workflow: [view], limit: 5 }, step)).toEqual({
+      workflow: [step, view],
+      limit: 5,
+    });
+  });
+
+  it("leaves a payload alone with no step or no workflow", () => {
+    const payload = { workflow: [view] };
+    expect(withFilterStep(payload, null)).toBe(payload);
+    const bare = { limit: 1 } as { workflow?: unknown[]; limit: number };
+    expect(withFilterStep(bare, step)).toBe(bare);
+  });
+});
+
+describe("useDashboardComputation's query", () => {
+  it("sends one payload as the tile does, through the chart's route, with its filters first", async () => {
+    computeSavedMock.mockResolvedValue({
+      rows: [{ region: "West", amount_sum: 150 }],
+      error: null,
+    });
+    const tile = ref<DashboardTile>({
+      id: "t1",
+      type: "viz",
+      viz_id: 3,
+      chart_index: 0,
+      x: 0,
+      y: 0,
+      w: 4,
+      h: 4,
+    } as DashboardTile);
+    const chartFilter = { fid: "amount", rule: { type: "range", value: [1, null] } };
+    const { query } = useDashboardComputation({
+      tile,
+      filters: ref([filterOf({ datasource_id: null, scope: "all" })]),
+      tileFields: () => fieldsOf({ region: "nominal", amount: "quantitative" }),
+      chartFilters: () => [chartFilter],
+    });
+    const view = { type: "view", query: [{ op: "aggregate", groupBy: ["region"] }] };
+
+    const result = await query({ workflow: [view] });
+
+    expect(result).toEqual({ rows: [{ region: "West", amount_sum: 150 }], error: null });
+    expect(computeSavedMock).toHaveBeenCalledWith(3, {
+      payload: {
+        workflow: [
+          {
+            type: "filter",
+            filters: [chartFilter, { fid: "region", rule: { type: "one of", value: ["EU"] } }],
+          },
+          view,
+        ],
+      },
+      maxRows: undefined,
+    });
   });
 });

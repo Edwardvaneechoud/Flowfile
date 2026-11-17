@@ -68,6 +68,13 @@ export const buildFilterStep = (
   return { type: "filter", filters: visFilters };
 };
 
+/** A workflow payload with the filter step run first; a payload without a workflow is left alone. */
+export const withFilterStep = <P extends { workflow?: unknown[] }>(
+  payload: P,
+  step: ReturnType<typeof buildFilterStep>,
+): P =>
+  step && payload?.workflow ? { ...payload, workflow: [step, ...payload.workflow] } : payload;
+
 const toNumber = (v: unknown): number =>
   typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
 
@@ -294,12 +301,8 @@ export function useDashboardComputation(opts: UseDashboardComputationOptions) {
       opts.tileFields?.() ?? null,
       opts.chartFilters?.() ?? [],
     );
-    const finalPayload =
-      filterStep && payload?.workflow
-        ? { ...payload, workflow: [filterStep, ...payload.workflow] }
-        : payload;
     try {
-      const resp = await computeOnSource(source, finalPayload);
+      const resp = await computeOnSource(source, withFilterStep(payload, filterStep));
       return { rows: resp.rows, error: resp.error ?? null };
     } catch (err: any) {
       if (err?.response?.status === 404) {
@@ -318,5 +321,8 @@ export function useDashboardComputation(opts: UseDashboardComputationOptions) {
     `dashboard-tile-${opts.tile.value.id}`,
   );
 
-  return { computation, lastError, effectiveFilters };
+  /** One query exactly as the tile sends it, without touching the tile's ``lastError``. */
+  const query = fetcher;
+
+  return { computation, lastError, effectiveFilters, query };
 }

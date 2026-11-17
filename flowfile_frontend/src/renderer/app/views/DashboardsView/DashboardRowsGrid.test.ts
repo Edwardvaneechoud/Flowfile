@@ -157,6 +157,30 @@ describe("DashboardRowsGrid", () => {
     });
   });
 
+  it("runs a chart's own row filters with the dashboard's, on every query", async () => {
+    const chartFilter = { fid: "amount", rule: { type: "range", value: [50, null] } };
+    mounted = mount(DashboardRowsGrid, {
+      source: { kind: "viz", vizId: 3 },
+      config: null,
+      fields,
+      filters: [regionFilter],
+      chartFilters: [chartFilter],
+    });
+    await settle();
+
+    const payloads = computeSavedMock.mock.calls.map((c) => c[1].payload);
+    expect(payloads).toHaveLength(2);
+    for (const payload of payloads) {
+      expect(payload.workflow[0]).toEqual({
+        type: "filter",
+        filters: [
+          chartFilter,
+          { fid: "region", rule: { type: "one of", value: ["West", "East"] } },
+        ],
+      });
+    }
+  });
+
   it("waits for the columns before it asks for rows", async () => {
     mounted = mount(DashboardRowsGrid, {
       source: { kind: "table", tableId: 5 },

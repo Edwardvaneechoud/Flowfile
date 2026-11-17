@@ -1,6 +1,7 @@
 import { formatCellValue } from "../../utils/cellFormat";
 import type { DashboardTableColumn, DashboardTableConfig, TableSortDirection } from "../../types";
 import { formatKpiValue } from "./kpi";
+import { downloadName } from "./tileActions";
 
 /** Key the count query carries the row count under. */
 const ROW_COUNT_KEY = "table_row_count";
@@ -176,13 +177,8 @@ export const toCsv = (columns: DashboardTableColumn[], rows: Record<string, unkn
 };
 
 /** File name for a download: the title made safe, else "table". */
-export const csvFileName = (title: string | null | undefined): string => {
-  const base = (title ?? "")
-    .trim()
-    .replace(/[^\w\- ]+/g, "")
-    .replace(/\s+/g, "_");
-  return `${base || "table"}.csv`;
-};
+export const csvFileName = (title: string | null | undefined): string =>
+  downloadName(title, "csv", "table");
 
 /** A cell as the table shows it: numbers in the column's format, everything else as text. */
 export const formatTableCell = (

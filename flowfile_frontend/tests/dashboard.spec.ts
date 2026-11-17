@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import { expect, test } from "@playwright/test";
 import { API_URL, authHeaders, getAuthToken } from "./helpers/api";
 import { login } from "./helpers/canvas";
@@ -273,6 +274,77 @@ test.describe("Dashboards", () => {
     } finally {
       await wide.cleanup(request);
     }
+  });
+
+  test("a viewer expands a chart, sees the rows behind it narrowed by the filter and downloads it", async ({
+    page,
+  }) => {
+    await login(page, token, `#/main/dashboards/${seeded.dashboardId}`);
+    // An earlier test duplicated this chart; either copy will do.
+    const chartTile = page
+      .locator(".tile", { has: page.locator(".tile-title", { hasText: "Revenue by region" }) })
+      .first();
+    await expect(chartTile.locator(".tile-viz-body canvas").first()).toBeVisible({
+      timeout: 30000,
+    });
+    // The KPI and the table get a menu; text and a KPI still to be set up do not.
+    await expect(
+      page.locator(".tile", { has: page.locator(".kpi-value") }).getByTestId("tile-actions"),
+    ).toHaveCount(1);
+    await expect(
+      page.locator(".tile", { hasText: "Orders" }).getByTestId("tile-actions"),
+    ).toHaveCount(1);
+    await expect(page.locator(".tile-text").getByTestId("tile-actions")).toHaveCount(0);
+    await expect(page.locator(".tile-blank").getByTestId("tile-actions")).toHaveCount(0);
+
+    const choose = async (entry: string) => {
+      await chartTile.hover();
+      await chartTile.getByTestId("tile-actions").click();
+      await page.locator(".el-dropdown-menu__item:visible", { hasText: entry }).click();
+    };
+
+    await choose("Expand");
+    const expanded = page.getByTestId("tile-expand-dialog");
+    await expect(expanded.locator("canvas").first()).toBeVisible({ timeout: 30000 });
+    await page.keyboard.press("Escape");
+    await expect(expanded).toBeHidden();
+
+    const rowsDialog = page.getByTestId("tile-rows-dialog");
+    await choose("See rows");
+    await expect(rowsDialog.locator(".rows-range")).toHaveText("1–7 of 7 rows", {
+      timeout: 30000,
+    });
+    await expect(rowsDialog.locator("thead th")).toHaveText(["region", "amount"]);
+    await page.keyboard.press("Escape");
+    await expect(rowsDialog).toBeHidden();
+
+    await page.locator(".filter-chip-input").click();
+    await page.locator(".el-select-dropdown__item:visible", { hasText: "West" }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".kpi-value")).toHaveText("150");
+
+    await choose("See rows");
+    await expect(rowsDialog.locator(".rows-range")).toHaveText("1–2 of 2 rows", {
+      timeout: 30000,
+    });
+    await expect(rowsDialog.locator("tbody tr td:first-child")).toHaveText(["West", "West"]);
+    await page.keyboard.press("Escape");
+    await expect(rowsDialog).toBeHidden();
+
+    // The chart's CSV is the data it draws: one aggregated row for the one region left.
+    const csvDownload = page.waitForEvent("download");
+    await choose("Download CSV");
+    const csv = await csvDownload;
+    expect(csv.suggestedFilename()).toBe("Revenue_by_region.csv");
+    const text = readFileSync(await csv.path(), "utf8").replace(/^\uFEFF/, "");
+    expect(text.trim().split("\n")).toEqual(["region,amount_sum", "West,150"]);
+
+    const imageDownload = page.waitForEvent("download");
+    await choose("Download image");
+    const image = await imageDownload;
+    expect(image.suggestedFilename()).toBe("Revenue_by_region.png");
+    const png = readFileSync(await image.path());
+    expect(png.subarray(1, 4).toString()).toBe("PNG");
   });
 
   // Last: it turns the shared seed's region filter single-select.

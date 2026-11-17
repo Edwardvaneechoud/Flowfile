@@ -105,8 +105,6 @@ const onDblclick = (e: MouseEvent) => {
   openSettings();
 };
 
-defineExpose({ openSettings });
-
 // fields is null while unknown: compute waits for the columns so cross-source filters gate correctly.
 const {
   source,
@@ -119,6 +117,8 @@ const {
   () => props.tile,
   () => props.vizRefreshNonce ?? 0,
 );
+
+defineExpose({ openSettings, missing });
 
 const unconfigured = computed(() => source.value == null || !isKpiComplete(props.tile.kpi));
 

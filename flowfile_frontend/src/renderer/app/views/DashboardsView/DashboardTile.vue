@@ -52,14 +52,9 @@
           <el-icon class="tile-menu" @click.stop><MoreFilled /></el-icon>
           <template #dropdown>
             <el-dropdown-menu>
-              <template v-if="isTable">
-                <el-dropdown-item @click="tableRef?.openSettings()">
-                  <el-icon><Grid /></el-icon> Edit table
-                </el-dropdown-item>
-                <el-dropdown-item :disabled="!tableSource" @click="downloadTableCsv">
-                  <el-icon><Download /></el-icon> Download CSV
-                </el-dropdown-item>
-              </template>
+              <el-dropdown-item v-if="isTable" @click="tableRef?.openSettings()">
+                <el-icon><Grid /></el-icon> Edit table
+              </el-dropdown-item>
               <el-dropdown-item v-else :disabled="tile.viz_id == null" @click="emit('edit-viz')">
                 <el-icon><Edit /></el-icon> Edit chart
               </el-dropdown-item>
@@ -76,39 +71,26 @@
               <el-dropdown-item divided @click="emit('remove')">
                 <el-icon><Delete /></el-icon> Remove from dashboard
               </el-dropdown-item>
+              <TileActionItems :actions="actions" divided @select="onAction" />
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-dropdown v-else-if="isTable && tableSource" trigger="click" @click.stop>
-          <el-icon class="tile-menu" @click.stop><MoreFilled /></el-icon>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item @click="downloadTableCsv">
-                <el-icon><Download /></el-icon> Download CSV
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <TileActionsMenu
+          v-else-if="actions.length"
+          class="tile-view-actions"
+          :actions="actions"
+          @select="onAction"
+        />
       </div>
     </div>
 
-    <!-- A viewer of a table whose title is hidden still gets its download. -->
-    <div
-      v-if="isTable && !showHeader && tableSource && !blankInView"
-      class="tile-text-actions"
-      @mousedown.stop
-    >
-      <el-dropdown trigger="click" @click.stop>
-        <el-icon class="tile-menu"><MoreFilled /></el-icon>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item @click="downloadTableCsv">
-              <el-icon><Download /></el-icon> Download CSV
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
-    </div>
+    <!-- Without a header the viewer's menu floats over the tile's corner. -->
+    <TileActionsMenu
+      v-if="floatingActions"
+      class="tile-view-actions tile-view-actions-float"
+      :actions="actions"
+      @select="onAction"
+    />
 
     <div
       v-if="!isViz && !isTable && !isFilter && mode === 'edit' && !textEditing"
@@ -140,6 +122,7 @@
             <el-dropdown-item divided @click="emit('remove')">
               <el-icon><Delete /></el-icon> Remove from dashboard
             </el-dropdown-item>
+            <TileActionItems :actions="actions" divided @select="onAction" />
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -259,6 +242,7 @@
           <button
             v-if="vizClickable"
             class="tile-viz-edit-badge"
+            :class="{ 'tile-viz-edit-badge-shifted': floatingActions }"
             type="button"
             title="Edit chart"
             @click.stop="emit('edit-viz')"
@@ -277,6 +261,7 @@
           </div>
           <VueGraphicRenderer
             v-else
+            ref="rendererRef"
             :key="rendererKey"
             :chart="chart as any"
             :computation="computation"
@@ -285,6 +270,46 @@
         </div>
       </template>
     </div>
+
+    <TileExpandDialog
+      v-if="expandMounted"
+      v-model="expandOpen"
+      :title="menuTitle"
+      :body-style="tileStyle"
+    >
+      <KpiTile
+        v-if="isKpi"
+        :tile="tile"
+        mode="view"
+        :filters="filters"
+        :tile-datasource="tileDatasource"
+        :viz-refresh-nonce="refreshNonce"
+      />
+      <TableTile
+        v-else-if="isTable"
+        :tile="tile"
+        mode="view"
+        :filters="filters"
+        :tile-datasource="tileDatasource"
+        :refresh-nonce="refreshNonce"
+      />
+      <VueGraphicRenderer
+        v-else-if="chart"
+        :chart="chart as any"
+        :computation="computation"
+        :appearance="appearance"
+      />
+    </TileExpandDialog>
+    <TileRowsDialog
+      v-if="rowsMounted"
+      v-model="rowsOpen"
+      :tile="tile"
+      :title="menuTitle"
+      :filters="filters"
+      :tile-datasource="tileDatasource"
+      :chart-filters="tileChart?.filters ?? []"
+      :refresh-nonce="refreshNonce"
+    />
 
     <Teleport to="body">
       <div
@@ -413,7 +438,7 @@
 //   - Move :deep() markdown styles (~lines 399-484) to an external _markdown.css import
 //   - TextTile.vue (~62-88) and VizTile.vue (~91-108) child components
 //   - useDashboardTileViz composable: viz loading (~lines 155-234)
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, toRef, watch } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import {
@@ -421,7 +446,6 @@ import {
   Close,
   CopyDocument,
   Delete,
-  Download,
   Edit,
   EditPen,
   Grid,
@@ -455,7 +479,13 @@ import { filterOfTile, targetsNoTile } from "./filterPlacement";
 import type { ValueSearchResult } from "./filterValues";
 import KpiTile from "./KpiTile.vue";
 import TableTile from "./TableTile.vue";
-import { isKpiComplete } from "./kpi";
+import { autoKpiLabel, isKpiComplete } from "./kpi";
+import { tileActions, type TileAction } from "./tileActions";
+import TileActionItems from "./TileActionItems.vue";
+import TileActionsMenu from "./TileActionsMenu.vue";
+import TileExpandDialog from "./TileExpandDialog.vue";
+import TileRowsDialog from "./TileRowsDialog.vue";
+import { downloadChartCsv, downloadChartImage } from "./tileDownloads";
 import VueGraphicRenderer from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicRenderer.vue";
 
 const props = defineProps<{
@@ -597,7 +627,7 @@ const tileFields = computed<TileField[] | null>(() =>
     : fields.value.map((f) => ({ fid: String(f.fid), semanticType: f.semanticType })),
 );
 
-const { computation, lastError } = useDashboardComputation({
+const { computation, lastError, query } = useDashboardComputation({
   tile: tileRef,
   filters: filtersRef,
   tileDatasource: (id) => props.tileDatasource?.(id) ?? null,
@@ -723,6 +753,66 @@ const toggleTextEdit = async () => {
 };
 
 const headerTitle = computed(() => props.tile.title?.trim() || vizName.value);
+
+// ---- viewer actions: expand, rows, downloads ----
+const actions = computed(() => {
+  const tile = props.tile;
+  const configured = isViz.value
+    ? tile.viz_id != null
+    : isKpi.value
+      ? tileSourceOf(tile) != null && isKpiComplete(tile.kpi)
+      : tableSource.value != null;
+  const missing = isViz.value
+    ? vizMissing.value
+    : isKpi.value
+      ? !!kpiRef.value?.missing
+      : !!tableRef.value?.missing;
+  return tileActions({
+    type: tile.type,
+    configured,
+    missing,
+    hasChart: isViz.value && !loading.value && chart.value != null,
+  });
+});
+
+// A viewer's menu sits in the header when there is one, else over the tile's corner.
+const floatingActions = computed(
+  () => props.mode === "view" && !showHeader.value && actions.value.length > 0,
+);
+
+const menuTitle = computed(() =>
+  isKpi.value && props.tile.kpi
+    ? props.tile.kpi.label || autoKpiLabel(props.tile.kpi)
+    : headerTitle.value,
+);
+
+const rendererRef = ref<InstanceType<typeof VueGraphicRenderer> | null>(null);
+const expandOpen = ref(false);
+const expandMounted = ref(false);
+const rowsOpen = ref(false);
+const rowsMounted = ref(false);
+
+const onAction = (action: TileAction) => {
+  if (action === "expand") {
+    expandMounted.value = true;
+    expandOpen.value = true;
+  } else if (action === "see-rows") {
+    rowsMounted.value = true;
+    rowsOpen.value = true;
+  } else if (action === "download-csv") {
+    if (isTable.value) void downloadTableCsv();
+    else if (chart.value) void downloadChartCsv(toRaw(chart.value), query, headerTitle.value);
+  } else {
+    void downloadImage();
+  }
+};
+
+const downloadImage = async () =>
+  downloadChartImage(
+    await rendererRef.value?.exportImage(),
+    rootEl.value ? getComputedStyle(rootEl.value).backgroundColor : "",
+    headerTitle.value,
+  );
 
 // ---- chart tile title ----
 const titleHidden = computed(() => props.tile.show_title === false);
@@ -885,6 +975,22 @@ onBeforeUnmount(() => {
 }
 .tile:hover .tile-text-actions {
   opacity: 1;
+}
+.tile-view-actions {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.tile:hover .tile-view-actions,
+.tile:focus-within .tile-view-actions {
+  opacity: 1;
+}
+.tile-view-actions-float {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  border-radius: 4px;
+  background: inherit;
 }
 /* In view mode text tiles look like part of the page, not a card. */
 .tile-text-view {
@@ -1069,6 +1175,9 @@ onBeforeUnmount(() => {
     opacity 0.15s,
     color 0.15s,
     border-color 0.15s;
+}
+.tile-viz-edit-badge-shifted {
+  right: 32px;
 }
 .tile:hover .tile-viz-edit-badge,
 .tile-viz-edit-badge:focus-visible {

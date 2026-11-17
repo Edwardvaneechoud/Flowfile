@@ -88,7 +88,7 @@ const onDblclick = (e: MouseEvent) => {
 
 const downloadCsv = (title?: string | null) => gridRef.value?.downloadCsv(title);
 
-defineExpose({ openSettings, downloadCsv, sourceName });
+defineExpose({ openSettings, downloadCsv, sourceName, missing });
 </script>
 
 <style scoped>
