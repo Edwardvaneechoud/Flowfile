@@ -89,6 +89,8 @@
     "axios": "^1.20.0",
     "chart.js": "^3.8.0",
     "cronstrue": "^2.59.0",
+    "d3-format": "^3.1.2",
+    "d3-time-format": "^4.1.0",
     "date-fns": "^3.6.0",
     "depcheck": "^1.4.7",
     "dompurify": "^3.4.17",

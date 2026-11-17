@@ -280,6 +280,67 @@ test.describe("Dashboards", () => {
     }
   });
 
+  test("a chart tile's number format and axis title are saved on the tile, and undo takes them back in one step", async ({
+    page,
+    request,
+  }) => {
+    const seededFormat = await seedDashboard(request, token, `e2e format ${Date.now()}`);
+    const headers = authHeaders(token);
+    const savedFormat = async () => {
+      const url = `${API_URL}/catalog/dashboards/${seededFormat.dashboardId}`;
+      const saved = await (await request.get(url, { headers })).json();
+      return saved.layout.tiles.find((t: { id: string }) => t.id === "t-chart")?.chart_format;
+    };
+    try {
+      await login(page, token, `#/main/dashboards/${seededFormat.dashboardId}/edit`);
+      const chartHeader = page.locator(".tile-header", { hasText: "Revenue by region" });
+      await expect(chartHeader).toBeVisible({ timeout: 30000 });
+      await chartHeader.locator(".tile-menu").click();
+      await page.locator(".el-dropdown-menu__item:visible", { hasText: "Format" }).click();
+
+      const dialog = page.locator(".el-dialog:visible", { hasText: "Format chart" });
+      await expect(dialog).toBeVisible();
+      await dialog.getByTestId("chart-format-number").click();
+      await page
+        .locator(".el-select-dropdown__item:visible", { hasText: "Compact (1.2M)" })
+        .click();
+      await expect(dialog.getByTestId("chart-format-number-sample")).toHaveText(
+        "1234567.891 → 1.23M",
+      );
+
+      // A custom format starts from the preset it replaces and is checked as it is typed.
+      await dialog.getByTestId("chart-format-number").click();
+      await page.locator(".el-select-dropdown__item:visible", { hasText: "Custom…" }).click();
+      const custom = dialog.getByTestId("chart-format-number-custom");
+      await expect(custom).toHaveValue(".3~s");
+      await custom.fill("not a format");
+      await expect(dialog.getByTestId("chart-format-number-error")).toBeVisible();
+      await expect(dialog.getByTestId("chart-format-save")).toBeDisabled();
+      await custom.fill("$,.2f");
+      await expect(dialog.getByTestId("chart-format-number-sample")).toHaveText(
+        "1234567.891 → $1,234,567.89",
+      );
+      await dialog.getByTestId("chart-format-y-title").fill("Region");
+      await dialog.getByTestId("chart-format-save").click();
+      await expect(dialog).toHaveCount(0);
+
+      await expect
+        .poll(savedFormat, { timeout: 20000 })
+        .toEqual({ number_format: "$,.2f", time_format: null, x_title: null, y_title: "Region" });
+      // The chart itself is untouched: the format lives on the tile.
+      const viz = await (
+        await request.get(`${API_URL}/catalog/visualizations/${seededFormat.vizId}`, { headers })
+      ).json();
+      expect(viz.spec[0].layout.format).toEqual({});
+      expect(viz.spec[0].encodings.rows.map((f: { name: string }) => f.name)).toEqual(["region"]);
+
+      await page.getByTestId("dashboard-undo").click();
+      await expect.poll(savedFormat, { timeout: 20000 }).toBeNull();
+    } finally {
+      await seededFormat.cleanup(request);
+    }
+  });
+
   test("typing in a filter's value box finds a value beyond the first hundred", async ({
     page,
     request,

@@ -43,6 +43,18 @@ export interface DashboardKpi {
   value_size?: KpiValueSize;
 }
 
+/** How a chart tile presents its chart; the saved chart is never changed. null keeps the chart's own. */
+export interface DashboardChartFormat {
+  /** d3-format string, e.g. ",.2f" or ".3~s". */
+  number_format?: string | null;
+  /** d3-time-format string, e.g. "%Y-%m-%d". */
+  time_format?: string | null;
+  /** Display name of the field ending the columns shelf (an aggregated measure reads sum(<title>)). */
+  x_title?: string | null;
+  /** The same for the rows shelf. */
+  y_title?: string | null;
+}
+
 export interface DashboardTile {
   /** Client-generated UUID, stable across saves so component state survives. */
   id: string;
@@ -57,6 +69,8 @@ export interface DashboardTile {
   title?: string | null;
   /** False hides a chart tile's title from viewers. */
   show_title?: boolean;
+  /** A chart tile's number, date and axis-title overrides; absent or null draws the chart as saved. */
+  chart_format?: DashboardChartFormat | null;
   /** Markdown source when type === "text". */
   text_md?: string | null;
   /** CSS colors for text tiles. */

@@ -164,6 +164,38 @@ class TestDashboardCRUD:
         # A tile saved before titles existed shows its chart's own name.
         assert (tiles[1]["title"], tiles[1]["show_title"]) == (None, True)
 
+    def test_chart_format_round_trips_and_defaults_to_none(self, client):
+        layout = _layout_with_two_tiles()
+        chart_format = {"number_format": ".3~s", "time_format": "%b %Y", "x_title": "Revenue", "y_title": None}
+        layout["tiles"][0]["chart_format"] = chart_format
+        created = client.post("/catalog/dashboards", json={"name": "Formatted", "layout": layout})
+        assert created.status_code == 201, created.text
+        tiles = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["tiles"]
+        assert tiles[0]["chart_format"] == chart_format
+        assert tiles[1]["chart_format"] is None
+
+    def test_layout_saved_before_chart_formats_loads_unchanged(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert [t["chart_format"] for t in tiles] == [None, None]
+        assert [(t["viz_id"], t["title"]) for t in tiles] == [(1, None), (2, None)]
+
+    @pytest.mark.parametrize(
+        "bad_format",
+        [{"number_format": "x" * 65}, {"time_format": "%Y" * 33}, {"x_title": "x" * 121}, {"y_title": "y" * 121}],
+    )
+    def test_chart_format_over_its_limits_returns_422(self, client, bad_format):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0]["chart_format"] = bad_format
+        resp = client.post("/catalog/dashboards", json={"name": "Too long", "layout": layout})
+        assert resp.status_code == 422
+
     def test_tile_title_over_120_characters_returns_422(self, client):
         layout = _layout_with_two_tiles()
         layout["tiles"][0]["title"] = "x" * 121

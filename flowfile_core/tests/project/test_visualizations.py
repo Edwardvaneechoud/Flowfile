@@ -19,6 +19,7 @@ from flowfile_core.database.models import CatalogDashboard, CatalogTable, Catalo
 from flowfile_core.project import project_sync
 from flowfile_core.project.service import write_export
 from flowfile_core.schemas.catalog_schema import (
+    DashboardChartFormat,
     DashboardFilter,
     DashboardKpi,
     DashboardLayout,
@@ -210,6 +211,45 @@ def test_dashboard_round_trips_and_relinks_tiles(tmp_path):
             assert (stored_tile["title"], stored_tile["show_title"]) == ("Revenue", False)
         write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "dashboard must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_chart_tile_format_round_trips(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    viz_id, vuuid = _make_viz("format-chart", source_type="sql", sql_query="SELECT 1 AS amount")
+    chart_format = DashboardChartFormat(number_format=",.2f", time_format="%Y-%m-%d", y_title="Revenue")
+    layout = DashboardLayout(
+        tiles=[
+            DashboardTile(id="fmt-1", type="viz", viz_id=viz_id, chart_format=chart_format, x=0, y=0, w=6, h=4),
+            DashboardTile(id="fmt-2", type="viz", viz_id=viz_id, x=6, y=0, w=6, h=4),
+        ]
+    )
+    _, duuid = _make_dashboard("format-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Format", OWNER)
+        tiles = _dash_yaml(root)[duuid]["layout"]["tiles"]
+        assert tiles[0]["chart_format"] == chart_format.model_dump()
+        assert tiles[1]["chart_format"] is None
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = json.loads(dashboard.layout_json)["tiles"]
+            assert DashboardChartFormat.model_validate(stored[0]["chart_format"]) == chart_format
+            assert stored[1]["chart_format"] is None
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "chart formats must round-trip byte-identically"
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)

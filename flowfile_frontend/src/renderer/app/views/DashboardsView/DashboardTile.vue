@@ -58,6 +58,14 @@
               <el-dropdown-item v-else :disabled="tile.viz_id == null" @click="emit('edit-viz')">
                 <el-icon><Edit /></el-icon> Edit chart
               </el-dropdown-item>
+              <el-dropdown-item
+                v-if="isViz"
+                :disabled="!tileChart"
+                data-testid="tile-format"
+                @click="openFormat"
+              >
+                <el-icon><Operation /></el-icon> Format
+              </el-dropdown-item>
               <el-dropdown-item @click="renameFromMenu">
                 <el-icon><EditPen /></el-icon> Rename
               </el-dropdown-item>
@@ -310,6 +318,14 @@
       :chart-filters="tileChart?.filters ?? []"
       :refresh-nonce="refreshNonce"
     />
+    <ChartFormatDialog
+      v-if="formatMounted"
+      v-model="formatOpen"
+      :chart-format="tile.chart_format"
+      :default-titles="defaultAxisTitles"
+      @preview="formatDraft = $event"
+      @save="onFormatSave"
+    />
 
     <Teleport to="body">
       <div
@@ -452,6 +468,7 @@ import {
   Hide,
   MoreFilled,
   Odometer,
+  Operation,
   Rank,
   Switch,
   Top,
@@ -470,10 +487,14 @@ import {
 import type {
   CatalogVisualization,
   ColumnStatsResponse,
+  DashboardChartFormat,
   DashboardFilter,
   DashboardTile,
   SeparatorOrientation,
 } from "../../types";
+import type { IChart } from "@kanaries/graphic-walker/interfaces";
+import ChartFormatDialog from "./ChartFormatDialog.vue";
+import { applyTilePresentation } from "./chartPresentation";
 import DashboardFilterControl from "./DashboardFilterControl.vue";
 import { filterOfTile, targetsNoTile } from "./filterPlacement";
 import type { ValueSearchResult } from "./filterValues";
@@ -654,7 +675,45 @@ const tileChart = computed(() => {
   const saved = viz.value?.spec?.[props.tile.chart_index];
   return saved ? splitChartFilters(saved) : null;
 });
-const chart = computed(() => tileChart.value?.chart ?? null);
+
+// ---- chart tile format: the dialog's draft shows on the tile until it closes ----
+const formatOpen = ref(false);
+const formatMounted = ref(false);
+const formatDraft = ref<DashboardChartFormat | null | undefined>(undefined);
+
+const chart = computed(() => {
+  const drawn = tileChart.value?.chart;
+  if (!drawn) return null;
+  const overrides = formatDraft.value !== undefined ? formatDraft.value : props.tile.chart_format;
+  return applyTilePresentation(drawn as IChart, overrides);
+});
+
+const axisTitle = (shelf: Record<string, any>[] | undefined): string | null => {
+  const field = shelf?.[shelf.length - 1];
+  if (!field) return null;
+  const agg = field.analyticType === "measure" ? (field.aggName ?? "sum") : null;
+  return agg && agg !== "expr" && tileChart.value?.chart.config?.defaultAggregated !== false
+    ? `${agg}(${field.name})`
+    : field.name;
+};
+const defaultAxisTitles = computed(() => ({
+  x: axisTitle(tileChart.value?.chart.encodings?.columns),
+  y: axisTitle(tileChart.value?.chart.encodings?.rows),
+}));
+
+const openFormat = () => {
+  formatMounted.value = true;
+  formatOpen.value = true;
+};
+
+watch(formatOpen, (open) => {
+  if (!open) formatDraft.value = undefined;
+});
+
+const onFormatSave = (next: DashboardChartFormat | null) => {
+  if (JSON.stringify(next) === JSON.stringify(props.tile.chart_format ?? null)) return;
+  emit("update:tile", { ...props.tile, chart_format: next });
+};
 
 const filterKey = computed(() => {
   const targeted = filtersTargetingTile(
@@ -801,7 +860,9 @@ const onAction = (action: TileAction) => {
     rowsOpen.value = true;
   } else if (action === "download-csv") {
     if (isTable.value) void downloadTableCsv();
-    else if (chart.value) void downloadChartCsv(toRaw(chart.value), query, headerTitle.value);
+    // The saved chart, not the formatted copy: the CSV keeps raw values and field names.
+    else if (tileChart.value)
+      void downloadChartCsv(toRaw(tileChart.value.chart), query, headerTitle.value);
   } else {
     void downloadImage();
   }

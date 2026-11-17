@@ -926,6 +926,22 @@ class DashboardTableConfig(BaseModel):
     page_size: int = Field(default=25, ge=5, le=500)
 
 
+class DashboardChartFormat(BaseModel):
+    """How a ``type == "viz"`` tile presents its chart, without touching the saved chart.
+
+    ``number_format`` and ``time_format`` are d3-format and d3-time-format strings handed to
+    Graphic Walker as the drawn copy's ``layout.format``; ``x_title`` and ``y_title`` become the
+    display name of the field that ends the columns and rows shelves, which is what Graphic
+    Walker writes as the axis title (an aggregated measure keeps its aggregation: ``sum(<title>)``).
+    None keeps the chart's own. The same chart on two tiles can be formatted differently.
+    """
+
+    number_format: str | None = Field(default=None, max_length=64)
+    time_format: str | None = Field(default=None, max_length=64)
+    x_title: str | None = Field(default=None, max_length=120)
+    y_title: str | None = Field(default=None, max_length=120)
+
+
 class DashboardTile(BaseModel):
     """One tile on a dashboard canvas.
 
@@ -933,7 +949,8 @@ class DashboardTile(BaseModel):
     can preserve component state on layout updates. ``type`` discriminates
     tile kinds: ``"viz"`` renders a saved visualization (uses ``viz_id`` /
     ``chart_index``; ``title`` replaces the chart's name as the tile's heading
-    and ``show_title`` False hides the heading from viewers); ``"text"`` renders user-authored Markdown from
+    and ``show_title`` False hides the heading from viewers; ``chart_format`` formats its
+    numbers, dates and axis titles); ``"text"`` renders user-authored Markdown from
     ``text_md``; ``"separator"`` draws a rule to break the page into
     sections (``orientation``, ``thickness`` in px and ``line_color`` style
     it); ``"kpi"`` shows one headline aggregate configured by ``kpi``
@@ -956,6 +973,7 @@ class DashboardTile(BaseModel):
     chart_index: int = 0
     title: str | None = Field(default=None, max_length=120)
     show_title: bool = True
+    chart_format: DashboardChartFormat | None = None
     text_md: str | None = None
     bg_color: str | None = None
     text_color: str | None = None
