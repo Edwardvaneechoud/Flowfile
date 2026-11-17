@@ -85,6 +85,7 @@ import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAp
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
 import { useDashboardRefresh } from "../../composables/useDashboardRefresh";
 import { provideDashboardVizCache } from "../../composables/useDashboardVizCache";
+import { provideDashboardColors } from "../../composables/useDashboardColors";
 import { asUtc } from "../../utils/catalogCdc";
 import { timeAgo } from "../../utils/time";
 import DashboardCanvas from "./DashboardCanvas.vue";
@@ -101,6 +102,7 @@ const appearance = useGraphicWalkerAppearance();
 
 const dashboardId = computed(() => Number(props.id));
 const vizCache = provideDashboardVizCache();
+provideDashboardColors(() => store.current?.layout.color_assignments);
 
 // A viewer's filter changes are not saved with the dashboard; they live in the URL instead.
 const liveFilters = ref<DashboardFilter[]>([]);

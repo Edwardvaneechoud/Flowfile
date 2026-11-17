@@ -1,7 +1,20 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, toRaw, watch } from "vue";
 
-import type { IChart, IGWProps, IRow, IUIThemeConfig } from "@kanaries/graphic-walker/interfaces";
+import type {
+  IChart,
+  IFieldInfos,
+  IGWProps,
+  IRow,
+  IUIThemeConfig,
+} from "@kanaries/graphic-walker/interfaces";
+import {
+  categoryColorField,
+  colorDomain,
+  createWorksheetColorTracker,
+  withCategoryRange,
+  type CategoryColors,
+} from "./chartColors";
 import { flowfileVizTheme } from "./vizTheme";
 
 /**
@@ -11,11 +24,16 @@ import { flowfileVizTheme } from "./vizTheme";
  * the default) lives inside `GraphicRenderer` and takes its height from the box that component is
  * given, so the box is measured here and handed over. A chart on another renderer, a map or a
  * table goes through `PureRenderer`, which draws only the chart and fills its parent by itself.
+ *
+ * With `categoryColors` the host picks the colour of each value of a nominal colour field (see
+ * `chartColors.ts`): the worksheet's queries are watched for the values it will draw and the
+ * matching range is in place before it gets the rows; Vega-Lite gets an explicit scale.
  */
 interface VueGRProps {
   chart: IChart;
   appearance?: IGWProps["appearance"];
   computation: (payload: any) => Promise<IRow[]>;
+  categoryColors?: CategoryColors;
 }
 
 const props = defineProps<VueGRProps>();
@@ -66,11 +84,38 @@ const toHex = (colour: string): string | undefined => {
     .join("")}`;
 };
 
+// The colour field the host colours, the domain the worksheet last drew it with and its range.
+let colorField: string | null = null;
+let drawnDomain: unknown[] | null = null;
+let colorRange: string[] | null = null;
+
+const isDark = (): boolean =>
+  props.appearance === "dark" ||
+  (props.appearance === "media" && !!window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+
+/** Works the range out again from the last domain; true when it changed. */
+const refreshRange = (): boolean => {
+  const next =
+    colorField && drawnDomain && props.categoryColors
+      ? props.categoryColors(colorField, drawnDomain, isDark())
+      : null;
+  if (JSON.stringify(next) === JSON.stringify(colorRange)) return false;
+  colorRange = next;
+  return true;
+};
+
 const syncChart = () => {
   const raw = toRaw(props.chart);
+  const field = categoryColorField(raw);
+  if (field !== colorField) {
+    colorField = field;
+    drawnDomain = null;
+    colorRange = null;
+  }
   const surface = surfaceColour();
   const background = raw.layout?.background || surface;
   chartRaw = background ? { ...raw, layout: { ...raw.layout, background } } : raw;
+  if (drawnByWorksheet(chartRaw)) chartRaw = withCategoryRange(chartRaw, colorRange);
   const shell = surface ? toHex(surface) : undefined;
   shellTheme =
     shell && stockTheme
@@ -90,11 +135,74 @@ const drawnByWorksheet = (chart: IChart): boolean => {
   return !dedicated && (chart.layout?.renderer ?? "native") === "native";
 };
 
+// The worksheet draws once its last query is answered and its theme follows the chart a render
+// later, so a new range is given a moment to land before the rows go back.
+const rangeLanded = () =>
+  new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+    setTimeout(finish, 100);
+  });
+
+let tracker = createWorksheetColorTracker();
+let trackedFor: VueGRProps["computation"] | null = null;
+let tracked: VueGRProps["computation"] | null = null;
+
+const trackColors = (compute: VueGRProps["computation"]): VueGRProps["computation"] => {
+  const own = createWorksheetColorTracker();
+  tracker = own;
+  return async (payload) => {
+    const watched = colorField && chartRaw && drawnByWorksheet(chartRaw);
+    const record = watched ? own.sent(payload, colorField!) : null;
+    const rows = await compute(payload);
+    const domain = record?.(rows);
+    if (domain && tracker === own) {
+      drawnDomain = domain;
+      if (refreshRange()) {
+        syncChart();
+        renderReact();
+        await rangeLanded();
+      }
+    }
+    return rows;
+  };
+};
+
+// One function per computation prop, since Graphic Walker queries again when it changes.
+const graphicWalkerComputation = (): VueGRProps["computation"] => {
+  if (!props.categoryColors) return props.computation;
+  if (trackedFor !== props.computation || !tracked) {
+    trackedFor = props.computation;
+    tracked = trackColors(props.computation);
+  }
+  return tracked;
+};
+
+/** Vega-Lite's colour scale for the host's colours, built from the values it was given. */
+const vegaScales = () => {
+  const field = colorField;
+  const colorsOf = props.categoryColors;
+  if (!field || !colorsOf) return undefined;
+  return {
+    color: (info: IFieldInfos) => {
+      if (info.semanticType !== "nominal" && info.semanticType !== "ordinal") return undefined;
+      const domain = colorDomain(info.values);
+      const range = colorsOf(field, domain, info.theme === "dark");
+      return range ? { domain: domain as string[], range } : undefined;
+    },
+  };
+};
+
 const renderReact = () => {
   if (!reactRootInstance || !React || !chartRaw) return;
   const shared = {
     ref: handle,
-    computation: props.computation,
+    computation: graphicWalkerComputation(),
     appearance: props.appearance || "light",
     vizThemeConfig: flowfileVizTheme,
     uiTheme: shellTheme,
@@ -119,6 +227,7 @@ const renderReact = () => {
       visualState: chartRaw.encodings,
       visualConfig: chartRaw.config,
       visualLayout: chartRaw.layout,
+      scales: vegaScales(),
     }),
   );
 };
@@ -183,7 +292,9 @@ onMounted(async () => {
 watch(
   () => props.chart,
   () => {
+    tracker.newRound();
     syncChart();
+    if (refreshRange()) syncChart();
     renderReact();
   },
   { deep: true },
@@ -193,8 +304,20 @@ watch(
 watch(
   () => props.appearance,
   () => {
+    refreshRange();
     syncChart();
     renderReact();
+  },
+);
+
+// The host's colours changed (a value was given one, or its stored ones were replaced).
+watch(
+  () => props.categoryColors,
+  () => {
+    if (!colorField || !chartRaw) return;
+    const changed = refreshRange();
+    if (changed) syncChart();
+    if (changed || !drawnByWorksheet(chartRaw)) renderReact();
   },
 );
 

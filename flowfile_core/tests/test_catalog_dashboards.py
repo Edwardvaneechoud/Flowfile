@@ -92,7 +92,7 @@ def _make_table(name: str = "Sales") -> int:
 
 
 def _empty_layout() -> dict:
-    return {"tiles": [], "grid": {"cols": 48, "row_height": 40, "version": 2}, "filters": []}
+    return {"tiles": [], "grid": {"cols": 48, "row_height": 40, "version": 2}, "filters": [], "color_assignments": []}
 
 
 def _layout_with_two_tiles() -> dict:
@@ -195,6 +195,61 @@ class TestDashboardCRUD:
         layout["tiles"][0]["chart_format"] = bad_format
         resp = client.post("/catalog/dashboards", json={"name": "Too long", "layout": layout})
         assert resp.status_code == 422
+
+    def test_color_assignments_round_trip_with_their_value_types(self, client):
+        layout = _layout_with_two_tiles()
+        assignments = [
+            {"field": "region", "value": "West", "slot": 0},
+            {"field": "region", "value": "East", "slot": 1},
+            {"field": "code", "value": 1, "slot": 0},
+            {"field": "code", "value": "1", "slot": 1},
+            {"field": "flag", "value": True, "slot": 0},
+            {"field": "region", "value": None, "slot": 2},
+        ]
+        layout["color_assignments"] = assignments
+        created = client.post("/catalog/dashboards", json={"name": "Coloured", "layout": layout})
+        assert created.status_code == 201, created.text
+        stored = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["color_assignments"]
+        assert stored == assignments
+        assert [type(a["value"]) for a in stored] == [str, str, int, str, bool, type(None)]
+
+    def test_layout_saved_before_color_assignments_loads_with_none(self, client):
+        with get_db_context() as db:
+            row = CatalogDashboard(
+                name="Uncoloured", layout_json=json.dumps(_layout_with_two_tiles()), layout_version=1, created_by=1
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        layout = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]
+        assert layout["color_assignments"] == []
+        assert [t["viz_id"] for t in layout["tiles"]] == [1, 2]
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            [{"field": "region", "value": "West", "slot": 0}, {"field": "region", "value": "West", "slot": 1}],
+            [{"field": "code", "value": 1, "slot": 0}, {"field": "code", "value": 1.0, "slot": 1}],
+            [{"field": "region", "value": "West", "slot": -1}],
+            [{"field": "", "value": "West", "slot": 0}],
+            [{"field": "region", "value": ["West"], "slot": 0}],
+        ],
+    )
+    def test_invalid_color_assignments_return_422(self, client, bad):
+        layout = _layout_with_two_tiles()
+        layout["color_assignments"] = bad
+        resp = client.post("/catalog/dashboards", json={"name": "Bad colours", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_same_value_in_two_fields_may_take_one_slot_each(self, client):
+        layout = _layout_with_two_tiles()
+        layout["color_assignments"] = [
+            {"field": "region", "value": "West", "slot": 0},
+            {"field": "area", "value": "West", "slot": 3},
+        ]
+        resp = client.post("/catalog/dashboards", json={"name": "Two fields", "layout": layout})
+        assert resp.status_code == 201, resp.text
 
     def test_tile_title_over_120_characters_returns_422(self, client):
         layout = _layout_with_two_tiles()

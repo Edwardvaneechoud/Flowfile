@@ -274,6 +274,7 @@
             :chart="chart as any"
             :computation="computation"
             :appearance="appearance"
+            :category-colors="categoryColors"
           />
         </div>
       </template>
@@ -306,6 +307,7 @@
         :chart="chart as any"
         :computation="computation"
         :appearance="appearance"
+        :category-colors="categoryColors"
       />
     </TileExpandDialog>
     <TileRowsDialog
@@ -477,6 +479,7 @@ import {
   WarningFilled,
 } from "@element-plus/icons-vue";
 import { useDashboardVizCache } from "../../composables/useDashboardVizCache";
+import { useDashboardColors } from "../../composables/useDashboardColors";
 import {
   useDashboardComputation,
   filtersTargetingTile,
@@ -620,6 +623,8 @@ const openStyleMenu = () => {
 
 // ---- viz branch (unchanged behaviour) ----
 const vizCache = useDashboardVizCache();
+const dashboardColors = useDashboardColors();
+const categoryColors = computed(() => dashboardColors?.categoryColors.value);
 const viz = ref<CatalogVisualization | null>(null);
 const fields = ref<Record<string, any>[]>([]);
 const loading = ref(true);

@@ -133,10 +133,25 @@ export interface DashboardFilter {
 
 export type DashboardFilterScope = "datasource" | "all";
 
+/** A value of a chart's colour field as the data holds it. */
+export type DashboardColorValue = string | number | boolean | null;
+
+/**
+ * The colour one value of a colour field has on every chart tile of the dashboard: the `slot`-th
+ * colour of the chart palette (`vizTheme.ts`), the same slot in light and dark.
+ */
+export interface DashboardColorAssignment {
+  field: string;
+  value: DashboardColorValue;
+  slot: number;
+}
+
 export interface DashboardLayout {
   tiles: DashboardTile[];
   grid: DashboardGrid;
   filters: DashboardFilter[];
+  /** Absent on layouts saved before value colours existed. */
+  color_assignments?: DashboardColorAssignment[];
 }
 
 export interface Dashboard {

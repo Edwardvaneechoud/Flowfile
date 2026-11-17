@@ -7,7 +7,19 @@ run history, favorites and follows.
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, TypedDict
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas.sharing_schema import AccessInfo
@@ -1058,10 +1070,46 @@ class DashboardFilter(BaseModel):
         return self
 
 
+class DashboardColorAssignment(BaseModel):
+    """The colour one value of a chart colour field has on every chart tile of a dashboard.
+
+    ``slot`` indexes the frontend's categorical chart palette (``vizTheme.ts``, the same slot in
+    light and dark). The frontend gives a value the first free slot when a tile first draws it and
+    stores it with the author's next edit; a value never gets a second entry, and one without an
+    entry past the palette's last slot is drawn grey. Field names and values only, nothing
+    machine-local, so the list travels in a project as is.
+    """
+
+    field: str = Field(min_length=1, max_length=255)
+    value: StrictStr | StrictBool | StrictInt | StrictFloat | None
+    slot: int = Field(ge=0, le=255)
+
+
+def _color_value_key(value: str | bool | int | float | None) -> tuple[str, object]:
+    """A value's identity as the frontend matches it: 1 and 1.0 are one value, 1 and "1" two."""
+    if isinstance(value, bool):
+        return ("boolean", value)
+    if isinstance(value, int | float):
+        return ("number", float(value))
+    return (type(value).__name__, value)
+
+
 class DashboardLayout(BaseModel):
     tiles: list[DashboardTile] = Field(default_factory=list)
     grid: DashboardGrid = Field(default_factory=DashboardGrid)
     filters: list[DashboardFilter] = Field(default_factory=list)
+    color_assignments: list[DashboardColorAssignment] = Field(default_factory=list, max_length=5000)
+
+    @field_validator("color_assignments")
+    @classmethod
+    def _one_colour_per_value(cls, assignments: list[DashboardColorAssignment]) -> list[DashboardColorAssignment]:
+        seen: set[tuple[str, tuple[str, object]]] = set()
+        for a in assignments:
+            key = (a.field, _color_value_key(a.value))
+            if key in seen:
+                raise ValueError(f"value {a.value!r} of field '{a.field}' has more than one colour")
+            seen.add(key)
+        return assignments
 
 
 class DashboardCreate(BaseModel):

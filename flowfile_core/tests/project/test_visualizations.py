@@ -20,6 +20,7 @@ from flowfile_core.project import project_sync
 from flowfile_core.project.service import write_export
 from flowfile_core.schemas.catalog_schema import (
     DashboardChartFormat,
+    DashboardColorAssignment,
     DashboardFilter,
     DashboardKpi,
     DashboardLayout,
@@ -250,6 +251,45 @@ def test_chart_tile_format_round_trips(tmp_path):
             assert stored[1]["chart_format"] is None
         write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "chart formats must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_color_assignments_round_trip(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    viz_id, _ = _make_viz("colour-chart", source_type="sql", sql_query="SELECT 'West' AS region")
+    assignments = [
+        DashboardColorAssignment(field="region", value="West", slot=0),
+        DashboardColorAssignment(field="region", value="East", slot=1),
+        DashboardColorAssignment(field="code", value=7, slot=0),
+        DashboardColorAssignment(field="region", value=None, slot=2),
+    ]
+    layout = DashboardLayout(
+        tiles=[DashboardTile(id="col-1", type="viz", viz_id=viz_id, x=0, y=0, w=6, h=4)],
+        color_assignments=assignments,
+    )
+    _, duuid = _make_dashboard("colour-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Colours", OWNER)
+        exported = _dash_yaml(root)[duuid]["layout"]["color_assignments"]
+        assert exported == [a.model_dump() for a in assignments]
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = DashboardLayout.model_validate_json(dashboard.layout_json)
+            assert stored.color_assignments == assignments
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "colours must round-trip byte-identically"
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)

@@ -215,6 +215,7 @@ import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAp
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
 import { useDashboardRefresh } from "../../composables/useDashboardRefresh";
 import { provideDashboardVizCache } from "../../composables/useDashboardVizCache";
+import { provideDashboardColors } from "../../composables/useDashboardColors";
 import { useAutosave } from "../../composables/useAutosave";
 import { classifyAutosaveError } from "../../composables/autosaveEngine";
 import { createLocalDraft, type LocalDraft } from "../../composables/localDraft";
@@ -233,6 +234,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { historyShortcutFor } from "../../composables/useFlowHotkeys";
 import { IS_MAC } from "../../utils/shortcuts";
 import { upgradeLayoutGrid } from "./gridVersion";
+import { sameAssignments, withoutColorAssignments } from "./colorAssignment";
 import {
   EditHistory,
   dashboardChange,
@@ -387,7 +389,7 @@ const currentSnapshot = (): DashboardSnapshot | null =>
     ? {
         name: nameDraft.value,
         description: descriptionDraft.value,
-        layout: toPlainJson(store.current.layout) as DashboardLayout,
+        layout: withoutColorAssignments(toPlainJson(store.current.layout) as DashboardLayout),
       }
     : null;
 
@@ -406,7 +408,19 @@ const recordEdit = (options?: Pick<RecordOptions, "key" | "absorb">) => {
   syncHistoryFlags();
 };
 
+const dashboardColors = provideDashboardColors(() => store.current?.layout.color_assignments);
+
+// Values the tiles gave a colour since the last edit are stored with this one, never on their own.
+const adoptColorAssignments = () => {
+  if (!store.current) return;
+  const assignments = dashboardColors.sync();
+  if (!sameAssignments(store.current.layout.color_assignments, assignments)) {
+    store.setLayout({ ...store.current.layout, color_assignments: assignments });
+  }
+};
+
 const markChanged = () => {
+  adoptColorAssignments();
   recordEdit();
   if (isNew.value) {
     // First edit claims the single draft slot; the restore offer is now stale.

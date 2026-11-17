@@ -102,6 +102,8 @@ A dashboard filter is bound to a catalog table (`datasource_id`) or, for a query
 
 A chart tile's `chart_format` (`DashboardChartFormat`: `number_format`, `time_format`, `x_title`, `y_title`, all optional) formats the chart on that tile only; the saved chart is never changed, so one chart on two dashboards can read differently. Core stores the strings as given (length limits only); the browser checks them and applies them to the copy it draws (`chartPresentation.ts::applyTilePresentation`): the formats as Graphic Walker's `layout.format` (d3-format, d3-time-format), the titles as the display `name` of the field that ends the columns and rows shelves, which is all Graphic Walker writes as an axis title. It holds nothing machine-local and travels in a project file as is.
 
+A layout's `color_assignments` (`DashboardColorAssignment`: `field`, `value`, `slot`; default empty, one entry per field and value, a value a JSON scalar) gives each value of a chart colour field one slot of the chart palette (`vizTheme.ts`, the same slot in light and dark), so every chart tile colouring by a field of that name draws the value alike and a filter repaints nothing. The browser hands slots out (`colorAssignment.ts`: first free slot, in Graphic Walker's value order, append-only, none past the palette's eight, which draw grey) and the editor writes them into the layout with the author's next edit only, so opening a dashboard saves nothing; Graphic Walker 0.6 takes no value-to-colour map, so the tile hands its worksheet renderer a category range ordered like the domain it will draw (`chartColors.ts`) and Vega-Lite an explicit scale. Field names and values only: it travels in a project file as is.
+
 ---
 
 ## The Explore Data node

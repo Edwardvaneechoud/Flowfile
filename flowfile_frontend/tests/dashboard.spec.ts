@@ -341,6 +341,60 @@ test.describe("Dashboards", () => {
     }
   });
 
+  test("each region's colour is stored with the author's next edit, never on its own, and undo keeps it", async ({
+    page,
+    request,
+  }) => {
+    const seededColors = await seedDashboard(request, token, `e2e colours ${Date.now()}`, {
+      colorByRegion: true,
+    });
+    const headers = authHeaders(token);
+    const saved = async () =>
+      (
+        await request.get(`${API_URL}/catalog/dashboards/${seededColors.dashboardId}`, { headers })
+      ).json();
+    const byRegion = ["Central", "East", "North", "South", "West"].map((value, slot) => ({
+      field: "region",
+      value,
+      slot,
+    }));
+    try {
+      await login(page, token, `#/main/dashboards/${seededColors.dashboardId}/edit`);
+      await expect(page.locator(".tile-viz-body canvas").first()).toBeVisible({ timeout: 30000 });
+      // Drawing the chart gives every region a colour, but no edit was made: nothing is saved.
+      await page.waitForTimeout(1500);
+      await expect(page.getByTestId("dashboard-undo")).toBeDisabled();
+      const opened = await saved();
+      expect(opened.layout_version).toBe(1);
+      expect(opened.layout.color_assignments).toEqual([]);
+
+      await page.getByPlaceholder("Description (optional)").fill("Coloured by region");
+      await expect
+        .poll(async () => (await saved()).layout.color_assignments, { timeout: 20000 })
+        .toEqual(byRegion);
+
+      await page.getByPlaceholder("Description (optional)").blur();
+      await page.getByTestId("dashboard-undo").click();
+      await expect
+        .poll(
+          async () => {
+            const after = await saved();
+            return [after.description, after.layout.color_assignments];
+          },
+          { timeout: 20000 },
+        )
+        .toEqual([null, byRegion]);
+
+      // The chart in the catalog is not touched.
+      const viz = await (
+        await request.get(`${API_URL}/catalog/visualizations/${seededColors.vizId}`, { headers })
+      ).json();
+      expect(viz.spec[0].layout.colorPalette).toBeUndefined();
+    } finally {
+      await seededColors.cleanup(request);
+    }
+  });
+
   test("typing in a filter's value box finds a value beyond the first hundred", async ({
     page,
     request,

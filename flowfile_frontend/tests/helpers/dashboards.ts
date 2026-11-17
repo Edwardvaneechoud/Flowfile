@@ -23,8 +23,9 @@ const measure = (fid: string) => ({
   offset: 0,
 });
 
-/** A Graphic Walker bar chart of sum(amount) per region, as the chart builder exports one. */
-export const regionBarChart = () => ({
+/** A Graphic Walker bar chart of sum(amount) per region, as the chart builder exports one;
+ * `colorByRegion` also colours each bar by its region. */
+export const regionBarChart = ({ colorByRegion = false } = {}) => ({
   visId: "e2e-region-bar",
   name: "Chart 1",
   config: { defaultAggregated: true, geoms: ["bar"], coordSystem: "generic", limit: -1 },
@@ -33,7 +34,7 @@ export const regionBarChart = () => ({
     measures: [measure("amount")],
     rows: [{ ...dimension("region"), sort: "descending" }],
     columns: [measure("amount")],
-    color: [],
+    color: colorByRegion ? [dimension("region")] : [],
     opacity: [],
     size: [],
     shape: [],
@@ -82,11 +83,13 @@ export interface SeededDashboard {
  * A catalog table, one chart on it and a dashboard with a titled chart tile, a KPI, a KPI still to
  * be set up, a text tile, a table tile that reads the table directly (five rows a page, largest
  * amount first) and a region filter. Core reads the CSV from this machine's temp dir.
+ * `colorByRegion` colours the chart's bars by region.
  */
 export async function seedDashboard(
   request: APIRequestContext,
   token: string,
   name: string,
+  { colorByRegion = false } = {},
 ): Promise<SeededDashboard> {
   const headers = authHeaders(token);
   const dir = mkdtempSync(join(tmpdir(), "flowfile-e2e-dashboard-"));
@@ -113,7 +116,7 @@ export async function seedDashboard(
   };
 
   try {
-    await seedRows(post, name, csvPath, created);
+    await seedRows(post, name, csvPath, created, colorByRegion);
   } catch (err) {
     await cleanup(request).catch(() => undefined);
     throw err;
@@ -138,6 +141,7 @@ async function seedRows(
   name: string,
   csvPath: string,
   created: Created,
+  colorByRegion: boolean,
 ): Promise<void> {
   // No spaces: a chart on a table whose name has one cannot read its files.
   const tableName = `${name.replace(/\W+/g, "_")}_orders`;
@@ -145,7 +149,7 @@ async function seedRows(
   created.table = table.id;
   const viz = await post("/catalog/visualizations", {
     name: `${name} chart`,
-    spec: [regionBarChart()],
+    spec: [regionBarChart({ colorByRegion })],
     source_type: "table",
     catalog_table_id: table.id,
   });
