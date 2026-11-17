@@ -23,6 +23,7 @@ from flowfile_core.schemas.catalog_schema import (
     DashboardColorAssignment,
     DashboardFilter,
     DashboardKpi,
+    DashboardKpiTrend,
     DashboardLayout,
     DashboardTableColumn,
     DashboardTableConfig,
@@ -301,7 +302,15 @@ def test_kpi_tile_round_trips_and_relinks(tmp_path):
     project_sync.close_project(OWNER)
     _clear_viz_dashboards()
     viz_id, vuuid = _make_viz("kpi-chart", source_type="sql", sql_query="SELECT 1 AS amount")
-    kpi = DashboardKpi(field="amount", agg="sum", label="Revenue", prefix="$", comparison="target", target=100.0)
+    kpi = DashboardKpi(
+        field="amount",
+        agg="sum",
+        label="Revenue",
+        prefix="$",
+        comparison="target",
+        target=100.0,
+        trend=DashboardKpiTrend(field="order_date", grain="quarter"),
+    )
     layout = DashboardLayout(tiles=[DashboardTile(id="kpi-1", type="kpi", viz_id=viz_id, kpi=kpi, x=0, y=0, w=12, h=3)])
     _, duuid = _make_dashboard("kpi-board", layout)
     root = tmp_path / "project"
@@ -310,6 +319,7 @@ def test_kpi_tile_round_trips_and_relinks(tmp_path):
         tile = _dash_yaml(root)[duuid]["layout"]["tiles"][0]
         assert tile["viz_uuid"] == vuuid and "viz_id" not in tile
         assert tile["kpi"] == kpi.model_dump()
+        assert tile["kpi"]["trend"] == {"field": "order_date", "grain": "quarter"}
 
         dash_bytes = (root / "dashboards.yaml").read_bytes()
 

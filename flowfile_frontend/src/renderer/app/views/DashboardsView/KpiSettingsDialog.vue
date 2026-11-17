@@ -101,6 +101,46 @@
           <el-radio-button :value="false">Lower</el-radio-button>
         </el-radio-group>
       </el-form-item>
+      <el-form-item label="Trend">
+        <el-switch
+          v-model="trendOn"
+          :disabled="!hasSource"
+          active-text="Show a line under the number"
+          data-testid="kpi-trend-switch"
+        />
+        <div v-if="trendOn && !fieldsLoading && !dateFields.length" class="kpi-hint">
+          {{
+            fieldsError ??
+            "This source has no date column, so there is nothing to draw a trend over."
+          }}
+        </div>
+      </el-form-item>
+      <template v-if="trendOn && draft.kpi.trend && dateFields.length">
+        <el-form-item label="Date column">
+          <el-select
+            v-model="draft.kpi.trend.field"
+            placeholder="Select a date column"
+            filterable
+            data-testid="kpi-trend-field"
+          >
+            <el-option v-for="f in dateFields" :key="f.fid" :value="f.fid" :label="f.fid" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Per">
+          <el-select v-model="draft.kpi.trend.grain" data-testid="kpi-trend-grain">
+            <el-option
+              v-for="opt in KPI_TREND_GRAIN_OPTIONS"
+              :key="opt.value"
+              :value="opt.value"
+              :label="opt.label"
+            />
+          </el-select>
+          <div class="kpi-hint">
+            The KPI's {{ aggPhrase }} per {{ grainHint }}, with the same filters as the number; the
+            most recent {{ KPI_TREND_MAX_BUCKETS }} are drawn.
+          </div>
+        </el-form-item>
+      </template>
     </el-form>
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">Cancel</el-button>
@@ -119,6 +159,8 @@ import TileSourcePicker from "./TileSourcePicker.vue";
 import {
   DEFAULT_KPI,
   KPI_AGG_OPTIONS,
+  KPI_TREND_GRAIN_OPTIONS,
+  KPI_TREND_MAX_BUCKETS,
   KPI_VALUE_SIZE_OPTIONS,
   autoKpiLabel,
   fieldEligible,
@@ -183,7 +225,11 @@ const loadFields = async () => {
 const onOpen = () => {
   draft.viz_id = props.tile.viz_id;
   draft.table_id = props.tile.table_id ?? null;
-  draft.kpi = { ...DEFAULT_KPI, ...(props.tile.kpi ?? {}) };
+  draft.kpi = {
+    ...DEFAULT_KPI,
+    ...(props.tile.kpi ?? {}),
+    trend: props.tile.kpi?.trend ? { ...props.tile.kpi.trend } : null,
+  };
   void loadFields();
 };
 
@@ -200,6 +246,39 @@ const fieldOptions = computed(() =>
   fields.value.filter((f) => fieldEligible(draft.kpi.agg, f.semanticType)),
 );
 
+const dateFields = computed(() => fields.value.filter((f) => f.semanticType === "temporal"));
+
+// The draft keeps an empty trend while the author picks its column; Save requires one.
+const trendOn = computed<boolean>({
+  get: () => draft.kpi.trend != null,
+  set: (on) => {
+    draft.kpi.trend = on ? { field: dateFields.value[0]?.fid ?? "", grain: "auto" } : null;
+  },
+});
+
+watch(dateFields, (list) => {
+  if (draft.kpi.trend && !draft.kpi.trend.field && list.length) {
+    draft.kpi.trend.field = list[0].fid;
+  }
+});
+
+const aggPhrase = computed(
+  () => KPI_AGG_OPTIONS.find((o) => o.value === draft.kpi.agg)?.label.toLowerCase() ?? "value",
+);
+
+const grainHint = computed(() =>
+  draft.kpi.trend?.grain && draft.kpi.trend.grain !== "auto"
+    ? draft.kpi.trend.grain
+    : "day, week, month, quarter or year, picked from the dates in view",
+);
+
+const dropStaleTrendField = () => {
+  const trend = draft.kpi.trend;
+  if (trend && !dateFields.value.some((f) => f.fid === trend.field)) {
+    trend.field = dateFields.value[0]?.fid ?? "";
+  }
+};
+
 const onAggChange = () => {
   const field = draft.kpi.field;
   if (field && !fieldOptions.value.some((f) => f.fid === field)) draft.kpi.field = null;
@@ -210,6 +289,7 @@ const onSourceChange = async (next: { viz_id: number | null; table_id: number | 
   draft.table_id = next.table_id;
   await loadFields();
   onAggChange();
+  dropStaleTrendField();
 };
 
 const fieldModel = computed<string | undefined>({
@@ -264,7 +344,8 @@ const canSave = computed(
   () =>
     hasSource.value &&
     (!kpiNeedsField(draft.kpi.agg) || !!draft.kpi.field) &&
-    (draft.kpi.comparison !== "target" || draft.kpi.target != null),
+    (draft.kpi.comparison !== "target" || draft.kpi.target != null) &&
+    (draft.kpi.trend == null || !!draft.kpi.trend.field || !dateFields.value.length),
 );
 
 const blankToNull = (s: string | null | undefined): string | null => (s && s.trim() ? s : null);
@@ -280,6 +361,7 @@ const onSave = () => {
       prefix: blankToNull(draft.kpi.prefix),
       suffix: blankToNull(draft.kpi.suffix),
       target: draft.kpi.comparison === "target" ? draft.kpi.target : null,
+      trend: draft.kpi.trend?.field ? { ...draft.kpi.trend } : null,
     },
   });
   emit("update:modelValue", false);

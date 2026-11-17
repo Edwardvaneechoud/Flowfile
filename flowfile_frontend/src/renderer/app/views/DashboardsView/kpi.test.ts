@@ -5,8 +5,19 @@ vi.mock("../../composables/useGraphicWalkerCompute", () => ({ useGraphicWalkerCo
 
 import {
   DEFAULT_KPI,
+  KPI_TREND_MAX_BUCKETS,
   autoKpiLabel,
+  autoTrendGrain,
   buildKpiPayload,
+  buildKpiTrendPayload,
+  formatTrendBucket,
+  kpiTrendOf,
+  parseBucket,
+  readKpiSpan,
+  readKpiTrend,
+  resolveTrendGrain,
+  trendDescription,
+  trendNeedsSpan,
   computeDelta,
   fieldEligible,
   findDateRangeFilter,
@@ -290,5 +301,233 @@ describe("autoKpiLabel", () => {
     expect(autoKpiLabel({ agg: "distinctCount", field: "region" })).toBe(
       "Distinct count of region",
     );
+  });
+});
+
+describe("trend settings", () => {
+  it("is off by default and needs a column to be on", () => {
+    expect(DEFAULT_KPI.trend).toBeNull();
+    expect(kpiTrendOf(kpiOf({ field: "amount" }))).toBeNull();
+    expect(kpiTrendOf(kpiOf({ field: "amount", trend: { field: "", grain: "day" } }))).toBeNull();
+    expect(kpiTrendOf(kpiOf({ trend: { field: "d", grain: "day" } }))).toEqual({
+      field: "d",
+      grain: "day",
+    });
+  });
+
+  it("reads the span with the headline only for an auto grain", () => {
+    expect(trendNeedsSpan(kpiOf({ trend: { field: "d", grain: "auto" } }))).toBe(true);
+    expect(trendNeedsSpan(kpiOf({ trend: { field: "d", grain: "month" } }))).toBe(false);
+    expect(trendNeedsSpan(kpiOf({}))).toBe(false);
+  });
+});
+
+describe("buildKpiPayload with the trend span", () => {
+  const kpi = kpiOf({ field: "amount", agg: "sum", trend: { field: "order_date", grain: "auto" } });
+
+  it("adds the first and last date of the trend column after the value", () => {
+    const measures = (buildKpiPayload(kpi, { withSpan: true }) as any).workflow[0].query[0]
+      .measures;
+    expect(measures).toEqual([
+      { field: "amount", agg: "sum", asFieldKey: "kpi_value" },
+      { field: "order_date", agg: "min", asFieldKey: "kpi_span_start" },
+      { field: "order_date", agg: "max", asFieldKey: "kpi_span_end" },
+    ]);
+  });
+
+  it("leaves the headline as it was without the option or a trend", () => {
+    expect(buildKpiPayload(kpi)).toEqual(buildKpiPayload(kpiOf({ field: "amount", agg: "sum" })));
+    expect(buildKpiPayload(kpiOf({ field: "amount" }), { withSpan: true })).toEqual(
+      buildKpiPayload(kpiOf({ field: "amount" })),
+    );
+  });
+});
+
+describe("buildKpiTrendPayload", () => {
+  it("truncates the date on the worker, aggregates per bucket and asks for the newest first", () => {
+    const kpi = kpiOf({
+      field: "amount",
+      agg: "mean",
+      trend: { field: "order_date", grain: "auto" },
+    });
+    expect(buildKpiTrendPayload(kpi, "week")).toEqual({
+      workflow: [
+        {
+          type: "transform",
+          transform: [
+            {
+              key: "kpi_bucket",
+              expression: {
+                op: "dateTimeDrill",
+                as: "kpi_bucket",
+                params: [
+                  { type: "field", value: "order_date" },
+                  { type: "value", value: "week" },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          type: "view",
+          query: [
+            {
+              op: "aggregate",
+              groupBy: ["kpi_bucket"],
+              measures: [{ field: "amount", agg: "mean", asFieldKey: "kpi_value" }],
+            },
+          ],
+        },
+        { type: "sort", by: ["kpi_bucket"], sort: "descending" },
+      ],
+      limit: KPI_TREND_MAX_BUCKETS + 1,
+    });
+  });
+
+  it("uses the KPI's own measure, a row count and a null-skipping distinct count included", () => {
+    const measure = (kpi: DashboardKpi) =>
+      (buildKpiTrendPayload(kpi, "month") as any).workflow[1].query[0].measures[0];
+    const trend = { field: "d", grain: "month" as const };
+    expect(measure(kpiOf({ agg: "count", field: null, trend }))).toEqual({
+      field: "*",
+      agg: "count",
+      asFieldKey: "kpi_value",
+    });
+    expect(measure(kpiOf({ agg: "distinctCount", field: "region", trend }))).toEqual({
+      agg: "expr",
+      expression: 'COUNT(DISTINCT "region")',
+      asFieldKey: "kpi_value",
+    });
+  });
+
+  it("is null without a trend or a complete KPI", () => {
+    expect(buildKpiTrendPayload(kpiOf({ field: "amount" }), "day")).toBeNull();
+    expect(
+      buildKpiTrendPayload(kpiOf({ field: null, trend: { field: "d", grain: "day" } }), "day"),
+    ).toBeNull();
+  });
+});
+
+describe("parseBucket", () => {
+  it("reads a date and a datetime as the local time they name", () => {
+    expect(parseBucket("2024-03-01")).toBe(new Date(2024, 2, 1).getTime());
+    expect(parseBucket("2024-03-01 13:45:10.000000")).toBe(
+      new Date(2024, 2, 1, 13, 45, 10).getTime(),
+    );
+    expect(parseBucket("2024-03-01T00:00:00+0000")).toBe(new Date(2024, 2, 1).getTime());
+  });
+
+  it("is null for anything that is no date", () => {
+    expect(parseBucket(null)).toBeNull();
+    expect(parseBucket("March")).toBeNull();
+    expect(parseBucket(undefined)).toBeNull();
+  });
+});
+
+describe("readKpiSpan", () => {
+  it("reads the span off the one headline row", () => {
+    expect(
+      readKpiSpan([{ kpi_value: 1, kpi_span_start: "2024-01-03", kpi_span_end: "2024-05-15" }]),
+    ).toEqual({ start: new Date(2024, 0, 3).getTime(), end: new Date(2024, 4, 15).getTime() });
+  });
+
+  it("is null when no dates are in view or the column is gone", () => {
+    expect(readKpiSpan([{ kpi_value: 0, kpi_span_start: null, kpi_span_end: null }])).toBeNull();
+    expect(readKpiSpan([{ kpi_value: 0 }])).toBeNull();
+    expect(readKpiSpan([])).toBeNull();
+  });
+});
+
+describe("autoTrendGrain", () => {
+  const span = (days: number) => ({ start: 0, end: days * 86_400_000 });
+
+  it("picks the finest grain whose buckets fit in the cap", () => {
+    expect(autoTrendGrain(span(0))).toBe("day");
+    expect(autoTrendGrain(span(59))).toBe("day");
+    expect(autoTrendGrain(span(60))).toBe("week");
+    expect(autoTrendGrain(span(365))).toBe("week");
+    expect(autoTrendGrain(span(2 * 365))).toBe("month");
+    expect(autoTrendGrain(span(10 * 365))).toBe("quarter");
+    expect(autoTrendGrain(span(30 * 365))).toBe("year");
+  });
+
+  it("keeps a fixed grain and falls back to months without a span", () => {
+    expect(autoTrendGrain(null)).toBe("month");
+    expect(resolveTrendGrain("quarter", span(3))).toBe("quarter");
+    expect(resolveTrendGrain("auto", span(3))).toBe("day");
+  });
+});
+
+describe("readKpiTrend", () => {
+  it("drops the null-date bucket and empty values and orders the points oldest first", () => {
+    const points = readKpiTrend([
+      { kpi_bucket: null, kpi_value: 5 },
+      { kpi_bucket: "2024-03-01", kpi_value: 30 },
+      { kpi_bucket: "2024-02-01", kpi_value: null },
+      { kpi_bucket: "2024-01-01", kpi_value: "10" },
+    ]);
+    expect(points).toEqual([
+      { t: new Date(2024, 0, 1).getTime(), value: 10 },
+      { t: new Date(2024, 2, 1).getTime(), value: 30 },
+    ]);
+  });
+
+  it("keeps only the most recent buckets", () => {
+    const rows = Array.from({ length: KPI_TREND_MAX_BUCKETS + 1 }, (_, i) => ({
+      kpi_bucket: `2024-01-${String((i % 28) + 1).padStart(2, "0")} ${String(Math.floor(i / 28)).padStart(2, "0")}:00:00`,
+      kpi_value: i,
+    }));
+    const points = readKpiTrend(rows)!;
+    expect(points).toHaveLength(KPI_TREND_MAX_BUCKETS);
+    expect(points.map((p) => p.value)).not.toContain(0);
+  });
+
+  it("is null when the rows are not buckets (the date column is missing)", () => {
+    expect(readKpiTrend([{ order_date: "2024-01-01", amount: 1 }])).toBeNull();
+    expect(readKpiTrend(null)).toBeNull();
+    expect(readKpiTrend([])).toEqual([]);
+  });
+});
+
+describe("formatTrendBucket and trendDescription", () => {
+  const t = (y: number, m: number, d = 1) => new Date(y, m, d).getTime();
+
+  it("names a bucket by its grain", () => {
+    expect(formatTrendBucket(t(2024, 2, 4), "day", "en-GB")).toBe("4 Mar 2024");
+    expect(formatTrendBucket(t(2024, 2, 4), "week", "en-GB")).toBe("Week of 4 Mar 2024");
+    expect(formatTrendBucket(t(2024, 2), "month", "en-GB")).toBe("Mar 2024");
+    expect(formatTrendBucket(t(2024, 7), "quarter")).toBe("Q3 2024");
+    expect(formatTrendBucket(t(2024, 7), "year")).toBe("2024");
+  });
+
+  it("says what the line shows, its span and its direction", () => {
+    const points = [
+      { t: t(2024, 0), value: 100 },
+      { t: t(2024, 4), value: 20 },
+    ];
+    expect(trendDescription(points, "month", "Total amount", "en-GB")).toBe(
+      "Total amount by month, Jan 2024 to May 2024: down 80%",
+    );
+    expect(
+      trendDescription(
+        [
+          { t: t(2024, 0), value: 0 },
+          { t: t(2024, 1), value: 5 },
+        ],
+        "month",
+        "Orders",
+        "en-GB",
+      ),
+    ).toBe("Orders by month, Jan 2024 to Feb 2024: up");
+    expect(
+      trendDescription(
+        [
+          { t: t(2024, 0), value: 5 },
+          { t: t(2025, 0), value: 5 },
+        ],
+        "year",
+        "Orders",
+      ),
+    ).toBe("Orders by year, 2024 to 2025: flat");
   });
 });

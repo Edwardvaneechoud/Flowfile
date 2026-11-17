@@ -25,6 +25,15 @@ export type SeparatorOrientation = "horizontal" | "vertical";
 export type KpiAgg = "sum" | "mean" | "median" | "min" | "max" | "count" | "distinctCount";
 export type KpiComparison = "none" | "target" | "previous_period";
 export type KpiValueSize = "auto" | "sm" | "md" | "lg" | "xl";
+export type KpiTrendGrain = "auto" | "day" | "week" | "month" | "quarter" | "year";
+
+/** The KPI's measure per bucket of a date column, drawn as a line under the number. */
+export interface DashboardKpiTrend {
+  /** A date or datetime column of the KPI's source. */
+  field: string;
+  /** "auto" picks day to year from the span of the rows in view. */
+  grain: KpiTrendGrain;
+}
 
 export interface DashboardKpi {
   /** null with agg "count" = row count. */
@@ -41,6 +50,8 @@ export interface DashboardKpi {
   higher_is_better?: boolean;
   /** Fixed number size; "auto" fits the tile. */
   value_size?: KpiValueSize;
+  /** null/absent draws no trend line. */
+  trend?: DashboardKpiTrend | null;
 }
 
 /** How a chart tile presents its chart; the saved chart is never changed. null keeps the chart's own. */

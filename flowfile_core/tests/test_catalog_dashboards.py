@@ -318,7 +318,7 @@ class TestDashboardCRUD:
         assert tiles[0]["kpi"] is None
         assert tiles[2]["type"] == "kpi"
         assert tiles[2]["viz_id"] == 1
-        assert tiles[2]["kpi"] == kpi
+        assert tiles[2]["kpi"] == {**kpi, "trend": None}
         assert tiles[3]["viz_id"] is None
         assert tiles[3]["kpi"] is None
         assert tiles[4]["kpi"] == {
@@ -333,6 +333,7 @@ class TestDashboardCRUD:
             "target": None,
             "higher_is_better": True,
             "value_size": "auto",
+            "trend": None,
         }
 
     @pytest.mark.parametrize(
@@ -343,6 +344,9 @@ class TestDashboardCRUD:
             {"agg": "sum", "comparison": "bogus"},
             {"agg": "sum", "label": "x" * 121},
             {"agg": "sum", "value_size": "huge"},
+            {"agg": "sum", "trend": {"field": "order_date", "grain": "fortnight"}},
+            {"agg": "sum", "trend": {"field": ""}},
+            {"agg": "sum", "trend": {"grain": "month"}},
         ],
     )
     def test_invalid_kpi_config_returns_422(self, client, bad_kpi):
@@ -350,6 +354,52 @@ class TestDashboardCRUD:
         layout["tiles"].append({"id": "kpi", "type": "kpi", "viz_id": 1, "kpi": bad_kpi, "x": 0, "y": 6, "w": 3, "h": 2})
         resp = client.post("/catalog/dashboards", json={"name": "Bad KPI", "layout": layout})
         assert resp.status_code == 422
+
+    def test_kpi_trend_round_trips_and_defaults_to_auto(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(
+            {
+                "id": "kpi-trend",
+                "type": "kpi",
+                "viz_id": 1,
+                "kpi": {"field": "amount", "comparison": "previous_period", "trend": {"field": "order_date", "grain": "week"}},
+                "x": 0,
+                "y": 6,
+                "w": 12,
+                "h": 3,
+            }
+        )
+        layout["tiles"].append(
+            {"id": "kpi-auto", "type": "kpi", "viz_id": 1, "kpi": {"trend": {"field": "order_date"}}, "x": 12, "y": 6, "w": 12, "h": 3}
+        )
+        resp = client.post("/catalog/dashboards", json={"name": "With trend", "layout": layout})
+        assert resp.status_code == 201, resp.text
+        tiles = client.get(f"/catalog/dashboards/{resp.json()['id']}").json()["layout"]["tiles"]
+        assert tiles[2]["kpi"]["trend"] == {"field": "order_date", "grain": "week"}
+        assert tiles[2]["kpi"]["comparison"] == "previous_period"
+        assert tiles[3]["kpi"]["trend"] == {"field": "order_date", "grain": "auto"}
+
+    def test_kpi_saved_before_trends_loads_without_one(self, client):
+        from flowfile_core.schemas.catalog_schema import DashboardLayout
+
+        old_kpi = {
+            "field": "amount",
+            "agg": "sum",
+            "label": None,
+            "prefix": None,
+            "suffix": None,
+            "decimals": None,
+            "compact": True,
+            "comparison": "none",
+            "target": None,
+            "higher_is_better": True,
+            "value_size": "auto",
+        }
+        layout = DashboardLayout.model_validate(
+            {"tiles": [{"id": "k", "type": "kpi", "viz_id": 1, "kpi": old_kpi, "x": 0, "y": 0, "w": 12, "h": 3}]}
+        )
+        assert layout.tiles[0].kpi.trend is None
+        assert layout.tiles[0].kpi.model_dump(exclude={"trend"}) == old_kpi
 
     def test_filter_can_target_kpi_tile(self, client):
         layout = _layout_with_two_tiles()

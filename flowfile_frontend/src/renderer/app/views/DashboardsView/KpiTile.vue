@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="rootRef"
     class="kpi"
     :class="{ 'kpi-colored': !!tile.text_color }"
     :style="tile.text_color ? { color: tile.text_color } : undefined"
@@ -39,6 +40,16 @@
       <div v-else-if="showPeriodHint" class="kpi-delta kpi-muted">
         Add a date range filter to compare periods
       </div>
+      <div v-if="showTrend" class="kpi-trend" data-testid="kpi-trend">
+        <KpiSparkline
+          :points="trendPoints ?? []"
+          :grain="trendGrain"
+          :format="tile.kpi ?? {}"
+          :label="label"
+          :dimmed="trendLoading"
+          :ink-color="tile.text_color"
+        />
+      </div>
     </template>
 
     <KpiSettingsDialog
@@ -52,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, toRef, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from "vue";
 import { Odometer, Warning, WarningFilled } from "@element-plus/icons-vue";
 import {
   filtersTargetingTile,
@@ -62,22 +73,32 @@ import {
 import { useDashboardTileSource } from "../../composables/useDashboardTileSource";
 import type { DashboardFilter, DashboardTile } from "../../types";
 import KpiSettingsDialog from "./KpiSettingsDialog.vue";
+import KpiSparkline from "./KpiSparkline.vue";
 import {
   autoKpiLabel,
+  autoTrendGrain,
   buildKpiPayload,
+  buildKpiTrendPayload,
   computeDelta,
   findDateRangeFilter,
   formatDeltaAbs,
   formatDeltaPct,
   formatKpiValue,
   isKpiComplete,
+  kpiTrendOf,
   pickComparisonFilter,
   previousPeriodFilters,
   previousPeriodLabel,
+  readKpiSpan,
+  readKpiTrend,
   readKpiValue,
+  trendNeedsSpan,
   valueSizePx,
   type KpiDelta,
+  type TrendGrain,
+  type TrendPoint,
 } from "./kpi";
+import { trendFits } from "./sparkline";
 
 const props = defineProps<{
   tile: DashboardTile;
@@ -157,11 +178,23 @@ const previous = useDashboardComputation({
   onMissing,
 });
 
+// Its own instance too, so a failed trend never sets the headline's error.
+const trendComputation = useDashboardComputation({
+  tile: tileRef,
+  filters: filtersRef,
+  tileDatasource: resolveDatasource,
+  tileFields: () => fields.value,
+  onMissing,
+});
+
 const value = ref<number | null>(null);
 const reference = ref<number | null>(null);
 const computeError = ref<string | null>(null);
 const hasResult = ref(false);
 const loading = ref(false);
+const trendPoints = ref<TrendPoint[] | null>(null);
+const trendGrain = ref<TrendGrain>("month");
+const trendLoading = ref(false);
 let requestSeq = 0;
 
 const error = computed(() => fieldsError.value ?? computeError.value);
@@ -186,14 +219,21 @@ const requestKey = computed(() =>
 
 const run = async () => {
   const kpi = props.tile.kpi;
-  const payload = kpi ? buildKpiPayload(kpi) : null;
+  const payload = kpi ? buildKpiPayload(kpi, { withSpan: trendNeedsSpan(kpi) }) : null;
   if (!kpi || !payload || source.value == null || !fields.value || missing.value) return;
   const seq = ++requestSeq;
   const withPrevious = kpi.comparison === "previous_period" && comparisonFilter.value != null;
+  const trend = kpiTrendOf(kpi);
+  // A fixed grain asks beside the headline; "auto" waits for the span the headline reads.
+  const fixedGrain = trend && trend.grain !== "auto" ? trend.grain : null;
+  const fixedTrendPayload = fixedGrain ? buildKpiTrendPayload(kpi, fixedGrain) : null;
   loading.value = true;
+  trendLoading.value = trend != null;
+  if (!trend) trendPoints.value = null;
+  const fixedTrendRows = fixedTrendPayload ? trendComputation.computation(fixedTrendPayload) : null;
   const [rows, prevRows] = await Promise.all([
     current.computation(payload),
-    withPrevious ? previous.computation(payload) : Promise.resolve(null),
+    withPrevious ? previous.computation(buildKpiPayload(kpi)) : Promise.resolve(null),
   ]);
   if (seq !== requestSeq) return;
   loading.value = false;
@@ -214,6 +254,34 @@ const run = async () => {
       : null;
   reference.value = prev && "value" in prev ? prev.value : null;
   hasResult.value = true;
+  if (trend)
+    await runTrend(seq, kpi, rows as Record<string, unknown>[], fixedGrain, fixedTrendRows);
+};
+
+// Quiet by design: a trend that fails or has under two buckets draws nothing.
+const runTrend = async (
+  seq: number,
+  kpi: NonNullable<DashboardTile["kpi"]>,
+  headlineRows: Record<string, unknown>[],
+  fixedGrain: TrendGrain | null,
+  fixedTrendRows: Promise<unknown[]> | null,
+) => {
+  let grain = fixedGrain;
+  let pending = fixedTrendRows;
+  if (!grain) {
+    const span = readKpiSpan(headlineRows);
+    grain = autoTrendGrain(span);
+    const autoPayload = span ? buildKpiTrendPayload(kpi, grain) : null;
+    pending = autoPayload ? trendComputation.computation(autoPayload) : null;
+  }
+  const rows = pending ? await pending : null;
+  if (seq !== requestSeq) return;
+  trendLoading.value = false;
+  trendGrain.value = grain;
+  trendPoints.value =
+    rows && !trendComputation.lastError.value
+      ? readKpiTrend(rows as Record<string, unknown>[])
+      : null;
 };
 
 watch([requestKey, fields], run, { immediate: true });
@@ -260,6 +328,34 @@ const deltaTitle = computed(() =>
   delta.value
     ? `${formatDeltaAbs(delta.value.abs, props.tile.kpi ?? {})} ${comparisonCaption.value}`
     : undefined,
+);
+
+const rootRef = ref<HTMLElement | null>(null);
+const tileHeight = ref(0);
+let resizeObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  const el = rootRef.value;
+  if (!el) return;
+  tileHeight.value = el.clientHeight;
+  resizeObserver = new ResizeObserver(() => {
+    tileHeight.value = el.clientHeight;
+  });
+  resizeObserver.observe(el);
+});
+
+onBeforeUnmount(() => resizeObserver?.disconnect());
+
+// The number keeps its size: on a tile too small for both, the line gives way.
+const showTrend = computed(
+  () =>
+    (trendPoints.value?.length ?? 0) >= 2 &&
+    kpiTrendOf(props.tile.kpi) != null &&
+    trendFits(
+      tileHeight.value,
+      valueSizePx(props.tile.kpi?.value_size),
+      delta.value != null || showPeriodHint.value,
+    ),
 );
 
 const showPeriodHint = computed(
@@ -364,6 +460,12 @@ const showPeriodHint = computed(
 }
 .kpi-delta-chip.is-bad {
   color: var(--color-danger-dark);
+}
+.kpi-trend {
+  flex: 0 1 36%;
+  min-height: 22px;
+  max-height: 64px;
+  margin-top: 6px;
 }
 .kpi-delta-chip.is-neutral,
 .kpi-delta-caption {

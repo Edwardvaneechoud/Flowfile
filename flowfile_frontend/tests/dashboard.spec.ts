@@ -2,7 +2,12 @@ import { readFileSync } from "fs";
 import { expect, test } from "@playwright/test";
 import { API_URL, authHeaders, getAuthToken } from "./helpers/api";
 import { login } from "./helpers/canvas";
-import { seedDashboard, seedWideFilterDashboard, type SeededDashboard } from "./helpers/dashboards";
+import {
+  seedDashboard,
+  seedTrendDashboard,
+  seedWideFilterDashboard,
+  type SeededDashboard,
+} from "./helpers/dashboards";
 
 // Dashboards draw through flowfile_worker: without one every tile stays empty, so the tests
 // skip (they do not pass) when the chart's columns cannot be read.
@@ -559,6 +564,41 @@ test.describe("Dashboards", () => {
         await request.delete(`${API_URL}/catalog/visualizations/${newVizId}`, { headers });
       }
       await seededNew.cleanup(request);
+    }
+  });
+
+  test("a KPI's trend draws one point per month in view and the region filter redraws it", async ({
+    page,
+    request,
+  }) => {
+    const trend = await seedTrendDashboard(request, token, `e2e trend ${Date.now()}`);
+    try {
+      await login(page, token, `#/main/dashboards/${trend.dashboardId}`);
+      await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
+
+      // Jan, Feb, Apr and May: the empty March and the undated row draw no point.
+      const line = page.getByTestId("kpi-trend").getByRole("img");
+      await expect(line).toHaveAttribute("data-points", "4", { timeout: 30000 });
+      await expect(line).toHaveAttribute(
+        "aria-label",
+        "Total amount by month, Jan 2024 to May 2024: down 80%",
+      );
+
+      await line.focus();
+      await expect(page.locator(".kpi-spark-tip")).toHaveText(/May 2024\s*20/);
+
+      await page.locator(".filter-chip-input").click();
+      await page.locator(".el-select-dropdown__item:visible", { hasText: "West" }).click();
+      await page.keyboard.press("Escape");
+
+      await expect(page.locator(".kpi-value")).toHaveText("150");
+      await expect(line).toHaveAttribute("data-points", "2");
+      await expect(line).toHaveAttribute(
+        "aria-label",
+        "Total amount by month, Jan 2024 to Feb 2024: down 50%",
+      );
+    } finally {
+      await trend.cleanup(request);
     }
   });
 

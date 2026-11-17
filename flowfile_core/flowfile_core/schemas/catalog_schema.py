@@ -885,6 +885,17 @@ class ColumnStatsResponse(BaseModel):
 # ==================== Dashboard Schemas ====================
 
 
+class DashboardKpiTrend(BaseModel):
+    """A KPI's trend line: its own measure and aggregation per ``grain`` bucket of ``field``.
+
+    ``field`` is a date or datetime column of the KPI's source, by name, so it travels in a
+    project export as it is. ``grain`` "auto" picks day to year from the span of the rows in view.
+    """
+
+    field: str = Field(min_length=1, max_length=255)
+    grain: Literal["auto", "day", "week", "month", "quarter", "year"] = "auto"
+
+
 class DashboardKpi(BaseModel):
     """Headline-number config for a ``type == "kpi"`` tile.
 
@@ -895,6 +906,7 @@ class DashboardKpi(BaseModel):
     ``target``; "previous_period" compares against the same aggregate over
     the targeting dashboard date_range filter shifted back by its own length.
     ``value_size`` fixes the number's font size ("auto" fits it to the tile).
+    ``trend`` None draws no trend line.
     """
 
     field: str | None = None
@@ -908,6 +920,7 @@ class DashboardKpi(BaseModel):
     target: float | None = None
     higher_is_better: bool = True
     value_size: Literal["auto", "sm", "md", "lg", "xl"] = "auto"
+    trend: DashboardKpiTrend | None = None
 
 
 class DashboardTableColumn(BaseModel):
