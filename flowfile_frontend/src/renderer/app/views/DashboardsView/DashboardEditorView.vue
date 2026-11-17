@@ -25,6 +25,34 @@
         <SaveStatusIndicator v-else :state="autosaveState" mode="draft" :draft-saved="draftDirty" />
       </div>
       <div class="editor-toolbar-right">
+        <template v-if="store.current">
+          <el-tooltip :content="UNDO_HINT" placement="bottom" :show-after="300">
+            <span class="history-btn-wrap">
+              <el-button
+                class="history-btn"
+                aria-label="Undo"
+                data-testid="dashboard-undo"
+                :disabled="!canUndo || reverting"
+                @click="onUndo"
+              >
+                <span class="material-icons">undo</span>
+              </el-button>
+            </span>
+          </el-tooltip>
+          <el-tooltip :content="REDO_HINT" placement="bottom" :show-after="300">
+            <span class="history-btn-wrap">
+              <el-button
+                class="history-btn"
+                aria-label="Redo"
+                data-testid="dashboard-redo"
+                :disabled="!canRedo || reverting"
+                @click="onRedo"
+              >
+                <span class="material-icons">redo</span>
+              </el-button>
+            </span>
+          </el-tooltip>
+        </template>
         <el-button v-if="store.current" :loading="refreshing" @click="onRefresh">
           <el-icon><Refresh /></el-icon> Refresh
         </el-button>
@@ -199,7 +227,16 @@ import DashboardSidebarPicker from "./DashboardSidebarPicker.vue";
 import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
 import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
+import { historyShortcutFor } from "../../composables/useFlowHotkeys";
+import { IS_MAC } from "../../utils/shortcuts";
 import { upgradeLayoutGrid } from "./gridVersion";
+import {
+  EditHistory,
+  dashboardChange,
+  sameDashboardSnapshot,
+  type DashboardSnapshot,
+  type RecordOptions,
+} from "./editHistory";
 import {
   deleteFilter,
   placeFilter,
@@ -319,6 +356,7 @@ const onRestoreDraft = () => {
   store.setLayout(pruneFilterTargets(upgradeLayoutGrid(pendingDraft.layout)));
   draftDirty.value = true;
   restoreAvailable.value = false;
+  resetHistory();
 };
 
 const onDiscardDraft = () => {
@@ -327,7 +365,45 @@ const onDiscardDraft = () => {
   restoreAvailable.value = false;
 };
 
+const UNDO_HINT = IS_MAC ? "Undo (⌘Z)" : "Undo (Ctrl+Z)";
+const REDO_HINT = IS_MAC ? "Redo (⇧⌘Z)" : "Redo (Ctrl+Shift+Z or Ctrl+Y)";
+
+// Session-only: reset when a dashboard opens, a draft is restored or a conflict is settled.
+const history = new EditHistory<DashboardSnapshot>({ equals: sameDashboardSnapshot });
+const canUndo = ref(false);
+const canRedo = ref(false);
+
+const syncHistoryFlags = () => {
+  canUndo.value = history.canUndo;
+  canRedo.value = history.canRedo;
+};
+
+const currentSnapshot = (): DashboardSnapshot | null =>
+  store.current
+    ? {
+        name: nameDraft.value,
+        description: descriptionDraft.value,
+        layout: toPlainJson(store.current.layout) as DashboardLayout,
+      }
+    : null;
+
+const resetHistory = () => {
+  history.reset(currentSnapshot(), Date.now());
+  syncHistoryFlags();
+};
+
+const recordEdit = (options?: Pick<RecordOptions, "key" | "absorb">) => {
+  const snapshot = currentSnapshot();
+  if (!snapshot) return;
+  history.record(snapshot, {
+    ...(options ?? dashboardChange(history.present, snapshot)),
+    now: Date.now(),
+  });
+  syncHistoryFlags();
+};
+
 const markChanged = () => {
+  recordEdit();
   if (isNew.value) {
     // First edit claims the single draft slot; the restore offer is now stale.
     if (restoreAvailable.value) {
@@ -422,6 +498,41 @@ const onPlaceFilter = (filterId: string) => onPlaceFilterAt({ filterId, x: 0, y:
 const onDeleteFilter = (filterId: string) => {
   if (!store.current) return;
   onLayoutChange(deleteFilter(store.current.layout, filterId));
+};
+
+// Same path as an edit (pruning, then markChanged), so autosave and the draft store it.
+const applySnapshot = (snapshot: DashboardSnapshot) => {
+  nameDraft.value = snapshot.name;
+  descriptionDraft.value = snapshot.description;
+  store.setLayout(pruneFilterTargets(toPlainJson(snapshot.layout)));
+  const applied = currentSnapshot();
+  if (applied) history.replacePresent(applied);
+  markChanged();
+};
+
+const stepHistory = (direction: "undo" | "redo") => {
+  if (!store.current || reverting.value) return;
+  const target = direction === "undo" ? history.undo(Date.now()) : history.redo(Date.now());
+  if (target) applySnapshot(target);
+  syncHistoryFlags();
+};
+
+const onUndo = () => stepHistory("undo");
+const onRedo = () => stepHistory("redo");
+
+const dialogOpen = (): boolean =>
+  vizDialogOpen.value ||
+  vizCreatorOpen.value ||
+  sourcePickerOpen.value ||
+  Array.from(document.querySelectorAll<HTMLElement>(".el-overlay")).some(
+    (el) => el.style.display !== "none" && el.getClientRects().length > 0,
+  );
+
+const handleHistoryKeydown = (event: KeyboardEvent) => {
+  const action = historyShortcutFor(event, IS_MAC);
+  if (!action || dialogOpen()) return;
+  event.preventDefault();
+  stepHistory(action);
 };
 
 const editingVizId = ref<number | null>(null);
@@ -679,6 +790,7 @@ const initialise = async () => {
     descriptionDraft.value = "";
     draftDirty.value = false;
     setupDraft();
+    resetHistory();
     return;
   }
   try {
@@ -687,18 +799,24 @@ const initialise = async () => {
       nameDraft.value = store.current.name;
       descriptionDraft.value = store.current.description ?? "";
       startAutosaveSession(store.current);
+      resetHistory();
     }
   } catch {
     ElMessage.error(store.error ?? "Failed to load dashboard");
   }
 };
 
+// Typing back to the saved value is no autosave change, but the history still follows it.
 watch(nameDraft, (v) => {
-  if (store.current && v !== store.current.name) markChanged();
+  if (!store.current) return;
+  if (v !== store.current.name) markChanged();
+  else recordEdit();
 });
 
 watch(descriptionDraft, () => {
-  if (store.current && descriptionValue() !== (store.current.description ?? null)) markChanged();
+  if (!store.current) return;
+  if (descriptionValue() !== (store.current.description ?? null)) markChanged();
+  else recordEdit();
 });
 
 // Honour ?editViz=<id> from the route by auto-opening the chart edit dialog
@@ -744,12 +862,14 @@ const handleBeforeUnload = (event: BeforeUnloadEvent) => {
 
 onMounted(async () => {
   window.addEventListener("beforeunload", handleBeforeUnload);
+  window.addEventListener("keydown", handleHistoryKeydown);
   await initialise();
   await consumeEditVizQuery();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("beforeunload", handleBeforeUnload);
+  window.removeEventListener("keydown", handleHistoryKeydown);
   if (draftDirty.value) draft?.writeNow();
   draft?.dispose();
   store.reset();
@@ -841,6 +961,8 @@ const onRevert = async () => {
     nameDraft.value = openSnapshot.value.name;
     descriptionDraft.value = openSnapshot.value.description ?? "";
     store.setLayout(toPlainJson(openSnapshot.value.layout) as DashboardLayout);
+    // One undoable step, recorded before the PUT so the drafts' watchers find it already taken.
+    recordEdit({ key: null });
     const body: DashboardUpdatePayload = {
       name: openSnapshot.value.name,
       description: openSnapshot.value.description,
@@ -882,6 +1004,8 @@ const resyncFromServer = async () => {
   nameDraft.value = store.current.name;
   descriptionDraft.value = store.current.description ?? "";
   expectedLayoutVersion.value = store.current.layout_version ?? 1;
+  // The history's base is gone with the version it was built on.
+  resetHistory();
   engine.resolveConflictReloaded(
     serializeDashboard(
       store.current.name,
@@ -921,6 +1045,7 @@ const onConflictOverwrite = async () => {
     const adopted = serializeDashboard(trimmed, layout, description);
     sessionChanged.value = adopted !== openSerialized.value;
     engine.markSaved(adopted);
+    resetHistory();
     // Edits made while the overwrite PUT was in flight must not vanish silently.
     const nowSerialized = serializeDashboard(
       nameDraft.value.trim(),
@@ -981,6 +1106,15 @@ const onConflictOverwrite = async () => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.history-btn-wrap {
+  display: inline-flex;
+}
+.history-btn {
+  padding: 0 10px;
+}
+.history-btn .material-icons {
+  font-size: 18px;
 }
 .editor-body {
   flex: 1;

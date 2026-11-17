@@ -243,6 +243,43 @@ test.describe("Dashboards", () => {
     }
   });
 
+  test("undo brings a removed tile back and saves it, redo removes it again", async ({
+    page,
+    request,
+  }) => {
+    const seededUndo = await seedDashboard(request, token, `e2e undo ${Date.now()}`);
+    const url = `${API_URL}/catalog/dashboards/${seededUndo.dashboardId}`;
+    const headers = authHeaders(token);
+    const savedHasTable = async () => {
+      const saved = await (await request.get(url, { headers })).json();
+      return saved.layout.tiles.some((t: { id: string }) => t.id === "t-table");
+    };
+    try {
+      await login(page, token, `#/main/dashboards/${seededUndo.dashboardId}/edit`);
+      const tableHeader = page.locator(".tile-header", { hasText: "Orders" });
+      await expect(tableHeader).toBeVisible({ timeout: 30000 });
+      await expect(page.getByTestId("dashboard-undo")).toBeDisabled();
+
+      await tableHeader.locator(".tile-menu").click();
+      await page
+        .locator(".el-dropdown-menu__item:visible", { hasText: "Remove from dashboard" })
+        .click();
+      await expect(tableHeader).toHaveCount(0);
+      await expect.poll(savedHasTable, { timeout: 20000 }).toBe(false);
+
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(tableHeader).toBeVisible();
+      await expect(page.getByTestId("dashboard-redo")).toBeEnabled();
+      await expect.poll(savedHasTable, { timeout: 20000 }).toBe(true);
+
+      await page.keyboard.press("ControlOrMeta+Shift+z");
+      await expect(tableHeader).toHaveCount(0);
+      await expect.poll(savedHasTable, { timeout: 20000 }).toBe(false);
+    } finally {
+      await seededUndo.cleanup(request);
+    }
+  });
+
   test("typing in a filter's value box finds a value beyond the first hundred", async ({
     page,
     request,
