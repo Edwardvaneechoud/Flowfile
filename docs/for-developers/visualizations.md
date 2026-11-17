@@ -96,6 +96,8 @@ A dashboard tile reaches data through a saved visualization (`viz_id`) or, for a
 
 A layout's `table_id` is machine-local, so project export writes it as the portable `source_table` `{catalog, schema, name}` handle (`projection._portable_layout`) and import resolves it back (`importer._localize_layout`), as it does for a filter's `datasource_id`.
 
+A `filter` tile reads no rows: it shows the control of one of the layout's filters, named by `filter_id` (the layout-internal `DashboardFilter.id`, so it travels in a project file as is). A filter so placed is not shown in the filter strip. The create and update routes refuse a filter tile whose `filter_id` names no filter of the layout, and a filter placed by two tiles (`VisualizationService._validate_filter_datasources`); reading a stored layout checks neither, and the frontend draws such a tile as a "Filter removed" note in the editor and nothing for viewers.
+
 ---
 
 ## The Explore Data node

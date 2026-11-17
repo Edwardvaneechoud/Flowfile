@@ -110,8 +110,10 @@ const filterToRule = (f: DashboardFilter, field?: TileField): Record<string, unk
 /** Where a tile's rows come from: a catalog table read directly, or a saved chart's source. */
 export type TileSource = { kind: "table"; tableId: number } | { kind: "viz"; vizId: number };
 
-/** A KPI or table tile reads ``table_id`` when set, else its chart; a chart tile its chart. */
+/** A KPI or table tile reads ``table_id`` when set, else its chart; a chart tile its chart.
+ * A filter tile is a control and reads no data. */
 export const tileSourceOf = (tile: DashboardTile): TileSource | null => {
+  if (tile.type === "filter") return null;
   if ((tile.type === "kpi" || tile.type === "table") && tile.table_id != null) {
     return { kind: "table", tableId: tile.table_id };
   }

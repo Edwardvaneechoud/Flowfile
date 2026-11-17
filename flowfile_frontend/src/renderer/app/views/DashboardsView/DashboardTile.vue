@@ -10,6 +10,8 @@
       'tile-separator': isSeparator,
       'tile-separator-vertical': isSeparator && isVertical,
       'tile-separator-edit': isSeparator && mode === 'edit',
+      'tile-filter': isFilter,
+      'tile-filter-edit': isFilter && mode === 'edit',
     }"
     :style="tileStyle"
     @contextmenu="onTileContextMenu"
@@ -109,7 +111,7 @@
     </div>
 
     <div
-      v-if="!isViz && !isTable && mode === 'edit' && !textEditing"
+      v-if="!isViz && !isTable && !isFilter && mode === 'edit' && !textEditing"
       class="tile-text-actions"
       @mousedown.stop
     >
@@ -146,7 +148,9 @@
     <div
       v-if="!blankInView"
       class="tile-body"
-      :class="{ 'tile-handle': !isViz && !isTable && mode === 'edit' && !textEditing }"
+      :class="{
+        'tile-handle': !isViz && !isTable && !isFilter && mode === 'edit' && !textEditing,
+      }"
     >
       <div v-if="isSeparator" class="tile-separator-line" :style="separatorLineStyle" />
       <template v-else-if="isText">
@@ -176,6 +180,48 @@
         />
         <!-- eslint-enable vue/no-v-html -->
       </template>
+      <div v-else-if="isFilter" class="tile-filter-body">
+        <div
+          class="tile-filter-label"
+          :class="{ 'tile-handle': mode === 'edit' }"
+          :title="mode === 'edit' ? 'Drag to move' : undefined"
+        >
+          <el-icon v-if="mode === 'edit'" class="tile-drag-icon"><Rank /></el-icon>
+          <span class="tile-filter-name">{{
+            tileFilter ? tileFilter.label || tileFilter.field_name : "Filter removed"
+          }}</span>
+          <el-dropdown v-if="mode === 'edit'" trigger="click" @click.stop>
+            <el-icon class="tile-menu" @click.stop><MoreFilled /></el-icon>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <template v-if="tileFilter">
+                  <el-dropdown-item @click="emit('edit-filter', tileFilter.id)">
+                    <el-icon><EditPen /></el-icon> Edit filter
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="emit('move-filter-to-bar', tileFilter.id)">
+                    <el-icon><Top /></el-icon> Move to filter bar
+                  </el-dropdown-item>
+                  <el-dropdown-item divided @click="emit('delete-filter', tileFilter.id)">
+                    <el-icon><Delete /></el-icon> Delete filter
+                  </el-dropdown-item>
+                </template>
+                <el-dropdown-item v-else @click="emit('remove')">
+                  <el-icon><Delete /></el-icon> Remove from dashboard
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+        <DashboardFilterControl
+          v-if="tileFilter"
+          :filter="tileFilter"
+          variant="tile"
+          :get-column-stats="getColumnStats"
+          :stats-refresh-nonce="dataRefreshNonce"
+          @update:filter="emit('update:filter', $event)"
+        />
+        <div v-else class="tile-filter-missing">Its filter was deleted; remove this tile.</div>
+      </div>
       <KpiTile
         v-else-if="isKpi"
         ref="kpiRef"
@@ -377,6 +423,7 @@ import {
   Odometer,
   Rank,
   Switch,
+  Top,
   View,
   Warning,
   WarningFilled,
@@ -391,10 +438,13 @@ import {
 } from "../../composables/useDashboardComputation";
 import type {
   CatalogVisualization,
+  ColumnStatsResponse,
   DashboardFilter,
   DashboardTile,
   SeparatorOrientation,
 } from "../../types";
+import DashboardFilterControl from "./DashboardFilterControl.vue";
+import { filterOfTile } from "./filterPlacement";
 import KpiTile from "./KpiTile.vue";
 import TableTile from "./TableTile.vue";
 import { isKpiComplete } from "./kpi";
@@ -413,6 +463,12 @@ const props = defineProps<{
   tileDatasource?: (tileId: string) => number | null;
   /** Column count of the hosting grid; a horizontal separator spans all of them. */
   gridCols?: number;
+  /** A filter tile's value list; the same cached lookup the filter strip uses. */
+  getColumnStats?: (
+    tableId: number,
+    column: string,
+    limit?: number,
+  ) => Promise<ColumnStatsResponse>;
 }>();
 
 const emit = defineEmits<{
@@ -420,6 +476,11 @@ const emit = defineEmits<{
   (e: "duplicate"): void;
   (e: "edit-viz"): void;
   (e: "update:tile", value: DashboardTile): void;
+  /** A filter tile's control changed its filter (state only). */
+  (e: "update:filter", value: DashboardFilter): void;
+  (e: "edit-filter", filterId: string): void;
+  (e: "move-filter-to-bar", filterId: string): void;
+  (e: "delete-filter", filterId: string): void;
 }>();
 
 const isText = computed(() => props.tile.type === "text");
@@ -427,6 +488,8 @@ const isSeparator = computed(() => props.tile.type === "separator");
 const isKpi = computed(() => props.tile.type === "kpi");
 const isViz = computed(() => props.tile.type === "viz");
 const isTable = computed(() => props.tile.type === "table");
+const isFilter = computed(() => props.tile.type === "filter");
+const tileFilter = computed(() => filterOfTile(props.tile, props.filters));
 const rootEl = ref<HTMLElement | null>(null);
 const kpiRef = ref<InstanceType<typeof KpiTile> | null>(null);
 const tableRef = ref<InstanceType<typeof TableTile> | null>(null);
@@ -440,7 +503,8 @@ const blankInView = computed(
   () =>
     props.mode === "view" &&
     ((isKpi.value && (tileSourceOf(props.tile) == null || !isKpiComplete(props.tile.kpi))) ||
-      (isTable.value && tableSource.value == null)),
+      (isTable.value && tableSource.value == null) ||
+      (isFilter.value && tileFilter.value == null)),
 );
 
 const downloadTableCsv = () => tableRef.value?.downloadCsv(headerTitle.value);
@@ -722,7 +786,15 @@ const closeColorMenu = () => {
 };
 
 const onTileContextMenu = (e: MouseEvent) => {
-  if (isViz.value || isTable.value || props.mode !== "edit" || textEditing.value) return;
+  if (
+    isViz.value ||
+    isTable.value ||
+    isFilter.value ||
+    props.mode !== "edit" ||
+    textEditing.value
+  ) {
+    return;
+  }
   e.preventDefault();
   colorMenu.value = {
     visible: true,
@@ -838,6 +910,47 @@ onBeforeUnmount(() => {
 }
 .tile-separator-edit:hover {
   outline-color: var(--el-color-primary-light-5);
+}
+.tile-filter {
+  background: transparent;
+}
+.tile-filter .tile-body {
+  padding: 4px 6px;
+}
+.tile-filter-edit {
+  border-radius: 6px;
+  outline: 1px dashed var(--el-border-color);
+  outline-offset: -1px;
+}
+.tile-filter-edit:hover {
+  outline-color: var(--el-color-primary-light-5);
+}
+.tile-filter-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  min-width: 0;
+}
+.tile-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.tile-filter-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.tile-filter-missing {
+  font-size: 12px;
+  color: var(--el-color-warning);
 }
 .tile-card {
   border: 1px solid var(--el-border-color-lighter);

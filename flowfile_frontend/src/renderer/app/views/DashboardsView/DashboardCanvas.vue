@@ -37,7 +37,7 @@
         :w="item.w"
         :h="item.h"
         :min-w="tileById[item.i]?.type === 'separator' ? 1 : Math.max(2, layout.grid.cols / 6)"
-        :min-h="['viz', 'kpi', 'table'].includes(tileById[item.i]?.type) ? 2 : 1"
+        :min-h="['viz', 'kpi', 'table', 'filter'].includes(tileById[item.i]?.type) ? 2 : 1"
         drag-allow-from=".tile-handle"
       >
         <DashboardTile
@@ -49,10 +49,15 @@
           :data-refresh-nonce="dataRefreshNonce"
           :tile-datasource="tileDatasource"
           :grid-cols="layout.grid.cols"
+          :get-column-stats="getColumnStats"
           @remove="onRemoveTile(item.i)"
           @duplicate="onDuplicateTile(item.i)"
           @edit-viz="emit('edit-viz', tileById[item.i].viz_id ?? null)"
           @update:tile="onUpdateTile"
+          @update:filter="emit('update:filter', $event)"
+          @edit-filter="emit('edit-filter', $event)"
+          @move-filter-to-bar="onMoveFilterToBar"
+          @delete-filter="emit('delete-filter', $event)"
         />
       </GridItem>
     </GridLayout>
@@ -65,6 +70,7 @@ import { GridItem, GridLayout } from "grid-layout-plus";
 import DashboardTile from "./DashboardTile.vue";
 import {
   useDashboardDragAndDrop,
+  FILTER_MIME,
   KPI_MIME,
   SEPARATOR_MIME,
   TABLE_MIME,
@@ -72,7 +78,10 @@ import {
   VIZ_MIME,
 } from "../../composables/useDashboardDragAndDrop";
 import { computeDropCell } from "./gridDrop";
+import { FILTER_TILE_DEFAULT_SIZE, moveFilterToBar } from "./filterPlacement";
 import type {
+  ColumnStatsResponse,
+  DashboardFilter,
   DashboardLayout,
   DashboardTile as DashboardTileType,
   SeparatorOrientation,
@@ -89,6 +98,12 @@ const props = defineProps<{
   dataRefreshNonce?: number;
   /** Resolves a tile id to its underlying CatalogTable id (if any). */
   tileDatasource?: (tileId: string) => number | null;
+  /** The value list of a filter shown on the canvas. */
+  getColumnStats?: (
+    tableId: number,
+    column: string,
+    limit?: number,
+  ) => Promise<ColumnStatsResponse>;
 }>();
 
 const emit = defineEmits<{
@@ -102,10 +117,22 @@ const emit = defineEmits<{
     e: "add-separator-at",
     payload: { x: number; y: number; orientation: SeparatorOrientation },
   ): void;
+  /** A filter chip was dropped on the grid. */
+  (e: "place-filter-at", payload: { filterId: string; x: number; y: number }): void;
+  /** A filter tile's control changed its filter; the view owns where filters live. */
+  (e: "update:filter", value: DashboardFilter): void;
+  (e: "edit-filter", filterId: string): void;
+  (e: "delete-filter", filterId: string): void;
 }>();
 
-const { isDraggingViz, isDraggingText, isDraggingSeparator, isDraggingKpi, isDraggingTable } =
-  useDashboardDragAndDrop();
+const {
+  isDraggingViz,
+  isDraggingText,
+  isDraggingSeparator,
+  isDraggingKpi,
+  isDraggingTable,
+  isDraggingFilter,
+} = useDashboardDragAndDrop();
 const canvasRef = ref<HTMLElement | null>(null);
 const gridRef = ref<ComponentPublicInstance | null>(null);
 const dragOver = ref(false);
@@ -116,7 +143,8 @@ const dragHasOurPayload = (e: DragEvent): boolean => {
     isDraggingText.value ||
     isDraggingSeparator.value ||
     isDraggingKpi.value ||
-    isDraggingTable.value
+    isDraggingTable.value ||
+    isDraggingFilter.value
   ) {
     return true;
   }
@@ -127,7 +155,8 @@ const dragHasOurPayload = (e: DragEvent): boolean => {
       types.includes(TEXT_MIME) ||
       types.includes(SEPARATOR_MIME) ||
       types.includes(KPI_MIME) ||
-      types.includes(TABLE_MIME))
+      types.includes(TABLE_MIME) ||
+      types.includes(FILTER_MIME))
   );
 };
 
@@ -162,26 +191,29 @@ const onCanvasDrop = (e: DragEvent) => {
   const isSeparator = dt.types.includes(SEPARATOR_MIME);
   const isKpi = dt.types.includes(KPI_MIME);
   const isTable = dt.types.includes(TABLE_MIME);
+  const filterId = dt.getData(FILTER_MIME);
   const orientation: SeparatorOrientation =
     dt.getData(SEPARATOR_MIME) === "vertical" ? "vertical" : "horizontal";
   const rawViz = dt.getData(VIZ_MIME);
   const vizId = rawViz ? Number(rawViz) : NaN;
   const isViz = Number.isFinite(vizId);
-  if (!isText && !isSeparator && !isKpi && !isTable && !isViz) return;
+  if (!isText && !isSeparator && !isKpi && !isTable && !isViz && !filterId) return;
   e.preventDefault();
 
   // Text and horizontal separators span the full width, viz and table tiles half,
-  // KPIs a quarter, vertical separators two columns; the width drives the x-clamp
+  // KPIs and filters a quarter, vertical separators two columns; the width drives the x-clamp
   // so a tile never overflows the grid.
   const cols = props.layout.grid.cols;
   const w =
     isViz || isTable
       ? cols / 2
-      : isKpi
-        ? cols / 4
-        : isSeparator && orientation === "vertical"
-          ? 2
-          : cols;
+      : filterId
+        ? FILTER_TILE_DEFAULT_SIZE.w
+        : isKpi
+          ? cols / 4
+          : isSeparator && orientation === "vertical"
+            ? 2
+            : cols;
   const layoutEl =
     (gridRef.value?.$el as HTMLElement | undefined) ??
     canvasRef.value?.querySelector<HTMLElement>(".vgl-layout") ??
@@ -200,7 +232,8 @@ const onCanvasDrop = (e: DragEvent) => {
       w,
     });
   }
-  if (isText) emit("add-text-at", { x: cell.x, y: cell.y });
+  if (filterId) emit("place-filter-at", { filterId, x: cell.x, y: cell.y });
+  else if (isText) emit("add-text-at", { x: cell.x, y: cell.y });
   else if (isSeparator) emit("add-separator-at", { x: cell.x, y: cell.y, orientation });
   else if (isKpi) emit("add-kpi-at", { x: cell.x, y: cell.y });
   else if (isTable) emit("add-table-at", { x: cell.x, y: cell.y });
@@ -284,7 +317,8 @@ const newTileId = () =>
 // The copy lands on the first free row; the grid's compaction pulls it up where there is room.
 const onDuplicateTile = (id: string) => {
   const source = props.layout.tiles.find((t) => t.id === id);
-  if (!source) return;
+  // A filter shows in one place only, so its tile is never copied.
+  if (!source || source.type === "filter") return;
   const freeRow = Math.max(...props.layout.tiles.map((t) => t.y + t.h));
   const copy: DashboardTileType = {
     ...source,
@@ -300,6 +334,10 @@ const onDuplicateTile = (id: string) => {
     y: freeRow,
   };
   emit("update:layout", { ...props.layout, tiles: [...props.layout.tiles, copy] });
+};
+
+const onMoveFilterToBar = (filterId: string) => {
+  emit("update:layout", moveFilterToBar(props.layout, filterId));
 };
 
 const onUpdateTile = (next: DashboardTileType) => {

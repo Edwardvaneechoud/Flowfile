@@ -723,3 +723,65 @@ class TestDashboardFilterDatasource:
             json={"layout": layout},
         )
         assert resp.status_code == 422
+
+
+def _filter_tile(tile_id: str = "ft-1", filter_id: str = "f1", **extra) -> dict:
+    return {"id": tile_id, "type": "filter", "filter_id": filter_id, "x": 0, "y": 6, "w": 12, "h": 2, **extra}
+
+
+class TestDashboardFilterTiles:
+    def test_filter_tile_round_trips(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_filter_tile())
+        created = client.post("/catalog/dashboards", json={"name": "Placed filter", "layout": layout})
+        assert created.status_code == 201, created.text
+        tiles = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["tiles"]
+        tile = tiles[2]
+        assert (tile["type"], tile["filter_id"], tile["viz_id"], tile["table_id"]) == ("filter", "f1", None, None)
+        assert (tile["x"], tile["y"], tile["w"], tile["h"]) == (0, 6, 12, 2)
+        # Every other tile reads back with no filter.
+        assert [t["filter_id"] for t in tiles[:2]] == [None, None]
+
+    def test_layout_saved_before_filter_tiles_loads_unchanged(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old filters", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        body = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]
+        assert [t["filter_id"] for t in body["tiles"]] == [None, None]
+        assert [f["id"] for f in body["filters"]] == ["f1"]
+
+    def test_filter_tile_without_a_filter_id_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_filter_tile(filter_id=None))
+        resp = client.post("/catalog/dashboards", json={"name": "No filter id", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_filter_tile_on_an_unknown_filter_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_filter_tile(filter_id="gone"))
+        resp = client.post("/catalog/dashboards", json={"name": "Dangling", "layout": layout})
+        assert resp.status_code == 422
+        assert "unknown filter 'gone'" in resp.text
+
+    def test_update_dropping_a_placed_filter_without_its_tile_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_filter_tile())
+        created = client.post("/catalog/dashboards", json={"name": "Drop", "layout": layout}).json()
+        layout["filters"] = []
+        resp = client.put(f"/catalog/dashboards/{created['id']}", json={"layout": layout})
+        assert resp.status_code == 422
+        # The filter and its tile go together.
+        layout["tiles"] = layout["tiles"][:2]
+        resp = client.put(f"/catalog/dashboards/{created['id']}", json={"layout": layout})
+        assert resp.status_code == 200, resp.text
+
+    def test_a_filter_placed_twice_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"] += [_filter_tile("ft-1"), _filter_tile("ft-2", y=8)]
+        resp = client.post("/catalog/dashboards", json={"name": "Twice", "layout": layout})
+        assert resp.status_code == 422
+        assert "more than once" in resp.text

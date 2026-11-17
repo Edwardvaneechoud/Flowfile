@@ -1,12 +1,12 @@
 <template>
-  <div v-if="filters.length || mode === 'edit'" class="filter-bar">
+  <div v-if="stripFilters.length || mode === 'edit'" class="filter-bar">
     <span class="filter-bar-label">
       <el-icon><Filter /></el-icon> Filters
     </span>
 
     <div class="filter-bar-chips">
       <div
-        v-for="f in filters"
+        v-for="f in stripFilters"
         :key="f.id"
         class="filter-chip"
         :class="{
@@ -20,7 +20,7 @@
           v-if="mode === 'edit'"
           class="filter-chip-grip"
           draggable="true"
-          title="Drag to reorder"
+          title="Drag to reorder, or onto the canvas to place it there"
           @dragstart="onGripDragStart($event, f)"
           @dragend="dropTarget = null"
         >
@@ -36,88 +36,13 @@
         </span>
         <span class="filter-chip-colon">:</span>
 
-        <template v-if="f.kind === 'categorical'">
-          <el-select
-            :model-value="getSelectedStrings(f)"
-            multiple
-            filterable
-            :allow-create="categoricalAllowCreate(f)"
-            default-first-option
-            collapse-tags
-            collapse-tags-tooltip
-            size="small"
-            :placeholder="categoricalPlaceholder(f)"
-            class="filter-chip-input"
-            :disabled="mode === 'view' && readonlyView"
-            :no-data-text="categoricalNoDataText(f)"
-            @update:model-value="(v: string[]) => updateState(f, { selected: v })"
-          >
-            <el-option
-              v-for="opt in categoricalOptions(f)"
-              :key="opt.value"
-              :value="opt.value"
-              :label="opt.label"
-            />
-          </el-select>
-          <span
-            v-if="statsFor(f)?.truncated"
-            class="filter-chip-hint"
-            title="More distinct values exist; type to add custom values."
-          >
-            +more
-          </span>
-        </template>
-
-        <template v-else-if="f.kind === 'numeric_range'">
-          <el-input-number
-            :model-value="(f.state.min as number | null) ?? undefined"
-            size="small"
-            :placeholder="numericPlaceholder(f, 'min')"
-            class="filter-chip-num"
-            :disabled="mode === 'view' && readonlyView"
-            :controls="false"
-            @update:model-value="
-              (v: number | undefined) => updateState(f, { ...f.state, min: v ?? null })
-            "
-          />
-          <span class="filter-chip-sep">–</span>
-          <el-input-number
-            :model-value="(f.state.max as number | null) ?? undefined"
-            size="small"
-            :placeholder="numericPlaceholder(f, 'max')"
-            class="filter-chip-num"
-            :disabled="mode === 'view' && readonlyView"
-            :controls="false"
-            @update:model-value="
-              (v: number | undefined) => updateState(f, { ...f.state, max: v ?? null })
-            "
-          />
-        </template>
-
-        <template v-else-if="f.kind === 'date_range'">
-          <el-select
-            :model-value="presetOf(f.state) ?? CUSTOM_RANGE"
-            size="small"
-            class="filter-chip-preset"
-            :disabled="mode === 'view' && readonlyView"
-            @update:model-value="(v: string) => onDatePreset(f, v)"
-          >
-            <el-option :value="CUSTOM_RANGE" label="Custom range" />
-            <el-option v-for="p in DATE_PRESETS" :key="p.value" :value="p.value" :label="p.label" />
-          </el-select>
-          <el-date-picker
-            v-if="!presetOf(f.state)"
-            :model-value="datePickerValue(f)"
-            type="daterange"
-            size="small"
-            range-separator="–"
-            start-placeholder="Start"
-            end-placeholder="End"
-            class="filter-chip-date"
-            :disabled="mode === 'view' && readonlyView"
-            @update:model-value="onDateRange(f, $event)"
-          />
-        </template>
+        <DashboardFilterControl
+          :filter="f"
+          :disabled="mode === 'view' && readonlyView"
+          :get-column-stats="getColumnStats"
+          :stats-refresh-nonce="statsRefreshNonce"
+          @update:filter="replaceFilter"
+        />
 
         <button
           v-if="mode === 'edit'"
@@ -127,6 +52,16 @@
           @click="openEdit(f)"
         >
           <el-icon><EditPen /></el-icon>
+        </button>
+        <button
+          v-if="mode === 'edit'"
+          type="button"
+          class="filter-chip-icon-btn"
+          title="Place on canvas"
+          aria-label="Place on canvas"
+          @click="emit('place', f.id)"
+        >
+          <el-icon><Grid /></el-icon>
         </button>
         <button
           v-if="mode === 'edit'"
@@ -299,7 +234,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import { Check, Close, EditPen, Filter, Loading, Plus, Rank } from "@element-plus/icons-vue";
+import { Check, Close, EditPen, Filter, Grid, Loading, Plus, Rank } from "@element-plus/icons-vue";
 import type {
   ColumnSchema,
   ColumnStatsResponse,
@@ -314,11 +249,15 @@ import {
   type TileField,
 } from "../../composables/useDashboardComputation";
 import { dtypeToDefaultFilterKind, isNumericDtype, isTemporalDtype } from "../../utils/dtype";
+import { useDashboardDragAndDrop } from "../../composables/useDashboardDragAndDrop";
 import { moveFilter, type DropPosition } from "./filterOrder";
-import { DATE_PRESETS, presetOf, resolveDateRange } from "./dateRange";
+import DashboardFilterControl from "./DashboardFilterControl.vue";
 
 const props = defineProps<{
+  /** Every filter of the dashboard; the dialog edits any of them. */
   filters: DashboardFilter[];
+  /** Filters shown by a tile on the canvas; the strip leaves them out. */
+  placedFilterIds?: Set<string>;
   mode: "edit" | "view";
   readonlyView?: boolean;
   /** View mode: the viewer changed a filter, so Reset is offered. */
@@ -337,14 +276,22 @@ const props = defineProps<{
     column: string,
     limit?: number,
   ) => Promise<ColumnStatsResponse>;
-  /** Bump to re-run fetchStats for every bound filter (manual dashboard refresh). */
+  /** Bump to load every shown filter's values again (manual dashboard refresh). */
   statsRefreshNonce?: number;
 }>();
 
 const emit = defineEmits<{
   (e: "update:filters", value: DashboardFilter[]): void;
   (e: "reset"): void;
+  /** Edit mode: put this filter on the canvas. */
+  (e: "place", filterId: string): void;
 }>();
+
+const stripFilters = computed(() =>
+  props.placedFilterIds?.size
+    ? props.filters.filter((f) => !props.placedFilterIds!.has(f.id))
+    : props.filters,
+);
 
 interface Draft {
   id: string | null;
@@ -376,46 +323,6 @@ const generateId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `f-${Math.random().toString(36).slice(2, 10)}`;
-
-// Per-filter column stats. Keyed by filter id and populated lazily when
-// the filter is rendered or its (datasource, field) changes.
-const statsByFilter = ref<Record<string, ColumnStatsResponse>>({});
-
-const fetchStats = async (filterId: string, tableId: number, column: string) => {
-  if (!props.getColumnStats) return;
-  try {
-    const resp = await props.getColumnStats(tableId, column, 100);
-    statsByFilter.value = { ...statsByFilter.value, [filterId]: resp };
-  } catch (err) {
-    console.warn(`[dashboard] column stats failed for filter ${filterId}:`, err);
-  }
-};
-
-watch(
-  () => [
-    props.statsRefreshNonce ?? 0,
-    ...props.filters.map((f) => `${f.id}:${f.datasource_id ?? ""}:${f.field_name}` as const),
-  ],
-  () => {
-    // Refresh stats whenever a filter's binding changes.
-    for (const f of props.filters) {
-      if (f.datasource_id == null || !f.field_name) continue;
-      const cached = statsByFilter.value[f.id];
-      // Don't refetch if the binding is unchanged and we already have data.
-      if (cached) {
-        // Heuristic: stats are bound to (datasource, column). If the
-        // user re-pointed the filter, the stats key would be stale, so
-        // we always refetch — getColumnStats has its own (table, col)
-        // cache so this is cheap.
-      }
-      fetchStats(f.id, f.datasource_id, f.field_name);
-    }
-  },
-  { immediate: true, deep: false },
-);
-
-const statsFor = (f: DashboardFilter): ColumnStatsResponse | null =>
-  statsByFilter.value[f.id] ?? null;
 
 const datasourceName = (id: number | null): string => {
   if (id == null) return "Untied";
@@ -531,10 +438,10 @@ watch(
 
 const canSave = computed(() => draft.datasource_id != null && draft.field_name.trim().length > 0);
 
-const updateState = (f: DashboardFilter, state: Record<string, unknown>) => {
+const replaceFilter = (next: DashboardFilter) => {
   emit(
     "update:filters",
-    props.filters.map((x) => (x.id === f.id ? { ...x, state: { ...x.state, ...state } } : x)),
+    props.filters.map((x) => (x.id === next.id ? next : x)),
   );
 };
 
@@ -545,8 +452,9 @@ const onRemove = (f: DashboardFilter) => {
   );
 };
 
-// Deliberately not a MIME DashboardCanvas accepts, so a chip drag never drops on the canvas.
+// Reordering keeps its own MIME; the canvas takes the chip by the FILTER_MIME set beside it.
 const FILTER_REORDER_MIME = "application/flowfile-filter-reorder";
+const { onFilterDragStart } = useDashboardDragAndDrop();
 
 const dropTarget = ref<{ id: string; position: DropPosition } | null>(null);
 
@@ -562,7 +470,7 @@ const onGripDragStart = (e: DragEvent, f: DashboardFilter) => {
   const dt = e.dataTransfer;
   if (!dt) return;
   dt.setData(FILTER_REORDER_MIME, f.id);
-  dt.effectAllowed = "move";
+  onFilterDragStart(e, f.id);
   const chip = (e.target as HTMLElement).closest(".filter-chip");
   if (chip) {
     const rect = chip.getBoundingClientRect();
@@ -683,90 +591,12 @@ const confirmDialog = () => {
   dialogOpen.value = false;
 };
 
-const getSelectedStrings = (f: DashboardFilter): string[] =>
-  Array.isArray(f.state.selected) ? (f.state.selected as unknown[]).map((v) => String(v)) : [];
-
-const formatStatValue = (v: unknown): string => {
-  if (v == null) return "";
-  if (v instanceof Date) return v.toISOString();
-  return String(v);
+const openEditById = (filterId: string) => {
+  const f = props.filters.find((x) => x.id === filterId);
+  if (f) openEdit(f);
 };
 
-const categoricalOptions = (f: DashboardFilter): { value: string; label: string }[] => {
-  const stats = statsFor(f);
-  const fetched = (stats?.values ?? []).map((v) => formatStatValue(v));
-  // Always include any user-entered values that aren't in the fetched list,
-  // so they remain visible (and selected) in the dropdown.
-  const selected = getSelectedStrings(f);
-  const seen = new Set<string>();
-  const opts: { value: string; label: string }[] = [];
-  for (const v of [...fetched, ...selected]) {
-    if (seen.has(v)) continue;
-    seen.add(v);
-    opts.push({ value: v, label: v });
-  }
-  return opts;
-};
-
-const categoricalAllowCreate = (f: DashboardFilter): boolean => {
-  // Free-text entry is allowed when stats are unavailable or truncated.
-  // When we have a complete distinct list, restrict to those options.
-  const stats = statsFor(f);
-  if (!stats) return true;
-  return stats.truncated;
-};
-
-const categoricalPlaceholder = (f: DashboardFilter): string => {
-  const stats = statsFor(f);
-  if (!stats) return "Loading values…";
-  if (!stats.values.length) return "No values found — type to add";
-  return "Select values…";
-};
-
-const categoricalNoDataText = (f: DashboardFilter): string => {
-  if (!props.getColumnStats) return "Type to add a value";
-  const stats = statsFor(f);
-  if (!stats) return "Loading…";
-  return "No matching values";
-};
-
-const numericPlaceholder = (f: DashboardFilter, which: "min" | "max"): string => {
-  const stats = statsFor(f);
-  const v = which === "min" ? stats?.min : stats?.max;
-  if (v == null) return which === "min" ? "Min" : "Max";
-  return `${which === "min" ? "≥" : "≤"} ${formatStatValue(v)}`;
-};
-
-const datePickerValue = (f: DashboardFilter): [Date, Date] | null => {
-  const start = f.state.start as string | null | undefined;
-  const end = f.state.end as string | null | undefined;
-  if (!start || !end) return null;
-  return [new Date(start), new Date(end)];
-};
-
-const onDateRange = (f: DashboardFilter, range: [Date, Date] | null) => {
-  if (!range) {
-    updateState(f, { preset: null, start: null, end: null });
-    return;
-  }
-  updateState(f, {
-    preset: null,
-    start: range[0]?.toISOString() ?? null,
-    end: range[1]?.toISOString() ?? null,
-  });
-};
-
-const CUSTOM_RANGE = "custom";
-
-// Switching to a custom range starts from the window the preset was showing.
-const onDatePreset = (f: DashboardFilter, value: string) => {
-  if (value !== CUSTOM_RANGE) {
-    updateState(f, { preset: value, start: null, end: null });
-    return;
-  }
-  const shown = resolveDateRange(f.state);
-  updateState(f, { preset: null, start: shown?.start ?? null, end: shown?.end ?? null });
-};
+defineExpose({ openEdit: openEditById });
 </script>
 
 <style scoped>
@@ -841,21 +671,6 @@ const onDatePreset = (f: DashboardFilter, value: string) => {
   color: var(--el-text-color-secondary);
   margin-right: 2px;
 }
-.filter-chip-input {
-  min-width: 220px;
-}
-.filter-chip-num {
-  width: 96px;
-}
-.filter-chip-sep {
-  color: var(--el-text-color-secondary);
-}
-.filter-chip-date {
-  width: 240px;
-}
-.filter-chip-preset {
-  width: 140px;
-}
 .filter-chip-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -878,12 +693,6 @@ const onDatePreset = (f: DashboardFilter, value: string) => {
 }
 .filter-chip-icon-btn-danger:hover {
   color: var(--el-color-danger);
-}
-.filter-chip-hint {
-  color: var(--el-text-color-secondary);
-  font-size: 10px;
-  font-style: italic;
-  cursor: help;
 }
 .field-opt {
   display: flex;

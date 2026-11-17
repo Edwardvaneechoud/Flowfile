@@ -92,7 +92,9 @@
         </div>
         <template v-else>
           <DashboardFilterBar
+            ref="filterBarRef"
             :filters="store.current.layout.filters"
+            :placed-filter-ids="placedIds"
             mode="edit"
             :datasources-in-use="datasourcesInUse"
             :tiles-by-datasource="tilesByDatasource"
@@ -103,6 +105,7 @@
             :get-column-stats="getColumnStats"
             :stats-refresh-nonce="statsRefreshNonce"
             @update:filters="onFiltersChange"
+            @place="onPlaceFilter"
           />
           <DashboardCanvas
             :layout="store.current.layout"
@@ -111,6 +114,7 @@
             :viz-refresh-nonces="vizRefreshNonces"
             :data-refresh-nonce="statsRefreshNonce"
             :tile-datasource="tileDatasource"
+            :get-column-stats="getColumnStats"
             @update:layout="onLayoutChange"
             @edit-viz="onEditViz"
             @add-viz-at="onAddVizAt"
@@ -118,6 +122,10 @@
             @add-separator-at="onAddSeparatorAt"
             @add-kpi-at="onAddKpiAt"
             @add-table-at="onAddTableAt"
+            @place-filter-at="onPlaceFilterAt"
+            @update:filter="onFilterChange"
+            @edit-filter="(id: string) => filterBarRef?.openEdit(id)"
+            @delete-filter="onDeleteFilter"
           />
         </template>
       </main>
@@ -190,6 +198,7 @@ import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
 import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
 import { upgradeLayoutGrid } from "./gridVersion";
+import { deleteFilter, placeFilter, placedFilterIds, withFilters } from "./filterPlacement";
 import { KPI_DEFAULT_SIZE } from "./kpi";
 import { TABLE_DEFAULT_SIZE } from "./tableTile";
 import {
@@ -376,10 +385,34 @@ const onLayoutChange = (next: DashboardLayout) => {
   markChanged();
 };
 
+// A filter removed from the strip or its dialog takes its canvas tile with it.
 const onFiltersChange = (next: DashboardFilter[]) => {
   if (!store.current) return;
-  store.setLayout({ ...store.current.layout, filters: next });
+  store.setLayout(withFilters(store.current.layout, next));
   markChanged();
+};
+
+const filterBarRef = ref<InstanceType<typeof DashboardFilterBar> | null>(null);
+const placedIds = computed(() =>
+  store.current ? placedFilterIds(store.current.layout) : new Set<string>(),
+);
+
+const onFilterChange = (next: DashboardFilter) => {
+  if (!store.current) return;
+  onFiltersChange(store.current.layout.filters.map((f) => (f.id === next.id ? next : f)));
+};
+
+const onPlaceFilterAt = ({ filterId, x, y }: { filterId: string; x: number; y: number }) => {
+  if (!store.current) return;
+  const next = placeFilter(store.current.layout, filterId, { x, y }, generateTileId());
+  if (next !== store.current.layout) onLayoutChange(next);
+};
+
+const onPlaceFilter = (filterId: string) => onPlaceFilterAt({ filterId, x: 0, y: -1 });
+
+const onDeleteFilter = (filterId: string) => {
+  if (!store.current) return;
+  onLayoutChange(deleteFilter(store.current.layout, filterId));
 };
 
 const editingVizId = ref<number | null>(null);

@@ -297,6 +297,10 @@ describe("tileSourceOf", () => {
     });
   });
 
+  it("a filter tile reads no data, so the datasource lists and filter targets leave it out", () => {
+    expect(tileSourceOf(tileOf({ type: "filter", filter_id: "f", viz_id: 3 }))).toBeNull();
+  });
+
   it("names the missing source", () => {
     expect(missingSourceText({ kind: "table", tableId: 5 })).toBe("Table #5 no longer exists.");
     expect(missingSourceText({ kind: "viz", vizId: 3 })).toBe("Visualization #3 no longer exists.");

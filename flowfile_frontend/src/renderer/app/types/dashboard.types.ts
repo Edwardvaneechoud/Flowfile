@@ -2,7 +2,7 @@
 
 import type { AccessInfo } from "./sharing.types";
 
-export type DashboardTileType = "viz" | "text" | "separator" | "kpi" | "table";
+export type DashboardTileType = "viz" | "text" | "separator" | "kpi" | "table" | "filter";
 export type TableSortDirection = "ascending" | "descending";
 
 export interface DashboardTableColumn {
@@ -70,6 +70,8 @@ export interface DashboardTile {
   kpi?: DashboardKpi | null;
   /** Rows config when type === "table"; null = every column, default page size. */
   table?: DashboardTableConfig | null;
+  /** The layout filter a `type === "filter"` tile shows; that filter then leaves the strip. */
+  filter_id?: string | null;
   x: number;
   y: number;
   w: number;

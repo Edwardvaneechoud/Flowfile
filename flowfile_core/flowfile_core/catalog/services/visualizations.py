@@ -385,7 +385,18 @@ class VisualizationService:
     # ---- Dashboards CRUD ------------------------------------------------ #
 
     def _validate_filter_datasources(self, layout: DashboardLayout) -> None:
-        """Ensure filter datasource_ids and target_tile_ids refer to known entities."""
+        """Ensure filter datasource_ids and target_tile_ids refer to known entities, and that each
+        filter tile places a filter of this layout, at most one tile per filter."""
+        filter_ids = {f.id for f in layout.filters}
+        placed: set[str] = set()
+        for tile in layout.tiles:
+            if tile.type != "filter":
+                continue
+            if tile.filter_id not in filter_ids:
+                raise ValueError(f"filter tile '{tile.id}' places unknown filter '{tile.filter_id}'")
+            if tile.filter_id in placed:
+                raise ValueError(f"filter '{tile.filter_id}' is placed on the canvas more than once")
+            placed.add(tile.filter_id)
         seen: dict[int, bool] = {}
         tile_ids = {t.id for t in layout.tiles}
         for f in layout.filters:

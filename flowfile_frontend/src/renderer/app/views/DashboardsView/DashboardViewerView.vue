@@ -9,6 +9,14 @@
         }}</span>
       </div>
       <div class="viewer-toolbar-right">
+        <el-button
+          v-if="filtersChanged && !stripFilterCount"
+          text
+          title="Back to the filters this dashboard was saved with"
+          @click="onResetFilters"
+        >
+          Reset
+        </el-button>
         <el-button v-if="store.current" :loading="refreshing" @click="onRefresh">
           <el-icon><Refresh /></el-icon> Refresh
         </el-button>
@@ -36,6 +44,7 @@
     <template v-else>
       <DashboardFilterBar
         :filters="liveFilters"
+        :placed-filter-ids="placedIds"
         mode="view"
         :datasources-in-use="datasourcesInUse"
         :tiles-by-datasource="tilesByDatasource"
@@ -56,7 +65,9 @@
         :viz-refresh-nonces="vizRefreshNonces"
         :data-refresh-nonce="statsRefreshNonce"
         :tile-datasource="tileDatasource"
+        :get-column-stats="getColumnStats"
         @edit-viz="onEditVizFromTile"
+        @update:filter="onFilterChange"
       />
     </template>
   </div>
@@ -77,6 +88,7 @@ import { timeAgo } from "../../utils/time";
 import DashboardCanvas from "./DashboardCanvas.vue";
 import DashboardFilterBar from "./DashboardFilterBar.vue";
 import { decodeFilterState, encodeFilterState, filtersDiffer } from "./filterUrlState";
+import { placedFilterIds } from "./filterPlacement";
 import { EMPTY_DASHBOARD_LAYOUT, type DashboardFilter, type DashboardLayout } from "../../types";
 
 const props = defineProps<{ id: string | number }>();
@@ -186,6 +198,15 @@ const onFiltersChange = (next: DashboardFilter[]) => {
   liveFilters.value = next;
   syncUrl();
 };
+
+const onFilterChange = (next: DashboardFilter) =>
+  onFiltersChange(liveFilters.value.map((f) => (f.id === next.id ? next : f)));
+
+const placedIds = computed(() => placedFilterIds(liveLayout.value));
+// With every filter on the canvas the strip takes no space, so Reset moves to the toolbar.
+const stripFilterCount = computed(
+  () => liveFilters.value.filter((f) => !placedIds.value.has(f.id)).length,
+);
 
 const onResetFilters = () => {
   liveFilters.value = savedFilters.value.map((f) => ({ ...f }));

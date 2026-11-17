@@ -139,4 +139,62 @@ test.describe("Dashboards", () => {
     await expect(range).toHaveText("1–2 of 2 rows");
     await expect(firstColumn).toHaveText(["West", "West"]);
   });
+
+  test("a filter dragged onto the canvas stays a tile, leaves the strip and narrows the KPI", async ({
+    page,
+    request,
+  }) => {
+    // Its own dashboard, so the strip filter the other tests use stays where it is.
+    const placed = await seedDashboard(request, token, `e2e placed filter ${Date.now()}`);
+    try {
+      await login(page, token, `#/main/dashboards/${placed.dashboardId}/edit`);
+      const chip = page.locator(".filter-chip", { hasText: "Region" });
+      await expect(chip).toBeVisible({ timeout: 30000 });
+
+      await chip
+        .locator(".filter-chip-grip")
+        .dragTo(page.locator(".canvas .vgl-layout"), { targetPosition: { x: 40, y: 40 } });
+      await expect(page.locator(".tile-filter")).toHaveCount(1);
+      await expect(page.locator(".filter-chip", { hasText: "Region" })).toHaveCount(0);
+
+      await expect
+        .poll(
+          async () => {
+            const response = await request.get(
+              `${API_URL}/catalog/dashboards/${placed.dashboardId}`,
+              { headers: authHeaders(token) },
+            );
+            const saved = await response.json();
+            return saved.layout.tiles
+              .filter((t: { type: string }) => t.type === "filter")
+              .map((t: { filter_id: string }) => t.filter_id);
+          },
+          { timeout: 20000 },
+        )
+        .toEqual(["f-region"]);
+
+      await page.reload();
+      await page.waitForLoadState("load");
+      await expect(page.locator(".tile-filter .tile-filter-name")).toHaveText("Region", {
+        timeout: 30000,
+      });
+      await expect(page.locator(".filter-chip", { hasText: "Region" })).toHaveCount(0);
+
+      await page.locator(".back-btn").click();
+      await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
+      // Its only filter is on the canvas, so the viewer gets no strip at all.
+      await expect(page.locator(".filter-bar")).toHaveCount(0);
+
+      await page.locator(".tile-filter .filter-chip-input").click();
+      await page.locator(".el-select-dropdown__item:visible", { hasText: "West" }).click();
+      await page.keyboard.press("Escape");
+      await expect(page.locator(".kpi-value")).toHaveText("150");
+      await expect(page).toHaveURL(/[?&]f=/);
+
+      await page.getByRole("button", { name: "Reset" }).click();
+      await expect(page.locator(".kpi-value")).toHaveText("270");
+    } finally {
+      await placed.cleanup(request);
+    }
+  });
 });

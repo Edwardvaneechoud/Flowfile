@@ -939,7 +939,10 @@ class DashboardTile(BaseModel):
     it); ``"kpi"`` shows one headline aggregate configured by ``kpi``
     (``chart_index`` is ignored; ``kpi`` None is an unconfigured placeholder);
     ``"table"`` shows the source's rows, paged and sorted on the worker,
-    configured by ``table`` (None = every column, default page size).
+    configured by ``table`` (None = every column, default page size);
+    ``"filter"`` shows the control of the layout filter whose ``id`` is
+    ``filter_id`` (a layout-internal id, so it travels in a project as is);
+    a filter so placed is not shown in the filter strip, and it reads no data.
 
     A KPI or table tile reads either a catalog table directly (``table_id``)
     or a saved chart's data source (``viz_id``, how a SQL source is reached),
@@ -947,7 +950,7 @@ class DashboardTile(BaseModel):
     """
 
     id: str
-    type: Literal["viz", "text", "separator", "kpi", "table"] = "viz"
+    type: Literal["viz", "text", "separator", "kpi", "table", "filter"] = "viz"
     viz_id: int | None = None
     table_id: int | None = None
     chart_index: int = 0
@@ -961,6 +964,7 @@ class DashboardTile(BaseModel):
     line_color: str | None = None
     kpi: DashboardKpi | None = None
     table: DashboardTableConfig | None = None
+    filter_id: str | None = None
     x: int
     y: int
     w: int
@@ -970,6 +974,8 @@ class DashboardTile(BaseModel):
     def _one_source(self) -> "DashboardTile":
         if self.type in ("kpi", "table") and self.viz_id is not None and self.table_id is not None:
             raise ValueError(f"tile '{self.id}' reads a chart or a table, not both (viz_id and table_id are set)")
+        if self.type == "filter" and not self.filter_id:
+            raise ValueError(f"filter tile '{self.id}' names no filter (filter_id is not set)")
         return self
 
 

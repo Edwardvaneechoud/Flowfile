@@ -6,6 +6,8 @@ export const TEXT_MIME = "application/flowfile-text";
 export const SEPARATOR_MIME = "application/flowfile-separator";
 export const KPI_MIME = "application/flowfile-kpi";
 export const TABLE_MIME = "application/flowfile-table";
+/** A strip filter chip dragged onto the canvas; the payload is the filter's id. */
+export const FILTER_MIME = "application/flowfile-dashboard-filter";
 
 const draggedVizId = ref<number | null>(null);
 const isDraggingViz = ref(false);
@@ -13,6 +15,7 @@ const isDraggingText = ref(false);
 const isDraggingSeparator = ref(false);
 const isDraggingKpi = ref(false);
 const isDraggingTable = ref(false);
+const isDraggingFilter = ref(false);
 
 export function useDashboardDragAndDrop() {
   const onDragEnd = () => {
@@ -21,6 +24,7 @@ export function useDashboardDragAndDrop() {
     isDraggingSeparator.value = false;
     isDraggingKpi.value = false;
     isDraggingTable.value = false;
+    isDraggingFilter.value = false;
     draggedVizId.value = null;
   };
 
@@ -65,6 +69,14 @@ export function useDashboardDragAndDrop() {
     armDragEnd(event);
   };
 
+  // The same drag also reorders inside the strip, hence copyMove.
+  const onFilterDragStart = (event: DragEvent, filterId: string) => {
+    event.dataTransfer?.setData(FILTER_MIME, filterId);
+    isDraggingFilter.value = true;
+    armDragEnd(event);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "copyMove";
+  };
+
   return {
     draggedVizId,
     isDraggingViz,
@@ -72,11 +84,13 @@ export function useDashboardDragAndDrop() {
     isDraggingSeparator,
     isDraggingKpi,
     isDraggingTable,
+    isDraggingFilter,
     onVizDragStart,
     onTextDragStart,
     onSeparatorDragStart,
     onKpiDragStart,
     onTableDragStart,
+    onFilterDragStart,
     onDragEnd,
   };
 }

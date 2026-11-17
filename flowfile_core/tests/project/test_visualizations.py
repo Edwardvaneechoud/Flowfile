@@ -19,6 +19,7 @@ from flowfile_core.database.models import CatalogDashboard, CatalogTable, Catalo
 from flowfile_core.project import project_sync
 from flowfile_core.project.service import write_export
 from flowfile_core.schemas.catalog_schema import (
+    DashboardFilter,
     DashboardKpi,
     DashboardLayout,
     DashboardTableColumn,
@@ -298,6 +299,42 @@ def test_table_tile_exports_a_portable_table_and_relinks(tmp_path):
     finally:
         _clear_viz_dashboards()
         _delete_table(tname)
+        project_sync.close_project(OWNER)
+
+
+def test_filter_tile_round_trips_with_its_filter(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    region = DashboardFilter(id="f-region", field_name="region", kind="categorical", state={"selected": ["West"]})
+    layout = DashboardLayout(
+        tiles=[DashboardTile(id="ft-1", type="filter", filter_id="f-region", x=0, y=0, w=12, h=2)],
+        filters=[region],
+    )
+    _, duuid = _make_dashboard("filter-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Placed filter", OWNER)
+        exported = _dash_yaml(root)[duuid]["layout"]
+        assert (exported["tiles"][0]["type"], exported["tiles"][0]["filter_id"]) == ("filter", "f-region")
+        assert exported["filters"][0]["id"] == "f-region"
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = json.loads(dashboard.layout_json)
+            assert (stored["tiles"][0]["type"], stored["tiles"][0]["filter_id"]) == ("filter", "f-region")
+            assert stored["filters"][0]["state"] == {"selected": ["West"]}
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "filter tiles must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
         project_sync.close_project(OWNER)
 
 
