@@ -95,7 +95,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.flowfile.execution.context import current_context
-from flowfile_core.flowfile.execution.errors import RESULT_GONE
+from flowfile_core.flowfile.execution.errors import RESULT_GONE, ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.execution.payloads import FileWritePayload, RestApiReadPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
@@ -111,6 +111,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalRestApiFetcher,
 )
 from flowfile_core.flowfile.flow_graph import GraphTransaction, add_connection, delete_connection, insert_node_on_edge
+from flowfile_core.flowfile.flow_node.models import recover_error_class
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.settings_validation import FlowSettingsValidation, validate_flow_settings
 from flowfile_core.flowfile.share import build_share_link
@@ -150,6 +151,7 @@ from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared.db_dialects import KNOWN_DIALECT_NAMES, DialectInfo, dialect_catalog, get_dialect_or_generic, read_sql
+from shared.rest_api.fetch import RestApiRequestError, first_request
 from shared.snowflake_auth import AUTH_METHODS, AUTH_OAUTH, SnowflakeAuthError, normalize_account
 from shared.storage_config import registered_flow_path, require_flow_in_storage, storage
 
@@ -2143,6 +2145,13 @@ def require_node_id_free(flow, node_id: int) -> None:
         )
 
 
+# The test request's budget; its connect cap is shared.rest_api.fetch._SAMPLE_CONNECT_TIMEOUT_SECONDS.
+_TEST_REQUEST_TIMEOUT_SECONDS = 30.0
+_TEST_REQUEST_MAX_RETRIES = 1
+# The failures whose text a test request answers: the fetch engine's, worded for the person testing.
+_SHOWN_FAILURE_CLASSES = frozenset({RestApiRequestError.__name__, "ValueError"})
+
+
 class RestApiSampleResponse(BaseModel):
     """Inferred output columns from a REST API sample fetch, and what the request sent and got back.
 
@@ -2172,6 +2181,9 @@ def fetch_rest_api_sample(
     "Fetch sample" button. Defined as a sync endpoint so the blocking worker
     round-trip runs in FastAPI's threadpool rather than the event loop. With
     ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows come from ``_rest_api_sample_rows``.
+    The test is capped (``_cap_for_test_request``). A failed fetch answers 422
+    with ``detail`` as ``_sample_failure`` builds it: ``message`` and the
+    ``request`` it sent (secret masked) when the request itself failed.
     """
     input_data["user_id"] = current_user.id
     try:
@@ -2187,6 +2199,7 @@ def fetch_rest_api_sample(
     auth = node.rest_api_settings.auth
     secret_encrypted = resolve_auth_secret_encrypted(auth, node.user_id)
     auth.secret = None
+    _cap_for_test_request(node.rest_api_settings)
 
     sample_size = max(1, sample_size)
     debug: dict[str, Any] = {}
@@ -2200,7 +2213,7 @@ def fetch_rest_api_sample(
             )
             sample_df = fetcher.get_result().head(sample_size).collect()
     except Exception as e:
-        raise HTTPException(422, f"Failed to fetch sample from REST API: {e}") from e
+        raise HTTPException(422, _sample_failure(e, node, secret_encrypted, sample_size)) from None
 
     fields = [c.get_minimal_field_info() for c in infer_schema_from_sample(sample_df)]
     # Cache onto the live node so schema prediction is immediately available.
@@ -2208,6 +2221,67 @@ def fetch_rest_api_sample(
     if live is not None and isinstance(live.setting_input, input_schema.NodeRestApiReader):
         live.setting_input.fields = fields
     return RestApiSampleResponse(fields=fields, **debug)
+
+
+def _cap_for_test_request(settings: input_schema.RestApiSettings) -> None:
+    """Cap *settings* for the drawer's test request, where someone is waiting: it reads within
+    ``_TEST_REQUEST_TIMEOUT_SECONDS`` and retries a 429 or 5xx at most ``_TEST_REQUEST_MAX_RETRIES`` times."""
+    settings.timeout_seconds = min(settings.timeout_seconds, _TEST_REQUEST_TIMEOUT_SECONDS)
+    settings.max_retries = min(settings.max_retries, _TEST_REQUEST_MAX_RETRIES)
+
+
+def _sample_failure(
+    error: Exception, node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
+) -> dict[str, Any]:
+    """The 422 detail of a failed test request: ``message`` and ``request``.
+
+    ``message`` carries the failure's text only when it was worded for the person testing: the fetch engine's
+    (``_SHOWN_FAILURE_CLASSES``) or compute that could not be reached. Any other failure is named by its class alone,
+    so no other exception's text reaches the answer. ``request`` is the request as the trace shows it when the request
+    itself failed, else ``None``: no worker, a secret the worker could not open, a step after a good answer.
+    """
+    failure = _failure_class(error)
+    if failure in _SHOWN_FAILURE_CLASSES or isinstance(error, ComputeUnavailable | VersionMismatch):
+        message = f"Failed to fetch sample from REST API: {error}"
+    else:
+        name = failure or type(error).__name__
+        logger.warning("REST API test request failed: %s", name, exc_info=error)
+        message = f"Failed to fetch sample from REST API: The test request could not run ({name})."
+    request = (
+        _rest_api_sample_request(node, secret_encrypted, sample_size)
+        if failure == RestApiRequestError.__name__
+        else None
+    )
+    return {"message": message, "request": request}
+
+
+def _failure_class(error: BaseException) -> str | None:
+    """The class a test request's failure started as.
+
+    One of ``_SHOWN_FAILURE_CLASSES`` raised in this process (by exact class, so a pydantic ``ValidationError`` is not
+    a ``ValueError`` here), else the class a worker's description names first (``ClassName: message``).
+    """
+    cause: BaseException | None = error
+    while cause is not None:
+        if type(cause).__name__ in _SHOWN_FAILURE_CLASSES:
+            return type(cause).__name__
+        cause = cause.__cause__
+    return recover_error_class(None, str(error))
+
+
+def _rest_api_sample_request(
+    node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
+) -> dict[str, Any] | None:
+    """The request a failed sample sent, its secret masked, for the drawer's trace.
+
+    ``None`` when none was sent or it cannot be built: it is an extra beside the failure, never a reason to lose it.
+    """
+    try:
+        settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
+        return first_request(settings, has_secret=secret_encrypted is not None)
+    except Exception:
+        logger.debug("Could not describe the failed REST API sample's request", exc_info=True)
+        return None
 
 
 def _rest_api_sample_rows(
@@ -3270,7 +3344,7 @@ async def get_excel_sheet_names(path: str) -> list[str] | None:
 
 
 @router.post("/validate_db_settings")
-async def validate_db_settings(
+def validate_db_settings(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ):
     """Validates that a connection can be made to a database with the given settings."""
@@ -3283,7 +3357,7 @@ async def validate_db_settings(
 
 
 @router.post("/db_databases", tags=["db_connections"], response_model=list[str])
-async def get_db_databases(
+def get_db_databases(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ) -> list[str]:
     """Returns the databases a node may pick on this connection; empty for a dialect with one database."""
@@ -3294,7 +3368,7 @@ async def get_db_databases(
 
 
 @router.post("/db_schemas", tags=["db_connections"], response_model=list[str])
-async def get_db_schemas(
+def get_db_schemas(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ) -> list[str]:
     """Returns available schema names for the given database connection.
@@ -3308,7 +3382,7 @@ async def get_db_schemas(
 
 
 @router.post("/db_tables", tags=["db_connections"], response_model=list[str])
-async def get_db_tables(
+def get_db_tables(
     database_settings: input_schema.DatabaseSettings, current_user=Depends(get_current_active_user)
 ) -> list[str]:
     """Returns available table names for the given database connection and optional schema.

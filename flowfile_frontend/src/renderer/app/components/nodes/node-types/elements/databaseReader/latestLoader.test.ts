@@ -105,6 +105,35 @@ describe("createLatestLoader", () => {
     expect(state.options).toEqual([]);
     expect(state.loading).toBe(false);
   });
+
+  it("has an answer only once the latest load succeeded, until invalidated", async () => {
+    const loader = createLatestLoader(emptyState());
+    expect(loader.hasAnswer()).toBe(false);
+
+    const pending = deferred<string[]>();
+    const load = loader.load(() => pending.promise);
+    expect(loader.hasAnswer()).toBe(false);
+    pending.resolve([]);
+    await load;
+    expect(loader.hasAnswer()).toBe(true);
+
+    loader.invalidate();
+    expect(loader.hasAnswer()).toBe(false);
+  });
+
+  it("has no answer after a failed load or a superseded success", async () => {
+    const loader = createLatestLoader(emptyState());
+    await loader.load(() => Promise.reject(new Error("no access")));
+    expect(loader.hasAnswer()).toBe(false);
+
+    const older = deferred<string[]>();
+    const first = loader.load(() => older.promise);
+    const second = loader.load(() => deferred<string[]>().promise);
+    older.resolve(["STALE"]);
+    await first;
+    expect(loader.hasAnswer()).toBe(false);
+    void second;
+  });
 });
 
 describe("table list for a dialect that browses databases", () => {

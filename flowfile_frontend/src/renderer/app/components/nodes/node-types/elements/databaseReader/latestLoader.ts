@@ -11,6 +11,8 @@ export interface LatestLoader<T> {
   load(fetcher: () => Promise<T[]>, onError?: (error: unknown) => void): Promise<void>;
   /** Drop the options and supersede any load in flight. */
   invalidate(): void;
+  /** True while the options are the answer of the latest load and nothing invalidated them since. */
+  hasAnswer(): boolean;
 }
 
 /**
@@ -19,14 +21,19 @@ export interface LatestLoader<T> {
  */
 export function createLatestLoader<T>(state: ListState<T>): LatestLoader<T> {
   let seq = 0;
+  let answered = false;
   return {
     async load(fetcher, onError) {
       const token = ++seq;
+      answered = false;
       state.options = [];
       state.loading = true;
       try {
         const result = await fetcher();
-        if (token === seq) state.options = result;
+        if (token === seq) {
+          state.options = result;
+          answered = true;
+        }
       } catch (error) {
         if (token === seq) onError?.(error);
       } finally {
@@ -35,8 +42,12 @@ export function createLatestLoader<T>(state: ListState<T>): LatestLoader<T> {
     },
     invalidate() {
       seq += 1;
+      answered = false;
       state.options = [];
       state.loading = false;
+    },
+    hasAnswer() {
+      return answered;
     },
   };
 }

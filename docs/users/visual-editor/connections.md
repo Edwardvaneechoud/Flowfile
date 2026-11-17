@@ -168,8 +168,8 @@ in **Reference** mode only; there is no inline Snowflake connection.
 - Database, schema and table names may hold `$` or be double-quoted, as the lists offer them: a name that is
   not plain upper case arrives quoted (`"USER$analyst"`, `"My Schema"`), and a quoted name keeps its case.
   Other databases keep the plain rule: letters, numbers and underscores only.
-- A write uploads the rows to a temporary stage in the table's schema, then copies them into the table, so the
-  connection's role needs `CREATE STAGE` on that schema as well as rights on the table.
+- A write uploads the rows to a temporary stage, which needs no grant of its own, then copies them into the table,
+  so the connection's role needs `INSERT` on the table, and `CREATE TABLE` on the schema when Flowfile creates it.
 - **Replace** recreates the table (`CREATE OR REPLACE TABLE`); **Append** creates it when it does not exist;
   **Fail** stops when it exists.
 

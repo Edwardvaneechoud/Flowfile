@@ -10,7 +10,10 @@ import {
   responseLine,
   showSecret,
   testErrorText,
+  testFailure,
   toCurl,
+  traceLine,
+  traceOk,
   treeRows,
   type ResponseNode,
   type TraceEntry,
@@ -176,6 +179,60 @@ describe("the request as shown", () => {
   it("summarises what came back", () => {
     expect(responseLine(entry())).toBe("200 · 312 ms · 4.2 KB · 50 records");
     expect(responseLine(entry({ bytes: 72, records: 1 }))).toBe("200 · 312 ms · 72 B · 1 record");
+  });
+
+  it("says when a test's request failed", () => {
+    const sent = { method: "GET", url: "https://x.test/a", headers: {}, body: null };
+    expect(traceLine(sent)).toBe("Request failed");
+    expect(traceOk(sent)).toBe(false);
+    expect(traceLine(entry())).toBe("200 · 312 ms · 4.2 KB · 50 records");
+    expect(traceOk(entry())).toBe(true);
+    expect(traceOk(entry({ status: 401 }))).toBe(false);
+  });
+
+  it("reads a failed test's message and the request it sent", () => {
+    const request = {
+      method: "GET",
+      url: "https://x.test/a?key=REDACTED",
+      headers: {},
+      body: null,
+    };
+    const answered = (data: unknown) => ({
+      message: "Request failed with status code 422",
+      response: { data },
+    });
+    expect(testFailure(answered({ detail: { message: "Failed: no route", request } }))).toEqual({
+      message: "Failed: no route",
+      request,
+    });
+    expect(
+      testFailure(answered({ detail: { message: "Failed: no worker", request: null } })),
+    ).toEqual({ message: "Failed: no worker", request: null });
+    expect(testFailure(answered({ detail: "Flow not found" }))).toEqual({
+      message: "Flow not found",
+      request: null,
+    });
+    expect(testFailure(answered({ detail: [{ msg: "sample_size: not an integer" }] }))).toEqual({
+      message: "sample_size: not an integer",
+      request: null,
+    });
+    expect(testFailure({ message: "Network Error" })).toEqual({
+      message: "Network Error",
+      request: null,
+    });
+    expect(testFailure(undefined)).toEqual({ message: "Unknown error", request: null });
+  });
+
+  it("writes a curl command for a request that got no response", () => {
+    const sent = {
+      method: "GET",
+      url: "https://x.test/a",
+      headers: { "X-Team": "data" },
+      body: null,
+    };
+    expect(toCurl(sent, "")).toBe(
+      ["curl -X GET 'https://x.test/a'", "-H 'X-Team: data'"].join(" \\\n  "),
+    );
   });
 
   it("writes a curl command whose secret is a variable", () => {
