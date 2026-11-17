@@ -27,15 +27,28 @@
           placeholder="e.g. Revenue by region"
           size="small"
           class="viz-name-input"
+          :class="{ 'is-error': !!nameError }"
+          data-testid="viz-name-input"
           :disabled="saving"
+          @keydown.enter.prevent
         />
+        <span v-if="nameError" class="viz-name-error" data-testid="viz-name-error">
+          {{ nameError }}
+        </span>
       </div>
       <div class="viz-editor-actions">
         <el-tooltip v-if="disabledReason" :content="disabledReason" placement="top">
           <span class="viz-disabled-hint">{{ disabledReason }}</span>
         </el-tooltip>
         <el-button size="small" :disabled="saving" @click="onCancel">Cancel</el-button>
-        <el-button type="primary" size="small" :loading="saving" :disabled="!canSave" @click="save">
+        <el-button
+          type="primary"
+          size="small"
+          data-testid="viz-save-button"
+          :loading="saving"
+          :disabled="!canSave"
+          @click="save"
+        >
           {{ viz ? "Save changes" : "Save visualization" }}
         </el-button>
       </div>
@@ -89,6 +102,7 @@ import { captureThumbnail } from "../../composables/useChartThumbnail";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 import { toPlainJson } from "../../utils/structuredClone";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
+import { chartNameError, suggestChartName } from "./chartNaming";
 import type {
   CatalogVisualization,
   VisualizationCreatePayload,
@@ -102,6 +116,8 @@ const props = defineProps<{
   appearance?: IDarkMode;
   /** Optional override for the table id when saving a viz from an ad-hoc SQL source. */
   saveTargetTableId?: number | null;
+  /** Names a new chart's suggested name must not repeat, e.g. the charts on the dashboard it is made for. */
+  takenNames?: string[];
 }>();
 
 const emit = defineEmits<{
@@ -112,7 +128,14 @@ const emit = defineEmits<{
 const store = useCatalogStore();
 const gwRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
-const name = ref(props.viz?.name ?? "Untitled chart");
+const sourceTableName = () =>
+  props.source.source_type === "table" && props.source.table_id != null
+    ? store.findTableInTree(props.source.table_id)?.name
+    : null;
+const name = ref(
+  props.viz?.name ?? suggestChartName(props.source, sourceTableName(), props.takenNames),
+);
+const nameError = computed(() => chartNameError(name.value));
 const saving = ref(false);
 
 const isCreate = computed(() => !isExistingViz(props.viz));
@@ -221,13 +244,9 @@ const { computation: computeOnWorker, lastError: computeError } = useGraphicWalk
   "ad-hoc",
 );
 
-const canSave = computed(() => name.value.trim().length > 0 && !loadingSample.value);
+const canSave = computed(() => !nameError.value && !loadingSample.value);
 
-const disabledReason = computed(() => {
-  if (loadingSample.value) return "Loading data sample...";
-  if (!name.value.trim()) return "Enter a name to save";
-  return null;
-});
+const disabledReason = computed(() => (loadingSample.value ? "Loading data sample..." : null));
 
 onMounted(async () => {
   if (isCreate.value) {
@@ -269,10 +288,7 @@ const isExistingViz = (v: any): v is CatalogVisualization =>
 
 const save = async () => {
   if (!gwRef.value) return;
-  if (!name.value.trim()) {
-    ElMessage.warning("Enter a name to save the visualization.");
-    return;
-  }
+  if (nameError.value) return;
   const charts = await gwRef.value.exportCode();
   if (!charts || !charts.length) {
     ElMessage.error("No chart to save — build one in the editor first.");
@@ -402,6 +418,13 @@ const offerOverwrite = async (
 }
 .viz-name-input {
   width: 100%;
+}
+.viz-name-input.is-error :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+.viz-name-error {
+  font-size: 12px;
+  color: var(--el-color-danger);
 }
 .viz-editor-actions {
   display: flex;

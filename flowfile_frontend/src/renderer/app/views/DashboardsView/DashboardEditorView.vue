@@ -194,6 +194,7 @@
         v-if="vizCreatorOpen && pendingSource"
         ref="vizCreatorRef"
         :source="pendingSource"
+        :taken-names="pendingTakenNames"
         :appearance="appearance"
         @saved="onVizCreated"
         @cancel="vizCreatorOpen = false"
@@ -227,6 +228,8 @@ import DashboardSidebarPicker from "./DashboardSidebarPicker.vue";
 import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
 import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
+import { dashboardChartNames } from "../CatalogView/chartNaming";
+import { useCatalogStore } from "../../stores/catalog-store";
 import { historyShortcutFor } from "../../composables/useFlowHotkeys";
 import { IS_MAC } from "../../utils/shortcuts";
 import { upgradeLayoutGrid } from "./gridVersion";
@@ -262,6 +265,7 @@ const props = defineProps<{ id?: string | number }>();
 const router = useRouter();
 const route = useRoute();
 const store = useDashboardsStore();
+const catalogStore = useCatalogStore();
 const appearance = useGraphicWalkerAppearance();
 
 const isNew = computed(() => props.id === undefined);
@@ -653,7 +657,11 @@ const onVizCreatorBeforeClose = async (done: () => void) => {
   }
 };
 
+const pendingTakenNames = ref<string[]>([]);
+
 const onSourcePicked = (source: VizSourceDescriptor) => {
+  const library = new Map(catalogStore.visualizationLibrary.map((v) => [v.id, v.name]));
+  pendingTakenNames.value = dashboardChartNames(layoutRef.value.tiles, (id) => library.get(id));
   pendingSource.value = source;
   vizCreatorOpen.value = true;
 };

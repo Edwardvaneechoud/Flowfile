@@ -384,6 +384,69 @@ test.describe("Dashboards", () => {
     expect(png.subarray(1, 4).toString()).toBe("PNG");
   });
 
+  test("a chart made from the dashboard is named before it saves and its tile shows the name", async ({
+    page,
+    request,
+  }) => {
+    const seededNew = await seedDashboard(request, token, `e2e name ${Date.now()}`);
+    const headers = authHeaders(token);
+    let newVizId: number | null = null;
+    try {
+      // The source picker lists only tables inside a catalog schema; the seed files none.
+      const namespaceId = await (
+        await request.get(`${API_URL}/catalog/default-namespace-id`, { headers })
+      ).json();
+      const moved = await request.put(`${API_URL}/catalog/tables/${seededNew.tableId}`, {
+        headers,
+        data: { namespace_id: namespaceId },
+      });
+      expect(moved.ok()).toBe(true);
+      const table = await moved.json();
+      await login(page, token, `#/main/dashboards/${seededNew.dashboardId}/edit`);
+      await expect(page.locator(".tile-header", { hasText: "Orders" })).toBeVisible({
+        timeout: 30000,
+      });
+
+      await page.getByRole("button", { name: "New visualization" }).click();
+      const picker = page.locator(".el-dialog", { hasText: "From a catalog table" });
+      await picker.locator(".picker-cascader input").fill(table.name);
+      await page.locator(".el-cascader__suggestion-item", { hasText: table.name }).click();
+      await picker.getByRole("button", { name: "Continue" }).click();
+
+      const nameInput = page.getByTestId("viz-name-input");
+      const save = page.getByTestId("viz-save-button");
+      await expect(nameInput).toHaveValue(table.name);
+      await expect(save).toBeEnabled({ timeout: 30000 });
+
+      await nameInput.fill("  ");
+      await expect(page.getByTestId("viz-name-error")).toHaveText("Enter a name to save");
+      await expect(save).toBeDisabled();
+
+      await nameInput.fill("Amount per region");
+      await expect(page.getByTestId("viz-name-error")).toHaveCount(0);
+      // Enter in the name field saves nothing: the builder stays open.
+      await nameInput.press("Enter");
+      await expect(save).toBeVisible();
+
+      const created = page.waitForResponse(
+        (r) => r.request().method() === "POST" && /\/catalog\/visualizations\/?$/.test(r.url()),
+      );
+      await save.click();
+      const response = await created;
+      newVizId = (await response.json()).id;
+      expect((await response.json()).name).toBe("Amount per region");
+      await expect(page.locator(".tile-title", { hasText: "Amount per region" })).toBeVisible({
+        timeout: 30000,
+      });
+    } finally {
+      if (newVizId != null) {
+        await request.delete(`${API_URL}/catalog/dashboards/${seededNew.dashboardId}`, { headers });
+        await request.delete(`${API_URL}/catalog/visualizations/${newVizId}`, { headers });
+      }
+      await seededNew.cleanup(request);
+    }
+  });
+
   // Last: it turns the shared seed's region filter single-select.
   test("a single-select filter picks one value at a time and narrows the KPI", async ({
     page,
