@@ -4,7 +4,7 @@ vi.mock("../../api/catalog.api", () => ({ CatalogApi: {} }));
 vi.mock("../../composables/useGraphicWalkerCompute", () => ({ useGraphicWalkerCompute: vi.fn() }));
 
 import type { DashboardFilter, DashboardTile } from "../../types";
-import { stackTiles, textRows } from "./stackedLayout";
+import { imageRows, stackTiles, textRows } from "./stackedLayout";
 
 const tile = (t: Partial<DashboardTile> & Pick<DashboardTile, "id" | "type">): DashboardTile => ({
   viz_id: null,
@@ -27,6 +27,7 @@ const filter = (id: string): DashboardFilter => ({
 });
 
 const kpi = { field: "amount", agg: "sum" as const, label: null, compact: false };
+const logo = { data_url: "data:image/png;base64,iVBORw0KGgo=", alt: "Logo" };
 
 describe("stackTiles", () => {
   it("orders tiles top to bottom, then left to right, each full width and one under the other", () => {
@@ -59,6 +60,8 @@ describe("stackTiles", () => {
     expect(rows(tile({ id: "s", type: "separator", orientation: "horizontal", w: 48, h: 1 }))).toBe(
       1,
     );
+    expect(rows(tile({ id: "i", type: "image", image: logo, h: 3 }))).toBe(3);
+    expect(rows(tile({ id: "i", type: "image", image: logo, h: 20 }))).toBe(8);
   });
 
   it("sizes a text tile to its content", () => {
@@ -82,8 +85,14 @@ describe("stackTiles", () => {
       tile({ id: "text-empty", type: "text", text_md: "   ", y: 4 }),
       tile({ id: "filter-gone", type: "filter", filter_id: "gone", y: 5 }),
       tile({ id: "filter-kept", type: "filter", filter_id: "kept", y: 6 }),
+      tile({ id: "image-unset", type: "image", image: null, y: 7 }),
+      tile({ id: "image", type: "image", image: logo, y: 8 }),
     ];
-    expect(stackTiles(tiles, 48, { filters }).map((s) => s.i)).toEqual(["hsep", "filter-kept"]);
+    expect(stackTiles(tiles, 48, { filters }).map((s) => s.i)).toEqual([
+      "hsep",
+      "filter-kept",
+      "image",
+    ]);
   });
 
   it("never changes the saved tiles", () => {
@@ -98,6 +107,45 @@ describe("stackTiles", () => {
 
   it("is empty for an empty dashboard", () => {
     expect(stackTiles([], 48)).toEqual([]);
+  });
+});
+
+describe("imageRows", () => {
+  // A 360 px canvas: a 336 px column inside the grid's margins and the tile's padding.
+  const rowsOf = (t: DashboardTile, size?: { width: number; height: number }) =>
+    imageRows(t, size, 360, 40, 8);
+
+  it("gives a wide picture the height it needs at the column's width", () => {
+    const wide = tile({ id: "w", type: "image", image: logo, h: 6 });
+    // 900x150 drawn 336 px wide is 56 px tall: 64 px with padding, two rows.
+    expect(rowsOf(wide, { width: 900, height: 150 })).toBe(2);
+  });
+
+  it("never draws a small raster past its own width, but fills with an SVG or Fill the tile", () => {
+    const small = tile({ id: "s", type: "image", image: logo, h: 8 });
+    expect(rowsOf(small, { width: 120, height: 120 })).toBe(3);
+    const cover = tile({ id: "c", type: "image", image: { ...logo, fit: "cover" }, h: 8 });
+    expect(rowsOf(cover, { width: 120, height: 120 })).toBe(8);
+    const svg = { data_url: "data:image/svg+xml;base64,PHN2Zy8+" };
+    expect(
+      rowsOf(tile({ id: "v", type: "image", image: svg, h: 8 }), { width: 100, height: 50 }),
+    ).toBe(4);
+  });
+
+  it("is never taller than the tile is now, nor before the picture's size is known", () => {
+    const tall = tile({ id: "t", type: "image", image: logo, h: 6 });
+    expect(rowsOf(tall, { width: 150, height: 600 })).toBe(6);
+    expect(rowsOf(tall)).toBe(6);
+    expect(rowsOf(tall, { width: 0, height: 0 })).toBe(6);
+  });
+
+  it("is what stackTiles uses when it is given the pictures' sizes", () => {
+    const wide = tile({ id: "w", type: "image", image: logo, h: 6 });
+    const stacked = stackTiles([wide], 48, {
+      widthPx: 360,
+      imageSizes: { w: { width: 900, height: 150 } },
+    });
+    expect(stacked[0].h).toBe(2);
   });
 });
 

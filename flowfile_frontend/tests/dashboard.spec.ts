@@ -3,11 +3,34 @@ import { expect, test } from "@playwright/test";
 import { API_URL, authHeaders, getAuthToken } from "./helpers/api";
 import { login } from "./helpers/canvas";
 import {
+  pngBuffer,
   seedDashboard,
   seedTrendDashboard,
   seedWideFilterDashboard,
   type SeededDashboard,
 } from "./helpers/dashboards";
+
+/** A 4000 x 3000 photo-like JPEG (smooth colour plus grain), made by the page's canvas. */
+const photoJpegBase64 = () => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 4000;
+  canvas.height = 3000;
+  const ctx = canvas.getContext("2d")!;
+  const data = ctx.createImageData(4000, 3000);
+  for (let y = 0; y < 3000; y++) {
+    for (let x = 0; x < 4000; x++) {
+      const i = (y * 4000 + x) * 4;
+      const grain = (Math.random() - 0.5) * 40;
+      data.data[i] = 120 + 100 * Math.sin(x / 150) + grain;
+      data.data[i + 1] = 110 + 90 * Math.cos(y / 120) + grain;
+      data.data[i + 2] = 140 + 80 * Math.sin((x + y) / 200) + grain;
+      data.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(data, 0, 0);
+  const url = canvas.toDataURL("image/jpeg", 0.92);
+  return url.slice(url.indexOf(",") + 1);
+};
 
 // Dashboards draw through flowfile_worker: without one every tile stays empty, so the tests
 // skip (they do not pass) when the chart's columns cannot be read.
@@ -592,6 +615,235 @@ test.describe("Dashboards", () => {
       await expect.poll(savedNote, { timeout: 20000 }).toBe("**Revenue** is net of refunds.");
     } finally {
       await seededNote.cleanup(request);
+    }
+  });
+
+  test("an author places an image from the Insert list, undo and redo take it back and forth, and a viewer sees it with its alt text", async ({
+    page,
+    request,
+  }) => {
+    const headers = authHeaders(token);
+    const created = await request.post(`${API_URL}/catalog/dashboards`, {
+      headers,
+      data: { name: `e2e image ${Date.now()}` },
+    });
+    expect(created.ok()).toBe(true);
+    const dashboardId: number = (await created.json()).id;
+    const url = `${API_URL}/catalog/dashboards/${dashboardId}`;
+    const savedImages = async () =>
+      ((await (await request.get(url, { headers })).json()).layout.tiles as Record<string, any>[])
+        .filter((t) => t.type === "image")
+        .map((t) =>
+          t.image
+            ? { alt: t.image.alt, png: t.image.data_url.startsWith("data:image/png;base64,") }
+            : null,
+        );
+    try {
+      await login(page, token, `#/main/dashboards/${dashboardId}/edit`);
+      const insert = page.getByTestId("insert-image");
+      await expect(insert).toBeVisible({ timeout: 30000 });
+
+      await insert.click();
+      const tile = page.locator(".tile-image");
+      await expect(tile).toHaveCount(1);
+      const choose = tile.getByTestId("image-choose");
+      await expect(choose).toBeVisible();
+
+      const chooserOpened = page.waitForEvent("filechooser");
+      await choose.click();
+      const chooser = await chooserOpened;
+      await chooser.setFiles({
+        name: "logo.png",
+        mimeType: "image/png",
+        buffer: pngBuffer(120, 60),
+      });
+      const img = tile.locator("img.image-tile-img");
+      await expect(img).toBeVisible();
+      await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBe(120);
+      await expect.poll(savedImages, { timeout: 20000 }).toEqual([{ alt: null, png: true }]);
+
+      await tile.hover();
+      await tile.locator(".tile-text-actions .tile-menu").click();
+      await page.locator(".el-dropdown-menu__item:visible", { hasText: "Alt text" }).click();
+      const prompt = page.locator(".el-message-box");
+      await prompt.locator("input").fill("Acme logo");
+      await prompt.getByRole("button", { name: "Save" }).click();
+      await expect(img).toHaveAttribute("alt", "Acme logo");
+
+      // Each is one step: the alt text, then the picture, then redo brings both back.
+      await page.getByTestId("dashboard-undo").click();
+      await expect(img).toHaveAttribute("alt", "");
+      await page.getByTestId("dashboard-undo").click();
+      await expect(img).toHaveCount(0);
+      await expect(choose).toBeVisible();
+      await page.getByTestId("dashboard-redo").click();
+      await page.getByTestId("dashboard-redo").click();
+      await expect(img).toHaveAttribute("alt", "Acme logo");
+
+      // Replace image… opens the file picker from the menu and keeps the alt text.
+      await tile.hover();
+      await tile.locator(".tile-text-actions .tile-menu").click();
+      const replaceChooser = page.waitForEvent("filechooser");
+      await page.locator(".el-dropdown-menu__item:visible", { hasText: "Replace image" }).click();
+      await (
+        await replaceChooser
+      ).setFiles({ name: "wide.png", mimeType: "image/png", buffer: pngBuffer(200, 50) });
+      await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBe(200);
+      await expect(img).toHaveAttribute("alt", "Acme logo");
+
+      // A second image tile left empty: the editor shows it, a viewer does not.
+      await insert.click();
+      await expect(tile).toHaveCount(2);
+      await expect
+        .poll(savedImages, { timeout: 20000 })
+        .toEqual([{ alt: "Acme logo", png: true }, null]);
+
+      await page.reload();
+      await page.waitForLoadState("load");
+      await expect(page.locator(".tile-image img.image-tile-img")).toHaveAttribute(
+        "alt",
+        "Acme logo",
+        { timeout: 30000 },
+      );
+
+      await login(page, token, `#/main/dashboards/${dashboardId}`);
+      const viewed = page.getByRole("img", { name: "Acme logo" });
+      await expect(viewed).toBeVisible({ timeout: 30000 });
+      await expect(page.locator("img.image-tile-img")).toHaveCount(1);
+      await expect(page.getByText("Choose image")).toHaveCount(0);
+      await expect(page.locator(".tile-image.tile-blank")).toHaveCount(1);
+      await expect(page.locator(".tile-image .tile-menu")).toHaveCount(0);
+
+      // On a phone the 200 x 50 image is drawn at its own width, so its tile takes the two rows
+      // (88 px) its picture needs instead of the three it has on the grid; the empty one is gone.
+      const imageItem = page.locator(".vgl-item:not(.vgl-item--placeholder)", { has: viewed });
+      await expect
+        .poll(() => imageItem.evaluate((el) => Math.round(el.getBoundingClientRect().height)))
+        .toBe(136);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(page.locator(".canvas-stacked")).toHaveCount(1);
+      await expect
+        .poll(() => imageItem.evaluate((el) => Math.round(el.getBoundingClientRect().height)))
+        .toBe(88);
+      await expect(page.locator(".vgl-item:not(.vgl-item--placeholder)")).toHaveCount(1);
+    } finally {
+      await request.delete(url, { headers });
+    }
+  });
+
+  test("a file dropped on the canvas becomes an image tile, a large photo is scaled down to fit, and a non-image or an SVG too large is refused with its message", async ({
+    page,
+    request,
+  }) => {
+    const headers = authHeaders(token);
+    const created = await request.post(`${API_URL}/catalog/dashboards`, {
+      headers,
+      data: { name: `e2e image drop ${Date.now()}` },
+    });
+    expect(created.ok()).toBe(true);
+    const dashboardId: number = (await created.json()).id;
+    const url = `${API_URL}/catalog/dashboards/${dashboardId}`;
+    const savedLayout = async () => (await (await request.get(url, { headers })).json()).layout;
+    const savedTiles = async () =>
+      ((await savedLayout()).tiles as Record<string, any>[]).map((t) => [t.type, !!t.image]);
+    // A real HTML5 drop of a file from the computer, dispatched on the grid as a browser does.
+    const dropFile = (name: string, type: string, bytes: Buffer) =>
+      page.evaluate(
+        ({ name, type, base64 }) => {
+          const data = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+          const transfer = new DataTransfer();
+          transfer.items.add(new File([data], name, { type }));
+          const grid = document.querySelector(".canvas .vgl-layout") as HTMLElement;
+          const rect = grid.getBoundingClientRect();
+          const at = { clientX: rect.left + 40, clientY: rect.top + 30 };
+          for (const kind of ["dragenter", "dragover", "drop"]) {
+            grid.dispatchEvent(
+              new DragEvent(kind, {
+                bubbles: true,
+                cancelable: true,
+                dataTransfer: transfer,
+                ...at,
+              }),
+            );
+          }
+        },
+        { name, type, base64: bytes.toString("base64") },
+      );
+    const message = page.locator(".el-message");
+    try {
+      await login(page, token, `#/main/dashboards/${dashboardId}/edit`);
+      await expect(page.getByTestId("insert-image")).toBeVisible({ timeout: 30000 });
+
+      await dropFile("notes.txt", "text/plain", Buffer.from("not a picture"));
+      await expect(message.filter({ hasText: "Only an image file" })).toBeVisible();
+      await expect(page.locator(".tile-image")).toHaveCount(0);
+      await expect(page.getByTestId("dashboard-undo")).toBeDisabled();
+
+      await dropFile("logo.png", "image/png", pngBuffer(80, 40));
+      const img = page.locator(".tile-image img.image-tile-img");
+      await expect(img).toBeVisible();
+      await expect.poll(savedTiles, { timeout: 20000 }).toEqual([["image", true]]);
+
+      await page.getByTestId("insert-image").click();
+      await expect.poll(savedTiles, { timeout: 20000 }).toEqual([
+        ["image", true],
+        ["image", false],
+      ]);
+      const before = await savedLayout();
+
+      // An SVG is kept as it is, so one over 300 KB is refused, with what to do.
+      const svg = Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">${'<rect width="1" height="1"/>'.repeat(14000)}</svg>`,
+      );
+      const empty = page.locator(".tile-image").nth(1);
+      const svgChooser = page.waitForEvent("filechooser");
+      await empty.getByTestId("image-choose").click();
+      await (
+        await svgChooser
+      ).setFiles({ name: "big.svg", mimeType: "image/svg+xml", buffer: svg });
+      await expect(
+        message.filter({
+          hasText: /^This SVG is \d+ KB; a GIF or SVG is kept as it is.*try again\.$/,
+        }),
+      ).toBeVisible({ timeout: 20000 });
+      await expect(img).toHaveCount(1);
+      await expect(page.locator(".editor-toolbar .save-dot")).toHaveAttribute(
+        "aria-label",
+        /^All changes saved/,
+      );
+      expect(await savedLayout()).toEqual(before);
+
+      // A 4000 x 3000 photo of about 5 MB is stepped down until it fits, keeping JPEG.
+      const photo = Buffer.from(await page.evaluate(photoJpegBase64), "base64");
+      expect(photo.length).toBeGreaterThan(2 * 1024 * 1024);
+      const photoChooser = page.waitForEvent("filechooser");
+      await empty.getByTestId("image-choose").click();
+      await (
+        await photoChooser
+      ).setFiles({ name: "IMG_0001.jpg", mimeType: "image/jpeg", buffer: photo });
+      await expect(img).toHaveCount(2, { timeout: 20000 });
+      await expect
+        .poll(() => img.nth(1).evaluate((el: HTMLImageElement) => el.naturalWidth))
+        .toBeGreaterThan(600);
+      await expect
+        .poll(
+          async () =>
+            ((await savedLayout()).tiles as Record<string, any>[]).map((t) =>
+              t.image
+                ? [
+                    t.image.data_url.slice(0, 23),
+                    Math.floor((t.image.data_url.length - 23) * 0.75) <= 300 * 1024,
+                  ]
+                : null,
+            ),
+          { timeout: 20000 },
+        )
+        .toEqual([
+          ["data:image/png;base64,i", true],
+          ["data:image/jpeg;base64,", true],
+        ]);
+    } finally {
+      await request.delete(url, { headers });
     }
   });
 

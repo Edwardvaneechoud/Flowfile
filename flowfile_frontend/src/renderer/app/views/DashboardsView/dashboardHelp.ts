@@ -93,6 +93,12 @@ export const dashboardHelp: PageHelpContent = {
             "Markdown with headings, lists, code, links, tables, images, blockquotes, horizontal rules. Sanitized through DOMPurify.",
         },
         {
+          icon: "fa-solid fa-image",
+          title: "Image tile",
+          description:
+            "A picture such as a logo, stored in the dashboard itself so it travels when the dashboard is shared or exported. Add one from the Insert list and choose a file, or drop a PNG, JPEG, WebP, GIF or SVG file onto the canvas. A large photo or screenshot is scaled down until it fits; an image may take 300 KB and a dashboard 2 MB of images, and a GIF or SVG is kept as it is. Its menu replaces the image, switches between fitting the whole image and filling the tile, and sets its alt text.",
+        },
+        {
           icon: "fa-solid fa-minus",
           title: "Separator",
           description:

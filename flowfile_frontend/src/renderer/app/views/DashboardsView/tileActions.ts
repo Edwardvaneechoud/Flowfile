@@ -21,7 +21,7 @@ export interface TileActionContext {
 }
 
 /**
- * The entries a tile's menu offers, in menu order. Text, separator and filter tiles get none, nor
+ * The entries a tile's menu offers, in menu order. Text, separator, filter and image tiles get none, nor
  * does a tile with nothing to show. A chart's CSV is the data it draws; a KPI's rows are in See rows.
  */
 export const tileActions = (ctx: TileActionContext): TileAction[] => {

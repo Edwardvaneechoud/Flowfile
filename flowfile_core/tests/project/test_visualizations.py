@@ -7,6 +7,7 @@ ids on another machine. The base64 PNG thumbnail is never committed. These tests
 directly.
 """
 
+import base64
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -29,6 +30,7 @@ from flowfile_core.schemas.catalog_schema import (
     DashboardTableColumn,
     DashboardTableConfig,
     DashboardTile,
+    DashboardTileImage,
 )
 
 OWNER = 1
@@ -290,6 +292,52 @@ def test_tile_note_round_trips(tmp_path):
             assert [t["note_md"] for t in stored] == [note, None]
         write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "tile notes must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_image_tile_round_trips_with_its_bytes(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    png = "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 40).decode()
+    svg = "data:image/svg+xml;base64," + base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg"/>').decode()
+    layout = DashboardLayout(
+        tiles=[
+            DashboardTile(
+                id="img-1", type="image", image=DashboardTileImage(data_url=png, alt="Logo"), x=0, y=0, w=8, h=3
+            ),
+            DashboardTile(
+                id="img-2", type="image", image=DashboardTileImage(data_url=svg, fit="cover"), x=8, y=0, w=8, h=3
+            ),
+            DashboardTile(id="img-3", type="image", x=16, y=0, w=8, h=3),
+        ]
+    )
+    _, duuid = _make_dashboard("image-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Images", OWNER)
+        tiles = _dash_yaml(root)[duuid]["layout"]["tiles"]
+        assert [t["image"] for t in tiles] == [
+            {"data_url": png, "alt": "Logo", "fit": "contain"},
+            {"data_url": svg, "alt": None, "fit": "cover"},
+            None,
+        ]
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = DashboardLayout.model_validate_json(dashboard.layout_json)
+            assert [t.image for t in stored.tiles] == [t.image for t in layout.tiles]
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "image tiles must round-trip byte-identically"
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)

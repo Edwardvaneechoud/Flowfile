@@ -2,7 +2,7 @@
 
 import type { AccessInfo } from "./sharing.types";
 
-export type DashboardTileType = "viz" | "text" | "separator" | "kpi" | "table" | "filter";
+export type DashboardTileType = "viz" | "text" | "separator" | "kpi" | "table" | "filter" | "image";
 export type TableSortDirection = "ascending" | "descending";
 
 export interface DashboardTableColumn {
@@ -66,6 +66,18 @@ export interface DashboardChartFormat {
   y_title?: string | null;
 }
 
+export type DashboardImageFit = "contain" | "cover";
+
+/** The picture an image tile shows, stored in the layout (`imageTile.ts` has the caps). */
+export interface DashboardTileImage {
+  /** A base64 `data:` URL of a PNG, JPEG, WebP, GIF or SVG image; only ever an `<img>` source. */
+  data_url: string;
+  /** What a screen reader reads; at most 300 characters. */
+  alt?: string | null;
+  /** "contain" (default) shows the whole image, never past its own size; "cover" fills and crops. */
+  fit?: DashboardImageFit;
+}
+
 export interface DashboardTile {
   /** Client-generated UUID, stable across saves so component state survives. */
   id: string;
@@ -99,6 +111,8 @@ export interface DashboardTile {
   table?: DashboardTableConfig | null;
   /** The layout filter a `type === "filter"` tile shows; that filter then leaves the strip. */
   filter_id?: string | null;
+  /** An image tile's picture; absent or null is an empty tile, blank to viewers. */
+  image?: DashboardTileImage | null;
   /** The layout tab the tile is on; absent or null on a layout without tabs (`dashboardTabs.ts`). */
   tab_id?: string | null;
   x: number;

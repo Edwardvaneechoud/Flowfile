@@ -9,7 +9,7 @@ export const NOTE_CLOSE_DELAY_MS = 200;
 
 const NOTE_TILE_TYPES: ReadonlySet<DashboardTileType> = new Set(["viz", "kpi", "table", "filter"]);
 
-/** Tiles that show data or a control take a note; text blocks and separators do not. */
+/** Tiles that show data or a control take a note; text blocks, separators and images do not. */
 export const takesNote = (type: DashboardTileType): boolean => NOTE_TILE_TYPES.has(type);
 
 /** The note a tile shows, or null when it has none (or is a type that takes none). */

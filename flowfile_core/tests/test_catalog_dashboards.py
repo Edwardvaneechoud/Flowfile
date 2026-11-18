@@ -6,8 +6,11 @@ covered by test_catalog_visualizations.py), so this suite stays focused
 on persistence and shape.
 """
 
+import base64
 import json
+import struct
 import time
+import zlib
 from unittest.mock import patch
 
 import pytest
@@ -557,7 +560,7 @@ class TestDashboardCRUD:
 
     def test_create_with_unknown_tile_type_returns_422(self, client):
         layout = _layout_with_two_tiles()
-        layout["tiles"].append({"id": "bad", "type": "image", "x": 0, "y": 6, "w": 12, "h": 1})
+        layout["tiles"].append({"id": "bad", "type": "video", "x": 0, "y": 6, "w": 12, "h": 1})
         resp = client.post("/catalog/dashboards", json={"name": "Bad tile", "layout": layout})
         assert resp.status_code == 422
 
@@ -999,6 +1002,115 @@ class TestDashboardFilterTiles:
         resp = client.post("/catalog/dashboards", json={"name": "Twice", "layout": layout})
         assert resp.status_code == 422
         assert "more than once" in resp.text
+
+
+def _png_bytes() -> bytes:
+    """A real 1x1 transparent PNG."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\x00"))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _data_url(data: bytes, mime: str = "image/png") -> str:
+    return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
+
+def _image_tile(tile_id: str = "img-1", image: dict | None = None, **extra) -> dict:
+    return {"id": tile_id, "type": "image", "image": image, "x": 0, "y": 6, "w": 8, "h": 4, **extra}
+
+
+def _padded_png(size: int) -> str:
+    """A data URL whose bytes start like a PNG and take ``size`` bytes, for the caps."""
+    signature = b"\x89PNG\r\n\x1a\n"
+    return _data_url(signature + b"\x00" * (size - len(signature)))
+
+
+class TestDashboardImageTiles:
+    def test_image_tile_round_trips_through_create_update_and_get(self, client):
+        png = _data_url(_png_bytes())
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_image_tile(image={"data_url": png, "alt": "Acme logo"}))
+        created = client.post("/catalog/dashboards", json={"name": "Logo", "layout": layout})
+        assert created.status_code == 201, created.text
+        dash_id = created.json()["id"]
+        tile = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"][2]
+        assert tile["type"] == "image"
+        assert tile["image"] == {"data_url": png, "alt": "Acme logo", "fit": "contain"}
+
+        svg = _data_url(b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"/>', "image/svg+xml")
+        layout["tiles"][2]["image"] = {"data_url": svg, "alt": None, "fit": "cover"}
+        layout["tiles"].append(_image_tile("img-2"))
+        updated = client.put(f"/catalog/dashboards/{dash_id}", json={"layout": layout})
+        assert updated.status_code == 200, updated.text
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert tiles[2]["image"] == {"data_url": svg, "alt": None, "fit": "cover"}
+        # An image tile still to be filled is stored empty.
+        assert (tiles[3]["type"], tiles[3]["image"]) == ("image", None)
+        assert [t["image"] for t in tiles[:2]] == [None, None]
+
+    def test_layout_saved_before_image_tiles_loads_unchanged(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old images", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert [t["image"] for t in tiles] == [None, None]
+
+    @pytest.mark.parametrize(
+        "data_url, message",
+        [
+            ("data:text/plain;base64,aGVsbG8=", "not a PNG, JPEG, WebP, GIF or SVG image"),
+            ("https://example.com/logo.png", "not a PNG, JPEG, WebP, GIF or SVG image"),
+            ("data:image/png,%89PNG", "not a PNG, JPEG, WebP, GIF or SVG image"),
+            ("data:image/png;base64,iVBORw0K!!!", "not valid base64"),
+            (_data_url(b"GIF89a" + b"\x00" * 16), "does not hold PNG data"),
+            (_data_url(b"<html><script>alert(1)</script></html>", "image/svg+xml"), "does not hold SVG data"),
+        ],
+    )
+    def test_an_image_that_is_not_one_returns_422(self, client, data_url, message):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_image_tile(image={"data_url": data_url}))
+        resp = client.post("/catalog/dashboards", json={"name": "Not an image", "layout": layout})
+        assert resp.status_code == 422
+        assert message in resp.text
+
+    def test_an_image_over_its_cap_returns_422_naming_both_sizes(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_image_tile(image={"data_url": _padded_png(300 * 1024 + 1)}))
+        resp = client.post("/catalog/dashboards", json={"name": "Big", "layout": layout})
+        assert resp.status_code == 422
+        assert "the image is 301 KB; an image may be at most 300 KB" in resp.text
+        layout["tiles"][2]["image"] = {"data_url": _padded_png(300 * 1024)}
+        resp = client.post("/catalog/dashboards", json={"name": "At the cap", "layout": layout})
+        assert resp.status_code == 201, resp.text
+
+    def test_a_dashboard_over_the_total_cap_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        image = {"data_url": _padded_png(299 * 1024)}
+        layout["tiles"] += [_image_tile(f"img-{i}", image=image, y=6 + i) for i in range(6)]
+        created = client.post("/catalog/dashboards", json={"name": "Six", "layout": layout})
+        assert created.status_code == 201, created.text
+        layout["tiles"].append(_image_tile("img-6", image=image, y=12))
+        resp = client.put(f"/catalog/dashboards/{created.json()['id']}", json={"layout": layout})
+        assert resp.status_code == 422
+        assert "the images on this dashboard take 2.1 MB; a dashboard may hold at most 2 MB" in resp.text
+
+    def test_alt_text_over_300_characters_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_image_tile(image={"data_url": _data_url(_png_bytes()), "alt": "x" * 301}))
+        resp = client.post("/catalog/dashboards", json={"name": "Long alt", "layout": layout})
+        assert resp.status_code == 422
 
 
 def _tabbed_layout() -> dict:

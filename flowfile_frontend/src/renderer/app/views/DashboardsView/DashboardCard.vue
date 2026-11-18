@@ -56,6 +56,13 @@
             alt=""
             loading="lazy"
           />
+          <img
+            v-else-if="rect.imageUrl"
+            :src="rect.imageUrl"
+            class="dash-preview-picture"
+            alt=""
+            loading="lazy"
+          />
           <i
             v-else-if="rect.type === 'viz'"
             class="fa-solid fa-chart-column dash-preview-glyph"
@@ -209,6 +216,15 @@ const thumbnailFor = (rect: PreviewRect): string | undefined =>
 }
 .dash-preview-viz {
   background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+.dash-preview-image {
+  background: transparent;
+}
+.dash-preview-picture {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 .dash-preview-kpi {
   background: color-mix(in srgb, var(--color-success) 30%, transparent);

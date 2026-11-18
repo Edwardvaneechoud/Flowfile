@@ -313,6 +313,10 @@ describe("tileSourceOf", () => {
     expect(tileSourceOf(tileOf({ type: "filter", filter_id: "f", viz_id: 3 }))).toBeNull();
   });
 
+  it("an image tile reads no data either", () => {
+    expect(tileSourceOf(tileOf({ type: "image", viz_id: 3, table_id: 5 }))).toBeNull();
+  });
+
   it("names the missing source", () => {
     expect(missingSourceText({ kind: "table", tableId: 5 })).toBe("Table #5 no longer exists.");
     expect(missingSourceText({ kind: "viz", vizId: 3 })).toBe("Visualization #3 no longer exists.");

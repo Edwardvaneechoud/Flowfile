@@ -4,6 +4,10 @@ Covers namespaces (Unity Catalog-style hierarchy), flow registrations,
 run history, favorites and follows.
 """
 
+import base64
+import binascii
+import math
+import re
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, TypedDict
 
@@ -967,6 +971,100 @@ class DashboardChartFormat(BaseModel):
     y_title: str | None = Field(default=None, max_length=120)
 
 
+DASHBOARD_IMAGE_MAX_BYTES = 300 * 1024
+DASHBOARD_IMAGES_TOTAL_MAX_BYTES = 2 * 1024 * 1024
+DASHBOARD_IMAGE_ALT_MAX_LENGTH = 300
+_DASHBOARD_IMAGE_TYPES = {
+    "image/png": "PNG",
+    "image/jpeg": "JPEG",
+    "image/webp": "WebP",
+    "image/gif": "GIF",
+    "image/svg+xml": "SVG",
+}
+_DATA_URL_HEADER = re.compile(r"data:([\w.+-]+/[\w.+-]+);base64")
+# The header and a little slack over the base64 of the largest image allowed.
+_MAX_DATA_URL_LENGTH = (DASHBOARD_IMAGE_MAX_BYTES + 2) // 3 * 4 + 64
+
+
+def _byte_size(n: int) -> str:
+    """A byte count as a user reads it, rounded up so a size just over a cap never reads as the cap:
+    ``412 KB``, ``2.1 MB``."""
+    if n > 1024 * 1024:
+        return f"{math.ceil(n * 10 / (1024 * 1024)) / 10:g} MB"
+    if n == 1024 * 1024:
+        return "1 MB"
+    return f"{max(1, math.ceil(n / 1024))} KB"
+
+
+def _base64_size(payload: str) -> int:
+    """The number of bytes a base64 payload decodes to, from its length alone."""
+    return len(payload) * 3 // 4 - (2 if payload.endswith("==") else 1 if payload.endswith("=") else 0)
+
+
+def _image_holds(mime: str, data: bytes) -> bool:
+    if mime == "image/png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if mime == "image/jpeg":
+        return data.startswith(b"\xff\xd8\xff")
+    if mime == "image/gif":
+        return data[:6] in (b"GIF87a", b"GIF89a")
+    if mime == "image/webp":
+        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    try:
+        return "<svg" in data.decode("utf-8-sig").lower()
+    except UnicodeDecodeError:
+        return False
+
+
+def _split_data_url(data_url: str) -> tuple[str | None, str]:
+    """A base64 data URL's media type (None when the header is not one) and its payload."""
+    comma = data_url.find(",", 0, 256)
+    match = _DATA_URL_HEADER.fullmatch(data_url[:comma]) if comma >= 0 else None
+    return (match.group(1) if match else None), data_url[comma + 1 :]
+
+
+def dashboard_image_size(data_url: str) -> int:
+    """The image bytes an image tile's ``data_url`` holds, from its length."""
+    return _base64_size(_split_data_url(data_url)[1])
+
+
+def validate_dashboard_image(data_url: str) -> str:
+    """Refuse a ``data_url`` that is not a base64 data URL of a PNG, JPEG, WebP, GIF or SVG image
+    holding at most ``DASHBOARD_IMAGE_MAX_BYTES``, or whose bytes do not decode to that type."""
+    mime, payload = _split_data_url(data_url)
+    if mime not in _DASHBOARD_IMAGE_TYPES:
+        raise ValueError("the image is not a PNG, JPEG, WebP, GIF or SVG image (expected a base64 data:image/... URL)")
+    size = _base64_size(payload)
+    if len(data_url) > _MAX_DATA_URL_LENGTH or size > DASHBOARD_IMAGE_MAX_BYTES:
+        raise ValueError(
+            f"the image is {_byte_size(size)}; an image may be at most {_byte_size(DASHBOARD_IMAGE_MAX_BYTES)}. "
+            "Choose a smaller image"
+        )
+    try:
+        data = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("the image could not be read: its data is not valid base64") from None
+    if not _image_holds(mime, data):
+        raise ValueError(f"the image does not hold {_DASHBOARD_IMAGE_TYPES[mime]} data, though it says it does")
+    return data_url
+
+
+class DashboardTileImage(BaseModel):
+    """The picture a ``type == "image"`` tile shows, stored in the layout itself.
+
+    ``data_url`` is a base64 ``data:`` URL of a PNG, JPEG, WebP, GIF or SVG image of at most
+    ``DASHBOARD_IMAGE_MAX_BYTES`` (the browser scales a large raster down before it is sent); a
+    layout holds at most ``DASHBOARD_IMAGES_TOTAL_MAX_BYTES`` of images in all. The frontend only
+    ever shows it as an ``<img>`` source, where an SVG runs no script. ``fit`` "contain" shows the
+    whole image, never larger than its own size; "cover" fills the tile and crops. ``alt`` is the
+    text a screen reader reads. It holds no machine-local id, so it travels in a project as is.
+    """
+
+    data_url: Annotated[str, AfterValidator(validate_dashboard_image)]
+    alt: str | None = Field(default=None, max_length=DASHBOARD_IMAGE_ALT_MAX_LENGTH)
+    fit: Literal["contain", "cover"] = "contain"
+
+
 class DashboardTile(BaseModel):
     """One tile on a dashboard canvas.
 
@@ -984,7 +1082,9 @@ class DashboardTile(BaseModel):
     configured by ``table`` (None = every column, default page size);
     ``"filter"`` shows the control of the layout filter whose ``id`` is
     ``filter_id`` (a layout-internal id, so it travels in a project as is);
-    a filter so placed is not shown in the filter strip, and it reads no data.
+    a filter so placed is not shown in the filter strip, and it reads no data;
+    ``"image"`` shows the picture in ``image`` (None: an empty tile, blank to viewers), reads no
+    data and takes no filter or note.
 
     ``note_md`` is an optional Markdown note a chart, KPI, table or filter tile shows behind
     an info icon (a definition or a caveat); it holds no machine-local id, so it travels in
@@ -999,7 +1099,7 @@ class DashboardTile(BaseModel):
     """
 
     id: str
-    type: Literal["viz", "text", "separator", "kpi", "table", "filter"] = "viz"
+    type: Literal["viz", "text", "separator", "kpi", "table", "filter", "image"] = "viz"
     viz_id: int | None = None
     table_id: int | None = None
     chart_index: int = 0
@@ -1016,6 +1116,7 @@ class DashboardTile(BaseModel):
     kpi: DashboardKpi | None = None
     table: DashboardTableConfig | None = None
     filter_id: str | None = None
+    image: DashboardTileImage | None = None
     tab_id: str | None = None
     x: int
     y: int
@@ -1149,6 +1250,16 @@ class DashboardLayout(BaseModel):
         default=None, ge=DASHBOARD_AUTO_REFRESH_MIN_SECONDS, le=DASHBOARD_AUTO_REFRESH_MAX_SECONDS
     )
     tabs: list[DashboardTab] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def _images_fit(self) -> "DashboardLayout":
+        total = sum(dashboard_image_size(t.image.data_url) for t in self.tiles if t.image is not None)
+        if total > DASHBOARD_IMAGES_TOTAL_MAX_BYTES:
+            raise ValueError(
+                f"the images on this dashboard take {_byte_size(total)}; a dashboard may hold at most "
+                f"{_byte_size(DASHBOARD_IMAGES_TOTAL_MAX_BYTES)} of images. Remove or replace an image"
+            )
+        return self
 
     @field_validator("color_assignments")
     @classmethod

@@ -376,6 +376,7 @@ export function useDashboardDatasources(
     if (!tile) return tileId;
     if (tile.type === "text") return "Text tile";
     if (tile.type === "separator") return "Separator";
+    if (tile.type === "image") return "Image";
     if (tile.type === "kpi" && tile.kpi?.label) return tile.kpi.label;
     if (tile.type === "table" && tile.title?.trim()) return tile.title.trim();
     const kind = KIND_LABEL[tile.type];

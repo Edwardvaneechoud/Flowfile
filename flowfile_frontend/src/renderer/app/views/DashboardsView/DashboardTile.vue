@@ -12,6 +12,9 @@
       'tile-separator-edit': isSeparator && mode === 'edit',
       'tile-filter': isFilter,
       'tile-filter-edit': isFilter && mode === 'edit',
+      'tile-image': isImage,
+      'tile-image-edit': isImage && mode === 'edit',
+      'tile-image-unset': isImage && !tile.image,
     }"
     :style="tileStyle"
     @contextmenu="onTileContextMenu"
@@ -125,6 +128,28 @@
             <el-dropdown-item v-if="isKpi" @click="kpiRef?.openSettings()">
               <el-icon><Odometer /></el-icon> Edit KPI
             </el-dropdown-item>
+            <template v-if="isImage">
+              <el-dropdown-item data-testid="image-replace" @click="imageRef?.chooseImage()">
+                <el-icon><Picture /></el-icon> {{ tile.image ? "Replace image…" : "Choose image…" }}
+              </el-dropdown-item>
+              <template v-if="tile.image">
+                <el-dropdown-item
+                  v-for="option in imageFitOptions"
+                  :key="option.value"
+                  :data-testid="`image-fit-${option.value}`"
+                  @click="setImageFit(option.value)"
+                >
+                  <el-icon
+                    ><Check
+                      :style="{ visibility: imageFit === option.value ? 'visible' : 'hidden' }"
+                  /></el-icon>
+                  {{ option.label }}
+                </el-dropdown-item>
+                <el-dropdown-item data-testid="image-alt" @click="editImageAlt">
+                  <el-icon><ChatLineSquare /></el-icon> Alt text…
+                </el-dropdown-item>
+              </template>
+            </template>
             <el-dropdown-item v-if="isSeparator || isKpi" @click="openStyleMenu">
               <el-icon><Brush /></el-icon> Style
             </el-dropdown-item>
@@ -278,6 +303,13 @@
         :filters="filters"
         :tile-datasource="tileDatasource"
         :refresh-nonce="refreshNonce"
+        @update:tile="emit('update:tile', $event)"
+      />
+      <ImageTile
+        v-else-if="isImage"
+        ref="imageRef"
+        :tile="tile"
+        :mode="mode"
         @update:tile="emit('update:tile', $event)"
       />
       <template v-else>
@@ -503,8 +535,11 @@
 //   - TextTile.vue (~62-88) and VizTile.vue (~91-108) child components
 //   - useDashboardTileViz composable: viz loading (~lines 155-234)
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, toRef, watch } from "vue";
+import { ElMessageBox } from "element-plus";
 import {
   Brush,
+  ChatLineSquare,
+  Check,
   Close,
   CopyDocument,
   Delete,
@@ -516,6 +551,7 @@ import {
   MoreFilled,
   Odometer,
   Operation,
+  Picture,
   Rank,
   Switch,
   Top,
@@ -536,6 +572,7 @@ import type {
   CatalogVisualization,
   ColumnStatsResponse,
   DashboardChartFormat,
+  DashboardImageFit,
   DashboardFilter,
   DashboardTab,
   DashboardTile,
@@ -547,6 +584,8 @@ import { applyTilePresentation } from "./chartPresentation";
 import DashboardFilterControl from "./DashboardFilterControl.vue";
 import { filterOfTile, targetsNoTile } from "./filterPlacement";
 import type { ValueSearchResult } from "./filterValues";
+import ImageTile from "./ImageTile.vue";
+import { IMAGE_ALT_MAX_LENGTH, withImageAlt, withImageFit } from "./imageTile";
 import KpiTile from "./KpiTile.vue";
 import TableTile from "./TableTile.vue";
 import { autoKpiLabel, isKpiComplete } from "./kpi";
@@ -613,10 +652,12 @@ const isKpi = computed(() => props.tile.type === "kpi");
 const isViz = computed(() => props.tile.type === "viz");
 const isTable = computed(() => props.tile.type === "table");
 const isFilter = computed(() => props.tile.type === "filter");
+const isImage = computed(() => props.tile.type === "image");
 const tileFilter = computed(() => filterOfTile(props.tile, props.filters));
 const rootEl = ref<HTMLElement | null>(null);
 const kpiRef = ref<InstanceType<typeof KpiTile> | null>(null);
 const tableRef = ref<InstanceType<typeof TableTile> | null>(null);
+const imageRef = ref<InstanceType<typeof ImageTile> | null>(null);
 
 // Both only ever grow, so their sum moves whenever either does.
 const refreshNonce = computed(() => (props.vizRefreshNonce ?? 0) + (props.dataRefreshNonce ?? 0));
@@ -628,8 +669,43 @@ const blankInView = computed(
     props.mode === "view" &&
     ((isKpi.value && (tileSourceOf(props.tile) == null || !isKpiComplete(props.tile.kpi))) ||
       (isTable.value && tableSource.value == null) ||
-      (isFilter.value && tileFilter.value == null)),
+      (isFilter.value && tileFilter.value == null) ||
+      (isImage.value && !props.tile.image)),
 );
+
+// ---- image branch ----
+const imageFitOptions: { value: DashboardImageFit; label: string }[] = [
+  { value: "contain", label: "Fit whole image" },
+  { value: "cover", label: "Fill the tile" },
+];
+const imageFit = computed(() => props.tile.image?.fit ?? "contain");
+
+const setImageFit = (fit: DashboardImageFit) => {
+  const next = withImageFit(props.tile, fit);
+  if (next) emit("update:tile", next);
+};
+
+const editImageAlt = async () => {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      "Describe the image for people who cannot see it. Leave it empty for a decorative image.",
+      "Alt text",
+      {
+        inputValue: props.tile.image?.alt ?? "",
+        inputPlaceholder: "e.g. Acme company logo",
+        inputValidator: (v: string) =>
+          (v ?? "").trim().length <= IMAGE_ALT_MAX_LENGTH ||
+          `At most ${IMAGE_ALT_MAX_LENGTH} characters`,
+        confirmButtonText: "Save",
+        cancelButtonText: "Cancel",
+      },
+    );
+    const next = withImageAlt(props.tile, value ?? "");
+    if (next) emit("update:tile", next);
+  } catch {
+    // cancelled
+  }
+};
 
 const downloadTableCsv = () => tableRef.value?.downloadCsv(headerTitle.value);
 
@@ -1035,6 +1111,7 @@ const onTileContextMenu = (e: MouseEvent) => {
     isViz.value ||
     isTable.value ||
     isFilter.value ||
+    isImage.value ||
     props.mode !== "edit" ||
     textEditing.value
   ) {
@@ -1187,6 +1264,23 @@ onBeforeUnmount(() => {
 }
 .tile-filter {
   background: transparent;
+}
+/* Part of the page, like a text block: no card and no background, in the editor too. */
+.tile-image {
+  background: transparent;
+}
+.tile-image-edit {
+  border-radius: 6px;
+  outline: 1px dashed transparent;
+  outline-offset: -1px;
+  transition: outline-color 0.12s ease;
+}
+.tile-image-edit:hover,
+.tile-image-edit.tile-image-unset {
+  outline-color: var(--el-border-color);
+}
+.tile-image-edit:hover {
+  outline-color: var(--el-color-primary-light-5);
 }
 .tile-filter .tile-body {
   padding: 4px 6px;

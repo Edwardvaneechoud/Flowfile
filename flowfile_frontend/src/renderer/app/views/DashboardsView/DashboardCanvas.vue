@@ -11,6 +11,7 @@
     @dragover="onCanvasDragOver"
     @dragleave="onCanvasDragLeave"
     @drop="onCanvasDrop"
+    @load.capture="onImageLoad"
   >
     <div v-if="!layout.tiles.length && mode === 'view'" class="canvas-empty">
       <el-empty
@@ -39,7 +40,7 @@
         :y="item.y"
         :w="item.w"
         :h="item.h"
-        :min-w="tileById[item.i]?.type === 'separator' ? 1 : Math.max(2, layout.grid.cols / 6)"
+        :min-w="minWidth(tileById[item.i]?.type)"
         :min-h="['viz', 'kpi', 'table', 'filter'].includes(tileById[item.i]?.type) ? 2 : 1"
         drag-allow-from=".tile-handle"
       >
@@ -82,10 +83,12 @@ import {
   type ComponentPublicInstance,
 } from "vue";
 import { GridItem, GridLayout } from "grid-layout-plus";
+import { ElMessage } from "element-plus";
 import DashboardTile from "./DashboardTile.vue";
 import {
   useDashboardDragAndDrop,
   FILTER_MIME,
+  IMAGE_MIME,
   KPI_MIME,
   NEW_FILTER_MIME,
   SEPARATOR_MIME,
@@ -96,8 +99,18 @@ import {
 import { computeDropCell } from "./gridDrop";
 import { FILTER_TILE_DEFAULT_SIZE, moveFilterToBar } from "./filterPlacement";
 import type { ValueSearchResult } from "./filterValues";
-import { STACK_BREAKPOINT_PX, stackTiles } from "./stackedLayout";
+import { STACK_BREAKPOINT_PX, stackTiles, type ImageSize } from "./stackedLayout";
 import { hasTabs } from "./dashboardTabs";
+import {
+  IMAGE_DEFAULT_SIZE,
+  NOT_AN_IMAGE_MESSAGE,
+  draggedFiles,
+  imageBudgetError,
+  imageBytesOf,
+  imageMimeOf,
+} from "./imageTile";
+import { ImageFileError, readImageFile } from "./readImageFile";
+import { useDashboardImageBudget } from "../../composables/useDashboardImageBudget";
 import type {
   ColumnStatsResponse,
   DashboardFilter,
@@ -147,6 +160,8 @@ const emit = defineEmits<{
   ): void;
   /** The Insert list's Filter was dropped on the grid: a filter still to be made goes here. */
   (e: "add-filter-at", payload: { x: number; y: number }): void;
+  /** The Insert list's Image (no data URL), or an image file read and checked, dropped on the grid. */
+  (e: "add-image-at", payload: { x: number; y: number; dataUrl: string | null }): void;
   /** A filter chip was dropped on the grid. */
   (e: "place-filter-at", payload: { filterId: string; x: number; y: number }): void;
   /** A filter tile's control changed its filter; the view owns where filters live. */
@@ -162,6 +177,7 @@ const {
   isDraggingSeparator,
   isDraggingKpi,
   isDraggingTable,
+  isDraggingImage,
   isDraggingFilter,
   isDraggingNewFilter,
 } = useDashboardDragAndDrop();
@@ -176,6 +192,7 @@ const dragHasOurPayload = (e: DragEvent): boolean => {
     isDraggingSeparator.value ||
     isDraggingKpi.value ||
     isDraggingTable.value ||
+    isDraggingImage.value ||
     isDraggingFilter.value ||
     isDraggingNewFilter.value
   ) {
@@ -189,16 +206,22 @@ const dragHasOurPayload = (e: DragEvent): boolean => {
       types.includes(SEPARATOR_MIME) ||
       types.includes(KPI_MIME) ||
       types.includes(TABLE_MIME) ||
+      types.includes(IMAGE_MIME) ||
       types.includes(FILTER_MIME) ||
       types.includes(NEW_FILTER_MIME))
   );
 };
 
+// Files from the computer: an image becomes a tile, anything else is refused on drop with a message.
+const dragHasFiles = (e: DragEvent): boolean =>
+  !!e.dataTransfer &&
+  draggedFiles(Array.from(e.dataTransfer.types), Array.from(e.dataTransfer.items)) !== "none";
+
 const onCanvasDragOver = (e: DragEvent) => {
   if (props.mode !== "edit") return;
   // Payload is unreadable during dragover, so gate on our shared flags (and the
-  // advertised MIME types) to ignore unrelated file/text drags.
-  if (!dragHasOurPayload(e)) return;
+  // advertised MIME types) to ignore unrelated text drags.
+  if (!dragHasOurPayload(e) && !dragHasFiles(e)) return;
   e.preventDefault(); // required so the subsequent `drop` fires
   if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
   dragOver.value = true;
@@ -225,6 +248,7 @@ const onCanvasDrop = (e: DragEvent) => {
   const isSeparator = dt.types.includes(SEPARATOR_MIME);
   const isKpi = dt.types.includes(KPI_MIME);
   const isTable = dt.types.includes(TABLE_MIME);
+  const isImage = dt.types.includes(IMAGE_MIME);
   const filterId = dt.getData(FILTER_MIME);
   const isNewFilter = dt.types.includes(NEW_FILTER_MIME);
   const orientation: SeparatorOrientation =
@@ -232,23 +256,43 @@ const onCanvasDrop = (e: DragEvent) => {
   const rawViz = dt.getData(VIZ_MIME);
   const vizId = rawViz ? Number(rawViz) : NaN;
   const isViz = Number.isFinite(vizId);
-  if (!isText && !isSeparator && !isKpi && !isTable && !isViz && !filterId && !isNewFilter) return;
+  const files = dragHasOurPayload(e) ? [] : Array.from(dt.files);
+  if (
+    !isText &&
+    !isSeparator &&
+    !isKpi &&
+    !isTable &&
+    !isImage &&
+    !isViz &&
+    !filterId &&
+    !isNewFilter &&
+    !files.length
+  ) {
+    return;
+  }
   e.preventDefault();
+  const imageFile = files.find((f) => imageMimeOf(f) !== null);
+  if (files.length && !imageFile) {
+    ElMessage.info(NOT_AN_IMAGE_MESSAGE);
+    return;
+  }
 
   // Text and horizontal separators span the full width, viz and table tiles half,
-  // KPIs and filters a quarter, vertical separators two columns; the width drives the x-clamp
+  // KPIs and filters a quarter, images a sixth, vertical separators two columns; the width drives the x-clamp
   // so a tile never overflows the grid.
   const cols = props.layout.grid.cols;
   const w =
-    isViz || isTable
-      ? cols / 2
-      : filterId || isNewFilter
-        ? FILTER_TILE_DEFAULT_SIZE.w
-        : isKpi
-          ? cols / 4
-          : isSeparator && orientation === "vertical"
-            ? 2
-            : cols;
+    imageFile || isImage
+      ? IMAGE_DEFAULT_SIZE.w
+      : isViz || isTable
+        ? cols / 2
+        : filterId || isNewFilter
+          ? FILTER_TILE_DEFAULT_SIZE.w
+          : isKpi
+            ? cols / 4
+            : isSeparator && orientation === "vertical"
+              ? 2
+              : cols;
   const layoutEl =
     (gridRef.value?.$el as HTMLElement | undefined) ??
     canvasRef.value?.querySelector<HTMLElement>(".vgl-layout") ??
@@ -267,7 +311,9 @@ const onCanvasDrop = (e: DragEvent) => {
       w,
     });
   }
-  if (filterId) emit("place-filter-at", { filterId, x: cell.x, y: cell.y });
+  if (imageFile) void addImageAt(imageFile, cell);
+  else if (isImage) emit("add-image-at", { ...cell, dataUrl: null });
+  else if (filterId) emit("place-filter-at", { filterId, x: cell.x, y: cell.y });
   else if (isNewFilter) emit("add-filter-at", { x: cell.x, y: cell.y });
   else if (isText) emit("add-text-at", { x: cell.x, y: cell.y });
   else if (isSeparator) emit("add-separator-at", { x: cell.x, y: cell.y, orientation });
@@ -275,6 +321,20 @@ const onCanvasDrop = (e: DragEvent) => {
   else if (isTable) emit("add-table-at", { x: cell.x, y: cell.y });
   else emit("add-viz-at", { vizId, x: cell.x, y: cell.y });
 };
+
+const imageBudget = useDashboardImageBudget();
+
+const addImageAt = async (file: File, cell: { x: number; y: number }) => {
+  try {
+    const dataUrl = await readImageFile(file, imageBudget(null));
+    emit("add-image-at", { ...cell, dataUrl });
+  } catch (err) {
+    ElMessage.warning(err instanceof ImageFileError ? err.message : "The image could not be read.");
+  }
+};
+
+const minWidth = (type: DashboardTileType["type"] | undefined): number =>
+  type === "separator" ? 1 : type === "image" ? 2 : Math.max(2, props.layout.grid.cols / 6);
 
 const vizRefreshNonceFor = (vizId: number): number => props.vizRefreshNonces?.[vizId] ?? 0;
 
@@ -311,6 +371,18 @@ const stacked = computed(
   () => props.mode === "view" && canvasWidth.value > 0 && canvasWidth.value < STACK_BREAKPOINT_PX,
 );
 
+// Image tiles' pictures as drawn; `load` does not bubble, so the canvas listens in capture.
+const imageSizes = ref<Record<string, ImageSize>>({});
+
+const onImageLoad = (e: Event) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.dataset.tileId) return;
+  const size = { width: img.naturalWidth, height: img.naturalHeight };
+  const known = imageSizes.value[img.dataset.tileId];
+  if (known?.width === size.width && known?.height === size.height) return;
+  imageSizes.value = { ...imageSizes.value, [img.dataset.tileId]: size };
+};
+
 const buildGridItems = (): GridItemModel[] =>
   stacked.value
     ? stackTiles(props.layout.tiles, props.layout.grid.cols, {
@@ -318,6 +390,7 @@ const buildGridItems = (): GridItemModel[] =>
         widthPx: canvasWidth.value,
         rowHeight: props.layout.grid.row_height,
         margin: 8,
+        imageSizes: imageSizes.value,
       })
     : props.layout.tiles.map((t) => ({ i: t.id, x: t.x, y: t.y, w: t.w, h: t.h }));
 
@@ -340,7 +413,7 @@ const gridItems = ref<GridItemModel[]>(buildGridItems());
 // its `layout` prop is reassigned to an equivalent value, especially with
 // vertical-compact on).
 watch(
-  [() => props.layout.tiles, () => props.layout.filters, stacked],
+  [() => props.layout.tiles, () => props.layout.filters, stacked, imageSizes],
   () => {
     const next = buildGridItems();
     if (sameGrid(gridItems.value, next)) return;
@@ -381,6 +454,13 @@ const onDuplicateTile = (id: string) => {
   const source = props.layout.tiles.find((t) => t.id === id);
   // A filter shows in one place only, so its tile is never copied.
   if (!source || source.type === "filter") return;
+  if (source.image) {
+    const error = imageBudgetError(imageBudget(null), imageBytesOf([source]));
+    if (error) {
+      ElMessage.warning(error);
+      return;
+    }
+  }
   const freeRow = Math.max(...props.layout.tiles.map((t) => t.y + t.h));
   const copy: DashboardTileType = {
     ...source,
@@ -392,6 +472,7 @@ const onDuplicateTile = (id: string) => {
           sort_by: [...source.table.sort_by],
         }
       : source.table,
+    image: source.image ? { ...source.image } : source.image,
     id: newTileId(),
     y: freeRow,
   };

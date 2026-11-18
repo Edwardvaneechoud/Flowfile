@@ -103,6 +103,7 @@
           @add-separator="onAddSeparatorTile"
           @add-kpi="onAddKpiTile"
           @add-table="onAddTableTile"
+          @add-image="onAddImageTile"
           @add-filter="onAddFilterTile"
           @create="sourcePickerOpen = true"
         />
@@ -161,6 +162,7 @@
             @add-separator-at="onAddSeparatorAt"
             @add-kpi-at="onAddKpiAt"
             @add-table-at="onAddTableAt"
+            @add-image-at="onAddImageAt"
             @place-filter-at="onPlaceFilterAt"
             @add-filter-at="onAddFilterAt"
             @update:filter="onFilterChange"
@@ -232,7 +234,7 @@ import { classifyAutosaveError } from "../../composables/autosaveEngine";
 import { createLocalDraft, type LocalDraft } from "../../composables/localDraft";
 import { createDashboardCreation, newDashboardName, type CreationPhase } from "./dashboardCreation";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
-import { toPlainJson } from "../../utils/structuredClone";
+import { toPlainJson, toPlainShared } from "../../utils/structuredClone";
 import SaveStatusIndicator from "../../components/common/SaveStatusIndicator.vue";
 import AutosaveConflictBanner from "../../components/common/AutosaveConflictBanner.vue";
 import DashboardCanvas from "./DashboardCanvas.vue";
@@ -276,6 +278,8 @@ import {
   tabTitleOfTile,
 } from "./dashboardTabs";
 import { KPI_DEFAULT_SIZE } from "./kpi";
+import { IMAGE_DEFAULT_SIZE } from "./imageTile";
+import { provideDashboardImageBudget } from "../../composables/useDashboardImageBudget";
 import { AUTO_REFRESH_CHOICES, autoRefreshLabel, savedAutoRefresh } from "./autoRefresh";
 import { TABLE_DEFAULT_SIZE } from "./tableTile";
 import {
@@ -451,7 +455,8 @@ const currentSnapshot = (): DashboardSnapshot | null =>
     ? {
         name: nameDraft.value,
         description: descriptionDraft.value,
-        layout: withoutColorAssignments(toPlainJson(store.current.layout) as DashboardLayout),
+        // Shared strings: a hundred snapshots of an image's data URL hold one copy of its bytes.
+        layout: withoutColorAssignments(toPlainShared(store.current.layout)),
       }
     : null;
 
@@ -634,7 +639,7 @@ const onDeleteFilter = (filterId: string) => {
 const applySnapshot = (snapshot: DashboardSnapshot) => {
   nameDraft.value = snapshot.name;
   descriptionDraft.value = snapshot.description;
-  store.setLayout(pruneFilterTargets(toPlainJson(snapshot.layout)));
+  store.setLayout(pruneFilterTargets(toPlainShared(snapshot.layout)));
   const applied = currentSnapshot();
   if (applied) history.replacePresent(applied);
   markChanged();
@@ -835,6 +840,25 @@ const buildTableTile = (x: number, y: number): DashboardTile => ({
 });
 
 const onAddTableTile = () => addToActiveTab((row) => buildTableTile(0, row));
+
+provideDashboardImageBudget(() => store.current?.layout.tiles ?? []);
+
+// Empty from the Insert list; filled when a file from the computer was dropped on the canvas.
+const buildImageTile = (x: number, y: number, dataUrl: string | null): DashboardTile => ({
+  id: generateTileId(),
+  type: "image",
+  viz_id: null,
+  chart_index: 0,
+  image: dataUrl ? { data_url: dataUrl, alt: null, fit: "contain" } : null,
+  x,
+  y,
+  ...IMAGE_DEFAULT_SIZE,
+});
+
+const onAddImageTile = () => addToActiveTab((row) => buildImageTile(0, row, null));
+
+const onAddImageAt = ({ x, y, dataUrl }: { x: number; y: number; dataUrl: string | null }) =>
+  addToActiveTab((row) => buildImageTile(x, row, dataUrl), y);
 
 const onAddTableAt = ({ x, y }: { x: number; y: number }) =>
   addToActiveTab((row) => buildTableTile(x, row), y);

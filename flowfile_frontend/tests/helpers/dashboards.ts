@@ -1,8 +1,54 @@
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { deflateSync } from "zlib";
 import type { APIRequestContext } from "@playwright/test";
 import { API_URL, authHeaders } from "./api";
+
+const crcTable = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+const crc32 = (bytes: Buffer): number => {
+  let c = 0xffffffff;
+  for (const b of bytes) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+const pngChunk = (kind: string, data: Buffer): Buffer => {
+  const body = Buffer.concat([Buffer.from(kind, "ascii"), data]);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([length, body, crc]);
+};
+
+/** A `width` x `height` RGBA PNG: a blue square on a transparent background, built in the test. */
+export function pngBuffer(width: number, height: number): Buffer {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.writeUInt8(8, 8);
+  header.writeUInt8(6, 9);
+  const rows: Buffer[] = [];
+  for (let y = 0; y < height; y++) {
+    const row = Buffer.alloc(1 + width * 4);
+    for (let x = 0; x < width; x++) {
+      const inside = x > width / 4 && x < (3 * width) / 4 && y > height / 4 && y < (3 * height) / 4;
+      if (inside) row.set([37, 99, 235, 255], 1 + x * 4);
+    }
+    rows.push(row);
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", deflateSync(Buffer.concat(rows))),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 const dimension = (fid: string) => ({
   fid,

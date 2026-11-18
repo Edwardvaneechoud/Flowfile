@@ -1,4 +1,5 @@
 import type { DashboardFilter, DashboardTile } from "../../types";
+import { dataUrlInfo, imageTileShows } from "./imageTile";
 import { isKpiComplete } from "./kpi";
 
 /** Below this canvas width (px) the viewer lays its tiles out in one column. */
@@ -21,6 +22,14 @@ export interface StackOptions {
   /** The grid's row height and margin (px), to turn a text's estimated height into rows. */
   rowHeight?: number;
   margin?: number;
+  /** The drawn pictures' own sizes by tile id, so an image tile takes the height its picture needs. */
+  imageSizes?: Record<string, ImageSize>;
+}
+
+/** A picture's own size in px (`naturalWidth`/`naturalHeight`). */
+export interface ImageSize {
+  width: number;
+  height: number;
 }
 
 const KPI_ROWS = { min: 3, max: 4 };
@@ -45,9 +54,35 @@ function showsInColumn(tile: DashboardTile, filterIds: Set<string> | null): bool
       return hasSource(tile);
     case "filter":
       return !!tile.filter_id && (filterIds == null || filterIds.has(tile.filter_id));
+    case "image":
+      return imageTileShows(tile);
     default:
       return true;
   }
+}
+
+/**
+ * Rows an image tile needs to show its picture at the column's width: "Fit whole image" draws a
+ * raster at most its own width, an SVG and "Fill the tile" at the column's. Never more rows than
+ * the tile has in one column now, and that many while the picture's size is not known yet.
+ */
+export function imageRows(
+  tile: DashboardTile,
+  size: ImageSize | undefined,
+  widthPx: number,
+  rowHeight: number,
+  margin: number,
+): number {
+  const most = clamp(tile.h, 1, CHART_ROWS);
+  if (!size || !(size.width > 0) || !(size.height > 0)) return most;
+  // The grid insets a full-width tile by its margin on both sides; the tile body pads 4px.
+  const column = Math.max(1, widthPx - 2 * margin - 8);
+  const fills =
+    tile.image?.fit === "cover" ||
+    dataUrlInfo(tile.image?.data_url ?? "")?.mime === "image/svg+xml";
+  const drawnWidth = fills ? column : Math.min(size.width, column);
+  const px = (drawnWidth * size.height) / size.width + 8;
+  return clamp(Math.ceil((px + margin) / (rowHeight + margin)), 1, most);
 }
 
 /** Rows a text tile's rendered markdown needs at this width; an estimate, the tile scrolls past it. */
@@ -74,7 +109,9 @@ export function textRows(
 
 function stackedRows(
   tile: DashboardTile,
-  options: Required<Omit<StackOptions, "filters">>,
+  options: Required<Omit<StackOptions, "filters" | "imageSizes">> & {
+    imageSizes?: Record<string, ImageSize>;
+  },
 ): number {
   switch (tile.type) {
     case "kpi":
@@ -87,6 +124,14 @@ function stackedRows(
       return FILTER_ROWS;
     case "separator":
       return 1;
+    case "image":
+      return imageRows(
+        tile,
+        options.imageSizes?.[tile.id],
+        options.widthPx,
+        options.rowHeight,
+        options.margin,
+      );
     case "text":
       return textRows(tile.text_md ?? "", options.widthPx, options.rowHeight, options.margin);
     default:
@@ -109,6 +154,7 @@ export function stackTiles(
     widthPx: options.widthPx ?? 360,
     rowHeight: options.rowHeight ?? 40,
     margin: options.margin ?? 8,
+    imageSizes: options.imageSizes,
   };
   const ordered = tiles
     .filter((t) => showsInColumn(t, filterIds))

@@ -6,6 +6,8 @@ export const TEXT_MIME = "application/flowfile-text";
 export const SEPARATOR_MIME = "application/flowfile-separator";
 export const KPI_MIME = "application/flowfile-kpi";
 export const TABLE_MIME = "application/flowfile-table";
+/** The Insert list's Image: an empty image tile (a file from the computer is a plain file drop). */
+export const IMAGE_MIME = "application/flowfile-image";
 /** A strip filter chip dragged onto the canvas; the payload is the filter's id. */
 export const FILTER_MIME = "application/flowfile-dashboard-filter";
 /** The Insert list's Filter: a filter still to be made, so the payload carries no id. */
@@ -17,6 +19,7 @@ const isDraggingText = ref(false);
 const isDraggingSeparator = ref(false);
 const isDraggingKpi = ref(false);
 const isDraggingTable = ref(false);
+const isDraggingImage = ref(false);
 const isDraggingFilter = ref(false);
 const isDraggingNewFilter = ref(false);
 
@@ -27,6 +30,7 @@ export function useDashboardDragAndDrop() {
     isDraggingSeparator.value = false;
     isDraggingKpi.value = false;
     isDraggingTable.value = false;
+    isDraggingImage.value = false;
     isDraggingFilter.value = false;
     isDraggingNewFilter.value = false;
     draggedVizId.value = null;
@@ -73,6 +77,12 @@ export function useDashboardDragAndDrop() {
     armDragEnd(event);
   };
 
+  const onImageDragStart = (event: DragEvent) => {
+    event.dataTransfer?.setData(IMAGE_MIME, "1");
+    isDraggingImage.value = true;
+    armDragEnd(event);
+  };
+
   const onNewFilterDragStart = (event: DragEvent) => {
     event.dataTransfer?.setData(NEW_FILTER_MIME, "1");
     isDraggingNewFilter.value = true;
@@ -94,6 +104,7 @@ export function useDashboardDragAndDrop() {
     isDraggingSeparator,
     isDraggingKpi,
     isDraggingTable,
+    isDraggingImage,
     isDraggingFilter,
     isDraggingNewFilter,
     onVizDragStart,
@@ -101,6 +112,7 @@ export function useDashboardDragAndDrop() {
     onSeparatorDragStart,
     onKpiDragStart,
     onTableDragStart,
+    onImageDragStart,
     onFilterDragStart,
     onNewFilterDragStart,
     onDragEnd,
