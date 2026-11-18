@@ -174,7 +174,7 @@ export const dashboardHelp: PageHelpContent = {
       title: "Editor workflow",
       icon: "fa-solid fa-pen-ruler",
       description:
-        "In edit mode the sidebar lets you insert tiles, the filter bar manages dashboard-wide filters, and the toolbar saves or discards your changes.",
+        "In edit mode the sidebar lets you insert tiles, the filter bar manages dashboard-wide filters, and the toolbar holds undo, redo and revert. Every change saves itself.",
       features: [
         {
           icon: "fa-solid fa-plus",
@@ -196,17 +196,17 @@ export const dashboardHelp: PageHelpContent = {
         },
         {
           icon: "fa-solid fa-floppy-disk",
-          title: "Save & discard",
+          title: "Autosave",
           description:
-            "Edits are local until you click Save. The unsaved-changes badge tracks divergence from the persisted copy.",
+            "Changes save automatically; the dot beside the name says whether they are saved. A new dashboard is created by its first change, so a New dashboard you leave untouched leaves nothing behind. Revert takes the dashboard back to how it was when you opened it.",
         },
       ],
       tips: [
         {
           type: "warning",
-          title: "Closing with unsaved changes prompts for confirmation",
+          title: "Leaving with changes that could not be saved asks first",
           description:
-            "Leaving the editor with the unsaved-changes badge active asks you to confirm before discarding.",
+            "If a save failed, leaving the editor asks you to confirm before the changes are lost.",
         },
         {
           type: "success",

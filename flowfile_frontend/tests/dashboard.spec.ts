@@ -220,6 +220,7 @@ test.describe("Dashboards", () => {
       const insert = page.getByTestId("insert-filter");
       await expect(insert).toBeVisible({ timeout: 30000 });
       await expect(page.getByTestId("dashboard-undo")).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Create dashboard" })).toHaveCount(0);
 
       // Cancelling the dialog adds nothing and records nothing.
       await insert.click();
@@ -240,6 +241,9 @@ test.describe("Dashboards", () => {
       await expect(dialog.getByTestId("filter-no-source-tile-hint")).toBeVisible();
       await dialog.getByRole("button", { name: "Add", exact: true }).click();
       await expect(dialog).toBeHidden();
+      // The filter is the first edit: it creates the dashboard, under the edit route.
+      await expect(page).toHaveURL(/#\/main\/dashboards\/\d+\/edit/, { timeout: 20000 });
+      createdId = Number(/dashboards\/(\d+)\/edit/.exec(page.url())?.[1]);
 
       const tile = page.locator(".tile-filter");
       await expect(tile).toHaveCount(1);
@@ -262,9 +266,21 @@ test.describe("Dashboards", () => {
       await expect(tile).toHaveCount(1);
 
       await page.getByPlaceholder("Dashboard name").fill(name);
-      await page.getByRole("button", { name: "Create dashboard" }).click();
-      await expect(page).toHaveURL(/#\/main\/dashboards\/\d+\/edit/, { timeout: 20000 });
-      createdId = Number(/dashboards\/(\d+)\/edit/.exec(page.url())?.[1]);
+      await expect
+        .poll(
+          async () =>
+            (
+              await (
+                await request.get(`${API_URL}/catalog/dashboards/${createdId}`, { headers })
+              ).json()
+            ).name,
+          { timeout: 20000 },
+        )
+        .toBe(name);
+      await expect(page.locator(".editor-toolbar .save-dot")).toHaveAttribute(
+        "aria-label",
+        /^All changes saved/,
+      );
 
       await page.reload();
       await page.waitForLoadState("load");
@@ -286,6 +302,111 @@ test.describe("Dashboards", () => {
     } finally {
       if (createdId != null) {
         await request.delete(`${API_URL}/catalog/dashboards/${createdId}`, { headers });
+      }
+    }
+  });
+
+  test("a new dashboard is created by its first edit, and one left untouched leaves nothing behind", async ({
+    page,
+    request,
+  }) => {
+    const headers = authHeaders(token);
+    const listIds = async (): Promise<number[]> =>
+      (await (await request.get(`${API_URL}/catalog/dashboards`, { headers })).json()).map(
+        (d: { id: number }) => d.id,
+      );
+    const before = new Set(await listIds());
+    const newIds = async () => (await listIds()).filter((id) => !before.has(id));
+    try {
+      await login(page, token, "#/main/catalog?tab=visuals&kind=dashboards");
+      const cards = page.locator(".dash-card");
+      await expect(cards).toHaveCount(before.size, { timeout: 30000 });
+
+      await page.getByRole("button", { name: "New dashboard" }).first().click();
+      const nameInput = page.getByPlaceholder("Dashboard name");
+      await expect(nameInput).toHaveValue(/^Untitled dashboard/, { timeout: 30000 });
+      await expect(page.getByRole("button", { name: "Create dashboard" })).toHaveCount(0);
+      const dot = page.locator(".editor-toolbar .save-dot");
+      await expect(dot).toHaveAttribute("aria-label", "Changes save automatically");
+
+      // Leaving without an edit asks nothing and sends nothing.
+      await page.locator(".editor-toolbar .back-btn").click();
+      await expect(cards).toHaveCount(before.size, { timeout: 30000 });
+      await expect(page.locator(".el-message-box")).toHaveCount(0);
+      expect(await newIds()).toEqual([]);
+
+      await page.getByRole("button", { name: "New dashboard" }).first().click();
+      await expect(nameInput).toHaveValue(/^Untitled dashboard/, { timeout: 30000 });
+      const opened = await nameInput.inputValue();
+      // Typing the name is the one edit; the URL changes under the field without taking focus.
+      await nameInput.click();
+      await nameInput.press("End");
+      await nameInput.pressSequentially(" for Q3", { delay: 40 });
+      await expect(page).toHaveURL(/#\/main\/dashboards\/\d+\/edit/, { timeout: 20000 });
+      await expect(nameInput).toBeFocused();
+      await expect(nameInput).toHaveValue(`${opened} for Q3`);
+      await expect(dot).toHaveAttribute("aria-label", /^All changes saved/, { timeout: 20000 });
+      const createdId = Number(/dashboards\/(\d+)\/edit/.exec(page.url())?.[1]);
+      expect(await newIds()).toEqual([createdId]);
+
+      await page.reload();
+      await page.waitForLoadState("load");
+      await expect(nameInput).toHaveValue(`${opened} for Q3`, { timeout: 30000 });
+      expect(await newIds()).toEqual([createdId]);
+
+      await login(page, token, "#/main/catalog?tab=visuals&kind=dashboards");
+      await expect(cards).toHaveCount(before.size + 1, { timeout: 30000 });
+      await expect(cards.filter({ hasText: `${opened} for Q3` })).toHaveCount(1);
+    } finally {
+      for (const id of await newIds()) {
+        await request.delete(`${API_URL}/catalog/dashboards/${id}`, { headers });
+      }
+    }
+  });
+
+  test("a create that fails keeps the work, asks before leaving and is retried", async ({
+    page,
+    request,
+  }) => {
+    const headers = authHeaders(token);
+    const listIds = async (): Promise<number[]> =>
+      (await (await request.get(`${API_URL}/catalog/dashboards`, { headers })).json()).map(
+        (d: { id: number }) => d.id,
+      );
+    const before = new Set(await listIds());
+    const name = `e2e failed create ${Date.now()}`;
+    const failCreate = (route: import("@playwright/test").Route) =>
+      route.request().method() === "POST" ? route.abort() : route.continue();
+    try {
+      await page.route(/\/catalog\/dashboards\/?$/, failCreate);
+      await login(page, token, "#/main/dashboards/new");
+      const nameInput = page.getByPlaceholder("Dashboard name");
+      await expect(nameInput).toHaveValue(/^Untitled dashboard/, { timeout: 30000 });
+      await nameInput.fill(name);
+      const dot = page.locator(".editor-toolbar .save-dot");
+      await expect(dot).toHaveAttribute("aria-label", "Saving automatically…");
+      await expect(page).toHaveURL(/#\/main\/dashboards\/new/);
+
+      await page.locator(".editor-toolbar .back-btn").click();
+      const confirm = page.locator(".el-message-box", {
+        hasText: "Some changes couldn't be saved. Leave anyway and lose them?",
+      });
+      await expect(confirm).toBeVisible({ timeout: 20000 });
+      await confirm.getByRole("button", { name: "Stay" }).click();
+      await expect(nameInput).toHaveValue(name);
+
+      await page.unroute(/\/catalog\/dashboards\/?$/, failCreate);
+      await expect(page).toHaveURL(/#\/main\/dashboards\/\d+\/edit/, { timeout: 30000 });
+      await expect(dot).toHaveAttribute("aria-label", /^All changes saved/, { timeout: 20000 });
+      const created = (await listIds()).filter((id) => !before.has(id));
+      expect(created).toHaveLength(1);
+      const saved = await (
+        await request.get(`${API_URL}/catalog/dashboards/${created[0]}`, { headers })
+      ).json();
+      expect(saved.name).toBe(name);
+    } finally {
+      for (const id of (await listIds()).filter((i) => !before.has(i))) {
+        await request.delete(`${API_URL}/catalog/dashboards/${id}`, { headers });
       }
     }
   });

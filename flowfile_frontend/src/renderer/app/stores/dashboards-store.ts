@@ -10,6 +10,7 @@ import type {
 import { EMPTY_DASHBOARD_LAYOUT } from "../types";
 import { upgradeLayoutGrid } from "../views/DashboardsView/gridVersion";
 import { healTabs } from "../views/DashboardsView/dashboardTabs";
+import { NEW_DASHBOARD_NAME } from "../views/DashboardsView/dashboardCreation";
 
 // Newest-wins: a dashboard page reused for another dashboard keeps only the last load's answer.
 let currentRequest = 0;
@@ -126,6 +127,18 @@ export const useDashboardsStore = defineStore("dashboards", {
       return updated;
     },
 
+    // Autosave's first write: the editor keeps its layout, edits made meanwhile included.
+    async autosaveCreateDashboard(payload: DashboardCreatePayload): Promise<Dashboard> {
+      const created = await CatalogApi.createDashboard(payload, {
+        timeout: AUTOSAVE_REQUEST_TIMEOUT_MS,
+      });
+      if (this.current && this.current.id === 0) {
+        this.current = { ...created, layout: this.current.layout };
+      }
+      this.library.unshift(created);
+      return created;
+    },
+
     async deleteDashboard(id: number): Promise<void> {
       this.error = null;
       try {
@@ -142,10 +155,10 @@ export const useDashboardsStore = defineStore("dashboards", {
       if (this.current) this.current = { ...this.current, layout };
     },
 
-    newBlankDashboard(): Dashboard {
+    newBlankDashboard(name = NEW_DASHBOARD_NAME): Dashboard {
       const blank: Dashboard = {
         id: 0,
-        name: "Untitled dashboard",
+        name,
         description: null,
         layout: { ...EMPTY_DASHBOARD_LAYOUT, tiles: [], filters: [] },
         layout_version: 1,

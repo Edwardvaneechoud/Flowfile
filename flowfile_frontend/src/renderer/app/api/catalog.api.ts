@@ -775,8 +775,11 @@ export class CatalogApi {
     return response.data;
   }
 
-  static async createDashboard(payload: DashboardCreatePayload): Promise<Dashboard> {
-    const response = await axios.post<Dashboard>("/catalog/dashboards", payload);
+  static async createDashboard(
+    payload: DashboardCreatePayload,
+    config?: AxiosRequestConfig,
+  ): Promise<Dashboard> {
+    const response = await axios.post<Dashboard>("/catalog/dashboards", payload, config);
     return response.data;
   }
 
