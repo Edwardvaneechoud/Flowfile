@@ -56,6 +56,7 @@
           :get-column-stats="getColumnStats"
           :search-values="searchValues"
           :move-targets="moveTargets"
+          :no-tile-hints="noTileHints"
           @remove="onRemoveTile(item.i)"
           @duplicate="onDuplicateTile(item.i)"
           @edit-viz="emit('edit-viz', tileById[item.i].viz_id ?? null)"
@@ -86,6 +87,7 @@ import {
   useDashboardDragAndDrop,
   FILTER_MIME,
   KPI_MIME,
+  NEW_FILTER_MIME,
   SEPARATOR_MIME,
   TABLE_MIME,
   TEXT_MIME,
@@ -128,6 +130,8 @@ const props = defineProps<{
   canEditCharts?: boolean;
   /** The other tabs a tile may move to (editor only). */
   moveTargets?: DashboardTab[];
+  /** Editor only: why a filter filters nothing because no tile reads its source, by filter id. */
+  noTileHints?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -141,6 +145,8 @@ const emit = defineEmits<{
     e: "add-separator-at",
     payload: { x: number; y: number; orientation: SeparatorOrientation },
   ): void;
+  /** The Insert list's Filter was dropped on the grid: a filter still to be made goes here. */
+  (e: "add-filter-at", payload: { x: number; y: number }): void;
   /** A filter chip was dropped on the grid. */
   (e: "place-filter-at", payload: { filterId: string; x: number; y: number }): void;
   /** A filter tile's control changed its filter; the view owns where filters live. */
@@ -157,6 +163,7 @@ const {
   isDraggingKpi,
   isDraggingTable,
   isDraggingFilter,
+  isDraggingNewFilter,
 } = useDashboardDragAndDrop();
 const canvasRef = ref<HTMLElement | null>(null);
 const gridRef = ref<ComponentPublicInstance | null>(null);
@@ -169,7 +176,8 @@ const dragHasOurPayload = (e: DragEvent): boolean => {
     isDraggingSeparator.value ||
     isDraggingKpi.value ||
     isDraggingTable.value ||
-    isDraggingFilter.value
+    isDraggingFilter.value ||
+    isDraggingNewFilter.value
   ) {
     return true;
   }
@@ -181,7 +189,8 @@ const dragHasOurPayload = (e: DragEvent): boolean => {
       types.includes(SEPARATOR_MIME) ||
       types.includes(KPI_MIME) ||
       types.includes(TABLE_MIME) ||
-      types.includes(FILTER_MIME))
+      types.includes(FILTER_MIME) ||
+      types.includes(NEW_FILTER_MIME))
   );
 };
 
@@ -217,12 +226,13 @@ const onCanvasDrop = (e: DragEvent) => {
   const isKpi = dt.types.includes(KPI_MIME);
   const isTable = dt.types.includes(TABLE_MIME);
   const filterId = dt.getData(FILTER_MIME);
+  const isNewFilter = dt.types.includes(NEW_FILTER_MIME);
   const orientation: SeparatorOrientation =
     dt.getData(SEPARATOR_MIME) === "vertical" ? "vertical" : "horizontal";
   const rawViz = dt.getData(VIZ_MIME);
   const vizId = rawViz ? Number(rawViz) : NaN;
   const isViz = Number.isFinite(vizId);
-  if (!isText && !isSeparator && !isKpi && !isTable && !isViz && !filterId) return;
+  if (!isText && !isSeparator && !isKpi && !isTable && !isViz && !filterId && !isNewFilter) return;
   e.preventDefault();
 
   // Text and horizontal separators span the full width, viz and table tiles half,
@@ -232,7 +242,7 @@ const onCanvasDrop = (e: DragEvent) => {
   const w =
     isViz || isTable
       ? cols / 2
-      : filterId
+      : filterId || isNewFilter
         ? FILTER_TILE_DEFAULT_SIZE.w
         : isKpi
           ? cols / 4
@@ -258,6 +268,7 @@ const onCanvasDrop = (e: DragEvent) => {
     });
   }
   if (filterId) emit("place-filter-at", { filterId, x: cell.x, y: cell.y });
+  else if (isNewFilter) emit("add-filter-at", { x: cell.x, y: cell.y });
   else if (isText) emit("add-text-at", { x: cell.x, y: cell.y });
   else if (isSeparator) emit("add-separator-at", { x: cell.x, y: cell.y, orientation });
   else if (isKpi) emit("add-kpi-at", { x: cell.x, y: cell.y });

@@ -204,6 +204,92 @@ test.describe("Dashboards", () => {
     }
   });
 
+  test("a filter from the Insert list lands on a new, empty dashboard and undo takes it back whole", async ({
+    page,
+    request,
+  }) => {
+    const headers = authHeaders(token);
+    const table = await (
+      await request.get(`${API_URL}/catalog/tables/${seeded.tableId}`, { headers })
+    ).json();
+    const tableLabel: string = table.full_table_name ?? table.name;
+    const name = `e2e insert filter ${Date.now()}`;
+    let createdId: number | null = null;
+    try {
+      await login(page, token, "#/main/dashboards/new");
+      const insert = page.getByTestId("insert-filter");
+      await expect(insert).toBeVisible({ timeout: 30000 });
+      await expect(page.getByTestId("dashboard-undo")).toBeDisabled();
+
+      // Cancelling the dialog adds nothing and records nothing.
+      await insert.click();
+      const dialog = page.locator(".el-dialog", { hasText: "Add filter" });
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(dialog).toBeHidden();
+      await expect(page.locator(".tile-filter")).toHaveCount(0);
+      await expect(page.getByTestId("dashboard-undo")).toBeDisabled();
+
+      await insert.dragTo(page.locator(".canvas"), { targetPosition: { x: 60, y: 40 } });
+      await expect(dialog).toBeVisible();
+      await dialog.getByTestId("filter-source-select").click();
+      await page.keyboard.type(table.name);
+      await page.locator(".el-select-dropdown__item:visible", { hasText: tableLabel }).click();
+      await dialog.getByTestId("filter-field-select").click();
+      await page.locator(".el-select-dropdown__item:visible", { hasText: "region" }).click();
+      await expect(dialog.getByTestId("filter-no-source-tile-hint")).toBeVisible();
+      await dialog.getByRole("button", { name: "Add", exact: true }).click();
+      await expect(dialog).toBeHidden();
+
+      const tile = page.locator(".tile-filter");
+      await expect(tile).toHaveCount(1);
+      await expect(tile.locator(".tile-filter-name")).toHaveText("region");
+      await expect(page.locator(".filter-chip")).toHaveCount(0);
+      // No tile reads the table yet, which the author is told without anything blocked.
+      await expect(tile.getByTestId("filter-no-source-tile")).toBeVisible();
+      await tile.locator(".filter-chip-input").click();
+      await expect(
+        page.locator(".el-select-dropdown__item:visible", { hasText: "West" }),
+      ).toBeVisible({ timeout: 30000 });
+      await page.keyboard.press("Escape");
+
+      // One undo takes the filter and its tile together; redo brings both back.
+      await page.getByTestId("dashboard-undo").click();
+      await expect(tile).toHaveCount(0);
+      await expect(page.locator(".filter-chip")).toHaveCount(0);
+      await expect(page.getByTestId("dashboard-undo")).toBeDisabled();
+      await page.getByTestId("dashboard-redo").click();
+      await expect(tile).toHaveCount(1);
+
+      await page.getByPlaceholder("Dashboard name").fill(name);
+      await page.getByRole("button", { name: "Create dashboard" }).click();
+      await expect(page).toHaveURL(/#\/main\/dashboards\/\d+\/edit/, { timeout: 20000 });
+      createdId = Number(/dashboards\/(\d+)\/edit/.exec(page.url())?.[1]);
+
+      await page.reload();
+      await page.waitForLoadState("load");
+      await expect(page.locator(".tile-filter .tile-filter-name")).toHaveText("region", {
+        timeout: 30000,
+      });
+      const saved = await (
+        await request.get(`${API_URL}/catalog/dashboards/${createdId}`, { headers })
+      ).json();
+      expect(saved.layout.filters).toHaveLength(1);
+      expect(saved.layout.filters[0]).toMatchObject({
+        field_name: "region",
+        datasource_id: seeded.tableId,
+        target: "all",
+      });
+      expect(
+        saved.layout.tiles.map((t: { type: string; filter_id: string }) => [t.type, t.filter_id]),
+      ).toEqual([["filter", saved.layout.filters[0].id]]);
+    } finally {
+      if (createdId != null) {
+        await request.delete(`${API_URL}/catalog/dashboards/${createdId}`, { headers });
+      }
+    }
+  });
+
   test("removing a tile a filter targets keeps the dashboard saving", async ({ page, request }) => {
     const seededTargets = await seedDashboard(request, token, `e2e filter target ${Date.now()}`);
     const url = `${API_URL}/catalog/dashboards/${seededTargets.dashboardId}`;

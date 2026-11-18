@@ -189,6 +189,13 @@
             title="The tiles this filter applied to were removed, so it filters nothing — edit it to choose tiles"
             >no tiles</span
           >
+          <span
+            v-else-if="mode === 'edit' && tileFilter && noTileHints?.[tileFilter.id]"
+            class="tile-filter-no-tiles"
+            data-testid="filter-no-source-tile"
+            :title="noTileHints[tileFilter.id]"
+            >no tiles yet</span
+          >
           <el-dropdown v-if="mode === 'edit'" trigger="click" @click.stop>
             <el-icon class="tile-menu" @click.stop><MoreFilled /></el-icon>
             <template #dropdown>
@@ -546,6 +553,8 @@ const props = defineProps<{
   canEditChart?: boolean;
   /** The editor's other tabs, offered as "Move to <tab>". */
   moveTargets?: DashboardTab[];
+  /** Editor only: why a filter filters nothing because no tile reads its source, by filter id. */
+  noTileHints?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{

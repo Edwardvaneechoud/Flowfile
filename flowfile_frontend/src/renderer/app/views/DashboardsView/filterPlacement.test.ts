@@ -7,7 +7,9 @@ import {
 } from "../../types";
 import {
   FILTER_TILE_DEFAULT_SIZE,
+  addPlacedFilter,
   deleteFilter,
+  filtersWithoutSourceTiles,
   filterOfTile,
   moveFilterToBar,
   placeFilter,
@@ -108,6 +110,80 @@ describe("placeFilter", () => {
     const once = placeFilter(base, "a", { x: 0, y: 0 }, "one");
     expect(placeFilter(once, "a", { x: 0, y: 4 }, "two")).toBe(once);
     expect(placeFilter(base, "gone", { x: 0, y: 0 }, "x")).toBe(base);
+  });
+});
+
+describe("addPlacedFilter", () => {
+  const base = layout([chart], [filter("a")]);
+
+  it("adds the filter and its tile at a free cell in one change", () => {
+    const next = addPlacedFilter(base, filter("new"), { x: 30, y: 0 }, "t-new");
+    expect(ids(next.filters)).toEqual(["a", "new"]);
+    expect(next.tiles[1]).toMatchObject({
+      id: "t-new",
+      type: "filter",
+      filter_id: "new",
+      x: 30,
+      y: 0,
+      ...FILTER_TILE_DEFAULT_SIZE,
+    });
+    expect(base.filters).toHaveLength(1);
+  });
+
+  it("moves a tile dropped on a taken cell under the tiles in its columns", () => {
+    const next = addPlacedFilter(base, filter("new"), { x: 4, y: 2 }, "t-new");
+    expect(next.tiles[1]).toMatchObject({ x: 4, y: chart.y + chart.h });
+    expect(next.tiles[0]).toBe(chart);
+  });
+
+  it("takes the next free row for a negative y, also on an empty dashboard", () => {
+    expect(addPlacedFilter(base, filter("new"), { x: 0, y: -1 }, "n").tiles[1].y).toBe(6);
+    const empty = layout([], []);
+    const next = addPlacedFilter(empty, filter("new"), { x: 0, y: -1 }, "n");
+    expect(ids(next.filters)).toEqual(["new"]);
+    expect(next.tiles[0]).toMatchObject({ x: 0, y: 0, filter_id: "new" });
+  });
+
+  it("keeps the tile inside the grid and never adds a filter id twice", () => {
+    const next = addPlacedFilter(base, filter("new"), { x: 100, y: 20 }, "n");
+    expect(next.tiles[1].x).toBe(base.grid.cols - FILTER_TILE_DEFAULT_SIZE.w);
+    expect(addPlacedFilter(base, filter("a"), { x: 0, y: 0 }, "n")).toBe(base);
+  });
+});
+
+describe("filtersWithoutSourceTiles", () => {
+  const name = (key: string) => `<${key}>`;
+
+  it("flags a filter on a source no tile reads, with the source's name", () => {
+    const hints = filtersWithoutSourceTiles([filter("a")], ["table:2"], name);
+    expect(Object.keys(hints)).toEqual(["a"]);
+    expect(hints.a).toContain("<table:1>");
+    expect(filtersWithoutSourceTiles([filter("a")], ["table:2", "table:1"], name)).toEqual({});
+  });
+
+  it("matches a SQL chart's filter on its chart, and flags any filter on an empty dashboard", () => {
+    const onChart = { ...filter("q"), datasource_id: null, datasource_viz_id: 9 };
+    expect(filtersWithoutSourceTiles([onChart], ["viz:9"], name)).toEqual({});
+    expect(Object.keys(filtersWithoutSourceTiles([onChart, filter("a")], [], name))).toEqual([
+      "q",
+      "a",
+    ]);
+  });
+
+  it("stays quiet while a tile's source is not known yet", () => {
+    expect(filtersWithoutSourceTiles([filter("a")], ["table:2", null], name)).toEqual({});
+  });
+
+  it("flags a scope-all filter only when no tile reads data", () => {
+    const all = { ...filter("a"), scope: "all" as const };
+    expect(filtersWithoutSourceTiles([all], ["table:2"], name)).toEqual({});
+    expect(filtersWithoutSourceTiles([all], [], name).a).toContain("reads data");
+  });
+
+  it("leaves untied filters and filters whose chosen tiles are gone to their own hints", () => {
+    const untied = { ...filter("u"), datasource_id: null };
+    const none = { ...filter("n"), target: "tiles" as const, target_tile_ids: [] };
+    expect(filtersWithoutSourceTiles([untied, none], [], name)).toEqual({});
   });
 });
 

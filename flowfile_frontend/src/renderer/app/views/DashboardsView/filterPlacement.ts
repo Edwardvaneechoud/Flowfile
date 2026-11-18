@@ -1,4 +1,13 @@
 import type { DashboardFilter, DashboardLayout, DashboardTile } from "../../types";
+import type { DatasourceKey } from "../../composables/useDashboardComputation";
+
+// The same rule as useDashboardComputation.filterSourceKey, which this pure module cannot import.
+const filterSourceKey = (f: DashboardFilter): DatasourceKey | null =>
+  f.datasource_id != null
+    ? `table:${f.datasource_id}`
+    : f.datasource_viz_id != null
+      ? `viz:${f.datasource_viz_id}`
+      : null;
 
 /** A filter tile's footprint when it is dropped or placed: a label over one control. */
 export const FILTER_TILE_DEFAULT_SIZE = { w: 12, h: 2 } as const;
@@ -59,6 +68,68 @@ export const placeFilter = (
     h,
   };
   return { ...layout, tiles: [...layout.tiles, tile] };
+};
+
+const overlaps = (
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/**
+ * Add a new filter and its tile in one layout change, the Insert list's Filter. A cell that a tile
+ * already covers moves the new tile down its own columns to the first row under them, so it never
+ * pushes the author's tiles; a negative `y` takes the next free row.
+ */
+export const addPlacedFilter = (
+  layout: DashboardLayout,
+  filter: DashboardFilter,
+  cell: { x: number; y: number },
+  tileId: string,
+): DashboardLayout => {
+  if (layout.filters.some((f) => f.id === filter.id)) return layout;
+  const { w, h } = FILTER_TILE_DEFAULT_SIZE;
+  const x = Math.max(0, Math.min(cell.x, layout.grid.cols - w));
+  let y = cell.y;
+  if (y >= 0 && layout.tiles.some((t) => overlaps(t, { x, y, w, h }))) {
+    const under = layout.tiles.filter((t) => t.x < x + w && x < t.x + t.w);
+    y = Math.max(...under.map((t) => t.y + t.h));
+  }
+  return placeFilter(
+    { ...layout, filters: [...layout.filters, filter] },
+    filter.id,
+    { x, y },
+    tileId,
+  );
+};
+
+/**
+ * The edit-mode hint for each filter that filters nothing because no tile on the dashboard reads
+ * its source (scope "all": because no tile reads data at all), keyed by filter id. `tileKeys` are
+ * the source keys of every tile that reads data, null for one not resolved yet, which keeps the
+ * hint off while it may still match. Untied filters and those whose chosen tiles are gone have
+ * their own hints and are left out.
+ */
+export const filtersWithoutSourceTiles = (
+  filters: DashboardFilter[],
+  tileKeys: (DatasourceKey | null)[],
+  sourceName: (key: DatasourceKey) => string,
+): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const f of filters) {
+    const key = filterSourceKey(f);
+    if (key == null || targetsNoTile(f)) continue;
+    if (f.scope === "all") {
+      if (!tileKeys.length) {
+        out[f.id] = "No tile on this dashboard reads data yet, so this filter filters nothing.";
+      }
+      continue;
+    }
+    if (tileKeys.includes(key) || tileKeys.includes(null)) continue;
+    out[f.id] =
+      `No tile on this dashboard reads ${sourceName(key)} yet, so this filter filters nothing. ` +
+      "A tile you add on it is filtered like the others.";
+  }
+  return out;
 };
 
 /** Take a filter off the canvas; it keeps its state and shows in the strip again. */

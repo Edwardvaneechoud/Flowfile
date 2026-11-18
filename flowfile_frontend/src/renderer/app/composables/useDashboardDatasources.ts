@@ -242,6 +242,33 @@ export function useDashboardDatasources(
     return (kind === "table" ? tableCache.value[id] : vizSourceCache.value[id]) ?? null;
   };
 
+  // A filter's table no tile reads still needs its name and columns, for the chip and the dialog.
+  watch(
+    () =>
+      JSON.stringify(
+        [...new Set(layout.value.filters.map((f) => f.datasource_id))].filter((id) => id != null),
+      ),
+    (raw) => {
+      for (const id of JSON.parse(raw) as number[]) void fetchTable(id);
+    },
+    { immediate: true },
+  );
+
+  /** A source as far as this page has read it: a table any tile or filter names, or one the
+   * filter dialog loaded, or a SQL chart a tile reads; null until it is loaded. */
+  const datasourceOf = (key: DatasourceKey): DashboardDatasource | null => datasourceOfKey(key);
+
+  /** Read a source's name and columns so the filter dialog can offer them; a table need not be
+   * read by any tile. */
+  const loadDatasource = async (key: DatasourceKey): Promise<void> => {
+    const [kind, raw] = key.split(":");
+    const id = Number(raw);
+    if (!Number.isFinite(id)) return;
+    if (kind === "table") return fetchTable(id);
+    await fetchViz(id);
+    if (vizSourceType.value[id] === "sql") await fetchVizSource(id);
+  };
+
   const datasourcesInUse = computed<DashboardDatasource[]>(() => {
     const seen = new Set<DatasourceKey>();
     for (const tile of layout.value.tiles) {
@@ -368,6 +395,8 @@ export function useDashboardDatasources(
     tileDatasource,
     tileFields,
     loadTileFields,
+    datasourceOf,
+    loadDatasource,
     tileLabel,
     getSchema,
     getDatasource,

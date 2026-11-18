@@ -18,15 +18,18 @@
       >
         <span
           v-if="mode === 'edit'"
-          class="filter-chip-grip"
+          class="filter-chip-handle"
           draggable="true"
-          title="Drag to reorder, or onto the canvas to place it there"
+          :title="`${chipTooltip(f)}. Drag to reorder, or onto the canvas to place it there`"
           @dragstart="onGripDragStart($event, f)"
           @dragend="dropTarget = null"
         >
-          <el-icon><Rank /></el-icon>
+          <span class="filter-chip-grip"
+            ><el-icon><Rank /></el-icon
+          ></span>
+          <span class="filter-chip-name">{{ f.label || f.field_name }}</span>
         </span>
-        <span class="filter-chip-name">{{ f.label || f.field_name }}</span>
+        <span v-else class="filter-chip-name">{{ f.label || f.field_name }}</span>
         <span
           v-if="filterSourceKey(f) == null"
           class="filter-chip-source-untied"
@@ -40,6 +43,14 @@
           title="The tiles this filter applied to were removed, so it filters nothing — click the pencil to choose tiles"
         >
           no tiles
+        </span>
+        <span
+          v-else-if="mode === 'edit' && noTileHints?.[f.id]"
+          class="filter-chip-source-untied"
+          data-testid="filter-no-source-tile"
+          :title="noTileHints[f.id]"
+        >
+          no tiles yet
         </span>
         <span class="filter-chip-colon">:</span>
 
@@ -82,18 +93,7 @@
         </button>
       </div>
 
-      <el-button
-        v-if="mode === 'edit'"
-        size="small"
-        plain
-        :disabled="!datasourcesInUse.length"
-        :title="
-          datasourcesInUse.length
-            ? ''
-            : 'Add a tile backed by a catalog table or a SQL chart to enable filters'
-        "
-        @click="openAdd"
-      >
+      <el-button v-if="mode === 'edit'" size="small" plain @click="openAdd">
         <el-icon><Plus /></el-icon> Add filter
       </el-button>
       <el-button
@@ -119,15 +119,20 @@
           <el-select
             v-model="draft.source_key"
             placeholder="Select a table or a SQL chart"
+            filterable
+            :loading="tablesLoading"
             :disabled="dialogMode === 'edit' && boundAtOpen"
+            data-testid="filter-source-select"
             @change="onDatasourceChange"
           >
-            <el-option
-              v-for="ds in datasourcesInUse"
-              :key="ds.key"
-              :value="ds.key"
-              :label="ds.kind === 'viz' ? `${ds.name} (SQL chart)` : ds.name"
-            />
+            <el-option-group v-for="group in sourceGroups" :key="group.label" :label="group.label">
+              <el-option
+                v-for="opt in group.options"
+                :key="opt.key"
+                :value="opt.key"
+                :label="opt.label"
+              />
+            </el-option-group>
           </el-select>
         </el-form-item>
         <el-form-item label="Field">
@@ -136,6 +141,8 @@
             :disabled="draft.source_key == null"
             placeholder="Select a column"
             filterable
+            :loading="sourceLoading"
+            data-testid="filter-field-select"
             @change="onFieldChange"
           >
             <el-option
@@ -240,6 +247,17 @@
               :disabled="t.disabled"
             />
           </el-select>
+          <div
+            v-if="draft.source_key != null && !draft.targets_none && !eligibleTiles.length"
+            class="scope-hint"
+            data-testid="filter-no-source-tile-hint"
+          >
+            {{
+              draft.scope === "all"
+                ? "No tile on this dashboard reads data yet, so this filter filters nothing until you add one."
+                : "No tile on this dashboard reads this source yet, so this filter filters nothing until you add a tile on it."
+            }}
+          </div>
           <div v-if="draft.targets_none" class="scope-hint" data-testid="filter-targets-none">
             The tiles this filter applied to were removed, so it filters nothing. Choose tiles, or
             <el-button link type="primary" size="small" @click="draft.targets_none = false">
@@ -282,7 +300,14 @@ import { moveFilter, type DropPosition } from "./filterOrder";
 import DashboardFilterControl from "./DashboardFilterControl.vue";
 import { targetsNoTile } from "./filterPlacement";
 import { withMultiple, type ValueSearchResult } from "./filterValues";
-import { draftTargets, sourceFieldsOfKey, sourceIdsOfKey } from "./filterDialog";
+import {
+  draftTargets,
+  filterSourceGroups,
+  sourceFieldsOfKey,
+  sourceIdsOfKey,
+  type FilterSourceOption,
+} from "./filterDialog";
+import { useCatalogStore } from "../../stores/catalog-store";
 
 const props = defineProps<{
   /** Every filter of the dashboard; the dialog edits any of them. */
@@ -312,6 +337,12 @@ const props = defineProps<{
   searchValues?: (filter: DashboardFilter, text: string) => Promise<ValueSearchResult>;
   /** Bump to load every shown filter's values again (manual dashboard refresh). */
   statsRefreshNonce?: number;
+  /** A source this page has read (any catalog table, not only one a tile reads); null if not. */
+  datasourceOf?: (key: DatasourceKey) => DashboardDatasource | null;
+  /** Read a source's name and columns, for a table no tile reads. */
+  loadDatasource?: (key: DatasourceKey) => Promise<void>;
+  /** Edit mode: why a filter filters nothing because no tile reads its source, by filter id. */
+  noTileHints?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -372,15 +403,70 @@ const chipTooltip = (f: DashboardFilter): string => {
   const head = f.label ?? f.field_name;
   const key = filterSourceKey(f);
   if (key == null) return `${head} — untied (no datasource bound)`;
-  const ds = props.datasourcesInUse.find((d) => d.key === key);
+  const ds = props.datasourcesInUse.find((d) => d.key === key) ?? props.datasourceOf?.(key);
   const fallback =
     f.datasource_id != null ? `Table #${f.datasource_id}` : `Chart #${f.datasource_viz_id}`;
   return `${head} · ${ds?.name ?? fallback}`;
 };
 
+const catalogStore = useCatalogStore();
+const tablesLoading = ref(false);
+
+const ensureCatalogTables = async () => {
+  if (catalogStore.allTables.length || tablesLoading.value) return;
+  tablesLoading.value = true;
+  try {
+    await catalogStore.loadAllTables();
+  } catch {
+    // The dashboard's own sources stay offered.
+  } finally {
+    tablesLoading.value = false;
+  }
+};
+
+const sourceLabelOf = (key: DatasourceKey): string => {
+  const ds = props.datasourcesInUse.find((d) => d.key === key) ?? props.datasourceOf?.(key);
+  if (ds) return ds.kind === "viz" ? `${ds.name} (SQL chart)` : ds.name;
+  const [kind, id] = key.split(":");
+  return kind === "viz" ? `Chart #${id}` : `Table #${id}`;
+};
+
+const sourceGroups = computed(() => {
+  const current: FilterSourceOption | null =
+    draft.source_key != null
+      ? { key: draft.source_key, label: sourceLabelOf(draft.source_key) }
+      : null;
+  return filterSourceGroups(
+    props.datasourcesInUse,
+    catalogStore.allTables.map((t) => ({ id: t.id, name: t.full_table_name ?? t.name })),
+    current,
+  );
+});
+
+const draftSource = computed<DashboardDatasource | null>(() => {
+  const key = draft.source_key;
+  if (key == null) return null;
+  return props.datasourcesInUse.find((d) => d.key === key) ?? props.datasourceOf?.(key) ?? null;
+});
+
 const fieldOptions = computed<ColumnSchema[]>(() =>
-  sourceFieldsOfKey(props.datasourcesInUse, draft.source_key),
+  draftSource.value ? sourceFieldsOfKey([draftSource.value], draft.source_key) : [],
 );
+
+const sourceLoading = ref(false);
+let sourceSeq = 0;
+
+const ensureDraftSource = async () => {
+  const key = draft.source_key;
+  if (key == null || draftSource.value || !props.loadDatasource) return;
+  const mine = ++sourceSeq;
+  sourceLoading.value = true;
+  try {
+    await props.loadDatasource(key);
+  } finally {
+    if (mine === sourceSeq) sourceLoading.value = false;
+  }
+};
 
 const selectedFieldDtype = computed<string | null>(() => {
   const col = fieldOptions.value.find((c) => c.name === draft.field_name);
@@ -547,6 +633,7 @@ const onDatasourceChange = () => {
   draft.field_name = "";
   draft.target_tile_ids = [];
   draft.targets_none = false;
+  void ensureDraftSource();
 };
 
 const onFieldChange = () => {
@@ -565,7 +652,27 @@ const openAdd = () => {
   Object.assign(draft, blankDraft());
   boundAtOpen.value = false;
   void ensureTileFields();
+  void ensureCatalogTables();
   dialogOpen.value = true;
+};
+
+// The Insert list's Filter: the dialog's result comes back to the editor, which places its tile.
+let pendingAdd: ((filter: DashboardFilter | null) => void) | null = null;
+
+const settlePendingAdd = (filter: DashboardFilter | null) => {
+  const resolve = pendingAdd;
+  pendingAdd = null;
+  resolve?.(filter);
+};
+
+/** Open the add dialog for a filter the caller places; resolves with it, or null on cancel. */
+const openAddForCanvas = (): Promise<DashboardFilter | null> => {
+  settlePendingAdd(null);
+  const result = new Promise<DashboardFilter | null>((resolve) => {
+    pendingAdd = resolve;
+  });
+  openAdd();
+  return result;
 };
 
 const openEdit = (f: DashboardFilter) => {
@@ -584,10 +691,13 @@ const openEdit = (f: DashboardFilter) => {
     targets_none: targetsNoTile(f),
   });
   void ensureTileFields();
+  void ensureCatalogTables();
+  void ensureDraftSource();
   dialogOpen.value = true;
 };
 
 const resetDraft = () => {
+  settlePendingAdd(null);
   Object.assign(draft, blankDraft());
   boundAtOpen.value = false;
 };
@@ -614,7 +724,8 @@ const confirmDialog = () => {
       scope: draft.scope,
       multiple: draft.multiple,
     };
-    emit("update:filters", [...props.filters, next]);
+    if (pendingAdd) settlePendingAdd(next);
+    else emit("update:filters", [...props.filters, next]);
   } else {
     const id = draft.id;
     emit(
@@ -648,7 +759,7 @@ const openEditById = (filterId: string) => {
   if (f) openEdit(f);
 };
 
-defineExpose({ openEdit: openEditById });
+defineExpose({ openEdit: openEditById, openAddForCanvas });
 </script>
 
 <style scoped>
@@ -692,14 +803,22 @@ defineExpose({ openEdit: openEditById });
 .filter-chip-drop-after {
   box-shadow: inset -2px 0 0 var(--el-color-primary);
 }
+.filter-chip-handle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: grab;
+}
+.filter-chip-handle:active {
+  cursor: grabbing;
+}
 .filter-chip-grip {
   display: inline-flex;
   align-items: center;
   margin-left: -2px;
   color: var(--el-text-color-secondary);
-  cursor: grab;
 }
-.filter-chip-grip:hover {
+.filter-chip-handle:hover .filter-chip-grip {
   color: var(--el-color-primary);
 }
 .filter-chip-name {
@@ -707,6 +826,7 @@ defineExpose({ openEdit: openEditById });
   font-weight: 500;
 }
 .filter-chip-source-untied {
+  white-space: nowrap;
   color: var(--el-color-warning);
   text-transform: uppercase;
   font-size: 10px;

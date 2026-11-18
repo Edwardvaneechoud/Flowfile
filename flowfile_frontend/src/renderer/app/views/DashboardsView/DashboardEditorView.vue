@@ -125,6 +125,7 @@
           @add-separator="onAddSeparatorTile"
           @add-kpi="onAddKpiTile"
           @add-table="onAddTableTile"
+          @add-filter="onAddFilterTile"
           @create="sourcePickerOpen = true"
         />
       </aside>
@@ -150,6 +151,9 @@
             :get-column-stats="getColumnStats"
             :search-values="searchFilterValues"
             :stats-refresh-nonce="statsRefreshNonce"
+            :datasource-of="datasourceOf"
+            :load-datasource="loadDatasource"
+            :no-tile-hints="noTileHints"
             @update:filters="onFiltersChange"
             @place="onPlaceFilter"
           />
@@ -171,6 +175,7 @@
             :get-column-stats="getColumnStats"
             :search-values="searchFilterValues"
             :move-targets="moveTargets"
+            :no-tile-hints="noTileHints"
             @update:layout="onCanvasLayoutChange"
             @edit-viz="onEditViz"
             @add-viz-at="onAddVizAt"
@@ -179,6 +184,7 @@
             @add-kpi-at="onAddKpiAt"
             @add-table-at="onAddTableAt"
             @place-filter-at="onPlaceFilterAt"
+            @add-filter-at="onAddFilterAt"
             @update:filter="onFilterChange"
             @edit-filter="(id: string) => filterBarRef?.openEdit(id)"
             @delete-filter="onDeleteFilter"
@@ -271,7 +277,9 @@ import {
   type RecordOptions,
 } from "./editHistory";
 import {
+  addPlacedFilter,
   deleteFilter,
+  filtersWithoutSourceTiles,
   placeFilter,
   placedFilterIds,
   pruneFilterTargets,
@@ -495,10 +503,20 @@ const {
   tileLabel,
   tileFields,
   loadTileFields,
+  datasourceOf,
+  loadDatasource,
   getColumnStats,
   searchFilterValues,
   refresh,
 } = useDashboardDatasources(layoutRef, vizCache);
+
+const noTileHints = computed(() =>
+  filtersWithoutSourceTiles(
+    layoutRef.value.filters,
+    vizTileIds.value.map(tileDatasource),
+    (key) => datasourceOf(key)?.name ?? key,
+  ),
+);
 
 const addedVizIds = computed(() => {
   if (!store.current) return new Set<number>();
@@ -588,6 +606,16 @@ const onPlaceFilterAt = ({ filterId, x, y }: { filterId: string; x: number; y: n
 };
 
 const onPlaceFilter = (filterId: string) => onPlaceFilterAt({ filterId, x: 0, y: -1 });
+
+// A filter needs a source and a column first; nothing changes until the dialog confirms.
+const onAddFilterAt = async ({ x, y }: { x: number; y: number }) => {
+  if (!store.current || !filterBarRef.value) return;
+  const filter = await filterBarRef.value.openAddForCanvas();
+  if (!filter || !store.current) return;
+  onCanvasLayoutChange(addPlacedFilter(tabLayout.value, filter, { x, y }, generateTileId()));
+};
+
+const onAddFilterTile = () => onAddFilterAt({ x: 0, y: -1 });
 
 const onDeleteFilter = (filterId: string) => {
   if (!store.current) return;
