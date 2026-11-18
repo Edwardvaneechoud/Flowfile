@@ -145,6 +145,43 @@ class CredentialRef:
     user_id: int
 
 
+@dataclass(frozen=True, repr=False)
+class SealedCredential:
+    """What a hub vended to a run for the storage under ``base_uri``, sealed to each node that runs a step with it.
+
+    ``sealed`` maps a hub node's name to a token only that node opens (``shared.sealed``); a backend sends the whole
+    map and the node it reaches opens its own entry, so core never holds the storage options.
+    """
+
+    base_uri: str
+    sealed: dict[str, str]
+
+    def __repr__(self) -> str:
+        return f"SealedCredential({self.base_uri!r}, nodes={sorted(self.sealed)!r})"
+
+
+@dataclass(frozen=True, repr=False)
+class EncryptedCredential:
+    """What a hub vended to a run for the storage under ``base_uri``, for the worker beside this core.
+
+    ``options`` hold no secret; ``encrypted`` is the secrets as a ``$ffsec$`` ciphertext, which that worker opens with
+    the master key it shares with core, as it opens a scan's (``EncryptedCredentialProvider``). A machine that is no
+    server of the hub crosses with it, since nothing can be sealed to it.
+    """
+
+    base_uri: str
+    options: dict[str, str]
+    encrypted: str
+
+    def __repr__(self) -> str:
+        return f"EncryptedCredential({self.base_uri!r})"
+
+
+Credential: TypeAlias = CredentialRef | SealedCredential | EncryptedCredential
+"""A credential an export, an import or the exchange store crosses with: a stored connection, a sealed vend, or a
+vend encrypted for the worker beside core."""
+
+
 class OperationKind(enum.Enum):
     """The operations a backend runs whole rather than as a Polars plan.
 
@@ -247,7 +284,7 @@ class ComputeBackend(Protocol):
         """
         ...
 
-    def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
+    def export(self, ref: ResultRef, uri: str, credential: Credential | None) -> str:
         """Write ``ref`` to ``uri``, through ``credential`` when the target needs one, and return the URI written.
 
         A table is written as parquet. A blob's bytes are copied as they are to a ``file://`` URI or ``PUT`` to a
@@ -260,7 +297,7 @@ class ComputeBackend(Protocol):
         uri: str,
         schema: Schema | None,
         row_count: int | None,
-        credential: CredentialRef | None,
+        credential: Credential | None,
         kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
         """A reference on this backend to the data at ``uri``, which has ``schema`` and ``row_count`` rows.

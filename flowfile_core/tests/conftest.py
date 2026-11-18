@@ -81,12 +81,31 @@ if 'FLOWFILE_SHARED_DIR' not in os.environ:
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import socket
 
+from test_utils.environ_thread_guard import (  # noqa: F401
+    allow_off_thread_environ_writes,
+    fail_on_off_main_thread_environ_writes,
+    hold_gitpython_env,
+)
 from test_utils.mssql import fixtures as mssql_fixtures
 from test_utils.mysql import fixtures as mysql_fixtures
 from test_utils.postgres import fixtures as pg_fixtures
 from tests.core_log_sink import CoreLogSink, session_claims_core_port
 from tests.flowfile_core_test_utils import is_docker_available
 from tests.kernel_fixtures import managed_kernel
+
+if os.environ.get("FLOWFILE_MODE") == "electron":
+    from flowfile_core.auth.jwt import get_internal_token
+
+    # Cache it on the main thread before collection; a test module entering a TestClient at import would write it off it.
+    get_internal_token()
+
+try:
+    import connectorx  # noqa: F401  # its import sets os.environ; do it here, not on a db-read thread
+except ImportError:
+    pass
+
+if sys.platform == "win32":
+    hold_gitpython_env()
 
 _NOT_ISOLATED_MSG = (
     'Secure store NOT isolated: a flowfile_worker is already running, so tests use the real '

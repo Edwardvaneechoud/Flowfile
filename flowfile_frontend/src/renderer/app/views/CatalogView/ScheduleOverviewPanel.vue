@@ -7,32 +7,28 @@
       </el-button>
     </div>
 
-    <!-- Scheduler status bar -->
+    <!-- The schedulers that fire the listed schedules, this machine's first -->
     <div
+      v-for="(status, i) in shownSchedulers"
+      :key="status.place ?? i"
       class="scheduler-status-bar"
-      :class="catalogStore.schedulerStatus?.active ? 'scheduler-active' : 'scheduler-inactive'"
+      data-testid="scheduler-status"
+      :class="status.active ? 'scheduler-active' : 'scheduler-inactive'"
     >
       <div class="scheduler-status-info">
-        <span
-          class="scheduler-dot"
-          :class="catalogStore.schedulerStatus?.active ? 'dot-green' : 'dot-orange'"
-        ></span>
+        <span class="scheduler-dot" :class="status.active ? 'dot-green' : 'dot-orange'"></span>
         <span class="scheduler-status-text">
-          {{ catalogStore.schedulerStatus?.active ? "Scheduler running" : "Scheduler not running" }}
+          {{ status.place ? `${status.place}: ` : ""
+          }}{{ status.active ? "Scheduler running" : "Scheduler not running" }}
         </span>
-        <span
-          v-if="catalogStore.schedulerStatus?.active && catalogStore.schedulerStatus?.heartbeat_at"
-          class="scheduler-heartbeat"
-        >
-          Last heartbeat: {{ formatDate(catalogStore.schedulerStatus.heartbeat_at) }}
+        <span v-if="status.active && status.heartbeat_at" class="scheduler-heartbeat">
+          Last heartbeat: {{ formatDate(status.heartbeat_at) }}
         </span>
       </div>
-      <template v-if="isStandalone || isDockerMode">
-        <!-- No start/stop controls for standalone scheduler or Docker mode -->
-      </template>
-      <template v-else>
+      <!-- Start/stop only for this machine's embedded scheduler, outside Docker mode -->
+      <template v-if="status === ownShown && !isStandalone && !isDockerMode">
         <el-button
-          v-if="catalogStore.schedulerStatus?.active"
+          v-if="status.active"
           size="small"
           type="warning"
           text
@@ -46,8 +42,16 @@
       </template>
     </div>
 
+    <div
+      v-if="listPending && catalogStore.schedulers.length === 0 && !catalogStore.overviewFailed"
+      class="scheduler-status-bar scheduler-pending"
+      aria-busy="true"
+    >
+      <span class="scheduler-status-text">Checking scheduler…</span>
+    </div>
+
     <!-- Lifecycle warning (hidden in Docker mode where the scheduler is always running) -->
-    <div v-if="!isDockerMode" class="scheduler-warning">
+    <div v-if="ownShown && !isDockerMode" class="scheduler-warning">
       <i class="fa-solid fa-circle-info"></i>
       <span v-if="isStandalone">
         The scheduler is running as a standalone service. Manage it from the process where it was
@@ -77,29 +81,51 @@
       <div class="summary-card">
         <i class="fa-solid fa-calendar-days summary-icon"></i>
         <div class="summary-info">
-          <span class="summary-value">{{ catalogStore.schedules.length }}</span>
+          <span class="summary-value">
+            <span v-if="listPending" class="skeleton-value"></span>
+            <template v-else>{{ catalogStore.schedules.length }}</template>
+          </span>
           <span class="summary-label">Total</span>
         </div>
       </div>
       <div class="summary-card">
         <i class="fa-solid fa-circle-check summary-icon enabled-icon"></i>
         <div class="summary-info">
-          <span class="summary-value">{{ enabledCount }}</span>
+          <span class="summary-value">
+            <span v-if="listPending" class="skeleton-value"></span>
+            <template v-else>{{ enabledCount }}</template>
+          </span>
           <span class="summary-label">Enabled</span>
         </div>
       </div>
       <div class="summary-card">
         <i class="fa-solid fa-spinner summary-icon running-icon"></i>
         <div class="summary-info">
-          <span class="summary-value">{{ runningCount }}</span>
+          <span class="summary-value">
+            <span v-if="listPending" class="skeleton-value"></span>
+            <template v-else>{{ runningCount }}</template>
+          </span>
           <span class="summary-label">Running</span>
         </div>
       </div>
     </div>
 
+    <div v-if="listPending && catalogStore.overviewFailed" class="overview-error" role="alert">
+      <span>Couldn't load schedules: {{ catalogStore.overviewError }}</span>
+      <button class="btn btn-secondary btn-sm" @click="catalogStore.initialize(true)">Retry</button>
+    </div>
+    <div
+      v-else-if="listPending"
+      class="skeleton-list"
+      aria-busy="true"
+      data-testid="schedules-pending"
+    >
+      <div v-for="i in 3" :key="i" class="skeleton-block skeleton-row"></div>
+    </div>
+
     <!-- Empty state -->
     <EmptyState
-      v-if="catalogStore.schedules.length === 0"
+      v-else-if="catalogStore.schedules.length === 0"
       icon="fa-solid fa-calendar-xmark"
       title="No schedules configured"
       description="Create a schedule to automatically run your flows on a timer or when a table updates."
@@ -146,6 +172,7 @@ import { authService } from "../../services/auth.service";
 import { formatDate } from "./catalog-formatters";
 import { EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
+import { offersOwnCatalog } from "./hubRows";
 
 const catalogStore = useCatalogStore();
 const isDockerMode = computed(() => !authService.isInDesktopMode());
@@ -166,6 +193,14 @@ const isStandalone = computed(
 
 const enrichedSchedules = computed(() => catalogStore.enrichedSchedules);
 
+// This machine's scheduler is shown where its own catalog is offered; a joined server's is not.
+const ownShown = computed(() =>
+  offersOwnCatalog(catalogStore.tree) ? catalogStore.schedulerStatus : null,
+);
+const shownSchedulers = computed(() =>
+  catalogStore.schedulers.filter((status, i) => i > 0 || ownShown.value !== null),
+);
+
 // Client-side filter over the fully-loaded schedule list (flow + schedule name).
 const scheduleSearch = ref("");
 const displaySchedules = computed(() => {
@@ -175,6 +210,11 @@ const displaySchedules = computed(() => {
     [s.flowName, s.name, s.description].some((v) => (v ?? "").toLowerCase().includes(q)),
   );
 });
+
+// Until the overview lands, an empty schedule list means "not loaded yet", not "none".
+const listPending = computed(
+  () => catalogStore.schedules.length === 0 && !catalogStore.overviewLoaded,
+);
 
 const enabledCount = computed(() => catalogStore.schedules.filter((s) => s.enabled).length);
 
@@ -239,6 +279,15 @@ async function onSaveDescription(scheduleId: number, description: string | null)
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
+}
+
+.scheduler-status-bar.scheduler-pending {
+  min-height: 42px;
+}
+
+.scheduler-status-bar.scheduler-pending .scheduler-status-text {
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-normal, 400);
 }
 
 .scheduler-dot {

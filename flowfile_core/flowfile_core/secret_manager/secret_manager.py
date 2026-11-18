@@ -13,6 +13,7 @@ from flowfile_core.auth.models import SecretInput
 from flowfile_core.auth.secrets import get_master_key
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.secret_manager import credential_sources
 
 # Version identifier for key derivation scheme (allows future migrations)
 KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"
@@ -98,7 +99,14 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
 
     Returns:
         SecretStr: The decrypted value wrapped in SecretStr
+
+    Raises:
+        ValueError: The value is one a provider granted to the server that runs a step
+            (``credential_sources.unopened``): core opens none, on any machine.
     """
+    unopened = credential_sources.unopened(encrypted_value)
+    if unopened:
+        raise ValueError(unopened)
     if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
         # Parse: $ffsec$1${user_id}${fernet_token}
         remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]

@@ -15,6 +15,8 @@ export interface Secret {
   user_id?: string;
   id?: number;
   access?: AccessInfo | null;
+  // "hub" when listed by the person's hub: it has no value here and is managed on the hub.
+  source?: "local" | "hub";
 }
 
 /**

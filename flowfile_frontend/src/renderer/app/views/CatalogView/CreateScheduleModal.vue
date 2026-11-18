@@ -316,6 +316,13 @@
           />
         </el-form-item>
 
+        <el-form-item label="Runs on">
+          <ScheduleBackendSelect v-model="form.backend" />
+          <div class="hint-text">
+            Where each run computes. The default worker must be reachable from this server.
+          </div>
+        </el-form-item>
+
         <!-- Optional alert. Never blocks creation: with no channels this is just a hint. -->
         <el-form-item class="notify-item">
           <el-checkbox v-model="notifyOnFailure">Notify on failure</el-checkbox>
@@ -383,6 +390,7 @@ import { useNotificationsStore } from "../../stores/notifications-store";
 import { channelTypeLabel } from "./catalog-formatters";
 import { AiDisabledError, generateCronExpression } from "../../api/ai.api";
 import { CatalogApi } from "../../api/catalog.api";
+import ScheduleBackendSelect from "./components/ScheduleBackendSelect.vue";
 
 const props = defineProps<{
   visible: boolean;
@@ -446,6 +454,7 @@ const form = ref<{
   trigger_table_ids: number[];
   name: string;
   description: string;
+  backend: string;
 }>({
   registration_id: props.preselectedFlowId ?? null,
   schedule_type: "cron",
@@ -453,6 +462,7 @@ const form = ref<{
   trigger_table_ids: [],
   name: "",
   description: "",
+  backend: "",
 });
 
 const builtCron = computed(() => buildCron(cron.value));
@@ -584,6 +594,7 @@ watch(
       form.value.trigger_table_ids = [];
       form.value.name = "";
       form.value.description = "";
+      form.value.backend = "";
       cron.value = defaultCronState();
       notifyOnFailure.value = false;
       notifyChannelId.value = null;
@@ -668,6 +679,7 @@ function handleCreate() {
     schedule_type: form.value.schedule_type,
     name: form.value.name.trim() || null,
     description: form.value.description.trim() || null,
+    backend: form.value.backend || null,
   };
 
   if (form.value.schedule_type === "cron") {

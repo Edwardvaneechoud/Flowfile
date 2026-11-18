@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import authService from "../services/auth.service";
+import { useGlobalSearchStore } from "./global-search-store";
 import { useTelemetryStore } from "./telemetry-store";
 
 export interface User {
@@ -88,8 +89,8 @@ export const useAuthStore = defineStore("auth", {
       }
     },
 
-    logout() {
-      authService.logout();
+    async logout() {
+      await authService.signOut();
       this.user = null;
       this.isAuthenticated = false;
       this.error = null;
@@ -100,10 +101,12 @@ export const useAuthStore = defineStore("auth", {
      * Drop per-user state that outlives a client-side user switch. Telemetry
      * status is load-once and carries `can_manage`, which is per-user in docker
      * mode — keeping it would let the next user be judged by the previous
-     * user's authority.
+     * user's authority. The search palette's query and recent searches are the
+     * previous user's too.
      */
     clearSessionScopedStores() {
       useTelemetryStore().$reset();
+      useGlobalSearchStore().reset();
     },
 
     clearError() {

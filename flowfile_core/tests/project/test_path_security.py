@@ -27,6 +27,7 @@ from flowfile_core.project.manifest import (
     tables_manifest_path,
     write_manifest,
 )
+from flowfile_core.project.service import write_export
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +381,7 @@ class TestRoundTripWithPathSecurity:
     def test_clean_project_round_trips_despite_path_security(self, tmp_path, monkeypatch):
         # Invariant: the path-security changes must not break a legitimate single-user round-trip.
         from flowfile_core.configs import settings
-        from flowfile_core.project import project_sync, projection
+        from flowfile_core.project import project_sync
         from flowfile_core.database.connection import get_db_context
         from flowfile_core.project.importer import import_project
 
@@ -398,8 +399,7 @@ class TestRoundTripWithPathSecurity:
                 if p.is_file() and not p.name.startswith("."):
                     snap1[str(p.relative_to(root))] = p.read_bytes()
 
-            with get_db_context() as db:
-                projection.project_all(db, root, owner_id)
+            write_export(root, owner_id)
 
             snap2: dict[str, bytes] = {}
             for p in sorted(root.rglob("*")):
@@ -409,8 +409,7 @@ class TestRoundTripWithPathSecurity:
             assert snap1 == snap2, "Re-projecting an unchanged project must be byte-identical!"
 
             import_project(root, owner_id)
-            with get_db_context() as db:
-                projection.project_all(db, root, owner_id)
+            write_export(root, owner_id)
 
             snap3: dict[str, bytes] = {}
             for p in sorted(root.rglob("*")):
@@ -420,3 +419,75 @@ class TestRoundTripWithPathSecurity:
             assert snap1 == snap3, "project→import→project must round-trip byte-identically!"
         finally:
             project_sync.close_project(owner_id)
+
+
+class TestProjectReadsRegisteredFlowsInsideTheFlowFolders:
+    """The project's sync and init read a registration's file through ``_load_flow_data``; on a multi-user server
+    a path outside the server's flow folders reads as nothing, whatever is there."""
+
+    @pytest.mark.parametrize("mode", ["docker", "server"])
+    def test_server_reads_nothing_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
+        from flowfile_core.project.projection import _load_flow_data
+        from shared.storage_config import storage
+        from tests.flowfile_core_test_utils import as_server
+
+        outside = tmp_path / "server_config.yaml"
+        outside.write_text("token: canary-7f3a\n", encoding="utf-8")
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        inside = storage.flows_directory / f"projected_{uuid4().hex[:8]}.yaml"
+        inside.write_text("flowfile_name: projected\n", encoding="utf-8")
+        try:
+            assert _load_flow_data(str(outside)) == {"token": "canary-7f3a"}
+            as_server(monkeypatch, mode)
+            assert _load_flow_data(str(outside)) is None
+            assert _load_flow_data(str(inside)) == {"flowfile_name": "projected"}
+        finally:
+            inside.unlink(missing_ok=True)
+
+
+class TestEditorLimitsOnAHubServer:
+    """A server run by hand is limited to the working folder and the storage folder, never the home folder
+    its user data directory points at."""
+
+    @staticmethod
+    def _hub(monkeypatch) -> None:
+        from flowfile_core.configs import settings
+
+        monkeypatch.setattr(settings, "FLOWFILE_MODE", "server")
+        monkeypatch.setenv("FLOWFILE_MODE", "server")
+
+    def test_hub_server_refuses_the_home_folder(self, monkeypatch):
+        from fastapi import HTTPException
+
+        from shared.storage_config import storage
+
+        self._hub(monkeypatch)
+        monkeypatch.setattr(storage, "_user_data_dir", Path.home())
+        with pytest.raises(HTTPException) as exc_info:
+            validate_path_under_cwd(str(Path.home() / "Documents" / "flow.yaml"))
+        assert exc_info.value.status_code == 403
+
+    def test_hub_server_allows_the_storage_folder(self, monkeypatch):
+        from shared.storage_config import storage
+
+        self._hub(monkeypatch)
+        assert validate_path_under_cwd(str(storage.flows_directory / "flow.yaml")) is not None
+
+    def test_docker_still_allows_its_user_data_folder(self, monkeypatch):
+        from flowfile_core.configs import settings
+        from shared.storage_config import storage
+
+        monkeypatch.setattr(settings, "FLOWFILE_MODE", "docker")
+        monkeypatch.setenv("FLOWFILE_MODE", "docker")
+        assert validate_path_under_cwd(str(storage.user_data_directory / "flow.yaml")) is not None
+
+    @pytest.mark.parametrize("mode", ["docker", "server"])
+    def test_server_refuses_a_relative_flow_file_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
+        from flowfile_core.flowfile.manage.io_flowfile import _validate_flow_path
+
+        (tmp_path / "rel.yaml").write_text("flow: {}", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        assert _validate_flow_path(Path("rel.yaml")) == (tmp_path / "rel.yaml").resolve()
+        monkeypatch.setenv("FLOWFILE_MODE", mode)
+        with pytest.raises(ValueError, match="Relative paths must be within"):
+            _validate_flow_path(Path("rel.yaml"))

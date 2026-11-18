@@ -1,5 +1,10 @@
 import { ElMessage } from "element-plus";
-import { createRouter, createWebHashHistory, RouteRecordRaw } from "vue-router";
+import {
+  createRouter,
+  createWebHashHistory,
+  RouteLocationNormalized,
+  RouteRecordRaw,
+} from "vue-router";
 import AppLayout from "../layouts/AppLayout.vue";
 import authService from "../services/auth.service";
 import setupService from "../services/setup.service";
@@ -135,6 +140,11 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../views/CatalogView/CatalogView.vue"),
       },
       {
+        name: "search",
+        path: "search",
+        component: () => import("../views/SearchView/SearchView.vue"),
+      },
+      {
         // Dashboards are catalog pages: CatalogView keeps its tab bar (pinned to
         // meta.catalogTab) and mounts the viewer/editor in its nested <router-view>.
         path: "dashboards",
@@ -227,6 +237,10 @@ router.onError((error, to) => {
 let setupChecked = false;
 let setupRequired = false;
 
+/** What brings a sign-in back to `to`; nothing for the app's plain entry, so a plain visit signs in as before. */
+const returnQuery = (to: RouteLocationNormalized) =>
+  to.name === "designer" && Object.keys(to.query).length === 0 ? {} : { redirect: to.fullPath };
+
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false);
@@ -288,10 +302,15 @@ router.beforeEach(async (to, _from, next) => {
     if (authService.isAuthenticated()) {
       next();
     } else {
-      next({ name: "login" });
+      next({ name: "login", query: returnQuery(to) });
     }
   } else {
-    if (to.name === "login" && (authService.isInDesktopMode() || authService.isAuthenticated())) {
+    // a signed-in tab still starts a sign-in through the hub, which may sign in someone else
+    const hubSignIn = to.query.hub_signin === "1";
+    if (
+      to.name === "login" &&
+      (authService.isInDesktopMode() || (authService.isAuthenticated() && !hubSignIn))
+    ) {
       next({ name: "home" });
     } else {
       next();
@@ -308,5 +327,14 @@ router.afterEach(() => {
 router.afterEach((to) => {
   if (to.name === "catalog") rememberCatalogLocation(to.query);
 });
+
+/**
+ * Send a tab nobody signed into to the sign-in page once the first navigation settles. A tab
+ * already there keeps its address, so `#/login?hub_signin=1` still starts the sign-in through the hub.
+ */
+export async function redirectToLogin(): Promise<void> {
+  await router.isReady().catch(() => undefined);
+  if (router.currentRoute.value.name !== "login") await router.push({ name: "login" });
+}
 
 export default router;

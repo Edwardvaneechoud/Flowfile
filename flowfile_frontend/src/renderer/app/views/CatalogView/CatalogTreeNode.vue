@@ -2,7 +2,12 @@
   <div class="tree-node">
     <div
       class="tree-row"
-      :class="{ expanded, selected: node.level === 0 && node.id === selectedNamespaceId }"
+      :class="{
+        expanded,
+        selected: node.level === 0 && node.id === selectedNamespaceId,
+        unavailable: reason !== null,
+      }"
+      :title="reason ?? undefined"
       @click="onRowClick"
     >
       <i
@@ -17,12 +22,17 @@
       <span class="ns-name">{{ node.name }}</span>
       <SharedBadge :access="node.access" />
       <CatalogStorageBadge
-        v-if="node.level === 0"
+        v-if="node.level === 0 && !isHub"
         :storage-uri="node.storage_uri"
         :connection-name="node.storage_connection_name"
       />
       <span v-if="totalFlows > 0" class="ns-count">{{ totalFlows }}</span>
-      <div class="tree-actions" @click.stop>
+      <div v-if="isHub && canShare(node)" class="tree-actions" @click.stop>
+        <button class="action-btn" title="Share namespace" @click="$emit('namespaceShare', node)">
+          <i class="fa-solid fa-share-nodes"></i>
+        </button>
+      </div>
+      <div v-if="!isHub" class="tree-actions" @click.stop>
         <button
           v-if="isMultiUser && isOwned(node)"
           class="action-btn"
@@ -75,9 +85,11 @@
       </div>
     </div>
 
+    <p v-if="reason !== null && node.level === 0" class="ns-unavailable">{{ reason }}</p>
+
     <div v-if="expanded" class="tree-children">
       <!-- Child namespaces (schemas) -->
-      <div v-for="child in node.children" :key="child.id" class="tree-child-wrapper">
+      <div v-for="child in shownChildren" :key="child.id" class="tree-child-wrapper">
         <CatalogTreeNode
           :node="child"
           :selected-flow-id="selectedFlowId"
@@ -128,6 +140,13 @@
         >
           <i class="fa-solid fa-diagram-project flow-icon"></i>
           <span class="flow-name">{{ flow.name }}</span>
+          <span
+            v-if="isHubRow(flow) && flow.latest_version != null"
+            class="flow-version"
+            :title="hubFlowVersionTitle(flow)"
+            data-testid="hub-flow-version"
+            >v{{ flow.latest_version }}</span
+          >
           <el-tooltip
             v-if="!flow.file_exists"
             content="Flow file not found on disk"
@@ -221,9 +240,7 @@
             'file-missing': table.table_type !== 'virtual' && table.file_exists === false,
           }"
           @click.stop="$emit('selectTable', table.id)"
-          @contextmenu.prevent.stop="
-            $emit('tableContextMenu', { table, x: $event.clientX, y: $event.clientY })
-          "
+          @contextmenu.prevent.stop="onTableContextMenu(table, $event)"
         >
           <i
             v-if="table.table_type === 'virtual'"
@@ -336,7 +353,7 @@
 <script setup lang="ts">
 import { computed, watch } from "vue";
 import { SCRATCH_NAMESPACE_NAMES, SYSTEM_NAMESPACE_NAMES } from "../../types";
-import type { FlowRegistration, GlobalArtifact, NamespaceTree } from "../../types";
+import type { CatalogTable, FlowRegistration, GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { RUN_OUTCOME_BADGE, runOutcome } from "./runStatus";
@@ -347,6 +364,7 @@ import {
   normalizeQuery,
   nsKey,
   secKey,
+  shownNamespaces,
   subtreeLeafCount,
   subtreeMatches,
   visibleArtifacts as filterArtifacts,
@@ -359,9 +377,10 @@ import {
 } from "./catalogTreeFilter";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
+import { hubFlowVersionTitle, isHubRow, unavailableReason } from "./hubRows";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
-const { isMultiUser, isOwned, canManage } = useResourceSharing();
+const { isMultiUser, isOwned, canManage, canShare } = useResourceSharing();
 
 const LAST_RUN_TITLE = {
   success: "Last run succeeded",
@@ -437,6 +456,14 @@ function containsTable(node: NamespaceTree, tableId: number): boolean {
   return node.children.some((child) => containsTable(child, tableId));
 }
 
+const isHub = computed(() => isHubRow(props.node));
+// Why this Flowfile cannot use a hub catalog's tables; the row shows only under "Show unavailable".
+const reason = computed(() => unavailableReason(props.node));
+
+function onTableContextMenu(table: CatalogTable, event: MouseEvent) {
+  emit("tableContextMenu", { table, x: event.clientX, y: event.clientY });
+}
+
 const rawQuery = computed(() => normalizeQuery(props.searchQuery));
 const searching = computed(() => rawQuery.value.length > 0);
 // A namespace matched by its own name shows everything it holds.
@@ -448,6 +475,7 @@ const filter = computed<TreeFilter>(() => ({
   showUnavailable: props.showUnavailable,
 }));
 
+const shownChildren = computed(() => shownNamespaces(props.node.children, filter.value));
 const visibleFlows = computed(() => filterFlows(props.node, filter.value));
 const visibleTables = computed(() => filterTables(props.node, filter.value));
 const visibleVisualizations = computed(() => filterVisualizations(props.node, filter.value));
@@ -589,6 +617,18 @@ const totalFlows = computed(() => {
   background: var(--color-primary-light, rgba(59, 130, 246, 0.1));
 }
 
+.tree-row.unavailable {
+  opacity: 0.55;
+}
+
+.ns-unavailable {
+  margin: 0 0 var(--spacing-1);
+  padding: 0 var(--spacing-2) 0 calc(var(--spacing-2) + 22px);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
 .chevron {
   width: 14px;
   font-size: 10px;
@@ -674,6 +714,17 @@ const totalFlows = computed(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.flow-version {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--color-background-tertiary);
+  padding: 0 5px;
+  border-radius: var(--border-radius-sm);
+  line-height: 18px;
+  flex-shrink: 0;
+  font-family: var(--font-family-mono);
 }
 
 .flow-actions {

@@ -49,7 +49,7 @@ from flowfile_core.flowfile.execution.payloads import (
     unpack,
 )
 from flowfile_core.flowfile.execution.protocol import (
-    CredentialRef,
+    Credential,
     JobHandle,
     JobStatus,
     OperationKind,
@@ -218,7 +218,7 @@ class EmbeddedWorkerBackend(_WorkerReferences):
             return pl.LazyFrame.deserialize(io.BytesIO(location.plan))
         raise OperationUnsupported(f"Result {ref.result_id} is a blob: it has no rows to plan over")
 
-    def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
+    def export(self, ref: ResultRef, uri: str, credential: Credential | None) -> str:
         """Write ``ref`` to ``uri`` as parquet by the worker's export job, or copy a blob there, and return ``uri``.
 
         Raises:
@@ -240,7 +240,7 @@ class EmbeddedWorkerBackend(_WorkerReferences):
         uri: str,
         schema: Schema | None,
         row_count: int | None,
-        credential: CredentialRef | None,
+        credential: Credential | None,
         kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
         """Hold a scan of the parquet at ``uri`` as a deferred result under a fresh id, or a blob of its bytes.

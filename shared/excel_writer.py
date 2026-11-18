@@ -45,6 +45,8 @@ _LOCK_POLL_S: Final = 0.05
 # (ENOLCK/EOPNOTSUPP on network filesystems, EBADF) means locking is broken and must fail fast.
 _CONTENTION_ERRNOS: Final = frozenset({errno.EACCES, errno.EAGAIN, errno.EDEADLK})
 
+_RETRY_DENIED_LOCKFILE_OPEN: Final = os.name == "nt"
+
 if os.name == "nt":
     import msvcrt
 
@@ -92,7 +94,8 @@ def _workbook_lock(path: str) -> Iterator[None]:
     Safe-unlink lockfile protocol: after acquiring the flock, verify the fd still is the live
     lockfile — a releaser unlinks *before* unlocking, so a waiter that acquires a stale inode
     detects the mismatch and reopens instead of entering a second lock domain. On Windows an
-    open file cannot be unlinked, which makes the plain unlock-close-unlink order safe there.
+    open file cannot be unlinked, which makes the plain unlock-close-unlink order safe there; a
+    waiter whose open is denied while that unlink is in progress polls again until the deadline.
     The OS releases the lock if the holder dies, so a killed write never wedges later runs.
     """
     lock_path = os.path.realpath(path) + ".lock"
@@ -100,7 +103,13 @@ def _workbook_lock(path: str) -> Iterator[None]:
     while True:
         if time.monotonic() > deadline:
             raise TimeoutError(f"Timed out waiting for the excel write lock on '{path}'.")
-        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        except PermissionError:
+            if not _RETRY_DENIED_LOCKFILE_OPEN:
+                raise
+            time.sleep(_LOCK_POLL_S)
+            continue
         try:
             while not _try_lock(fd):
                 if time.monotonic() > deadline:

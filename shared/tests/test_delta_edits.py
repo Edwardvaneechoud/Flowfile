@@ -15,6 +15,9 @@ from shared.delta_utils import (
     DeltaEditStaleError,
     add_delta_row_id_column,
     apply_delta_edits,
+    enable_change_data_feed,
+    restore_delta_version,
+    vacuum_delta,
 )
 
 
@@ -299,3 +302,70 @@ class TestAddDeltaRowIdColumn:
     def test_stale_version_rejected(self, delta_table):
         with pytest.raises(DeltaEditStaleError):
             add_delta_row_id_column(delta_table, "record_id", expected_version=3)
+
+
+class TestRestoreDeltaVersion:
+    def test_restores_data_and_schema_of_an_earlier_version(self, delta_table):
+        pl.DataFrame({"id": [9], "other": ["x"]}).write_delta(
+            delta_table, mode="overwrite", delta_write_options={"schema_mode": "overwrite"}
+        )
+        result = restore_delta_version(delta_table, 0, expected_version=1)
+
+        assert result["restored_version"] == 0
+        assert result["new_version"] == 2
+        out = pl.read_delta(delta_table).sort("id")
+        assert out.columns == ["id", "text", "score", "created"]
+        assert out["text"].to_list() == ["alpha", "beta", "gamma"]
+        assert result["row_count"] == 3
+        assert [c["name"] for c in result["schema"]] == ["id", "text", "score", "created"]
+
+    def test_history_is_kept_so_a_restore_can_be_undone(self, delta_table):
+        pl.DataFrame({"id": [4], "text": ["delta"], "score": [4.5]}).with_columns(
+            pl.lit("2024-01-02 10:11:12").str.to_datetime().alias("created")
+        ).write_delta(delta_table, mode="append")
+        restore_delta_version(delta_table, 0)
+        assert pl.read_delta(delta_table).height == 3
+        restore_delta_version(delta_table, 1)
+        assert pl.read_delta(delta_table).height == 4
+        history = DeltaTable(delta_table).history()
+        assert history[0]["operation"] == "RESTORE"
+        assert history[0]["operationParameters"]["version"] == "1"
+
+    def test_commit_metadata_is_recorded(self, delta_table):
+        pl.DataFrame({"id": [9]}).write_delta(
+            delta_table, mode="overwrite", delta_write_options={"schema_mode": "overwrite"}
+        )
+        restore_delta_version(delta_table, 0, commit_metadata={"flowfile_operation": "catalog_table_restore"})
+        assert DeltaTable(delta_table).history(1)[0]["flowfile_operation"] == "catalog_table_restore"
+
+    def test_stale_expected_version_rejected(self, delta_table):
+        pl.DataFrame({"id": [9]}).write_delta(
+            delta_table, mode="overwrite", delta_write_options={"schema_mode": "overwrite"}
+        )
+        with pytest.raises(DeltaEditStaleError):
+            restore_delta_version(delta_table, 0, expected_version=0)
+
+    @pytest.mark.parametrize("version, message", [(0, "already the current"), (5, "does not exist"), (-1, "does not exist")])
+    def test_out_of_range_versions_rejected(self, delta_table, version, message):
+        with pytest.raises(DeltaEditError, match=message):
+            restore_delta_version(delta_table, version)
+
+    def test_vacuumed_version_gives_a_clear_error(self, delta_table):
+        pl.DataFrame({"id": [9]}).write_delta(
+            delta_table, mode="overwrite", delta_write_options={"schema_mode": "overwrite"}
+        )
+        vacuum_delta(delta_table, retention_hours=0, dry_run=False)
+        with pytest.raises(DeltaEditError, match="removed by a vacuum"):
+            restore_delta_version(delta_table, 0)
+        assert pl.read_delta(delta_table)["id"].to_list() == [9]
+
+    def test_restore_brings_back_table_properties(self, delta_table):
+        floor = enable_change_data_feed(delta_table)
+        pl.DataFrame({"id": [9]}).write_delta(
+            delta_table, mode="overwrite", delta_write_options={"schema_mode": "overwrite"}
+        )
+        restore_delta_version(delta_table, floor)
+        assert DeltaTable(delta_table).metadata().configuration.get("delta.enableChangeDataFeed") == "true"
+        # Below the enable commit the change feed goes: why the catalog refuses it for tracked tables.
+        restore_delta_version(delta_table, floor - 1)
+        assert "delta.enableChangeDataFeed" not in DeltaTable(delta_table).metadata().configuration

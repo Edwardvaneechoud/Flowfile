@@ -17,6 +17,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from flowfile_core.catalog import table_sources
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogCdcCursor, FlowRegistration
@@ -30,12 +31,14 @@ UNRESOLVABLE_CONSUMER_MESSAGE = (
 )
 
 
-def resolve_consumer_key(graph, node_settings) -> tuple[str, str | None]:
+def resolve_consumer_key(graph, node_settings, *, elsewhere: bool = False) -> tuple[str, str | None]:
     """Resolve the ``(consumer_key, label)`` a since-last-run reader commits against.
 
     A typed name is global to the table — deliberately shared across flows and notebooks. Without
     one the key is anchored on ``FlowRegistration.flow_uuid``, the only flow identity that survives
-    a delete-and-recreate, so an unregistered flow has no cursor to advance.
+    a delete-and-recreate, so an unregistered flow has no cursor to advance. A reader of a table
+    ``elsewhere`` (a remote catalog's) first takes the uuid that catalog keeps the flow under, so the
+    flow shares one cursor whichever install runs it.
 
     Raises:
         ValueError: The flow has neither a typed cursor name nor a registration.
@@ -46,10 +49,10 @@ def resolve_consumer_key(graph, node_settings) -> tuple[str, str | None]:
     if name:
         return f"name:{name}", name
 
+    flow_uuid = table_sources.flow_uuid(graph) if elsewhere else None
     resolve_source_registration_id(graph)
     registration_id = getattr(graph.flow_settings, "source_registration_id", None)
-    flow_uuid = None
-    if registration_id is not None:
+    if registration_id is not None and not flow_uuid:
         with get_db_context() as db:
             registration = db.get(FlowRegistration, registration_id)
             flow_uuid = getattr(registration, "flow_uuid", None)
@@ -78,6 +81,15 @@ def read_cursor(
         )
         return None
     return cursor
+
+
+def stored_version(table_id: int, consumer_key: str, table_path: str, user_id: int | None) -> int | None:
+    """The version the consumer last read up to, from the catalog that keeps the table; ``None`` before its first."""
+    if table_sources.remote_of(table_id) is not None:
+        return table_sources.cursor_position(table_id, user_id, consumer_key, table_path)
+    with get_db_context() as db:
+        cursor = read_cursor(db, table_id, consumer_key, table_path)
+    return cursor.last_version if cursor is not None else None
 
 
 def init_cursor_value(cdc_start: str, head: int, cdc_enabled_version: int | None) -> int:
@@ -195,16 +207,21 @@ def make_cdc_commit_callback(
             flow_logger.warning(f"Change cursor NOT advanced for node {node_id} (downstream failure or cancel)")
             return
         try:
-            with get_db_context() as db:
-                commit_cursor(
-                    db,
-                    table_id,
-                    consumer_key,
-                    head,
-                    owner_id=owner_id,
-                    label=label,
-                    table_path=table_path,
+            if table_sources.remote_of(table_id) is not None:
+                table_sources.advance_cursor(
+                    table_id, owner_id, consumer_key, head, consumer_label=label, table_path=table_path
                 )
+            else:
+                with get_db_context() as db:
+                    commit_cursor(
+                        db,
+                        table_id,
+                        consumer_key,
+                        head,
+                        owner_id=owner_id,
+                        label=label,
+                        table_path=table_path,
+                    )
             flow_logger.info(f"Advanced change cursor for node {node_id} to v{head} ({consumer_key})")
         except Exception as e:
             flow_logger.error(f"Failed to advance change cursor for node {node_id}: {e}")

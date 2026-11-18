@@ -45,7 +45,7 @@ def sched(tmp_path, monkeypatch):
     s = FlowScheduler(poll_interval=1)
     s.spawned: list[tuple[str, int]] = []
     monkeypatch.setattr(
-        s, "_spawn_flow", lambda flow_path, run_id: (s.spawned.append((flow_path, run_id)) or 4242)
+        s, "_spawn_flow", lambda flow_path, run_id, backend=None: (s.spawned.append((flow_path, run_id)) or 4242)
     )
     return s
 
@@ -248,7 +248,7 @@ def test_active_run_blocks_launch_and_keeps_watermark(sched, monkeypatch):
 
 @pytest.mark.parametrize("mode", ["returns_none", "raises"])
 def test_spawn_failure_advances_watermark(sched, monkeypatch, mode):
-    def _fail(flow_path, run_id):
+    def _fail(flow_path, run_id, backend=None):
         if mode == "raises":
             raise OSError("boom")
         return None

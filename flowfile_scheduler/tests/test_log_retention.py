@@ -38,7 +38,7 @@ def sched(tmp_path, monkeypatch):
     s = FlowScheduler(poll_interval=1)
     s.spawned: list[tuple[str, int]] = []
     monkeypatch.setattr(
-        s, "_spawn_flow", lambda flow_path, run_id: (s.spawned.append((flow_path, run_id)) or 4242)
+        s, "_spawn_flow", lambda flow_path, run_id, backend=None: (s.spawned.append((flow_path, run_id)) or 4242)
     )
     return s
 

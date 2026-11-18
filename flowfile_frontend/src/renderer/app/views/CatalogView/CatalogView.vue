@@ -20,6 +20,11 @@
             <i :class="tab.icon"></i>
             <span class="tab-label">{{ tab.label }}</span>
             <span v-if="tab.badge !== null" class="tab-badge">{{ tab.badge }}</span>
+            <span
+              v-else-if="tab.badgePending"
+              class="tab-badge tab-badge--pending"
+              aria-hidden="true"
+            ></span>
           </button>
         </div>
       </template>
@@ -77,7 +82,13 @@
           >
             <i class="fa-solid fa-angles-left"></i>
           </button>
-          <el-dropdown trigger="click" placement="bottom-end" class="sidebar-new-dropdown">
+          <el-dropdown
+            v-if="showsNew"
+            trigger="click"
+            placement="bottom-end"
+            class="sidebar-new-dropdown"
+            data-testid="catalog-new"
+          >
             <button class="btn btn-primary btn-sm sidebar-new-btn">
               <i class="fa-solid fa-plus"></i>
               New
@@ -105,13 +116,20 @@
         <!-- Catalog Tree -->
         <div class="tree-container">
           <div class="sidebar-filters">
-            <input v-model="searchQuery" class="search-input" placeholder="Search..." />
+            <input v-model="searchQuery" class="search-input" placeholder="Filter catalog…" />
             <label class="unavailable-toggle">
               <input v-model="showUnavailable" type="checkbox" />
               <span>Show unavailable</span>
             </label>
           </div>
-          <div v-if="catalogStore.loading" class="loading-state">Loading...</div>
+          <div
+            v-if="!catalogStore.treeLoaded && catalogStore.overviewFailed"
+            class="overview-error"
+          >
+            <span>Couldn't load catalogs.</span>
+            <button class="btn btn-secondary btn-sm" @click="retryOverview">Retry</button>
+          </div>
+          <div v-else-if="!catalogStore.treeLoaded" class="loading-state">Loading...</div>
           <div v-else-if="catalogStore.tree.length === 0" class="empty-state">
             <p>No catalogs yet.</p>
             <button class="btn btn-primary btn-sm" @click="showCreateNamespace = true">
@@ -126,43 +144,54 @@
             </button>
           </div>
           <div v-else>
+            <p v-if="treeEmptyNote" class="search-empty">{{ treeEmptyNote }}</p>
             <p v-if="treeSearchFilter.query && searchMatchCount === 0" class="search-empty">
               No matches for "{{ searchQuery.trim() }}".
               <template v-if="hiddenUnavailableMatches > 0">
-                Tick "Show unavailable" — the only matches are items whose files are missing.
+                Tick "Show unavailable" — the only matches are
+                {{
+                  hasHubRows
+                    ? "missing or out of this Flowfile's reach"
+                    : "items whose files are missing"
+                }}.
               </template>
             </p>
-            <CatalogTreeNode
-              v-for="node in catalogStore.tree"
-              :key="node.id"
-              :node="node"
-              :selected-flow-id="catalogStore.selectedFlowId"
-              :selected-artifact-id="catalogStore.selectedArtifactId"
-              :selected-table-id="catalogStore.selectedTableId"
-              :selected-namespace-id="catalogStore.selectedNamespaceId"
-              :search-query="searchQuery"
-              :show-unavailable="showUnavailable"
-              @select-flow="selectFlow($event)"
-              @select-artifact="selectArtifact($event)"
-              @select-table="selectTable($event)"
-              @select-namespace="selectNamespace($event)"
-              @table-context-menu="onTableContextMenu($event)"
-              @artifact-context-menu="onArtifactContextMenu($event)"
-              @flow-context-menu="onFlowContextMenu($event)"
-              @select-visualization="openVisualization($event)"
-              @select-notebook="openNotebook($event)"
-              @delete-notebook="handleDeleteNotebook($event)"
-              @toggle-favorite="catalogStore.toggleFavorite($event)"
-              @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
-              @register-flow="openRegisterFlow($event)"
-              @register-table="openRegisterTable($event)"
-              @create-schema="openCreateSchema($event)"
-              @delete-table="handleDeleteTable($event)"
-              @delete-flow="handleDeleteFlow($event)"
-              @namespace-share="openNamespaceShare($event)"
-              @cleanup-namespace="handleCleanupNamespace($event)"
-              @delete-namespace="handleDeleteSchema($event)"
-            />
+            <template v-for="group in treeGroups" :key="group.place ?? ''">
+              <div v-if="showsPlaces(treeGroups)" class="tree-place" data-testid="catalog-place">
+                {{ group.place }}
+              </div>
+              <CatalogTreeNode
+                v-for="node in group.rows"
+                :key="node.id"
+                :node="node"
+                :selected-flow-id="catalogStore.selectedFlowId"
+                :selected-artifact-id="catalogStore.selectedArtifactId"
+                :selected-table-id="catalogStore.selectedTableId"
+                :selected-namespace-id="catalogStore.selectedNamespaceId"
+                :search-query="searchQuery"
+                :show-unavailable="showUnavailable"
+                @select-flow="selectFlow($event)"
+                @select-artifact="selectArtifact($event)"
+                @select-table="selectTable($event)"
+                @select-namespace="selectNamespace($event)"
+                @table-context-menu="onTableContextMenu($event)"
+                @artifact-context-menu="onArtifactContextMenu($event)"
+                @flow-context-menu="onFlowContextMenu($event)"
+                @select-visualization="openVisualization($event)"
+                @select-notebook="openNotebook($event)"
+                @delete-notebook="handleDeleteNotebook($event)"
+                @toggle-favorite="catalogStore.toggleFavorite($event)"
+                @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
+                @register-flow="openRegisterFlow($event)"
+                @register-table="openRegisterTable($event)"
+                @create-schema="openCreateSchema($event)"
+                @delete-table="handleDeleteTable($event)"
+                @delete-flow="handleDeleteFlow($event)"
+                @namespace-share="openNamespaceShare($event)"
+                @cleanup-namespace="handleCleanupNamespace($event)"
+                @delete-namespace="handleDeleteSchema($event)"
+              />
+            </template>
           </div>
         </div>
       </div>
@@ -171,15 +200,43 @@
       <div class="catalog-detail">
         <!-- Nested page (dashboards); first so a lingering selection can't shadow it -->
         <router-view v-if="nestedPageTab" />
-        <!-- Run detail view -->
+        <!-- A URL naming a selection waits for the overview rather than painting the tab's default panel first -->
+        <div v-else-if="selectionAwaitsOverview" data-testid="detail-pending">
+          <div v-if="catalogStore.overviewFailed" class="overview-error" role="alert">
+            <span>Couldn't load the catalog: {{ catalogStore.overviewError }}</span>
+            <button class="btn btn-secondary btn-sm" @click="retryOverview">Retry</button>
+          </div>
+          <div v-else class="loading-state">Loading...</div>
+        </div>
+        <!-- Run detail view: shown from the run's list row until its detail arrives -->
         <RunDetailPanel
-          v-else-if="catalogStore.selectedRunDetail"
-          :run="catalogStore.selectedRunDetail"
+          v-else-if="catalogStore.selectedRun"
+          :run="catalogStore.selectedRun"
+          :detail-pending="!catalogStore.selectedRunDetail"
+          :detail-error="catalogStore.runDetailError"
+          @retry-detail="retryRunDetail"
           @close="handleCloseDetail"
           @open-snapshot="openRunSnapshot($event)"
           @view-flow="navigateToFlow($event)"
           @view-schedule-runs="navigateToScheduleRuns"
         />
+        <!-- A selected run or schedule nothing loaded describes yet -->
+        <div v-else-if="pendingDetail" class="detail-pending" data-testid="detail-item-pending">
+          <div class="detail-pending-header">
+            <button class="back-btn" @click="handleCloseDetail">
+              <i class="fa-solid fa-arrow-left"></i> Back
+            </button>
+            <h2>{{ pendingDetail.title }}</h2>
+          </div>
+          <div v-if="pendingDetail.error" class="overview-error" role="alert">
+            <span>Couldn't load this {{ pendingDetail.kind }}: {{ pendingDetail.error }}</span>
+            <button class="btn btn-secondary btn-sm" @click="pendingDetail.retry()">Retry</button>
+          </div>
+          <div v-else class="skeleton-list" aria-busy="true">
+            <div class="skeleton-block detail-pending-meta"></div>
+            <div v-for="i in 4" :key="i" class="skeleton-block skeleton-row"></div>
+          </div>
+        </div>
         <!-- Schedule detail view -->
         <ScheduleDetailPanel
           v-else-if="catalogStore.selectedSchedule"
@@ -238,8 +295,10 @@
           @load-preview="catalogStore.loadSelectedPreview()"
           @refresh-history="catalogStore.refreshTableHistory()"
           @edits-saved="catalogStore.handleTableEdited($event)"
+          @restore-version="handleRestoreVersion($event)"
+          @create-viz="openCreateViz($event)"
         />
-        <!-- Flow detail view -->
+        <!-- Flow detail view; a hub flow's is the same page with its versions and their Open on it -->
         <FlowDetailPanel
           v-else-if="catalogStore.selectedFlow"
           :flow="catalogStore.selectedFlow"
@@ -266,7 +325,14 @@
           @select-schedule="selectSchedule"
           @recover-from-snapshot="openRunSnapshot($event)"
           @open-snapshot="openRunSnapshot($event)"
-        />
+        >
+          <template v-if="isHubRow(catalogStore.selectedFlow)" #remote>
+            <HubFlowDetailPanel
+              :flow="catalogStore.selectedFlow"
+              @open="openHubFlowInDesigner(catalogStore.selectedFlow, $event)"
+            />
+          </template>
+        </FlowDetailPanel>
         <!-- Run history overview -->
         <RunOverviewPanel
           v-else-if="catalogStore.activeTab === 'runs'"
@@ -291,8 +357,17 @@
         <!-- Favorites list -->
         <div v-else-if="catalogStore.activeTab === 'favorites'" class="favorites-panel">
           <h2>Favorites</h2>
+          <template v-if="catalogStore.favorites.length === 0 && !catalogStore.overviewLoaded">
+            <div v-if="catalogStore.overviewFailed" class="overview-error" role="alert">
+              <span>Couldn't load favorites: {{ catalogStore.overviewError }}</span>
+              <button class="btn btn-secondary btn-sm" @click="retryOverview">Retry</button>
+            </div>
+            <div v-else class="skeleton-list" aria-busy="true">
+              <div v-for="i in 3" :key="i" class="skeleton-block skeleton-row"></div>
+            </div>
+          </template>
           <EmptyState
-            v-if="catalogStore.favorites.length === 0"
+            v-else-if="catalogStore.favorites.length === 0"
             icon="fa-solid fa-star"
             title="No favorites yet"
             description="Star flows from the catalog tree to see them here."
@@ -579,7 +654,7 @@
 import { computed, h, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElCheckbox, ElLoading, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
-import { useCatalogStore } from "../../stores/catalog-store";
+import { useCatalogStore, type CatalogItemKind } from "../../stores/catalog-store";
 import { useProjectStore } from "../../stores/project-store";
 import { useNotebookStore } from "../../stores/notebook-store";
 import { useSqlEditorStore } from "../../stores/sql-editor-store";
@@ -597,6 +672,7 @@ import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
 import CatalogTreeNode from "./CatalogTreeNode.vue";
 import FlowListItem from "./FlowListItem.vue";
 import FlowDetailPanel from "./FlowDetailPanel.vue";
+import HubFlowDetailPanel from "./HubFlowDetailPanel.vue";
 import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
 import TableDetailPanel from "./TableDetailPanel.vue";
 import NamespaceDetailPanel from "./NamespaceDetailPanel.vue";
@@ -622,13 +698,40 @@ import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import {
+  byPlace,
+  chartSource,
+  hubPresence as hubPresenceOf,
+  isHubRow,
+  isOffered,
+  offersNew,
+  showsPlaces,
+  withoutHubRows,
+} from "./hubRows";
+import {
+  OpenFromHubCancelled,
+  OpenFromHubRefused,
+  openHubFlowVersion,
+} from "../../features/designer/openFromHub";
+import { detailOf } from "../../utils/apiDetail";
+import { tableChoice } from "../../components/nodes/node-types/elements/catalogPick";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import { useRecentFlows } from "../../composables/useRecentFlows";
-import { countMatches, normalizeQuery } from "./catalogTreeFilter";
+import { countMatches, normalizeQuery, shownNamespaces } from "./catalogTreeFilter";
 import { apiErrorMessage, artifactRef, pageAfterDelete } from "./artifactVersions";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { findNamespacePath } from "../../types";
-import { CATALOG_TAB_GROUP_LABELS, catalogSectionOfTab, catalogTabsInSection } from "./catalogTabs";
+import {
+  CATALOG_TAB_GROUP_LABELS,
+  catalogSectionOfTab,
+  catalogTabsInSection,
+  schedulesBadge,
+} from "./catalogTabs";
+import {
+  catalogTabLocation,
+  forgetCatalogSelection,
+  lastCatalogQueryByTab,
+} from "./catalogLastLocation";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import type {
   ArtifactVersionInfo,
@@ -684,8 +787,13 @@ const tabs = computed(() => {
       tab.key === "favorites"
         ? (catalogStore.stats?.total_favorites ?? null)
         : tab.key === "schedules"
-          ? (catalogStore.stats?.total_schedules ?? null)
+          ? schedulesBadge(catalogStore.stats !== null, catalogStore.schedules)
           : null,
+    // Holds the badge's width until the count lands, so neighbouring tabs don't shift.
+    badgePending:
+      (tab.key === "favorites" || tab.key === "schedules") &&
+      catalogStore.stats === null &&
+      !catalogStore.overviewFailed,
   }));
 });
 
@@ -728,6 +836,22 @@ watch(() => treeSearchFilter.value.query, resetSearchOverrides);
 const searchMatchCount = computed(() =>
   treeSearchFilter.value.query ? countMatches(catalogStore.tree, treeSearchFilter.value) : 0,
 );
+// The catalogs the tree shows, under the place each lives in; headings only where more than one place shows.
+const treeGroups = computed(() =>
+  byPlace(shownNamespaces(catalogStore.tree, treeSearchFilter.value)),
+);
+const hubPresence = computed(() => hubPresenceOf(catalogStore.tree));
+const hasHubRows = computed(() => hubPresence.value !== "none");
+const showsNew = computed(() => offersNew(hubPresence.value, catalogStore.selectedNamespace));
+// Why the tree is empty though catalogs were listed: none offered here, or all out of this Flowfile's reach.
+const treeEmptyNote = computed(() => {
+  if (treeGroups.value.length > 0 || catalogStore.tree.length === 0) return null;
+  if (!catalogStore.tree.some(isOffered)) {
+    return "This server works in its hub's catalogs, and the hub lists none for you now.";
+  }
+  return 'The catalogs listed are out of this Flowfile\'s reach. Tick "Show unavailable" to see them.';
+});
+
 // Only nudge toward "Show unavailable" when it would actually reveal something.
 const hiddenUnavailableMatches = computed(() => {
   if (!treeSearchFilter.value.query || showUnavailable.value || searchMatchCount.value > 0) {
@@ -871,7 +995,7 @@ const artifactMenuOptions = computed<ContextMenuOption[]>(() => [
   { label: "Delete model", action: "delete", danger: true },
 ]);
 
-// Right-click context menu for catalog flows
+// Right-click context menu for catalog flows.
 const flowMenu = ref<{ flow: FlowRegistration; x: number; y: number } | null>(null);
 const flowMenuOptions = computed<ContextMenuOption[]>(() => [
   { label: "Open flow in editor", action: "open", disabled: !flowMenu.value?.flow.file_exists },
@@ -887,6 +1011,8 @@ const defaultNamespaceId = computed(() => catalogStore.defaultNamespaceId);
 
 // Polling
 let pollInterval: ReturnType<typeof setInterval> | null = null;
+let routeAwaitsOverview = false;
+let unmounted = false;
 const refreshing = ref(false);
 
 async function pollActiveRuns() {
@@ -896,10 +1022,13 @@ async function pollActiveRuns() {
 
   // When runs finish, refresh related data
   if (hadActiveRuns && !hasActiveRuns) {
+    // A finished run may have written tables, so the tree and table list refresh too (in place).
     const loads: Promise<void>[] = [
-      catalogStore.loadRuns(catalogStore.selectedFlowId),
+      catalogStore.refreshRuns(),
       catalogStore.loadSchedules(),
       catalogStore.loadStats(),
+      catalogStore.loadTree(),
+      catalogStore.loadAllTables(),
     ];
     if (catalogStore.selectedScheduleId !== null) {
       loads.push(catalogStore.loadScheduleRuns(catalogStore.selectedScheduleId));
@@ -912,9 +1041,13 @@ async function pollActiveRuns() {
 async function refreshAll() {
   refreshing.value = true;
   try {
+    if (!catalogStore.overviewLoaded) {
+      await catalogStore.initialize(true);
+      return;
+    }
     await Promise.all([
       catalogStore.loadActiveRuns(),
-      catalogStore.loadRuns(catalogStore.selectedFlowId),
+      catalogStore.refreshRuns(),
       catalogStore.loadSchedules(),
       catalogStore.loadStats(),
       catalogStore.loadTree(),
@@ -927,10 +1060,34 @@ async function refreshAll() {
   }
 }
 
+async function handleRestoreVersion(version: number) {
+  const table = catalogStore.selectedTable;
+  if (!table) return;
+  try {
+    const result = await catalogStore.restoreTableVersion(table.id, version);
+    ElMessage.success(
+      result.new_version !== null
+        ? `Restored version ${version} as version ${result.new_version}`
+        : `Restored version ${version}`,
+    );
+  } catch (e: any) {
+    if (e?.response?.status === 409) {
+      ElMessage.error("The table changed since you loaded it. Refresh and try again.");
+      return;
+    }
+    const detail = e?.response?.data?.detail;
+    ElMessage.error(
+      (typeof detail === "string" ? detail : detail?.message) ?? "Could not restore the version",
+    );
+  }
+}
+
 // --- Demo catalog (optional sample data) ---
 
 const demoBusy = ref(false);
-const hasDemoCatalog = computed(() => catalogStore.tree.some((n) => n.name === "Demo"));
+const hasDemoCatalog = computed(() =>
+  withoutHubRows(catalogStore.tree).some((n) => n.name === "Demo"),
+);
 
 async function handleLoadDemoData() {
   demoBusy.value = true;
@@ -969,8 +1126,10 @@ async function handleRemoveDemoData() {
 
 // --- Route-based navigation ---
 
+// Another tab reopens where it was left; the tab already shown goes back to its root.
 function handleTabClick(tab: CatalogTab) {
-  router.push({ name: "catalog", query: { tab } });
+  const query = catalogTabLocation(tab, catalogStore.activeTab, lastCatalogQueryByTab.value);
+  router.push({ name: "catalog", query });
 }
 
 function selectFlow(flowId: number) {
@@ -1055,7 +1214,7 @@ function tableReference(table: CatalogTable): string {
 function openReadInNotebook(table: CatalogTable) {
   // The panel hydrates on mount, but the cell must exist before we navigate.
   notebookStore.ensureHydrated();
-  notebookStore.insertReadCell(tableReference(table));
+  notebookStore.insertReadCell(tableReference(table), isHubRow(table));
   catalogStore.clearTableSelection();
   router.push({ name: "catalog", query: { tab: "notebook" } });
 }
@@ -1087,8 +1246,10 @@ function onFlowMenuSelect(action: string) {
   const flow = flowMenu.value?.flow;
   if (!flow) return;
   if (action === "view") selectFlow(flow.id);
-  else if (action === "open") openFlowInDesigner(flow);
-  else if (action === "runs") {
+  else if (action === "open") {
+    if (isHubRow(flow)) openHubFlowInDesigner(flow);
+    else openFlowInDesigner(flow);
+  } else if (action === "runs") {
     flowDetailFocusRuns.value = true;
     selectFlow(flow.id);
   }
@@ -1099,6 +1260,17 @@ const NEW_FLOW_NODE_POSITION = { x: 200, y: 200 };
 // Spin up a fresh flow whose only node is a catalog reader pre-configured for the
 // given table, then open it in the designer. Mirrors the setting_input the
 // CatalogReader node persists for a configured table (is_setup: true).
+// A hub table is named by the hub's own ids, as the reader's picker writes it.
+function readerTarget(table: CatalogTable) {
+  if (isHubRow(table)) return tableChoice(table);
+  return {
+    catalog_table_id: table.id,
+    catalog_table_name: table.name,
+    catalog_full_table_name: null,
+    catalog_namespace_id: table.namespace_id,
+  };
+}
+
 async function createReadInFlow(table: CatalogTable) {
   try {
     const flowId = await FlowApi.createFlow(null, null, null, false);
@@ -1106,10 +1278,7 @@ async function createReadInFlow(table: CatalogTable) {
       flowId,
       "Add catalog_reader node",
       addConfiguredNodeOperations(flowId, 1, "catalog_reader", NEW_FLOW_NODE_POSITION, {
-        catalog_table_id: table.id,
-        catalog_table_name: table.name,
-        catalog_full_table_name: null,
-        catalog_namespace_id: table.namespace_id,
+        ...readerTarget(table),
         delta_version: null,
         sql_query: null,
         cache_results: false,
@@ -1157,8 +1326,9 @@ async function createReadInFlowFromArtifact(artifact: GlobalArtifact) {
   }
 }
 
+// A hub table is charted through a query over it: a saved visual keeps a query, never a hub table's id.
 function openCreateViz(table: CatalogTable) {
-  vizEditorSource.value = { source_type: "table", table_id: table.id };
+  vizEditorSource.value = chartSource(table);
   vizEditorOpen.value = true;
 }
 
@@ -1337,23 +1507,25 @@ function handleEditTableSql({ table, link }: { table: CatalogTable; link: boolea
 async function confirmDeleteWithFile(opts: {
   title: string;
   question: string;
-  fileLabel: string;
+  fileLabel?: string;
 }): Promise<{ deleteFile: boolean } | null> {
-  const deleteFile = ref(true);
+  // No file to offer (a remote row): its catalog removes the entry, never a file.
+  const deleteFile = ref(opts.fileLabel !== undefined);
+  const checkbox = () =>
+    h(
+      ElCheckbox,
+      {
+        modelValue: deleteFile.value,
+        "onUpdate:modelValue": (v: boolean | string | number) => (deleteFile.value = Boolean(v)),
+      },
+      () => opts.fileLabel,
+    );
   try {
     await ElMessageBox.confirm(
       () =>
         h("div", [
           h("p", { style: "margin: 0 0 12px" }, opts.question),
-          h(
-            ElCheckbox,
-            {
-              modelValue: deleteFile.value,
-              "onUpdate:modelValue": (v: boolean | string | number) =>
-                (deleteFile.value = Boolean(v)),
-            },
-            () => opts.fileLabel,
-          ),
+          opts.fileLabel === undefined ? null : checkbox(),
         ]),
       opts.title,
       { confirmButtonText: "Delete", cancelButtonText: "Cancel", type: "warning" },
@@ -1368,11 +1540,12 @@ async function handleDeleteTable(tableId: number) {
   const result = await confirmDeleteWithFile({
     title: "Delete Table",
     question: "Delete this table from the catalog?",
-    fileLabel: "Also delete the table data from disk",
+    fileLabel: tableId < 0 ? undefined : "Also delete the table data from disk",
   });
   if (!result) return;
   try {
     await CatalogApi.deleteTable(tableId, result.deleteFile);
+    forgetCatalogSelection("tableId", tableId);
     catalogStore.clearTableSelection();
     await Promise.all([
       catalogStore.loadTree(),
@@ -1402,6 +1575,7 @@ async function handleDeleteArtifact(artifact: GlobalArtifact) {
   }
   try {
     await CatalogApi.deleteArtifact(artifact.name, artifact.namespace_id);
+    forgetCatalogSelection("artifactId", artifact.id);
     catalogStore.clearArtifactSelection();
     await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
   } catch (e: any) {
@@ -1413,11 +1587,12 @@ async function handleDeleteFlow(flowId: number) {
   const result = await confirmDeleteWithFile({
     title: "Delete Flow",
     question: "Delete this flow from the catalog? Run history will also be removed.",
-    fileLabel: "Also delete the flow file from disk",
+    fileLabel: flowId < 0 ? undefined : "Also delete the flow file from disk",
   });
   if (!result) return;
   try {
     await CatalogApi.deleteFlow(flowId, result.deleteFile);
+    forgetCatalogSelection("flowId", flowId);
     projectStore.onSourceChanged();
     catalogStore.selectedFlowId = null;
     await Promise.all([
@@ -1486,6 +1661,7 @@ async function handleCleanupNamespace(node: NamespaceTree) {
         ? `Removed ${result.deleted} flows (${result.kept} kept)`
         : `Removed ${result.deleted} flows`,
     );
+    for (const flow of node.flows) forgetCatalogSelection("flowId", flow.id);
     projectStore.onSourceChanged();
     catalogStore.selectedFlowId = null;
     await Promise.all([
@@ -1562,6 +1738,24 @@ async function openFlowInDesigner(
   }
 }
 
+/** Opens `version` of a hub flow (the newest when none is given) as the person's own copy, as Open Flow does. */
+async function openHubFlowInDesigner(flow: FlowRegistration, version?: number | null) {
+  const wanted = version ?? flow.latest_version;
+  if (!flow.flow_uuid || wanted == null) return;
+  try {
+    const opened = await openHubFlowVersion(flow.flow_uuid, wanted);
+    const flowId = await openFlow(opened.flowPath, { name: flow.name });
+    if (flowId === null) return;
+    ElMessage.success(opened.message);
+    router.push({ name: "designer" });
+  } catch (err) {
+    if (err instanceof OpenFromHubCancelled) return;
+    ElMessage.error(
+      err instanceof OpenFromHubRefused ? err.message : detailOf(err, "Couldn't open the flow."),
+    );
+  }
+}
+
 function navigateToFlow(registrationId: number) {
   router.push({
     name: "catalog",
@@ -1623,7 +1817,7 @@ async function handleRunNow(scheduleId: number) {
     await CatalogApi.triggerScheduleNow(scheduleId);
     await Promise.all([
       catalogStore.loadActiveRuns(),
-      catalogStore.loadRuns(catalogStore.selectedFlowId),
+      catalogStore.refreshRuns(),
       catalogStore.loadSchedules(),
     ]);
   } catch (e: any) {
@@ -1656,6 +1850,7 @@ async function handleDeleteSchedule(id: number) {
   }
   try {
     await CatalogApi.deleteSchedule(id);
+    forgetCatalogSelection("scheduleId", id);
     await Promise.all([catalogStore.loadSchedules(), catalogStore.loadStats()]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to delete schedule");
@@ -1671,7 +1866,7 @@ async function handleCancelScheduleRun(schedule: FlowSchedule) {
     await Promise.all([
       catalogStore.loadActiveRuns(),
       catalogStore.loadSchedules(),
-      catalogStore.loadRuns(catalogStore.selectedFlowId),
+      catalogStore.refreshRuns(),
       catalogStore.loadStats(),
     ]);
     ElMessage.success("Run cancelled");
@@ -1705,6 +1900,7 @@ async function handleDeleteScheduleFromDetail(id: number) {
   }
   try {
     await CatalogApi.deleteSchedule(id);
+    forgetCatalogSelection("scheduleId", id);
     catalogStore.clearScheduleSelection();
     router.push({ name: "catalog", query: { tab: catalogStore.activeTab } });
     await Promise.all([catalogStore.loadSchedules(), catalogStore.loadStats()]);
@@ -1730,7 +1926,7 @@ async function handleRunNowFromDetail(scheduleId: number) {
 async function handleRunFlow(flowId: number) {
   try {
     await CatalogApi.runFlow(flowId);
-    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(flowId)]);
+    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.refreshRuns()]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to trigger run");
   }
@@ -1744,7 +1940,7 @@ async function handleCancelFlowRun(flowId: number) {
     }
     await Promise.all([
       catalogStore.loadActiveRuns(),
-      catalogStore.loadRuns(flowId),
+      catalogStore.refreshRuns(),
       catalogStore.loadStats(),
     ]);
     ElMessage.success("Run cancelled");
@@ -1759,7 +1955,74 @@ function routeTab(): CatalogTab {
   return nestedPageTab.value ?? ((route.query.tab as CatalogTab) || "runs");
 }
 
+const SELECTION_QUERY_KEYS = [
+  "flowId",
+  "tableId",
+  "artifactId",
+  "scheduleId",
+  "namespaceId",
+  "runId",
+] as const;
+
+// False until this mount applied the route: the store still holds the previous visit's selection.
+const routeApplied = ref(false);
+
+const selectionAwaitsOverview = computed(
+  () =>
+    (!catalogStore.overviewLoaded || !routeApplied.value) &&
+    SELECTION_QUERY_KEYS.some((key) => !!route.query[key]),
+);
+
+/** Whether the overview already in the store holds every item the URL selects (a run loads by itself). */
+function cachedOverviewHoldsRoute(): boolean {
+  if (!catalogStore.overviewLoaded) return false;
+  const id = (key: (typeof SELECTION_QUERY_KEYS)[number]) =>
+    route.query[key] ? Number(route.query[key]) : null;
+  const holds = (value: number | null, kind: CatalogItemKind) =>
+    value === null || catalogStore.holdsItem(kind, value);
+  return (
+    holds(id("tableId"), "table") &&
+    holds(id("namespaceId"), "namespace") &&
+    holds(id("artifactId"), "artifact") &&
+    holds(id("scheduleId"), "schedule") &&
+    holds(id("flowId"), "flow")
+  );
+}
+
+function retryOverview() {
+  void catalogStore.initialize(true);
+}
+
+function retryRunDetail() {
+  if (catalogStore.selectedRunId !== null)
+    void catalogStore.loadRunDetail(catalogStore.selectedRunId);
+}
+
+// The run branch renders first, so a selected run takes this pane before a schedule does.
+const pendingDetail = computed(() => {
+  const runId = catalogStore.selectedRunId;
+  if (runId !== null) {
+    return {
+      kind: "run",
+      title: `Run #${runId}`,
+      error: catalogStore.runDetailError,
+      retry: () => catalogStore.loadRunDetail(runId),
+    };
+  }
+  const scheduleId = catalogStore.selectedScheduleId;
+  if (scheduleId !== null && !catalogStore.selectedSchedule) {
+    return {
+      kind: "schedule",
+      title: "Schedule",
+      error: catalogStore.scheduleDetailError,
+      retry: () => catalogStore.loadScheduleDetail(scheduleId),
+    };
+  }
+  return null;
+});
+
 function applyRouteToStore() {
+  routeApplied.value = true;
   // A nested page owns its own state; only its tab is pinned.
   if (nestedPageTab.value) {
     catalogStore.activeTab = nestedPageTab.value;
@@ -1774,6 +2037,7 @@ function applyRouteToStore() {
   const scheduleId = q.scheduleId ? Number(q.scheduleId) : null;
   const scheduleFlowId = q.scheduleFlowId ? Number(q.scheduleFlowId) : null;
   const namespaceId = q.namespaceId ? Number(q.namespaceId) : null;
+  const vizId = q.vizId ? Number(q.vizId) : null;
 
   // Update tab (set directly to avoid setActiveTab clearing selections)
   if (catalogStore.activeTab !== tab) {
@@ -1796,7 +2060,7 @@ function applyRouteToStore() {
   if (tableId !== null) {
     if (tableId !== catalogStore.selectedTableId) catalogStore.selectTable(tableId);
     if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
-    if (catalogStore.selectedSchedule) catalogStore.clearScheduleSelection();
+    if (catalogStore.selectedScheduleId !== null) catalogStore.clearScheduleSelection();
   } else if (scheduleId !== null) {
     if (scheduleId !== catalogStore.selectedScheduleId) catalogStore.selectSchedule(scheduleId);
     if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
@@ -1812,7 +2076,7 @@ function applyRouteToStore() {
     // Clear table, artifact, and schedule if not in URL
     if (catalogStore.selectedTable) catalogStore.clearTableSelection();
     if (catalogStore.selectedArtifact) catalogStore.clearArtifactSelection();
-    if (catalogStore.selectedSchedule) catalogStore.clearScheduleSelection();
+    if (catalogStore.selectedScheduleId !== null) catalogStore.clearScheduleSelection();
 
     // Flow selection (set manually to avoid selectFlow clearing run detail)
     if (flowId !== null) {
@@ -1821,9 +2085,7 @@ function applyRouteToStore() {
         catalogStore.clearTableSelection();
         catalogStore.clearArtifactSelection();
         catalogStore.clearScheduleSelection();
-        catalogStore.loadRuns(flowId);
-        catalogStore.loadFlowArtifacts(flowId);
-        catalogStore.loadFlowSchedules(flowId);
+        catalogStore.loadFlowDetail(flowId);
       }
     } else if (catalogStore.selectedFlowId !== null) {
       catalogStore.selectedFlowId = null;
@@ -1833,9 +2095,8 @@ function applyRouteToStore() {
   // Run detail can coexist with any selection (schedule, flow, etc.)
   if (runId !== null) {
     if (runId !== catalogStore.selectedRunId) catalogStore.loadRunDetail(runId);
-  } else if (catalogStore.selectedRunDetail) {
-    catalogStore.selectedRunId = null;
-    catalogStore.selectedRunDetail = null;
+  } else if (catalogStore.selectedRunId !== null) {
+    catalogStore.clearRunSelection();
   }
 
   // Deep link from the Kafka sync flow: open the schedule modal preselected to
@@ -1845,6 +2106,14 @@ function applyRouteToStore() {
     showCreateSchedule.value = true;
     const rest = { ...route.query };
     delete rest.scheduleFlowId;
+    router.replace({ query: rest });
+  }
+
+  // Deep link from the global search: open that chart in the viewer, then strip the param the same way.
+  if (vizId !== null) {
+    if (Number.isFinite(vizId)) openVisualization(vizId);
+    const rest = { ...route.query };
+    delete rest.vizId;
     router.replace({ query: rest });
   }
 }
@@ -1858,16 +2127,33 @@ watch(
   },
 );
 
+// Selections resolve against the tree, so after a failed first load they are restored once a retry lands.
+watch(
+  () => catalogStore.overviewLoaded,
+  (loaded) => {
+    if (!loaded || !routeAwaitsOverview) return;
+    routeAwaitsOverview = false;
+    applyRouteToStore();
+  },
+);
+
 onMounted(async () => {
   // Pin the route's tab before the overview loads, or the store's previous (or default)
   // tab renders first and the page visibly jumps once the data arrives.
   catalogStore.activeTab = routeTab();
+  // A cached overview that holds the route's items shows them now; a stale one refreshes underneath.
+  const appliedFromCache = cachedOverviewHoldsRoute();
+  if (appliedFromCache) applyRouteToStore();
   await catalogStore.initialize();
-  applyRouteToStore(); // Restore selections from URL after data is loaded
+  if (unmounted) return;
   pollInterval = setInterval(pollActiveRuns, 20_000);
+  if (appliedFromCache) return;
+  if (catalogStore.overviewLoaded) applyRouteToStore();
+  else routeAwaitsOverview = true;
 });
 
 onUnmounted(() => {
+  unmounted = true;
   if (pollInterval !== null) {
     clearInterval(pollInterval);
     pollInterval = null;
@@ -2624,6 +2910,84 @@ onUnmounted(() => {
 .catalog-view .info-card .demo-card-btn {
   margin-top: var(--spacing-3);
 }
+
+/* Overview placeholders, shown before the first overview lands */
+.catalog-view .skeleton-block {
+  border-radius: var(--border-radius-md);
+  background: color-mix(in srgb, var(--color-text-muted) 12%, transparent);
+  animation: catalog-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.catalog-view .skeleton-value {
+  display: inline-block;
+  width: 2.5em;
+  height: 1em;
+  vertical-align: middle;
+  border-radius: var(--border-radius-sm, 4px);
+  background: color-mix(in srgb, var(--color-text-muted) 18%, transparent);
+  animation: catalog-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.catalog-view .skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.catalog-view .skeleton-row {
+  height: 36px;
+}
+
+.catalog-view .overview-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-3);
+  padding: var(--spacing-5) var(--spacing-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.catalog-view .detail-pending {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.catalog-view .detail-pending-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-5);
+}
+
+.catalog-view .detail-pending-header h2 {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+}
+
+.catalog-view .detail-pending-meta {
+  height: 140px;
+}
+
+@keyframes catalog-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .catalog-view .skeleton-block,
+  .catalog-view .skeleton-value {
+    animation: none;
+  }
+}
 </style>
 
 <style scoped>
@@ -2679,6 +3043,11 @@ onUnmounted(() => {
   min-width: 18px;
   text-align: center;
   line-height: 18px;
+}
+
+.tab-badge--pending {
+  height: 18px;
+  background: color-mix(in srgb, var(--color-text-muted) 18%, transparent);
 }
 
 .tab-group-divider {
@@ -2903,6 +3272,20 @@ onUnmounted(() => {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   line-height: 1.5;
+}
+
+.tree-place {
+  margin: var(--spacing-3) 0 var(--spacing-1);
+  padding: 0 var(--spacing-2);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.tree-place:first-of-type {
+  margin-top: 0;
 }
 
 .unavailable-toggle {

@@ -106,7 +106,9 @@ import type { FileInfo } from "../../../types";
 import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
 import { CatalogApi } from "../../../api";
 import type { FlowRegistration } from "../../../types";
+import { isHubRow } from "../../../views/CatalogView/hubRows";
 import { runOutcome } from "../../../views/CatalogView/runStatus";
+import { OpenFromHubCancelled, openHubFlowVersion } from "../openFromHub";
 
 const props = defineProps({
   visible: {
@@ -226,7 +228,24 @@ function handleRowClick(flow: FlowRegistration) {
   selectedFlowId.value = flow.id;
 }
 
+/** Opens a hub flow's newest version as the person's copy (`openHubFlowVersion` asks about unpublished edits). */
+async function openHubRow(flow: FlowRegistration) {
+  if (!flow.flow_uuid || flow.latest_version == null) {
+    ElMessage.error("This flow has no published version yet.");
+    return;
+  }
+  try {
+    const opened = await openHubFlowVersion(flow.flow_uuid, flow.latest_version);
+    emit("open-flow", { message: opened.message, flowPath: opened.flowPath });
+    ElMessage.success(opened.message);
+    isVisible.value = false;
+  } catch (err) {
+    if (!(err instanceof OpenFromHubCancelled)) ElMessage.error((err as Error).message);
+  }
+}
+
 function handleOpenCatalogFlow(flow: FlowRegistration) {
+  if (isHubRow(flow)) return void openHubRow(flow);
   const nsPath = namespacePicker.value?.getNamespacePath(
     flow.namespace_id ?? selectedNamespaceId.value,
   );

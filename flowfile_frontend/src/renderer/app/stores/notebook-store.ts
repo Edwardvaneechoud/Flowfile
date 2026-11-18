@@ -146,10 +146,12 @@ function toWire(cells: NotebookCellModel[]): NotebookCellWire[] {
 }
 
 /** Python that reads a catalog table; the typed ref chain only fits the
- * catalog.schema.table shape, anything else falls back to the string form. */
-export function readTableSnippet(qualifiedName: string): string {
+ * catalog.schema.table shape, anything else falls back to the string form.
+ * A hub table (`byName`) is always read by its name: core finds it on the hub,
+ * while the ref chain walks this machine's own catalogs. */
+export function readTableSnippet(qualifiedName: string, byName = false): string {
   const parts = qualifiedName.split(".");
-  if (parts.length === 3) {
+  if (parts.length === 3 && !byName) {
     const [catalog, schema, table] = parts.map((p) => JSON.stringify(p));
     return `df = flowfile_ctx.get_catalog(${catalog}).get_schema(${schema}).get_table_ref(${table}).read()`;
   }
@@ -1135,10 +1137,10 @@ export const useNotebookStore = defineStore("notebook", {
     /** Insert a read of `qualifiedName` (catalog.schema.table) at the caret of the
      * last-focused Python cell. Without one, a trailing blank Python cell is filled
      * in, else a new cell is appended. */
-    insertReadCell(qualifiedName: string) {
+    insertReadCell(qualifiedName: string, byName = false) {
       const nb = this.active;
       if (!nb) return;
-      const snippet = readTableSnippet(qualifiedName);
+      const snippet = readTableSnippet(qualifiedName, byName);
       const focused = nb.cells.find((c) => c.id === nb.focusedCellId);
       if (focused?.cellType === "python") {
         const { at, insert, cursor } = snippetInsertion(focused.code, focused.cursor ?? 0, snippet);

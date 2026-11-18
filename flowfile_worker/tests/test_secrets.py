@@ -1,6 +1,10 @@
 """Tests for secrets module."""
 
 import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from flowfile_worker.secrets import (
@@ -56,6 +60,23 @@ class TestGetMasterKey:
         key = get_master_key()
         assert isinstance(key, str)
         assert len(key) > 0
+
+
+class TestGetMasterKeyOnAServer:
+    """Outside TEST_MODE a multi-user server reads the configured key, as core does in both server modes."""
+
+    @pytest.mark.parametrize("mode", ["docker", "server"])
+    def test_reads_the_configured_key(self, monkeypatch, mode):
+        from cryptography.fernet import Fernet
+
+        import flowfile_worker.secrets as worker_secrets
+
+        key = Fernet.generate_key().decode()
+        monkeypatch.setattr(worker_secrets, "TEST_MODE", False)
+        monkeypatch.setenv("FLOWFILE_MODE", mode)
+        monkeypatch.setenv("FLOWFILE_MASTER_KEY", key)
+
+        assert get_master_key() == key
 
 
 class TestGetDockerSecretKey:
@@ -141,3 +162,32 @@ class TestEncryptDecryptSecret:
         encrypted = encrypt_secret("test_value", user_id=1)
         result = decrypt_secret(encrypted)
         assert isinstance(result, SecretStr)
+
+
+def test_a_plain_secret_decrypts_without_loading_the_sealed_opener(tmp_path):
+    """``shared.sealed`` loads only for a sealed secret, never for a ``$ffsec$`` or legacy one, so every worker child
+    that decrypts a secret is spared it and the server extension that opens one. In a fresh process, since the test
+    session has long imported the module."""
+    repo_root = Path(__file__).resolve().parents[2]
+    code = "\n".join(
+        [
+            "import sys",
+            "from flowfile_worker.secrets import decrypt_secret, encrypt_secret",
+            'assert decrypt_secret(encrypt_secret("mine", user_id=1)).get_secret_value() == "mine"',
+            'assert decrypt_secret(encrypt_secret("legacy")).get_secret_value() == "legacy"',
+            'print("shared.sealed" in sys.modules)',
+        ]
+    )
+    env = {
+        **os.environ,
+        "TEST_MODE": "1",
+        "FLOWFILE_STORAGE_DIR": str(tmp_path / "storage"),
+        "PYTHONPATH": os.pathsep.join(
+            [str(repo_root / "flowfile_worker"), str(repo_root), os.environ.get("PYTHONPATH", "")]
+        ),
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=str(tmp_path), timeout=120
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "False"

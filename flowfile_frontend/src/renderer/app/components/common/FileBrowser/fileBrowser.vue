@@ -26,6 +26,16 @@
           <div class="current-path">
             {{ currentPath }}
           </div>
+          <button
+            v-if="canCreateFolder"
+            class="nav-button"
+            :disabled="loading || !!error"
+            data-testid="file-browser-new-folder"
+            @click="createFolder"
+          >
+            <span class="material-icons">create_new_folder</span>
+            <span>New folder</span>
+          </button>
         </div>
 
         <div class="controls-row">
@@ -604,6 +614,34 @@ const handleSingleClick = (file: FileInfo) => {
 
 const handleSelectDirectory = () => {
   emit("directorySelected", currentPath.value);
+};
+
+/** Offered where a location is being picked: a save target or a directory. */
+const canCreateFolder = computed(
+  () =>
+    !!provider.value.createDirectory && (props.mode === "create" || props.allowDirectorySelection),
+);
+
+const createFolder = async () => {
+  let name: string;
+  try {
+    const { value } = (await ElMessageBox.prompt("Folder name", "New Folder", {
+      confirmButtonText: "Create",
+      cancelButtonText: "Cancel",
+      inputPattern: /\S/,
+      inputErrorMessage: "Enter a folder name",
+    })) as { value: string };
+    name = value.trim();
+  } catch {
+    return;
+  }
+  try {
+    await provider.value.createDirectory?.(currentPath.value, name);
+  } catch (err: any) {
+    ElMessage.error(typeof err?.message === "string" ? err.message : "Could not create the folder");
+    return;
+  }
+  await navigateToPath(provider.value.join(currentPath.value, name));
 };
 
 const handleDoubleClick = async (file: FileInfo) => {

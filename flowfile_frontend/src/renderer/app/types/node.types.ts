@@ -879,6 +879,8 @@ export interface DatabaseSettings {
   database_connection?: DatabaseConnection;
   database_connection_name?: string;
   query_mode: "query" | "table";
+  // Unset (absent or null) = the connection's default database.
+  database_name?: string | null;
   schema_name?: string;
   table_name?: string;
   query: string;
@@ -888,6 +890,8 @@ export interface DatabaseWriteSettings {
   connection_mode: ConnectionModeOption;
   database_connection?: DatabaseConnection;
   database_connection_name?: string;
+  // Unset (absent or null) = the connection's default database.
+  database_name?: string | null;
   schema_name?: string;
   table_name?: string;
   if_exists: IfExistAction;
@@ -1034,6 +1038,8 @@ export const DEFAULT_SCD2_SETTINGS: Scd2Settings = {
 
 export interface CatalogWriteSettings {
   table_name: string;
+  // The schema's catalog: this machine's or the hub's, where namespace_full_name alone names it.
+  source?: "local" | "hub";
   namespace_id: number | null;
   namespace_full_name?: string | null;
   description: string | null;
@@ -1050,6 +1056,8 @@ export interface NodeCatalogWriter extends NodeBase {
 }
 
 export interface NodeCatalogReader extends NodeBase {
+  // The table's catalog: this machine's or the hub's, where catalog_full_table_name alone names it.
+  source?: "local" | "hub";
   catalog_table_id: number | null;
   catalog_full_table_name: string | null;
   catalog_table_name: string | null;
@@ -1463,6 +1471,7 @@ export interface CatalogNamespaceOut {
   level: number;
   description?: string | null;
   access?: AccessInfo | null;
+  source?: "local" | "hub";
 }
 
 export interface CatalogNamespaceTree extends CatalogNamespaceOut {

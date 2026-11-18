@@ -1,11 +1,25 @@
 import axios from "../services/axios.config";
-import type { PermissionLevel, ResourceType, Share, ShareCreate } from "../types/sharing.types";
+import type {
+  PermissionLevel,
+  ResourceType,
+  Share,
+  ShareCreate,
+  UserGroup,
+} from "../types/sharing.types";
 
 const BASE = "/shares";
 
 export class SharesApi {
   static async list(resourceType: ResourceType, resourceId: number): Promise<Share[]> {
     const response = await axios.get<Share[]>(BASE, {
+      params: { resource_type: resourceType, resource_id: resourceId },
+    });
+    return response.data;
+  }
+
+  /** The groups the resource may be shared with, asked where the resource is kept. */
+  static async groups(resourceType: ResourceType, resourceId: number): Promise<UserGroup[]> {
+    const response = await axios.get<UserGroup[]>(`${BASE}/groups`, {
       params: { resource_type: resourceType, resource_id: resourceId },
     });
     return response.data;

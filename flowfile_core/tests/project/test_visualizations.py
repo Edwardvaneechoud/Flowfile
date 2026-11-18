@@ -1,10 +1,10 @@
-"""Visualization & dashboard projection: determinism, portable round-trip, prune, hook isolation.
+"""Visualization & dashboard projection: determinism, portable round-trip, prune.
 
 Charts and dashboards round-trip by stable uuid (viz_uuid / dashboard_uuid). A viz carries its
 GraphicWalker spec + a portable source ({catalog, schema} namespace + source table by name, or
 inline SQL); a dashboard's tiles reference their viz by viz_uuid so the canvas re-links to local
 ids on another machine. The base64 PNG thumbnail is never committed. These tests write rows
-directly and drive the project_sync hooks, exactly as the catalog service does.
+directly.
 """
 
 import json
@@ -16,7 +16,8 @@ import yaml
 from flowfile_core.catalog import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogDashboard, CatalogTable, CatalogVisualization
-from flowfile_core.project import project_sync, projection
+from flowfile_core.project import project_sync
+from flowfile_core.project.service import write_export
 from flowfile_core.schemas.catalog_schema import DashboardKpi, DashboardLayout, DashboardTile
 
 OWNER = 1
@@ -119,8 +120,7 @@ def test_sql_visualization_round_trips_byte_identical(tmp_path):
         assert "thumbnail_data_url" not in entry and "source_table" not in entry
 
         viz_bytes = (root / "visualizations.yaml").read_bytes()
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "visualizations.yaml").read_bytes() == viz_bytes, "re-projection must be byte-identical"
 
         # project -> import -> project must round-trip; upsert by viz_uuid must not duplicate.
@@ -132,8 +132,7 @@ def test_sql_visualization_round_trips_byte_identical(tmp_path):
             rows = db.query(CatalogVisualization).filter_by(created_by=OWNER).all()
             assert len(rows) == 1 and rows[0].viz_uuid == vuuid
             assert rows[0].sql_query == "SELECT region, sales FROM s" and rows[0].source_type == "sql"
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "visualizations.yaml").read_bytes() == viz_bytes, "project->import->project must round-trip"
     finally:
         _clear_viz_dashboards()
@@ -198,8 +197,7 @@ def test_dashboard_round_trips_and_relinks_tiles(tmp_path):
             assert new_viz is not None and dashboard is not None
             stored_tile = json.loads(dashboard.layout_json)["tiles"][0]
             assert stored_tile["viz_id"] == new_viz.id and "viz_uuid" not in stored_tile
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "dashboard must round-trip byte-identically"
     finally:
         _clear_viz_dashboards()
@@ -235,8 +233,7 @@ def test_kpi_tile_round_trips_and_relinks(tmp_path):
             assert stored_tile["viz_id"] == new_viz.id and "viz_uuid" not in stored_tile
             assert stored_tile["type"] == "kpi"
             assert DashboardKpi.model_validate(stored_tile["kpi"]) == kpi
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "KPI dashboard must round-trip byte-identically"
     finally:
         _clear_viz_dashboards()
@@ -244,7 +241,8 @@ def test_kpi_tile_round_trips_and_relinks(tmp_path):
 
 
 def test_reimport_preserves_dashboard_layout_version_monotonicity(tmp_path):
-    """The server-owned write counter (CAS token) must never rewind on a project re-import."""
+    """The server-owned write counter (CAS token) never rewinds on a project re-import, and an
+    unchanged layout leaves it where it is."""
     from flowfile_core.catalog import CatalogService
     from flowfile_core.project.importer import import_project
     from flowfile_core.schemas.catalog_schema import DashboardUpdate
@@ -264,7 +262,7 @@ def test_reimport_preserves_dashboard_layout_version_monotonicity(tmp_path):
         with get_db_context() as db:
             row = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
             assert row is not None
-            assert row.layout_version > bumped.layout_version
+            assert row.layout_version == bumped.layout_version
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)
@@ -292,45 +290,3 @@ def test_prune_removes_absent_viz_and_dashboard(tmp_path):
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)
-
-
-def test_viz_dashboard_hooks_and_failure_isolation(tmp_path, monkeypatch):
-    project_sync.close_project(OWNER)
-    _clear_viz_dashboards()
-    root = tmp_path / "project"
-    try:
-        project_sync.init_project(str(root), "Hooks VD", OWNER)
-        assert _viz_yaml(root) == {} and _dash_yaml(root) == {}
-
-        _, vuuid = _make_viz("hk-viz", source_type="sql", sql_query="SELECT 1")
-        project_sync.visualizations_changed(OWNER)
-        assert vuuid in _viz_yaml(root)
-
-        _, duuid = _make_dashboard("hk-board", DashboardLayout(tiles=[]))
-        project_sync.dashboards_changed(OWNER)
-        assert duuid in _dash_yaml(root)
-
-        _clear_viz_dashboards()
-        project_sync.visualizations_changed(OWNER)
-        project_sync.dashboards_changed(OWNER)
-        assert _viz_yaml(root) == {} and _dash_yaml(root) == {}
-
-        def _boom(*_args, **_kwargs):
-            raise RuntimeError("projection boom")
-
-        monkeypatch.setattr(projection, "regenerate_visualizations_manifest", _boom)
-        project_sync.visualizations_changed(OWNER)  # must not raise
-    finally:
-        _clear_viz_dashboards()
-        project_sync.close_project(OWNER)
-
-
-def test_viz_dashboard_changed_noop_without_active_project():
-    project_sync.close_project(OWNER)
-    _clear_viz_dashboards()
-    _make_viz("orphan-viz", source_type="sql", sql_query="SELECT 1")
-    try:
-        project_sync.visualizations_changed(OWNER)  # no active project -> silent no-op
-        project_sync.dashboards_changed(OWNER)
-    finally:
-        _clear_viz_dashboards()

@@ -13,7 +13,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
-from flowfile_core.auth.password import get_password_hash
+from flowfile_core.auth.password import pwd_context
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 
@@ -41,8 +41,18 @@ def multi_user_mode(monkeypatch, tmp_path):
     monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
 
 
+@pytest.fixture(scope="session")
+def shared_password_hash() -> str:
+    """One real bcrypt hash of TEST_PASSWORD at the minimum cost, shared by every test user.
+
+    The default cost (12) spent ~0.2 s per hash and per login, ~1.3 s of setup for each of the
+    suite's tests; logins still run a genuine bcrypt verify against this hash.
+    """
+    return pwd_context.handler("bcrypt").using(rounds=4).hash(TEST_PASSWORD)
+
+
 @pytest.fixture
-def users():
+def users(shared_password_hash):
     """One admin + three regular users; teardown removes them and ALL sharing rows."""
     created_ids = []
     out = {}
@@ -56,7 +66,7 @@ def users():
                 username=username,
                 email=f"{username}@flowfile.app",
                 full_name=username,
-                hashed_password=get_password_hash(TEST_PASSWORD),
+                hashed_password=shared_password_hash,
                 disabled=False,
                 is_admin=(key == "admin"),
                 must_change_password=False,

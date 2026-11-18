@@ -3,7 +3,7 @@
 // dependency-free (pure data) so it can be imported from the sidebar without
 // risking an import cycle.
 
-export const COMPUTE_TAB_KEYS = ["kernels", "backends", "privacy", "backups"] as const;
+export const COMPUTE_TAB_KEYS = ["kernels", "backends", "hub", "privacy", "backups"] as const;
 
 export type ComputeTabKey = (typeof COMPUTE_TAB_KEYS)[number];
 
@@ -41,6 +41,16 @@ export interface ComputeTabDef {
   sidebarKey: string; // i18n key for the sidebar child label
   group: ComputeTabGroup; // tab-bar cluster; a divider renders between groups
   requiresAdmin?: boolean; // hide from nav + tab bar for non-admins
+  onJoinedServer?: boolean; // shown to everyone on a server that belongs to a hub, where the tab only reads
+}
+
+/** Whether a person sees a tab: an admin every one, anyone else those open to all and, on a hub's server, its Hub tab. */
+export function showsTab(
+  tab: Pick<ComputeTabDef, "requiresAdmin" | "onJoinedServer">,
+  isAdmin: boolean,
+  joined: boolean,
+): boolean {
+  return !tab.requiresAdmin || isAdmin || (!!tab.onJoinedServer && joined);
 }
 
 export const computeTabs: ComputeTabDef[] = [
@@ -58,6 +68,15 @@ export const computeTabs: ComputeTabDef[] = [
     sidebarKey: "menu.computeBackends",
     group: "execution",
     requiresAdmin: true,
+  },
+  {
+    key: "hub",
+    label: "Hub",
+    icon: "fa-solid fa-tower-broadcast",
+    sidebarKey: "menu.computeHub",
+    group: "preferences",
+    requiresAdmin: true,
+    onJoinedServer: true,
   },
   {
     key: "privacy",

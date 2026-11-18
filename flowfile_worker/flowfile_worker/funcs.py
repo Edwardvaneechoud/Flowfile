@@ -416,18 +416,19 @@ def export_result(
 
     The task routes run it too, as the ``export_result`` operation. Nothing is collected. *credential* (a stored
     connection's ``connection_id`` and ``user_id``) becomes a ``CredentialRefProvider`` this child resolves with its
-    own catalog and master key (``credential_ref_kwargs``). A ``file:`` URI is sunk to the local path it names
+    own catalog and master key, and a hub's ``sealed`` map is opened with this node's key (``credential_body_kwargs``).
+    A ``file:`` URI is sunk to the local path it names
     (``file_uri_path``). The URI written is queued. A failure is logged with the target cut at its query, where a
     presigned URL's signature is.
     """
-    from shared.cloud_credential_provider import credential_ref_kwargs
+    from shared.cloud_credential_provider import credential_body_kwargs
     from shared.compute_protocol import file_uri_path
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting export to parquet")
     try:
         lf = _load_plan(polars_serializable_object)
-        credential_kwargs = {} if credential is None else credential_ref_kwargs(**credential)
+        credential_kwargs = credential_body_kwargs(credential)
         lf.sink_parquet(file_uri_path(uri), **credential_kwargs)
     except BaseException as e:
         target = uri.partition("?")[0]
@@ -1368,6 +1369,42 @@ def add_catalog_key_column_task(
                 column_name=column_name,
                 expected_version=expected_version,
                 storage_options=storage_options,
+            )
+        except DeltaEditStaleError as e:
+            raise ValueError(f"STALE_WRITE:{e.expected}:{e.current}") from e
+        except DeltaEditError as e:
+            raise ValueError(f"EDIT_INVALID:{e}") from e
+        queue.put(result)
+        with progress.get_lock():
+            progress.value = 100
+    except BaseException as e:
+        # The route parses these sentinels by prefix, so no class name is stamped here.
+        record_task_failure_text(error_message, progress, str(e), limit=1024)
+        if not isinstance(e, Exception):
+            raise
+
+
+def restore_catalog_version_task(
+    table_path: str,
+    version: int,
+    expected_version: int | None,
+    commit_metadata: dict[str, str] | None,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    storage_options: dict | None = None,
+):
+    """Subprocess task: restore a Delta catalog table to an earlier version."""
+    try:
+        from shared.delta_utils import DeltaEditError, DeltaEditStaleError, restore_delta_version
+
+        try:
+            result = restore_delta_version(
+                table_path,
+                version,
+                expected_version=expected_version,
+                storage_options=storage_options,
+                commit_metadata=commit_metadata,
             )
         except DeltaEditStaleError as e:
             raise ValueError(f"STALE_WRITE:{e.expected}:{e.current}") from e

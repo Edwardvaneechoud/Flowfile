@@ -21,7 +21,6 @@ import polars as pl
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
-from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
     ensure_handshake,
     reset_handshake,
@@ -224,19 +223,22 @@ def streaming_start(
     Raises immediately on connection failure or send error. The worker's versions are
     checked first (``ensure_handshake``). A failed connect re-arms that check, since the
     worker that comes back at ``worker_url`` may be another one. A ``wss://`` socket
-    verifies the worker against the CA core trusts for it (``ssl_context_for``).
+    verifies the worker against the CA core trusts for it (``ssl_context_for``), and the
+    socket is signed as the backend that owns ``worker_url`` (``signing_token``).
     """
     # imported here: subprocess_operations imports this module
-    from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import ssl_context_for
+    from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+        signing_token,
+        ssl_context_for,
+    )
 
     ensure_handshake(worker_url)
     ws_url = _get_ws_url(worker_url) + "/ws/submit"
     metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
 
     try:
-        ws = connect(
-            ws_url, additional_headers={"X-Flowfile-Internal": get_internal_token()}, ssl=ssl_context_for(worker_url)
-        )
+        headers = {"X-Flowfile-Internal": signing_token(worker_url)}
+        ws = connect(ws_url, additional_headers=headers, ssl=ssl_context_for(worker_url))
     except OSError:
         reset_handshake(worker_url)
         raise

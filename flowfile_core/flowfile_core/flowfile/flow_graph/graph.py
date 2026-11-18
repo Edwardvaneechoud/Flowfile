@@ -167,6 +167,7 @@ class FlowGraph(
         self._any_input_liveness: dict[str | int, frozenset] = {}
         # Gate id -> dead output handles of the last run_graph (parameter and formula gates).
         self._last_closed_gate_handles: dict[str | int, frozenset[str]] = {}
+        self.known_rows_out = {}
         # Visual groups (box registry; membership lives on setting_input.group_id). Never read by the executor.
         self._groups: dict[int, schemas.GroupInformation] = {}
         self._group_id_seq: int = 0  # monotonic group-id allocator; never reuses a freed id

@@ -62,7 +62,7 @@ defineExpose({
 
     <pop-over content="Toggle Code Generator" placement="bottom">
       <button
-        class="action-btn"
+        class="header-btn action-btn"
         data-tutorial="generate-code-btn"
         :class="{ active: nodeStore.showCodeGenerator }"
         :aria-label="nodeStore.showCodeGenerator ? 'Hide Code Generator' : 'Show Code Generator'"
@@ -83,7 +83,7 @@ defineExpose({
 
     <pop-over content="Share as a browser link" placement="bottom">
       <button
-        class="action-btn action-btn--icon-only"
+        class="header-btn action-btn action-btn--icon-only"
         type="button"
         aria-label="Share flow as a browser link"
         @click="showShareLink = true"
@@ -94,7 +94,7 @@ defineExpose({
 
     <pop-over content="Flow settings (⌘,)" placement="bottom">
       <button
-        class="action-btn action-btn--icon-only"
+        class="header-btn action-btn action-btn--icon-only"
         data-tutorial="settings-btn"
         type="button"
         aria-label="Flow settings"
@@ -106,7 +106,7 @@ defineExpose({
 
     <pop-over content="Show or hide logs and status" placement="bottom">
       <button
-        class="action-btn action-btn--icon-only"
+        class="header-btn action-btn action-btn--icon-only"
         :class="{ active: showFlowResult }"
         type="button"
         :aria-label="showFlowResult ? 'Hide results panel' : 'Show results panel'"
@@ -130,24 +130,6 @@ defineExpose({
   height: 50px;
   padding-right: var(--spacing-3);
   font-family: var(--font-family-base);
-}
-
-.action-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  background-color: var(--color-background-primary);
-  border: 1px solid var(--color-border-light);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  color: var(--color-text-primary);
-  font-size: 12px;
-  font-weight: var(--font-weight-medium);
-  box-shadow: var(--shadow-xs);
-  white-space: nowrap;
 }
 
 .action-btn:hover {

@@ -14,24 +14,18 @@
           <i class="fa-solid fa-book"></i>
           <span>Documentation</span>
         </button>
-        <a
-          class="about-link"
-          href="https://github.com/edwardvaneechoud/Flowfile"
-          target="_blank"
-          rel="noopener"
-        >
+        <button class="about-link" @click="openLink(REPO_URL)">
           <i class="fa-brands fa-github"></i>
           <span>GitHub</span>
-        </a>
-        <a
-          class="about-link"
-          href="https://github.com/edwardvaneechoud/Flowfile/discussions"
-          target="_blank"
-          rel="noopener"
-        >
+        </button>
+        <button class="about-link" @click="openLink(DISCUSSIONS_URL)">
           <i class="fa-solid fa-comments"></i>
           <span>Discussions</span>
-        </a>
+        </button>
+        <button class="about-link" @click="reportIssue">
+          <i class="fa-solid fa-bug"></i>
+          <span>Report an issue</span>
+        </button>
         <button class="about-link" :disabled="checking" @click="checkForUpdates">
           <i class="fa-solid fa-rotate"></i>
           <span>Check for updates</span>
@@ -46,7 +40,8 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { desktop } from "../../../lib/desktop";
-import { DOCS_BASE_URL } from "../../lib/docsLinks";
+import { DISCUSSIONS_URL, DOCS_BASE_URL, REPO_URL } from "../../lib/docsLinks";
+import { openBugReport } from "../../composables/useBugReport";
 import { useAppUpdate } from "../../composables/useAppUpdate";
 
 const props = defineProps<{ visible: boolean; version?: string }>();
@@ -79,6 +74,14 @@ watch(isVisible, (v) => {
 function openDocs() {
   isVisible.value = false;
   void desktop.openExternal(DOCS_BASE_URL);
+}
+
+function openLink(url: string) {
+  void desktop.openExternal(url);
+}
+
+function reportIssue() {
+  openBugReport(props.version ?? "");
 }
 
 async function checkForUpdates() {

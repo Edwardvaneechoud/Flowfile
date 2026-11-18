@@ -24,13 +24,6 @@ from flowfile_core.schemas.catalog_schema import FlowRunOut, FlowScheduleOut
 logger = logging.getLogger(__name__)
 
 
-def _project_sync_schedule(registration_id: int, owner_id: int) -> None:
-    """Mirror a schedule definition change into the active project folder (no-op when none active)."""
-    from flowfile_core.project import project_sync
-
-    project_sync.schedule_changed(registration_id, owner_id)
-
-
 class ScheduleService:
     """Owns schedule CRUD, manual triggers, and the push path of table_trigger fan-out."""
 
@@ -87,6 +80,8 @@ class ScheduleService:
             enabled=schedule.enabled,
             name=schedule.name,
             description=schedule.description,
+            backend=schedule.backend,
+            disabled_reason=schedule.disabled_reason,
             schedule_type=schedule.schedule_type,
             interval_seconds=schedule.interval_seconds,
             cron_expression=schedule.cron_expression,
@@ -143,8 +138,13 @@ class ScheduleService:
         enabled: bool = True,
         name: str | None = None,
         description: str | None = None,
+        backend: str | None = None,
     ) -> FlowScheduleOut:
-        """Create a new schedule for a registered flow."""
+        """Create a new schedule for a registered flow.
+
+        ``backend`` names the compute backend its runs go to (passed as ``--backend``); blank or ``None`` leaves it
+        to the flow. It is not checked against the configured backends: a run on one that is missing fails.
+        """
         flow = self.repo.get_flow(registration_id)
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
@@ -165,6 +165,7 @@ class ScheduleService:
             enabled=enabled,
             name=name,
             description=description,
+            backend=(backend or "").strip() or None,
             schedule_type=schedule_type,
             interval_seconds=interval_seconds,
             cron_expression=cron_expression,
@@ -177,7 +178,6 @@ class ScheduleService:
         if schedule_type == "table_set_trigger" and trigger_table_ids:
             self.repo.set_trigger_table_ids(schedule.id, trigger_table_ids)
 
-        _project_sync_schedule(registration_id, owner_id)
         return self._schedule_to_out(schedule)
 
     def update_schedule(
@@ -189,8 +189,9 @@ class ScheduleService:
         cron_timezone: str | None = None,
         name: str | None = None,
         description: str | None = None,
+        backend: str | None = None,
     ) -> FlowScheduleOut:
-        """Update a schedule."""
+        """Update a schedule; a blank ``backend`` clears it, ``None`` keeps it."""
         schedule = self.repo.get_schedule(schedule_id)
         if schedule is None:
             raise ScheduleNotFoundError(schedule_id=schedule_id)
@@ -204,6 +205,8 @@ class ScheduleService:
             if enabled and not schedule.enabled:
                 self._arm_trigger(schedule)
             schedule.enabled = enabled
+            if enabled:
+                schedule.disabled_reason = None
         if interval_seconds is not None:
             schedule.interval_seconds = interval_seconds
         if cron_expression is not None:
@@ -214,8 +217,9 @@ class ScheduleService:
             schedule.name = name
         if description is not None:
             schedule.description = description
+        if backend is not None:
+            schedule.backend = backend.strip() or None
         schedule = self.repo.update_schedule(schedule)
-        _project_sync_schedule(schedule.registration_id, schedule.owner_id)
         return self._schedule_to_out(schedule)
 
     def delete_schedule(self, schedule_id: int) -> None:
@@ -223,9 +227,7 @@ class ScheduleService:
         schedule = self.repo.get_schedule(schedule_id)
         if schedule is None:
             raise ScheduleNotFoundError(schedule_id=schedule_id)
-        registration_id, owner_id = schedule.registration_id, schedule.owner_id
         self.repo.delete_schedule(schedule_id)
-        _project_sync_schedule(registration_id, owner_id)
 
     def get_schedule(self, schedule_id: int) -> FlowScheduleOut:
         """Get a schedule by ID."""
@@ -262,6 +264,7 @@ class ScheduleService:
             run_type="on_demand",
             schedule_id=schedule.id,
             suppress_telemetry=suppress_telemetry,
+            backend=schedule.backend,
         )
         return self._runs.run_to_out(run)
 
@@ -312,9 +315,18 @@ class ScheduleService:
             schedule.last_trigger_table_updated_at = table_updated_at
             self.repo.update_schedule(schedule)
 
-            run = self._runs.spawn_flow_run(
-                flow, user_id=schedule.owner_id, run_type="scheduled", schedule_id=schedule.id
-            )
+            try:
+                run = self._runs.spawn_flow_run(
+                    flow,
+                    user_id=schedule.owner_id,
+                    run_type="scheduled",
+                    schedule_id=schedule.id,
+                    backend=schedule.backend,
+                )
+            except ValueError as exc:
+                # A flow the server may not run (its file lies outside the flow folders) loses only its own push.
+                logger.warning("Skipping push trigger for flow %s (schedule %s): %s", flow.id, schedule.id, exc)
+                continue
             if run.pid is not None:
                 launched += 1
 

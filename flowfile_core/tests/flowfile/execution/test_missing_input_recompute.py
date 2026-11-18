@@ -324,10 +324,10 @@ def test_the_main_grid_keeps_its_rows_and_stats_and_export_say_the_result_is_gon
 
         assert len(node.get_table_example(True).data) == 3
         with pytest.raises(HTTPException) as stats:
-            routes.get_node_column_stats(graph.flow_id, 2, "rank", output_handle="output-0", current_user=None)
+            routes.get_node_column_stats(graph.flow_id, 2, "rank", output_handle="output-0", current_user=SimpleNamespace(id=1))
         with pytest.raises(HTTPException) as export:
             routes.export_node_data(
-                graph.flow_id, 2, output_handle="output-0", file_format="csv", limit=100, current_user=None
+                graph.flow_id, 2, output_handle="output-0", file_format="csv", limit=100, current_user=SimpleNamespace(id=1)
             )
 
         assert (stats.value.status_code, stats.value.detail) == (409, RESULT_GONE)
@@ -366,7 +366,7 @@ def test_an_export_of_a_plan_over_a_gone_cached_input_says_the_result_is_gone(ba
         assert backend.exists(reader.results.result_ref)
         with pytest.raises(HTTPException) as export:
             routes.export_node_data(
-                graph.flow_id, 3, output_handle="output-0", file_format="csv", limit=100, current_user=None
+                graph.flow_id, 3, output_handle="output-0", file_format="csv", limit=100, current_user=SimpleNamespace(id=1)
             )
         assert (export.value.status_code, export.value.detail) == (409, RESULT_GONE)
     finally:

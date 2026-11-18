@@ -104,7 +104,7 @@ def test_cache_check_skips_ineligible_nodes(client, http_read_flow, monkeypatch,
     placement = graph.preview_placement()
     calls = []
 
-    def preview(*, probe=True):
+    def preview(hub_store=None, *, probe=True):
         calls.append(True)
         return placement
 

@@ -73,6 +73,25 @@ def friendly_relation_error(error: str, query: str) -> str:
     )
 
 
+_NAME = r'(?:"[^"]+"|[\w-]+)'
+_READ_FROM = re.compile(rf"\b(?:FROM|JOIN)\s+({_NAME}(?:\s*\.\s*{_NAME})*)", re.IGNORECASE)
+_WITH_NAME = re.compile(rf"({_NAME})\s+AS\s*\(", re.IGNORECASE)
+
+
+def plain_reference(reference: str) -> str:
+    """A table reference without its quotes and spaces: ``"a" . b`` as ``a.b``."""
+    if re.fullmatch(_NAME, reference):
+        return reference.strip('"')
+    return ".".join(part.strip().strip('"') for part in reference.split("."))
+
+
+def reads_other(query: str, own: set[str]) -> bool:
+    """Whether ``query`` reads from a name that is neither one of ``own`` nor one of its own ``WITH`` names."""
+    collapsed = rewrite_qualified_references(query, own)
+    known = own | {plain_reference(name) for name in _WITH_NAME.findall(collapsed)}
+    return any(plain_reference(name) not in known for name in _READ_FROM.findall(collapsed))
+
+
 def is_table_reference(name: str, query: str) -> bool:
     """Return True iff ``name`` appears as an actual table reference in ``query``.
 

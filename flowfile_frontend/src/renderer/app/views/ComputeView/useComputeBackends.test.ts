@@ -40,6 +40,7 @@ const teamRow = (
   url: TEAM_URL,
   shares_core_disk,
   verdict: seen,
+  source: "local",
 });
 
 let rows: ComputeBackend[] = [];
@@ -53,6 +54,7 @@ beforeEach(() => {
       url: input.url,
       shares_core_disk: input.shares_core_disk ?? false,
       verdict: null,
+      source: "local" as const,
     };
     rows.push(row);
     return { ...row };
@@ -86,6 +88,7 @@ describe("load", () => {
         url: "https://gpu.example:63579",
         shares_core_disk: false,
         verdict: null,
+        source: "local",
       },
     ];
     const page = useComputeBackends();

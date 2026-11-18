@@ -18,10 +18,12 @@ logger = logging.getLogger("flowfile.run_logs")
 
 RUN_LOG_PREFIX = "scheduled_run_"
 FLOW_LOG_PREFIX = "flow_"
+HUB_RUN_LOG_PREFIX = "hub_run_"  # a run dispatched to this server, kept by the run id it was dispatched under
 
 # Mirrors shared.run_completion.REAPABLE_RUN_TYPES; duplicated rather than
 # imported so this module stays free of the sqlalchemy import.
 SUBPROCESS_RUN_TYPES = ("scheduled", "manual", "on_demand")
+LOGGED_RUN_TYPES = SUBPROCESS_RUN_TYPES + ("dispatched",)  # a dispatched run runs in core and copies its log
 
 DEFAULT_LOG_RETENTION_DAYS = 30
 
@@ -60,7 +62,7 @@ def cleanup_old_logs(max_age_days: int | None = None) -> int:
     cutoff = time.time() - days * 86400
     logs_dir = storage.logs_directory
     deleted = 0
-    for prefix in (RUN_LOG_PREFIX, FLOW_LOG_PREFIX):
+    for prefix in (RUN_LOG_PREFIX, FLOW_LOG_PREFIX, HUB_RUN_LOG_PREFIX):
         for log_file in logs_dir.glob(f"{prefix}*.log"):
             try:
                 if log_file.stat().st_mtime < cutoff:

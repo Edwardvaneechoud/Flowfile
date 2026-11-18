@@ -7,7 +7,7 @@ from pathlib import Path
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.events import publish
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.flowfile.manage.io_flowfile import open_flow
+from flowfile_core.flowfile.manage.io_flowfile import is_working_copy, open_flow
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas.schemas import FlowSettings, FlowSettingsResponse
 from shared.storage_config import storage
@@ -46,6 +46,7 @@ class FlowfileHandler:
     def __init__(self):
         self._flows = {}
         self._user_sessions = {}
+        self._notes_at_open: dict[str, str] = {}
 
     @property
     def flowfile_flows(self) -> list[FlowGraph]:
@@ -83,6 +84,22 @@ class FlowfileHandler:
         self._flows[other.flow_id] = other
         return other.flow_id
 
+    def note_at_open(self, flow_path: Path | str, note: str | None) -> None:
+        """Keep what the catalog a flow came from said of it, for the open of ``flow_path`` that follows."""
+        key = str(Path(flow_path).resolve())
+        if note:
+            self._notes_at_open[key] = note
+        else:
+            self._notes_at_open.pop(key, None)
+
+    def _closed(self, flow: FlowGraph) -> None:
+        """A flow left the registry: its results are released and a working copy of it is removed."""
+        flow.close_flow()
+        path = flow.flow_settings.path if flow.flow_settings else None
+        still_open = any(f.flow_settings and f.flow_settings.path == path for f in self._flows.values())
+        if is_working_copy(path) and not still_open:
+            Path(path).unlink(missing_ok=True)
+
     def import_flow(self, flow_path: Path | str, user_id: int | None = None, register_session: bool = True) -> int:
         """Load a flow into the registry. ``register_session=False`` loads it into ``_flows`` (still
         passing ``user_id`` to ``open_flow`` for connection resolution) without opening an editor
@@ -95,6 +112,7 @@ class FlowfileHandler:
         if isinstance(flow_path, str):
             flow_path = Path(flow_path)
         imported_flow = open_flow(flow_path, user_id=user_id)
+        imported_flow.save_note = self._notes_at_open.pop(str(flow_path.resolve()), None)
         if self._held_by_another_user(imported_flow.flow_id, user_id):
             imported_flow.flow_id = create_unique_id()
             # The setter keeps the per-id logger, which would share the other user's log file.
@@ -147,11 +165,11 @@ class FlowfileHandler:
             self._unregister_user_session(user_id, flow_id)
             flow_still_open = any(flow_id in flows for flows in self._user_sessions.values())
             if not flow_still_open and flow_id in self._flows:
-                self._flows.pop(flow_id).close_flow()
+                self._closed(self._flows.pop(flow_id))
                 publish("flow_closed", flow_id=flow_id)
         else:
             if flow_id in self._flows:
-                self._flows.pop(flow_id).close_flow()
+                self._closed(self._flows.pop(flow_id))
                 publish("flow_closed", flow_id=flow_id)
 
     def evict_flow_by_path(self, flow_path: str) -> int | None:
@@ -216,11 +234,16 @@ class FlowfileHandler:
 
         old_flow_id = flow.flow_id
         new_flow_id = create_unique_id()
+        old_path = flow.flow_settings.path
 
         flow.flow_settings.source_registration_id = None
         flow.flow_id = new_flow_id  # propagates to child nodes + settings
 
         flow.save_flow(flow_path=new_path)
+        if is_working_copy(old_path) and not is_working_copy(new_path):
+            # The copy is a file of its own now: the catalog's working copy and its note stay behind.
+            Path(old_path).unlink(missing_ok=True)
+            flow.save_note = None
 
         self.rekey_flow(old_flow_id, new_flow_id, user_id)
 
@@ -284,7 +307,12 @@ class FlowfileHandler:
         except Exception:
             # As HistoryManager.has_unsaved_changes does, assume dirty on error so prompts err safe.
             dirty = True
-        return FlowSettingsResponse(**flow_settings.model_dump(), has_unsaved_changes=dirty)
+        return FlowSettingsResponse(
+            **flow_settings.model_dump(),
+            has_unsaved_changes=dirty,
+            save_note=getattr(flow, "save_note", None),
+            working_copy=is_working_copy(flow_settings.path),
+        )
 
     def get_node(self, flow_id: int, node_id: int):
         flow = self.get_flow(flow_id)

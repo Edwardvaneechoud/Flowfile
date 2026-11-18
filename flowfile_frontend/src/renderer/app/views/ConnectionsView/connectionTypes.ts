@@ -28,7 +28,7 @@ export const connectionTypes: ConnectionType[] = [
     key: "database",
     label: "Database",
     icon: "fa-solid fa-database",
-    description: "Connect to PostgreSQL, MySQL, SQL Server, and other SQL databases",
+    description: "Connect to PostgreSQL, MySQL, SQL Server, Snowflake, and other SQL databases",
     sidebarKey: "menu.connectionsDatabase",
     countUnit: "connection",
   },

@@ -12,6 +12,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,7 @@ from flowfile_scheduler import engine as engine_mod
 from flowfile_scheduler.engine import FlowScheduler
 from shared.models import FlowRegistration, FlowRun, FlowSchedule
 from shared.notifications import processor as notifications
+from shared.storage_config import storage
 
 
 @pytest.fixture
@@ -30,7 +32,7 @@ def sched(tmp_path, monkeypatch):
     s = FlowScheduler(poll_interval=1)
     s.spawned: list[tuple[str, int]] = []
     monkeypatch.setattr(
-        s, "_spawn_flow", lambda flow_path, run_id: (s.spawned.append((flow_path, run_id)) or 4242)
+        s, "_spawn_flow", lambda flow_path, run_id, backend=None: (s.spawned.append((flow_path, run_id)) or 4242)
     )
     return s
 
@@ -273,13 +275,44 @@ def test_cron_spring_forward_fires_once(sched, monkeypatch):
     assert len(_runs(sched, reg_id)) == 1
 
 
+@pytest.mark.parametrize("mode", ["docker", "server"])
+def test_server_launches_a_due_flow_only_inside_the_flow_folders(sched, monkeypatch, tmp_path, mode):
+    """On a multi-user server a scheduled flow outside the flow folders is not spawned; one inside is, by its
+    resolved path. The scheduler reads ``FLOWFILE_MODE`` itself, so the mode is set for the tick."""
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
+    storage.flows_directory.mkdir(parents=True, exist_ok=True)
+    inside = storage.flows_directory / "scheduled_inside.flowfile"
+    inside.write_text("flow: {}")
+    outside_id = _seed(sched, cron_expression="*/15 * * * *", last_triggered_at=datetime(2026, 5, 25, 10, 0, 0))
+    inside_id = _seed(sched, cron_expression="*/15 * * * *", last_triggered_at=datetime(2026, 5, 25, 10, 0, 0))
+    with sched._session_factory() as db:
+        db.get(FlowRegistration, inside_id).flow_path = str(inside)
+        db.commit()
+    _set_now(monkeypatch, datetime(2026, 5, 25, 10, 16, 0, tzinfo=timezone.utc))
+    try:
+        assert _run_tick(sched) == 1
+    finally:
+        inside.unlink(missing_ok=True)
+    assert _runs(sched, outside_id) == []
+    assert len(_runs(sched, inside_id)) == 1
+    assert sched.spawned == [(str(inside.resolve()), _runs(sched, inside_id)[0].id)]
+
+
+def test_desktop_launches_a_due_flow_anywhere(sched, monkeypatch):
+    monkeypatch.delenv("FLOWFILE_MODE", raising=False)
+    reg_id = _seed(sched, cron_expression="*/15 * * * *", last_triggered_at=datetime(2026, 5, 25, 10, 0, 0))
+    _set_now(monkeypatch, datetime(2026, 5, 25, 10, 16, 0, tzinfo=timezone.utc))
+    assert _run_tick(sched) == 1
+    assert sched.spawned == [(str(Path("/tmp/flow.flowfile").resolve()), _runs(sched, reg_id)[0].id)]
+
+
 def test_a_run_cancelled_while_it_starts_is_stopped(sched, monkeypatch):
     """A cancel recorded before the run's pid is saved signals nothing, so the launch stops the child itself."""
     reg_id = _seed(sched, last_triggered_at=datetime(2026, 5, 25, 10, 0, 0))
     _set_now(monkeypatch, datetime(2026, 5, 25, 10, 16, 0, tzinfo=timezone.utc))
     children: list[subprocess.Popen] = []
 
-    def spawn_then_cancel(flow_path: str, run_id: int) -> int:
+    def spawn_then_cancel(flow_path: str, run_id: int, backend: str | None = None) -> int:
         children.append(subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"]))
         with sched._session_factory() as db:
             run = db.get(FlowRun, run_id)

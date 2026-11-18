@@ -20,7 +20,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Bound as attributes of `shared` by the pre-lazification eager re-exports.
-SHARED_SUBMODULE_ATTRS = ("db_dialects", "delta_utils", "sql_utils")
+SHARED_SUBMODULE_ATTRS = ("db_dialects", "delta_utils", "sql_utils", "storage_config")
 
 # Bound as attributes of `flowfile_worker` by the pre-lazification `models` import chain.
 WORKER_LAZY_ATTRS = ("Status", "configs", "external_sources", "models", "secrets")

@@ -363,7 +363,7 @@ async def ws_submit(websocket: WebSocket):
     terminated, even after it reached 100, or one that died is not, since a killed writer's
     partial envelope can block the read.
     """
-    if not websocket_authorized(websocket):
+    if not await websocket_authorized(websocket):
         await websocket.close(code=1008)
         return
     await websocket.accept()
@@ -508,7 +508,7 @@ async def ws_submit_v1(websocket: WebSocket):
     cancels the job, and a result that completed before the client left is released (``_release_unread``), since
     core never reads a result after its socket closed. Cancel is ``POST /v1/jobs/{id}/cancel``.
     """
-    if not websocket_authorized(websocket):
+    if not await websocket_authorized(websocket):
         await websocket.close(code=1008)
         return
     try:

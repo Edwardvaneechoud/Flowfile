@@ -73,11 +73,12 @@ def _modules_after(stmt: str, tmp_path) -> set[str]:
 
 # shared/__init__ re-exports the sql/delta/cloud helpers lazily (PEP 562), so importing
 # `shared` never pulls the pydantic-backed dialect registry -- a boot-path win for core,
-# the scheduler and the CLI.
+# the scheduler and the CLI -- nor storage_config, so a worker can pick its storage dir first.
 SHARED_MUST_STAY_LAZY = (
     "shared.sql_utils",
     "shared.db_dialects",
     "shared.delta_utils",
+    "shared.storage_config",
     "pydantic",
 )
 

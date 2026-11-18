@@ -31,6 +31,8 @@ from flowfile_core.database.connection import get_db
 
 router = APIRouter()
 
+TEST_PING_MAX_TOKENS = 64
+
 
 def _ensure_known_provider(name: str) -> None:
     if name not in PROVIDERS:
@@ -119,7 +121,7 @@ async def test_provider(
     current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ) -> ProviderTestResult:
-    """Live-test the caller's credential by issuing a 1-token chat ping.
+    """Live-test the caller's credential by issuing a short chat ping.
 
     On success persists ``last_tested_at + last_test_status="ok"``; on
     failure persists ``last_test_status="error"`` with the exception message
@@ -141,8 +143,8 @@ async def test_provider(
 
     try:
         await provider.chat(
-            messages=[Message(role="user", content="ping")],
-            max_tokens=1,
+            messages=[Message(role="user", content="Reply with the single word: ok")],
+            max_tokens=TEST_PING_MAX_TOKENS,
         )
         ok, error = True, None
     except Exception as exc:  # noqa: BLE001 — provider-side errors surfaced to UI
