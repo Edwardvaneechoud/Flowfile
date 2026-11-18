@@ -21,16 +21,15 @@ const layout = (tiles: DashboardTile[], grid = EMPTY_DASHBOARD_LAYOUT.grid): Das
 });
 
 describe("buildLayoutPreview", () => {
-  it("carries an image tile's picture and nothing for other tiles", () => {
-    const url = "data:image/png;base64,iVBORw0KGgo=";
+  it("marks an image tile that holds a picture, even with its bytes left out", () => {
     const rects = buildLayoutPreview(
       layout([
-        tile({ id: "logo", type: "image", viz_id: null, image: { data_url: url } }),
+        tile({ id: "logo", type: "image", viz_id: null, image: { data_url: "" } }),
         tile({ id: "empty", type: "image", viz_id: null, image: null, x: 12 }),
         tile({ id: "chart", x: 24 }),
       ]),
     );
-    expect(rects.map((r) => r.imageUrl)).toEqual([url, null, null]);
+    expect(rects.map((r) => r.hasImage)).toEqual([true, false, false]);
   });
 
   it("returns nothing for an empty dashboard", () => {

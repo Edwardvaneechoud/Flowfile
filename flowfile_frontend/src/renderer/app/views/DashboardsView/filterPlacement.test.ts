@@ -16,7 +16,6 @@ import {
   placedFilterIds,
   pruneFilterTargets,
   targetsNoTile,
-  unplacedFilters,
   withFilters,
 } from "./filterPlacement";
 
@@ -60,17 +59,15 @@ const layout = (tiles: DashboardTile[], filters: DashboardFilter[]): DashboardLa
 
 const ids = (items: { id: string }[]) => items.map((x) => x.id);
 
-describe("placedFilterIds / unplacedFilters", () => {
+describe("placedFilterIds", () => {
   it("lists the filters a tile shows and leaves the rest to the strip, in order", () => {
     const l = layout([chart, filterTile("ft", "b")], [filter("a"), filter("b"), filter("c")]);
     expect([...placedFilterIds(l)]).toEqual(["b"]);
-    expect(ids(unplacedFilters(l))).toEqual(["a", "c"]);
   });
 
   it("does not count a tile whose filter is gone", () => {
     const l = layout([filterTile("ft", "gone")], [filter("a")]);
     expect(placedFilterIds(l).size).toBe(0);
-    expect(ids(unplacedFilters(l))).toEqual(["a"]);
   });
 
   it("finds a tile's filter, and none for a chart", () => {
@@ -96,7 +93,7 @@ describe("placeFilter", () => {
       y: 2,
       ...FILTER_TILE_DEFAULT_SIZE,
     });
-    expect(ids(unplacedFilters(next))).toEqual(["b"]);
+    expect([...placedFilterIds(next)]).toEqual(["a"]);
     expect(base.tiles).toHaveLength(1);
   });
 
@@ -194,7 +191,7 @@ describe("moveFilterToBar", () => {
     const next = moveFilterToBar(l, "a");
     expect(ids(next.tiles)).toEqual(["t-chart"]);
     expect(next.filters).toEqual([withState]);
-    expect(ids(unplacedFilters(next))).toEqual(["a"]);
+    expect(placedFilterIds(next).size).toBe(0);
   });
 
   it("leaves a layout with nothing to move as it is", () => {

@@ -329,6 +329,18 @@ class CatalogService:
         if not self.access.can_manage("dashboard", dashboard_id, owner_id=dashboard.created_by):
             raise NotAuthorizedError(self.access.user_id or -1, "modify this dashboard")
 
+    def caller_can_read(self, resource_type: str, resource_id: int) -> bool:
+        """Whether this request's caller may read an existing chart (``"visualization"``) or table
+        (``"catalog_table"``); always True unrestricted."""
+        try:
+            if resource_type == "visualization":
+                self._require_use_visualization(resource_id)
+            else:
+                self._require_use(resource_type, resource_id)
+        except NotAuthorizedError:
+            return False
+        return True
+
     def _require_use_viz_source(self, source) -> None:
         """Guard an ad-hoc viz source. Table sources require read on that table."""
         if self._restricted and getattr(source, "source_type", None) == "table" and source.table_id is not None:

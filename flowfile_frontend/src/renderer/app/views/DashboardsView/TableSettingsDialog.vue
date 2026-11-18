@@ -98,9 +98,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
-import { useDashboardVizCache } from "../../composables/useDashboardVizCache";
-import type { TileField } from "../../composables/useDashboardComputation";
+import { computed, reactive, watch } from "vue";
+import { useDraftSourceFields } from "../../composables/useDashboardTileSource";
 import type { DashboardTableColumn, DashboardTableConfig, DashboardTile } from "../../types";
 import TileSourcePicker from "./TileSourcePicker.vue";
 import { TABLE_PAGE_SIZES, tableConfigOf } from "./tableTile";
@@ -122,8 +121,6 @@ const emit = defineEmits<{
 const AUTO_DECIMALS = -1;
 const DECIMAL_CHOICES = [0, 1, 2, 3, 4, 5, 6];
 
-const vizCache = useDashboardVizCache();
-
 const draft = reactive<{
   viz_id: number | null;
   table_id: number | null;
@@ -132,33 +129,8 @@ const draft = reactive<{
 
 const hasSource = computed(() => draft.viz_id != null || draft.table_id != null);
 
-const fields = ref<TileField[]>([]);
-const fieldsLoading = ref(false);
-const fieldsError = ref<string | null>(null);
-let fieldsSeq = 0;
-
-const loadFields = async () => {
-  const seq = ++fieldsSeq;
-  fields.value = [];
-  fieldsError.value = null;
-  if (!hasSource.value) return;
-  fieldsLoading.value = true;
-  try {
-    const resp =
-      draft.table_id != null
-        ? await vizCache.getTableFields(draft.table_id)
-        : await vizCache.getFields(draft.viz_id as number);
-    if (seq !== fieldsSeq) return;
-    fields.value = (resp.fields ?? []).map((f) => ({
-      fid: String(f.fid),
-      semanticType: f.semanticType,
-    }));
-  } catch {
-    if (seq === fieldsSeq) fieldsError.value = "Could not load columns";
-  } finally {
-    if (seq === fieldsSeq) fieldsLoading.value = false;
-  }
-};
+const { fields, fieldsLoading, fieldsError, loadFields: loadSourceFields } = useDraftSourceFields();
+const loadFields = () => loadSourceFields(draft);
 
 const onOpen = () => {
   draft.viz_id = props.tile.viz_id ?? null;

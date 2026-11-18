@@ -1112,6 +1112,56 @@ class TestDashboardImageTiles:
         resp = client.post("/catalog/dashboards", json={"name": "Long alt", "layout": layout})
         assert resp.status_code == 422
 
+    def test_the_list_leaves_out_image_bytes_that_get_carries(self, client):
+        png = _data_url(_png_bytes())
+        layout = _layout_with_two_tiles()
+        layout["tiles"] += [_image_tile(image={"data_url": png, "alt": "Logo", "fit": "cover"}), _image_tile("img-2")]
+        dash_id = client.post("/catalog/dashboards", json={"name": "Logo", "layout": layout}).json()["id"]
+        listed = next(d for d in client.get("/catalog/dashboards").json() if d["id"] == dash_id)
+        assert [t["image"] for t in listed["layout"]["tiles"]] == [
+            None,
+            None,
+            {"data_url": "", "alt": "Logo", "fit": "cover"},
+            None,
+        ]
+        got = client.get(f"/catalog/dashboards/{dash_id}").json()
+        assert got["layout"]["tiles"][2]["image"]["data_url"] == png
+
+    def test_a_stored_layout_over_the_save_limits_still_reads(self, client):
+        layout = _layout_with_two_tiles()
+        image = {"data_url": _padded_png(400 * 1024)}
+        layout["tiles"] += [_image_tile(f"img-{i}", image=image, y=6 + i) for i in range(6)]
+        layout["color_assignments"] = [{"field": "region", "value": "EU", "slot": s} for s in (0, 1)]
+        dash_id = _store_dashboard("Written under looser caps", layout)
+        resp = client.get(f"/catalog/dashboards/{dash_id}")
+        assert resp.status_code == 200, resp.text
+        assert len(resp.json()["layout"]["tiles"]) == 8
+        listed = client.get("/catalog/dashboards")
+        assert listed.status_code == 200, listed.text
+        assert len(next(d for d in listed.json() if d["id"] == dash_id)["layout"]["tiles"]) == 8
+        resp = client.put(f"/catalog/dashboards/{dash_id}", json={"layout": layout})
+        assert resp.status_code == 422
+
+    def test_a_stored_layout_that_does_not_read_leaves_the_list_working(self, client):
+        good = client.post("/catalog/dashboards", json={"name": "Good", "layout": _layout_with_two_tiles()}).json()
+        bad_id = _store_dashboard("Broken", {**_empty_layout(), "auto_refresh_seconds": 5})
+        listed = client.get("/catalog/dashboards")
+        assert listed.status_code == 200, listed.text
+        by_id = {d["id"]: d for d in listed.json()}
+        assert len(by_id[good["id"]]["layout"]["tiles"]) == 2
+        assert by_id[bad_id]["layout"]["tiles"] == []
+        assert client.get(f"/catalog/dashboards/{bad_id}").status_code == 422
+
+
+def _store_dashboard(name: str, layout: dict) -> int:
+    """Write a row as is, past the save checks, as an older release or a hand edit would."""
+    with get_db_context() as db:
+        row = CatalogDashboard(name=name, layout_json=json.dumps(layout), layout_version=1, created_by=1)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row.id
+
 
 def _tabbed_layout() -> dict:
     layout = _layout_with_two_tiles()

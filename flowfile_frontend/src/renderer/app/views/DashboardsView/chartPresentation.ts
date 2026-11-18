@@ -33,7 +33,6 @@ export const DATE_FORMAT_PRESETS: FormatPreset[] = [
 ];
 
 export const SAMPLE_NUMBER = 1234567.891;
-export const SAMPLE_SHARE = 0.1234;
 export const SAMPLE_DATE = new Date(Date.UTC(2024, 2, 31, 14, 30));
 
 /** The preset whose string this is, else `custom`; null or blank is the automatic preset. */

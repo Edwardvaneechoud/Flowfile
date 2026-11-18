@@ -351,9 +351,6 @@ export const autoTrendGrain = (span: KpiSpan | null): TrendGrain => {
   return AUTO_GRAIN_LIMITS.find(([, limit]) => days < limit)?.[0] ?? "year";
 };
 
-export const resolveTrendGrain = (grain: KpiTrendGrain, span: KpiSpan | null): TrendGrain =>
-  grain === "auto" ? autoTrendGrain(span) : grain;
-
 /** The KPI's measure per ``grain`` bucket of the trend column, newest first, on the worker:
  * polars-gw truncates the date (Graphic Walker's ``dateTimeDrill`` transform) and aggregates.
  * The composable prepends the filter step the headline gets. One bucket over the cap leaves

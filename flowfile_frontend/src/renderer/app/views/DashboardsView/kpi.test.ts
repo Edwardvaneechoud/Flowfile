@@ -15,7 +15,6 @@ import {
   parseBucket,
   readKpiSpan,
   readKpiTrend,
-  resolveTrendGrain,
   trendDescription,
   trendNeedsSpan,
   computeDelta,
@@ -451,10 +450,8 @@ describe("autoTrendGrain", () => {
     expect(autoTrendGrain(span(30 * 365))).toBe("year");
   });
 
-  it("keeps a fixed grain and falls back to months without a span", () => {
+  it("falls back to months without a span", () => {
     expect(autoTrendGrain(null)).toBe("month");
-    expect(resolveTrendGrain("quarter", span(3))).toBe("quarter");
-    expect(resolveTrendGrain("auto", span(3))).toBe("day");
   });
 });
 

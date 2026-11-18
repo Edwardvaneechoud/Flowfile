@@ -138,11 +138,12 @@ export function useDashboardDatasources(
     }
   };
 
-  // (table_id, column_name) -> stats. Promise caching dedupes concurrent
+  // (table_id, column_name, limit) -> stats. Promise caching dedupes concurrent
   // requests; the resolved Promise stays in the cache so subsequent
   // lookups are synchronous.
   const statsCache = new Map<string, Promise<ColumnStatsResponse>>();
-  const statsKey = (tableId: number, column: string) => `${tableId}:${column}`;
+  const statsKey = (tableId: number, column: string, limit: number) =>
+    JSON.stringify([tableId, column, limit]);
   // (source key, field, text) -> value search result; dropped on a force refresh.
   const searchCache = new Map<string, Promise<ValueSearchResult>>();
 
@@ -312,7 +313,7 @@ export function useDashboardDatasources(
     column: string,
     limit = 100,
   ): Promise<ColumnStatsResponse> => {
-    const key = statsKey(tableId, column);
+    const key = statsKey(tableId, column, limit);
     let entry = statsCache.get(key);
     if (!entry) {
       entry = CatalogApi.getTableColumnStats(tableId, column, limit).catch((err) => {

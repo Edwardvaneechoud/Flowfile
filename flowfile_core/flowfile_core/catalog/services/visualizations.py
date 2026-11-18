@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 from packaging.version import InvalidVersion, Version
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from flowfile_core.catalog.constants import (
@@ -401,10 +402,18 @@ class VisualizationService:
             if tab_ids and tile.tab_id not in tab_ids:
                 raise ValueError(f"tile '{tile.id}' is on unknown tab '{tile.tab_id}'")
 
-    def _validate_filter_datasources(self, layout: DashboardLayout) -> None:
+    def _caller_can_read(self, resource_type: str, resource_id: int) -> bool:
+        return self._facade is None or self._facade.caller_can_read(resource_type, resource_id)
+
+    def _validate_filter_datasources(self, layout: DashboardLayout, kept: DashboardLayout | None = None) -> None:
         """Ensure filter datasource_ids, datasource_viz_ids (a SQL chart's) and target_tile_ids refer to
-        known entities, and that each filter tile places a filter of this layout, at most one tile per filter."""
+        known entities, and that each filter tile places a filter of this layout, at most one tile per filter.
+
+        A source the caller may not read is unknown to them, unless ``kept`` (the stored layout) already
+        binds it: a manage grantee keeps the owner's filters, and learns nothing they could not read."""
         self._validate_tabs(layout)
+        kept_viz = {f.datasource_viz_id for f in kept.filters} if kept else set()
+        kept_tables = {f.datasource_id for f in kept.filters} if kept else set()
         filter_ids = {f.id for f in layout.filters}
         placed: set[str] = set()
         for tile in layout.tiles:
@@ -425,6 +434,12 @@ class VisualizationService:
             if f.datasource_viz_id is not None:
                 if f.datasource_viz_id not in viz_sources:
                     viz = self.repo.get_visualization(f.datasource_viz_id)
+                    if (
+                        viz is not None
+                        and viz.id not in kept_viz
+                        and not self._caller_can_read("visualization", viz.id)
+                    ):
+                        viz = None
                     viz_sources[f.datasource_viz_id] = (viz.source_type or "table") if viz is not None else None
                 source_type = viz_sources[f.datasource_viz_id]
                 if source_type is None:
@@ -440,35 +455,71 @@ class VisualizationService:
                 if not seen[f.datasource_id]:
                     raise ValueError(f"filter '{f.id}' references unknown catalog_table_id={f.datasource_id}")
                 continue
-            exists = self.repo.get_table(f.datasource_id) is not None
+            exists = self.repo.get_table(f.datasource_id) is not None and (
+                f.datasource_id in kept_tables or self._caller_can_read("catalog_table", f.datasource_id)
+            )
             seen[f.datasource_id] = exists
             if not exists:
                 raise ValueError(f"filter '{f.id}' references unknown catalog_table_id={f.datasource_id}")
 
-    def _dashboard_to_out(self, dashboard: CatalogDashboard) -> DashboardOut:
+    @staticmethod
+    def _stored_layout(dashboard: CatalogDashboard) -> DashboardLayout:
+        """The layout a row holds, read without the save-time limits it may predate."""
         try:
             raw = json.loads(dashboard.layout_json) if dashboard.layout_json else {}
         except (TypeError, ValueError):
             raw = {}
-        layout = DashboardLayout.model_validate(raw) if raw else DashboardLayout()
+        return DashboardLayout.model_validate(raw, context={"stored": True}) if raw else DashboardLayout()
+
+    def _dashboard_to_out(self, dashboard: CatalogDashboard, layout: DashboardLayout | None = None) -> DashboardOut:
+        if layout is None:
+            layout = self._stored_layout(dashboard)
         ns_name: str | None = None
         if dashboard.namespace_id is not None:
             ns_name = self._namespaces.resolve_namespace_name(dashboard.namespace_id)
-        return DashboardOut(
-            id=dashboard.id,
-            name=dashboard.name,
-            description=dashboard.description,
-            layout=layout,
-            layout_version=dashboard.layout_version or 1,
-            namespace_id=dashboard.namespace_id,
-            namespace_name=ns_name,
-            created_by=dashboard.created_by,
-            created_at=dashboard.created_at,
-            updated_at=dashboard.updated_at,
+        # The layout's after-validators run again on nesting, so this read carries the stored context too.
+        return DashboardOut.model_validate(
+            {
+                "id": dashboard.id,
+                "name": dashboard.name,
+                "description": dashboard.description,
+                "layout": layout,
+                "layout_version": dashboard.layout_version or 1,
+                "namespace_id": dashboard.namespace_id,
+                "namespace_name": ns_name,
+                "created_by": dashboard.created_by,
+                "created_at": dashboard.created_at,
+                "updated_at": dashboard.updated_at,
+            },
+            context={"stored": True},
         )
 
+    @staticmethod
+    def _without_image_data(layout: DashboardLayout) -> DashboardLayout:
+        """The layout a library card draws: an image tile keeps its alt and fit, its ``data_url`` is empty."""
+        if all(t.image is None for t in layout.tiles):
+            return layout
+        tiles = [
+            t if t.image is None else t.model_copy(update={"image": t.image.model_copy(update={"data_url": ""})})
+            for t in layout.tiles
+        ]
+        return layout.model_copy(update={"tiles": tiles})
+
     def list_dashboards(self, user_id: int | None = None) -> list[DashboardOut]:
-        return [self._dashboard_to_out(d) for d in self.repo.list_dashboards()]
+        """Every dashboard, without its images' bytes (``get_dashboard`` carries them). One whose stored layout
+        no longer reads is listed with an empty layout, so it cannot break the library for everyone (opening
+        it still reports the error)."""
+        out: list[DashboardOut] = []
+        for dashboard in self.repo.list_dashboards():
+            try:
+                layout = self._without_image_data(self._stored_layout(dashboard))
+            except ValidationError as exc:
+                logger.warning(
+                    "Dashboard %s has a layout that does not read; listing it without one: %s", dashboard.id, exc
+                )
+                layout = DashboardLayout()
+            out.append(self._dashboard_to_out(dashboard, layout))
+        return out
 
     def get_dashboard(self, dashboard_id: int, user_id: int | None = None) -> DashboardOut:
         dashboard = self.repo.get_dashboard(dashboard_id)
@@ -525,7 +576,11 @@ class VisualizationService:
         if "layout" in provided:
             if payload.layout is None:
                 raise ValueError("layout cannot be cleared")
-            self._validate_filter_datasources(payload.layout)
+            try:
+                kept = self._stored_layout(dashboard)
+            except ValidationError:
+                kept = None
+            self._validate_filter_datasources(payload.layout, kept)
             dashboard.layout_json = payload.layout.model_dump_json()
         dashboard.updated_at = datetime.now(timezone.utc)
         updated = self.repo.update_dashboard(dashboard)

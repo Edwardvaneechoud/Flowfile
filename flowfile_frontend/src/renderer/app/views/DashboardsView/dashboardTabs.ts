@@ -5,6 +5,7 @@ import {
   type DashboardTile,
 } from "../../types";
 import { pruneFilterTargets } from "./filterPlacement";
+import { firstFreeRow } from "./gridDrop";
 
 /** A fresh layout-internal tab id. */
 export const newTabId = (): string =>
@@ -74,12 +75,6 @@ export const mergeTabCanvas = (
   }
   for (const tile of canvas.tiles) if (!kept.has(tile.id)) tiles.push(onTab(tile));
   return { ...canvas, tabs: layout.tabs, tiles };
-};
-
-/** The first row below the given tiles in columns `x` to `x + w`; below all of them without a span. */
-export const firstFreeRow = (tiles: DashboardTile[], span?: { x: number; w: number }): number => {
-  const under = span ? tiles.filter((t) => t.x < span.x + span.w && span.x < t.x + t.w) : tiles;
-  return under.length ? Math.max(...under.map((t) => t.y + t.h)) : 0;
 };
 
 const withoutTab = (tile: DashboardTile): DashboardTile => {
