@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from typing import Any, ClassVar, TypedDict
@@ -29,6 +30,41 @@ from flowfile_core.ai.providers.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+_WIRE_NAME_UNSAFE = re.compile(r"[^a-zA-Z0-9_-]")
+_WIRE_NAME_MAX = 64
+
+
+def wire_tool_name(name: str) -> str:
+    """Spell a tool name the way every vendor accepts it.
+
+    Flowfile's tools are dotted (``flowfile.graph.connect``); OpenAI-style
+    APIs refuse anything outside ``^[a-zA-Z0-9_-]+$`` (64 chars at most), so a
+    dot becomes ``__`` on the wire and the response is mapped back with
+    :func:`_tool_name_map`.
+    """
+    return _WIRE_NAME_UNSAFE.sub("_", name.replace(".", "__"))[:_WIRE_NAME_MAX]
+
+
+def _tool_name_map(tools: list[ToolSpec] | None, messages: list[Message]) -> dict[str, str]:
+    """Wire name → Flowfile name for every tool name one request carries.
+
+    The encoding is not injective (``a.b`` and ``a__b``, or two names that
+    differ only past 64 characters), so a collision keeps the first name and
+    logs a warning; the registry test keeps the shipped tools collision-free.
+    """
+    names = [t.name for t in tools or []]
+    for msg in messages:
+        names.extend(tc.name for tc in msg.tool_calls or [])
+        if msg.role == "tool" and msg.name:
+            names.append(msg.name)
+    mapping: dict[str, str] = {}
+    for name in names:
+        wire = wire_tool_name(name)
+        known = mapping.setdefault(wire, name)
+        if known != name:
+            logger.warning("tool names %r and %r share wire name %r; replies decode to the first", known, name, wire)
+    return mapping
 
 
 def _lazy_litellm() -> Any:
@@ -175,7 +211,7 @@ class LiteLLMProvider:
         result: ChatResponse | None = None
         try:
             response = await litellm.acompletion(**kwargs)
-            result = _response_from_litellm(response, model=self.model)
+            result = _response_from_litellm(response, model=self.model, names=_tool_name_map(tools, messages))
             return result
         except Exception as exc:
             error = repr(exc)
@@ -223,8 +259,9 @@ class LiteLLMProvider:
         try:
             response = await litellm.acompletion(**kwargs)
             tool_buffer: dict[int, _PartialToolCall] = {}
+            names = _tool_name_map(tools, messages)
             async for raw_chunk in response:
-                for chunk in _chunks_from_litellm(raw_chunk, tool_buffer):
+                for chunk in _chunks_from_litellm(raw_chunk, tool_buffer, names):
                     if chunk.content_delta:
                         aggregated_text.append(chunk.content_delta)
                     if chunk.tool_call_delta is not None:
@@ -271,7 +308,7 @@ def _message_to_litellm(msg: Message) -> dict[str, Any]:
                 "id": tc.id,
                 "type": "function",
                 "function": {
-                    "name": tc.name,
+                    "name": wire_tool_name(tc.name),
                     "arguments": json.dumps(tc.arguments),
                 },
             }
@@ -280,7 +317,7 @@ def _message_to_litellm(msg: Message) -> dict[str, Any]:
     if msg.tool_call_id:
         out["tool_call_id"] = msg.tool_call_id
     if msg.name:
-        out["name"] = msg.name
+        out["name"] = wire_tool_name(msg.name) if msg.role == "tool" else msg.name
     return out
 
 
@@ -289,15 +326,19 @@ def _tool_to_litellm(tool: ToolSpec) -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
-            "name": tool.name,
+            "name": wire_tool_name(tool.name),
             "description": tool.description,
             "parameters": tool.parameters,
         },
     }
 
 
-def _response_from_litellm(response: Any, *, model: str) -> ChatResponse:
-    """Translate a litellm completion response to a ``ChatResponse``."""
+def _response_from_litellm(response: Any, *, model: str, names: dict[str, str] | None = None) -> ChatResponse:
+    """Translate a litellm completion response to a ``ChatResponse``.
+
+    ``names`` maps wire tool names back to Flowfile's; a name it lacks is kept.
+    """
+    names = names or {}
     choice = response.choices[0]
     message = choice.message
     content = getattr(message, "content", None)
@@ -316,7 +357,7 @@ def _response_from_litellm(response: Any, *, model: str) -> ChatResponse:
         tool_calls.append(
             ToolCall(
                 id=getattr(raw, "id", "") or "",
-                name=name,
+                name=names.get(name, name),
                 arguments=arguments,
             )
         )
@@ -376,13 +417,14 @@ class _PartialToolCall:
             return False
         return True
 
-    def to_tool_call(self) -> ToolCall:
-        return ToolCall(id=self.id, name=self.name, arguments=_parse_arguments(self.arguments))
+    def to_tool_call(self, names: dict[str, str]) -> ToolCall:
+        return ToolCall(id=self.id, name=names.get(self.name, self.name), arguments=_parse_arguments(self.arguments))
 
 
 def _chunks_from_litellm(
     raw_chunk: Any,
     tool_buffer: dict[int, _PartialToolCall],
+    names: dict[str, str] | None = None,
 ) -> list[StreamChunk]:
     """Translate a single litellm streaming chunk into ``StreamChunk`` deltas.
 
@@ -409,7 +451,7 @@ def _chunks_from_litellm(
     if finish_reason:
         for partial in tool_buffer.values():
             if partial.is_complete():
-                out.append(StreamChunk(tool_call_delta=partial.to_tool_call()))
+                out.append(StreamChunk(tool_call_delta=partial.to_tool_call(names or {})))
         tool_buffer.clear()
         out.append(StreamChunk(finish_reason=finish_reason))
 
