@@ -47,13 +47,24 @@ def wire_tool_name(name: str) -> str:
 
 
 def _tool_name_map(tools: list[ToolSpec] | None, messages: list[Message]) -> dict[str, str]:
-    """Wire name → Flowfile name for every tool name one request carries."""
+    """Wire name → Flowfile name for every tool name one request carries.
+
+    The encoding is not injective (``a.b`` and ``a__b``, or two names that
+    differ only past 64 characters), so a collision keeps the first name and
+    logs a warning; the registry test keeps the shipped tools collision-free.
+    """
     names = [t.name for t in tools or []]
     for msg in messages:
         names.extend(tc.name for tc in msg.tool_calls or [])
         if msg.role == "tool" and msg.name:
             names.append(msg.name)
-    return {wire_tool_name(n): n for n in names}
+    mapping: dict[str, str] = {}
+    for name in names:
+        wire = wire_tool_name(name)
+        known = mapping.setdefault(wire, name)
+        if known != name:
+            logger.warning("tool names %r and %r share wire name %r; replies decode to the first", known, name, wire)
+    return mapping
 
 
 def _lazy_litellm() -> Any:

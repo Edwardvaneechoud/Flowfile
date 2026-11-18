@@ -58,6 +58,7 @@ from flowfile_core.ai.providers._litellm_base import (
     _message_to_litellm,
     _PartialToolCall,
     _response_from_litellm,
+    _tool_name_map,
     _tool_to_litellm,
     wire_tool_name,
 )
@@ -586,6 +587,31 @@ def test_response_keeps_a_name_the_request_did_not_carry() -> None:
     assert out.tool_calls[0].name == "flowfile.graph.connect"
 
 
+def test_tool_name_map_warns_when_two_names_share_a_wire_name(caplog: pytest.LogCaptureFixture) -> None:
+    tools = [
+        ToolSpec(name="a.b", description="d", parameters={"type": "object"}),
+        ToolSpec(name="a__b", description="d", parameters={"type": "object"}),
+    ]
+    with caplog.at_level("WARNING", logger="flowfile_core.ai.providers._litellm_base"):
+        mapping = _tool_name_map(tools, [])
+    assert mapping == {"a__b": "a.b"}
+    assert "share wire name" in caplog.text
+
+
+def test_registered_tool_names_encode_uniquely() -> None:
+    from flowfile_core.ai.tools.registry import _iter_node_types, build_staged_fill_tool_spec, build_tool_catalog
+
+    names = {t.name for t in build_tool_catalog()}
+    for node_type in _iter_node_types():
+        spec = build_staged_fill_tool_spec(node_type)
+        if spec is not None:
+            names.add(spec.name)
+    wires: dict[str, str] = {}
+    for name in sorted(names):
+        wire = wire_tool_name(name)
+        assert wires.setdefault(wire, name) == name, f"{name!r} and {wires[wire]!r} both encode to {wire!r}"
+
+
 def test_response_from_litellm_handles_missing_usage() -> None:
     raw = _Obj(
         choices=[_Obj(message=_Obj(content="hi", tool_calls=None), finish_reason="stop")],
@@ -652,6 +678,51 @@ def test_chunks_from_litellm_finish_reason_only() -> None:
 def test_chunks_from_litellm_empty_choices() -> None:
     raw = _Obj(choices=[])
     assert _chunks_from_litellm(raw, {}) == []
+
+
+def _one_tool_call_stream(name: str) -> Any:
+    async def fake_stream() -> Any:
+        yield _Obj(
+            choices=[
+                _Obj(
+                    delta=_Obj(
+                        content=None,
+                        tool_calls=[_Obj(index=0, id="call_s", function=_Obj(name=name, arguments="{}"))],
+                    ),
+                    finish_reason=None,
+                )
+            ]
+        )
+        yield _Obj(choices=[_Obj(delta=_Obj(content=None), finish_reason="tool_calls")])
+
+    return fake_stream()
+
+
+async def _streamed_tool_names(messages: list[Message], tools: list[ToolSpec] | None, wire_name: str) -> list[str]:
+    p = provider_factory("openai")
+    with patch("litellm.acompletion", new=AsyncMock(return_value=_one_tool_call_stream(wire_name))):
+        return [c.tool_call_delta.name async for c in p.stream(messages, tools=tools) if c.tool_call_delta is not None]
+
+
+@pytest.mark.asyncio
+async def test_stream_keeps_a_name_the_request_did_not_carry() -> None:
+    names = await _streamed_tool_names([Message(role="user", content="hi")], None, "flowfile__graph__connect")
+    assert names == ["flowfile__graph__connect"]
+
+
+@pytest.mark.asyncio
+async def test_stream_decodes_a_name_only_the_history_carries() -> None:
+    history = [
+        Message(role="user", content="connect"),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[ToolCall(id="c0", name="flowfile.graph.connect", arguments={})],
+        ),
+        Message(role="tool", content="{}", tool_call_id="c0", name="flowfile.graph.connect"),
+    ]
+    names = await _streamed_tool_names(history, None, "flowfile__graph__connect")
+    assert names == ["flowfile.graph.connect"]
 
 
 @pytest.mark.asyncio

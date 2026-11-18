@@ -144,7 +144,7 @@ async def test_provider(
     try:
         await provider.chat(
             messages=[Message(role="user", content="Reply with the single word: ok")],
-            max_tokens=TEST_PING_MAX_TOKENS,  # 64 tokens
+            max_tokens=TEST_PING_MAX_TOKENS,
         )
         ok, error = True, None
     except Exception as exc:  # noqa: BLE001 — provider-side errors surfaced to UI
