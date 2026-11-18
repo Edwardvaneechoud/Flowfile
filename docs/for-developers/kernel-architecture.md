@@ -39,7 +39,7 @@ The `KernelManager` is a singleton that runs inside the Core service. It manages
 
 ### Port Allocation
 
-- **Local mode:** Allocates ports from the range 19000–19999. Each kernel gets a unique host port mapped to container port 9999.
+- **Local mode:** Allocates ports from the range 19000–19999. Each kernel gets a unique host port mapped to container port 9999, published on `127.0.0.1` only, which is where core reaches it.
 - **Docker-in-Docker mode:** Skips port allocation entirely. Containers communicate via container names on the shared Docker network (`flowfile-network`).
 
 ### Docker-in-Docker Support
