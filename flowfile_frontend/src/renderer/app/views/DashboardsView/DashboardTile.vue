@@ -33,14 +33,16 @@
         @keydown.esc.prevent="titleEditing = false"
         @blur="commitTitle"
       />
-      <span
-        v-else
-        class="tile-title"
-        :class="{ 'tile-title-hidden': titleHidden }"
-        :title="mode === 'edit' ? 'Double-click to rename' : undefined"
-        @dblclick="startTitleEdit"
-        >{{ titleHidden ? "Title hidden" : headerTitle }}</span
-      >
+      <span v-else class="tile-title-group">
+        <span
+          class="tile-title"
+          :class="{ 'tile-title-hidden': titleHidden }"
+          :title="mode === 'edit' ? 'Double-click to rename' : undefined"
+          @dblclick="startTitleEdit"
+          >{{ titleHidden ? "Title hidden" : headerTitle }}</span
+        >
+        <TileNoteInfo v-if="note" :note="note" :label="menuTitle" />
+      </span>
       <div class="tile-header-actions">
         <span v-if="lastError" class="tile-error" :title="lastError"
           ><el-icon><Warning /></el-icon
@@ -73,6 +75,9 @@
                 <el-icon><component :is="titleHidden ? View : Hide" /></el-icon>
                 {{ titleHidden ? "Show title" : "Hide title" }}
               </el-dropdown-item>
+              <el-dropdown-item data-testid="tile-note-edit" @click="openNoteDialog">
+                <el-icon><InfoFilled /></el-icon> {{ noteMenuLabel(tile) }}
+              </el-dropdown-item>
               <el-dropdown-item @click="emit('duplicate')">
                 <el-icon><CopyDocument /></el-icon> Duplicate
               </el-dropdown-item>
@@ -93,10 +98,14 @@
       </div>
     </div>
 
-    <!-- Without a header the viewer's menu floats over the tile's corner. -->
+    <!-- Without a header the viewer's menu and the note's ⓘ float over the tile's corner. -->
+    <div v-if="floatingNote && note" class="tile-note-float">
+      <TileNoteInfo :note="note" :label="menuTitle" />
+    </div>
     <TileActionsMenu
       v-if="floatingActions"
       class="tile-view-actions tile-view-actions-float"
+      :class="{ 'tile-float-beside-note': floatingNote }"
       :actions="actions"
       @select="onAction"
     />
@@ -118,6 +127,9 @@
             </el-dropdown-item>
             <el-dropdown-item v-if="isSeparator || isKpi" @click="openStyleMenu">
               <el-icon><Brush /></el-icon> Style
+            </el-dropdown-item>
+            <el-dropdown-item v-if="isKpi" data-testid="tile-note-edit" @click="openNoteDialog">
+              <el-icon><InfoFilled /></el-icon> {{ noteMenuLabel(tile) }}
             </el-dropdown-item>
             <el-dropdown-item
               v-if="isSeparator"
@@ -168,6 +180,7 @@
           :class="{ 'tile-text-colored': !!tile.text_color }"
           :style="textStyle"
           :title="mode === 'edit' ? 'Double-click to edit' : undefined"
+          @click="openTileLink"
           @dblclick="enterTextEdit"
           v-html="renderedHtml"
         />
@@ -180,9 +193,16 @@
           :title="mode === 'edit' ? 'Drag to move' : undefined"
         >
           <el-icon v-if="mode === 'edit'" class="tile-drag-icon"><Rank /></el-icon>
-          <span class="tile-filter-name">{{
-            tileFilter ? tileFilter.label || tileFilter.field_name : "Filter removed"
-          }}</span>
+          <span class="tile-filter-title">
+            <span class="tile-filter-name">{{
+              tileFilter ? tileFilter.label || tileFilter.field_name : "Filter removed"
+            }}</span>
+            <TileNoteInfo
+              v-if="note && tileFilter"
+              :note="note"
+              :label="tileFilter.label || tileFilter.field_name"
+            />
+          </span>
           <span
             v-if="mode === 'edit' && tileFilter && targetsNoTile(tileFilter)"
             class="tile-filter-no-tiles"
@@ -203,6 +223,9 @@
                 <template v-if="tileFilter">
                   <el-dropdown-item @click="emit('edit-filter', tileFilter.id)">
                     <el-icon><EditPen /></el-icon> Edit filter
+                  </el-dropdown-item>
+                  <el-dropdown-item data-testid="tile-note-edit" @click="openNoteDialog">
+                    <el-icon><InfoFilled /></el-icon> {{ noteMenuLabel(tile) }}
                   </el-dropdown-item>
                   <el-dropdown-item @click="emit('move-filter-to-bar', tileFilter.id)">
                     <el-icon><Top /></el-icon> Move to filter bar
@@ -242,7 +265,11 @@
         :tile-datasource="tileDatasource"
         :viz-refresh-nonce="refreshNonce"
         @update:tile="emit('update:tile', $event)"
-      />
+      >
+        <template v-if="note" #label-after>
+          <TileNoteInfo :note="note" :label="menuTitle" />
+        </template>
+      </KpiTile>
       <TableTile
         v-else-if="isTable"
         ref="tableRef"
@@ -263,7 +290,11 @@
           <button
             v-if="vizClickable"
             class="tile-viz-edit-badge"
-            :class="{ 'tile-viz-edit-badge-shifted': floatingActions }"
+            :class="{
+              'tile-viz-edit-badge-shifted': floatingActions && !floatingNote,
+              'tile-viz-edit-badge-beside-note': floatingNote && !floatingActions,
+              'tile-viz-edit-badge-shifted-note': floatingNote && floatingActions,
+            }"
             type="button"
             title="Edit chart"
             @click.stop="emit('edit-viz')"
@@ -297,6 +328,7 @@
       v-if="expandMounted"
       v-model="expandOpen"
       :title="menuTitle"
+      :note="note"
       :body-style="tileStyle"
     >
       <KpiTile
@@ -333,6 +365,7 @@
       :chart-filters="tileChart?.filters ?? []"
       :refresh-nonce="refreshNonce"
     />
+    <TileNoteDialog v-if="noteMounted" v-model="noteOpen" :note="note" @save="onNoteSave" />
     <ChartFormatDialog
       v-if="formatMounted"
       v-model="formatOpen"
@@ -470,8 +503,6 @@
 //   - TextTile.vue (~62-88) and VizTile.vue (~91-108) child components
 //   - useDashboardTileViz composable: viz loading (~lines 155-234)
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, toRef, watch } from "vue";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import {
   Brush,
   Close,
@@ -481,6 +512,7 @@ import {
   EditPen,
   Grid,
   Hide,
+  InfoFilled,
   MoreFilled,
   Odometer,
   Operation,
@@ -524,6 +556,11 @@ import TileActionItems from "./TileActionItems.vue";
 import TileActionsMenu from "./TileActionsMenu.vue";
 import TileMoveToTabItems from "./TileMoveToTabItems.vue";
 import TileExpandDialog from "./TileExpandDialog.vue";
+import TileNoteDialog from "./TileNoteDialog.vue";
+import TileNoteInfo from "./TileNoteInfo.vue";
+import { noteMenuLabel, tileNote, withNote } from "./tileNote";
+import { openTileLink } from "./tileLinks";
+import { renderTileMarkdown } from "./tileMarkdown";
 import TileRowsDialog from "./TileRowsDialog.vue";
 import { downloadChartCsv, downloadChartImage } from "./tileDownloads";
 import VueGraphicRenderer from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicRenderer.vue";
@@ -814,13 +851,7 @@ watch(
   },
 );
 
-const renderedHtml = computed(() => {
-  const md = props.tile.text_md ?? "";
-  if (!md.trim()) return "";
-  // marked v15 returns string for sync parse; cast keeps TS happy across overloads.
-  const raw = marked.parse(md, { async: false }) as string;
-  return DOMPurify.sanitize(raw);
-});
+const renderedHtml = computed(() => renderTileMarkdown(props.tile.text_md));
 
 const commitText = () => {
   const next = textDraft.value;
@@ -872,6 +903,25 @@ const actions = computed(() => {
 const floatingActions = computed(
   () => props.mode === "view" && !showHeader.value && actions.value.length > 0,
 );
+
+// ---- the tile's note, behind an ⓘ beside its title ----
+const note = computed(() => tileNote(props.tile));
+// A chart or table with its title hidden keeps the ⓘ in its top right corner.
+const floatingNote = computed(
+  () => !!note.value && (isViz.value || isTable.value) && !showHeader.value && !blankInView.value,
+);
+const noteOpen = ref(false);
+const noteMounted = ref(false);
+
+const openNoteDialog = () => {
+  noteMounted.value = true;
+  noteOpen.value = true;
+};
+
+const onNoteSave = (draft: string) => {
+  const next = withNote(props.tile, draft);
+  if (next) emit("update:tile", next);
+};
 
 const menuTitle = computed(() =>
   isKpi.value && props.tile.kpi
@@ -1087,6 +1137,19 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   background: inherit;
 }
+.tile-view-actions-float.tile-float-beside-note {
+  right: 30px;
+}
+/* Inset so the ⓘ's wider hit area is not clipped by the tile's edge. */
+.tile-note-float {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 2;
+  display: flex;
+  border-radius: 50%;
+  background: inherit;
+}
 /* In view mode text tiles look like part of the page, not a card. */
 .tile-text-view {
   border: none;
@@ -1151,8 +1214,14 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
-.tile-filter-name {
+.tile-filter-title {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.tile-filter-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1186,6 +1255,12 @@ onBeforeUnmount(() => {
 }
 .tile-handle {
   cursor: move;
+}
+.tile-title-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 .tile-title {
   font-weight: 600;
@@ -1273,6 +1348,12 @@ onBeforeUnmount(() => {
 }
 .tile-viz-edit-badge-shifted {
   right: 32px;
+}
+.tile-viz-edit-badge-beside-note {
+  right: 28px;
+}
+.tile-viz-edit-badge-shifted-note {
+  right: 52px;
 }
 .tile:hover .tile-viz-edit-badge,
 .tile-viz-edit-badge:focus-visible {

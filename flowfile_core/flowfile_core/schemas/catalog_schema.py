@@ -986,6 +986,10 @@ class DashboardTile(BaseModel):
     ``filter_id`` (a layout-internal id, so it travels in a project as is);
     a filter so placed is not shown in the filter strip, and it reads no data.
 
+    ``note_md`` is an optional Markdown note a chart, KPI, table or filter tile shows behind
+    an info icon (a definition or a caveat); it holds no machine-local id, so it travels in
+    a project as is.
+
     A KPI or table tile reads either a catalog table directly (``table_id``)
     or a saved chart's data source (``viz_id``, how a SQL source is reached),
     never both. Type-irrelevant fields are simply ignored.
@@ -1003,6 +1007,7 @@ class DashboardTile(BaseModel):
     show_title: bool = True
     chart_format: DashboardChartFormat | None = None
     text_md: str | None = None
+    note_md: str | None = Field(default=None, max_length=4000)
     bg_color: str | None = None
     text_color: str | None = None
     orientation: Literal["horizontal", "vertical"] = "horizontal"

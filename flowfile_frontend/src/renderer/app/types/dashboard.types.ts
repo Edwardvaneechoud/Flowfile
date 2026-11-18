@@ -84,6 +84,8 @@ export interface DashboardTile {
   chart_format?: DashboardChartFormat | null;
   /** Markdown source when type === "text". */
   text_md?: string | null;
+  /** A chart, KPI, table or filter tile's note, Markdown shown behind an ⓘ; at most 4000 characters. */
+  note_md?: string | null;
   /** CSS colors for text tiles. */
   bg_color?: string | null;
   text_color?: string | null;

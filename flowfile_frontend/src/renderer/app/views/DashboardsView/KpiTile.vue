@@ -25,7 +25,10 @@
       <el-skeleton :rows="2" animated />
     </div>
     <template v-else>
-      <div class="kpi-label" :title="sourceTitle">{{ label }}</div>
+      <div class="kpi-label-row">
+        <div class="kpi-label" :title="sourceTitle">{{ label }}</div>
+        <slot name="label-after" />
+      </div>
       <div class="kpi-value-box">
         <div class="kpi-value" :class="{ 'kpi-refreshing': loading }" :style="valueStyle">
           {{ formattedValue }}
@@ -407,7 +410,14 @@ const showPeriodHint = computed(
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.kpi-label-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
 .kpi-label {
+  min-width: 0;
   font-size: 12px;
   color: var(--el-text-color-secondary);
   white-space: nowrap;
@@ -439,6 +449,10 @@ const showPeriodHint = computed(
   color: inherit;
 }
 .kpi-colored .kpi-label {
+  color: inherit;
+  opacity: 0.75;
+}
+.kpi-colored .kpi-label-row :deep(.tile-note-button) {
   color: inherit;
   opacity: 0.75;
 }

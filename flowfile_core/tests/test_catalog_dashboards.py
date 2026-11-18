@@ -291,6 +291,43 @@ class TestDashboardCRUD:
         resp = client.post("/catalog/dashboards", json={"name": "Too often", "layout": layout})
         assert resp.status_code == 422
 
+    def test_tile_note_round_trips_through_create_update_and_get(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0]["note_md"] = "**Revenue** excludes refunds. [Definition](https://example.com)"
+        created = client.post("/catalog/dashboards", json={"name": "Noted", "layout": layout})
+        assert created.status_code == 201, created.text
+        dash_id = created.json()["id"]
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert tiles[0]["note_md"] == layout["tiles"][0]["note_md"]
+        assert tiles[1]["note_md"] is None
+
+        layout["tiles"][0]["note_md"] = None
+        layout["tiles"][1]["note_md"] = "x" * 4000
+        updated = client.put(f"/catalog/dashboards/{dash_id}", json={"layout": layout})
+        assert updated.status_code == 200, updated.text
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert [t["note_md"] for t in tiles] == [None, "x" * 4000]
+
+    def test_layout_saved_before_tile_notes_loads_without_them(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert [t["note_md"] for t in tiles] == [None, None]
+
+    def test_tile_note_over_4000_characters_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0]["note_md"] = "x" * 4001
+        resp = client.post("/catalog/dashboards", json={"name": "Too long", "layout": layout})
+        assert resp.status_code == 422
+        created = client.post("/catalog/dashboards", json={"name": "Short", "layout": _layout_with_two_tiles()})
+        resp = client.put(f"/catalog/dashboards/{created.json()['id']}", json={"layout": layout})
+        assert resp.status_code == 422
+
     def test_tile_title_over_120_characters_returns_422(self, client):
         layout = _layout_with_two_tiles()
         layout["tiles"][0]["title"] = "x" * 121

@@ -83,13 +83,17 @@ export interface SeededDashboard {
  * A catalog table, one chart on it and a dashboard with a titled chart tile, a KPI, a KPI still to
  * be set up, a text tile, a table tile that reads the table directly (five rows a page, largest
  * amount first) and a region filter. Core reads the CSV from this machine's temp dir.
- * `colorByRegion` colours the chart's bars by region.
+ * `colorByRegion` colours the chart's bars by region; `notes` gives tiles a note, by tile id
+ * (`t-chart`, `t-kpi`, `t-table`).
  */
 export async function seedDashboard(
   request: APIRequestContext,
   token: string,
   name: string,
-  { colorByRegion = false } = {},
+  {
+    colorByRegion = false,
+    notes = {},
+  }: { colorByRegion?: boolean; notes?: Record<string, string> } = {},
 ): Promise<SeededDashboard> {
   const headers = authHeaders(token);
   const dir = mkdtempSync(join(tmpdir(), "flowfile-e2e-dashboard-"));
@@ -116,7 +120,7 @@ export async function seedDashboard(
   };
 
   try {
-    await seedRows(post, name, csvPath, created, colorByRegion);
+    await seedRows(post, name, csvPath, created, colorByRegion, notes);
   } catch (err) {
     await cleanup(request).catch(() => undefined);
     throw err;
@@ -142,6 +146,7 @@ async function seedRows(
   csvPath: string,
   created: Created,
   colorByRegion: boolean,
+  notes: Record<string, string>,
 ): Promise<void> {
   // No spaces: a chart on a table whose name has one cannot read its files.
   const tableName = `${name.replace(/\W+/g, "_")}_orders`;
@@ -198,7 +203,7 @@ async function seedRows(
           w: 24,
           h: 8,
         },
-      ],
+      ].map((tile) => (notes[tile.id] ? { ...tile, note_md: notes[tile.id] } : tile)),
       filters: [
         {
           id: "f-region",

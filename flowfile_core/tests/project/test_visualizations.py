@@ -258,6 +258,43 @@ def test_chart_tile_format_round_trips(tmp_path):
         project_sync.close_project(OWNER)
 
 
+def test_tile_note_round_trips(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    viz_id, _ = _make_viz("note-chart", source_type="sql", sql_query="SELECT 1 AS amount")
+    note = "**Revenue** excludes refunds.\n\nSee [the definition](https://example.com)."
+    layout = DashboardLayout(
+        tiles=[
+            DashboardTile(id="note-1", type="viz", viz_id=viz_id, note_md=note, x=0, y=0, w=6, h=4),
+            DashboardTile(id="note-2", type="viz", viz_id=viz_id, x=6, y=0, w=6, h=4),
+        ]
+    )
+    _, duuid = _make_dashboard("note-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Notes", OWNER)
+        tiles = _dash_yaml(root)[duuid]["layout"]["tiles"]
+        assert [t["note_md"] for t in tiles] == [note, None]
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = json.loads(dashboard.layout_json)["tiles"]
+            assert [t["note_md"] for t in stored] == [note, None]
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "tile notes must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
 def test_color_assignments_round_trip(tmp_path):
     from flowfile_core.project.importer import import_project
 

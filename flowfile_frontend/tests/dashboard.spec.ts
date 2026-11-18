@@ -553,6 +553,150 @@ test.describe("Dashboards", () => {
     }
   });
 
+  test("an author adds a note to a tile from its menu, and undo and redo take it back and forth", async ({
+    page,
+    request,
+  }) => {
+    const seededNote = await seedDashboard(request, token, `e2e note ${Date.now()}`);
+    const headers = authHeaders(token);
+    const savedNote = async () => {
+      const url = `${API_URL}/catalog/dashboards/${seededNote.dashboardId}`;
+      const saved = await (await request.get(url, { headers })).json();
+      return saved.layout.tiles.find((t: { id: string }) => t.id === "t-chart")?.note_md ?? null;
+    };
+    try {
+      await login(page, token, `#/main/dashboards/${seededNote.dashboardId}/edit`);
+      const chartHeader = page.locator(".tile-header", { hasText: "Revenue by region" });
+      await expect(chartHeader).toBeVisible({ timeout: 30000 });
+      await expect(chartHeader.getByTestId("tile-note-button")).toHaveCount(0);
+
+      await chartHeader.locator(".tile-menu").click();
+      await page.locator(".el-dropdown-menu__item:visible", { hasText: "Add note" }).click();
+      const dialog = page.getByTestId("tile-note-dialog");
+      await expect(dialog).toBeVisible();
+      await dialog.locator("textarea").fill("**Revenue** is net of refunds.");
+      await expect(dialog.getByTestId("tile-note-preview").locator("strong")).toHaveText("Revenue");
+      await dialog.getByTestId("tile-note-save").click();
+      await expect(dialog).toBeHidden();
+
+      const noteButton = chartHeader.getByTestId("tile-note-button");
+      await expect(noteButton).toBeVisible();
+      await expect.poll(savedNote, { timeout: 20000 }).toBe("**Revenue** is net of refunds.");
+
+      await page.getByTestId("dashboard-undo").click();
+      await expect(noteButton).toHaveCount(0);
+      await expect.poll(savedNote, { timeout: 20000 }).toBeNull();
+
+      await page.getByTestId("dashboard-redo").click();
+      await expect(noteButton).toBeVisible();
+      await expect.poll(savedNote, { timeout: 20000 }).toBe("**Revenue** is net of refunds.");
+    } finally {
+      await seededNote.cleanup(request);
+    }
+  });
+
+  test("a viewer reads a tile's note on hover, and a click keeps it open until Esc", async ({
+    page,
+    context,
+    request,
+  }) => {
+    const seededNote = await seedDashboard(request, token, `e2e note view ${Date.now()}`, {
+      notes: {
+        "t-kpi":
+          "Sums **every** order. [Definition](https://example.com/amount)\n\n" +
+          '<img src="x" onerror="window.__notePwned = 1"> <script>window.__notePwned = 2</script>',
+      },
+    });
+    await context.route("https://example.com/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<p>definition</p>" }),
+    );
+    try {
+      await login(page, token, `#/main/dashboards/${seededNote.dashboardId}`);
+      await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
+      const noteButton = page.getByTestId("tile-note-button");
+      await expect(noteButton).toHaveCount(1);
+      await expect(noteButton).toHaveAccessibleName("Note: Total amount");
+      const note = page.getByTestId("tile-note");
+      const away = async () => {
+        const box = await page.locator(".tile-title", { hasText: "Orders" }).boundingBox();
+        await page.mouse.move(box!.x + 4, box!.y + 4);
+      };
+
+      await noteButton.hover();
+      await expect(note).toBeVisible();
+      await expect(note).toContainText("Sums every order.");
+      await expect(note.locator("a")).toHaveAttribute("href", "https://example.com/amount");
+      // Sanitised as a text block is: the image stays, its handler and the script do not.
+      await expect(note.locator("img")).toHaveCount(1);
+      await expect(note.locator("img[onerror], script")).toHaveCount(0);
+      expect(await page.evaluate(() => (window as { __notePwned?: number }).__notePwned)).toBe(
+        undefined,
+      );
+      await away();
+      await expect(note).toHaveCount(0);
+
+      await noteButton.click();
+      await expect(note).toBeVisible();
+      await away();
+      await page.waitForTimeout(600);
+      await expect(note).toBeVisible();
+
+      // A link opens outside the app; the dashboard stays where it is.
+      const dashboardUrl = page.url();
+      const opened = context.waitForEvent("page");
+      await note.locator("a").click();
+      const external = await opened;
+      await expect.poll(() => external.url()).toBe("https://example.com/amount");
+      await external.close();
+      expect(page.url()).toBe(dashboardUrl);
+      await expect(page.locator(".kpi-value")).toHaveText("270");
+      await expect(note).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(note).toHaveCount(0);
+      await expect(noteButton).toBeFocused();
+
+      // Enter opens it from the keyboard too.
+      await page.keyboard.press("Enter");
+      await expect(note).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(note).toHaveCount(0);
+    } finally {
+      await seededNote.cleanup(request);
+    }
+  });
+
+  test("on a phone a tap beside the small ⓘ opens the note and a tap elsewhere closes it", async ({
+    browser,
+    request,
+  }) => {
+    const seededNote = await seedDashboard(request, token, `e2e note phone ${Date.now()}`, {
+      notes: { "t-kpi": "Sums every order." },
+    });
+    const phone = await browser.newContext({
+      viewport: { width: 375, height: 812 },
+      hasTouch: true,
+      isMobile: true,
+    });
+    try {
+      const page = await phone.newPage();
+      await login(page, token, `#/main/dashboards/${seededNote.dashboardId}`);
+      await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
+      const noteButton = page.getByTestId("tile-note-button");
+      const box = (await noteButton.boundingBox())!;
+      expect(box.width).toBeLessThan(20);
+      // 4px past the drawn icon still lands on the button: its hit area is wider than it looks.
+      await noteButton.tap({ position: { x: box.width + 4, y: box.height / 2 } });
+      const note = page.getByTestId("tile-note");
+      await expect(note).toBeVisible();
+      await expect(note).toContainText("Sums every order.");
+      await page.locator(".kpi-value").tap();
+      await expect(note).toHaveCount(0);
+    } finally {
+      await phone.close();
+      await seededNote.cleanup(request);
+    }
+  });
+
   test("each region's colour is stored with the author's next edit, never on its own, and undo keeps it", async ({
     page,
     request,

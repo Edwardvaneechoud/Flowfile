@@ -105,6 +105,12 @@ export const dashboardHelp: PageHelpContent = {
             "Double-click a text tile (or click the pen icon) in edit mode to enter the editor; click outside or press the check icon to commit.",
         },
         {
+          icon: "fa-solid fa-circle-info",
+          title: "Tile notes",
+          description:
+            "Add note… in a chart, KPI, table or filter tile's menu puts a Markdown note (a definition, a source or a caveat) behind an ⓘ beside its title. Readers hover the ⓘ to read it, or click or tap it to keep it open; Esc or a click elsewhere closes it. Links in a note or a text block open in your browser, never in place of the dashboard. Save an empty note to remove it.",
+        },
+        {
           icon: "fa-solid fa-eye",
           title: "View-mode prose",
           description:
