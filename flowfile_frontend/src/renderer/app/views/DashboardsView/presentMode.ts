@@ -18,6 +18,27 @@ export function withPresentQuery(query: LocationQuery, on: boolean): LocationQue
   return next;
 }
 
+/** What the viewer keeps in its URL: the filters that differ from the saved ones, the tab, present mode. */
+export interface ViewerUrlState {
+  /** `filterUrlState.encodeFilterState`'s value; null leaves `f` out. */
+  filters: string | null;
+  tab: string | null;
+  present: boolean;
+}
+
+/**
+ * The viewer's query with all three of its keys set from its own state at once, every other key
+ * kept: written together, no write can drop a key another one set while its navigation was pending.
+ */
+export function viewerQuery(query: LocationQuery, state: ViewerUrlState): LocationQueryRaw {
+  const next = withPresentQuery(query, state.present);
+  if (state.filters) next.f = state.filters;
+  else delete next.f;
+  if (state.tab) next.tab = state.tab;
+  else delete next.tab;
+  return next;
+}
+
 interface FullscreenDocument {
   fullscreenEnabled?: boolean;
   fullscreenElement?: Element | null;

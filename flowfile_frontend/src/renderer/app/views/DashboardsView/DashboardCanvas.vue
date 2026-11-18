@@ -13,7 +13,9 @@
     @drop="onCanvasDrop"
   >
     <div v-if="!layout.tiles.length && mode === 'view'" class="canvas-empty">
-      <el-empty description="This dashboard has no tiles." />
+      <el-empty
+        :description="hasTabs(layout) ? 'This tab has no tiles.' : 'This dashboard has no tiles.'"
+      />
     </div>
 
     <GridLayout
@@ -53,6 +55,7 @@
           :can-edit-chart="canEditCharts"
           :get-column-stats="getColumnStats"
           :search-values="searchValues"
+          :move-targets="moveTargets"
           @remove="onRemoveTile(item.i)"
           @duplicate="onDuplicateTile(item.i)"
           @edit-viz="emit('edit-viz', tileById[item.i].viz_id ?? null)"
@@ -61,6 +64,7 @@
           @edit-filter="emit('edit-filter', $event)"
           @move-filter-to-bar="onMoveFilterToBar"
           @delete-filter="emit('delete-filter', $event)"
+          @move-to-tab="emit('move-tile-to-tab', { tileId: item.i, tabId: $event })"
         />
       </GridItem>
     </GridLayout>
@@ -91,10 +95,12 @@ import { computeDropCell } from "./gridDrop";
 import { FILTER_TILE_DEFAULT_SIZE, moveFilterToBar } from "./filterPlacement";
 import type { ValueSearchResult } from "./filterValues";
 import { STACK_BREAKPOINT_PX, stackTiles } from "./stackedLayout";
+import { hasTabs } from "./dashboardTabs";
 import type {
   ColumnStatsResponse,
   DashboardFilter,
   DashboardLayout,
+  DashboardTab,
   DashboardTile as DashboardTileType,
   SeparatorOrientation,
 } from "../../types";
@@ -120,6 +126,8 @@ const props = defineProps<{
   searchValues?: (filter: DashboardFilter, text: string) => Promise<ValueSearchResult>;
   /** False hides a chart tile's edit badge and double-click from viewers; default shown. */
   canEditCharts?: boolean;
+  /** The other tabs a tile may move to (editor only). */
+  moveTargets?: DashboardTab[];
 }>();
 
 const emit = defineEmits<{
@@ -139,6 +147,7 @@ const emit = defineEmits<{
   (e: "update:filter", value: DashboardFilter): void;
   (e: "edit-filter", filterId: string): void;
   (e: "delete-filter", filterId: string): void;
+  (e: "move-tile-to-tab", payload: { tileId: string; tabId: string }): void;
 }>();
 
 const {

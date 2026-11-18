@@ -98,6 +98,7 @@ def _empty_layout() -> dict:
         "filters": [],
         "color_assignments": [],
         "auto_refresh_seconds": None,
+        "tabs": [],
     }
 
 
@@ -961,6 +962,93 @@ class TestDashboardFilterTiles:
         resp = client.post("/catalog/dashboards", json={"name": "Twice", "layout": layout})
         assert resp.status_code == 422
         assert "more than once" in resp.text
+
+
+def _tabbed_layout() -> dict:
+    layout = _layout_with_two_tiles()
+    layout["tabs"] = [{"id": "tab-a", "title": "Overview"}, {"id": "tab-b", "title": "Sales"}]
+    layout["tiles"][0]["tab_id"] = "tab-a"
+    layout["tiles"][1].update({"tab_id": "tab-b", "x": 0})
+    return layout
+
+
+class TestDashboardTabs:
+    def test_tabs_and_tile_tabs_round_trip(self, client):
+        created = client.post("/catalog/dashboards", json={"name": "Tabbed", "layout": _tabbed_layout()})
+        assert created.status_code == 201, created.text
+        body = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]
+        assert body["tabs"] == [{"id": "tab-a", "title": "Overview"}, {"id": "tab-b", "title": "Sales"}]
+        assert [(t["id"], t["tab_id"], t["x"]) for t in body["tiles"]] == [("t1", "tab-a", 0), ("t2", "tab-b", 0)]
+
+    def test_layout_saved_before_tabs_loads_as_one_canvas(self, client):
+        with get_db_context() as db:
+            row = CatalogDashboard(
+                name="Old canvas", layout_json=json.dumps(_layout_with_two_tiles()), layout_version=1, created_by=1
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        body = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]
+        assert body["tabs"] == []
+        assert [t["tab_id"] for t in body["tiles"]] == [None, None]
+
+    def test_a_stored_tile_on_an_unknown_tab_still_reads(self, client):
+        layout = _tabbed_layout()
+        layout["tiles"][1]["tab_id"] = "gone"
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Stray", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        resp = client.get(f"/catalog/dashboards/{dash_id}")
+        assert resp.status_code == 200
+        assert resp.json()["layout"]["tiles"][1]["tab_id"] == "gone"
+
+    def test_duplicate_tab_ids_return_422(self, client):
+        layout = _tabbed_layout()
+        layout["tabs"][1]["id"] = "tab-a"
+        layout["tiles"][1]["tab_id"] = "tab-a"
+        resp = client.post("/catalog/dashboards", json={"name": "Twice", "layout": layout})
+        assert resp.status_code == 422
+        assert "tab 'tab-a' appears more than once" in resp.text
+
+    @pytest.mark.parametrize(
+        ("tab_id", "message"),
+        [("gone", "is on unknown tab 'gone'"), (None, "is on no tab")],
+    )
+    def test_saving_a_tile_off_the_tabs_returns_422(self, client, tab_id, message):
+        created = client.post("/catalog/dashboards", json={"name": "Tabbed", "layout": _tabbed_layout()}).json()
+        layout = _tabbed_layout()
+        layout["tiles"][1]["tab_id"] = tab_id
+        resp = client.put(f"/catalog/dashboards/{created['id']}", json={"layout": layout})
+        assert resp.status_code == 422
+        assert message in resp.text
+
+    def test_a_tile_on_a_tab_of_a_layout_without_tabs_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0]["tab_id"] = "tab-a"
+        resp = client.post("/catalog/dashboards", json={"name": "No tabs", "layout": layout})
+        assert resp.status_code == 422
+        assert "the layout has no tabs" in resp.text
+
+    @pytest.mark.parametrize("bad_tab", [{"id": "", "title": "Empty id"}, {"id": "t", "title": ""}, {"id": "t"}])
+    def test_invalid_tab_returns_422(self, client, bad_tab):
+        layout = _empty_layout()
+        layout["tabs"] = [bad_tab]
+        resp = client.post("/catalog/dashboards", json={"name": "Bad tab", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_a_filter_targets_tiles_on_every_tab(self, client):
+        layout = _tabbed_layout()
+        layout["filters"][0].update({"target": "tiles", "target_tile_ids": ["t1", "t2"]})
+        layout["tiles"].append(_filter_tile(tab_id="tab-b"))
+        created = client.post("/catalog/dashboards", json={"name": "Filtered tabs", "layout": layout})
+        assert created.status_code == 201, created.text
+        body = created.json()["layout"]
+        assert body["filters"][0]["target_tile_ids"] == ["t1", "t2"]
+        assert body["tiles"][2]["tab_id"] == "tab-b"
 
 
 def _make_viz(source_type: str = "sql", table_id: int | None = None) -> int:

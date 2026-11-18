@@ -108,6 +108,8 @@ A layout's `color_assignments` (`DashboardColorAssignment`: `field`, `value`, `s
 
 A layout's `auto_refresh_seconds` (default `None`, off) is how often a viewer's page reruns its Refresh while it is open; core refuses anything under 60 seconds or over a day, so an open dashboard cannot hammer the worker. It is the author's default only: a viewer can pick another interval or pause it for their session, and nothing they pick is saved or put in the URL. A number, so it travels in a project file as is; a layout saved before it existed loads with it off.
 
+A layout's `tabs` (`DashboardTab`: `id`, `title`; ordered, default empty) split it into canvases, and each tile names its tab in `tab_id`, its `x`/`y` being positions on that tab. No tabs is one canvas, which is every layout saved before tabs existed. The create and update routes refuse repeated tab ids, a tile with no or an unknown `tab_id` on a layout with tabs, and a `tab_id` on a layout without them (`VisualizationService._validate_tabs`); reading a stored layout refuses none of it, and the frontend shows such a tile on the first tab and stores it there with the author's next edit (`dashboardTabs.ts::healTabs`, run when a dashboard loads). Filters stay dashboard-wide: `target_tile_ids` may name tiles on any tab. Tab ids are layout-internal, so they travel in a project file as is.
+
 ---
 
 ## The Explore Data node

@@ -112,8 +112,15 @@
         @update:filters="onFiltersChange"
         @reset="onResetFilters"
       />
-      <DashboardCanvas
+      <DashboardTabBar
         :layout="liveLayout"
+        :active-tab-id="activeTabId"
+        mode="view"
+        @select="onSelectTab"
+      />
+      <DashboardCanvas
+        :key="activeTabId ?? 'canvas'"
+        :layout="tabLayout"
         mode="view"
         :appearance="appearance"
         :viz-refresh-nonces="vizRefreshNonces"
@@ -145,6 +152,8 @@ import { asUtc } from "../../utils/catalogCdc";
 import { timeAgo } from "../../utils/time";
 import DashboardCanvas from "./DashboardCanvas.vue";
 import DashboardFilterBar from "./DashboardFilterBar.vue";
+import DashboardTabBar from "./DashboardTabBar.vue";
+import { resolveTabId, tabCanvasLayout } from "./dashboardTabs";
 import { decodeFilterState, encodeFilterState, filtersDiffer } from "./filterUrlState";
 import { placedFilterIds } from "./filterPlacement";
 import {
@@ -158,7 +167,7 @@ import {
   exitNativeFullscreen,
   isPresentQuery,
   requestNativeFullscreen,
-  withPresentQuery,
+  viewerQuery,
 } from "./presentMode";
 import { DEVICE_WIDTH_VIEWPORT, setViewportMeta } from "./viewportMeta";
 import { EMPTY_DASHBOARD_LAYOUT, type DashboardFilter, type DashboardLayout } from "../../types";
@@ -183,6 +192,20 @@ const liveLayout = computed<DashboardLayout>(() => {
   }
   return { ...store.current.layout, filters: liveFilters.value };
 });
+// The page's own state, written to ?tab= with ?f= by writeUrl; an unknown id shows the first tab.
+const chosenTabId = ref<string | null>(
+  typeof route.query.tab === "string" ? route.query.tab : null,
+);
+// A link or history step to another ?tab= is followed; a write that lost the key is not.
+watch(
+  () => route.query.tab,
+  (tab) => {
+    if (typeof tab === "string") chosenTabId.value = tab;
+  },
+);
+const activeTabId = computed(() => resolveTabId(liveLayout.value, chosenTabId.value));
+// Only the active tab's tiles mount, so only they query and refresh.
+const tabLayout = computed(() => tabCanvasLayout(liveLayout.value, activeTabId.value));
 const {
   datasourcesInUse,
   tilesByDatasource,
@@ -198,7 +221,7 @@ const {
 
 const vizRefreshNonces = ref<Record<number, number>>({});
 const { refreshing, statsRefreshNonce, refreshAll } = useDashboardRefresh({
-  layout: liveLayout,
+  layout: tabLayout,
   vizRefreshNonces,
   refreshDatasources: refresh,
 });
@@ -261,9 +284,16 @@ const canEdit = computed(() => mayEdit(store.current?.access));
 // Only a fullscreen this page asked for is left again with present mode.
 let nativeFullscreen = false;
 
-// The URL is the source of truth, so ?present=1 opens a wall screen straight into it.
+// Page state written to the URL by writeUrl; ?present=1 on load or in a link opens a wall screen.
+const presentOn = ref(isPresentQuery(route.query));
 watch(
   () => isPresentQuery(route.query),
+  (on) => {
+    if (on) presentOn.value = true;
+  },
+);
+watch(
+  presentOn,
   (on) => {
     if (on) presentation.enter();
     else presentation.exit();
@@ -276,7 +306,8 @@ const onPresent = () => {
   void requestNativeFullscreen(document.documentElement).then((ok) => {
     nativeFullscreen = ok;
   });
-  void router.replace({ query: withPresentQuery(route.query, true) });
+  presentOn.value = true;
+  writeUrl();
 };
 
 const onExitPresent = () => {
@@ -284,7 +315,8 @@ const onExitPresent = () => {
     nativeFullscreen = false;
     void exitNativeFullscreen();
   }
-  void router.replace({ query: withPresentQuery(route.query, false) });
+  presentOn.value = false;
+  writeUrl();
 };
 
 const onFullscreenChange = () => {
@@ -292,10 +324,16 @@ const onFullscreenChange = () => {
   if (nativeFullscreen && !document.fullscreenElement) onExitPresent();
 };
 
+// A popper on its way out is closed: a select list left mid-transition by Present stays in it.
 const overlayOpen = (): boolean =>
   Array.from(
     document.querySelectorAll<HTMLElement>(".el-overlay, .el-dropdown__popper, .el-select__popper"),
-  ).some((el) => el.style.display !== "none" && el.getClientRects().length > 0);
+  ).some(
+    (el) =>
+      el.style.display !== "none" &&
+      el.getClientRects().length > 0 &&
+      !/-leave-(active|to)\b/.test(el.className),
+  );
 
 const onPresentKeydown = (event: KeyboardEvent) => {
   if (event.key !== "Escape" || !presentation.presenting || event.defaultPrevented) return;
@@ -360,17 +398,28 @@ watch(
 
 let urlTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Every key from the page's state: navigations resolve after async guards, so a route.query read
+// while another write is in flight can be stale.
+function writeUrl() {
+  if (urlTimer) clearTimeout(urlTimer);
+  urlTimer = null;
+  const query = viewerQuery(route.query, {
+    filters: encodeFilterState(liveFilters.value, savedFilters.value),
+    tab: chosenTabId.value,
+    present: presentOn.value,
+  });
+  void router.replace({ query });
+}
+
 // Debounced, so typing a number does not write the URL on every keystroke.
 const syncUrl = () => {
   if (urlTimer) clearTimeout(urlTimer);
-  urlTimer = setTimeout(() => {
-    urlTimer = null;
-    const query = { ...route.query };
-    const encoded = encodeFilterState(liveFilters.value, savedFilters.value);
-    if (encoded) query.f = encoded;
-    else delete query.f;
-    void router.replace({ query });
-  }, 300);
+  urlTimer = setTimeout(writeUrl, 300);
+};
+
+const onSelectTab = (tabId: string) => {
+  chosenTabId.value = tabId;
+  writeUrl();
 };
 
 onBeforeUnmount(() => {
@@ -411,6 +460,8 @@ watch(dashboardId, (id, previous) => {
   if (id === previous) return;
   chosenInterval.value = undefined;
   paused.value = false;
+  chosenTabId.value = typeof route.query.tab === "string" ? route.query.tab : null;
+  presentOn.value = isPresentQuery(route.query);
   void load();
 });
 

@@ -989,6 +989,9 @@ class DashboardTile(BaseModel):
     A KPI or table tile reads either a catalog table directly (``table_id``)
     or a saved chart's data source (``viz_id``, how a SQL source is reached),
     never both. Type-irrelevant fields are simply ignored.
+
+    ``tab_id`` names the layout tab the tile is on (``None`` on a layout without
+    tabs); ``x``/``y`` are positions on that tab's own canvas.
     """
 
     id: str
@@ -1008,6 +1011,7 @@ class DashboardTile(BaseModel):
     kpi: DashboardKpi | None = None
     table: DashboardTableConfig | None = None
     filter_id: str | None = None
+    tab_id: str | None = None
     x: int
     y: int
     w: int
@@ -1111,12 +1115,25 @@ DASHBOARD_AUTO_REFRESH_MIN_SECONDS = 60
 DASHBOARD_AUTO_REFRESH_MAX_SECONDS = 24 * 60 * 60
 
 
+class DashboardTab(BaseModel):
+    """One tab of a dashboard, a canvas of its own. ``id`` is layout-internal, so it travels in a
+    project as is."""
+
+    id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=60)
+
+
 class DashboardLayout(BaseModel):
     """A dashboard's canvas.
 
     ``auto_refresh_seconds`` is the interval a viewer's page refreshes its data at by default
     (``None``: off). A viewer may change or pause it for their own session; it is never shorter
     than a minute, so an open dashboard cannot hammer the worker.
+
+    ``tabs`` (ordered) splits the dashboard into canvases; each tile names its tab in ``tab_id``.
+    No tabs is one canvas. A save must place every tile on a tab of the layout (the catalog service
+    checks it); a stored layout whose tile names no known tab still reads, and the frontend shows that
+    tile on the first tab until the author's next edit stores it there.
     """
 
     tiles: list[DashboardTile] = Field(default_factory=list)
@@ -1126,6 +1143,7 @@ class DashboardLayout(BaseModel):
     auto_refresh_seconds: int | None = Field(
         default=None, ge=DASHBOARD_AUTO_REFRESH_MIN_SECONDS, le=DASHBOARD_AUTO_REFRESH_MAX_SECONDS
     )
+    tabs: list[DashboardTab] = Field(default_factory=list, max_length=50)
 
     @field_validator("color_assignments")
     @classmethod

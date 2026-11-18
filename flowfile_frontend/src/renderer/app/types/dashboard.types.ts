@@ -97,6 +97,8 @@ export interface DashboardTile {
   table?: DashboardTableConfig | null;
   /** The layout filter a `type === "filter"` tile shows; that filter then leaves the strip. */
   filter_id?: string | null;
+  /** The layout tab the tile is on; absent or null on a layout without tabs (`dashboardTabs.ts`). */
+  tab_id?: string | null;
   x: number;
   y: number;
   w: number;
@@ -157,6 +159,14 @@ export interface DashboardColorAssignment {
   slot: number;
 }
 
+/** One tab of a dashboard, a canvas of its own; the id is layout-internal. */
+export interface DashboardTab {
+  id: string;
+  title: string;
+}
+
+export const DASHBOARD_TAB_TITLE_MAX = 60;
+
 export interface DashboardLayout {
   tiles: DashboardTile[];
   grid: DashboardGrid;
@@ -165,6 +175,8 @@ export interface DashboardLayout {
   color_assignments?: DashboardColorAssignment[];
   /** A viewer's default refresh interval; null or absent is off, never under 60. */
   auto_refresh_seconds?: number | null;
+  /** Ordered; absent or empty is one canvas with no tab bar. */
+  tabs?: DashboardTab[];
 }
 
 export interface Dashboard {

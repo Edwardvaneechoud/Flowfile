@@ -144,7 +144,7 @@
             :datasources-in-use="datasourcesInUse"
             :tiles-by-datasource="tilesByDatasource"
             :viz-tile-ids="vizTileIds"
-            :tile-label="tileLabel"
+            :tile-label="tileLabelOnTab"
             :tile-fields="tileFields"
             :load-tile-fields="loadTileFields"
             :get-column-stats="getColumnStats"
@@ -153,8 +153,16 @@
             @update:filters="onFiltersChange"
             @place="onPlaceFilter"
           />
-          <DashboardCanvas
+          <DashboardTabBar
             :layout="store.current.layout"
+            :active-tab-id="currentTabId"
+            mode="edit"
+            @select="activeTabId = $event"
+            @update:layout="onLayoutChange"
+          />
+          <DashboardCanvas
+            :key="currentTabId ?? 'canvas'"
+            :layout="tabLayout"
             mode="edit"
             :appearance="appearance"
             :viz-refresh-nonces="vizRefreshNonces"
@@ -162,7 +170,8 @@
             :tile-datasource="tileDatasource"
             :get-column-stats="getColumnStats"
             :search-values="searchFilterValues"
-            @update:layout="onLayoutChange"
+            :move-targets="moveTargets"
+            @update:layout="onCanvasLayoutChange"
             @edit-viz="onEditViz"
             @add-viz-at="onAddVizAt"
             @add-text-at="onAddTextAt"
@@ -173,6 +182,7 @@
             @update:filter="onFilterChange"
             @edit-filter="(id: string) => filterBarRef?.openEdit(id)"
             @delete-filter="onDeleteFilter"
+            @move-tile-to-tab="onMoveTileToTab"
           />
         </template>
       </main>
@@ -243,6 +253,7 @@ import AutosaveConflictBanner from "../../components/common/AutosaveConflictBann
 import DashboardCanvas from "./DashboardCanvas.vue";
 import DashboardFilterBar from "./DashboardFilterBar.vue";
 import DashboardSidebarPicker from "./DashboardSidebarPicker.vue";
+import DashboardTabBar from "./DashboardTabBar.vue";
 import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
 import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
@@ -266,6 +277,17 @@ import {
   pruneFilterTargets,
   withFilters,
 } from "./filterPlacement";
+import {
+  firstFreeRow,
+  healTabs,
+  layoutTabs,
+  mergeTabCanvas,
+  moveTileToTab,
+  resolveTabId,
+  tabCanvasLayout,
+  tabOfTile,
+  tabTitleOfTile,
+} from "./dashboardTabs";
 import { KPI_DEFAULT_SIZE } from "./kpi";
 import { AUTO_REFRESH_CHOICES, autoRefreshLabel, savedAutoRefresh } from "./autoRefresh";
 import { TABLE_DEFAULT_SIZE } from "./tableTile";
@@ -377,7 +399,7 @@ const onRestoreDraft = () => {
   if (!pendingDraft) return;
   nameDraft.value = pendingDraft.name;
   descriptionDraft.value = pendingDraft.description ?? "";
-  store.setLayout(pruneFilterTargets(upgradeLayoutGrid(pendingDraft.layout)));
+  store.setLayout(pruneFilterTargets(healTabs(upgradeLayoutGrid(pendingDraft.layout))));
   draftDirty.value = true;
   restoreAvailable.value = false;
   resetHistory();
@@ -495,16 +517,41 @@ const generateTileId = () =>
 
 const gridCols = () => store.current?.layout.grid.cols ?? EMPTY_DASHBOARD_LAYOUT.grid.cols;
 
-const findFreeRow = (layout: DashboardLayout): number => {
-  if (!layout.tiles.length) return 0;
-  return Math.max(...layout.tiles.map((t) => t.y + t.h));
-};
+// View state, not an edit: switching tabs records nothing.
+const activeTabId = ref<string | null>(null);
+const currentTabId = computed(() => resolveTabId(layoutRef.value, activeTabId.value));
+// What the canvas draws and edits: the active tab's tiles; the whole layout without tabs.
+const tabLayout = computed(() => tabCanvasLayout(layoutRef.value, currentTabId.value));
+const moveTargets = computed(() =>
+  layoutTabs(layoutRef.value).filter((t) => t.id !== currentTabId.value),
+);
 
 // Every edit passes here, so a removed tile leaves no filter target behind and a stale one heals.
 const onLayoutChange = (next: DashboardLayout) => {
   if (!store.current) return;
-  store.setLayout(pruneFilterTargets(next));
+  store.setLayout(pruneFilterTargets(healTabs(next)));
   markChanged();
+};
+
+const onCanvasLayoutChange = (next: DashboardLayout) =>
+  onLayoutChange(mergeTabCanvas(layoutRef.value, currentTabId.value, next));
+
+// New tiles land on the active tab; a negative y (grid not measurable) takes its next free row.
+const addToActiveTab = (build: (y: number) => DashboardTile, y = -1) => {
+  if (!store.current) return;
+  const tab = tabLayout.value;
+  onCanvasLayoutChange({
+    ...tab,
+    tiles: [...tab.tiles, build(y < 0 ? firstFreeRow(tab.tiles) : y)],
+  });
+};
+
+const onMoveTileToTab = ({ tileId, tabId }: { tileId: string; tabId: string }) =>
+  onLayoutChange(moveTileToTab(layoutRef.value, tileId, tabId));
+
+const tileLabelOnTab = (tileId: string): string => {
+  const tab = tabTitleOfTile(layoutRef.value, tileId);
+  return tab ? `${tileLabel(tileId)} · ${tab}` : tileLabel(tileId);
 };
 
 // 0 stands for off in the select, which cannot hold null as an option's value.
@@ -532,10 +579,12 @@ const onFilterChange = (next: DashboardFilter) => {
   onFiltersChange(store.current.layout.filters.map((f) => (f.id === next.id ? next : f)));
 };
 
+// Checked on the whole layout: a filter placed on another tab is not placed again.
 const onPlaceFilterAt = ({ filterId, x, y }: { filterId: string; x: number; y: number }) => {
-  if (!store.current) return;
-  const next = placeFilter(store.current.layout, filterId, { x, y }, generateTileId());
-  if (next !== store.current.layout) onLayoutChange(next);
+  if (!store.current || placedIds.value.has(filterId)) return;
+  const tab = tabLayout.value;
+  const next = placeFilter(tab, filterId, { x, y }, generateTileId());
+  if (next !== tab) onCanvasLayoutChange(next);
 };
 
 const onPlaceFilter = (filterId: string) => onPlaceFilterAt({ filterId, x: 0, y: -1 });
@@ -656,23 +705,12 @@ const buildVizTile = (vizId: number, x: number, y: number): DashboardTile => ({
   h: 6,
 });
 
-const onAddTile = (viz: CatalogVisualization) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  onLayoutChange({
-    ...layout,
-    tiles: [...layout.tiles, buildVizTile(viz.id, 0, findFreeRow(layout))],
-  });
-};
+const onAddTile = (viz: CatalogVisualization) =>
+  addToActiveTab((row) => buildVizTile(viz.id, 0, row));
 
-// Drag-drop from the sidebar lands a tile at the dropped cell; a negative y
-// (grid not measurable) falls back to the next free row, like a click-add.
-const onAddVizAt = ({ vizId, x, y }: { vizId: number; x: number; y: number }) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  const row = y < 0 ? findFreeRow(layout) : y;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildVizTile(vizId, x, row)] });
-};
+// Drag-drop from the sidebar lands a tile at the dropped cell.
+const onAddVizAt = ({ vizId, x, y }: { vizId: number; x: number; y: number }) =>
+  addToActiveTab((row) => buildVizTile(vizId, x, row), y);
 
 const sourcePickerOpen = ref(false);
 const vizCreatorOpen = ref(false);
@@ -727,18 +765,10 @@ const buildTextTile = (x: number, y: number): DashboardTile => ({
   h: 3,
 });
 
-const onAddTextTile = () => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTextTile(0, findFreeRow(layout))] });
-};
+const onAddTextTile = () => addToActiveTab((row) => buildTextTile(0, row));
 
-const onAddTextAt = ({ x, y }: { x: number; y: number }) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  const row = y < 0 ? findFreeRow(layout) : y;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTextTile(x, row)] });
-};
+const onAddTextAt = ({ x, y }: { x: number; y: number }) =>
+  addToActiveTab((row) => buildTextTile(x, row), y);
 
 const buildKpiTile = (x: number, y: number): DashboardTile => ({
   id: generateTileId(),
@@ -751,18 +781,10 @@ const buildKpiTile = (x: number, y: number): DashboardTile => ({
   ...KPI_DEFAULT_SIZE,
 });
 
-const onAddKpiTile = () => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildKpiTile(0, findFreeRow(layout))] });
-};
+const onAddKpiTile = () => addToActiveTab((row) => buildKpiTile(0, row));
 
-const onAddKpiAt = ({ x, y }: { x: number; y: number }) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  const row = y < 0 ? findFreeRow(layout) : y;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildKpiTile(x, row)] });
-};
+const onAddKpiAt = ({ x, y }: { x: number; y: number }) =>
+  addToActiveTab((row) => buildKpiTile(x, row), y);
 
 const buildTableTile = (x: number, y: number): DashboardTile => ({
   id: generateTileId(),
@@ -776,18 +798,10 @@ const buildTableTile = (x: number, y: number): DashboardTile => ({
   ...TABLE_DEFAULT_SIZE,
 });
 
-const onAddTableTile = () => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTableTile(0, findFreeRow(layout))] });
-};
+const onAddTableTile = () => addToActiveTab((row) => buildTableTile(0, row));
 
-const onAddTableAt = ({ x, y }: { x: number; y: number }) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  const row = y < 0 ? findFreeRow(layout) : y;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTableTile(x, row)] });
-};
+const onAddTableAt = ({ x, y }: { x: number; y: number }) =>
+  addToActiveTab((row) => buildTableTile(x, row), y);
 
 const buildSeparatorTile = (
   x: number,
@@ -805,14 +819,8 @@ const buildSeparatorTile = (
   h: orientation === "vertical" ? 6 : 1,
 });
 
-const onAddSeparatorTile = (orientation: SeparatorOrientation) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  onLayoutChange({
-    ...layout,
-    tiles: [...layout.tiles, buildSeparatorTile(0, findFreeRow(layout), orientation)],
-  });
-};
+const onAddSeparatorTile = (orientation: SeparatorOrientation) =>
+  addToActiveTab((row) => buildSeparatorTile(0, row, orientation));
 
 const onAddSeparatorAt = ({
   x,
@@ -822,15 +830,7 @@ const onAddSeparatorAt = ({
   x: number;
   y: number;
   orientation: SeparatorOrientation;
-}) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  const row = y < 0 ? findFreeRow(layout) : y;
-  onLayoutChange({
-    ...layout,
-    tiles: [...layout.tiles, buildSeparatorTile(x, row, orientation)],
-  });
-};
+}) => addToActiveTab((row) => buildSeparatorTile(x, row, orientation), y);
 
 const initialise = async () => {
   if (isNew.value) {
@@ -885,7 +885,8 @@ const consumeEditVizQuery = async () => {
 
   const tiles = store.current?.layout.tiles ?? [];
   const targetTile = tiles.find((t) => t.type === "viz" && t.viz_id === id);
-  if (targetTile) {
+  if (targetTile && store.current) {
+    activeTabId.value = tabOfTile(store.current.layout, targetTile);
     onEditViz(id);
   }
   // Strip the query whether or not the tile was found, so a reload or

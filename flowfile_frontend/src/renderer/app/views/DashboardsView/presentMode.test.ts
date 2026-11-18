@@ -3,6 +3,7 @@ import {
   exitNativeFullscreen,
   isPresentQuery,
   requestNativeFullscreen,
+  viewerQuery,
   withPresentQuery,
 } from "./presentMode";
 
@@ -29,6 +30,35 @@ describe("withPresentQuery", () => {
     const query = { present: "1" };
     withPresentQuery(query, false);
     expect(query).toEqual({ present: "1" });
+  });
+});
+
+describe("viewerQuery", () => {
+  it("writes filters, tab and present mode together and keeps every other key", () => {
+    expect(viewerQuery({ x: "1" }, { filters: "abc", tab: "t2", present: true })).toEqual({
+      x: "1",
+      f: "abc",
+      tab: "t2",
+      present: "1",
+    });
+  });
+
+  it("sets each key from the state, not from a query that missed a pending write", () => {
+    expect(viewerQuery({ tab: "t1" }, { filters: "abc", tab: "t2", present: true })).toEqual({
+      f: "abc",
+      tab: "t2",
+      present: "1",
+    });
+  });
+
+  it("leaving present mode removes only its key; empty state removes the others", () => {
+    const query = { f: "abc", tab: "t2", present: "1" };
+    expect(viewerQuery(query, { filters: "abc", tab: "t2", present: false })).toEqual({
+      f: "abc",
+      tab: "t2",
+    });
+    expect(viewerQuery(query, { filters: null, tab: null, present: false })).toEqual({});
+    expect(query).toEqual({ f: "abc", tab: "t2", present: "1" });
   });
 });
 

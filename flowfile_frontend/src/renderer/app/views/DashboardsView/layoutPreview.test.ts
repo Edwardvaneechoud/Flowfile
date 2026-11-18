@@ -86,4 +86,17 @@ describe("buildLayoutPreview", () => {
     );
     expect(rects.map((r) => r.orientation)).toEqual(["horizontal", "vertical"]);
   });
+
+  it("previews the first tab of a dashboard with tabs", () => {
+    const tabbed: DashboardLayout = {
+      ...layout([tile({ id: "second", tab_id: "b", h: 20 }), tile({ id: "first", tab_id: "a" })]),
+      tabs: [
+        { id: "a", title: "Overview" },
+        { id: "b", title: "Detail" },
+      ],
+    };
+    const rects = buildLayoutPreview(tabbed);
+    expect(rects.map((r) => r.id)).toEqual(["first"]);
+    expect(rects[0].height).toBe(50);
+  });
 });

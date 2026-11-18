@@ -645,19 +645,25 @@ test.describe("Dashboards", () => {
     const sidebar = page.locator(".app-layout__sidebar-wrapper");
     await expect(sidebar).toBeVisible();
 
+    // Present at once, inside the filter's URL debounce: the link must keep both.
+    await page.locator(".filter-chip-input").click();
+    await page.locator(".el-select-dropdown__item:visible", { hasText: "West" }).click();
+    await page.keyboard.press("Escape");
     await page.getByTestId("dashboard-present").click();
     await expect(sidebar).toHaveCount(0);
     await expect(page.locator(".catalog-tabs")).toBeHidden();
     await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
     await expect(page.getByTestId("dashboard-exit-present")).toBeVisible();
     await expect(page).toHaveURL(/[?&]present=1/);
-    await expect(page.locator(".kpi-value")).toHaveText("270");
+    await expect(page).toHaveURL(/[?&]f=/);
+    await expect(page.locator(".kpi-value")).toHaveText("150");
 
     await page.keyboard.press("Escape");
     await expect(sidebar).toBeVisible();
     await expect(page.locator(".catalog-tabs")).toBeVisible();
     await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
     await expect(page).not.toHaveURL(/[?&]present=1/);
+    await expect(page).toHaveURL(/[?&]f=/);
   });
 
   test("?present=1 opens in present mode with working filters, and Exit keeps the filter", async ({
@@ -734,6 +740,137 @@ test.describe("Dashboards", () => {
         headers,
         data: { layout: { ...current.layout, auto_refresh_seconds: null } },
       });
+    }
+  });
+
+  test("an author moves a tile to a second tab; a viewer sees each tab's tiles there, with ?tab= and the filter kept", async ({
+    page,
+    request,
+  }) => {
+    const tabbed = await seedDashboard(request, token, `e2e tabs ${Date.now()}`);
+    const url = `${API_URL}/catalog/dashboards/${tabbed.dashboardId}`;
+    const headers = authHeaders(token);
+    try {
+      await page.setViewportSize({ width: 1400, height: 900 });
+      await login(page, token, `#/main/dashboards/${tabbed.dashboardId}/edit`);
+      const tableHeader = page.locator(".tile-header", { hasText: "Orders" });
+      await expect(tableHeader).toBeVisible({ timeout: 30000 });
+
+      await page.getByTestId("dashboard-add-tab").click();
+      await expect(page.getByRole("tab")).toHaveText(["Tab 1", "Tab 2"]);
+      await expect(page.getByRole("tab", { name: "Tab 2" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(page.locator(".tile-header")).toHaveCount(0);
+
+      await page.getByRole("tab", { name: "Tab 2" }).dblclick();
+      await page.getByTestId("dashboard-tab-rename").fill("Details");
+      await page.getByTestId("dashboard-tab-rename").press("Enter");
+      await page.getByRole("tab", { name: "Tab 1" }).click();
+      await expect(tableHeader).toBeVisible();
+      await tableHeader.locator(".tile-menu").click();
+      await page.locator(".el-dropdown-menu__item:visible", { hasText: "Move to Details" }).click();
+      await expect(tableHeader).toHaveCount(0);
+      await page.getByRole("tab", { name: "Details" }).click();
+      await expect(tableHeader).toBeVisible();
+
+      await expect
+        .poll(
+          async () => {
+            const { layout } = await (await request.get(url, { headers })).json();
+            const tabOf = (id: string) =>
+              layout.tiles.find((t: { id: string }) => t.id === id)?.tab_id;
+            const tabs = layout.tabs.map((t: { id: string; title: string }) => t.id);
+            return [
+              layout.tabs.map((t: { title: string }) => t.title),
+              tabOf("t-chart") === tabs[0],
+              tabOf("t-table") === tabs[1],
+            ];
+          },
+          { timeout: 20000 },
+        )
+        .toEqual([["Tab 1", "Details"], true, true]);
+
+      await login(page, token, `#/main/dashboards/${tabbed.dashboardId}`);
+      await expect(page.locator(".kpi-value")).toHaveText("270", { timeout: 30000 });
+      await expect(page.locator(".rows-grid")).toHaveCount(0);
+      await page.locator(".filter-chip-input").click();
+      await page.locator(".el-select-dropdown__item:visible", { hasText: "West" }).click();
+      await page.keyboard.press("Escape");
+      await expect(page.locator(".kpi-value")).toHaveText("150");
+
+      // The tab list moves with the arrow keys, like any tablist.
+      await page.getByRole("tab", { name: "Tab 1" }).focus();
+      await page.keyboard.press("ArrowRight");
+      await expect(page.getByRole("tab", { name: "Details" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(page).toHaveURL(/[?&]tab=/);
+      await expect(page.locator(".kpi-value")).toHaveCount(0);
+      await expect(page.locator(".rows-range")).toHaveText("1–2 of 2 rows", { timeout: 30000 });
+
+      await page.reload();
+      await page.waitForLoadState("load");
+      await expect(page.locator(".rows-range")).toHaveText("1–2 of 2 rows", { timeout: 30000 });
+      await expect(page.getByRole("tab", { name: "Details" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+
+      await page.getByRole("tab", { name: "Tab 1" }).click();
+      await expect(page.locator(".kpi-value")).toHaveText("150", { timeout: 30000 });
+    } finally {
+      await tabbed.cleanup(request);
+    }
+  });
+
+  test("undo takes back a tab deletion with its tiles", async ({ page, request }) => {
+    const tabbed = await seedDashboard(request, token, `e2e tab undo ${Date.now()}`);
+    const url = `${API_URL}/catalog/dashboards/${tabbed.dashboardId}`;
+    const headers = authHeaders(token);
+    const savedTabs = async () => {
+      const { layout } = await (await request.get(url, { headers })).json();
+      const table = layout.tiles.find((t: { id: string }) => t.id === "t-table");
+      return [layout.tabs.map((t: { title: string }) => t.title), table?.tab_id ?? null];
+    };
+    try {
+      const current = await (await request.get(url, { headers })).json();
+      const layout = {
+        ...current.layout,
+        tabs: [
+          { id: "tab-overview", title: "Overview" },
+          { id: "tab-detail", title: "Detail" },
+        ],
+        tiles: current.layout.tiles.map((t: { id: string }) => ({
+          ...t,
+          tab_id: t.id === "t-table" ? "tab-detail" : "tab-overview",
+        })),
+      };
+      expect((await request.put(url, { headers, data: { layout } })).ok()).toBe(true);
+
+      await login(page, token, `#/main/dashboards/${tabbed.dashboardId}/edit`);
+      await page.getByRole("tab", { name: "Detail" }).click({ timeout: 30000 });
+      const tableHeader = page.locator(".tile-header", { hasText: "Orders" });
+      await expect(tableHeader).toBeVisible({ timeout: 30000 });
+
+      await page.getByTestId("dashboard-tab-menu").click();
+      await page.locator(".el-dropdown-menu__item:visible", { hasText: "Delete tab" }).click();
+      await page.getByRole("button", { name: "Delete", exact: true }).click();
+      await page.getByRole("button", { name: "Keep the tab" }).click();
+      await expect(page.getByRole("tab")).toHaveText(["Overview"]);
+      await expect.poll(savedTabs, { timeout: 20000 }).toEqual([["Overview"], null]);
+
+      await page.getByTestId("dashboard-undo").click();
+      await expect(page.getByRole("tab")).toHaveText(["Overview", "Detail"]);
+      await page.getByRole("tab", { name: "Detail" }).click();
+      await expect(tableHeader).toBeVisible();
+      await expect
+        .poll(savedTabs, { timeout: 20000 })
+        .toEqual([["Overview", "Detail"], "tab-detail"]);
+    } finally {
+      await tabbed.cleanup(request);
     }
   });
 

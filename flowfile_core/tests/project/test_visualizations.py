@@ -25,6 +25,7 @@ from flowfile_core.schemas.catalog_schema import (
     DashboardKpi,
     DashboardKpiTrend,
     DashboardLayout,
+    DashboardTab,
     DashboardTableColumn,
     DashboardTableConfig,
     DashboardTile,
@@ -483,6 +484,76 @@ def test_filter_tile_round_trips_with_its_filter(tmp_path):
             assert stored["filters"][0]["state"] == {"selected": ["West"]}
         write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "filter tiles must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_tabs_round_trip_with_their_tiles(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    layout = DashboardLayout(
+        tabs=[DashboardTab(id="tab-a", title="Overview"), DashboardTab(id="tab-b", title="Operations")],
+        tiles=[
+            DashboardTile(id="txt-1", type="text", text_md="# A", tab_id="tab-a", x=0, y=0, w=48, h=3),
+            DashboardTile(id="txt-2", type="text", text_md="# B", tab_id="tab-b", x=0, y=0, w=48, h=3),
+        ],
+    )
+    _, duuid = _make_dashboard("tabbed-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Tabs", OWNER)
+        exported = _dash_yaml(root)[duuid]["layout"]
+        assert exported["tabs"] == [{"id": "tab-a", "title": "Overview"}, {"id": "tab-b", "title": "Operations"}]
+        assert [t["tab_id"] for t in exported["tiles"]] == ["tab-a", "tab-b"]
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = DashboardLayout.model_validate_json(dashboard.layout_json)
+            assert stored.tabs == layout.tabs
+            assert [t.tab_id for t in stored.tiles] == ["tab-a", "tab-b"]
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "tabs must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_layout_without_tabs_imports_as_one_canvas(tmp_path):
+    """A dashboards.yaml written before tabs existed imports with none."""
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    _, duuid = _make_dashboard(
+        "flat-board", DashboardLayout(tiles=[DashboardTile(id="t", type="text", x=0, y=0, w=48, h=3)])
+    )
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Flat", OWNER)
+        data = yaml.safe_load((root / "dashboards.yaml").read_text(encoding="utf-8"))
+        for entry in data["dashboards"]:
+            entry["layout"].pop("tabs", None)
+            for tile in entry["layout"]["tiles"]:
+                tile.pop("tab_id", None)
+        (root / "dashboards.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            row = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert row is not None
+            stored = DashboardLayout.model_validate_json(row.layout_json)
+            assert stored.tabs == []
+            assert [t.tab_id for t in stored.tiles] == [None]
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)

@@ -384,9 +384,27 @@ class VisualizationService:
 
     # ---- Dashboards CRUD ------------------------------------------------ #
 
+    @staticmethod
+    def _validate_tabs(layout: DashboardLayout) -> None:
+        """Refuse a save whose tab ids repeat or that leaves a tile off the layout's tabs: with tabs every
+        tile names one of them, without tabs none names any. Reading a stored layout never refuses it."""
+        tab_ids: set[str] = set()
+        for tab in layout.tabs:
+            if tab.id in tab_ids:
+                raise ValueError(f"tab '{tab.id}' appears more than once")
+            tab_ids.add(tab.id)
+        for tile in layout.tiles:
+            if not tab_ids and tile.tab_id is not None:
+                raise ValueError(f"tile '{tile.id}' is on tab '{tile.tab_id}', but the layout has no tabs")
+            if tab_ids and tile.tab_id is None:
+                raise ValueError(f"tile '{tile.id}' is on no tab (tab_id is not set)")
+            if tab_ids and tile.tab_id not in tab_ids:
+                raise ValueError(f"tile '{tile.id}' is on unknown tab '{tile.tab_id}'")
+
     def _validate_filter_datasources(self, layout: DashboardLayout) -> None:
         """Ensure filter datasource_ids, datasource_viz_ids (a SQL chart's) and target_tile_ids refer to
         known entities, and that each filter tile places a filter of this layout, at most one tile per filter."""
+        self._validate_tabs(layout)
         filter_ids = {f.id for f in layout.filters}
         placed: set[str] = set()
         for tile in layout.tiles:

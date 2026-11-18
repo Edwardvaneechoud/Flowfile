@@ -76,6 +76,7 @@
               <el-dropdown-item @click="emit('duplicate')">
                 <el-icon><CopyDocument /></el-icon> Duplicate
               </el-dropdown-item>
+              <TileMoveToTabItems :tabs="moveTargets ?? []" @select="emit('move-to-tab', $event)" />
               <el-dropdown-item divided @click="emit('remove')">
                 <el-icon><Delete /></el-icon> Remove from dashboard
               </el-dropdown-item>
@@ -127,6 +128,7 @@
             <el-dropdown-item @click="emit('duplicate')">
               <el-icon><CopyDocument /></el-icon> Duplicate
             </el-dropdown-item>
+            <TileMoveToTabItems :tabs="moveTargets ?? []" @select="emit('move-to-tab', $event)" />
             <el-dropdown-item divided @click="emit('remove')">
               <el-icon><Delete /></el-icon> Remove from dashboard
             </el-dropdown-item>
@@ -198,6 +200,10 @@
                   <el-dropdown-item @click="emit('move-filter-to-bar', tileFilter.id)">
                     <el-icon><Top /></el-icon> Move to filter bar
                   </el-dropdown-item>
+                  <TileMoveToTabItems
+                    :tabs="moveTargets ?? []"
+                    @select="emit('move-to-tab', $event)"
+                  />
                   <el-dropdown-item divided @click="emit('delete-filter', tileFilter.id)">
                     <el-icon><Delete /></el-icon> Delete filter
                   </el-dropdown-item>
@@ -492,6 +498,7 @@ import type {
   ColumnStatsResponse,
   DashboardChartFormat,
   DashboardFilter,
+  DashboardTab,
   DashboardTile,
   SeparatorOrientation,
 } from "../../types";
@@ -508,6 +515,7 @@ import { mayEdit } from "./dashboardAccess";
 import { tileActions, type TileAction } from "./tileActions";
 import TileActionItems from "./TileActionItems.vue";
 import TileActionsMenu from "./TileActionsMenu.vue";
+import TileMoveToTabItems from "./TileMoveToTabItems.vue";
 import TileExpandDialog from "./TileExpandDialog.vue";
 import TileRowsDialog from "./TileRowsDialog.vue";
 import { downloadChartCsv, downloadChartImage } from "./tileDownloads";
@@ -536,6 +544,8 @@ const props = defineProps<{
   searchValues?: (filter: DashboardFilter, text: string) => Promise<ValueSearchResult>;
   /** False when the viewer may not edit the dashboard, so the chart's edit shortcut is hidden. */
   canEditChart?: boolean;
+  /** The editor's other tabs, offered as "Move to <tab>". */
+  moveTargets?: DashboardTab[];
 }>();
 
 const emit = defineEmits<{
@@ -548,6 +558,7 @@ const emit = defineEmits<{
   (e: "edit-filter", filterId: string): void;
   (e: "move-filter-to-bar", filterId: string): void;
   (e: "delete-filter", filterId: string): void;
+  (e: "move-to-tab", tabId: string): void;
 }>();
 
 const isText = computed(() => props.tile.type === "text");
