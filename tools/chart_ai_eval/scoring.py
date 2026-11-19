@@ -342,7 +342,11 @@ def validate_expectation(expect: dict[str, Any], columns: Iterable[str]) -> list
 
 @dataclass
 class StepResult:
-    """One call of a case, scored. ``fallback`` is set when the chain's own chart was missing."""
+    """One call of a case, scored. ``fallback`` is set when the chain's own chart was missing.
+
+    ``case_steps`` is how many steps the case has, so a case a run stopped inside is told apart
+    from one that ran to its end.
+    """
 
     case_id: str
     table: str
@@ -354,6 +358,7 @@ class StepResult:
     score: StepScore
     sent_current_chart: dict[str, Any] | None = None
     fallback: bool = False
+    case_steps: int = 1
 
     def as_dict(self) -> dict[str, Any]:
         answer = asdict(self.answer)
@@ -363,6 +368,7 @@ class StepResult:
             "table": self.table,
             "kind": self.kind,
             "step": self.step,
+            "case_steps": self.case_steps,
             "prompt": self.prompt,
             "expect": self.expect,
             "sent_current_chart": self.sent_current_chart,
@@ -398,13 +404,15 @@ def summarize(results: Sequence[StepResult]) -> dict[str, Any]:
     expects_chart_only = [r for r in results if _expected_outcomes(r.expect) == ["chart"]]
     checks = [c for r in results for c in r.score.checks]
     latencies = [a.latency_ms for a in answers if a.latency_ms is not None and a.status is not None]
-    cases: dict[str, bool] = {}
+    cases: dict[str, list[StepResult]] = {}
     for r in results:
-        cases[r.case_id] = cases.get(r.case_id, True) and r.score.met
+        cases.setdefault(r.case_id, []).append(r)
+    partial = {name for name, steps in cases.items() if len(steps) < max(r.case_steps for r in steps)}
     repairs = Counter(code for a in charts for code in (a.repairs or ()))
     return {
         "cases": len(cases),
-        "cases_met": sum(cases.values()),
+        "cases_met": sum(name not in partial and all(r.score.met for r in steps) for name, steps in cases.items()),
+        "cases_partial": len(partial),
         "calls": len(results),
         "calls_met": sum(r.score.met for r in results),
         "http_errors": sum(a.outcome == "error" for a in answers),
