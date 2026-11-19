@@ -39,8 +39,6 @@ const HUB_SIGN_IN_RETURN = "hub_signin_return";
 // Set on a session that came through the hub, the only kind whose sign-out the server is told of.
 const HUB_SESSION = "auth_hub_session";
 
-const RENEW_ON_RETURN_MS = 60_000;
-
 // Every localStorage key a session is kept under.
 const SESSION_KEYS = [
   "auth_token",
@@ -76,7 +74,6 @@ class AuthService {
   private hubSignInToken: string | null = null;
   private hubSignInError: string | null = null;
   private sessionEnded = false;
-  private lastReturnRenewal: number | null = null;
 
   constructor() {
     // Initial detection based on the Tauri runtime presence.
@@ -435,31 +432,8 @@ class AuthService {
         localStorage.getItem("auth_token") ?? localStorage.getItem("auth_refresh_token");
       if (stored === null) this.endSession(false);
     };
-    const onReturn = () => {
-      if (document.visibilityState !== "hidden") this.renewOnReturn();
-    };
     window.addEventListener("storage", onStorage);
-    document.addEventListener("visibilitychange", onReturn);
-    window.addEventListener("focus", onReturn);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      document.removeEventListener("visibilitychange", onReturn);
-      window.removeEventListener("focus", onReturn);
-    };
-  }
-
-  /**
-   * A session through the hub is renewed when the person comes back to the tab, at most once a minute: the
-   * server asks the hub at each renewal, so a sign-in that ended there is found now. A password session is not.
-   */
-  private renewOnReturn(): void {
-    if (this.isDesktopMode.value || !this.hasSession()) return;
-    if (localStorage.getItem(HUB_SESSION) === null) return;
-    const now = Date.now();
-    const last = this.lastReturnRenewal;
-    if (last !== null && now - last < RENEW_ON_RETURN_MS) return;
-    this.lastReturnRenewal = now;
-    void this.refreshAccessToken();
+    return () => window.removeEventListener("storage", onStorage);
   }
 
   /** Whether this tab was sent to the sign-in page because its session ended; answered once. */
