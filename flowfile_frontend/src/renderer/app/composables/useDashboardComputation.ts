@@ -1,23 +1,72 @@
 import { computed, type ComputedRef, type Ref } from "vue";
 import { CatalogApi } from "../api/catalog.api";
 import { useGraphicWalkerCompute } from "./useGraphicWalkerCompute";
-import type { DashboardFilter, DashboardFilterKind, DashboardTile } from "../types";
+import type {
+  DashboardFilter,
+  DashboardFilterKind,
+  DashboardTile,
+  VisualizationComputeResponse,
+} from "../types";
+import { resolveDateRange } from "../views/DashboardsView/dateRange";
+import { filterSourceKey, type DatasourceKey, type TileSource } from "./dashboardSourceKeys";
+
+export {
+  filterSourceKey,
+  filterSourceOf,
+  tableSourceKey,
+  vizSourceKey,
+  type DatasourceKey,
+  type TileSource,
+} from "./dashboardSourceKeys";
 
 type SemanticType = "quantitative" | "nominal" | "ordinal" | "temporal";
 
 const isSemantic = (s: unknown): s is SemanticType =>
   s === "quantitative" || s === "nominal" || s === "ordinal" || s === "temporal";
 
-interface VisFilter {
+export interface VisFilter {
   fid: string;
   rule: Record<string, unknown>;
 }
 
+/** A chart's own filter as its spec holds it. */
+interface ChartFilter {
+  fid: string;
+  rule?: Record<string, unknown> | null;
+  computed?: boolean;
+  enableAgg?: boolean;
+}
+
+interface ChartWithFilters {
+  encodings?: { filters?: ChartFilter[] };
+}
+
+/**
+ * Take a chart's row filters out of its spec, for a dashboard tile.
+ *
+ * Graphic Walker draws an input for every filter a chart holds, above the chart. A filter on a
+ * stored column is the first step of the chart's query, so it applies just the same when the tile
+ * sends it with the dashboard's own filters and the chart no longer holds it. A filter on a
+ * computed or an aggregated field runs later in the query and stays where it is.
+ */
+export const splitChartFilters = <T extends ChartWithFilters>(
+  chart: T,
+): { chart: T; filters: VisFilter[] } => {
+  const all = chart.encodings?.filters ?? [];
+  const kept = all.filter((f) => f.computed || f.enableAgg);
+  if (kept.length === all.length) return { chart, filters: [] };
+  const filters = all
+    .filter((f) => !f.computed && !f.enableAgg && f.rule != null)
+    .map((f) => ({ fid: f.fid, rule: f.rule as Record<string, unknown> }));
+  return { chart: { ...chart, encodings: { ...chart.encodings, filters: kept } }, filters };
+};
+
 export const buildFilterStep = (
   filters: DashboardFilter[],
   tileFields: TileField[] | null,
+  chartFilters: VisFilter[] = [],
 ): { type: "filter"; filters: VisFilter[] } | null => {
-  const visFilters: VisFilter[] = [];
+  const visFilters: VisFilter[] = [...chartFilters];
   for (const f of filters) {
     const rule = filterToRule(
       f,
@@ -28,6 +77,13 @@ export const buildFilterStep = (
   if (!visFilters.length) return null;
   return { type: "filter", filters: visFilters };
 };
+
+/** A workflow payload with the filter step run first; a payload without a workflow is left alone. */
+export const withFilterStep = <P extends { workflow?: unknown[] }>(
+  payload: P,
+  step: ReturnType<typeof buildFilterStep>,
+): P =>
+  step && payload?.workflow ? { ...payload, workflow: [step, ...payload.workflow] } : payload;
 
 const toNumber = (v: unknown): number =>
   typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
@@ -42,8 +98,9 @@ const categoricalValues = (selected: unknown[], field?: TileField): unknown[] =>
 
 const filterToRule = (f: DashboardFilter, field?: TileField): Record<string, unknown> | null => {
   if (f.kind === "categorical") {
-    const selected = (f.state.selected as unknown[]) ?? [];
-    if (!Array.isArray(selected) || !selected.length) return null;
+    const stored = (f.state.selected as unknown[]) ?? [];
+    if (!Array.isArray(stored) || !stored.length) return null;
+    const selected = f.multiple === false ? stored.slice(0, 1) : stored;
     const value = categoricalValues(selected, field);
     if (!value.length) return null;
     return { type: "one of", value };
@@ -55,18 +112,56 @@ const filterToRule = (f: DashboardFilter, field?: TileField): Record<string, unk
     return { type: "range", value: [min ?? null, max ?? null] };
   }
   if (f.kind === "date_range") {
-    const start = f.state.start as string | null | undefined;
-    const end = f.state.end as string | null | undefined;
-    if (!start && !end) return null;
+    const range = resolveDateRange(f.state);
+    if (!range) return null;
     return {
       type: "temporal range",
-      value: [start ? Date.parse(start) : null, end ? Date.parse(end) : null],
+      value: [
+        range.start ? Date.parse(range.start) : null,
+        range.end ? Date.parse(range.end) : null,
+      ],
     };
   }
   return null;
 };
 
-export type TileDatasourceResolver = (tileId: string) => number | null;
+/** Where a tile's rows come from: a catalog table read directly, or a saved chart's source. */
+
+/** A KPI or table tile reads ``table_id`` when set, else its chart; a chart tile its chart.
+ * A filter tile is a control and an image tile a picture: neither reads data. */
+export const tileSourceOf = (tile: DashboardTile): TileSource | null => {
+  if (tile.type === "filter" || tile.type === "image") return null;
+  if ((tile.type === "kpi" || tile.type === "table") && tile.table_id != null) {
+    return { kind: "table", tableId: tile.table_id };
+  }
+  return tile.viz_id != null ? { kind: "viz", vizId: tile.viz_id } : null;
+};
+
+export const sameSource = (a: TileSource | null, b: TileSource | null): boolean =>
+  JSON.stringify(a) === JSON.stringify(b);
+
+/** What a tile says when its source is gone. */
+export const missingSourceText = (source: TileSource): string =>
+  source.kind === "table"
+    ? `Table #${source.tableId} no longer exists.`
+    : `Visualization #${source.vizId} no longer exists.`;
+
+/** Run one Graphic Walker workflow payload against a source on the worker. A table goes through
+ * the ad-hoc route, which checks the caller may read that table; a chart through its own route. */
+export const computeOnSource = (
+  source: TileSource,
+  payload: Record<string, unknown>,
+  maxRows?: number,
+): Promise<VisualizationComputeResponse> =>
+  source.kind === "table"
+    ? CatalogApi.computeAdHocVisualization(
+        { source_type: "table", table_id: source.tableId },
+        payload,
+        maxRows,
+      )
+    : CatalogApi.computeSavedVisualization(source.vizId, { payload, maxRows });
+
+export type TileDatasourceResolver = (tileId: string) => DatasourceKey | null;
 
 /** One column of a tile's data; ``semanticType`` absent or unknown means unclassified. */
 export interface TileField {
@@ -74,9 +169,9 @@ export interface TileField {
   semanticType?: string;
 }
 
-/** A filter reaches beyond its own table when scoped "all" or legacy-untied. */
+/** A filter reaches beyond its own source when scoped "all" or legacy-untied. */
 export const isCrossSourceFilter = (f: DashboardFilter): boolean =>
-  f.scope === "all" || f.datasource_id == null;
+  f.scope === "all" || filterSourceKey(f) == null;
 
 const COMPATIBLE_SEMANTIC_TYPES: Record<DashboardFilterKind, SemanticType[]> = {
   categorical: ["nominal", "ordinal", "quantitative"],
@@ -133,9 +228,9 @@ export const describeFieldFit = (
 /** Decide which dashboard filters apply to a given tile.
  *
  * Two gates:
- *   1. Source gate — a datasource-scoped filter needs the tile's underlying
- *      CatalogTable to match. A cross-source filter (scope "all", or the
- *      legacy untied null ``datasource_id``) instead needs the tile's data to
+ *   1. Source gate — a datasource-scoped filter needs the tile's source key
+ *      (its CatalogTable, or for a SQL chart the chart) to match. A
+ *      cross-source filter (scope "all", or a legacy untied one) instead needs the tile's data to
  *      have a column named ``field_name`` whose type fits the filter kind;
  *      ``tileFields`` null means the tile's columns are unknown and the gate
  *      is skipped.
@@ -156,7 +251,7 @@ export const filtersTargetingTile = (
       }
     } else {
       const tds = tileDatasource ? tileDatasource(tileId) : null;
-      if (tds !== f.datasource_id) return false;
+      if (tds !== filterSourceKey(f)) return false;
     }
     return f.target === "all" || (f.target === "tiles" && f.target_tile_ids.includes(tileId));
   });
@@ -167,6 +262,8 @@ export interface UseDashboardComputationOptions {
   tileDatasource?: TileDatasourceResolver;
   /** Columns of the tile's data; null while unknown (still loading). */
   tileFields?: () => TileField[] | null;
+  /** Row filters taken out of the tile's chart (``splitChartFilters``). */
+  chartFilters?: () => VisFilter[];
   onMissing?: () => void;
 }
 
@@ -184,20 +281,23 @@ export function useDashboardComputation(opts: UseDashboardComputationOptions) {
   );
 
   const fetcher = async (payload: any): Promise<{ rows: any[]; error: string | null }> => {
-    const vizId = opts.tile.value.viz_id;
-    if (vizId == null) return { rows: [], error: null };
-    const filterStep = buildFilterStep(effectiveFilters.value, opts.tileFields?.() ?? null);
-    const finalPayload =
-      filterStep && payload?.workflow
-        ? { ...payload, workflow: [filterStep, ...payload.workflow] }
-        : payload;
+    const source = tileSourceOf(opts.tile.value);
+    if (source == null) return { rows: [], error: null };
+    const filterStep = buildFilterStep(
+      effectiveFilters.value,
+      opts.tileFields?.() ?? null,
+      opts.chartFilters?.() ?? [],
+    );
     try {
-      const resp = await CatalogApi.computeSavedVisualization(vizId, { payload: finalPayload });
+      const resp = await computeOnSource(source, withFilterStep(payload, filterStep));
       return { rows: resp.rows, error: resp.error ?? null };
     } catch (err: any) {
       if (err?.response?.status === 404) {
         opts.onMissing?.();
-        return { rows: [], error: "Visualization not found" };
+        return {
+          rows: [],
+          error: source.kind === "table" ? "Table not found" : "Visualization not found",
+        };
       }
       throw err;
     }
@@ -208,5 +308,8 @@ export function useDashboardComputation(opts: UseDashboardComputationOptions) {
     `dashboard-tile-${opts.tile.value.id}`,
   );
 
-  return { computation, lastError, effectiveFilters };
+  /** One query exactly as the tile sends it, without touching the tile's ``lastError``. */
+  const query = fetcher;
+
+  return { computation, lastError, effectiveFilters, query };
 }

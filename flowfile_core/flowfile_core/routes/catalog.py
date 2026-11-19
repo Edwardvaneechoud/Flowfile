@@ -1537,7 +1537,7 @@ def list_dashboards(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return every saved dashboard."""
+    """Return every saved dashboard; an image tile's ``data_url`` is empty here, ``GET /dashboards/{id}`` carries it."""
     return service.list_dashboards(user_id=current_user.id)
 
 

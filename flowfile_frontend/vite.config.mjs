@@ -20,6 +20,11 @@ const CORE_PORT = Number(process.env.FLOWFILE_CORE_PORT ?? 63578);
 // desktop shell reports its real version via the get_app_version command.
 const pkg = JSON.parse(readFileSync(Path.join(__dirname, 'package.json'), 'utf-8'));
 
+// Stamped on every saved chart, so a spec says which Graphic Walker wrote it.
+const gwPkg = JSON.parse(
+    readFileSync(Path.join(__dirname, 'node_modules', '@kanaries', 'graphic-walker', 'package.json'), 'utf-8'),
+);
+
 // Tauri only enforces its CSP on pages it serves itself (the packaged asset protocol), never
 // on a devUrl, so the dev/preview servers send the same policy to keep dev honest. The only
 // addition is Vite's HMR websocket, which the packaged app doesn't have.
@@ -101,6 +106,7 @@ export default defineConfig({
     publicDir: 'public',
     define: {
         __APP_VERSION__: JSON.stringify(pkg.version),
+        __GW_VERSION__: JSON.stringify(gwPkg.version),
     },
     // Pin the dep-optimization cache to a stable path under the repo so it
     // doesn't get confused by parallel Vite instances (`npm run dev:web` vs

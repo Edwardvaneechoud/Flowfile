@@ -15,7 +15,7 @@ export const CDF_COLUMNS: { name: string; dtype: string }[] = [
 ];
 
 // Backend timestamps are UTC but not always suffixed; JS would read a bare one as local.
-function asUtc(iso: string): string {
+export function asUtc(iso: string): string {
   return iso.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
 }
 

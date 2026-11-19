@@ -50,6 +50,44 @@
         <el-icon><Odometer /></el-icon>
         <span>KPI</span>
       </el-button>
+      <el-button
+        size="small"
+        plain
+        class="picker-tool-btn"
+        draggable="true"
+        title="Click or drag onto the canvas"
+        @click="emit('add-table')"
+        @dragstart="onTableDragStart($event)"
+      >
+        <el-icon><Grid /></el-icon>
+        <span>Table</span>
+      </el-button>
+      <el-button
+        size="small"
+        plain
+        class="picker-tool-btn"
+        draggable="true"
+        title="Click or drag onto the canvas, then choose an image; or drop an image file on the canvas"
+        data-testid="insert-image"
+        @click="emit('add-image')"
+        @dragstart="onImageDragStart($event)"
+      >
+        <el-icon><Picture /></el-icon>
+        <span>Image</span>
+      </el-button>
+      <el-button
+        size="small"
+        plain
+        class="picker-tool-btn"
+        draggable="true"
+        title="Click or drag onto the canvas, then choose its source and column"
+        data-testid="insert-filter"
+        @click="emit('add-filter')"
+        @dragstart="onNewFilterDragStart($event)"
+      >
+        <el-icon><Filter /></el-icon>
+        <span>Filter</span>
+      </el-button>
     </div>
     <div class="picker-divider" />
     <div class="picker-header">
@@ -130,7 +168,16 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { EditPen, Minus, Odometer, Plus, Search } from "@element-plus/icons-vue";
+import {
+  EditPen,
+  Filter,
+  Grid,
+  Minus,
+  Odometer,
+  Picture,
+  Plus,
+  Search,
+} from "@element-plus/icons-vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useDashboardDragAndDrop } from "../../composables/useDashboardDragAndDrop";
 import type { CatalogVisualization, SeparatorOrientation } from "../../types";
@@ -142,12 +189,22 @@ const emit = defineEmits<{
   (e: "add-text"): void;
   (e: "add-separator", orientation: SeparatorOrientation): void;
   (e: "add-kpi"): void;
+  (e: "add-table"): void;
+  (e: "add-image"): void;
+  (e: "add-filter"): void;
   (e: "create"): void;
 }>();
 
 const catalogStore = useCatalogStore();
-const { onVizDragStart, onTextDragStart, onSeparatorDragStart, onKpiDragStart } =
-  useDashboardDragAndDrop();
+const {
+  onVizDragStart,
+  onTextDragStart,
+  onSeparatorDragStart,
+  onKpiDragStart,
+  onTableDragStart,
+  onImageDragStart,
+  onNewFilterDragStart,
+} = useDashboardDragAndDrop();
 const search = ref("");
 const tableFilter = ref<number | null>(null);
 
