@@ -21,7 +21,14 @@ from shared.tests import toy_server_extension as toy
 
 TOY = "shared.tests.toy_server_extension"
 RELIED_ON = {
-    "flowfile_core.auth.jwt": ("create_access_token", "create_refresh_token", "invalidate_user_cache"),
+    "flowfile_core.auth.jwt": (
+        "create_access_token",
+        "create_refresh_token",
+        "get_current_user",
+        "get_user_or_internal_service",
+        "internal_token_valid",
+        "invalidate_user_cache",
+    ),
     "flowfile_core.auth.models": ("Token",),
     "flowfile_core.auth.password": ("get_password_hash",),
     "flowfile_core.auth.sharing": ("INTERNAL_SERVICE_USERNAME",),
@@ -45,6 +52,7 @@ RELIED_ON = {
     "flowfile_core.hub_client.node_tokens": ("acting_for",),
     "flowfile_core.hub_client.report": ("build_run_report", "hub_flow_uuid", "hub_target", "post_run_report"),
     "flowfile_core.hub_client.session": (
+        "SERVICE",
         "access_token",
         "clear",
         "load",
