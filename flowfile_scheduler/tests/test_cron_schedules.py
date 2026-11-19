@@ -18,7 +18,7 @@ import pytest
 
 from flowfile_scheduler import engine as engine_mod
 from flowfile_scheduler.engine import FlowScheduler
-from shared.models import FlowRegistration, FlowRun, FlowSchedule
+from shared.models import FlowRegistration, FlowRun, FlowSchedule, User
 from shared.notifications import processor as notifications
 from shared.storage_config import storage
 
@@ -53,6 +53,7 @@ def _seed(
     """Insert a flow registration + cron schedule; return the registration id."""
     default_ts = created_at or datetime(2026, 5, 25, 9, 0, 0)
     with sched._session_factory() as db:
+        db.merge(User(id=1, disabled=False))
         reg = FlowRegistration(name="flow", flow_path="/tmp/flow.flowfile", owner_id=1)
         db.add(reg)
         db.commit()

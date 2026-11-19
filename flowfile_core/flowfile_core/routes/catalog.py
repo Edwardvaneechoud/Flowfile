@@ -24,7 +24,12 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
-from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service, kernel_owner_id
+from flowfile_core.auth.jwt import (
+    get_current_active_user,
+    get_current_admin_user,
+    get_user_or_internal_service,
+    kernel_owner_id,
+)
 from flowfile_core.auth.sharing import note_principal
 from flowfile_core.catalog import (
     KEEP_PREDICTION,
@@ -1993,7 +1998,7 @@ def get_catalog_overview(
 
 
 @router.post("/scheduler/start", status_code=200)
-async def scheduler_start(current_user=Depends(get_current_active_user)):
+async def scheduler_start(current_user=Depends(get_current_admin_user)):
     """Start the embedded scheduler. No-op if already running."""
     scheduler = get_scheduler()
     if scheduler is not None:
@@ -2006,7 +2011,7 @@ async def scheduler_start(current_user=Depends(get_current_active_user)):
 
 
 @router.post("/scheduler/stop", status_code=200)
-async def scheduler_stop(current_user=Depends(get_current_active_user)):
+async def scheduler_stop(current_user=Depends(get_current_admin_user)):
     """Stop the embedded scheduler. No-op if not running."""
     scheduler = get_scheduler()
     if scheduler is None:

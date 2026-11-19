@@ -337,6 +337,12 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
     return current_user
 
 
+def active_db_user(db: Session, user_id: int) -> db_models.User | None:
+    """The person's ``users`` row, or ``None`` when it is gone or disabled (a NULL ``disabled`` counts as active)."""
+    user = db.get(db_models.User, user_id)
+    return user if user is not None and not user.disabled else None
+
+
 def kernel_owner_id(
     x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
     x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
@@ -350,10 +356,8 @@ def kernel_owner_id(
     if not x_kernel_id or not internal_token_valid(x_internal_token):
         return None
     kernel = db.query(db_models.Kernel).filter(db_models.Kernel.id == x_kernel_id).first()
-    if kernel is None:
-        return None
-    owner = db.query(db_models.User).filter(db_models.User.id == kernel.user_id).first()
-    return owner.id if owner is not None and not owner.disabled else None
+    owner = active_db_user(db, kernel.user_id) if kernel is not None else None
+    return owner.id if owner is not None else None
 
 
 def get_user_or_internal_service(
@@ -370,7 +374,8 @@ def get_user_or_internal_service(
 
     When the internal token authenticates and X-Kernel-Id is provided, returns
     the kernel's actual owner so artifact / catalog ownership lands on the
-    right user in multi-user deployments. Falls back to a synthetic
+    right user in multi-user deployments, and refuses (401) a kernel whose
+    owner is disabled or no longer exists. Falls back to a synthetic
     ``_internal_service`` user when no kernel id is supplied (legacy callers).
     """
     if x_internal_token:
@@ -387,12 +392,8 @@ def get_user_or_internal_service(
                         .first()
                     )
                     if kernel_row is not None:
-                        owner = (
-                            db.query(db_models.User)
-                            .filter(db_models.User.id == kernel_row.user_id)
-                            .first()
-                        )
-                        if owner is not None and not owner.disabled:
+                        owner = active_db_user(db, kernel_row.user_id)
+                        if owner is not None:
                             return User(
                                 username=owner.username,
                                 id=owner.id,
@@ -402,6 +403,11 @@ def get_user_or_internal_service(
                                 is_admin=owner.is_admin,
                                 must_change_password=owner.must_change_password,
                             )
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="The kernel's owner is disabled or no longer exists",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
 
                 # Fall through to synthetic service user. ID is configurable
                 # via FLOWFILE_INTERNAL_SERVICE_USER_ID; default 1 (typically

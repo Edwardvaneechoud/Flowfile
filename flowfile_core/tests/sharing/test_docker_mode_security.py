@@ -232,3 +232,34 @@ def test_admin_can_save_and_delete_custom_node(users, client_for, marker_node):
 
     resp = admin.delete(f"/user_defined_components/delete-custom-node/{stem}.py")
     assert resp.status_code == 200, resp.text
+
+
+@pytest.fixture
+def running_scheduler():
+    """Stand in for a started scheduler, so no route here starts or stops a real one."""
+    from flowfile_core import scheduler as scheduler_mod
+
+    before = scheduler_mod.get_scheduler()
+    stand_in = object()
+    scheduler_mod.set_scheduler(stand_in)
+    yield stand_in
+    scheduler_mod.set_scheduler(before)
+
+
+@pytest.mark.parametrize("action", ["start", "stop"])
+def test_non_admin_cannot_start_or_stop_the_scheduler(users, client_for, running_scheduler, action):
+    from flowfile_core import scheduler as scheduler_mod
+
+    response = client_for("alice").post(f"/catalog/scheduler/{action}")
+
+    assert response.status_code == 403
+    assert scheduler_mod.get_scheduler() is running_scheduler
+
+
+def test_admin_can_start_and_stop_the_scheduler(users, client_for, running_scheduler):
+    from flowfile_core import scheduler as scheduler_mod
+
+    admin = client_for("admin")
+    assert admin.post("/catalog/scheduler/start").json() == {"message": "Scheduler already running"}
+    scheduler_mod.set_scheduler(None)
+    assert admin.post("/catalog/scheduler/stop").json() == {"message": "Scheduler not running"}

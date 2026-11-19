@@ -15,7 +15,7 @@ import pytest
 from flowfile_scheduler import engine as engine_mod
 from flowfile_scheduler.engine import FlowScheduler, Launch
 from shared import run_completion, subprocess_utils
-from shared.models import FlowRegistration, FlowRun, FlowSchedule
+from shared.models import FlowRegistration, FlowRun, FlowSchedule, User
 
 NOW = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
 BASE_TS = datetime(2026, 5, 25, 9, 0, 0)
@@ -41,6 +41,7 @@ def _scheduler(answer: Launch | None, calls: list) -> FlowScheduler:
 def _seed(sched: FlowScheduler, flow_path: str = "no/such/file.flowfile") -> tuple[int, int]:
     """An interval schedule that is due, of a flow whose file need not exist."""
     with sched._session_factory() as db:
+        db.merge(User(id=1, disabled=False))
         reg = FlowRegistration(name="flow", flow_path=flow_path, owner_id=1)
         db.add(reg)
         db.commit()
@@ -121,6 +122,50 @@ def test_a_refusal_disables_the_schedule_with_its_reason_and_it_does_not_fire_ag
     with sched._session_factory() as db:
         row = db.get(FlowSchedule, schedule_id)
         assert (row.enabled, row.disabled_reason) == (False, "Its owner may not run there")
+
+
+def _set_owner(sched: FlowScheduler, *, disabled: bool | None) -> None:
+    """Disable the schedule's owner, or remove the account when ``disabled`` is None."""
+    with sched._session_factory() as db:
+        owner = db.get(User, 1)
+        if disabled is None:
+            db.delete(owner)
+        else:
+            owner.disabled = disabled
+        db.commit()
+
+
+@pytest.mark.parametrize("with_launcher", [True, False])
+@pytest.mark.parametrize("disabled", [True, None], ids=["owner_disabled", "owner_deleted"])
+def test_a_schedule_whose_owner_is_disabled_or_gone_is_disabled_with_a_reason_and_launches_nothing(
+    db_url, with_launcher, disabled
+):
+    calls: list = []
+    sched = _scheduler(Launch(pid=4242) if with_launcher else None, calls)
+    sched._spawn_flow = lambda *args, **kwargs: pytest.fail("no run may start for this schedule")
+    schedule_id, _ = _seed(sched)
+    _set_owner(sched, disabled=disabled)
+
+    assert _fire(sched) == 0
+    assert _fire(sched) == 0
+    assert calls == []
+    assert _runs(sched) == []
+    with sched._session_factory() as db:
+        row = db.get(FlowSchedule, schedule_id)
+        assert (row.enabled, row.disabled_reason) == (False, engine_mod.OWNER_NOT_ACTIVE)
+
+
+def test_a_schedule_whose_owner_is_enabled_fires_as_before(db_url):
+    calls: list = []
+    sched = _scheduler(Launch(pid=4242), calls)
+    schedule_id, _ = _seed(sched)
+    _set_owner(sched, disabled=False)
+
+    assert _fire(sched) == 1
+    assert len(calls) == 1
+    with sched._session_factory() as db:
+        row = db.get(FlowSchedule, schedule_id)
+        assert (row.enabled, row.disabled_reason) == (True, None)
 
 
 @pytest.mark.parametrize("answer", [Launch(error="no answer"), Launch(), Launch(remote_run_id="r1", error="refused")])
