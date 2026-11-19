@@ -167,6 +167,21 @@ describe("a refused renewal ends the session at the sign-in page", () => {
     expect(authService.isAuthenticated()).toBe(false);
   });
 
+  it("ends a refused session that has no refresh token to renew it with", async () => {
+    storeSession(3_600_000, { hub: true, refresh: false });
+    const server = serverAnswering(renewed());
+    const authService = await loadSession(server.adapter);
+
+    const failure = await within(axios.get("/catalog/namespaces")).catch((error) => error);
+
+    expect(statusOf(failure)).toBe(401);
+    expect(server.renewals()).toHaveLength(0);
+    expect(reloads.reloads).toHaveLength(1);
+    expect(reloads.reloads[0].hash.startsWith("#/login?")).toBe(true);
+    expect(reloads.reloads[0].stored).toEqual([null, null, null, null, null]);
+    expect(authService.isAuthenticated()).toBe(false);
+  });
+
   it("leaves nothing when there was no session to end", async () => {
     const server = serverAnswering(refused);
     const authService = await loadSession(server.adapter);

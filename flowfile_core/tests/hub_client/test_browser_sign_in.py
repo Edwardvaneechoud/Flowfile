@@ -27,10 +27,12 @@ USER_ID = 43
 def clean(monkeypatch):
     """No node token, backends row or pending sign-in outlives a test, and the sync's checks are stood down."""
     monkeypatch.setattr(node_tokens, "_tokens", {})
+    monkeypatch.setattr(browser_sign_in, "_flows", {})
     monkeypatch.setattr(compute_backends_routes, "check_unchecked", lambda backend_ids: None)
     monkeypatch.setattr(client, "_module_http", None)
     yield
-    browser_sign_in.forget_all()
+    for flow_id, flow in list(browser_sign_in._flows.items()):
+        browser_sign_in.cancel(flow_id, flow.user_id)
     with get_db_context() as db:
         for row in db.query(ConfiguredBackend).all():
             registry.forget(row.id)
@@ -198,6 +200,23 @@ def test_a_device_the_hub_refuses_fails_the_sign_in_and_ends_the_grant_on_the_hu
 
     status = _status(api, started["flow_id"])
     assert (status["status"], status["detail"]) == ("failed", fake.version_refusal)
+    assert _stored(api) is None
+    assert len(fake.revoked) == 1 and fake.browser_refresh == {}
+
+
+def test_a_session_that_cannot_be_stored_fails_the_sign_in_and_ends_the_grant_on_the_hub(api, served, monkeypatch):
+    fake, url = served
+
+    def keyring_down(*args, **kwargs):
+        raise OSError("the keyring is locked")
+
+    monkeypatch.setattr(session, "save_browser", keyring_down)
+    started = _start(api, url)
+
+    httpx.get(fake.authorize(started["authorize_url"]), timeout=10)
+
+    status = _status(api, started["flow_id"])
+    assert status["status"] == "failed" and "OSError" in status["detail"]
     assert _stored(api) is None
     assert len(fake.revoked) == 1 and fake.browser_refresh == {}
 

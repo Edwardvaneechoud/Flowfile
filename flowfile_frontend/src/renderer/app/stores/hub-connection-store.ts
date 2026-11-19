@@ -108,6 +108,8 @@ export const useHubConnectionStore = defineStore("hub-connection", () => {
       await open(started.authorize_url);
     } catch (error) {
       browserSignIn.value = null;
+      // A sign-in core started keeps its local port open until cancelled.
+      if (flowId) await cancelBrowserSignInApi(flowId).catch(() => undefined);
       throw refusal(error, "Couldn't start the sign-in.");
     } finally {
       busy.value = false;

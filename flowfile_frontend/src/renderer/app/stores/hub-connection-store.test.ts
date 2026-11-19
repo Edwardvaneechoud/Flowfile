@@ -192,6 +192,21 @@ describe("the hub connection store", () => {
     expect(hub.busy).toBe(false);
   });
 
+  it("cancels a started sign-in whose page could not be opened, even when the cancel fails", async () => {
+    mocks.cancel.mockRejectedValue(new Error("core did not answer"));
+    const hub = useHubConnectionStore();
+    const open = vi.fn().mockRejectedValue(new Error("no browser"));
+
+    const error = await hub.signInWithBrowser(browserInput, open).catch((e) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).not.toBe("core did not answer");
+    expect(mocks.cancel).toHaveBeenCalledWith("f1");
+    expect(mocks.status).not.toHaveBeenCalled();
+    expect(hub.waitingForBrowser).toBe(false);
+    expect(hub.busy).toBe(false);
+  });
+
   it("throws any other refusal to start in the route's words", async () => {
     mocks.start.mockRejectedValue(
       httpError(502, "Could not reach the hub at https://hub.example.test."),

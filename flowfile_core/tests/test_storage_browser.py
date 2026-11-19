@@ -357,7 +357,10 @@ def hub_connection():
 
 
 def test_a_connection_from_the_hub_is_a_typed_sentence_not_a_missing_connection(hub_connection):
-    sentence = storage_browser.PROVIDER_CONNECTION.format(hub_connection)
+    sentence = (
+        "hub-lake is a connection whose keys never reach this server, so browsing and table checks are not "
+        "available for it: type the path."
+    )
     response = client.get(BROWSE_URL, params={"connection_name": hub_connection, "path": "s3://lake/"})
     assert response.status_code == 422, response.text
     assert response.json()["detail"] == {"error_code": "PROVIDER_CONNECTION", "message": sentence}

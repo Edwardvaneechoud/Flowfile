@@ -19,7 +19,6 @@ from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 from flowfile_core.hub_client import session as hub_session
-from flowfile_scheduler.engine import OWNER_NOT_ACTIVE
 from shared import server_extension
 
 router = APIRouter()
@@ -341,10 +340,15 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
     ).delete(synchronize_session=False)
     db.query(db_models.ApiConsumer).filter_by(owner_id=user_id).delete(synchronize_session=False)
     db.query(db_models.FlowApiEndpoint).filter_by(owner_id=user_id).delete(synchronize_session=False)
-    # Schedules stay but stop, so an account that later gets this id does not inherit them.
-    db.query(db_models.FlowSchedule).filter_by(owner_id=user_id).update(
-        {"enabled": False, "disabled_reason": OWNER_NOT_ACTIVE}, synchronize_session=False
+    # Schedules go with their trigger tables and rules, so an account that later gets this id inherits none.
+    schedule_ids = db.query(db_models.FlowSchedule.id).filter_by(owner_id=user_id)
+    db.query(db_models.ScheduleTriggerTable).filter(
+        db_models.ScheduleTriggerTable.schedule_id.in_(schedule_ids)
+    ).delete(synchronize_session=False)
+    db.query(db_models.NotificationRule).filter(db_models.NotificationRule.schedule_id.in_(schedule_ids)).delete(
+        synchronize_session=False
     )
+    db.query(db_models.FlowSchedule).filter_by(owner_id=user_id).delete(synchronize_session=False)
 
     db.delete(user)
     db.commit()

@@ -560,6 +560,10 @@ axios.interceptors.response.use(
           originalRequest.headers["Authorization"] = `Bearer ${newToken}`;
           return axios(originalRequest);
         }
+        // Nothing to renew with: the refused session cannot come back, so it ends here.
+        if (authService.hasSession() && localStorage.getItem("auth_refresh_token") === null) {
+          authService.endSession();
+        }
       }
     }
 

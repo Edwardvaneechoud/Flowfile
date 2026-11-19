@@ -812,12 +812,11 @@ class TestDeleteUserRemovesTheirApis:
             assert exc.value.status_code == 401
             assert verify_api_key(slug=kept_slug, x_api_key=kept_key, db=db).slug == kept_slug
 
-    def test_delete_switches_off_the_persons_schedules(self, admin_user, create_test_user):
+    def test_delete_removes_the_persons_schedules_and_what_hangs_on_them(self, admin_user, create_test_user):
         from uuid import uuid4
 
-        from flowfile_scheduler.engine import OWNER_NOT_ACTIVE
-
         schedule_ids: dict[int, int] = {}
+        registration_ids: list[int] = []
         with get_db_context() as db:
             for owner_id in (create_test_user, admin_user["id"]):
                 slug = f"sched-{uuid4().hex[:10]}"
@@ -826,12 +825,22 @@ class TestDeleteUserRemovesTheirApis:
                 )
                 db.add(reg)
                 db.flush()
+                registration_ids.append(reg.id)
                 schedule = db_models.FlowSchedule(
                     registration_id=reg.id, owner_id=owner_id, schedule_type="interval", interval_seconds=60
                 )
                 db.add(schedule)
                 db.flush()
                 schedule_ids[owner_id] = schedule.id
+            gone_id = schedule_ids[create_test_user]
+            db.add(db_models.ScheduleTriggerTable(schedule_id=gone_id, table_id=987654))
+            channel = db_models.NotificationChannel(
+                owner_id=admin_user["id"], name="ops", channel_type="generic", webhook_url_encrypted="x"
+            )
+            db.add(channel)
+            db.flush()
+            channel_id = channel.id
+            db.add(db_models.NotificationRule(owner_id=admin_user["id"], channel_id=channel_id, schedule_id=gone_id))
             db.commit()
         try:
             with TestClient(main.app) as client:
@@ -840,16 +849,20 @@ class TestDeleteUserRemovesTheirApis:
                 assert response.status_code == 200, response.text
 
             with get_db_context() as db:
-                gone = db.get(db_models.FlowSchedule, schedule_ids[create_test_user])
+                assert db.get(db_models.FlowSchedule, gone_id) is None
+                assert db.query(db_models.ScheduleTriggerTable).filter_by(schedule_id=gone_id).count() == 0
+                assert db.query(db_models.NotificationRule).filter_by(schedule_id=gone_id).count() == 0
                 kept = db.get(db_models.FlowSchedule, schedule_ids[admin_user["id"]])
-                assert (gone.enabled, gone.disabled_reason) == (False, OWNER_NOT_ACTIVE)
                 assert (kept.enabled, kept.disabled_reason) == (True, None)
         finally:
             with get_db_context() as db:
-                for schedule_id in schedule_ids.values():
-                    schedule = db.get(db_models.FlowSchedule, schedule_id)
-                    registration_id = schedule.registration_id
-                    db.delete(schedule)
-                    db.flush()
-                    db.query(db_models.FlowRegistration).filter_by(id=registration_id).delete()
+                db.query(db_models.ScheduleTriggerTable).filter_by(schedule_id=gone_id).delete()
+                db.query(db_models.NotificationRule).filter_by(channel_id=channel_id).delete()
+                db.query(db_models.NotificationChannel).filter_by(id=channel_id).delete()
+                db.query(db_models.FlowSchedule).filter(
+                    db_models.FlowSchedule.id.in_(schedule_ids.values())
+                ).delete(synchronize_session=False)
+                db.query(db_models.FlowRegistration).filter(
+                    db_models.FlowRegistration.id.in_(registration_ids)
+                ).delete(synchronize_session=False)
                 db.commit()

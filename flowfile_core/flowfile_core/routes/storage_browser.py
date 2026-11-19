@@ -42,8 +42,8 @@ router = APIRouter()
 # AuthSettingsInput.connection_name defaults to the string "None"; treat it as unset.
 _UNSET_CONNECTION_NAMES = (None, "", "None")
 PROVIDER_CONNECTION = (
-    "{} is a connection from your hub, whose keys never reach this server, so browsing and table checks are not "
-    "available for it: type the path."
+    "{} is a connection whose keys never reach this server, so browsing and table checks are not available for "
+    "it: type the path."
 )
 
 

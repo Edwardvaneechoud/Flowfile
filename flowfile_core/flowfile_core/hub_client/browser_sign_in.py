@@ -281,12 +281,3 @@ def cancel(flow_id: str, user_id: int) -> bool:
     if not flow._taken:
         _end(flow, "failed", CANCELLED)
     return True
-
-
-def forget_all() -> None:
-    """End every pending sign-in and close their ports."""
-    with _lock:
-        flows = list(_flows.values())
-        _flows.clear()
-    for flow in flows:
-        _end(flow, "failed", CANCELLED)

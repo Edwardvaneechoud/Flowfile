@@ -253,17 +253,23 @@ def connect_in_browser(
     user_id, hub_url, device_name = current_user.id, request.hub_url, _device_name(request.device_name)
 
     def complete(tokens: dict) -> dict:
+        """Finish the sign-in; a failure before the session is stored ends the grant on the hub too, whatever failed,
+        and one after it leaves the stored session and its grant alone."""
+        kept = False
+
         def keep(registered: str) -> None:
+            nonlocal kept
             session.save_browser(user_id, hub_url, tokens, device_name=registered, org_name=info["org_name"])
+            kept = True
 
         try:
             with get_db_context() as db:
                 connection, synced = _finish_connect(
                     db, user_id, hub_url, info, tokens["access_token"], device_name, keep
                 )
-        except (HubUnreachable, HubRefused, HubVersionRefused):
-            # Nothing was kept, so the sign-in the hub just granted is ended there too.
-            _revoke_quietly(hub_url, tokens["refresh_token"])
+        except Exception:
+            if not kept:
+                _revoke_quietly(hub_url, tokens["refresh_token"])
             raise
         if synced:
             threading.Thread(target=compute_backends.check_unchecked, args=(synced,), daemon=True).start()
