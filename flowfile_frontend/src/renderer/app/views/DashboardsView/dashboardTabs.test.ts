@@ -9,7 +9,6 @@ import {
   addTab,
   deleteTab,
   dissolveTabs,
-  firstFreeRow,
   healTabs,
   mergeTabCanvas,
   moveTab,
@@ -141,16 +140,6 @@ describe("mergeTabCanvas", () => {
     layout.tiles.push(tile("stray", { tab_id: "gone" }));
     const merged = mergeTabCanvas(layout, "a", tabCanvasLayout(layout, "a"));
     expect(merged.tiles.find((t) => t.id === "stray")?.tab_id).toBe("a");
-  });
-});
-
-describe("firstFreeRow", () => {
-  it("is the row below the tiles, in a column span when one is given", () => {
-    const tiles = [tile("l", { x: 0, w: 24, h: 4 }), tile("r", { x: 24, w: 24, h: 10 })];
-    expect(firstFreeRow([])).toBe(0);
-    expect(firstFreeRow(tiles)).toBe(10);
-    expect(firstFreeRow(tiles, { x: 0, w: 24 })).toBe(4);
-    expect(firstFreeRow(tiles, { x: 20, w: 10 })).toBe(10);
   });
 });
 

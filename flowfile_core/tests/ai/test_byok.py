@@ -77,6 +77,7 @@ from flowfile_core.ai.byok import (
     detect_env_fallback,
     get_configured_provider,
 )
+from flowfile_core.ai.byok_routes import TEST_PING_MAX_TOKENS
 from flowfile_core.ai.credentials import (
     ProviderCredentialInput,
     decrypt_api_key,
@@ -459,7 +460,7 @@ def test_routes_test_provider_records_status(
     assert response.status_code == 200
     assert response.json() == {"ok": True, "error": None}
     assert isinstance(captured["messages"][0], Message)
-    assert captured["max_tokens"] == 1
+    assert captured["max_tokens"] == TEST_PING_MAX_TOKENS
 
     with get_db_context() as db:
         cred = get_provider_credential(db, local_user_id, "anthropic")

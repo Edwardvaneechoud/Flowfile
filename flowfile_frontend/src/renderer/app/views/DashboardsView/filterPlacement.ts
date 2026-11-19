@@ -1,13 +1,6 @@
 import type { DashboardFilter, DashboardLayout, DashboardTile } from "../../types";
-import type { DatasourceKey } from "../../composables/useDashboardComputation";
-
-// The same rule as useDashboardComputation.filterSourceKey, which this pure module cannot import.
-const filterSourceKey = (f: DashboardFilter): DatasourceKey | null =>
-  f.datasource_id != null
-    ? `table:${f.datasource_id}`
-    : f.datasource_viz_id != null
-      ? `viz:${f.datasource_viz_id}`
-      : null;
+import { filterSourceKey, type DatasourceKey } from "../../composables/dashboardSourceKeys";
+import { firstFreeRow } from "./gridDrop";
 
 /** A filter tile's footprint when it is dropped or placed: a label over one control. */
 export const FILTER_TILE_DEFAULT_SIZE = { w: 12, h: 2 } as const;
@@ -33,15 +26,6 @@ export const placedFilterIds = (layout: DashboardLayout): Set<string> => {
   return out;
 };
 
-/** The filters the strip shows, in the layout's order. */
-export const unplacedFilters = (layout: DashboardLayout): DashboardFilter[] => {
-  const placed = placedFilterIds(layout);
-  return layout.filters.filter((f) => !placed.has(f.id));
-};
-
-const nextFreeRow = (tiles: DashboardTile[]): number =>
-  tiles.length ? Math.max(...tiles.map((t) => t.y + t.h)) : 0;
-
 /**
  * Put a filter on the canvas at a grid cell (a negative `y` takes the next free row). A filter
  * that is unknown or already on the canvas leaves the layout as it is: one tile per filter.
@@ -63,7 +47,7 @@ export const placeFilter = (
     chart_index: 0,
     filter_id: filterId,
     x: Math.max(0, Math.min(cell.x, cols - w)),
-    y: cell.y < 0 ? nextFreeRow(layout.tiles) : cell.y,
+    y: cell.y < 0 ? firstFreeRow(layout.tiles) : cell.y,
     w,
     h,
   };

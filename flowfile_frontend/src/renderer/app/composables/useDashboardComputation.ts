@@ -8,6 +8,16 @@ import type {
   VisualizationComputeResponse,
 } from "../types";
 import { resolveDateRange } from "../views/DashboardsView/dateRange";
+import { filterSourceKey, type DatasourceKey, type TileSource } from "./dashboardSourceKeys";
+
+export {
+  filterSourceKey,
+  filterSourceOf,
+  tableSourceKey,
+  vizSourceKey,
+  type DatasourceKey,
+  type TileSource,
+} from "./dashboardSourceKeys";
 
 type SemanticType = "quantitative" | "nominal" | "ordinal" | "temporal";
 
@@ -116,7 +126,6 @@ const filterToRule = (f: DashboardFilter, field?: TileField): Record<string, unk
 };
 
 /** Where a tile's rows come from: a catalog table read directly, or a saved chart's source. */
-export type TileSource = { kind: "table"; tableId: number } | { kind: "viz"; vizId: number };
 
 /** A KPI or table tile reads ``table_id`` when set, else its chart; a chart tile its chart.
  * A filter tile is a control and an image tile a picture: neither reads data. */
@@ -151,28 +160,6 @@ export const computeOnSource = (
         maxRows,
       )
     : CatalogApi.computeSavedVisualization(source.vizId, { payload, maxRows });
-
-/**
- * Which source a tile reads, as filters compare it: `table:<id>` for a catalog table (read
- * directly or through a chart on it), `viz:<id>` for a chart with no table (a SQL chart).
- */
-export type DatasourceKey = string;
-
-export const tableSourceKey = (tableId: number): DatasourceKey => `table:${tableId}`;
-export const vizSourceKey = (vizId: number): DatasourceKey => `viz:${vizId}`;
-
-/** The source a filter is bound to, or null for a legacy untied filter. */
-export const filterSourceOf = (f: DashboardFilter): TileSource | null => {
-  if (f.datasource_id != null) return { kind: "table", tableId: f.datasource_id };
-  if (f.datasource_viz_id != null) return { kind: "viz", vizId: f.datasource_viz_id };
-  return null;
-};
-
-export const filterSourceKey = (f: DashboardFilter): DatasourceKey | null => {
-  const source = filterSourceOf(f);
-  if (source == null) return null;
-  return source.kind === "table" ? tableSourceKey(source.tableId) : vizSourceKey(source.vizId);
-};
 
 export type TileDatasourceResolver = (tileId: string) => DatasourceKey | null;
 

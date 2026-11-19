@@ -21,6 +21,7 @@ from pydantic import (
     StrictInt,
     StrictStr,
     StringConstraints,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -1049,6 +1050,16 @@ def validate_dashboard_image(data_url: str) -> str:
     return data_url
 
 
+def _reading_stored(info: ValidationInfo) -> bool:
+    """True while a stored layout is read back (``context={"stored": True}``): save-time limits, which may
+    tighten after a row was written, are not applied to it again."""
+    return bool(info.context and info.context.get("stored"))
+
+
+def _checked_dashboard_image(data_url: str, info: ValidationInfo) -> str:
+    return data_url if _reading_stored(info) else validate_dashboard_image(data_url)
+
+
 class DashboardTileImage(BaseModel):
     """The picture a ``type == "image"`` tile shows, stored in the layout itself.
 
@@ -1060,7 +1071,7 @@ class DashboardTileImage(BaseModel):
     text a screen reader reads. It holds no machine-local id, so it travels in a project as is.
     """
 
-    data_url: Annotated[str, AfterValidator(validate_dashboard_image)]
+    data_url: Annotated[str, AfterValidator(_checked_dashboard_image)]
     alt: str | None = Field(default=None, max_length=DASHBOARD_IMAGE_ALT_MAX_LENGTH)
     fit: Literal["contain", "cover"] = "contain"
 
@@ -1239,7 +1250,9 @@ class DashboardLayout(BaseModel):
     ``tabs`` (ordered) splits the dashboard into canvases; each tile names its tab in ``tab_id``.
     No tabs is one canvas. A save must place every tile on a tab of the layout (the catalog service
     checks it); a stored layout whose tile names no known tab still reads, and the frontend shows that
-    tile on the first tab until the author's next edit stores it there.
+    tile on the first tab until the author's next edit stores it there. The image limits and the one
+    colour per value rule are save-time checks too: a stored layout read with ``context={"stored": True}``
+    skips them.
     """
 
     tiles: list[DashboardTile] = Field(default_factory=list)
@@ -1252,7 +1265,9 @@ class DashboardLayout(BaseModel):
     tabs: list[DashboardTab] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="after")
-    def _images_fit(self) -> "DashboardLayout":
+    def _images_fit(self, info: ValidationInfo) -> "DashboardLayout":
+        if _reading_stored(info):
+            return self
         total = sum(dashboard_image_size(t.image.data_url) for t in self.tiles if t.image is not None)
         if total > DASHBOARD_IMAGES_TOTAL_MAX_BYTES:
             raise ValueError(
@@ -1263,7 +1278,11 @@ class DashboardLayout(BaseModel):
 
     @field_validator("color_assignments")
     @classmethod
-    def _one_colour_per_value(cls, assignments: list[DashboardColorAssignment]) -> list[DashboardColorAssignment]:
+    def _one_colour_per_value(
+        cls, assignments: list[DashboardColorAssignment], info: ValidationInfo
+    ) -> list[DashboardColorAssignment]:
+        if _reading_stored(info):
+            return assignments
         seen: set[tuple[str, tuple[str, object]]] = set()
         for a in assignments:
             key = (a.field, _color_value_key(a.value))

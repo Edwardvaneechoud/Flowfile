@@ -148,9 +148,10 @@ interface BaseList {
 }
 
 const baseList = ref<BaseList | null>(null);
+let listedFor = "";
 
 const sourceSignature = () =>
-  `${props.filter.id}:${props.filter.datasource_id ?? ""}:${props.filter.datasource_viz_id ?? ""}:${props.filter.field_name}`;
+  `${props.filter.id}:${props.filter.datasource_id ?? ""}:${props.filter.datasource_viz_id ?? ""}:${props.filter.field_name}:${props.filter.kind}`;
 
 watch(
   () => [props.statsRefreshNonce, sourceSignature()],
@@ -162,6 +163,11 @@ watch(
       id,
     } = props.filter;
     const signature = sourceSignature();
+    // A new source or field never shows the previous one's values.
+    if (signature !== listedFor) {
+      baseList.value = null;
+      listedFor = signature;
+    }
     if (!column) return;
     try {
       let next: BaseList | null = null;
@@ -178,7 +184,7 @@ watch(
         const resp = await props.searchValues(props.filter, "");
         next = { values: resp.values, truncated: resp.capped, min: null, max: null };
       }
-      if (next && sourceSignature() === signature) baseList.value = next;
+      if (sourceSignature() === signature) baseList.value = next;
     } catch (err) {
       console.warn(`[dashboard] values failed for filter ${id}:`, err);
     }

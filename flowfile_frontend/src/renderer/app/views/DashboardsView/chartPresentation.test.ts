@@ -7,7 +7,6 @@ import {
   NUMBER_FORMAT_PRESETS,
   SAMPLE_DATE,
   SAMPLE_NUMBER,
-  SAMPLE_SHARE,
   applyTilePresentation,
   formatSampleDate,
   formatSampleNumber,
@@ -67,7 +66,7 @@ describe("presets", () => {
       compact: "1.23M",
       percent: "123456789.1%",
     });
-    expect(formatSampleNumber(".1%", SAMPLE_SHARE)).toBe("12.3%");
+    expect(formatSampleNumber(".1%", 0.1234)).toBe("12.3%");
   });
 
   it("writes the sample date the way each preset says", () => {

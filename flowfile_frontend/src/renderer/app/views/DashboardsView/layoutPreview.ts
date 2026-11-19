@@ -12,8 +12,8 @@ export interface PreviewRect {
   type: DashboardTileType;
   vizId: number | null;
   orientation: SeparatorOrientation;
-  /** An image tile's picture, drawn in the wireframe; null for every other tile. */
-  imageUrl: string | null;
+  /** An image tile that holds a picture; the library list carries no image bytes, so a card shows an icon. */
+  hasImage: boolean;
   /** Percentages of the preview box, so the wireframe scales with the card. */
   left: number;
   top: number;
@@ -41,7 +41,7 @@ export function buildLayoutPreview(layout: DashboardLayout): PreviewRect[] {
     type: t.type,
     vizId: t.viz_id ?? null,
     orientation: t.orientation ?? "horizontal",
-    imageUrl: t.type === "image" ? (t.image?.data_url ?? null) : null,
+    hasImage: t.type === "image" && t.image != null,
     left: (t.x / cols) * 100,
     top: (t.y / rows) * 100,
     width: (t.w / cols) * 100,

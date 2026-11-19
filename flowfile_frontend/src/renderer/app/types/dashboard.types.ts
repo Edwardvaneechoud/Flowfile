@@ -70,7 +70,8 @@ export type DashboardImageFit = "contain" | "cover";
 
 /** The picture an image tile shows, stored in the layout (`imageTile.ts` has the caps). */
 export interface DashboardTileImage {
-  /** A base64 `data:` URL of a PNG, JPEG, WebP, GIF or SVG image; only ever an `<img>` source. */
+  /** A base64 `data:` URL of a PNG, JPEG, WebP, GIF or SVG image; only ever an `<img>` source. Empty in
+   * the dashboard list, which carries no image bytes (`getDashboard` does). */
   data_url: string;
   /** What a screen reader reads; at most 300 characters. */
   alt?: string | null;

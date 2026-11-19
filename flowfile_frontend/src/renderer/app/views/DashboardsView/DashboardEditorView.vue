@@ -266,8 +266,8 @@ import {
   pruneFilterTargets,
   withFilters,
 } from "./filterPlacement";
+import { firstFreeRow } from "./gridDrop";
 import {
-  firstFreeRow,
   healTabs,
   layoutTabs,
   mergeTabCanvas,
