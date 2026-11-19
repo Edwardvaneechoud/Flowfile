@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   e2e-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Playwright 1.57 has no chromium build for ubuntu-latest (26.04)
     timeout-minutes: 30
 
     steps:
