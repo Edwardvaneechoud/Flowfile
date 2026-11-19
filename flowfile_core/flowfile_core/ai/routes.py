@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends
 from flowfile_core.ai.agent_routes import router as agent_router
 from flowfile_core.ai.autocomplete_routes import router as autocomplete_router
 from flowfile_core.ai.byok_routes import router as byok_router
+from flowfile_core.ai.chart_routes import router as chart_router
 from flowfile_core.ai.chat_routes import router as chat_router
 from flowfile_core.ai.command_palette_routes import router as command_palette_router
 from flowfile_core.ai.cron_routes import router as cron_router
@@ -50,6 +51,7 @@ router.include_router(intent_router)
 router.include_router(local_model_router)
 router.include_router(generate_router)
 router.include_router(node_codegen_router)
+router.include_router(chart_router)
 
 
 @router.get("/health")

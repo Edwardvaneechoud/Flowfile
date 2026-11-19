@@ -9,6 +9,8 @@ import type {
   IGWHandler,
 } from "@kanaries/graphic-walker/interfaces";
 import type { VizSpecStore } from "@kanaries/graphic-walker/store/visualSpecStore";
+import type { GraphicWalkerFunctions } from "@/views/CatalogView/chartRequest";
+import { toPlainJson } from "@/utils/structuredClone";
 import { flowfileVizTheme } from "./vizTheme";
 
 interface VueGWProps {
@@ -38,6 +40,7 @@ let reactRootInstance: any = null;
 let React: any = null;
 let ReactDOMClient: any = null;
 let GraphicWalker: any = null;
+let gwFunctions: GraphicWalkerFunctions | null = null;
 
 const internalStoreRef = ref<{ current: VizSpecStore | null }>({ current: null });
 
@@ -174,6 +177,13 @@ onMounted(async () => {
     React = reactModule.default;
     ReactDOMClient = reactDomModule;
     GraphicWalker = gwModule.GraphicWalker;
+    gwFunctions = {
+      normalize: gwModule.normalize,
+      expandTerse: gwModule.expandTerse,
+      projectTerse: gwModule.projectTerse,
+      parseShorthand: gwModule.parseShorthand,
+      terseComputedFid: gwModule.terseComputedFid,
+    };
 
     gwHandleRef = React.createRef();
     reactRootInstance = ReactDOMClient.createRoot(container.value);
@@ -242,9 +252,58 @@ const exportCode = async (): Promise<IChart[] | null> => {
   }
 };
 
+// The raw store: GW's MobX actions must not run through Vue's reactive proxy.
+const gwStore = (): VizSpecStore | null =>
+  (toRaw(internalStoreRef.value) as { current: VizSpecStore | null }).current ?? null;
+
+const POOL_KEYS = new Set(["dimensions", "measures"]);
+const BUILT_IN_FIDS = new Set(["gw_count_fid", "gw_mea_key_fid", "gw_mea_val_fid"]);
+
+const isBlankChart = (chart: IChart): boolean =>
+  Object.entries(chart.encodings).every(
+    ([key, fields]) => POOL_KEYS.has(key) || fields.length === 0,
+  ) &&
+  [...chart.encodings.dimensions, ...chart.encodings.measures].every(
+    (f) => !(f.computed || f.expression) || BUILT_IN_FIDS.has(f.fid),
+  );
+
+/** Replace the chart on screen as one step Graphic Walker's undo takes back. */
+const applyChart = (chart: IChart): boolean => {
+  const store = gwStore();
+  if (!store) return false;
+  try {
+    store.applyChart(toRaw(chart));
+    return true;
+  } catch (error) {
+    console.error("[VueGW] applyChart failed:", error);
+    return false;
+  }
+};
+
+/** A plain copy of the chart on screen, or null when the builder holds nothing yet. */
+const currentChart = (): IChart | null => {
+  const store = gwStore();
+  if (!store) return null;
+  const chart = toPlainJson(store.currentVis);
+  return isBlankChart(chart) ? null : chart;
+};
+
+/** A plain copy of the dataset fields the builder's store holds. */
+const datasetFields = (): IMutField[] | null => {
+  const store = gwStore();
+  return store ? toPlainJson(store.meta) : null;
+};
+
+/** The Graphic Walker functions of the package this builder loaded, for `chartRequest.ts`. */
+const graphicWalker = (): GraphicWalkerFunctions | null => gwFunctions;
+
 defineExpose({
   exportCode,
   exportImage,
+  applyChart,
+  currentChart,
+  datasetFields,
+  graphicWalker,
 });
 </script>
 

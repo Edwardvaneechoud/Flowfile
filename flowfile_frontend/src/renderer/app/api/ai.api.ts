@@ -3,6 +3,7 @@
 import axios from "../services/axios.config";
 import { fetchAiProviders } from "../views/AiSettingsView/api";
 import { AiDisabledError, AI_DISABLED_DETAIL } from "../views/AiSettingsView/api";
+import type { ChartRequest } from "../views/CatalogView/chartRequest";
 import {
   routeMessage,
   streamChat,
@@ -229,6 +230,83 @@ export const generateNodeCode = async (
       explanation: response.data.explanation,
       degraded: response.data.degraded,
       reason: response.data.reason,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+// Chart generation — POST /ai/generate_chart. A prompt (and the chart on screen,
+// as a chart request) for a catalog table → a chart request the builder expands.
+
+/** Every `reason` a degraded chart answer can carry (core's `chart_request.REASONS`). */
+export type ChartGenerationReason =
+  | "empty_prompt"
+  | "no_columns"
+  | "timeout"
+  | "provider_error"
+  | "empty_response"
+  | "parse_error"
+  | "validation_error"
+  | "no_chart"
+  | "invalid_chart";
+
+export interface GenerateChartRequest {
+  tableId: number;
+  prompt: string;
+  currentChart?: ChartRequest | null;
+  provider?: string | null;
+  model?: string | null;
+  timeout?: number;
+}
+
+export interface ChartGenerationResponse {
+  chart: ChartRequest | null;
+  title: string | null;
+  explanation: string | null;
+  warnings: string[];
+  degraded: boolean;
+  reason: ChartGenerationReason | null;
+  message: string | null;
+  /** Model calls this answer took (2 when the correction round ran); absent from an older core. */
+  attempts?: number;
+  /** Codes of the silent repairs core applied (`chart_request.REPAIRS`); absent from an older core. */
+  repairs?: string[];
+}
+
+/**
+ * The route waits up to 90 s for the model plus up to 8 s for the table profile; the client
+ * waits longer so the server's own timeout answer is the one the user sees.
+ */
+export const GENERATE_CHART_CLIENT_TIMEOUT_MS = 110_000;
+
+export const generateChart = async (
+  body: GenerateChartRequest,
+  signal?: AbortSignal,
+): Promise<ChartGenerationResponse> => {
+  const payload: Record<string, unknown> = { table_id: body.tableId, prompt: body.prompt };
+  if (body.currentChart) payload.current_chart = body.currentChart;
+  if (body.provider) payload.provider = body.provider;
+  if (body.model) payload.model = body.model;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<ChartGenerationResponse>("/ai/generate_chart", payload, {
+      signal,
+      timeout: GENERATE_CHART_CLIENT_TIMEOUT_MS,
+    });
+    const data = response.data;
+    return {
+      chart: data.chart ?? null,
+      title: data.title ?? null,
+      explanation: data.explanation ?? null,
+      warnings: data.warnings ?? [],
+      degraded: Boolean(data.degraded),
+      reason: data.reason ?? null,
+      message: data.message ?? null,
+      ...(typeof data.attempts === "number" ? { attempts: data.attempts } : {}),
+      ...(Array.isArray(data.repairs) ? { repairs: data.repairs } : {}),
     };
   } catch (error) {
     if (isAiDisabledError(error)) throw new AiDisabledError();

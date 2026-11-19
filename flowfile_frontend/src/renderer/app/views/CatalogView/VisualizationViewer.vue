@@ -104,6 +104,11 @@
       </div>
 
       <template v-else>
+        <ChartPromptBar
+          :table-id="promptTableId"
+          :builder="builderHandle"
+          @applied="onSpecChanged"
+        />
         <el-alert
           v-if="computeError"
           :title="computeError"
@@ -131,6 +136,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/interfaces";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
+import ChartPromptBar from "./ChartPromptBar.vue";
 import SaveStatusIndicator from "../../components/common/SaveStatusIndicator.vue";
 import AutosaveConflictBanner from "../../components/common/AutosaveConflictBanner.vue";
 import { useAutosave } from "../../composables/useAutosave";
@@ -138,7 +144,7 @@ import {
   AUTOSAVE_REQUEST_TIMEOUT_MS,
   classifyAutosaveError,
 } from "../../composables/autosaveEngine";
-import { buildVizSaveBody, shouldCaptureThumbnail } from "./vizAutosave";
+import { buildVizSaveBody, chartTypeOf, shouldCaptureThumbnail } from "./vizAutosave";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { captureThumbnail } from "../../composables/useChartThumbnail";
@@ -235,7 +241,13 @@ const { engine, state: autosaveState } = useAutosave<VisualizationUpdatePayload>
   },
 });
 
+// The AI's change goes through this too, so it autosaves exactly like a manual edit.
 const onSpecChanged = () => engine.notifyChange();
+// AI prompts are offered for a catalog table only: a SQL source has no column types on the server.
+const promptTableId = computed(() =>
+  viz.value?.source_type === "table" ? (viz.value.catalog_table_id ?? null) : null,
+);
+const builderHandle = () => gwRef.value;
 watch(name, (v) => {
   if (viz.value && v.trim() !== viz.value.name) engine.notifyChange();
 });
@@ -370,6 +382,7 @@ async function onRevert() {
     const body: VisualizationUpdatePayload = {
       name: openSnapshot.value.name,
       spec: openSnapshot.value.spec,
+      chart_type: chartTypeOf(openSnapshot.value.spec),
     };
     if (expectedUpdatedAt.value) body.expected_updated_at = expectedUpdatedAt.value;
     const updated = await store.updateVisualization(props.vizId, body, {
@@ -417,6 +430,7 @@ async function onConflictOverwrite() {
     const body: VisualizationUpdatePayload = {
       name: trimmed,
       spec,
+      chart_type: chartTypeOf(spec),
       expected_updated_at: fresh.updated_at,
     };
     const thumb = await captureThumbnail(gwRef, computeOnWorker);

@@ -227,11 +227,11 @@ else
 endif
 	@echo "Running tests..."
 ifeq ($(OS),Windows_NT)
-	$(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts || true
+	$(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/chart-ai.spec.ts || true
 	@$(MAKE) stop_servers
 else
 	@status=0; \
-	($(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts) || status=$$?; \
+	($(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/chart-ai.spec.ts) || status=$$?; \
 	$(STOP_LISTENERS); exit $$status
 endif
 
@@ -255,11 +255,11 @@ else
 endif
 	@echo "Running tests..."
 ifeq ($(OS),Windows_NT)
-	$(CD) "$(FRONTEND_DIR)" && npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts || true
+	$(CD) "$(FRONTEND_DIR)" && npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/chart-ai.spec.ts || true
 	@$(MAKE) stop_servers
 else
 	@status=0; \
-	($(CD) "$(FRONTEND_DIR)" && PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts) || status=$$?; \
+	($(CD) "$(FRONTEND_DIR)" && PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/chart-ai.spec.ts) || status=$$?; \
 	$(STOP_LISTENERS); exit $$status
 endif
 

@@ -4,6 +4,7 @@ import {
   chartNameError,
   dashboardChartNames,
   distinctName,
+  nameFromAiTitle,
   suggestChartName,
   tableNameInSql,
 } from "./chartNaming";
@@ -84,5 +85,18 @@ describe("suggestChartName", () => {
     expect(
       suggestChartName({ source_type: "table", table_id: 1 }, "orders", ["orders", "orders 2"]),
     ).toBe("orders 3");
+  });
+});
+
+describe("nameFromAiTitle", () => {
+  it("uses the title, tidied and made distinct", () => {
+    expect(nameFromAiTitle("  Revenue   by region ")).toBe("Revenue by region");
+    expect(nameFromAiTitle("Revenue by region", ["revenue by region"])).toBe("Revenue by region 2");
+  });
+
+  it("gives nothing for a missing or blank title, and cuts a long one", () => {
+    expect(nameFromAiTitle(null)).toBeNull();
+    expect(nameFromAiTitle("   ")).toBeNull();
+    expect(nameFromAiTitle("x".repeat(300))).toHaveLength(120);
   });
 });

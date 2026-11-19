@@ -64,6 +64,7 @@
       </div>
 
       <template v-else>
+        <ChartPromptBar :table-id="promptTableId" :builder="builderHandle" @applied="onAiApplied" />
         <el-alert
           v-if="computeError"
           :title="computeError"
@@ -92,17 +93,18 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/interfaces";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
+import ChartPromptBar from "./ChartPromptBar.vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useAuthStore } from "../../stores/auth-store";
 import { createLocalDraft, type LocalDraft } from "../../composables/localDraft";
 import { classifyAutosaveError } from "../../composables/autosaveEngine";
-import { vizDraftKey } from "./vizAutosave";
+import { chartTypeOf, vizDraftKey } from "./vizAutosave";
 import { captureThumbnail } from "../../composables/useChartThumbnail";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 import { toPlainJson } from "../../utils/structuredClone";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
-import { chartNameError, suggestChartName } from "./chartNaming";
+import { chartNameError, nameFromAiTitle, suggestChartName } from "./chartNaming";
 import type {
   CatalogVisualization,
   VisualizationCreatePayload,
@@ -140,6 +142,8 @@ const saving = ref(false);
 
 const isCreate = computed(() => !isExistingViz(props.viz));
 const initialName = name.value;
+// The last name set for the user (the suggestion, then an AI title); typing makes it theirs.
+let automaticName = initialName;
 
 // CAS token for edit mode: the updated_at of the viz whose spec was loaded.
 let expectedUpdatedAt = props.viz?.updated_at ?? null;
@@ -185,6 +189,28 @@ watch(name, () => {
     draft?.scheduleWrite();
   }
 });
+
+// AI prompts are offered for a catalog table only: a SQL source has no column types on the server.
+const promptTableId = computed(() =>
+  props.source.source_type === "table" ? (props.source.table_id ?? null) : null,
+);
+const builderHandle = () => gwRef.value;
+
+const onAiApplied = ({ title }: { title: string | null }) => {
+  if (isCreate.value && title && name.value === automaticName) {
+    const tableId = promptTableId.value;
+    const taken = [
+      ...(props.takenNames ?? []),
+      ...(tableId != null ? (store.visualizationsByTable[tableId] ?? []).map((v) => v.name) : []),
+    ];
+    const next = nameFromAiTitle(title, taken);
+    if (next) {
+      name.value = next;
+      automaticName = next;
+    }
+  }
+  if (isCreate.value) void onSpecChanged();
+};
 
 const onRestoreDraft = () => {
   if (!pendingDraft) return;
@@ -304,6 +330,7 @@ const save = async () => {
       const updatePayload: VisualizationUpdatePayload = {
         name: name.value.trim(),
         spec,
+        chart_type: chartTypeOf(spec),
       };
       if (thumbnail_data_url) updatePayload.thumbnail_data_url = thumbnail_data_url;
       if (expectedUpdatedAt) updatePayload.expected_updated_at = expectedUpdatedAt;
@@ -313,6 +340,7 @@ const save = async () => {
       const createPayload: VisualizationCreatePayload = {
         name: name.value.trim(),
         spec,
+        chart_type: chartTypeOf(spec),
         source_type: props.source.source_type,
         catalog_table_id:
           props.source.source_type === "table" ? (props.source.table_id ?? null) : null,
@@ -358,6 +386,7 @@ const offerOverwrite = async (
     const updatePayload: VisualizationUpdatePayload = {
       name: name.value.trim(),
       spec,
+      chart_type: chartTypeOf(spec),
       expected_updated_at: fresh.updated_at,
     };
     if (thumbnail_data_url) updatePayload.thumbnail_data_url = thumbnail_data_url;
