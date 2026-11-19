@@ -14,7 +14,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
-from test_utils.docker_images import pull_image_if_missing
+from test_utils.docker_images import docker_daemon_responds, pull_image_if_missing
 
 logging.basicConfig(
     level=logging.INFO,
@@ -98,22 +98,7 @@ def is_docker_available() -> bool:
         logger.warning("Docker executable not found in PATH")
         return False
 
-    try:
-        result = subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            timeout=5,
-            check=False,
-        )
-
-        if result.returncode != 0:
-            logger.warning("Docker is not operational")
-            return False
-
-        return True
-    except (subprocess.SubprocessError, OSError):
-        logger.warning("Error running Docker command")
-        return False
+    return docker_daemon_responds(logger)
 
 
 def is_container_running(container_name: str) -> bool:

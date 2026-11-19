@@ -8,6 +8,8 @@ from contextlib import contextmanager
 
 import requests
 
+from test_utils.docker_images import docker_daemon_responds
+
 logger = logging.getLogger("azurite_fixture")
 
 AZURITE_HOST = os.environ.get("TEST_AZURITE_HOST", "localhost")
@@ -109,14 +111,7 @@ def is_docker_available() -> bool:
     if shutil.which("docker") is None:
         logger.warning("Docker executable not found in PATH")
         return False
-    try:
-        result = subprocess.run(
-            ["docker", "info"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5, check=False
-        )
-        return result.returncode == 0
-    except (subprocess.SubprocessError, OSError):
-        logger.warning("Error running Docker command")
-        return False
+    return docker_daemon_responds(logger)
 
 
 def stop_azurite_container() -> bool:
