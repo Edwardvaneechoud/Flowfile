@@ -411,6 +411,75 @@ def test_a_chart_is_made_for_a_dashboard_only_by_who_manages_it(
 
 
 @pytest.fixture
+def alice_dashboard_chart(users, resource_factory, alice_catalog, alice_dashboard):
+    """A chart on alice's table that belongs to her dashboard."""
+    return resource_factory(
+        db_models.CatalogVisualization,
+        name="alice_dashboard_chart",
+        spec_json="[]",
+        source_type="table",
+        catalog_table_id=alice_catalog["table"],
+        namespace_id=alice_catalog["schema"],
+        dashboard_id=alice_dashboard,
+        created_by=users["alice"].id,
+    )
+
+
+def test_a_chart_names_its_dashboard_only_to_who_may_read_the_dashboard(
+    users, client_for, alice_catalog, alice_dashboard, alice_dashboard_chart, team, grant_factory
+):
+    def as_seen_by(client) -> list[dict]:
+        """The chart from each route that answers it: the library, its table's charts and the chart itself."""
+        table_charts = client.get(f"/catalog/tables/{alice_catalog['table']}/visualizations").json()
+        return [
+            next(v for v in client.get("/catalog/visualizations").json() if v["id"] == alice_dashboard_chart),
+            next(v for v in table_charts if v["id"] == alice_dashboard_chart),
+            client.get(f"/catalog/visualizations/{alice_dashboard_chart}").json(),
+        ]
+
+    # Reading the table shows bob the chart and that a dashboard owns it, never which dashboard by name.
+    grant_factory("catalog_table", alice_catalog["table"], team, granted_by=users["alice"].id)
+    bob = client_for("bob")
+    assert alice_dashboard not in [d["id"] for d in bob.get("/catalog/dashboards").json()]
+    for chart in as_seen_by(bob):
+        assert chart["dashboard_id"] == alice_dashboard
+        assert chart["dashboard_name"] is None
+
+    for chart in as_seen_by(client_for("alice")):
+        assert chart["dashboard_name"] == "alice_dashboard"
+    for chart in as_seen_by(client_for("admin")):
+        assert chart["dashboard_name"] == "alice_dashboard"
+
+    grant_factory("dashboard", alice_dashboard, team, permission="use", granted_by=users["alice"].id)
+    for chart in as_seen_by(bob):
+        assert chart["dashboard_name"] == "alice_dashboard"
+
+
+def test_a_dashboards_manager_detaches_a_chart_that_is_not_theirs(
+    users, client_for, alice_dashboard, alice_dashboard_chart, team, group_factory, grant_factory
+):
+    bob = client_for("bob")
+    detach = f"/catalog/visualizations/{alice_dashboard_chart}/detach"
+    assert bob.post(detach).status_code == 403
+
+    # Reading the dashboard is not managing it.
+    readers = group_factory("cat-readers", users["admin"].id, {users["bob"].id: "member"})
+    grant_factory("dashboard", alice_dashboard, readers, permission="use", granted_by=users["alice"].id)
+    assert bob.post(detach).status_code == 403
+
+    grant_factory("dashboard", alice_dashboard, team, permission="manage", granted_by=users["alice"].id)
+    kept = bob.post(detach)
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["dashboard_id"] is None
+    with get_db_context() as db:
+        assert db.get(db_models.CatalogVisualization, alice_dashboard_chart).dashboard_id is None
+
+    # The chart is alice's own now: managing her dashboard gave bob no right over it, nor a second detach.
+    assert bob.delete(f"/catalog/visualizations/{alice_dashboard_chart}").status_code == 403
+    assert bob.post(detach).status_code == 403
+
+
+@pytest.fixture
 def alice_sql_viz(users, resource_factory, alice_catalog):
     return resource_factory(
         db_models.CatalogVisualization,

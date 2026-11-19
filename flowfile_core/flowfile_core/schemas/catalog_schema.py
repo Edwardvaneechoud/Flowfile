@@ -810,7 +810,7 @@ class VisualizationOut(BaseModel):
     table_full_name: str | None = None
     table_type: str | None = None
     namespace_name: str | None = None
-    # The dashboard the chart belongs to, and its name; both None for a chart of its own.
+    # The chart's dashboard: both None for a chart of its own, the name None for whoever may not read it.
     dashboard_id: int | None = None
     dashboard_name: str | None = None
     access: AccessInfo | None = None
