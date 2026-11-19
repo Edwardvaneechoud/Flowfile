@@ -1,7 +1,5 @@
 // @vitest-environment happy-dom
-// The prompt bar against a stand-in builder: what goes with the prompt, what gets applied,
-// and the rule for an answer that comes back late (cancelled, replaced, builder reloaded,
-// chart changed by hand meanwhile).
+// The prompt bar against a stand-in builder: what is sent, what is applied, and late answers.
 
 import { createApp, h, nextTick, type FunctionalComponent } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -157,6 +155,16 @@ describe("ChartPromptBar", () => {
     const noProvider = await mountBar(() => handle);
     expect(noProvider.q("chart-prompt-bar")).toBeNull();
     expect(mocks.loadProviders).toHaveBeenCalled();
+  });
+
+  it("leaves the builder alone while it is hidden", async () => {
+    const { handle } = fakeBuilder(build(BAR));
+    const builder = vi.fn(() => handle);
+    await mountBar(builder, null);
+    expect(builder).not.toHaveBeenCalled();
+
+    await mountBar(builder);
+    expect(builder).toHaveBeenCalled();
   });
 
   it("waits for the builder, then asks for a chart or for a change", async () => {

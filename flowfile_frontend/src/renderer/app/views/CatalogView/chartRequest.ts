@@ -722,7 +722,7 @@ export function coreRefusals(request: ChartRequest, kinds: Map<string, ColumnKin
   }
   if (mark !== "arc") {
     if (request.sort) {
-      const key = (["x", "y"] as const).find(
+      const key = (["y", "x"] as const).find(
         (k) => axes[k].length > 0 && !axes[k].some((r) => isMeasure(k, r)),
       );
       const last = key ? axes[key][axes[key].length - 1] : undefined;

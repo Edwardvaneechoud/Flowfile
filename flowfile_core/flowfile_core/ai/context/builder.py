@@ -48,6 +48,7 @@ from flowfile_core.ai.context.mentions import (
     parse_mentions,
     resolve_mentions,
 )
+from flowfile_core.ai.feature_flag import send_data_allowed
 from flowfile_core.ai.providers.base import Message
 from flowfile_core.ai.safety import FlowSafetyConfig, prepare_samples
 from flowfile_core.ai.tools.classification import is_predictable_via_mirror
@@ -1097,7 +1098,7 @@ def _attach_samples(
     nodes that haven't run yield ``None`` and ship without samples.
     """
 
-    if samples_mode == "off" or sample_rows <= 0:
+    if samples_mode == "off" or sample_rows <= 0 or not send_data_allowed():
         return snapshot
 
     safety_config = FlowSafetyConfig(sample_mode=samples_mode, sample_row_count=sample_rows)

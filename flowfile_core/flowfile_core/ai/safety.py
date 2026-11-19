@@ -68,6 +68,7 @@ from flowfile_core.ai.audit import (
     record_event,
     update_diff_action,
 )
+from flowfile_core.ai.feature_flag import send_data_allowed
 
 # Sample-row policy
 
@@ -248,7 +249,8 @@ def prepare_samples(
     """Apply the per-flow sample policy: row-count limit + selected scrubber.
 
     Returns ``[]`` whenever ``config.sample_mode == 'off'`` regardless
-    of input — the default. Callers (the prompt context builder) can
+    of input — the default — and whenever the server withholds data values
+    (``feature_flag.send_data_allowed``). Callers (the prompt context builder) can
     short-circuit before materialising rows when samples won't ship
     anyway.
 
@@ -256,7 +258,7 @@ def prepare_samples(
     optional dependency isn't installed; never imports Presidio in the
     ``off`` / ``regex`` paths.
     """
-    if config.sample_mode == "off":
+    if config.sample_mode == "off" or not send_data_allowed():
         return []
 
     limited: list[dict[str, Any]] = []

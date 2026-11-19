@@ -237,8 +237,7 @@ export const generateNodeCode = async (
   }
 };
 
-// Chart generation — POST /ai/generate_chart. A prompt (and the chart on screen,
-// as a chart request) for a catalog table → a chart request the builder expands.
+// Chart generation: POST /ai/generate_chart, a prompt for a catalog table → a chart request.
 
 /** Every `reason` a degraded chart answer can carry (core's `chart_request.REASONS`). */
 export type ChartGenerationReason =

@@ -398,8 +398,7 @@ const onMainModelChange = (value: string): void => {
   aiStore.setSelectedModel(value || null);
 };
 
-// Tasks that can run on a model of their own. A new task gets its picker by adding a row
-// here; `surface` is the name its store passes to `aiStore.resolveSurface`.
+// Tasks that can run on their own model; `surface` is the name passed to `resolveSurface`.
 const TASK_MODELS: ReadonlyArray<{ surface: string; label: string; hint: string }> = [
   { surface: "chart", label: "Charts", hint: "Used when you ask the AI for a chart." },
   { surface: "cron", label: "Schedules", hint: "Used to turn a schedule in words into cron." },

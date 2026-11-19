@@ -22,6 +22,7 @@ class OpenAIProvider(LiteLLMProvider):
         "cmd_k": "gpt-6-luna",
         "ghost_node": "gpt-6-luna",
         "explain": "gpt-6-luna",
+        "chart": "gpt-6-luna",
         "agent_complex": "gpt-6-luna",
         "agent_staged": "gpt-6-luna",
         "docgen": "gpt-6-luna",

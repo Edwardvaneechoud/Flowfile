@@ -1,11 +1,5 @@
-// Pinia store for the chart builder's prompt bar (POST /ai/generate_chart).
-//
-// One request in flight: a new Generate aborts the one before it, and only the latest
-// request's answer comes back as "ok"; an older one resolves "superseded". Provider and
-// model come from the AI settings through `resolveSurface("chart")`.
-
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, reactive } from "vue";
 
 import {
   AiDisabledError,
@@ -34,6 +28,16 @@ export type GenerateChartOutcome =
 
 type AbortReason = "cancelled" | "superseded";
 
+interface Flight {
+  controller: AbortController;
+  reason: AbortReason | null;
+}
+
+/** Whoever asks: a prompt bar passes its own, so two bars never stop each other's request. */
+export type ChartPromptOwner = symbol;
+
+const SHARED_OWNER: ChartPromptOwner = Symbol("chart-prompt");
+
 const isAbortError = (err: unknown): boolean => {
   if (err instanceof DOMException && err.name === "AbortError") return true;
   return Boolean(
@@ -41,10 +45,22 @@ const isAbortError = (err: unknown): boolean => {
   );
 };
 
+/**
+ * The chart builder's prompt bar (`POST /ai/generate_chart`). Each owner has one request in
+ * flight: its next Generate aborts the one before it, which resolves "superseded", and only its
+ * latest request's answer comes back as "ok". Provider and model come from the AI settings
+ * through `resolveSurface("chart")`.
+ */
 export const useAiChartStore = defineStore("aiChart", () => {
   const aiStore = useAiStore();
-  const loading = ref(false);
-  let inflight: { controller: AbortController; reason: AbortReason | null } | null = null;
+  const flights = new Map<ChartPromptOwner, Flight>();
+  const busy = reactive(new Set<ChartPromptOwner>());
+
+  /** True while any owner's request is out. */
+  const loading = computed(() => busy.size > 0);
+
+  /** True while this owner's request is out. */
+  const isLoading = (owner: ChartPromptOwner = SHARED_OWNER): boolean => busy.has(owner);
 
   /**
    * The provider a request goes to, and its model: the chart surface's pick when it is
@@ -63,22 +79,26 @@ export const useAiChartStore = defineStore("aiChart", () => {
   /** True when the bar may show: AI is on and some provider is set up. */
   const available = computed(() => !aiStore.aiDisabled && aiStore.hasConfiguredProvider);
 
-  const abort = (reason: AbortReason): void => {
-    if (!inflight) return;
-    inflight.reason = reason;
-    inflight.controller.abort();
-    inflight = null;
-    loading.value = false;
+  const abort = (owner: ChartPromptOwner, reason: AbortReason): void => {
+    const flight = flights.get(owner);
+    if (!flight) return;
+    flight.reason = reason;
+    flight.controller.abort();
+    flights.delete(owner);
+    busy.delete(owner);
   };
 
-  /** Stop the request in flight; it resolves "cancelled". */
-  const cancel = (): void => abort("cancelled");
+  /** Stop this owner's request in flight; it resolves "cancelled". */
+  const cancel = (owner: ChartPromptOwner = SHARED_OWNER): void => abort(owner, "cancelled");
 
-  const generate = async (args: GenerateChartArgs): Promise<GenerateChartOutcome> => {
-    abort("superseded");
-    const mine = { controller: new AbortController(), reason: null as AbortReason | null };
-    inflight = mine;
-    loading.value = true;
+  const generate = async (
+    args: GenerateChartArgs,
+    owner: ChartPromptOwner = SHARED_OWNER,
+  ): Promise<GenerateChartOutcome> => {
+    abort(owner, "superseded");
+    const mine: Flight = { controller: new AbortController(), reason: null };
+    flights.set(owner, mine);
+    busy.add(owner);
     const { provider, model } = target.value;
     const body: GenerateChartRequest = {
       tableId: args.tableId,
@@ -98,12 +118,12 @@ export const useAiChartStore = defineStore("aiChart", () => {
       if (error instanceof AiDisabledError) return { status: "disabled" };
       return { status: "failed", message: requestFailureMessage(error) };
     } finally {
-      if (inflight === mine) {
-        inflight = null;
-        loading.value = false;
+      if (flights.get(owner) === mine) {
+        flights.delete(owner);
+        busy.delete(owner);
       }
     }
   };
 
-  return { loading, target, available, cancel, generate };
+  return { loading, isLoading, target, available, cancel, generate };
 });
