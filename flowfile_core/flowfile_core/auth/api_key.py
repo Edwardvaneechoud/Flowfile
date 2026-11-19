@@ -12,6 +12,7 @@ import secrets as _secrets
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
+from flowfile_core.auth.jwt import active_db_user
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 
@@ -48,7 +49,8 @@ def verify_api_key(
 
     Resolves the ``X-API-Key`` header to an enabled, unexpired key, then to its
     ``ApiConsumer``, and authorizes the request only if that consumer is enabled and
-    holds a grant for the endpoint named ``slug`` (which must itself be enabled).
+    holds a grant for the endpoint named ``slug`` (which must itself be enabled, and
+    whose owner must exist and not be disabled).
     Updates ``last_used_at`` and returns the resolved endpoint. The grant check is
     the sole authorization gate — there is no per-key endpoint fallback — so a single
     key can call every endpoint its consumer is granted. Raises 401 on any failure.
@@ -96,6 +98,9 @@ def verify_api_key(
         .first()
     )
     if grant is None:
+        raise unauthorized
+    # The flow runs as the endpoint's owner, so a disabled or deleted owner's API stops answering.
+    if active_db_user(db, endpoint.owner_id) is None:
         raise unauthorized
     if not endpoint.enabled:
         raise HTTPException(

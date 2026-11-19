@@ -9,13 +9,18 @@
         <p class="login-subtitle">Sign in to continue</p>
       </div>
 
+      <div v-if="sessionEnded" class="ended-message" data-testid="login-ended">
+        <i class="fa-solid fa-circle-info"></i>
+        <span>Your sign-in has ended. Sign in again to continue.</span>
+      </div>
+
       <div v-if="error" class="error-message" data-testid="login-error">
         <i class="fa-solid fa-circle-exclamation"></i>
         <span>{{ error }}</span>
       </div>
 
       <a
-        v-if="signInMethod.method === 'hub'"
+        v-if="signInMethod?.method === 'hub'"
         :href="signInMethod.url"
         class="btn btn-primary login-button"
         data-testid="login-hub"
@@ -24,7 +29,11 @@
         Sign in with {{ hubAddress(signInMethod.hub_url) }}
       </a>
 
-      <form v-else class="login-form" @submit.prevent="handleLogin">
+      <form
+        v-else-if="signInMethod?.method === 'password'"
+        class="login-form"
+        @submit.prevent="handleLogin"
+      >
         <div class="form-field">
           <label for="username" class="form-label">Username</label>
           <div class="input-wrapper">
@@ -100,8 +109,10 @@ const password = ref("");
 const showPassword = ref(false);
 const isLoading = ref(false);
 const error = ref(authService.takeHubSignInError() ?? "");
-// The password form until the server says it signs people in through a hub.
-const signInMethod = ref<SignInMethod>({ method: "password" });
+// Set when this tab was sent here because its session ended.
+const sessionEnded = authService.takeSessionEnded();
+// Nothing is shown until the server says how it signs people in.
+const signInMethod = ref<SignInMethod | null>(null);
 
 // The page that sent this tab here, an address in this app only, which the sign-in returns to.
 const redirect = route.query.redirect;
@@ -111,15 +122,16 @@ const returnTo =
     : undefined;
 
 const startHubSignIn = () => {
-  if (signInMethod.value.method === "hub")
+  if (signInMethod.value?.method === "hub")
     authService.startHubSignIn(signInMethod.value.url, returnTo);
 };
 
 // `#/login?hub_signin=1` is the hub's sign-in start: the hub's page replaces its entry, a password server drops the flag.
 onMounted(async () => {
-  signInMethod.value = await authService.getSignInMethod();
+  const method = await authService.getSignInMethod();
+  signInMethod.value = method;
   if (route.query.hub_signin !== "1") return;
-  if (signInMethod.value.method === "hub") startHubSignIn();
+  if (method.method === "hub") startHubSignIn();
   else await router.replace({ path: route.path, query: {} });
 });
 
@@ -226,6 +238,23 @@ const handleLogin = async () => {
 }
 
 .error-message i {
+  flex-shrink: 0;
+}
+
+.ended-message {
+  margin-bottom: var(--spacing-4);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3) var(--spacing-4);
+  background-color: var(--color-background-secondary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.ended-message i {
   flex-shrink: 0;
 }
 

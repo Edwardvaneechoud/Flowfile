@@ -5,6 +5,7 @@ visualization tests patch (``flowfile_core.catalog.service.trigger_visualize_*``
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
@@ -375,6 +376,36 @@ async def test_time_budget_returns_what_was_finished_and_caches_the_late_result(
             time.sleep(0.05)
     assert late.complete is True
     assert late.row_count == 100
+
+
+@pytest.mark.asyncio
+async def test_requests_for_one_table_share_one_build_on_the_profile_threads(table: Any) -> None:
+    worker = FakeWorker(stats_delay=0.3)
+    threads: list[str] = []
+    fill = chart_profile._fill
+
+    def _fill(*args: Any, **kwargs: Any) -> None:
+        threads.append(threading.current_thread().name)
+        fill(*args, **kwargs)
+
+    p1, p2 = worker.patches()
+    with p1, p2, patch.object(chart_profile, "_fill", _fill):
+        first, second, third = await asyncio.gather(*(profile_table(table, USER) for _ in range(3)))
+    assert first.complete and second is first and third is first
+    assert worker.fields_calls == 1
+    assert len(threads) == 1 and threads[0].startswith("chart-profile")
+
+
+@pytest.mark.asyncio
+async def test_a_request_that_times_out_does_not_start_a_second_build(table: Any) -> None:
+    worker = FakeWorker(stats_delay=0.5)
+    p1, p2 = worker.patches()
+    with p1, p2:
+        early = await profile_table(table, USER, budget=0.1)
+        again = await profile_table(table, USER, budget=5)
+    assert early.complete is False
+    assert again.complete is True
+    assert worker.fields_calls == 1
 
 
 @pytest.mark.asyncio

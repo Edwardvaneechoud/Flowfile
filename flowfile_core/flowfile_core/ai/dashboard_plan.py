@@ -32,13 +32,13 @@ from flowfile_core.ai.chart_request import (
     _NUMERIC,
     ColumnInfo,
     _call,
-    _parse_json_payload,
     _record,
     _resolve,
     _text,
     _type_word,
     ref_from_string,
 )
+from flowfile_core.ai.json_payload import parse_json_payload
 from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.scheduler import RateLimitScheduler
 
@@ -550,7 +550,7 @@ class _Answer:
 
 def read_answer(content: str | None, sources: Sequence[PlanSource]) -> _Answer:
     """One model answer: a plan (with the problems of the items it lost), a decline, or a refusal."""
-    payload, err = _parse_json_payload(content)
+    payload, err = parse_json_payload(content, extract_object=True)
     if err == "empty_response":
         return _Answer(reason=err, problem='The answer was empty. Answer with one JSON object {"checks": ...}.')
     if err == "parse_error":

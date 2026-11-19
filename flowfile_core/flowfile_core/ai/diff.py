@@ -620,41 +620,7 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
             _apply_update_node_settings(flow, mod.node_type, settings)
             modified_node_ids.append(int(mod.node_id))
 
-        # LLM-redundant-op tolerance for connection adds/removes lives at this
-        # AI seam — not in core ``add_connection`` / ``delete_connection``,
-        # which stay strict for non-AI callers (frontend, scripts, MCP).
-        # The LLM sometimes emits explicit connect/delete_connection ops in
-        # the same batch as an ``update_node_settings`` whose changed
-        # ``depending_on_id`` already implicitly rewired the primary input;
-        # we swallow only the "already present" / "already absent" cases.
-        for c in diff.connections_added:
-            connection = input_schema.NodeConnection.model_validate(c.connection)
-            from_node = flow.get_node(connection.output_connection.node_id)
-            to_node = flow.get_node(connection.input_connection.node_id)
-            already_present = False
-            if from_node is not None and to_node is not None:
-                try:
-                    already_present = to_node.node_inputs.validate_if_input_connection_exists(
-                        node_input_id=from_node.node_id,
-                        connection_name=connection.input_connection.get_node_input_connection_type(),
-                    )
-                except Exception:
-                    already_present = False
-            if already_present:
-                logger.info(
-                    "apply_diff: wire %s -> %s (%s) already present; skipping redundant connections_added op",
-                    connection.output_connection.node_id,
-                    connection.input_connection.node_id,
-                    connection.input_connection.connection_class,
-                )
-                continue
-            add_connection(flow, connection)
-            applied_connection_count += 1
-
-        for d in diff.deletions:
-            flow.delete_node(d.delete_node_id)
-            removed_node_ids.append(d.delete_node_id)
-
+        # Remove staged wires before validating their replacements in the same transaction.
         for c in diff.connections_removed:
             connection = input_schema.NodeConnection.model_validate(c.connection)
             try:
@@ -675,6 +641,28 @@ def apply_diff(flow, diff: GraphDiff) -> ApplyResult:
                     continue
                 raise
             removed_connection_count += 1
+
+        for d in diff.deletions:
+            flow.delete_node(d.delete_node_id)
+            removed_node_ids.append(d.delete_node_id)
+
+        # Explicit staged connections enforce the same port contract as editor
+        # gestures, after additions and modifications establish the live interface.
+        # Strict add_connection also treats an exact replay as idempotent.
+        for c in diff.connections_added:
+            connection = input_schema.NodeConnection.model_validate(c.connection)
+            to_node = flow.get_node(connection.input_connection.node_id)
+            already_present = (
+                to_node is not None
+                and to_node.input_edge_handle(
+                    connection.output_connection.node_id, connection.input_connection.connection_class
+                )
+                == connection.output_connection.connection_class
+            )
+            add_connection(flow, connection, validate_ports=True)
+            if not already_present:
+                applied_connection_count += 1
+
 
     return ApplyResult(
         diff_id=diff.diff_id,

@@ -420,7 +420,7 @@ environment in local/desktop runs.
 
 - `FEATURE_FLAG_AI` — master switch for the `/ai/*` router. Default **on** (`true`/`1`/`yes`/`on`). With no BYOK rows saved, providers fall back to env keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, …).
 - `FLOWFILE_AI_<PROVIDER>_RPM` / `_RPD` — optional per-provider request budgets (enforced per worker process).
-- `FLOWFILE_AI_SEND_DATA` — whether AI features may send data values (statistics, examples) to a model; default on, `0`/`false`/`no`/`off` sends names and types only (`ai/feature_flag.py::send_data_allowed`, read per call; users can also turn it off for themselves in Settings → AI).
+- `FLOWFILE_AI_SEND_DATA` — whether AI features may send data values (the chart profile's statistics and examples, the sample rows a request asks for with `samples_mode`, the agent's observation rows) to a model; default on, `0`/`false`/`no`/`off` sends names and types only (`ai/feature_flag.py::send_data_allowed`, read per call; users can also turn it off for themselves in Settings → AI).
 - `FLOWFILE_AI_LOG_PROMPTS` / `FLOWFILE_AI_LOG_PROMPTS_SCRUB` — prompt logging (see [Debugging the AI](#debugging-the-ai)).
 
 **Local-dev tunables (read from env, not all in `.env.example`):**

@@ -568,6 +568,176 @@ def test_open_of_a_flow_published_from_here_points_at_its_own_file(connected, hu
     assert yaml.safe_load(path.read_text(encoding="utf-8"))["flowfile_id"] == flow.flow_id
 
 
+def _open_hub_flow(connected, hub, user_id, tmp_path, hub_copies, flow_uuid: str, name: str):
+    """A flow seeded on the hub, opened from it and open in the editor: ``(open flow, its local copy)``."""
+    source = _new_flow(user_id, tmp_path / f"{flow_uuid[:8]}_source.yaml", name=name)
+    hub.seed(flow_uuid, name, source.get_flowfile_data().model_dump(mode="json"), namespace_id=2)
+    opened = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid})
+    assert opened.status_code == 200, opened.text
+    copy = Path(opened.json()["flow_path"])
+    hub_copies.append(str(copy))
+    flow = flow_file_handler.get_flow(flow_file_handler.import_flow(copy, user_id=user_id))
+    return flow, copy
+
+
+def test_publish_as_new_sends_a_new_flow_and_the_open_flow_becomes_it_leaving_the_original_as_it_was(
+    connected, hub, user_id, tmp_path, hub_copies
+):
+    original_uuid = "12121212-3434-4565-8787-909090909090"
+    flow, copy = _open_hub_flow(connected, hub, user_id, tmp_path, hub_copies, original_uuid, "Weekly returns")
+    original_flow_id = flow.flow_id
+    original_registration = _registration(uuid=original_uuid)
+    original_origin = {"hub_url": HUB_URL, "flow_uuid": original_uuid, "version": 1}
+    flow.flow_settings.description = "edited here, neither saved nor published"
+    hub.publishes.clear()
+
+    response = connected.post(
+        "/hub_client/publish",
+        json={
+            "flow_id": original_flow_id,
+            "as_new": True,
+            "name": "  Weekly returns by region  ",
+            "namespace_id": 2,
+            "message": "split off",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    answer = response.json()
+    assert answer["version"] == 1 and answer["name"] == "Weekly returns by region"
+    new_flow_id = answer["flow_id"]
+    assert new_flow_id != original_flow_id
+
+    new_uuid, body = hub.publishes[-1]
+    assert new_uuid != original_uuid
+    assert body["base_version"] is None
+    assert body["name"] == "Weekly returns by region"
+    assert body["namespace_id"] == 2
+    assert body["message"] == "split off"
+    assert body["definition"]["flowfile_name"] == "Weekly returns by region"
+    assert body["definition"]["flowfile_settings"]["description"] == "edited here, neither saved nor published"
+    assert body["definition"]["flowfile_settings"]["source_registration_id"] is None
+    assert "hub_origin" not in body["definition"]["flowfile_settings"]
+
+    # The original on the hub keeps its one version and its name.
+    assert [v["version"] for v in hub.versions[original_uuid]] == [1]
+    assert hub.flows[original_uuid]["name"] == "Weekly returns"
+    assert [v["version"] for v in hub.versions[new_uuid]] == [1]
+
+    # The open flow is the new flow now, under a new id, as after a Save As.
+    assert flow_file_handler.get_flow(original_flow_id) is None
+    moved = flow_file_handler.get_flow(new_flow_id)
+    assert moved is flow
+    new_origin = {"hub_url": HUB_URL, "flow_uuid": new_uuid, "version": 1}
+    assert moved.flow_settings.hub_origin.model_dump() == new_origin
+    assert moved.flow_settings.name == "Weekly returns by region"
+    new_path = Path(moved.flow_settings.path)
+    hub_copies.append(str(new_path))
+    assert new_path != copy
+    assert new_path.resolve().parent == (storage.flows_directory / "hub").resolve()
+    assert _saved_origin(new_path) == new_origin
+    new_registration = _registration(uuid=new_uuid)
+    assert new_registration["flow_path"] == str(new_path)
+    assert new_registration["name"] == "Weekly returns by region"
+    assert moved.flow_settings.source_registration_id == new_registration["id"]
+
+    # The original's local copy and its registration are as they were.
+    assert _saved_origin(copy) == original_origin
+    assert "neither saved nor published" not in copy.read_text(encoding="utf-8")
+    assert _registration(uuid=original_uuid) == original_registration
+
+    # Opening the original again gives the original's own copy, never the new flow's document.
+    reopened = connected.post("/hub_client/open", json={"flow_uuid": original_uuid})
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["flow_path"] == str(copy)
+    assert _saved_origin(copy) == original_origin
+    assert _saved_origin(new_path) == new_origin
+
+    # Opening the new flow finds this document as its copy, with nothing reported as unpublished.
+    reopened_new = connected.post("/hub_client/open", json={"flow_uuid": new_uuid})
+    assert reopened_new.status_code == 200, reopened_new.text
+    assert reopened_new.json()["flow_path"] == str(new_path)
+    assert "neither saved nor published" in new_path.read_text(encoding="utf-8")
+
+    # The next publish of the open flow is the new flow's version 2.
+    second = connected.post("/hub_client/publish", json={"flow_id": new_flow_id})
+    assert second.status_code == 201, second.text
+    assert second.json() == {"version": 2, "name": "Weekly returns by region"}
+    assert hub.publishes[-1][0] == new_uuid and hub.publishes[-1][1]["base_version"] == 1
+    assert [v["version"] for v in hub.versions[original_uuid]] == [1]
+
+
+def test_a_refused_publish_as_new_changes_nothing_here(connected, hub, user_id, tmp_path, hub_copies):
+    original_uuid = "23232323-4545-4676-8898-a0a0a0a0a0a0"
+    flow, copy = _open_hub_flow(connected, hub, user_id, tmp_path, hub_copies, original_uuid, "Stock levels")
+    hub.seed("34343434-5656-4787-8909-b1b1b1b1b1b1", "Stock levels by site", {"flowfile_name": "x"}, namespace_id=2)
+    flow_id, path, name = flow.flow_id, flow.flow_settings.path, flow.flow_settings.name
+    saved = copy.read_text(encoding="utf-8")
+
+    response = connected.post(
+        "/hub_client/publish",
+        json={"flow_id": flow_id, "as_new": True, "name": "Stock levels by site", "namespace_id": 2},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "kind": "refused",
+        "status": 409,
+        "detail": "a flow with this name already exists in this namespace",
+    }
+    assert flow_file_handler.get_flow(flow_id) is flow
+    assert flow.flow_settings.path == path and flow.flow_settings.name == name
+    assert flow.flow_settings.hub_origin.model_dump() == {"hub_url": HUB_URL, "flow_uuid": original_uuid, "version": 1}
+    assert copy.read_text(encoding="utf-8") == saved
+    assert not list((storage.flows_directory / "hub").glob("Stock_levels_by_site_*.yaml"))
+    assert [v["version"] for v in hub.versions[original_uuid]] == [1]
+
+
+def test_publish_as_new_over_a_version_is_refused_before_the_hub_is_called(connected, hub, user_id, tmp_path):
+    flow = _new_flow(user_id, tmp_path / "over.yaml")
+    assert connected.post("/hub_client/publish", json={"flow_id": flow.flow_id}).status_code == 201
+
+    response = connected.post(
+        "/hub_client/publish", json={"flow_id": flow.flow_id, "as_new": True, "overwrite_version": 2}
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "A new flow has no version to publish over."
+    assert len(hub.publishes) == 1
+
+
+def test_publish_as_new_over_a_version_of_a_flow_on_no_hub_is_an_ordinary_publish_over_it(
+    connected, hub, user_id, tmp_path
+):
+    flow = _new_flow(user_id, tmp_path / "never_over.yaml")
+
+    response = connected.post(
+        "/hub_client/publish", json={"flow_id": flow.flow_id, "as_new": True, "overwrite_version": 2}
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["kind"] == "stale_base"
+    assert [body["base_version"] for _, body in hub.publishes] == [2]
+
+
+def test_publish_as_new_of_a_flow_on_no_hub_is_a_first_publish(connected, hub, user_id, tmp_path):
+    path = tmp_path / "never_published.yaml"
+    flow = _new_flow(user_id, path)
+    auto_register_flow(str(path), "Never published", user_id)
+    registration = _registration(path=str(path))
+
+    response = connected.post(
+        "/hub_client/publish", json={"flow_id": flow.flow_id, "as_new": True, "name": "Another name"}
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json() == {"version": 1, "name": "Never published"}
+    assert hub.publishes[-1][0] == registration["flow_uuid"]
+    assert flow_file_handler.get_flow(flow.flow_id) is flow
+    assert flow.flow_settings.path == str(path)
+    assert _saved_origin(path)["flow_uuid"] == registration["flow_uuid"]
+
+
 def test_open_on_a_shared_core_gives_each_person_a_copy_of_their_own(shared_core, hub, tmp_path, hub_copies):
     owner_id, owner = shared_core["owner"]
     stranger_id, stranger = shared_core["stranger"]

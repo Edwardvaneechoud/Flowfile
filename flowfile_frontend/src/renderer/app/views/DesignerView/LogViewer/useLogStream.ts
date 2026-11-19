@@ -11,12 +11,13 @@ import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useFlowStore } from "../../../stores/flow-store";
 import authService from "../../../services/auth.service";
-import { streamFlowLogs } from "../../../services/logStreamClient";
+import { LogStreamHttpError, streamFlowLogs } from "../../../services/logStreamClient";
 
 export type LogConnectionStatus = "connected" | "disconnected" | "error";
 
 const MAX_RETRIES = 5;
 const TOKEN_CHECK_MS = 5 * 60 * 1000;
+const SIGN_IN_FAILED = "Authentication failed. Please log in again.";
 
 export function useLogStream() {
   const nodeStore = useNodeStore();
@@ -46,7 +47,8 @@ export function useLogStream() {
     markDisconnected();
   };
 
-  const open = async (attempt: number): Promise<void> => {
+  /** `renewed`: this stream follows a 401 whose renewal was granted, so another 401 is not renewed again. */
+  const open = async (attempt: number, renewed = false): Promise<void> => {
     cancelRetry();
     streamController?.abort();
     const controller = new AbortController();
@@ -61,7 +63,7 @@ export function useLogStream() {
     if (streamController !== controller) return;
     if (!token) {
       console.error("No auth token available for log streaming");
-      errorMessage.value = "Authentication failed. Please log in again.";
+      errorMessage.value = SIGN_IN_FAILED;
       connectionStatus.value = "error";
       streamController = null;
       return;
@@ -94,6 +96,18 @@ export function useLogStream() {
     if (streamError) console.error("Log stream error:", streamError);
     streamController = null;
     markDisconnected();
+    // A refused renewal ends the session; a granted one reads the log again.
+    if (streamError instanceof LogStreamHttpError && streamError.status === 401) {
+      const token = renewed ? null : await authService.refreshAccessToken();
+      if (streamController !== null) return;
+      if (token) {
+        void open(attempt, true);
+        return;
+      }
+      errorMessage.value = SIGN_IN_FAILED;
+      connectionStatus.value = "error";
+      return;
+    }
     // Core sent what there was: the file, or the run to its end.
     if (receivedLine || !nodeStore.isRunning) return;
 

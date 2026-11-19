@@ -95,6 +95,8 @@ def db_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     db_models.Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
+    session.add(db_models.User(id=1, username="owner1", disabled=False))
+    session.commit()
     try:
         yield session
     finally:
@@ -407,6 +409,27 @@ def test_verify_api_key_expired(db_session):
     with pytest.raises(HTTPException) as exc:
         api_key_mod.verify_api_key(slug="sales", x_api_key=raw, db=db_session)
     assert exc.value.status_code == 401
+
+
+@pytest.mark.parametrize("owner_state", ["disabled", "deleted"])
+def test_verify_api_key_refuses_an_endpoint_whose_owner_is_disabled_or_gone(db_session, owner_state):
+    ep, raw = _make_endpoint_with_key(db_session)
+    owner = db_session.get(db_models.User, ep.owner_id)
+    if owner_state == "disabled":
+        owner.disabled = True
+    else:
+        db_session.delete(owner)
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        api_key_mod.verify_api_key(slug="sales", x_api_key=raw, db=db_session)
+    assert exc.value.status_code == 401
+
+
+def test_verify_api_key_answers_for_an_enabled_owner(db_session):
+    ep, raw = _make_endpoint_with_key(db_session)
+    assert db_session.get(db_models.User, ep.owner_id).disabled is False
+    assert api_key_mod.verify_api_key(slug="sales", x_api_key=raw, db=db_session).id == ep.id
 
 
 # Management endpoints (publish + keys)

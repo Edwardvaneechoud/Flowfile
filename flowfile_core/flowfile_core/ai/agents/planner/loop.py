@@ -881,6 +881,11 @@ async def _run_planner_loop(
                     "live_node_ids_at_stage": sorted(_collect_live_node_ids(flow)),
                     "staged_node_ids_at_stage": list(session.staged_node_ids),
                     "staged_source_node_ids_at_stage": staged_source_node_ids,
+                    "staged_modified_node_ids_at_stage": [
+                        entry.staged_node_payload.get("node_id")
+                        for entry in session.staged_results
+                        if entry.tool_name == "flowfile.graph.update_node_settings"
+                    ],
                 }
 
             # Universal self-loop invariant guard. Catches all three

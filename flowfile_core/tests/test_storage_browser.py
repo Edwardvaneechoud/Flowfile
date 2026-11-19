@@ -334,3 +334,42 @@ class TestAuthentication:
     def test_endpoint_requires_a_token(self):
         with TestClient(main.app) as anonymous:
             assert anonymous.get(BROWSE_URL).status_code == 401
+
+
+class _HubConnections:
+    """A provider of credentials that lists one cloud connection and never hands this core its keys."""
+
+    def secret_rows(self, user_id):
+        return []
+
+    def connection_rows(self, user_id, kind):
+        return [{"connection_name": "hub-lake", "storage_type": "s3", "source": "hub"}] if kind == "cloud" else []
+
+
+@pytest.fixture
+def hub_connection():
+    from flowfile_core.secret_manager import credential_sources
+
+    before = credential_sources._source
+    credential_sources.register(_HubConnections())
+    yield "hub-lake"
+    credential_sources._source = before
+
+
+def test_a_connection_from_the_hub_is_a_typed_sentence_not_a_missing_connection(hub_connection):
+    sentence = (
+        "hub-lake is a connection whose keys never reach this server, so browsing and table checks are not "
+        "available for it: type the path."
+    )
+    response = client.get(BROWSE_URL, params={"connection_name": hub_connection, "path": "s3://lake/"})
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {"error_code": "PROVIDER_CONNECTION", "message": sentence}
+
+    for route in ("info", "history"):
+        body = {"connection_name": hub_connection, "resource_path": "s3://lake/orders"}
+        response = client.post(f"/cloud_storage/delta/{route}", json=body)
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"]["error_code"] == "PROVIDER_CONNECTION"
+
+    response = client.get(BROWSE_URL, params={"connection_name": "does-not-exist"})
+    assert response.status_code == 404

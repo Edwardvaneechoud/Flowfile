@@ -27,6 +27,7 @@ class OllamaProvider(LiteLLMProvider):
         "cmd_k": "qwen3.5:9b",
         "ghost_node": "qwen3.5:9b",
         "explain": "qwen3.5:9b",
+        "chart": "qwen3.5:9b",
         "agent_complex": "qwen3.6:35b-a3b",
         "docgen": "qwen3.5:9b",
         "settings_autocomplete": "qwen3.5:9b",

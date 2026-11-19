@@ -14,6 +14,7 @@ from shared.models import (
     FlowSchedule,
     SchedulerLock,
     ScheduleTriggerTable,
+    User,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "FlowSchedule",
     "SchedulerLock",
     "ScheduleTriggerTable",
+    "User",
 ]

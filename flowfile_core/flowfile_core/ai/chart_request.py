@@ -29,6 +29,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer
 
+from flowfile_core.ai.json_payload import parse_json_payload
 from flowfile_core.ai.metrics import record_autocomplete_call
 from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.scheduler import RateLimitScheduler, default_scheduler
@@ -39,6 +40,7 @@ SURFACE: str = "chart"
 DEFAULT_TIMEOUT_SECONDS: float = 45.0
 MAX_TIMEOUT_SECONDS: float = 90.0
 MAX_PROMPT_LEN: int = 2000
+MAX_CURRENT_CHART_CHARS: int = 16_000
 RETRY_ROUNDS: int = 1
 _MAX_TOKENS: int = 1500
 _MAX_TITLE: int = 120
@@ -229,7 +231,8 @@ _TIME_UNIT_ALIASES: dict[str, str] = {
     "yearmonthdate": "day",
     "yearmonthdatehours": "hour",
 }
-_SHORTHAND_RE = re.compile(r"^\s*([A-Za-z_]+)\s*\(\s*(.*?)\s*\)\s*$")
+_SHORTHAND_RE = re.compile(r"^\s*([A-Za-z_]+)\s*\((.*)\)\s*$", re.DOTALL)
+_MAX_SHORTHAND_LEN: int = 256
 
 STAR_MESSAGE = '"*" means row count: use {"field":"*","aggregate":"count"} on x, y, theta, size or color only.'
 
@@ -255,10 +258,14 @@ def _canonical(value: Any, aliases: dict[str, str]) -> Any:
 
 
 def ref_from_string(text: str, column_names: Sequence[str]) -> dict[str, Any]:
-    """``"sum(amount)"`` → ``{"field": "amount", "aggregate": "sum"}``; a column literally named so wins."""
+    """``"sum(amount)"`` → ``{"field": "amount", "aggregate": "sum"}``; a column literally named so wins.
+
+    Text longer than ``_MAX_SHORTHAND_LEN`` is never read as a shorthand: no aggregate of a
+    column is that long, and the text may come straight from a request body.
+    """
     if text in column_names:
         return {"field": text}
-    match = _SHORTHAND_RE.match(text)
+    match = _SHORTHAND_RE.match(text) if len(text) <= _MAX_SHORTHAND_LEN else None
     if match:
         agg = _AGGREGATE_ALIASES.get(match.group(1).lower())
         inner = match.group(2).strip().strip("\"'`")
@@ -821,7 +828,7 @@ class _Checker:
         w = self.w
         if w.sort is not None and self.typed:
             axis = next(
-                (k for k in ("x", "y") if w.channels[k] and not any(self.is_measure(k, r) for r in w.channels[k])),
+                (k for k in ("y", "x") if w.channels[k] and not any(self.is_measure(k, r) for r in w.channels[k])),
                 None,
             )
             if axis is None:
@@ -980,6 +987,14 @@ def _as_date(value: str | None) -> date | None | Literal[False]:
         return False
 
 
+def _finite(value: int | float) -> bool:
+    """Whether a number is a finite float; an int too large for one is not."""
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def _coerce(value: Any, type_: str) -> tuple[bool, Any]:
     """A filter value as the column's type; ``(False, value)`` when it has no unambiguous form."""
     if type_ == "boolean":
@@ -998,14 +1013,19 @@ def _coerce(value: Any, type_: str) -> tuple[bool, Any]:
         if isinstance(value, float) and value.is_integer():
             return True, int(value)
         if isinstance(value, str):
+            text = value.strip()
             try:
-                number = float(value.strip())
+                return True, int(text)
+            except ValueError:
+                pass
+            try:
+                number = float(text)
             except ValueError:
                 return False, value
             return (True, int(number)) if number.is_integer() else (False, value)
         return False, value
     if type_ == "float":
-        if isinstance(value, int | float) and math.isfinite(value):
+        if isinstance(value, int | float) and _finite(value):
             return True, value
         if isinstance(value, str):
             try:
@@ -1273,38 +1293,6 @@ def retry_message(problem_text: str) -> str:
 # The model call.
 
 
-def _parse_json_payload(content: str | None, repairs: list[str] | None = None) -> tuple[Any, str | None]:
-    """JSON, tolerating a ```json fence or prose around one object (noted as ``json_extracted``)."""
-    if content is None or not content.strip():
-        return None, "empty_response"
-    text = content.strip()
-    try:
-        return json.loads(text), None
-    except json.JSONDecodeError:
-        pass
-    if text.startswith("```"):
-        body = text.split("\n", 1)[-1]
-        if body.rstrip().endswith("```"):
-            body = body.rstrip()[: -len("```")]
-        try:
-            parsed = json.loads(body)
-        except json.JSONDecodeError:
-            pass
-        else:
-            _note(repairs, "json_extracted")
-            return parsed, None
-    start, end = text.find("{"), text.rfind("}")
-    if 0 <= start < end:
-        try:
-            parsed = json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            pass
-        else:
-            _note(repairs, "json_extracted")
-            return parsed, None
-    return None, "parse_error"
-
-
 def _text(value: Any, limit: int) -> str | None:
     if value is None:
         return None
@@ -1325,7 +1313,9 @@ def read_answer(content: str | None, columns: Sequence[ColumnInfo]) -> _Answer:
     An accepted chart carries the codes of the repairs it needed in ``repairs``.
     """
     repairs: list[str] = []
-    payload, err = _parse_json_payload(content, repairs)
+    payload, err = parse_json_payload(
+        content, extract_object=True, on_extracted=lambda: _note(repairs, "json_extracted")
+    )
     if err == "empty_response":
         return _Answer(reason=err, problem='The answer was empty. Answer with one JSON object {"chart": ...}.')
     if err == "parse_error":
@@ -1385,6 +1375,14 @@ async def _call(
         return None, "provider_error", f"The AI provider call failed ({type(exc).__name__})."
 
 
+def _oversized(current_chart: Any) -> bool:
+    """Whether the chart on screen is too large to check and send; one that cannot be measured counts."""
+    try:
+        return len(json.dumps(current_chart, default=str)) > MAX_CURRENT_CHART_CHARS
+    except (TypeError, ValueError, RecursionError):
+        return True
+
+
 def _record(provider: Provider, started: float, reason: str | None, surface: str = SURFACE) -> None:
     record_autocomplete_call(
         surface=surface,
@@ -1431,7 +1429,10 @@ async def generate_chart(
 
     current: ChartRequest | None = None
     if current_chart is not None:
-        current, problems = review_chart(current_chart, columns)
+        if _oversized(current_chart):
+            problems = [f"It is larger than {MAX_CURRENT_CHART_CHARS} characters."]
+        else:
+            current, problems = review_chart(current_chart, columns)
         if current is None:
             notes.append(
                 "The current chart could not be used for a change ("
@@ -1480,6 +1481,7 @@ __all__ = [
     "AGGREGATES",
     "DEFAULT_TIMEOUT_SECONDS",
     "MARKS",
+    "MAX_CURRENT_CHART_CHARS",
     "MAX_PROMPT_LEN",
     "MAX_TIMEOUT_SECONDS",
     "REASONS",

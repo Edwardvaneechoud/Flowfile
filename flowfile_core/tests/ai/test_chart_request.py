@@ -12,6 +12,8 @@ import asyncio
 import importlib
 import json
 import sys
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -250,6 +252,109 @@ async def test_follow_up_with_an_invalid_current_chart_goes_on_without_it() -> N
     assert warning.startswith("The current chart could not be used for a change (")
     assert 'x.field "nope" is not a column.' in warning
     assert "## Current chart\n\nNone: build a new chart." in provider.calls[0]["messages"][1].content
+
+
+@pytest.mark.asyncio
+async def test_follow_up_with_an_oversized_current_chart_goes_on_without_it() -> None:
+    values = ["v" * 40] * (cr.MAX_CURRENT_CHART_CHARS // 40)
+    current = {**BAR, "filters": [{"field": "region", "oneOf": values}]}
+    provider = ScriptedProvider(_answer(BAR))
+    with patch.object(cr, "review_chart", wraps=cr.review_chart) as review:
+        resp = await _generate(provider, prompt="only 2025", current_chart=current)
+    assert [call.args[0] for call in review.call_args_list] == [BAR]
+    assert resp.degraded is False
+    assert resp.warnings == [
+        f"The current chart could not be used for a change (It is larger than {cr.MAX_CURRENT_CHART_CHARS} "
+        "characters.); the chart was built from the prompt alone."
+    ]
+    assert "## Current chart\n\nNone: build a new chart." in provider.calls[0]["messages"][1].content
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("sum(revenue)", {"field": "revenue", "aggregate": "sum"}),
+        (" Sum ( revenue ) ", {"field": "revenue", "aggregate": "sum"}),
+        ("sum(\n  revenue\n)", {"field": "revenue", "aggregate": "sum"}),
+        ("avg('price')", {"field": "price", "aggregate": "mean"}),
+        ("sum(`revenue`)", {"field": "revenue", "aggregate": "sum"}),
+        ("count(*)", {"field": "*", "aggregate": "count"}),
+        ("count()", {"field": "*", "aggregate": "count"}),
+        ("sum()", {"field": "sum()"}),
+        ("nope(revenue)", {"field": "nope(revenue)"}),
+        ("sum(revenue) per region", {"field": "sum(revenue) per region"}),
+        (" revenue ", {"field": "revenue"}),
+    ],
+)
+def test_shorthand_reference_forms(text: str, expected: dict[str, str]) -> None:
+    assert cr.ref_from_string(text, [c.name for c in COLUMNS]) == expected
+
+
+def test_a_column_named_like_a_shorthand_wins() -> None:
+    assert cr.ref_from_string("sum(revenue)", ["sum(revenue)", "revenue"]) == {"field": "sum(revenue)"}
+
+
+_WORST_CASES = {
+    "unclosed_then_spaces": "A(" + " " * 200_000,
+    "closed_then_spaces": "A(" + ")" + " " * 200_000 + "x",
+    "many_closing_parens": "A(" + ") " * 100_000 + "x",
+    "leading_spaces": " " * 200_000 + "(",
+    "spaces_inside": "sum(" + " " * 200_000 + "revenue)",
+}
+
+
+@pytest.mark.parametrize("case", sorted(_WORST_CASES))
+def test_shorthand_parsing_is_linear_in_the_text(case: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pattern alone, without the length guard: the old one took minutes on a few thousand spaces.
+
+    Parametrized by name: pytest puts the test id in an environment variable, and Windows
+    refuses one longer than 32,767 characters.
+    """
+    text = _WORST_CASES[case]
+    monkeypatch.setattr(cr, "_MAX_SHORTHAND_LEN", len(text))
+    started = time.perf_counter()
+    cr.ref_from_string(text, [])
+    assert time.perf_counter() - started < 1.0
+
+
+def test_long_text_is_never_read_as_a_shorthand() -> None:
+    long = "sum(" + "x" * cr._MAX_SHORTHAND_LEN + ")"
+    assert cr.ref_from_string(long, []) == {"field": long}
+    fits = "sum(" + "x" * (cr._MAX_SHORTHAND_LEN - 5) + ")"
+    assert cr.ref_from_string(fits, []) == {"field": "x" * (cr._MAX_SHORTHAND_LEN - 5), "aggregate": "sum"}
+
+
+def test_a_filter_number_too_large_for_a_float_is_a_problem_not_an_error() -> None:
+    huge = 10**400
+    assert cr._coerce(huge, "float") == (False, huge)
+    chart, problems = review_chart({**BAR, "filters": [{"field": "revenue", "oneOf": [huge]}]}, COLUMNS)
+    assert chart is None
+    assert problems == ['"revenue" holds numbers; use numbers such as 9.5.']
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("9007199254740993", (True, 9007199254740993)),
+        (" 42 ", (True, 42)),
+        ("3.0", (True, 3)),
+        ("1e3", (True, 1000)),
+        ("2.5", (False, "2.5")),
+        ("many", (False, "many")),
+    ],
+)
+def test_integer_filter_text_keeps_every_digit(value: str, expected: tuple[bool, Any]) -> None:
+    assert cr._coerce(value, "integer") == expected
+
+
+def test_sort_is_checked_on_the_axis_the_browser_sorts() -> None:
+    month = {"field": "order_date", "timeUnit": "month"}
+    heat = {"mark": "rect", "color": {"field": "revenue", "aggregate": "sum"}, "sort": "descending"}
+    chart, problems = review_chart({**heat, "x": month, "y": {"field": "region"}}, COLUMNS)
+    assert problems == [] and chart is not None
+    chart, problems = review_chart({**heat, "x": {"field": "region"}, "y": month}, COLUMNS)
+    assert chart is None
+    assert problems == ["A time or number axis is always in order; remove sort and limit, or use dateRange."]
 
 
 def test_reason_vocabulary_is_stable() -> None:
@@ -501,6 +606,66 @@ def test_route_warns_when_the_profile_fails(
         "the model saw the column names, types and roles only."
     ]
     assert "Statistics and example values are not available" in provider.calls[0]["messages"][1].content
+
+
+def test_route_drops_an_oversized_current_chart_with_a_warning(
+    authed_client: TestClient, table_id: int, worker: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = ScriptedProvider(_answer({"mark": "bar", "x": "region", "y": "sum(revenue)"}))
+    _use_provider(monkeypatch, provider)
+    current = {"mark": "bar", "x": "A(" + " " * 50_000, "y": "sum(revenue)"}
+    started = time.perf_counter()
+    resp = authed_client.post(
+        "/ai/generate_chart", json={"table_id": table_id, "prompt": "revenue by region", "current_chart": current}
+    )
+    assert time.perf_counter() - started < 10.0
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["degraded"] is False
+    assert body["warnings"] == [
+        f"The current chart could not be used for a change (It is larger than {cr.MAX_CURRENT_CHART_CHARS} "
+        "characters.); the chart was built from the prompt alone."
+    ]
+    assert "## Current chart\n\nNone: build a new chart." in provider.calls[0]["messages"][1].content
+
+
+def test_route_reads_the_database_off_the_event_loop_on_a_closed_session(
+    authed_client: TestClient, table_id: int, worker: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, Any] = {}
+    provider = ScriptedProvider(_answer({"mark": "bar", "x": "region", "y": "sum(revenue)"}))
+    readable_table = chart_routes._readable_table
+
+    def _table(db: Any, user: Any, table_id_: int):
+        seen["table"] = (threading.get_ident(), db)
+        return readable_table(db, user, table_id_)
+
+    def _provider(db: Any, *_a: Any, **kw: Any) -> ScriptedProvider:
+        seen["provider"] = (threading.get_ident(), db)
+        seen["surface"] = kw.get("surface")
+        return provider
+
+    async def _chat(*args: Any, **kwargs: Any):
+        seen["loop"] = threading.get_ident()
+        seen["in_transaction"] = seen["table"][1].in_transaction()
+        return await ScriptedProvider.chat(provider, *args, **kwargs)
+
+    monkeypatch.setattr(chart_routes, "_readable_table", _table)
+    monkeypatch.setattr(chart_routes, "_resolve_provider", _provider)
+    monkeypatch.setattr(provider, "chat", _chat)
+    resp = authed_client.post("/ai/generate_chart", json={"table_id": table_id, "prompt": "revenue by region"})
+    assert resp.status_code == 200, resp.text
+    assert seen["table"] == seen["provider"]
+    assert seen["surface"] == "chart"
+    assert seen["table"][0] != seen["loop"]
+    assert seen["in_transaction"] is False
+
+
+def test_every_provider_has_a_chart_preset() -> None:
+    from flowfile_core.ai.providers.registry import PROVIDERS
+
+    missing = [name for name, cls in PROVIDERS.items() if "chart" not in cls.surface_models]
+    assert missing == []
 
 
 def test_route_404_on_unknown_provider(authed_client: TestClient, table_id: int) -> None:

@@ -13,6 +13,9 @@ is kept. The profile is cached in process for five minutes per user and table ve
 under a time budget: past it, or on any failure, the caller gets what was finished
 (names and types, roles when the fields call answered) with ``problem`` saying why. A
 profile that finishes after the budget still lands in the cache for the next request.
+One profile is built per key at a time: a request that finds one under way waits on it
+within its own budget. The builds run on ``PROFILE_THREADS`` threads of their own, so a
+slow table never takes the threads the rest of core runs on.
 Must not import ``litellm``.
 """
 
@@ -24,6 +27,7 @@ import logging
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -34,6 +38,7 @@ from flowfile_core.ai.safety import scrub_text_regex
 logger = logging.getLogger(__name__)
 
 PROFILE_BUDGET_SECONDS: float = 8.0
+PROFILE_THREADS: int = 4
 CACHE_TTL_SECONDS: float = 300.0
 MAX_VALUE_CHARS: int = 40
 EXAMPLE_ROWS: int = 10
@@ -158,9 +163,30 @@ _cache: dict[tuple, tuple[float, TableProfile]] = {}
 _cache_lock = threading.Lock()
 
 
+@dataclass
+class _Flight:
+    """One profile being built: every request for its key waits on ``done`` and reads ``holder``."""
+
+    loop: asyncio.AbstractEventLoop
+    holder: TableProfile
+    done: asyncio.Future[TableProfile]
+
+
+_executor = ThreadPoolExecutor(max_workers=PROFILE_THREADS, thread_name_prefix="chart-profile")
+_flights: dict[tuple, _Flight] = {}
+
+
+def _landed(key: tuple, flight: _Flight, done: asyncio.Future[TableProfile]) -> None:
+    if _flights.get(key) is flight:
+        del _flights[key]
+    if not done.cancelled():
+        done.exception()
+
+
 def clear_cache() -> None:
     with _cache_lock:
         _cache.clear()
+    _flights.clear()
 
 
 def _cache_get(key: tuple) -> TableProfile | None:
@@ -309,18 +335,28 @@ async def profile_table(
     holder = _base_profile(table)
     holder.values_withheld = not share_values
     user_id = getattr(user, "id", None)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + budget
 
-    def work() -> TableProfile:
-        key = cache_key(table, user_id, share_values)
-        cached = _cache_get(key)
-        if cached is not None:
-            return cached
+    def work(key: tuple) -> TableProfile:
         _fill(table, user, holder, share_values)
         _cache_put(key, holder)
         return holder
 
     try:
-        return await asyncio.wait_for(asyncio.to_thread(work), timeout=budget)
+        key = await asyncio.wait_for(
+            loop.run_in_executor(_executor, cache_key, table, user_id, share_values), timeout=budget
+        )
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+        flight = _flights.get(key)
+        if flight is None or flight.loop is not loop or flight.done.done():
+            flight = _Flight(loop=loop, holder=holder, done=loop.run_in_executor(_executor, work, key))
+            _flights[key] = flight
+            flight.done.add_done_callback(lambda done, key=key, flight=flight: _landed(key, flight, done))
+        holder = flight.holder
+        return await asyncio.wait_for(asyncio.shield(flight.done), timeout=max(deadline - loop.time(), 0.0))
     except asyncio.TimeoutError:
         logger.info("chart profile of table %s ran past its %.1f s budget", table.id, budget)
         return _snapshot(holder, f"timed out after {budget:g} s")

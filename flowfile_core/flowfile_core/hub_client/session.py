@@ -4,8 +4,9 @@ tokens minted from it.
 It is no ``Secret`` row, so no node can reference it, and it holds no password. Access tokens live only in memory; each
 refresh rotates the refresh token and the new one is stored at once. A sign-in through the hub on a joined server is
 ``kind: "delegation"``: opaque tokens whose expiries are counted from the hub's answer, ended when a refresh is
-answered ``invalid_grant``. Expiries of JWTs are read unverified: the hub verifies, this side only needs to know when
-to refresh.
+answered ``invalid_grant``. A desktop's sign-in through the system browser is ``kind: "browser"``: opaque tokens too,
+refreshed at the hub's ``/hub/token`` and ended the same way, with the account name kept from the hub's answer.
+Expiries of JWTs are read unverified: the hub verifies, this side only needs to know when to refresh.
 """
 
 import json
@@ -48,9 +49,12 @@ def _expiry(token: str) -> float | None:
 
 
 def account(stored: dict) -> str | None:
-    """The hub username of a desktop connection: its refresh token's ``sub``; ``None`` for a delegation."""
+    """The hub username of a desktop connection: the one kept for a sign-in through the browser, else its refresh
+    token's ``sub``; ``None`` for a delegation."""
     if stored.get("kind") == "delegation":
         return None
+    if stored.get("kind") == "browser":
+        return stored.get("account") or None
     try:
         sub = jwt.decode(stored.get("refresh_token") or "", options={"verify_signature": False}).get("sub")
     except jwt.PyJWTError:
@@ -108,6 +112,27 @@ def save_delegation(user_id: int, hub_url: str, granted) -> str:
     return sid
 
 
+def save_browser(user_id: int, hub_url: str, granted: dict, *, device_name: str, org_name: str | None) -> None:
+    """Replace the connection of ``user_id`` with a sign-in through the browser (``granted``: the hub's
+    ``/hub/token`` answer). The access token is cached, never stored."""
+    now = time.time()
+    user = granted["user"]
+    stored = {
+        "kind": "browser",
+        "hub_url": hub_url.rstrip("/"),
+        "refresh_token": granted["refresh_token"],
+        "refresh_expires_at": now + granted["refresh_expires_in"],
+        "account": user["username"],
+        "full_name": user.get("full_name") or None,
+        "device_name": device_name,
+        "org_name": org_name,
+    }
+    with _one_at_a_time(user_id), _lock:
+        secrets.set_password(SERVICE, _key(user_id), json.dumps(stored))
+        _access_tokens[user_id] = (granted["access_token"], now + granted["expires_in"])
+    _forget_node_tokens(user_id)
+
+
 def clear(user_id: int) -> None:
     """Forget the connection and its node tokens on this machine; the hub is not told."""
     with _one_at_a_time(user_id), _lock:
@@ -126,6 +151,31 @@ def _ended(refused: client.HubRefused) -> bool:
     return isinstance(refused.payload, dict) and refused.payload.get("error") == "invalid_grant"
 
 
+def _drop_ended(user_id: int, refused: client.HubRefused) -> None:
+    if _ended(refused):
+        with _lock:
+            _access_tokens.pop(user_id, None)
+            secrets.delete_password(SERVICE, _key(user_id))
+
+
+def _refresh_browser(user_id: int, stored: dict) -> str:
+    """Refresh with the user's lock held and store the rotated refresh token; ``invalid_grant`` (the sign-in was
+    ended on the hub) removes the session before re-raising."""
+    try:
+        granted = client.refresh_browser(stored["hub_url"], stored["refresh_token"])
+    except client.HubRefused as e:
+        _drop_ended(user_id, e)
+        raise
+    now = time.time()
+    stored["refresh_token"] = granted["refresh_token"]
+    stored["refresh_expires_at"] = now + granted["refresh_expires_in"]
+    stored["account"] = granted["user"]["username"]
+    with _lock:
+        secrets.set_password(SERVICE, _key(user_id), json.dumps(stored))
+        _access_tokens[user_id] = (granted["access_token"], now + granted["expires_in"])
+    return granted["access_token"]
+
+
 def _refresh_delegation(user_id: int, stored: dict):
     """Refresh with the user's lock held, through the server's extension, which signs the request as this server.
     ``invalid_grant`` removes the session before re-raising; a server that cannot sign for itself raises ``HubRefused``
@@ -135,10 +185,7 @@ def _refresh_delegation(user_id: int, stored: dict):
             raise LookupError("nothing on this server signs for it at its hub")
         granted = server_extension.call("refresh_delegation", stored["hub_url"], stored["refresh_token"])
     except client.HubRefused as e:
-        if _ended(e):
-            with _lock:
-                _access_tokens.pop(user_id, None)
-                secrets.delete_password(SERVICE, _key(user_id))
+        _drop_ended(user_id, e)
         raise
     except LookupError as e:
         logger.warning("The sign-in through the hub of user %s could not be refreshed: %s", user_id, e)
@@ -155,8 +202,8 @@ def _refresh_delegation(user_id: int, stored: dict):
 def access_token(user_id: int) -> str | None:
     """An access token for ``user_id``'s hub, ``None`` without a connection; reused until a minute before ``exp``.
 
-    A refused refresh leaves a desktop connection as it was; a delegation answered ``invalid_grant`` is cleared,
-    node tokens included, before the refusal is raised.
+    A refused refresh leaves a password connection as it was; a delegation or a sign-in through the browser
+    answered ``invalid_grant`` is cleared, node tokens included, before the refusal is raised.
     """
     if sharing.acts_for_no_person():
         return None
@@ -173,6 +220,8 @@ def access_token(user_id: int) -> str | None:
                 return None
             if session.get("kind") == "delegation":
                 return _refresh_delegation(user_id, session).access_token
+            if session.get("kind") == "browser":
+                return _refresh_browser(user_id, session)
             tokens = client.refresh(session["hub_url"], session["refresh_token"])
             session["refresh_token"] = tokens["refresh_token"]
             session["refresh_expires_at"] = _expiry(tokens["refresh_token"])
@@ -184,6 +233,30 @@ def access_token(user_id: int) -> str | None:
         if _ended(e):
             _forget_node_tokens(user_id)
         raise
+
+
+def access_refused(token: str) -> None:
+    """The hub answered 401 to a request made with ``token``. When it is the cached access token of a sign-in through
+    the browser, drop it and refresh at once, so a sign-in ended on the hub is cleared here at that request, not when
+    the token would have expired; a refused refresh raises nothing here, the request's own refusal does."""
+    with _lock:
+        user_id = next((uid for uid, (cached, _) in _access_tokens.items() if cached == token), None)
+    if user_id is None:
+        return
+    with _one_at_a_time(user_id):
+        with _lock:
+            cached = _access_tokens.get(user_id)
+            if cached is None or cached[0] != token:
+                return
+            _access_tokens.pop(user_id, None)
+        stored = load(user_id)
+        if stored is None or stored.get("kind") != "browser":
+            return
+        try:
+            # The person's lock is an RLock, so access_token takes it again on this thread.
+            access_token(user_id)
+        except (client.HubRefused, client.HubUnreachable, client.HubVersionRefused):
+            pass
 
 
 def bearer(user_id: int | None, missing: str, *, ended: tuple[int, ...] = (401,)) -> tuple[str, str]:

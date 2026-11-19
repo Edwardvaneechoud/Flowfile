@@ -28,6 +28,7 @@ from flowfile_scheduler.models import (
     FlowSchedule,
     SchedulerLock,
     ScheduleTriggerTable,
+    User,
 )
 from shared.database import create_catalog_engine
 from shared.notifications.processor import process_pending_notifications
@@ -38,6 +39,7 @@ from shared.storage_config import get_database_url, require_flow_in_storage
 logger = logging.getLogger("flowfile.scheduler")
 
 DEFAULT_POLL_INTERVAL = 30
+OWNER_NOT_ACTIVE = "Its owner's account is disabled or no longer exists."
 
 STALE_THRESHOLD = 90
 
@@ -520,10 +522,17 @@ class FlowScheduler:
         )
 
     def _maybe_launch(self, db: Session, sched: FlowSchedule, now: datetime) -> LaunchOutcome:
-        """Create a run record and spawn the flow if no run is active."""
+        """Create a run record and spawn the flow if no run is active; disable it if the owner is gone or disabled."""
         reg: FlowRegistration | None = db.get(FlowRegistration, sched.registration_id)
         if reg is None:
             logger.warning("Schedule %s references missing flow registration %s", sched.id, sched.registration_id)
+            return LaunchOutcome.FAILED
+
+        owner: User | None = db.get(User, sched.owner_id)
+        if owner is None or owner.disabled:
+            logger.warning("Schedule %s disabled — %s", sched.id, OWNER_NOT_ACTIVE)
+            sched.enabled, sched.disabled_reason = False, OWNER_NOT_ACTIVE
+            db.commit()
             return LaunchOutcome.FAILED
 
         if self._has_active_run(db, reg):

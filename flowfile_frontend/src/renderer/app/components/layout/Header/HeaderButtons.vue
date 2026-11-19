@@ -179,6 +179,7 @@
     v-model:visible="modalVisibleForHubPublish"
     :flow-id="nodeStore.flow_id"
     :hub-origin="flowSettings?.hub_origin ?? null"
+    :flow-name="flowSettings?.display_name?.trim() || flowSettings?.name || ''"
     @published="handleHubPublished"
     @open-flow="handleOpenFromDialog"
   />
@@ -311,6 +312,7 @@ import OpenDialog from "../../../features/designer/components/OpenDialog.vue";
 import CreateDialog from "../../../features/designer/components/CreateDialog.vue";
 import AlteryxImportDialog from "../../../features/designer/components/AlteryxImportDialog.vue";
 import HubPublishDialog from "../../../features/designer/components/HubPublishDialog.vue";
+import type { HubPublishResult } from "../../../api/hubFlows.api";
 import { useNodeStore } from "../../../stores/column-store";
 import { useFlowStore } from "../../../stores/flow-store";
 import { useEditorStore } from "../../../stores/editor-store";
@@ -353,7 +355,18 @@ const openHubPublishDialog = () => {
 };
 
 // A publish saves the flow with its new hub version; refresh what the header caches about it.
-const handleHubPublished = async () => {
+// A publish as a new flow moved it to a new id, as a Save As does: follow it there.
+const handleHubPublished = async (result: HubPublishResult) => {
+  if (result.flow_id && result.flow_id !== nodeStore.flow_id) {
+    const previousPath = flowSettings.value?.path ?? null;
+    nodeStore.setFlowId(result.flow_id);
+    emit("refreshFlow");
+    projectStore.onSourceChanged();
+    await Promise.all([catalogStore.loadAllFlows(), catalogStore.loadTree()]);
+    await recordRelocatedFlowAsRecent(previousPath);
+    await reconcileWithCatalog();
+    return;
+  }
   emit("flowSaved", nodeStore.flow_id);
   projectStore.onSourceChanged();
   await loadFlowSettings();

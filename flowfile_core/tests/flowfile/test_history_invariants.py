@@ -576,6 +576,27 @@ class TestInsertOnEdge:
         )
         insert_node_on_edge(graph, node_id, connection)
 
+    def test_conflicting_source_output_is_refused_without_changes(self):
+        from flowfile_core.flowfile.flow_graph import add_connection
+
+        graph = build_rich_graph(8204)
+        add_connection(
+            graph,
+            input_schema.NodeConnection.create_from_simple_input(3, 9, output_handle="output-1"),
+        )
+        manual_input(graph, 50, [{"a": 1}])
+        connect(graph, 50, 9)
+        before = in_scope(graph)
+        edge = input_schema.NodeConnection.create_from_simple_input(50, 9)
+
+        with pytest.raises(HTTPException) as refused:
+            insert_node_on_edge(graph, 3, edge)
+
+        assert refused.value.status_code == 422
+        assert "already reads" in str(refused.value.detail)
+        assert in_scope(graph) == before
+        assert edge_bookkeeping_errors(graph) == []
+
     def test_positional_inputs_keep_their_order(self):
         graph = build_rich_graph(8200)
 

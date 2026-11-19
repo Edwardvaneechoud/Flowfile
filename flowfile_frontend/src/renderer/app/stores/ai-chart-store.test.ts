@@ -1,5 +1,4 @@
-// Unit tests for `useAiChartStore`: one request in flight, cancel, supersede, the
-// provider it targets and how failures come back.
+// `useAiChartStore`: one request per owner, cancel, supersede, its target and its failures.
 
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -123,6 +122,28 @@ describe("generate", () => {
     expect(store.loading).toBe(true);
     second.resolve(okResponse);
     expect(await secondResult).toEqual({ status: "ok", response: okResponse });
+    expect(store.loading).toBe(false);
+  });
+
+  it("keeps each owner's request apart: one bar never stops another's", async () => {
+    const first = pending();
+    pending();
+    const store = useAiChartStore();
+    const viewer = Symbol("viewer");
+    const dialog = Symbol("dialog");
+
+    const viewerResult = store.generate({ tableId: 1, prompt: "first" }, viewer);
+    const dialogResult = store.generate({ tableId: 2, prompt: "second" }, dialog);
+    expect(first.signal()?.aborted).toBe(false);
+
+    store.cancel(dialog);
+    expect(await dialogResult).toEqual({ status: "cancelled" });
+    expect(store.isLoading(dialog)).toBe(false);
+    expect(store.isLoading(viewer)).toBe(true);
+    expect(first.signal()?.aborted).toBe(false);
+
+    first.resolve(okResponse);
+    expect(await viewerResult).toEqual({ status: "ok", response: okResponse });
     expect(store.loading).toBe(false);
   });
 

@@ -25,6 +25,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageType, FullCloudStorageConnection
+from flowfile_core.secret_manager import credential_sources
 from shared.cloud_storage.browse import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
@@ -40,6 +41,10 @@ router = APIRouter()
 
 # AuthSettingsInput.connection_name defaults to the string "None"; treat it as unset.
 _UNSET_CONNECTION_NAMES = (None, "", "None")
+PROVIDER_CONNECTION = (
+    "{} is a connection whose keys never reach this server, so browsing and table checks are not available for "
+    "it: type the path."
+)
 
 
 class CloudBrowseEntry(BaseModel):
@@ -94,6 +99,8 @@ def _resolve_connection(
         except CloudConnectionNotAllowedError as exc:
             raise _error(400, "CONNECTION_NOT_ALLOWED", str(exc)) from None
         if connection is None:
+            if credential_sources.connection(user_id, "cloud", connection_name) is not None:
+                raise _error(422, "PROVIDER_CONNECTION", PROVIDER_CONNECTION.format(connection_name))
             # Same 404 whether it is missing or simply not shared with this user.
             raise _error(404, "CONNECTION_NOT_FOUND", "Cloud connection not found.")
         return connection

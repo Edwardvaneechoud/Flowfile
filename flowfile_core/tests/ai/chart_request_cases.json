@@ -298,6 +298,28 @@
       }
     },
     {
+      "name": "sorted heatmap with the category on y",
+      "verdict": "accepted",
+      "request": {
+        "mark": "rect",
+        "x": { "field": "order_date", "timeUnit": "month" },
+        "y": { "field": "region" },
+        "color": { "field": "amount", "aggregate": "sum" },
+        "sort": "descending"
+      }
+    },
+    {
+      "name": "sorted heatmap with the time axis on y",
+      "verdict": "rejected",
+      "request": {
+        "mark": "rect",
+        "x": { "field": "region" },
+        "y": { "field": "order_date", "timeUnit": "month" },
+        "color": { "field": "amount", "aggregate": "sum" },
+        "sort": "descending"
+      }
+    },
+    {
       "name": "sort with no category axis",
       "verdict": "rejected",
       "request": {

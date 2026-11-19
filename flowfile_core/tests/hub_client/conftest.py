@@ -5,20 +5,26 @@ fields, rotating refresh tokens), ``POST /hub/devices``, which upserts on the ac
 hub does, ``GET /hub/compute-nodes`` (whatever ``nodes`` holds) and ``POST /hub/node-tokens``, which signs a ``run``
 token for an enabled node and refuses as the hub does; and the one a team node asks, ``GET /hub/exchange-store``
 (``exchange_store``, a 404 while it is ``None``). Its tokens are real JWTs with an ``exp`` claim, signed with a key
-only the fake knows. ``FakeHubWithCatalog`` adds the hub's catalog namespaces and tables, the credentials the
-hub vends to a run over them and the run reports it receives; ``SealingHubCatalog`` seals what it vends to the nodes a
-run names. ``serve_fake`` serves a fake over real HTTP on a
-loopback port, for tests in which nothing may stand between the client and the wire.
+only the fake knows. It also offers the sign-in through the browser (``browser_sign_in`` in its info):
+``authorize`` plays the browser on ``/hub/authorize`` and answers the redirect, and ``POST /hub/token`` takes the
+``authorization_code`` and ``refresh_token`` grants (opaque refresh tokens, rotated on every refresh,
+``invalid_grant`` for a spent or ended one), ``POST /hub/token/revoke`` ends one. ``FakeHubWithCatalog`` adds the
+hub's catalog namespaces and tables, the credentials the hub vends to a run over them and the run reports it
+receives; ``SealingHubCatalog`` seals what it vends to the nodes a run names. ``serve_fake`` serves a fake over real
+HTTP on a loopback port, for tests in which nothing may stand between the client and the wire.
 """
 
+import base64
+import hashlib
 import json
+import secrets
 import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 import httpx
 import jwt
@@ -74,6 +80,13 @@ class FakeHub:
         self.node_token_ttl = 3600
         self.minted: list[dict] = []
         self.exchange_store: dict | None = None
+        self.info["browser_sign_in"] = True
+        self.full_names: dict[str, str] = {"ana": "Ana Lima"}
+        self.codes: dict[str, dict] = {}
+        self.browser_refresh: dict[str, str] = {}
+        self.browser_refresh_ttl = 30 * 24 * 3600
+        self.revoked: list[str] = []
+        self.signed_out: set[str] = set()
         self._issued = 0
 
     def http(self) -> httpx.Client:
@@ -93,13 +106,81 @@ class FakeHub:
             "token_type": "bearer",
         }
 
+    def authorize(self, authorize_url: str, username: str = "ana", *, deny: bool = False) -> str:
+        """Play the browser on the hub's sign-in page: check the request as the hub does, sign ``username`` in (or
+        say no with ``deny``) and answer the URL the hub redirects the browser to."""
+        query = {k: v[0] for k, v in parse_qs(urlsplit(authorize_url).query).items()}
+        assert urlsplit(authorize_url).path == "/hub/authorize"
+        assert query["response_type"] == "code" and query["client_id"] == client.DESKTOP_CLIENT_ID
+        assert query["code_challenge_method"] == "S256" and len(query["code_challenge"]) == 43
+        assert query["redirect_uri"].startswith("http://127.0.0.1:") and query["redirect_uri"].endswith("/callback")
+        assert query["state"] and query["device_name"]
+        if deny:
+            answer = {"error": "access_denied", "state": query["state"]}
+        else:
+            code = secrets.token_urlsafe(16)
+            self.codes[code] = {
+                "user": username,
+                "challenge": query["code_challenge"],
+                "redirect_uri": query["redirect_uri"],
+                "used": False,
+            }
+            answer = {"code": code, "state": query["state"]}
+        return f"{query['redirect_uri']}?{urlencode(answer)}"
+
+    def _browser_grant(self, user: str) -> dict:
+        refresh = secrets.token_urlsafe(24)
+        self.browser_refresh[refresh] = user
+        return {
+            "access_token": self._token(user, "access", self.access_ttl),
+            "refresh_token": refresh,
+            "token_type": "bearer",
+            "expires_in": self.access_ttl,
+            "refresh_expires_in": self.browser_refresh_ttl,
+            "user": {"username": user, "full_name": self.full_names.get(user)},
+        }
+
+    @staticmethod
+    def _invalid_grant(sentence: str) -> httpx.Response:
+        return httpx.Response(400, json={"error": "invalid_grant", "error_description": sentence})
+
+    def _token_grant(self, form: dict) -> httpx.Response:
+        if form.get("client_id") != client.DESKTOP_CLIENT_ID:
+            return httpx.Response(400, json={"error": "invalid_client", "error_description": "Unknown client."})
+        if form.get("grant_type") == "refresh_token":
+            user = self.browser_refresh.pop(form.get("refresh_token", ""), None)
+            if user is None:
+                return self._invalid_grant("This sign-in has ended; sign in again.")
+            return httpx.Response(200, json=self._browser_grant(user))
+        if form.get("grant_type") != "authorization_code":
+            return httpx.Response(400, json={"error": "unsupported_grant_type", "error_description": "No."})
+        granted = self.codes.get(form.get("code", ""))
+        if granted is None or granted["used"]:
+            return self._invalid_grant("This sign-in code is not valid; start again.")
+        granted["used"] = True
+        if form.get("redirect_uri") != granted["redirect_uri"]:
+            return self._invalid_grant("The redirect address does not match the sign-in.")
+        digest = hashlib.sha256(form.get("code_verifier", "").encode()).digest()
+        if base64.urlsafe_b64encode(digest).rstrip(b"=").decode() != granted["challenge"]:
+            return self._invalid_grant("The code verifier does not match the sign-in.")
+        return httpx.Response(200, json=self._browser_grant(granted["user"]))
+
     def _bearer_user(self, request: httpx.Request) -> str | None:
         token = request.headers.get("Authorization", "").removeprefix("Bearer ")
         try:
             claims = jwt.decode(token, _KEY, algorithms=["HS256"])
         except jwt.PyJWTError:
             return None
-        return claims["sub"] if claims.get("type") == "access" else None
+        if claims.get("type") != "access" or claims["sub"] in self.signed_out:
+            return None
+        return claims["sub"]
+
+    def sign_out_everywhere(self, user: str) -> None:
+        """End every sign-in of ``user`` on the hub: their refresh tokens and the access tokens already issued."""
+        self.signed_out.add(user)
+        for token, owner in list(self.browser_refresh.items()):
+            if owner == user:
+                del self.browser_refresh[token]
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.calls.append((request.method, request.url.path))
@@ -119,6 +200,15 @@ class FakeHub:
             if user is None:
                 return httpx.Response(401, json={"detail": "Invalid refresh token"})
             return httpx.Response(200, json=self._pair(user))
+        if request.method == "POST" and path == "/hub/token":
+            if not self.info.get("browser_sign_in"):
+                return httpx.Response(404, json={"detail": "Not Found"})
+            return self._token_grant({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+        if request.method == "POST" and path == "/hub/token/revoke":
+            form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+            self.revoked.append(form.get("token", ""))
+            self.browser_refresh.pop(form.get("token", ""), None)
+            return httpx.Response(200, json={})
         if request.method == "POST" and path == "/hub/devices":
             user = self._bearer_user(request)
             if user is None:

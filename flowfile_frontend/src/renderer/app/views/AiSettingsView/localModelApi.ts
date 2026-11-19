@@ -320,6 +320,8 @@ export const streamLocalModelInstall = async (
   });
 
   if (!response.ok || !response.body) {
+    // A 401 renews the session, or ends it when the server refuses that too.
+    if (response.status === 401) await authService.refreshAccessToken();
     let detail = `HTTP ${response.status}`;
     try {
       const data = await response.json();

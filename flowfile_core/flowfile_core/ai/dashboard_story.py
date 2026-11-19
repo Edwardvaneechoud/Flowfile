@@ -36,11 +36,11 @@ from flowfile_core.ai.chart_request import (
     ChartRequest,
     FieldRef,
     _call,
-    _parse_json_payload,
     _record,
     _text,
 )
 from flowfile_core.ai.dashboard_plan import MAX_CHECKS, MAX_KPIS, SURFACE, PlannedKpi, PlannedRelation
+from flowfile_core.ai.json_payload import parse_json_payload
 from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.scheduler import RateLimitScheduler
 
@@ -788,7 +788,7 @@ async def write_story(
             if best is None:
                 return degraded(err, err_message)
             break
-        payload, parse_err = _parse_json_payload(content)
+        payload, parse_err = parse_json_payload(content, extract_object=True)
         if parse_err is not None:
             last_reason = parse_err
             last_problem = (

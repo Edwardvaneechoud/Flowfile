@@ -46,6 +46,8 @@ const blockStrayFileDrop = (event: DragEvent) => {
 window.addEventListener("dragover", blockStrayFileDrop);
 window.addEventListener("drop", blockStrayFileDrop);
 
+authService.followSession();
+
 setupService
   .getSetupStatus()
   .then((status) => {

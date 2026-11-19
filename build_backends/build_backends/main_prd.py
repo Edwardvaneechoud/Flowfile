@@ -20,15 +20,13 @@ def wait_for_endpoint(url, timeout=60):
     return False
 
 
-def shutdown_service():
-    """Shutdown the service gracefully using the shutdown endpoint."""
+def shutdown_service(process: subprocess.Popen) -> bool:
+    """Stop the service gracefully with a signal; its ``/shutdown`` route needs the internal token."""
+    process.terminate()
     try:
-        requests.post("http://0.0.0.0:63578/shutdown", headers={"accept": "application/json"}, data="")
-        print("Shutdown request sent, waiting for service to stop...")
-        time.sleep(1)
+        process.wait(timeout=10)
         return True
-    except requests.exceptions.RequestException as e:
-        print(f"Error shutting down service: {e}")
+    except subprocess.TimeoutExpired:
         return False
 
 
@@ -46,7 +44,7 @@ def measure_startup_time(executable_path):
 
     elapsed_time = time.time() - start_time
 
-    if not shutdown_service():
+    if not shutdown_service(process):
         print("Failed to shutdown service gracefully, killing process...")
         process.kill()
         time.sleep(1)

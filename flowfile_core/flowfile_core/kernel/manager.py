@@ -352,6 +352,7 @@ def _validate_custom_image(uri: str) -> None:
 
 _BASE_PORT = 19000
 _PORT_RANGE = 1000  # 19000-19999
+_KERNEL_PUBLISH_HOST = "127.0.0.1"
 _HEALTH_TIMEOUT = 120
 _HEALTH_POLL_INTERVAL = 2
 _START_FLIGHT_GRACE = 600
@@ -378,10 +379,10 @@ def _is_docker_mode() -> bool:
 
 
 def _is_port_available(port: int) -> bool:
-    """Check whether a TCP port is free on localhost."""
+    """Check whether a TCP port is free on the address kernels are published on."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
-            s.bind(("127.0.0.1", port))
+            s.bind((_KERNEL_PUBLISH_HOST, port))
             return True
         except OSError:
             return False
@@ -626,11 +627,14 @@ class KernelManager:
         """Return the base URL for communicating with a kernel container.
 
         In Docker-in-Docker mode, use the container name on the shared
-        Docker network.  Otherwise, use localhost with the mapped host port.
+        Docker network.  Otherwise, use the host port, which is published on
+        ``127.0.0.1`` only (``_build_run_kwargs``). The address is spelled out
+        rather than ``localhost``: a name that resolves to ``::1`` first would
+        try an address nothing listens on before the one that answers.
         """
         if self._docker_network:
             return f"http://flowfile-kernel-{kernel.id}:9999"
-        return f"http://localhost:{kernel.port}"
+        return f"http://{_KERNEL_PUBLISH_HOST}:{kernel.port}"
 
     def to_kernel_path(self, local_path: str) -> str:
         """Translate a local filesystem path to the path visible inside a kernel container.
@@ -754,7 +758,8 @@ class KernelManager:
                 self._shared_volume: {"bind": "/shared", "mode": "rw"},
                 self._catalog_tables_dir: {"bind": "/catalog_tables", "mode": "rw"},
             }
-            run_kwargs["ports"] = {"9999/tcp": kernel.port}
+            # Loopback only: core on this machine is the kernel's one client.
+            run_kwargs["ports"] = {"9999/tcp": (_KERNEL_PUBLISH_HOST, kernel.port)}
             run_kwargs["extra_hosts"] = {"host.docker.internal": "host-gateway"}
 
         return run_kwargs

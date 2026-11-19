@@ -24,6 +24,7 @@ class OpenRouterProvider(LiteLLMProvider):
         "cmd_k": "anthropic/claude-haiku-4.5",
         "ghost_node": "anthropic/claude-haiku-4.5",
         "explain": "anthropic/claude-sonnet-5.5",
+        "chart": "anthropic/claude-sonnet-5.5",
         "agent_complex": "anthropic/claude-opus-4.7",
         # ``agent_staged`` is the surface built specifically to make
         # smaller open-weights models viable: one tool per LLM round,

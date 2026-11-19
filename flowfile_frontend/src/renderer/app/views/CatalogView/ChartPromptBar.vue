@@ -37,7 +37,7 @@
       <span class="chart-prompt__keys">⌘/Ctrl+Enter</span>
     </div>
 
-    <div v-if="store.loading" class="chart-prompt__line is-busy" data-testid="chart-prompt-busy">
+    <div v-if="busy" class="chart-prompt__line is-busy" data-testid="chart-prompt-busy">
       <el-icon class="is-loading"><Loading /></el-icon>
       <span>Building the chart…</span>
       <button
@@ -103,7 +103,7 @@
     </div>
 
     <div
-      v-if="carryNotice && !store.loading"
+      v-if="carryNotice && !busy"
       class="chart-prompt__line is-warning"
       data-testid="chart-prompt-carry-notice"
     >
@@ -116,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { Loading } from "@element-plus/icons-vue";
 import type { IChart } from "@kanaries/graphic-walker/interfaces";
 import type { ChartGenerationResponse } from "../../api/ai.api";
@@ -156,6 +156,8 @@ const emit = defineEmits<{
 
 const aiStore = useAiStore();
 const store = useAiChartStore();
+const owner = Symbol("chart-prompt-bar");
+const busy = computed(() => store.isLoading(owner));
 
 const prompt = ref("");
 const ready = ref(false);
@@ -164,8 +166,7 @@ const message = ref<ChartPromptMessage | null>(null);
 const explanation = ref<string | null>(null);
 const warnings = ref<string[]>([]);
 const carryNotice = ref<ChartPromptMessage | null>(null);
-// An answer that arrived after a hand edit, kept so "Apply anyway" can still use it; shallow so the
-// handle stays the builder's own object and compares equal to it.
+// An answer held after a hand edit; shallow, so the handle stays the builder's own object.
 const held = shallowRef<{ response: ChartGenerationResponse; handle: ChartBuilderHandle } | null>(
   null,
 );
@@ -257,11 +258,10 @@ const submit = async (): Promise<void> => {
   const plan = planRequest(current, { fields, gw });
   clearResult();
 
-  const outcome = await store.generate({
-    tableId: props.tableId,
-    prompt: text,
-    currentChart: plan.currentChart,
-  });
+  const outcome = await store.generate(
+    { tableId: props.tableId, prompt: text, currentChart: plan.currentChart },
+    owner,
+  );
   if (unmounted || outcome.status === "superseded") return;
   if (outcome.status === "cancelled") {
     message.value = CANCELLED_MESSAGE;
@@ -305,23 +305,38 @@ const applyHeld = () => {
   apply(pending.response, pending.handle);
 };
 
-const onCancel = () => store.cancel();
+const onCancel = () => store.cancel(owner);
 
 // Graphic Walker undoes the chart on Ctrl+Z anywhere in the page; in the prompt it is the text's undo.
 const keepUndoInField = (event: KeyboardEvent) => {
   if ((event.ctrlKey || event.metaKey) && /^[zy]$/i.test(event.key)) event.stopPropagation();
 };
 
+const stopPolling = () => {
+  if (pollTimer !== null) clearInterval(pollTimer);
+  pollTimer = null;
+};
+
+// The builder is read only while the bar shows: a hidden bar has nothing to keep current.
+watch(
+  visible,
+  (shown) => {
+    stopPolling();
+    if (!shown) return;
+    refresh();
+    pollTimer = setInterval(refresh, POLL_MS);
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   if (!aiStore.providersLoading) void aiStore.loadProviders();
-  refresh();
-  pollTimer = setInterval(refresh, POLL_MS);
 });
 
 onBeforeUnmount(() => {
   unmounted = true;
-  if (pollTimer !== null) clearInterval(pollTimer);
-  if (store.loading) store.cancel();
+  stopPolling();
+  store.cancel(owner);
 });
 </script>
 

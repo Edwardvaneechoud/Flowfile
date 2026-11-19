@@ -6,6 +6,7 @@ import { mountIn, text } from "../../__fixtures__/mount";
 const mocks = vi.hoisted(() => ({
   getSignInMethod: vi.fn(),
   takeHubSignInError: vi.fn(),
+  takeSessionEnded: vi.fn(),
   startHubSignIn: vi.fn(),
   replace: vi.fn(),
   push: vi.fn(),
@@ -41,6 +42,7 @@ const throughHub = {
 beforeEach(() => {
   mocks.getSignInMethod.mockReset();
   mocks.takeHubSignInError.mockReset().mockReturnValue(null);
+  mocks.takeSessionEnded.mockReset().mockReturnValue(false);
   mocks.startHubSignIn.mockReset();
   mocks.replace.mockReset().mockResolvedValue(undefined);
   mocks.push.mockReset().mockResolvedValue(undefined);
@@ -152,14 +154,50 @@ describe("LoginView", () => {
     expect(find("login-hub")).toBeNull();
   });
 
-  it("shows the password form at once, before the server answers how it signs people in", async () => {
+  it("shows no password form before the server answers how it signs people in", async () => {
     mocks.getSignInMethod.mockReturnValue(new Promise(() => undefined));
 
     await mount();
 
-    expect(host.querySelector("form #username")).not.toBeNull();
-    expect(host.querySelector("form input[type=password]")).not.toBeNull();
+    expect(host.querySelector("form, input")).toBeNull();
     expect(find("login-hub")).toBeNull();
+  });
+
+  it("says the sign-in ended and offers the hub's button, starting nothing by itself", async () => {
+    mocks.takeSessionEnded.mockReturnValue(true);
+    mocks.query = { redirect: "/main/catalog?tab=runs" };
+    mocks.getSignInMethod.mockResolvedValue(throughHub);
+
+    await mount();
+
+    expect(text(find("login-ended"))).toBe("Your sign-in has ended. Sign in again to continue.");
+    expect(text(find("login-hub"))).toBe("Sign in with hub.example.com:8443");
+    expect(mocks.startHubSignIn).not.toHaveBeenCalled();
+    expect(mocks.replace).not.toHaveBeenCalled();
+
+    (find("login-hub") as HTMLElement).click();
+    expect(mocks.startHubSignIn).toHaveBeenCalledWith(
+      "https://hub.example.com:8443/open/12",
+      "/main/catalog?tab=runs",
+    );
+  });
+
+  it("says the sign-in ended above the password form on a server that takes passwords", async () => {
+    mocks.takeSessionEnded.mockReturnValue(true);
+    mocks.getSignInMethod.mockResolvedValue({ method: "password" });
+
+    await mount();
+
+    expect(text(find("login-ended"))).toBe("Your sign-in has ended. Sign in again to continue.");
+    expect(host.querySelector("form #username")).not.toBeNull();
+  });
+
+  it("says nothing of an ended sign-in to a tab that was not sent here for it", async () => {
+    mocks.getSignInMethod.mockResolvedValue(throughHub);
+
+    await mount();
+
+    expect(find("login-ended")).toBeNull();
   });
 
   it("shows the server's sentence for a sign-in through the hub it refused", async () => {

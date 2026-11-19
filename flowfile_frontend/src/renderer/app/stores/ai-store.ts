@@ -187,8 +187,7 @@ export const useAiStore = defineStore("ai", () => {
   // A model picked for one task, keyed by surface (``chart``, ``cron``, …); absent → the main pick.
   const surfaceModels = ref<Record<string, SurfaceModel>>({});
 
-  // Sending data values to the AI: the user's choice within the server's rule (from core).
-  // Every AI feature that sends data reads ``sendsData``; core enforces the rule regardless.
+  // Sending data values: the user's choice within the server's rule, which core enforces.
   const shareData = ref<boolean>(true);
   const sendDataAllowed = ref<boolean>(true);
   const sendsData = computed(() => shareData.value && sendDataAllowed.value);

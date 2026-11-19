@@ -2,8 +2,7 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 import { coreRefusals, type ChartRequest, type ColumnKind } from "./chartRequest";
 
-// The cases core's suite reads too (`flowfile_core/tests/ai/test_chart_request_cases.py`): the
-// browser's mirror of core's rules must give each request core's verdict.
+// Core's suite reads these cases too; the browser's mirror must give each one core's verdict.
 const CASES_FILE = new URL(
   "../../../../../../flowfile_core/tests/ai/chart_request_cases.json",
   import.meta.url,
