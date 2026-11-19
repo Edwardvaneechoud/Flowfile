@@ -579,15 +579,32 @@ def _visualization_entry(db: Session, viz: CatalogVisualization) -> dict:
     return entry
 
 
-def visualizations_manifest_data(db: Session, owner_id: int) -> dict:
-    """visualizations.yaml mirrors the owner's saved charts keyed by stable ``viz_uuid``: the
+def _stems(named: list[tuple[str, str | None]], fallback: str) -> dict[str, str]:
+    """``{uuid: file stem}`` for ``(uuid, name)`` pairs, named in uuid order as flows and notebooks are: the
+    name as a stem, and for one already taken (compared casefolded) the stem with the start of the uuid."""
+    stems: dict[str, str] = {}
+    taken: set[str] = set()
+    for object_uuid, name in sorted(named, key=lambda pair: pair[0]):
+        base = stem = safe_stem(name, fallback)
+        used = 8
+        while stem.casefold() in taken:
+            stem = f"{base}_{object_uuid[:used]}"
+            used += 4
+        taken.add(stem.casefold())
+        stems[object_uuid] = stem
+    return stems
+
+
+def export_visualizations(db: Session, owner_id: int) -> dict[str, str]:
+    """``{path: text}`` of the owner's saved charts, one file each, keyed inside by stable ``viz_uuid``: the
     GraphicWalker spec plus a portable source (``{catalog, schema}`` namespace + source table by
     name, or inline SQL). The client-side PNG thumbnail is never committed — it re-exports on the
     next view, like table data and model blobs are never committed."""
     rows = db.query(CatalogVisualization).filter(CatalogVisualization.created_by == owner_id).all()
-    entries = [_visualization_entry(db, v) for v in rows]
-    entries.sort(key=lambda e: (e["name"], e["viz_uuid"]))
-    return {"visualizations": entries}
+    stems = _stems([(v.viz_uuid, v.name) for v in rows], "chart")
+    return {
+        f"visualizations/{stems[v.viz_uuid]}.visualization.yaml": dump_yaml(_visualization_entry(db, v)) for v in rows
+    }
 
 
 def _portable_layout(db: Session, layout: dict) -> dict:
@@ -623,14 +640,13 @@ def _dashboard_entry(db: Session, dashboard: CatalogDashboard) -> dict:
     return entry
 
 
-def dashboards_manifest_data(db: Session, owner_id: int) -> dict:
-    """dashboards.yaml mirrors the owner's dashboards keyed by stable ``dashboard_uuid``. Tiles
-    reference their visualization by portable ``viz_uuid`` and filters their datasource by portable
+def export_dashboards(db: Session, owner_id: int) -> dict[str, str]:
+    """``{path: text}`` of the owner's dashboards, one file each, keyed inside by stable ``dashboard_uuid``.
+    Tiles reference their visualization by portable ``viz_uuid`` and filters their datasource by portable
     table name, so the canvas re-links to local ids on another machine."""
     rows = db.query(CatalogDashboard).filter(CatalogDashboard.created_by == owner_id).all()
-    entries = [_dashboard_entry(db, d) for d in rows]
-    entries.sort(key=lambda e: (e["name"], e["dashboard_uuid"]))
-    return {"dashboards": entries}
+    stems = _stems([(d.dashboard_uuid, d.name) for d in rows], "dashboard")
+    return {f"dashboards/{stems[d.dashboard_uuid]}.dashboard.yaml": dump_yaml(_dashboard_entry(db, d)) for d in rows}
 
 
 # --- notebooks ---------------------------------------------------------------

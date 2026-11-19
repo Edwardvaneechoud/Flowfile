@@ -33,8 +33,8 @@ SPECS = {
     "tables": ("tables.yaml", "tables", "name", ("sql_query", "SELECT 2 AS id")),
     "models": ("models.yaml", "models", "version", ("tags", ["b"])),
     "kernels": ("kernels.yaml", "kernels", "id", ("name", "renamed")),
-    "visualizations": ("visualizations.yaml", "visualizations", "viz_uuid", ("name", "renamed")),
-    "dashboards": ("dashboards.yaml", "dashboards", "dashboard_uuid", ("name", "renamed")),
+    "visualizations": ("visualizations/kinds_viz.visualization.yaml", None, "viz_uuid", ("name", "renamed")),
+    "dashboards": ("dashboards/kinds_dashboard.dashboard.yaml", None, "dashboard_uuid", ("name", "renamed")),
     "notebook": ("notebooks/kinds_notebook.notebook.yaml", None, "notebook_uuid", ("description", "changed")),
 }
 NEW = "0d0d0d0d-0000-4000-8000-000000000001"
@@ -64,6 +64,7 @@ def _edit(root, kind: str, change: str) -> None:
             old_key = data[key]
             data[key] = new_key
             data.update({"name": "nb_new"} if kind == "notebook" else {})
+            data.update({"name": f"new_{kind}"} if kind in ("visualizations", "dashboards") else {})
             data.update(
                 {"catalog_name": "flow_new", "flowfile_name": "flow_new", "flowfile_id": deterministic_flow_id(NEW)}
                 if kind == "flow"
@@ -83,7 +84,7 @@ def _edit(root, kind: str, change: str) -> None:
     elif change == "added":
         item = dict(items[-1], **{key: new_key})
         item.update({"schemas": []} if kind == "namespaces" else {})
-        item.update({"name": f"new_{kind}"} if kind in ("kernels", "visualizations", "dashboards") else {})
+        item.update({"name": f"new_{kind}"} if kind == "kernels" else {})
         items.append(item)
     elif change == "modified":
         items[-1][edit[0]] = edit[1]
