@@ -7,6 +7,7 @@ ids on another machine. The base64 PNG thumbnail is never committed. These tests
 directly.
 """
 
+import base64
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -18,7 +19,19 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogDashboard, CatalogTable, CatalogVisualization
 from flowfile_core.project import project_sync
 from flowfile_core.project.service import write_export
-from flowfile_core.schemas.catalog_schema import DashboardKpi, DashboardLayout, DashboardTile
+from flowfile_core.schemas.catalog_schema import (
+    DashboardChartFormat,
+    DashboardColorAssignment,
+    DashboardFilter,
+    DashboardKpi,
+    DashboardKpiTrend,
+    DashboardLayout,
+    DashboardTab,
+    DashboardTableColumn,
+    DashboardTableConfig,
+    DashboardTile,
+    DashboardTileImage,
+)
 
 OWNER = 1
 
@@ -177,13 +190,16 @@ def test_dashboard_round_trips_and_relinks_tiles(tmp_path):
     project_sync.close_project(OWNER)
     _clear_viz_dashboards()
     viz_id, vuuid = _make_viz("dash-chart", source_type="sql", sql_query="SELECT 1")
-    layout = DashboardLayout(tiles=[DashboardTile(id="tile-1", type="viz", viz_id=viz_id, x=0, y=0, w=6, h=4)])
-    _, duuid = _make_dashboard("board", layout)
+    tile_model = DashboardTile(
+        id="tile-1", type="viz", viz_id=viz_id, title="Revenue", show_title=False, x=0, y=0, w=6, h=4
+    )
+    _, duuid = _make_dashboard("board", DashboardLayout(tiles=[tile_model]))
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Dash", OWNER)
         tile = _dash_yaml(root)[duuid]["layout"]["tiles"][0]
         assert tile["viz_uuid"] == vuuid and "viz_id" not in tile  # portable tile reference
+        assert (tile["title"], tile["show_title"]) == ("Revenue", False)
 
         dash_bytes = (root / "dashboards.yaml").read_bytes()
 
@@ -197,8 +213,230 @@ def test_dashboard_round_trips_and_relinks_tiles(tmp_path):
             assert new_viz is not None and dashboard is not None
             stored_tile = json.loads(dashboard.layout_json)["tiles"][0]
             assert stored_tile["viz_id"] == new_viz.id and "viz_uuid" not in stored_tile
+            assert (stored_tile["title"], stored_tile["show_title"]) == ("Revenue", False)
         write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "dashboard must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_chart_tile_format_round_trips(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    viz_id, vuuid = _make_viz("format-chart", source_type="sql", sql_query="SELECT 1 AS amount")
+    chart_format = DashboardChartFormat(number_format=",.2f", time_format="%Y-%m-%d", y_title="Revenue")
+    layout = DashboardLayout(
+        tiles=[
+            DashboardTile(id="fmt-1", type="viz", viz_id=viz_id, chart_format=chart_format, x=0, y=0, w=6, h=4),
+            DashboardTile(id="fmt-2", type="viz", viz_id=viz_id, x=6, y=0, w=6, h=4),
+        ]
+    )
+    _, duuid = _make_dashboard("format-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Format", OWNER)
+        tiles = _dash_yaml(root)[duuid]["layout"]["tiles"]
+        assert tiles[0]["chart_format"] == chart_format.model_dump()
+        assert tiles[1]["chart_format"] is None
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = json.loads(dashboard.layout_json)["tiles"]
+            assert DashboardChartFormat.model_validate(stored[0]["chart_format"]) == chart_format
+            assert stored[1]["chart_format"] is None
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "chart formats must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_tile_note_round_trips(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    viz_id, _ = _make_viz("note-chart", source_type="sql", sql_query="SELECT 1 AS amount")
+    note = "**Revenue** excludes refunds.\n\nSee [the definition](https://example.com)."
+    layout = DashboardLayout(
+        tiles=[
+            DashboardTile(id="note-1", type="viz", viz_id=viz_id, note_md=note, x=0, y=0, w=6, h=4),
+            DashboardTile(id="note-2", type="viz", viz_id=viz_id, x=6, y=0, w=6, h=4),
+        ]
+    )
+    _, duuid = _make_dashboard("note-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Notes", OWNER)
+        tiles = _dash_yaml(root)[duuid]["layout"]["tiles"]
+        assert [t["note_md"] for t in tiles] == [note, None]
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = json.loads(dashboard.layout_json)["tiles"]
+            assert [t["note_md"] for t in stored] == [note, None]
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "tile notes must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_image_tile_round_trips_with_its_bytes(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    png = "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 40).decode()
+    svg = "data:image/svg+xml;base64," + base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg"/>').decode()
+    layout = DashboardLayout(
+        tiles=[
+            DashboardTile(
+                id="img-1", type="image", image=DashboardTileImage(data_url=png, alt="Logo"), x=0, y=0, w=8, h=3
+            ),
+            DashboardTile(
+                id="img-2", type="image", image=DashboardTileImage(data_url=svg, fit="cover"), x=8, y=0, w=8, h=3
+            ),
+            DashboardTile(id="img-3", type="image", x=16, y=0, w=8, h=3),
+        ]
+    )
+    _, duuid = _make_dashboard("image-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Images", OWNER)
+        tiles = _dash_yaml(root)[duuid]["layout"]["tiles"]
+        assert [t["image"] for t in tiles] == [
+            {"data_url": png, "alt": "Logo", "fit": "contain"},
+            {"data_url": svg, "alt": None, "fit": "cover"},
+            None,
+        ]
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = DashboardLayout.model_validate_json(dashboard.layout_json)
+            assert [t.image for t in stored.tiles] == [t.image for t in layout.tiles]
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "image tiles must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_color_assignments_round_trip(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    viz_id, _ = _make_viz("colour-chart", source_type="sql", sql_query="SELECT 'West' AS region")
+    assignments = [
+        DashboardColorAssignment(field="region", value="West", slot=0),
+        DashboardColorAssignment(field="region", value="East", slot=1),
+        DashboardColorAssignment(field="code", value=7, slot=0),
+        DashboardColorAssignment(field="region", value=None, slot=2),
+    ]
+    layout = DashboardLayout(
+        tiles=[DashboardTile(id="col-1", type="viz", viz_id=viz_id, x=0, y=0, w=6, h=4)],
+        color_assignments=assignments,
+    )
+    _, duuid = _make_dashboard("colour-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Colours", OWNER)
+        exported = _dash_yaml(root)[duuid]["layout"]["color_assignments"]
+        assert exported == [a.model_dump() for a in assignments]
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = DashboardLayout.model_validate_json(dashboard.layout_json)
+            assert stored.color_assignments == assignments
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "colours must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_auto_refresh_interval_round_trips(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    _, timed_uuid = _make_dashboard("timed-board", DashboardLayout(auto_refresh_seconds=900))
+    _, static_uuid = _make_dashboard("static-board", DashboardLayout())
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Refresh", OWNER)
+        dashboards = _dash_yaml(root)
+        assert dashboards[timed_uuid]["layout"]["auto_refresh_seconds"] == 900
+        assert dashboards[static_uuid]["layout"]["auto_refresh_seconds"] is None
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            rows = {
+                d.dashboard_uuid: DashboardLayout.model_validate_json(d.layout_json)
+                for d in db.query(CatalogDashboard).filter_by(created_by=OWNER)
+            }
+        assert rows[timed_uuid].auto_refresh_seconds == 900
+        assert rows[static_uuid].auto_refresh_seconds is None
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "the interval must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_layout_without_auto_refresh_imports_with_it_off(tmp_path):
+    """A dashboards.yaml written before the field existed imports and exports again unchanged."""
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    _, duuid = _make_dashboard("old-board", DashboardLayout())
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Old", OWNER)
+        data = yaml.safe_load((root / "dashboards.yaml").read_text(encoding="utf-8"))
+        for entry in data["dashboards"]:
+            entry["layout"].pop("auto_refresh_seconds", None)
+        (root / "dashboards.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            row = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert row is not None
+            assert "auto_refresh_seconds" not in json.loads(row.layout_json)
+            assert DashboardLayout.model_validate_json(row.layout_json).auto_refresh_seconds is None
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)
@@ -210,7 +448,15 @@ def test_kpi_tile_round_trips_and_relinks(tmp_path):
     project_sync.close_project(OWNER)
     _clear_viz_dashboards()
     viz_id, vuuid = _make_viz("kpi-chart", source_type="sql", sql_query="SELECT 1 AS amount")
-    kpi = DashboardKpi(field="amount", agg="sum", label="Revenue", prefix="$", comparison="target", target=100.0)
+    kpi = DashboardKpi(
+        field="amount",
+        agg="sum",
+        label="Revenue",
+        prefix="$",
+        comparison="target",
+        target=100.0,
+        trend=DashboardKpiTrend(field="order_date", grain="quarter"),
+    )
     layout = DashboardLayout(tiles=[DashboardTile(id="kpi-1", type="kpi", viz_id=viz_id, kpi=kpi, x=0, y=0, w=12, h=3)])
     _, duuid = _make_dashboard("kpi-board", layout)
     root = tmp_path / "project"
@@ -219,6 +465,7 @@ def test_kpi_tile_round_trips_and_relinks(tmp_path):
         tile = _dash_yaml(root)[duuid]["layout"]["tiles"][0]
         assert tile["viz_uuid"] == vuuid and "viz_id" not in tile
         assert tile["kpi"] == kpi.model_dump()
+        assert tile["kpi"]["trend"] == {"field": "order_date", "grain": "quarter"}
 
         dash_bytes = (root / "dashboards.yaml").read_bytes()
 
@@ -235,6 +482,178 @@ def test_kpi_tile_round_trips_and_relinks(tmp_path):
             assert DashboardKpi.model_validate(stored_tile["kpi"]) == kpi
         write_export(root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "KPI dashboard must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_table_tile_exports_a_portable_table_and_relinks(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    tname = f"rows_{uuid4().hex[:6]}"
+    table_id = _make_table(tname)
+    config = DashboardTableConfig(
+        columns=[DashboardTableColumn(field="amount", label="Amount", decimals=2)],
+        sort_by=["amount"],
+        sort_direction="descending",
+        page_size=50,
+    )
+    layout = DashboardLayout(
+        tiles=[
+            DashboardTile(id="tbl-1", type="table", table_id=table_id, table=config, x=0, y=0, w=24, h=8),
+            DashboardTile(id="kpi-t", type="kpi", table_id=table_id, kpi=DashboardKpi(agg="count"), x=24, y=0, w=12, h=3),
+        ]
+    )
+    _, duuid = _make_dashboard("table-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Rows", OWNER)
+        tiles = _dash_yaml(root)[duuid]["layout"]["tiles"]
+        for tile in tiles:
+            assert tile["source_table"]["name"] == tname and "table_id" not in tile
+        assert tiles[0]["table"] == config.model_dump()
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        # Rebuild with a new table id: both tiles re-link to it by {catalog, schema, name}.
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        _delete_table(tname)
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            table = SQLAlchemyCatalogRepository(db).get_table_by_name(tname, None)
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert table is not None and dashboard is not None
+            stored = json.loads(dashboard.layout_json)["tiles"]
+            assert [t["table_id"] for t in stored] == [table.id, table.id]
+            assert all("source_table" not in t for t in stored)
+            assert DashboardTableConfig.model_validate(stored[0]["table"]) == config
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "table tiles must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        _delete_table(tname)
+        project_sync.close_project(OWNER)
+
+
+def test_filter_tile_round_trips_with_its_filter(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    region = DashboardFilter(id="f-region", field_name="region", kind="categorical", state={"selected": ["West"]})
+    layout = DashboardLayout(
+        tiles=[DashboardTile(id="ft-1", type="filter", filter_id="f-region", x=0, y=0, w=12, h=2)],
+        filters=[region],
+    )
+    _, duuid = _make_dashboard("filter-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Placed filter", OWNER)
+        exported = _dash_yaml(root)[duuid]["layout"]
+        assert (exported["tiles"][0]["type"], exported["tiles"][0]["filter_id"]) == ("filter", "f-region")
+        assert exported["filters"][0]["id"] == "f-region"
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = json.loads(dashboard.layout_json)
+            assert (stored["tiles"][0]["type"], stored["tiles"][0]["filter_id"]) == ("filter", "f-region")
+            assert stored["filters"][0]["state"] == {"selected": ["West"]}
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "filter tiles must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_tabs_round_trip_with_their_tiles(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    layout = DashboardLayout(
+        tabs=[DashboardTab(id="tab-a", title="Overview"), DashboardTab(id="tab-b", title="Operations")],
+        tiles=[
+            DashboardTile(id="txt-1", type="text", text_md="# A", tab_id="tab-a", x=0, y=0, w=48, h=3),
+            DashboardTile(id="txt-2", type="text", text_md="# B", tab_id="tab-b", x=0, y=0, w=48, h=3),
+        ],
+    )
+    _, duuid = _make_dashboard("tabbed-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Tabs", OWNER)
+        exported = _dash_yaml(root)[duuid]["layout"]
+        assert exported["tabs"] == [{"id": "tab-a", "title": "Overview"}, {"id": "tab-b", "title": "Operations"}]
+        assert [t["tab_id"] for t in exported["tiles"]] == ["tab-a", "tab-b"]
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert dashboard is not None
+            stored = DashboardLayout.model_validate_json(dashboard.layout_json)
+            assert stored.tabs == layout.tabs
+            assert [t.tab_id for t in stored.tiles] == ["tab-a", "tab-b"]
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "tabs must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_layout_without_tabs_imports_as_one_canvas(tmp_path):
+    """A dashboards.yaml written before tabs existed imports with none."""
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    _, duuid = _make_dashboard(
+        "flat-board", DashboardLayout(tiles=[DashboardTile(id="t", type="text", x=0, y=0, w=48, h=3)])
+    )
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Flat", OWNER)
+        data = yaml.safe_load((root / "dashboards.yaml").read_text(encoding="utf-8"))
+        for entry in data["dashboards"]:
+            entry["layout"].pop("tabs", None)
+            for tile in entry["layout"]["tiles"]:
+                tile.pop("tab_id", None)
+        (root / "dashboards.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            row = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert row is not None
+            stored = DashboardLayout.model_validate_json(row.layout_json)
+            assert stored.tabs == []
+            assert [t.tab_id for t in stored.tiles] == [None]
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_table_tile_on_a_deleted_table_exports_no_source(tmp_path):
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    layout = DashboardLayout(tiles=[DashboardTile(id="tbl-gone", type="table", table_id=987654, x=0, y=0, w=24, h=8)])
+    _, duuid = _make_dashboard("gone-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Gone", OWNER)
+        tile = _dash_yaml(root)[duuid]["layout"]["tiles"][0]
+        assert tile["source_table"] is None and "table_id" not in tile
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)
@@ -287,6 +706,50 @@ def test_prune_removes_absent_viz_and_dashboard(tmp_path):
         with get_db_context() as db:
             assert db.query(CatalogVisualization).filter_by(viz_uuid=vuuid).first() is None
             assert db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first() is None
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_filter_on_a_sql_chart_exports_its_viz_uuid_and_relinks(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    viz_id, vuuid = _make_viz("filter-source", source_type="sql", sql_query="SELECT 'West' AS region")
+    region = DashboardFilter(
+        id="f-region",
+        field_name="region",
+        kind="categorical",
+        state={"selected": ["West"]},
+        datasource_viz_id=viz_id,
+        multiple=False,
+    )
+    layout = DashboardLayout(
+        tiles=[DashboardTile(id="tile-1", type="viz", viz_id=viz_id, x=0, y=0, w=6, h=4)], filters=[region]
+    )
+    _, duuid = _make_dashboard("sql-filter-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "SQL filter", OWNER)
+        exported = _dash_yaml(root)[duuid]["layout"]["filters"][0]
+        assert exported["datasource_viz_uuid"] == vuuid and "datasource_viz_id" not in exported
+        assert exported["multiple"] is False
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            new_viz = db.query(CatalogVisualization).filter_by(viz_uuid=vuuid).first()
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert new_viz is not None and dashboard is not None
+            stored = json.loads(dashboard.layout_json)["filters"][0]
+            assert stored["datasource_viz_id"] == new_viz.id and "datasource_viz_uuid" not in stored
+            assert (stored["multiple"], stored["state"]) == (False, {"selected": ["West"]})
+        write_export(root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "chart-sourced filter must round-trip"
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)

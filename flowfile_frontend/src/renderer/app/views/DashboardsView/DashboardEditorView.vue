@@ -13,35 +13,72 @@
           class="editor-name"
           maxlength="120"
         />
-        <SaveStatusIndicator v-if="!isNew" :state="autosaveState" />
-        <SaveStatusIndicator v-else :state="autosaveState" mode="draft" :draft-saved="draftDirty" />
+        <el-input
+          v-if="store.current"
+          v-model="descriptionDraft"
+          size="small"
+          placeholder="Description (optional)"
+          class="editor-description"
+          maxlength="300"
+        />
+        <SaveStatusIndicator :state="autosaveState" />
       </div>
       <div class="editor-toolbar-right">
+        <template v-if="store.current">
+          <el-tooltip :content="UNDO_HINT" placement="bottom" :show-after="300">
+            <span class="history-btn-wrap">
+              <el-button
+                class="history-btn"
+                aria-label="Undo"
+                data-testid="dashboard-undo"
+                :disabled="!canUndo || reverting"
+                @click="onUndo"
+              >
+                <span class="material-icons">undo</span>
+              </el-button>
+            </span>
+          </el-tooltip>
+          <el-tooltip :content="REDO_HINT" placement="bottom" :show-after="300">
+            <span class="history-btn-wrap">
+              <el-button
+                class="history-btn"
+                aria-label="Redo"
+                data-testid="dashboard-redo"
+                :disabled="!canRedo || reverting"
+                @click="onRedo"
+              >
+                <span class="material-icons">redo</span>
+              </el-button>
+            </span>
+          </el-tooltip>
+        </template>
+        <el-select
+          v-if="store.current"
+          v-model="autoRefreshSetting"
+          class="editor-auto-refresh"
+          data-testid="dashboard-auto-refresh-setting"
+          title="How often a viewer's page refreshes the data; a viewer can change or pause it"
+        >
+          <template #prefix>
+            <el-icon><Timer /></el-icon>
+          </template>
+          <el-option
+            v-for="choice in AUTO_REFRESH_CHOICES"
+            :key="String(choice)"
+            :label="choice == null ? 'Auto-refresh off' : `Every ${autoRefreshLabel(choice)}`"
+            :value="choice ?? 0"
+          />
+        </el-select>
         <el-button v-if="store.current" :loading="refreshing" @click="onRefresh">
           <el-icon><Refresh /></el-icon> Refresh
         </el-button>
-        <el-button
-          v-if="!isNew"
-          :disabled="!canRevert || reverting"
-          :loading="reverting"
-          @click="onRevert"
-        >
+        <el-button :disabled="!canRevert || reverting" :loading="reverting" @click="onRevert">
           Revert
-        </el-button>
-        <el-button
-          v-else
-          type="primary"
-          :loading="store.saving"
-          :disabled="!nameDraft.trim()"
-          @click="onCreate"
-        >
-          Create dashboard
         </el-button>
       </div>
     </div>
 
     <AutosaveConflictBanner
-      v-if="!isNew"
       :state="autosaveState"
       resource-label="dashboard"
       :busy="conflictBusy"
@@ -49,13 +86,7 @@
       @overwrite="onConflictOverwrite"
     />
 
-    <el-alert
-      v-if="isNew && restoreAvailable"
-      type="info"
-      :closable="false"
-      show-icon
-      class="draft-banner"
-    >
+    <el-alert v-if="restoreAvailable" type="info" :closable="false" show-icon class="draft-banner">
       <template #title>You have an unfinished dashboard from last time.</template>
       <div class="draft-banner-actions">
         <el-button size="small" type="primary" @click="onRestoreDraft">Continue draft</el-button>
@@ -71,6 +102,9 @@
           @add-text="onAddTextTile"
           @add-separator="onAddSeparatorTile"
           @add-kpi="onAddKpiTile"
+          @add-table="onAddTableTile"
+          @add-image="onAddImageTile"
+          @add-filter="onAddFilterTile"
           @create="sourcePickerOpen = true"
         />
       </aside>
@@ -83,30 +117,58 @@
         </div>
         <template v-else>
           <DashboardFilterBar
+            ref="filterBarRef"
             :filters="store.current.layout.filters"
+            :placed-filter-ids="placedIds"
             mode="edit"
             :datasources-in-use="datasourcesInUse"
             :tiles-by-datasource="tilesByDatasource"
             :viz-tile-ids="vizTileIds"
-            :tile-label="tileLabel"
+            :tile-label="tileLabelOnTab"
             :tile-fields="tileFields"
             :load-tile-fields="loadTileFields"
             :get-column-stats="getColumnStats"
+            :search-values="searchFilterValues"
             :stats-refresh-nonce="statsRefreshNonce"
+            :datasource-of="datasourceOf"
+            :load-datasource="loadDatasource"
+            :no-tile-hints="noTileHints"
             @update:filters="onFiltersChange"
+            @place="onPlaceFilter"
+          />
+          <DashboardTabBar
+            :layout="store.current.layout"
+            :active-tab-id="currentTabId"
+            mode="edit"
+            @select="activeTabId = $event"
+            @update:layout="onLayoutChange"
           />
           <DashboardCanvas
-            :layout="store.current.layout"
+            :key="currentTabId ?? 'canvas'"
+            :layout="tabLayout"
             mode="edit"
             :appearance="appearance"
             :viz-refresh-nonces="vizRefreshNonces"
+            :data-refresh-nonce="statsRefreshNonce"
             :tile-datasource="tileDatasource"
-            @update:layout="onLayoutChange"
+            :get-column-stats="getColumnStats"
+            :search-values="searchFilterValues"
+            :move-targets="moveTargets"
+            :no-tile-hints="noTileHints"
+            @update:layout="onCanvasLayoutChange"
             @edit-viz="onEditViz"
             @add-viz-at="onAddVizAt"
             @add-text-at="onAddTextAt"
             @add-separator-at="onAddSeparatorAt"
             @add-kpi-at="onAddKpiAt"
+            @add-table-at="onAddTableAt"
+            @add-image-at="onAddImageAt"
+            @place-filter-at="onPlaceFilterAt"
+            @add-filter-at="onAddFilterAt"
+            @update:filter="onFilterChange"
+            @edit-filter="(id: string) => filterBarRef?.openEdit(id)"
+            @delete-filter="onDeleteFilter"
+            @move-tile-to-tab="onMoveTileToTab"
           />
         </template>
       </main>
@@ -145,6 +207,7 @@
         v-if="vizCreatorOpen && pendingSource"
         ref="vizCreatorRef"
         :source="pendingSource"
+        :taken-names="pendingTakenNames"
         :appearance="appearance"
         @saved="onVizCreated"
         @cancel="vizCreatorOpen = false"
@@ -157,32 +220,73 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Refresh } from "@element-plus/icons-vue";
+import { Refresh, Timer } from "@element-plus/icons-vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useDashboardsStore } from "../../stores/dashboards-store";
 import { useAuthStore } from "../../stores/auth-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { useDashboardDatasources } from "../../composables/useDashboardDatasources";
 import { useDashboardRefresh } from "../../composables/useDashboardRefresh";
+import { provideDashboardVizCache } from "../../composables/useDashboardVizCache";
+import { provideDashboardColors } from "../../composables/useDashboardColors";
 import { useAutosave } from "../../composables/useAutosave";
 import { classifyAutosaveError } from "../../composables/autosaveEngine";
 import { createLocalDraft, type LocalDraft } from "../../composables/localDraft";
+import { createDashboardCreation, newDashboardName, type CreationPhase } from "./dashboardCreation";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
-import { toPlainJson } from "../../utils/structuredClone";
+import { toPlainJson, toPlainShared } from "../../utils/structuredClone";
 import SaveStatusIndicator from "../../components/common/SaveStatusIndicator.vue";
 import AutosaveConflictBanner from "../../components/common/AutosaveConflictBanner.vue";
 import DashboardCanvas from "./DashboardCanvas.vue";
 import DashboardFilterBar from "./DashboardFilterBar.vue";
 import DashboardSidebarPicker from "./DashboardSidebarPicker.vue";
+import DashboardTabBar from "./DashboardTabBar.vue";
 import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
 import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
+import { dashboardChartNames } from "../CatalogView/chartNaming";
+import { useCatalogStore } from "../../stores/catalog-store";
+import { historyShortcutFor } from "../../composables/useFlowHotkeys";
+import { IS_MAC } from "../../utils/shortcuts";
 import { upgradeLayoutGrid } from "./gridVersion";
+import { sameAssignments, withoutColorAssignments } from "./colorAssignment";
+import {
+  EditHistory,
+  dashboardChange,
+  sameDashboardSnapshot,
+  type DashboardSnapshot,
+  type RecordOptions,
+} from "./editHistory";
+import {
+  addPlacedFilter,
+  deleteFilter,
+  filtersWithoutSourceTiles,
+  placeFilter,
+  placedFilterIds,
+  pruneFilterTargets,
+  withFilters,
+} from "./filterPlacement";
+import { firstFreeRow } from "./gridDrop";
+import {
+  healTabs,
+  layoutTabs,
+  mergeTabCanvas,
+  moveTileToTab,
+  resolveTabId,
+  tabCanvasLayout,
+  tabOfTile,
+  tabTitleOfTile,
+} from "./dashboardTabs";
 import { KPI_DEFAULT_SIZE } from "./kpi";
+import { IMAGE_DEFAULT_SIZE } from "./imageTile";
+import { provideDashboardImageBudget } from "../../composables/useDashboardImageBudget";
+import { AUTO_REFRESH_CHOICES, autoRefreshLabel, savedAutoRefresh } from "./autoRefresh";
+import { TABLE_DEFAULT_SIZE } from "./tableTile";
 import {
   EMPTY_DASHBOARD_LAYOUT,
   type CatalogVisualization,
   type Dashboard,
+  type DashboardCreatePayload,
   type DashboardFilter,
   type DashboardLayout,
   type DashboardTile,
@@ -195,16 +299,35 @@ const props = defineProps<{ id?: string | number }>();
 const router = useRouter();
 const route = useRoute();
 const store = useDashboardsStore();
+const catalogStore = useCatalogStore();
 const appearance = useGraphicWalkerAppearance();
 
-const isNew = computed(() => props.id === undefined);
+// Opened from "New dashboard": not on the server until its first edit creates it.
+const openedNew = props.id === undefined;
+const creationPhase = ref<CreationPhase>(openedNew ? "pending" : "created");
+const creation = createDashboardCreation<DashboardCreatePayload, Dashboard>({
+  id: openedNew ? null : Number(props.id),
+  send: (payload) => store.autosaveCreateDashboard(payload),
+  onChange: (phase) => {
+    creationPhase.value = phase;
+  },
+});
+const dashboardId = (): number => (props.id !== undefined ? Number(props.id) : creation.id()!);
+// Set while a navigation away waits in the leave guard, so a create landing then keeps the URL.
+let leaving = false;
 const nameDraft = ref("");
+const descriptionDraft = ref("");
+const descriptionValue = (): string | null => descriptionDraft.value.trim() || null;
 
-const serializeDashboard = (dashName: string, layout: unknown) =>
-  JSON.stringify({ name: dashName, layout });
+const serializeDashboard = (dashName: string, layout: unknown, description: string | null) =>
+  JSON.stringify({ name: dashName, description, layout });
 
 // Revert anchor: the state captured when the editor opened this dashboard.
-const openSnapshot = ref<{ name: string; layout: DashboardLayout } | null>(null);
+const openSnapshot = ref<{
+  name: string;
+  description: string | null;
+  layout: DashboardLayout;
+} | null>(null);
 const openSerialized = ref("");
 // CAS token echoed into every PUT; refreshed from each response.
 const expectedLayoutVersion = ref<number | null>(null);
@@ -214,26 +337,55 @@ const conflictBusy = ref(false);
 
 const { engine, state: autosaveState } = useAutosave<DashboardUpdatePayload>({
   getSnapshot: () => {
-    if (isNew.value || !store.current) return null;
+    if (!store.current) return null;
     const trimmed = nameDraft.value.trim();
     if (!trimmed) return null;
     const layout = toPlainJson(store.current.layout) as DashboardLayout;
+    const description = descriptionValue();
     return {
-      payload: { name: trimmed, layout },
-      serialized: serializeDashboard(trimmed, layout),
+      payload: { name: trimmed, description, layout },
+      serialized: serializeDashboard(trimmed, layout, description),
     };
   },
   save: async (payload) => {
+    if (!creation.isCreated()) {
+      const created = await creation.create({
+        name: payload.name ?? "",
+        description: payload.description ?? null,
+        namespace_id: store.current?.namespace_id ?? null,
+        layout: payload.layout,
+      });
+      adoptCreated(created, payload);
+      return;
+    }
     const body: DashboardUpdatePayload = { ...payload };
     if (expectedLayoutVersion.value != null) {
       body.expected_layout_version = expectedLayoutVersion.value;
     }
-    const updated = await store.autosaveDashboard(Number(props.id), body);
+    const updated = await store.autosaveDashboard(dashboardId(), body);
     expectedLayoutVersion.value = updated.layout_version;
     sessionChanged.value =
-      serializeDashboard(payload.name ?? "", payload.layout) !== openSerialized.value;
+      serializeDashboard(payload.name ?? "", payload.layout, payload.description ?? null) !==
+      openSerialized.value;
   },
 });
+
+// The same instance carries on under the edit route; the leave guard lets this replace through.
+const showCreatedInUrl = () => {
+  const id = creation.id();
+  if (leaving || id === null || route.name !== "dashboard-new") return;
+  void router.replace({ name: "dashboard-edit", params: { id } });
+};
+
+const adoptCreated = (created: Dashboard, payload: DashboardUpdatePayload) => {
+  expectedLayoutVersion.value = created.layout_version ?? 1;
+  sessionChanged.value =
+    serializeDashboard(payload.name ?? "", payload.layout, payload.description ?? null) !==
+    openSerialized.value;
+  showCreatedInUrl();
+  // Edits made while the create was out go now, not a debounce later.
+  void engine.flush();
+};
 
 const canRevert = computed(() => {
   const st = autosaveState.value.status;
@@ -241,71 +393,121 @@ const canRevert = computed(() => {
   return !!openSnapshot.value && (sessionChanged.value || st !== "idle");
 });
 
-// New-dashboard mode: user-scoped localStorage draft instead of server autosave.
+// A local draft the earlier create-first flow left: read once, offered, never written again.
 const auth = useAuthStore();
-const draftDirty = ref(false);
 const restoreAvailable = ref(false);
-let draft: LocalDraft<{ name: string; layout: DashboardLayout }> | null = null;
-let pendingDraft: { name: string; layout: DashboardLayout } | null = null;
+interface NewDashboardDraft {
+  name: string;
+  description?: string;
+  layout: DashboardLayout;
+}
+let oldDraft: LocalDraft<NewDashboardDraft> | null = null;
+let pendingDraft: NewDashboardDraft | null = null;
 
-const setupDraft = () => {
+const offerOldDraft = () => {
   const userKey = auth.currentUser?.id ?? auth.currentUser?.username ?? "anon";
-  draft = createLocalDraft({
+  oldDraft = createLocalDraft<NewDashboardDraft>({
     key: `dashboards.draft.new.${userKey}`,
     version: 1,
-    serialize: () =>
-      draftDirty.value && store.current
-        ? {
-            name: nameDraft.value,
-            layout: toPlainJson(store.current.layout) as DashboardLayout,
-          }
-        : null,
+    serialize: () => null,
   });
-  const existing = draft.peek();
+  const existing = oldDraft.peek();
   if (existing) {
     pendingDraft = existing.data;
     restoreAvailable.value = true;
   }
 };
 
-const onRestoreDraft = () => {
-  if (!pendingDraft) return;
-  nameDraft.value = pendingDraft.name;
-  store.setLayout(upgradeLayoutGrid(pendingDraft.layout));
-  draftDirty.value = true;
-  restoreAvailable.value = false;
-};
-
-const onDiscardDraft = () => {
-  draft?.discard();
+const settleOldDraft = () => {
+  oldDraft?.discard();
   pendingDraft = null;
   restoreAvailable.value = false;
 };
 
-const markChanged = () => {
-  if (isNew.value) {
-    // First edit claims the single draft slot; the restore offer is now stale.
-    if (restoreAvailable.value) {
-      restoreAvailable.value = false;
-      pendingDraft = null;
-    }
-    draftDirty.value = true;
-    draft?.scheduleWrite();
-  } else {
-    engine.notifyChange();
+// Loaded like an edit, so it is created like one and Undo takes it back to the blank state.
+const onRestoreDraft = () => {
+  const restored = pendingDraft;
+  settleOldDraft();
+  if (!restored || !store.current) return;
+  nameDraft.value = restored.name;
+  descriptionDraft.value = restored.description ?? "";
+  store.setLayout(pruneFilterTargets(healTabs(upgradeLayoutGrid(restored.layout))));
+  markChanged();
+};
+
+const onDiscardDraft = () => settleOldDraft();
+
+const UNDO_HINT = IS_MAC ? "Undo (⌘Z)" : "Undo (Ctrl+Z)";
+const REDO_HINT = IS_MAC ? "Redo (⇧⌘Z)" : "Redo (Ctrl+Shift+Z or Ctrl+Y)";
+
+// Session-only: reset when a dashboard opens, a draft is restored or a conflict is settled.
+const history = new EditHistory<DashboardSnapshot>({ equals: sameDashboardSnapshot });
+const canUndo = ref(false);
+const canRedo = ref(false);
+
+const syncHistoryFlags = () => {
+  canUndo.value = history.canUndo;
+  canRedo.value = history.canRedo;
+};
+
+const currentSnapshot = (): DashboardSnapshot | null =>
+  store.current
+    ? {
+        name: nameDraft.value,
+        description: descriptionDraft.value,
+        // Shared strings: a hundred snapshots of an image's data URL hold one copy of its bytes.
+        layout: withoutColorAssignments(toPlainShared(store.current.layout)),
+      }
+    : null;
+
+const resetHistory = () => {
+  history.reset(currentSnapshot(), Date.now());
+  syncHistoryFlags();
+};
+
+const recordEdit = (options?: Pick<RecordOptions, "key" | "absorb">) => {
+  const snapshot = currentSnapshot();
+  if (!snapshot) return;
+  history.record(snapshot, {
+    ...(options ?? dashboardChange(history.present, snapshot)),
+    now: Date.now(),
+  });
+  syncHistoryFlags();
+};
+
+const dashboardColors = provideDashboardColors(() => store.current?.layout.color_assignments);
+
+// Values the tiles gave a colour since the last edit are stored with this one, never on their own.
+const adoptColorAssignments = () => {
+  if (!store.current) return;
+  const assignments = dashboardColors.sync();
+  if (!sameAssignments(store.current.layout.color_assignments, assignments)) {
+    store.setLayout({ ...store.current.layout, color_assignments: assignments });
   }
+};
+
+const markChanged = () => {
+  adoptColorAssignments();
+  recordEdit();
+  // Editing past the offer starts fresh.
+  if (restoreAvailable.value) settleOldDraft();
+  engine.notifyChange();
+  // The first edit creates the dashboard at once; later ones autosave as usual.
+  if (creationPhase.value === "pending") void engine.flush();
 };
 
 const startAutosaveSession = (dashboard: Dashboard) => {
   const layout = toPlainJson(dashboard.layout) as DashboardLayout;
-  openSnapshot.value = { name: dashboard.name, layout };
-  openSerialized.value = serializeDashboard(dashboard.name, layout);
+  const description = dashboard.description ?? null;
+  openSnapshot.value = { name: dashboard.name, description, layout };
+  openSerialized.value = serializeDashboard(dashboard.name, layout, description);
   expectedLayoutVersion.value = dashboard.layout_version ?? 1;
   sessionChanged.value = false;
   engine.reset(openSerialized.value);
 };
 
 const layoutRef = computed<DashboardLayout>(() => store.current?.layout ?? EMPTY_DASHBOARD_LAYOUT);
+const vizCache = provideDashboardVizCache();
 const {
   datasourcesInUse,
   tilesByDatasource,
@@ -314,9 +516,20 @@ const {
   tileLabel,
   tileFields,
   loadTileFields,
+  datasourceOf,
+  loadDatasource,
   getColumnStats,
+  searchFilterValues,
   refresh,
-} = useDashboardDatasources(layoutRef);
+} = useDashboardDatasources(layoutRef, vizCache);
+
+const noTileHints = computed(() =>
+  filtersWithoutSourceTiles(
+    layoutRef.value.filters,
+    vizTileIds.value.map(tileDatasource),
+    (key) => datasourceOf(key)?.name ?? key,
+  ),
+);
 
 const addedVizIds = computed(() => {
   if (!store.current) return new Set<number>();
@@ -335,21 +548,126 @@ const generateTileId = () =>
 
 const gridCols = () => store.current?.layout.grid.cols ?? EMPTY_DASHBOARD_LAYOUT.grid.cols;
 
-const findFreeRow = (layout: DashboardLayout): number => {
-  if (!layout.tiles.length) return 0;
-  return Math.max(...layout.tiles.map((t) => t.y + t.h));
-};
+// View state, not an edit: switching tabs records nothing.
+const activeTabId = ref<string | null>(null);
+const currentTabId = computed(() => resolveTabId(layoutRef.value, activeTabId.value));
+// What the canvas draws and edits: the active tab's tiles; the whole layout without tabs.
+const tabLayout = computed(() => tabCanvasLayout(layoutRef.value, currentTabId.value));
+const moveTargets = computed(() =>
+  layoutTabs(layoutRef.value).filter((t) => t.id !== currentTabId.value),
+);
 
+// Every edit passes here, so a removed tile leaves no filter target behind and a stale one heals.
 const onLayoutChange = (next: DashboardLayout) => {
   if (!store.current) return;
-  store.setLayout(next);
+  store.setLayout(pruneFilterTargets(healTabs(next)));
   markChanged();
 };
 
+const onCanvasLayoutChange = (next: DashboardLayout) =>
+  onLayoutChange(mergeTabCanvas(layoutRef.value, currentTabId.value, next));
+
+// New tiles land on the active tab; a negative y (grid not measurable) takes its next free row.
+const addToActiveTab = (build: (y: number) => DashboardTile, y = -1) => {
+  if (!store.current) return;
+  const tab = tabLayout.value;
+  onCanvasLayoutChange({
+    ...tab,
+    tiles: [...tab.tiles, build(y < 0 ? firstFreeRow(tab.tiles) : y)],
+  });
+};
+
+const onMoveTileToTab = ({ tileId, tabId }: { tileId: string; tabId: string }) =>
+  onLayoutChange(moveTileToTab(layoutRef.value, tileId, tabId));
+
+const tileLabelOnTab = (tileId: string): string => {
+  const tab = tabTitleOfTile(layoutRef.value, tileId);
+  return tab ? `${tileLabel(tileId)} · ${tab}` : tileLabel(tileId);
+};
+
+// 0 stands for off in the select, which cannot hold null as an option's value.
+const autoRefreshSetting = computed<number>({
+  get: () => savedAutoRefresh(store.current?.layout.auto_refresh_seconds) ?? 0,
+  set: (seconds) => {
+    if (!store.current) return;
+    onLayoutChange({ ...store.current.layout, auto_refresh_seconds: seconds || null });
+  },
+});
+
+// A filter removed from the strip or its dialog takes its canvas tile with it.
 const onFiltersChange = (next: DashboardFilter[]) => {
   if (!store.current) return;
-  store.setLayout({ ...store.current.layout, filters: next });
+  onLayoutChange(withFilters(store.current.layout, next));
+};
+
+const filterBarRef = ref<InstanceType<typeof DashboardFilterBar> | null>(null);
+const placedIds = computed(() =>
+  store.current ? placedFilterIds(store.current.layout) : new Set<string>(),
+);
+
+const onFilterChange = (next: DashboardFilter) => {
+  if (!store.current) return;
+  onFiltersChange(store.current.layout.filters.map((f) => (f.id === next.id ? next : f)));
+};
+
+// Checked on the whole layout: a filter placed on another tab is not placed again.
+const onPlaceFilterAt = ({ filterId, x, y }: { filterId: string; x: number; y: number }) => {
+  if (!store.current || placedIds.value.has(filterId)) return;
+  const tab = tabLayout.value;
+  const next = placeFilter(tab, filterId, { x, y }, generateTileId());
+  if (next !== tab) onCanvasLayoutChange(next);
+};
+
+const onPlaceFilter = (filterId: string) => onPlaceFilterAt({ filterId, x: 0, y: -1 });
+
+// A filter needs a source and a column first; nothing changes until the dialog confirms.
+const onAddFilterAt = async ({ x, y }: { x: number; y: number }) => {
+  if (!store.current || !filterBarRef.value) return;
+  const filter = await filterBarRef.value.openAddForCanvas();
+  if (!filter || !store.current) return;
+  onCanvasLayoutChange(addPlacedFilter(tabLayout.value, filter, { x, y }, generateTileId()));
+};
+
+const onAddFilterTile = () => onAddFilterAt({ x: 0, y: -1 });
+
+const onDeleteFilter = (filterId: string) => {
+  if (!store.current) return;
+  onLayoutChange(deleteFilter(store.current.layout, filterId));
+};
+
+// Same path as an edit (pruning, then markChanged), so autosave and the draft store it.
+const applySnapshot = (snapshot: DashboardSnapshot) => {
+  nameDraft.value = snapshot.name;
+  descriptionDraft.value = snapshot.description;
+  store.setLayout(pruneFilterTargets(toPlainShared(snapshot.layout)));
+  const applied = currentSnapshot();
+  if (applied) history.replacePresent(applied);
   markChanged();
+};
+
+const stepHistory = (direction: "undo" | "redo") => {
+  if (!store.current || reverting.value) return;
+  const target = direction === "undo" ? history.undo(Date.now()) : history.redo(Date.now());
+  if (target) applySnapshot(target);
+  syncHistoryFlags();
+};
+
+const onUndo = () => stepHistory("undo");
+const onRedo = () => stepHistory("redo");
+
+const dialogOpen = (): boolean =>
+  vizDialogOpen.value ||
+  vizCreatorOpen.value ||
+  sourcePickerOpen.value ||
+  Array.from(document.querySelectorAll<HTMLElement>(".el-overlay")).some(
+    (el) => el.style.display !== "none" && el.getClientRects().length > 0,
+  );
+
+const handleHistoryKeydown = (event: KeyboardEvent) => {
+  const action = historyShortcutFor(event, IS_MAC);
+  if (!action || dialogOpen()) return;
+  event.preventDefault();
+  stepHistory(action);
 };
 
 const editingVizId = ref<number | null>(null);
@@ -407,6 +725,7 @@ const onCloseVizDialog = () => {
   // Refresh tiles bound to this viz only when the viewer reported a save.
   if (editingVizId.value != null && vizPendingRefresh.value) {
     const id = editingVizId.value;
+    vizCache.invalidate(id);
     vizRefreshNonces.value = {
       ...vizRefreshNonces.value,
       [id]: (vizRefreshNonces.value[id] ?? 0) + 1,
@@ -427,23 +746,12 @@ const buildVizTile = (vizId: number, x: number, y: number): DashboardTile => ({
   h: 6,
 });
 
-const onAddTile = (viz: CatalogVisualization) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  onLayoutChange({
-    ...layout,
-    tiles: [...layout.tiles, buildVizTile(viz.id, 0, findFreeRow(layout))],
-  });
-};
+const onAddTile = (viz: CatalogVisualization) =>
+  addToActiveTab((row) => buildVizTile(viz.id, 0, row));
 
-// Drag-drop from the sidebar lands a tile at the dropped cell; a negative y
-// (grid not measurable) falls back to the next free row, like a click-add.
-const onAddVizAt = ({ vizId, x, y }: { vizId: number; x: number; y: number }) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  const row = y < 0 ? findFreeRow(layout) : y;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildVizTile(vizId, x, row)] });
-};
+// Drag-drop from the sidebar lands a tile at the dropped cell.
+const onAddVizAt = ({ vizId, x, y }: { vizId: number; x: number; y: number }) =>
+  addToActiveTab((row) => buildVizTile(vizId, x, row), y);
 
 const sourcePickerOpen = ref(false);
 const vizCreatorOpen = ref(false);
@@ -469,7 +777,11 @@ const onVizCreatorBeforeClose = async (done: () => void) => {
   }
 };
 
+const pendingTakenNames = ref<string[]>([]);
+
 const onSourcePicked = (source: VizSourceDescriptor) => {
+  const library = new Map(catalogStore.visualizationLibrary.map((v) => [v.id, v.name]));
+  pendingTakenNames.value = dashboardChartNames(layoutRef.value.tiles, (id) => library.get(id));
   pendingSource.value = source;
   vizCreatorOpen.value = true;
 };
@@ -494,18 +806,10 @@ const buildTextTile = (x: number, y: number): DashboardTile => ({
   h: 3,
 });
 
-const onAddTextTile = () => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTextTile(0, findFreeRow(layout))] });
-};
+const onAddTextTile = () => addToActiveTab((row) => buildTextTile(0, row));
 
-const onAddTextAt = ({ x, y }: { x: number; y: number }) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  const row = y < 0 ? findFreeRow(layout) : y;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTextTile(x, row)] });
-};
+const onAddTextAt = ({ x, y }: { x: number; y: number }) =>
+  addToActiveTab((row) => buildTextTile(x, row), y);
 
 const buildKpiTile = (x: number, y: number): DashboardTile => ({
   id: generateTileId(),
@@ -518,18 +822,46 @@ const buildKpiTile = (x: number, y: number): DashboardTile => ({
   ...KPI_DEFAULT_SIZE,
 });
 
-const onAddKpiTile = () => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildKpiTile(0, findFreeRow(layout))] });
-};
+const onAddKpiTile = () => addToActiveTab((row) => buildKpiTile(0, row));
 
-const onAddKpiAt = ({ x, y }: { x: number; y: number }) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  const row = y < 0 ? findFreeRow(layout) : y;
-  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildKpiTile(x, row)] });
-};
+const onAddKpiAt = ({ x, y }: { x: number; y: number }) =>
+  addToActiveTab((row) => buildKpiTile(x, row), y);
+
+const buildTableTile = (x: number, y: number): DashboardTile => ({
+  id: generateTileId(),
+  type: "table",
+  viz_id: null,
+  table_id: null,
+  chart_index: 0,
+  table: null,
+  x,
+  y,
+  ...TABLE_DEFAULT_SIZE,
+});
+
+const onAddTableTile = () => addToActiveTab((row) => buildTableTile(0, row));
+
+provideDashboardImageBudget(() => store.current?.layout.tiles ?? []);
+
+// Empty from the Insert list; filled when a file from the computer was dropped on the canvas.
+const buildImageTile = (x: number, y: number, dataUrl: string | null): DashboardTile => ({
+  id: generateTileId(),
+  type: "image",
+  viz_id: null,
+  chart_index: 0,
+  image: dataUrl ? { data_url: dataUrl, alt: null, fit: "contain" } : null,
+  x,
+  y,
+  ...IMAGE_DEFAULT_SIZE,
+});
+
+const onAddImageTile = () => addToActiveTab((row) => buildImageTile(0, row, null));
+
+const onAddImageAt = ({ x, y, dataUrl }: { x: number; y: number; dataUrl: string | null }) =>
+  addToActiveTab((row) => buildImageTile(x, row, dataUrl), y);
+
+const onAddTableAt = ({ x, y }: { x: number; y: number }) =>
+  addToActiveTab((row) => buildTableTile(x, row), y);
 
 const buildSeparatorTile = (
   x: number,
@@ -547,14 +879,8 @@ const buildSeparatorTile = (
   h: orientation === "vertical" ? 6 : 1,
 });
 
-const onAddSeparatorTile = (orientation: SeparatorOrientation) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  onLayoutChange({
-    ...layout,
-    tiles: [...layout.tiles, buildSeparatorTile(0, findFreeRow(layout), orientation)],
-  });
-};
+const onAddSeparatorTile = (orientation: SeparatorOrientation) =>
+  addToActiveTab((row) => buildSeparatorTile(0, row, orientation));
 
 const onAddSeparatorAt = ({
   x,
@@ -564,37 +890,43 @@ const onAddSeparatorAt = ({
   x: number;
   y: number;
   orientation: SeparatorOrientation;
-}) => {
-  if (!store.current) return;
-  const layout = store.current.layout;
-  const row = y < 0 ? findFreeRow(layout) : y;
-  onLayoutChange({
-    ...layout,
-    tiles: [...layout.tiles, buildSeparatorTile(x, row, orientation)],
-  });
-};
+}) => addToActiveTab((row) => buildSeparatorTile(x, row, orientation), y);
 
 const initialise = async () => {
-  if (isNew.value) {
-    const blank = store.newBlankDashboard();
+  if (openedNew) {
+    const blank = store.newBlankDashboard(newDashboardName(store.library.map((d) => d.name)));
     nameDraft.value = blank.name;
-    draftDirty.value = false;
-    setupDraft();
+    descriptionDraft.value = "";
+    // The blank state is the baseline: nothing is sent until it changes.
+    startAutosaveSession(blank);
+    offerOldDraft();
+    resetHistory();
     return;
   }
   try {
     await store.loadDashboard(Number(props.id));
     if (store.current) {
       nameDraft.value = store.current.name;
+      descriptionDraft.value = store.current.description ?? "";
       startAutosaveSession(store.current);
+      resetHistory();
     }
   } catch {
     ElMessage.error(store.error ?? "Failed to load dashboard");
   }
 };
 
+// Typing back to the saved value is no autosave change, but the history still follows it.
 watch(nameDraft, (v) => {
-  if (store.current && v !== store.current.name) markChanged();
+  if (!store.current) return;
+  if (v !== store.current.name) markChanged();
+  else recordEdit();
+});
+
+watch(descriptionDraft, () => {
+  if (!store.current) return;
+  if (descriptionValue() !== (store.current.description ?? null)) markChanged();
+  else recordEdit();
 });
 
 // Honour ?editViz=<id> from the route by auto-opening the chart edit dialog
@@ -614,7 +946,8 @@ const consumeEditVizQuery = async () => {
 
   const tiles = store.current?.layout.tiles ?? [];
   const targetTile = tiles.find((t) => t.type === "viz" && t.viz_id === id);
-  if (targetTile) {
+  if (targetTile && store.current) {
+    activeTabId.value = tabOfTile(store.current.layout, targetTile);
     onEditViz(id);
   }
   // Strip the query whether or not the tile was found, so a reload or
@@ -627,11 +960,6 @@ const consumeEditVizQuery = async () => {
 };
 
 const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-  if (isNew.value) {
-    // Dirty sessions only: a clean write would delete a still-offered prior draft.
-    if (draftDirty.value) draft?.writeNow();
-    return;
-  }
   if (engine.isDirty()) {
     event.preventDefault();
     event.returnValue = "";
@@ -640,33 +968,25 @@ const handleBeforeUnload = (event: BeforeUnloadEvent) => {
 
 onMounted(async () => {
   window.addEventListener("beforeunload", handleBeforeUnload);
+  window.addEventListener("keydown", handleHistoryKeydown);
   await initialise();
   await consumeEditVizQuery();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("beforeunload", handleBeforeUnload);
-  if (draftDirty.value) draft?.writeNow();
-  draft?.dispose();
+  window.removeEventListener("keydown", handleHistoryKeydown);
+  oldDraft?.dispose();
   store.reset();
 });
 
 // Flush-first leave guard: a confirm only appears when a flush could not land.
-onBeforeRouteLeave(async () => {
-  if (isNew.value) {
-    if (!draftDirty.value) return true;
-    draft?.writeNow();
-    try {
-      await ElMessageBox.confirm(
-        "Leave without creating this dashboard? Your draft stays on this device.",
-        "Leave draft",
-        { confirmButtonText: "Leave", cancelButtonText: "Keep editing", type: "warning" },
-      );
-      return true;
-    } catch {
-      return false;
-    }
+onBeforeRouteLeave(async (to) => {
+  const createdId = creation.id();
+  if (createdId !== null && to.name === "dashboard-edit" && Number(to.params.id) === createdId) {
+    return true;
   }
+  leaving = true;
   const viewerClean = vizDialogOpen.value
     ? ((await vizViewerRef.value?.flushAutosave()) ?? true)
     : true;
@@ -680,42 +1000,20 @@ onBeforeRouteLeave(async () => {
     );
     return true;
   } catch {
+    leaving = false;
+    showCreatedInUrl();
     return false;
   }
 });
 
-const onCreate = async () => {
-  if (!store.current) return;
-  const trimmed = nameDraft.value.trim();
-  if (!trimmed) {
-    ElMessage.warning("Name is required");
-    return;
-  }
-  try {
-    const created = await store.createDashboard({
-      name: trimmed,
-      description: store.current.description,
-      namespace_id: store.current.namespace_id,
-      layout: store.current.layout,
-    });
-    draftDirty.value = false;
-    draft?.discard();
-    ElMessage.success(`Created "${created.name}"`);
-    await router.replace({ name: "dashboard-edit", params: { id: created.id } });
-    // Both routes share this instance; onMounted won't re-run after replace.
-    startAutosaveSession(created);
-  } catch (err) {
-    ElMessage.error(catalogSaveErrorMessage(err, store.error ?? "Failed to save"));
-  }
-};
-
 const onBack = () => {
-  // The route guard flushes (existing) or keeps the draft (new); no confirm here.
-  if (isNew.value || props.id === undefined) {
+  // The route guard flushes; no confirm here.
+  const id = props.id !== undefined ? Number(props.id) : creation.id();
+  if (id === null) {
     router.push({ name: "catalog", query: { tab: "visuals", kind: "dashboards" } });
     return;
   }
-  router.push({ name: "dashboard-view", params: { id: props.id } });
+  router.push({ name: "dashboard-view", params: { id } });
 };
 
 const onRevert = async () => {
@@ -735,15 +1033,25 @@ const onRevert = async () => {
     engine.suspend();
     await engine.flush();
     nameDraft.value = openSnapshot.value.name;
+    descriptionDraft.value = openSnapshot.value.description ?? "";
     store.setLayout(toPlainJson(openSnapshot.value.layout) as DashboardLayout);
+    // One undoable step, recorded before the PUT so the drafts' watchers find it already taken.
+    recordEdit({ key: null });
+    if (!creation.isCreated()) {
+      // Nothing reached the server: the blank state it opened with is the baseline again.
+      engine.reset(openSerialized.value);
+      sessionChanged.value = false;
+      return;
+    }
     const body: DashboardUpdatePayload = {
       name: openSnapshot.value.name,
+      description: openSnapshot.value.description,
       layout: openSnapshot.value.layout,
     };
     if (expectedLayoutVersion.value != null) {
       body.expected_layout_version = expectedLayoutVersion.value;
     }
-    const updated = await store.autosaveDashboard(Number(props.id), body);
+    const updated = await store.autosaveDashboard(dashboardId(), body);
     expectedLayoutVersion.value = updated.layout_version;
     engine.markSaved(openSerialized.value);
     sessionChanged.value = false;
@@ -751,6 +1059,7 @@ const onRevert = async () => {
     const nowSerialized = serializeDashboard(
       nameDraft.value.trim(),
       toPlainJson(store.current.layout),
+      descriptionValue(),
     );
     if (nowSerialized !== openSerialized.value) engine.notifyChange();
   } catch (err) {
@@ -770,12 +1079,19 @@ const onRevert = async () => {
 
 // Adopt the server's version wholesale; the revert anchor stays at original open.
 const resyncFromServer = async () => {
-  await store.loadDashboard(Number(props.id));
+  await store.loadDashboard(dashboardId());
   if (!store.current) return;
   nameDraft.value = store.current.name;
+  descriptionDraft.value = store.current.description ?? "";
   expectedLayoutVersion.value = store.current.layout_version ?? 1;
+  // The history's base is gone with the version it was built on.
+  resetHistory();
   engine.resolveConflictReloaded(
-    serializeDashboard(store.current.name, toPlainJson(store.current.layout)),
+    serializeDashboard(
+      store.current.name,
+      toPlainJson(store.current.layout),
+      store.current.description ?? null,
+    ),
   );
 };
 
@@ -795,22 +1111,26 @@ const onConflictOverwrite = async () => {
   conflictBusy.value = true;
   try {
     // Token-only re-GET; store.loadDashboard would clobber the state being kept.
-    const fresh = await CatalogApi.getDashboard(Number(props.id));
+    const fresh = await CatalogApi.getDashboard(dashboardId());
     const trimmed = nameDraft.value.trim() || fresh.name;
     const layout = toPlainJson(store.current.layout) as DashboardLayout;
-    const updated = await store.autosaveDashboard(Number(props.id), {
+    const description = descriptionValue();
+    const updated = await store.autosaveDashboard(dashboardId(), {
       name: trimmed,
+      description,
       layout,
       expected_layout_version: fresh.layout_version,
     });
     expectedLayoutVersion.value = updated.layout_version;
-    const adopted = serializeDashboard(trimmed, layout);
+    const adopted = serializeDashboard(trimmed, layout, description);
     sessionChanged.value = adopted !== openSerialized.value;
     engine.markSaved(adopted);
+    resetHistory();
     // Edits made while the overwrite PUT was in flight must not vanish silently.
     const nowSerialized = serializeDashboard(
       nameDraft.value.trim(),
       toPlainJson(store.current.layout),
+      descriptionValue(),
     );
     if (nowSerialized !== adopted) engine.notifyChange();
   } catch (err) {
@@ -850,6 +1170,9 @@ const onConflictOverwrite = async () => {
 .editor-name {
   max-width: 320px;
 }
+.editor-description {
+  max-width: 360px;
+}
 .draft-banner {
   margin: 0 0 var(--spacing-3);
   width: auto;
@@ -863,6 +1186,18 @@ const onConflictOverwrite = async () => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.editor-auto-refresh {
+  width: 170px;
+}
+.history-btn-wrap {
+  display: inline-flex;
+}
+.history-btn {
+  padding: 0 10px;
+}
+.history-btn .material-icons {
+  font-size: 18px;
 }
 .editor-body {
   flex: 1;

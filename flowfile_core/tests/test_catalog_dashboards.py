@@ -6,8 +6,11 @@ covered by test_catalog_visualizations.py), so this suite stays focused
 on persistence and shape.
 """
 
+import base64
 import json
+import struct
 import time
+import zlib
 from unittest.mock import patch
 
 import pytest
@@ -92,7 +95,14 @@ def _make_table(name: str = "Sales") -> int:
 
 
 def _empty_layout() -> dict:
-    return {"tiles": [], "grid": {"cols": 48, "row_height": 40, "version": 2}, "filters": []}
+    return {
+        "tiles": [],
+        "grid": {"cols": 48, "row_height": 40, "version": 2},
+        "filters": [],
+        "color_assignments": [],
+        "auto_refresh_seconds": None,
+        "tabs": [],
+    }
 
 
 def _layout_with_two_tiles() -> dict:
@@ -153,6 +163,179 @@ class TestDashboardCRUD:
         get_resp = client.get(f"/catalog/dashboards/{body['id']}")
         assert get_resp.status_code == 200
         assert get_resp.json()["layout"]["tiles"][1]["viz_id"] == 2
+
+    def test_chart_tile_title_round_trips_and_defaults(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0].update({"title": "Revenue by region", "show_title": False})
+        created = client.post("/catalog/dashboards", json={"name": "Titled", "layout": layout})
+        assert created.status_code == 201, created.text
+        tiles = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["tiles"]
+        assert (tiles[0]["title"], tiles[0]["show_title"]) == ("Revenue by region", False)
+        # A tile saved before titles existed shows its chart's own name.
+        assert (tiles[1]["title"], tiles[1]["show_title"]) == (None, True)
+
+    def test_chart_format_round_trips_and_defaults_to_none(self, client):
+        layout = _layout_with_two_tiles()
+        chart_format = {"number_format": ".3~s", "time_format": "%b %Y", "x_title": "Revenue", "y_title": None}
+        layout["tiles"][0]["chart_format"] = chart_format
+        created = client.post("/catalog/dashboards", json={"name": "Formatted", "layout": layout})
+        assert created.status_code == 201, created.text
+        tiles = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["tiles"]
+        assert tiles[0]["chart_format"] == chart_format
+        assert tiles[1]["chart_format"] is None
+
+    def test_layout_saved_before_chart_formats_loads_unchanged(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert [t["chart_format"] for t in tiles] == [None, None]
+        assert [(t["viz_id"], t["title"]) for t in tiles] == [(1, None), (2, None)]
+
+    @pytest.mark.parametrize(
+        "bad_format",
+        [{"number_format": "x" * 65}, {"time_format": "%Y" * 33}, {"x_title": "x" * 121}, {"y_title": "y" * 121}],
+    )
+    def test_chart_format_over_its_limits_returns_422(self, client, bad_format):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0]["chart_format"] = bad_format
+        resp = client.post("/catalog/dashboards", json={"name": "Too long", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_color_assignments_round_trip_with_their_value_types(self, client):
+        layout = _layout_with_two_tiles()
+        assignments = [
+            {"field": "region", "value": "West", "slot": 0},
+            {"field": "region", "value": "East", "slot": 1},
+            {"field": "code", "value": 1, "slot": 0},
+            {"field": "code", "value": "1", "slot": 1},
+            {"field": "flag", "value": True, "slot": 0},
+            {"field": "region", "value": None, "slot": 2},
+        ]
+        layout["color_assignments"] = assignments
+        created = client.post("/catalog/dashboards", json={"name": "Coloured", "layout": layout})
+        assert created.status_code == 201, created.text
+        stored = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["color_assignments"]
+        assert stored == assignments
+        assert [type(a["value"]) for a in stored] == [str, str, int, str, bool, type(None)]
+
+    def test_layout_saved_before_color_assignments_loads_with_none(self, client):
+        with get_db_context() as db:
+            row = CatalogDashboard(
+                name="Uncoloured", layout_json=json.dumps(_layout_with_two_tiles()), layout_version=1, created_by=1
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        layout = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]
+        assert layout["color_assignments"] == []
+        assert [t["viz_id"] for t in layout["tiles"]] == [1, 2]
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            [{"field": "region", "value": "West", "slot": 0}, {"field": "region", "value": "West", "slot": 1}],
+            [{"field": "code", "value": 1, "slot": 0}, {"field": "code", "value": 1.0, "slot": 1}],
+            [{"field": "region", "value": "West", "slot": -1}],
+            [{"field": "", "value": "West", "slot": 0}],
+            [{"field": "region", "value": ["West"], "slot": 0}],
+        ],
+    )
+    def test_invalid_color_assignments_return_422(self, client, bad):
+        layout = _layout_with_two_tiles()
+        layout["color_assignments"] = bad
+        resp = client.post("/catalog/dashboards", json={"name": "Bad colours", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_same_value_in_two_fields_may_take_one_slot_each(self, client):
+        layout = _layout_with_two_tiles()
+        layout["color_assignments"] = [
+            {"field": "region", "value": "West", "slot": 0},
+            {"field": "area", "value": "West", "slot": 3},
+        ]
+        resp = client.post("/catalog/dashboards", json={"name": "Two fields", "layout": layout})
+        assert resp.status_code == 201, resp.text
+
+    def test_auto_refresh_interval_round_trips(self, client):
+        layout = _layout_with_two_tiles()
+        layout["auto_refresh_seconds"] = 300
+        created = client.post("/catalog/dashboards", json={"name": "Wall screen", "layout": layout})
+        assert created.status_code == 201, created.text
+        dash_id = created.json()["id"]
+        assert client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["auto_refresh_seconds"] == 300
+
+        layout["auto_refresh_seconds"] = None
+        updated = client.put(f"/catalog/dashboards/{dash_id}", json={"layout": layout})
+        assert updated.status_code == 200, updated.text
+        assert client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["auto_refresh_seconds"] is None
+
+    def test_layout_saved_before_auto_refresh_loads_with_it_off(self, client):
+        with get_db_context() as db:
+            row = CatalogDashboard(
+                name="Static", layout_json=json.dumps(_layout_with_two_tiles()), layout_version=1, created_by=1
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        layout = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]
+        assert layout["auto_refresh_seconds"] is None
+        assert [t["viz_id"] for t in layout["tiles"]] == [1, 2]
+
+    @pytest.mark.parametrize("bad", [0, 1, 59, -60, 24 * 60 * 60 + 1, "often"])
+    def test_auto_refresh_under_a_minute_returns_422(self, client, bad):
+        layout = _layout_with_two_tiles()
+        layout["auto_refresh_seconds"] = bad
+        resp = client.post("/catalog/dashboards", json={"name": "Too often", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_tile_note_round_trips_through_create_update_and_get(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0]["note_md"] = "**Revenue** excludes refunds. [Definition](https://example.com)"
+        created = client.post("/catalog/dashboards", json={"name": "Noted", "layout": layout})
+        assert created.status_code == 201, created.text
+        dash_id = created.json()["id"]
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert tiles[0]["note_md"] == layout["tiles"][0]["note_md"]
+        assert tiles[1]["note_md"] is None
+
+        layout["tiles"][0]["note_md"] = None
+        layout["tiles"][1]["note_md"] = "x" * 4000
+        updated = client.put(f"/catalog/dashboards/{dash_id}", json={"layout": layout})
+        assert updated.status_code == 200, updated.text
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert [t["note_md"] for t in tiles] == [None, "x" * 4000]
+
+    def test_layout_saved_before_tile_notes_loads_without_them(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert [t["note_md"] for t in tiles] == [None, None]
+
+    def test_tile_note_over_4000_characters_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0]["note_md"] = "x" * 4001
+        resp = client.post("/catalog/dashboards", json={"name": "Too long", "layout": layout})
+        assert resp.status_code == 422
+        created = client.post("/catalog/dashboards", json={"name": "Short", "layout": _layout_with_two_tiles()})
+        resp = client.put(f"/catalog/dashboards/{created.json()['id']}", json={"layout": layout})
+        assert resp.status_code == 422
+
+    def test_tile_title_over_120_characters_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0]["title"] = "x" * 121
+        resp = client.post("/catalog/dashboards", json={"name": "Too long", "layout": layout})
+        assert resp.status_code == 422
 
     def test_create_with_separator_tile(self, client):
         layout = _layout_with_two_tiles()
@@ -215,7 +398,7 @@ class TestDashboardCRUD:
         assert tiles[0]["kpi"] is None
         assert tiles[2]["type"] == "kpi"
         assert tiles[2]["viz_id"] == 1
-        assert tiles[2]["kpi"] == kpi
+        assert tiles[2]["kpi"] == {**kpi, "trend": None}
         assert tiles[3]["viz_id"] is None
         assert tiles[3]["kpi"] is None
         assert tiles[4]["kpi"] == {
@@ -230,6 +413,7 @@ class TestDashboardCRUD:
             "target": None,
             "higher_is_better": True,
             "value_size": "auto",
+            "trend": None,
         }
 
     @pytest.mark.parametrize(
@@ -240,6 +424,9 @@ class TestDashboardCRUD:
             {"agg": "sum", "comparison": "bogus"},
             {"agg": "sum", "label": "x" * 121},
             {"agg": "sum", "value_size": "huge"},
+            {"agg": "sum", "trend": {"field": "order_date", "grain": "fortnight"}},
+            {"agg": "sum", "trend": {"field": ""}},
+            {"agg": "sum", "trend": {"grain": "month"}},
         ],
     )
     def test_invalid_kpi_config_returns_422(self, client, bad_kpi):
@@ -247,6 +434,52 @@ class TestDashboardCRUD:
         layout["tiles"].append({"id": "kpi", "type": "kpi", "viz_id": 1, "kpi": bad_kpi, "x": 0, "y": 6, "w": 3, "h": 2})
         resp = client.post("/catalog/dashboards", json={"name": "Bad KPI", "layout": layout})
         assert resp.status_code == 422
+
+    def test_kpi_trend_round_trips_and_defaults_to_auto(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(
+            {
+                "id": "kpi-trend",
+                "type": "kpi",
+                "viz_id": 1,
+                "kpi": {"field": "amount", "comparison": "previous_period", "trend": {"field": "order_date", "grain": "week"}},
+                "x": 0,
+                "y": 6,
+                "w": 12,
+                "h": 3,
+            }
+        )
+        layout["tiles"].append(
+            {"id": "kpi-auto", "type": "kpi", "viz_id": 1, "kpi": {"trend": {"field": "order_date"}}, "x": 12, "y": 6, "w": 12, "h": 3}
+        )
+        resp = client.post("/catalog/dashboards", json={"name": "With trend", "layout": layout})
+        assert resp.status_code == 201, resp.text
+        tiles = client.get(f"/catalog/dashboards/{resp.json()['id']}").json()["layout"]["tiles"]
+        assert tiles[2]["kpi"]["trend"] == {"field": "order_date", "grain": "week"}
+        assert tiles[2]["kpi"]["comparison"] == "previous_period"
+        assert tiles[3]["kpi"]["trend"] == {"field": "order_date", "grain": "auto"}
+
+    def test_kpi_saved_before_trends_loads_without_one(self, client):
+        from flowfile_core.schemas.catalog_schema import DashboardLayout
+
+        old_kpi = {
+            "field": "amount",
+            "agg": "sum",
+            "label": None,
+            "prefix": None,
+            "suffix": None,
+            "decimals": None,
+            "compact": True,
+            "comparison": "none",
+            "target": None,
+            "higher_is_better": True,
+            "value_size": "auto",
+        }
+        layout = DashboardLayout.model_validate(
+            {"tiles": [{"id": "k", "type": "kpi", "viz_id": 1, "kpi": old_kpi, "x": 0, "y": 0, "w": 12, "h": 3}]}
+        )
+        assert layout.tiles[0].kpi.trend is None
+        assert layout.tiles[0].kpi.model_dump(exclude={"trend"}) == old_kpi
 
     def test_filter_can_target_kpi_tile(self, client):
         layout = _layout_with_two_tiles()
@@ -268,9 +501,66 @@ class TestDashboardCRUD:
         filters = client.get(f"/catalog/dashboards/{resp.json()['id']}").json()["layout"]["filters"]
         assert filters[0]["target_tile_ids"] == ["kpi-1"]
 
+    def test_create_with_table_tiles(self, client):
+        table_id = _make_table()
+        table_config = {
+            "columns": [
+                {"field": "region", "label": "Region", "decimals": None, "thousands": True},
+                {"field": "amount", "label": None, "decimals": 2, "thousands": False},
+            ],
+            "sort_by": ["amount", "region"],
+            "sort_direction": "descending",
+            "page_size": 50,
+        }
+        layout = _layout_with_two_tiles()
+        layout["tiles"] += [
+            {"id": "tbl-1", "type": "table", "table_id": table_id, "table": table_config, "x": 0, "y": 6, "w": 6, "h": 6},
+            {"id": "tbl-2", "type": "table", "viz_id": 1, "x": 6, "y": 6, "w": 6, "h": 6},
+            {"id": "tbl-3", "type": "table", "x": 0, "y": 12, "w": 6, "h": 6},
+            {"id": "kpi-t", "type": "kpi", "table_id": table_id, "kpi": {"agg": "count"}, "x": 6, "y": 12, "w": 3, "h": 2},
+        ]
+        resp = client.post("/catalog/dashboards", json={"name": "With table", "layout": layout})
+        assert resp.status_code == 201, resp.text
+        tiles = client.get(f"/catalog/dashboards/{resp.json()['id']}").json()["layout"]["tiles"]
+        assert (tiles[2]["type"], tiles[2]["table_id"], tiles[2]["viz_id"]) == ("table", table_id, None)
+        assert tiles[2]["table"] == table_config
+        # A chart's source, and a table still to be set up, keep the defaults.
+        assert (tiles[3]["viz_id"], tiles[3]["table_id"], tiles[3]["table"]) == (1, None, None)
+        assert (tiles[4]["viz_id"], tiles[4]["table_id"]) == (None, None)
+        assert (tiles[5]["table_id"], tiles[5]["viz_id"], tiles[5]["kpi"]["agg"]) == (table_id, None, "count")
+
+    def test_layout_saved_before_table_tiles_loads_unchanged(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert [(t["viz_id"], t["table_id"], t["table"]) for t in tiles] == [(1, None, None), (2, None, None)]
+
+    @pytest.mark.parametrize(
+        "bad_tile",
+        [
+            {"type": "table", "viz_id": 1, "table_id": 2},
+            {"type": "kpi", "viz_id": 1, "table_id": 2, "kpi": {"agg": "count"}},
+            {"type": "table", "table_id": 2, "table": {"page_size": 0}},
+            {"type": "table", "table_id": 2, "table": {"page_size": 501}},
+            {"type": "table", "table_id": 2, "table": {"sort_direction": "up"}},
+            {"type": "table", "table_id": 2, "table": {"columns": [{"field": "a", "decimals": 7}]}},
+            {"type": "table", "table_id": 2, "table": {"columns": [{"field": ""}]}},
+        ],
+    )
+    def test_invalid_table_tile_returns_422(self, client, bad_tile):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append({"id": "bad", **bad_tile, "x": 0, "y": 6, "w": 6, "h": 6})
+        resp = client.post("/catalog/dashboards", json={"name": "Bad table", "layout": layout})
+        assert resp.status_code == 422
+
     def test_create_with_unknown_tile_type_returns_422(self, client):
         layout = _layout_with_two_tiles()
-        layout["tiles"].append({"id": "bad", "type": "image", "x": 0, "y": 6, "w": 12, "h": 1})
+        layout["tiles"].append({"id": "bad", "type": "video", "x": 0, "y": 6, "w": 12, "h": 1})
         resp = client.post("/catalog/dashboards", json={"name": "Bad tile", "layout": layout})
         assert resp.status_code == 422
 
@@ -649,4 +939,402 @@ class TestDashboardFilterDatasource:
             f"/catalog/dashboards/{created['id']}",
             json={"layout": layout},
         )
+        assert resp.status_code == 422
+
+
+def _filter_tile(tile_id: str = "ft-1", filter_id: str = "f1", **extra) -> dict:
+    return {"id": tile_id, "type": "filter", "filter_id": filter_id, "x": 0, "y": 6, "w": 12, "h": 2, **extra}
+
+
+class TestDashboardFilterTiles:
+    def test_filter_tile_round_trips(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_filter_tile())
+        created = client.post("/catalog/dashboards", json={"name": "Placed filter", "layout": layout})
+        assert created.status_code == 201, created.text
+        tiles = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["tiles"]
+        tile = tiles[2]
+        assert (tile["type"], tile["filter_id"], tile["viz_id"], tile["table_id"]) == ("filter", "f1", None, None)
+        assert (tile["x"], tile["y"], tile["w"], tile["h"]) == (0, 6, 12, 2)
+        # Every other tile reads back with no filter.
+        assert [t["filter_id"] for t in tiles[:2]] == [None, None]
+
+    def test_layout_saved_before_filter_tiles_loads_unchanged(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old filters", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        body = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]
+        assert [t["filter_id"] for t in body["tiles"]] == [None, None]
+        assert [f["id"] for f in body["filters"]] == ["f1"]
+
+    def test_filter_tile_without_a_filter_id_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_filter_tile(filter_id=None))
+        resp = client.post("/catalog/dashboards", json={"name": "No filter id", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_filter_tile_on_an_unknown_filter_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_filter_tile(filter_id="gone"))
+        resp = client.post("/catalog/dashboards", json={"name": "Dangling", "layout": layout})
+        assert resp.status_code == 422
+        assert "unknown filter 'gone'" in resp.text
+
+    def test_update_dropping_a_placed_filter_without_its_tile_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_filter_tile())
+        created = client.post("/catalog/dashboards", json={"name": "Drop", "layout": layout}).json()
+        layout["filters"] = []
+        resp = client.put(f"/catalog/dashboards/{created['id']}", json={"layout": layout})
+        assert resp.status_code == 422
+        # The filter and its tile go together.
+        layout["tiles"] = layout["tiles"][:2]
+        resp = client.put(f"/catalog/dashboards/{created['id']}", json={"layout": layout})
+        assert resp.status_code == 200, resp.text
+
+    def test_a_filter_placed_twice_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"] += [_filter_tile("ft-1"), _filter_tile("ft-2", y=8)]
+        resp = client.post("/catalog/dashboards", json={"name": "Twice", "layout": layout})
+        assert resp.status_code == 422
+        assert "more than once" in resp.text
+
+
+def _png_bytes() -> bytes:
+    """A real 1x1 transparent PNG."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\x00"))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _data_url(data: bytes, mime: str = "image/png") -> str:
+    return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
+
+def _image_tile(tile_id: str = "img-1", image: dict | None = None, **extra) -> dict:
+    return {"id": tile_id, "type": "image", "image": image, "x": 0, "y": 6, "w": 8, "h": 4, **extra}
+
+
+def _padded_png(size: int) -> str:
+    """A data URL whose bytes start like a PNG and take ``size`` bytes, for the caps."""
+    signature = b"\x89PNG\r\n\x1a\n"
+    return _data_url(signature + b"\x00" * (size - len(signature)))
+
+
+class TestDashboardImageTiles:
+    def test_image_tile_round_trips_through_create_update_and_get(self, client):
+        png = _data_url(_png_bytes())
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_image_tile(image={"data_url": png, "alt": "Acme logo"}))
+        created = client.post("/catalog/dashboards", json={"name": "Logo", "layout": layout})
+        assert created.status_code == 201, created.text
+        dash_id = created.json()["id"]
+        tile = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"][2]
+        assert tile["type"] == "image"
+        assert tile["image"] == {"data_url": png, "alt": "Acme logo", "fit": "contain"}
+
+        svg = _data_url(b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"/>', "image/svg+xml")
+        layout["tiles"][2]["image"] = {"data_url": svg, "alt": None, "fit": "cover"}
+        layout["tiles"].append(_image_tile("img-2"))
+        updated = client.put(f"/catalog/dashboards/{dash_id}", json={"layout": layout})
+        assert updated.status_code == 200, updated.text
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert tiles[2]["image"] == {"data_url": svg, "alt": None, "fit": "cover"}
+        # An image tile still to be filled is stored empty.
+        assert (tiles[3]["type"], tiles[3]["image"]) == ("image", None)
+        assert [t["image"] for t in tiles[:2]] == [None, None]
+
+    def test_layout_saved_before_image_tiles_loads_unchanged(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old images", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        tiles = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["tiles"]
+        assert [t["image"] for t in tiles] == [None, None]
+
+    @pytest.mark.parametrize(
+        "data_url, message",
+        [
+            ("data:text/plain;base64,aGVsbG8=", "not a PNG, JPEG, WebP, GIF or SVG image"),
+            ("https://example.com/logo.png", "not a PNG, JPEG, WebP, GIF or SVG image"),
+            ("data:image/png,%89PNG", "not a PNG, JPEG, WebP, GIF or SVG image"),
+            ("data:image/png;base64,iVBORw0K!!!", "not valid base64"),
+            (_data_url(b"GIF89a" + b"\x00" * 16), "does not hold PNG data"),
+            (_data_url(b"<html><script>alert(1)</script></html>", "image/svg+xml"), "does not hold SVG data"),
+        ],
+    )
+    def test_an_image_that_is_not_one_returns_422(self, client, data_url, message):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_image_tile(image={"data_url": data_url}))
+        resp = client.post("/catalog/dashboards", json={"name": "Not an image", "layout": layout})
+        assert resp.status_code == 422
+        assert message in resp.text
+
+    def test_an_image_over_its_cap_returns_422_naming_both_sizes(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_image_tile(image={"data_url": _padded_png(300 * 1024 + 1)}))
+        resp = client.post("/catalog/dashboards", json={"name": "Big", "layout": layout})
+        assert resp.status_code == 422
+        assert "the image is 301 KB; an image may be at most 300 KB" in resp.text
+        layout["tiles"][2]["image"] = {"data_url": _padded_png(300 * 1024)}
+        resp = client.post("/catalog/dashboards", json={"name": "At the cap", "layout": layout})
+        assert resp.status_code == 201, resp.text
+
+    def test_a_dashboard_over_the_total_cap_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        image = {"data_url": _padded_png(299 * 1024)}
+        layout["tiles"] += [_image_tile(f"img-{i}", image=image, y=6 + i) for i in range(6)]
+        created = client.post("/catalog/dashboards", json={"name": "Six", "layout": layout})
+        assert created.status_code == 201, created.text
+        layout["tiles"].append(_image_tile("img-6", image=image, y=12))
+        resp = client.put(f"/catalog/dashboards/{created.json()['id']}", json={"layout": layout})
+        assert resp.status_code == 422
+        assert "the images on this dashboard take 2.1 MB; a dashboard may hold at most 2 MB" in resp.text
+
+    def test_alt_text_over_300_characters_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(_image_tile(image={"data_url": _data_url(_png_bytes()), "alt": "x" * 301}))
+        resp = client.post("/catalog/dashboards", json={"name": "Long alt", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_the_list_leaves_out_image_bytes_that_get_carries(self, client):
+        png = _data_url(_png_bytes())
+        layout = _layout_with_two_tiles()
+        layout["tiles"] += [_image_tile(image={"data_url": png, "alt": "Logo", "fit": "cover"}), _image_tile("img-2")]
+        dash_id = client.post("/catalog/dashboards", json={"name": "Logo", "layout": layout}).json()["id"]
+        listed = next(d for d in client.get("/catalog/dashboards").json() if d["id"] == dash_id)
+        assert [t["image"] for t in listed["layout"]["tiles"]] == [
+            None,
+            None,
+            {"data_url": "", "alt": "Logo", "fit": "cover"},
+            None,
+        ]
+        got = client.get(f"/catalog/dashboards/{dash_id}").json()
+        assert got["layout"]["tiles"][2]["image"]["data_url"] == png
+
+    def test_a_stored_layout_over_the_save_limits_still_reads(self, client):
+        layout = _layout_with_two_tiles()
+        image = {"data_url": _padded_png(400 * 1024)}
+        layout["tiles"] += [_image_tile(f"img-{i}", image=image, y=6 + i) for i in range(6)]
+        layout["color_assignments"] = [{"field": "region", "value": "EU", "slot": s} for s in (0, 1)]
+        dash_id = _store_dashboard("Written under looser caps", layout)
+        resp = client.get(f"/catalog/dashboards/{dash_id}")
+        assert resp.status_code == 200, resp.text
+        assert len(resp.json()["layout"]["tiles"]) == 8
+        listed = client.get("/catalog/dashboards")
+        assert listed.status_code == 200, listed.text
+        assert len(next(d for d in listed.json() if d["id"] == dash_id)["layout"]["tiles"]) == 8
+        resp = client.put(f"/catalog/dashboards/{dash_id}", json={"layout": layout})
+        assert resp.status_code == 422
+
+    def test_a_stored_layout_that_does_not_read_leaves_the_list_working(self, client):
+        good = client.post("/catalog/dashboards", json={"name": "Good", "layout": _layout_with_two_tiles()}).json()
+        bad_id = _store_dashboard("Broken", {**_empty_layout(), "auto_refresh_seconds": 5})
+        listed = client.get("/catalog/dashboards")
+        assert listed.status_code == 200, listed.text
+        by_id = {d["id"]: d for d in listed.json()}
+        assert len(by_id[good["id"]]["layout"]["tiles"]) == 2
+        assert by_id[bad_id]["layout"]["tiles"] == []
+        assert client.get(f"/catalog/dashboards/{bad_id}").status_code == 422
+
+
+def _store_dashboard(name: str, layout: dict) -> int:
+    """Write a row as is, past the save checks, as an older release or a hand edit would."""
+    with get_db_context() as db:
+        row = CatalogDashboard(name=name, layout_json=json.dumps(layout), layout_version=1, created_by=1)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row.id
+
+
+def _tabbed_layout() -> dict:
+    layout = _layout_with_two_tiles()
+    layout["tabs"] = [{"id": "tab-a", "title": "Overview"}, {"id": "tab-b", "title": "Sales"}]
+    layout["tiles"][0]["tab_id"] = "tab-a"
+    layout["tiles"][1].update({"tab_id": "tab-b", "x": 0})
+    return layout
+
+
+class TestDashboardTabs:
+    def test_tabs_and_tile_tabs_round_trip(self, client):
+        created = client.post("/catalog/dashboards", json={"name": "Tabbed", "layout": _tabbed_layout()})
+        assert created.status_code == 201, created.text
+        body = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]
+        assert body["tabs"] == [{"id": "tab-a", "title": "Overview"}, {"id": "tab-b", "title": "Sales"}]
+        assert [(t["id"], t["tab_id"], t["x"]) for t in body["tiles"]] == [("t1", "tab-a", 0), ("t2", "tab-b", 0)]
+
+    def test_layout_saved_before_tabs_loads_as_one_canvas(self, client):
+        with get_db_context() as db:
+            row = CatalogDashboard(
+                name="Old canvas", layout_json=json.dumps(_layout_with_two_tiles()), layout_version=1, created_by=1
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        body = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]
+        assert body["tabs"] == []
+        assert [t["tab_id"] for t in body["tiles"]] == [None, None]
+
+    def test_a_stored_tile_on_an_unknown_tab_still_reads(self, client):
+        layout = _tabbed_layout()
+        layout["tiles"][1]["tab_id"] = "gone"
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Stray", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        resp = client.get(f"/catalog/dashboards/{dash_id}")
+        assert resp.status_code == 200
+        assert resp.json()["layout"]["tiles"][1]["tab_id"] == "gone"
+
+    def test_duplicate_tab_ids_return_422(self, client):
+        layout = _tabbed_layout()
+        layout["tabs"][1]["id"] = "tab-a"
+        layout["tiles"][1]["tab_id"] = "tab-a"
+        resp = client.post("/catalog/dashboards", json={"name": "Twice", "layout": layout})
+        assert resp.status_code == 422
+        assert "tab 'tab-a' appears more than once" in resp.text
+
+    @pytest.mark.parametrize(
+        ("tab_id", "message"),
+        [("gone", "is on unknown tab 'gone'"), (None, "is on no tab")],
+    )
+    def test_saving_a_tile_off_the_tabs_returns_422(self, client, tab_id, message):
+        created = client.post("/catalog/dashboards", json={"name": "Tabbed", "layout": _tabbed_layout()}).json()
+        layout = _tabbed_layout()
+        layout["tiles"][1]["tab_id"] = tab_id
+        resp = client.put(f"/catalog/dashboards/{created['id']}", json={"layout": layout})
+        assert resp.status_code == 422
+        assert message in resp.text
+
+    def test_a_tile_on_a_tab_of_a_layout_without_tabs_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"][0]["tab_id"] = "tab-a"
+        resp = client.post("/catalog/dashboards", json={"name": "No tabs", "layout": layout})
+        assert resp.status_code == 422
+        assert "the layout has no tabs" in resp.text
+
+    @pytest.mark.parametrize("bad_tab", [{"id": "", "title": "Empty id"}, {"id": "t", "title": ""}, {"id": "t"}])
+    def test_invalid_tab_returns_422(self, client, bad_tab):
+        layout = _empty_layout()
+        layout["tabs"] = [bad_tab]
+        resp = client.post("/catalog/dashboards", json={"name": "Bad tab", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_a_filter_targets_tiles_on_every_tab(self, client):
+        layout = _tabbed_layout()
+        layout["filters"][0].update({"target": "tiles", "target_tile_ids": ["t1", "t2"]})
+        layout["tiles"].append(_filter_tile(tab_id="tab-b"))
+        created = client.post("/catalog/dashboards", json={"name": "Filtered tabs", "layout": layout})
+        assert created.status_code == 201, created.text
+        body = created.json()["layout"]
+        assert body["filters"][0]["target_tile_ids"] == ["t1", "t2"]
+        assert body["tiles"][2]["tab_id"] == "tab-b"
+
+
+def _make_viz(source_type: str = "sql", table_id: int | None = None) -> int:
+    with get_db_context() as db:
+        viz = CatalogVisualization(
+            name=f"chart-{source_type}-{time.time_ns()}",
+            created_by=1,
+            source_type=source_type,
+            sql_query="SELECT region, amount FROM sales" if source_type == "sql" else None,
+            catalog_table_id=table_id if source_type == "table" else None,
+            spec_json=json.dumps([{"encodings": {}}]),
+        )
+        db.add(viz)
+        db.commit()
+        db.refresh(viz)
+        return viz.id
+
+
+def _region_filter(**extra) -> dict:
+    return {
+        "id": "f1",
+        "field_name": "region",
+        "kind": "categorical",
+        "state": {"selected": []},
+        "target": "all",
+        "target_tile_ids": [],
+        **extra,
+    }
+
+
+class TestDashboardFilterSingleSelect:
+    def test_multiple_defaults_to_true_and_round_trips_false(self, client):
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(), _region_filter(id="f2", multiple=False, state={"selected": ["EU"]})]
+        created = client.post("/catalog/dashboards", json={"name": "Single", "layout": layout})
+        assert created.status_code == 201, created.text
+        filters = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["filters"]
+        assert [f["multiple"] for f in filters] == [True, False]
+        assert filters[1]["state"] == {"selected": ["EU"]}
+
+    def test_layout_saved_before_single_select_loads_unchanged(self, client):
+        layout = _layout_with_two_tiles()
+        with get_db_context() as db:
+            row = CatalogDashboard(name="Old", layout_json=json.dumps(layout), layout_version=1, created_by=1)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            dash_id = row.id
+        flt = client.get(f"/catalog/dashboards/{dash_id}").json()["layout"]["filters"][0]
+        assert (flt["multiple"], flt["datasource_viz_id"], flt["state"]) == (True, None, {"selected": ["US", "EU"]})
+
+
+class TestDashboardFilterChartSource:
+    def test_filter_on_a_sql_chart_round_trips(self, client):
+        viz_id = _make_viz("sql")
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(datasource_viz_id=viz_id)]
+        created = client.post("/catalog/dashboards", json={"name": "SQL source", "layout": layout})
+        assert created.status_code == 201, created.text
+        flt = client.get(f"/catalog/dashboards/{created.json()['id']}").json()["layout"]["filters"][0]
+        assert (flt["datasource_viz_id"], flt["datasource_id"]) == (viz_id, None)
+
+    def test_table_and_chart_together_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(datasource_id=_make_table(), datasource_viz_id=_make_viz("sql"))]
+        resp = client.post("/catalog/dashboards", json={"name": "Both", "layout": layout})
+        assert resp.status_code == 422
+        assert "not both" in resp.text
+
+    def test_unknown_chart_returns_422(self, client):
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(datasource_viz_id=99999)]
+        resp = client.post("/catalog/dashboards", json={"name": "Gone", "layout": layout})
+        assert resp.status_code == 422
+        assert "unknown visualization_id=99999" in resp.text
+
+    def test_chart_on_a_table_returns_422(self, client):
+        viz_id = _make_viz("table", table_id=_make_table())
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(datasource_viz_id=viz_id)]
+        resp = client.post("/catalog/dashboards", json={"name": "Table chart", "layout": layout})
+        assert resp.status_code == 422
+        assert "bind the table" in resp.text
+
+    def test_update_onto_an_unknown_chart_returns_422(self, client):
+        created = client.post("/catalog/dashboards", json={"name": "Up", "layout": _layout_with_two_tiles()}).json()
+        layout = _layout_with_two_tiles()
+        layout["filters"] = [_region_filter(datasource_viz_id=99999)]
+        resp = client.put(f"/catalog/dashboards/{created['id']}", json={"layout": layout})
         assert resp.status_code == 422

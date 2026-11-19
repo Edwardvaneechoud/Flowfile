@@ -1,6 +1,7 @@
 import type { DashboardFilterKind } from "../types";
 
-const NUMERIC_RE = /^(int|uint|float|decimal)/i;
+// "number" is how a SQL chart's quantitative field is listed (no Polars dtype).
+const NUMERIC_RE = /^(int|uint|float|decimal|number$)/i;
 const TEMPORAL_RE = /^(date|datetime|time|duration|timestamp)/i;
 
 export const isNumericDtype = (dtype: string | null | undefined): boolean =>
