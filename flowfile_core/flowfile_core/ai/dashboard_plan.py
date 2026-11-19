@@ -1,7 +1,8 @@
 """A question over several catalog tables → the plan of a dashboard page (``POST /ai/plan_dashboard``).
 
 The first of three stages. The model reads the profile of every selected source and writes a
-*plan*: a title, a few KPIs and an ordered list of *checks*. A check names one source, says in
+*plan*: a title, a few KPIs, an ordered list of *checks* and, when the question asks to filter by
+something, dashboard filters. A check names one source, says in
 words which chart to build (``brief``, the prompt ``POST /ai/generate_chart`` gets for it) and
 what the chart tests (``purpose``); ``relation`` names two number columns whose correlation the
 story stage measures. Nothing here claims anything about the data: the claims are written by
@@ -49,6 +50,7 @@ MAX_TIMEOUT_SECONDS: float = 120.0
 MAX_SOURCES: int = 6
 MAX_CHECKS: int = 8
 MAX_KPIS: int = 4
+MAX_FILTERS: int = 3
 RETRY_ROUNDS: int = 1
 DETAILED_COLUMNS: int = 40
 _MAX_TOKENS: int = 2500
@@ -71,6 +73,17 @@ REASONS: tuple[str, ...] = (
 """Every ``reason`` a degraded plan can carry."""
 
 KpiAgg = Literal["sum", "mean", "median", "min", "max", "count", "distinctCount"]
+FilterKind = Literal["categorical", "date_range", "numeric_range"]
+
+_FILTER_KINDS: dict[str, tuple[str, ...]] = {
+    "string": ("categorical",),
+    "boolean": ("categorical",),
+    "integer": ("numeric_range", "categorical"),
+    "float": ("numeric_range",),
+    "date": ("date_range",),
+    "datetime": ("date_range",),
+}
+"""The filter kinds a column type takes, the default first (the filter dialog's own rule)."""
 
 
 class PlannedRelation(BaseModel):
@@ -107,12 +120,25 @@ class PlannedCheck(BaseModel):
     relation: PlannedRelation | None = None
 
 
+class PlannedFilter(BaseModel):
+    """A dashboard filter on one column of a source; it reaches the page's tiles that read that source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    table_id: int
+    field: str
+    kind: FilterKind
+    label: str | None = None
+
+
 class DashboardPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str
     kpis: list[PlannedKpi] = Field(default_factory=list)
     checks: list[PlannedCheck] = Field(default_factory=list)
+    filters: list[PlannedFilter] = Field(default_factory=list)
 
 
 class DashboardPlanResponse(BaseModel):
@@ -271,6 +297,34 @@ def _kpi(raw: Any, i: int, sources: Sequence[PlanSource]) -> tuple[dict | None, 
     return {"table_id": source.table_id, "label": label, "field": field, "agg": agg}, []
 
 
+def _filter(raw: Any, i: int, sources: Sequence[PlanSource]) -> tuple[dict | None, list[str]]:
+    path = f"filters[{i}]"
+    if isinstance(raw, str):
+        raw = {"field": raw}
+    if not isinstance(raw, dict):
+        return None, [f'{path} must be an object {{"source", "field", "label"}}.']
+    source, problem = _source_of(raw, sources, path)
+    if source is None:
+        return None, [problem or f"{path}.source is missing."]
+    by_name = {c.name: c for c in source.columns}
+    named = raw.get("field", raw.get("column"))
+    if not isinstance(named, str) or not named.strip():
+        return None, [f"{path}.field is missing: name the column the reader filters by."]
+    field, problem = _resolve(named, by_name, f"{path}.field")
+    if field is None:
+        return None, [problem or f"{path}.field is not a column."]
+    kinds = _FILTER_KINDS.get(by_name[field].type)
+    if kinds is None:
+        return None, [f'{path}: "{field}" cannot be filtered by; pick a text, number or date column.']
+    asked = str(raw.get("kind", "")).strip().lower()
+    return {
+        "table_id": source.table_id,
+        "field": field,
+        "kind": asked if asked in kinds else kinds[0],
+        "label": _text(raw.get("label", raw.get("title")), _MAX_TITLE),
+    }, []
+
+
 def check_plan(raw: Any, sources: Sequence[PlanSource]) -> tuple[DashboardPlan | None, list[str], list[str]]:
     """``(plan, problems, warnings)``: the valid items of ``raw`` as a plan, and what was wrong.
 
@@ -299,16 +353,36 @@ def check_plan(raw: Any, sources: Sequence[PlanSource]) -> tuple[DashboardPlan |
         if kpi is not None:
             kpis.append(kpi)
 
+    filters: list[dict] = []
+    for i, item in enumerate(raw.get("filters") if isinstance(raw.get("filters"), list) else []):
+        found_filter, found = _filter(item, i, sources)
+        problems.extend(found)
+        if found_filter is not None and not any(
+            (f["table_id"], f["field"]) == (found_filter["table_id"], found_filter["field"]) for f in filters
+        ):
+            filters.append(found_filter)
+
     if not checks:
         return None, problems, warnings
     if len(checks) > MAX_CHECKS:
         warnings.append(f"The plan had {len(checks)} charts; the first {MAX_CHECKS} were kept.")
     if len(kpis) > MAX_KPIS:
         warnings.append(f"The plan had {len(kpis)} KPIs; the first {MAX_KPIS} were kept.")
+    checks, kpis = checks[:MAX_CHECKS], kpis[:MAX_KPIS]
+    read = {item["table_id"] for item in (*checks, *kpis)}
+    keys = {s.table_id: s.key for s in sources}
+    for unused in [f for f in filters if f["table_id"] not in read]:
+        warnings.append(
+            f'The filter on "{unused["field"]}" was left out: nothing on the page reads "{keys[unused["table_id"]]}".'
+        )
+    filters = [f for f in filters if f["table_id"] in read]
+    if len(filters) > MAX_FILTERS:
+        warnings.append(f"The plan had {len(filters)} filters; the first {MAX_FILTERS} were kept.")
     plan = DashboardPlan(
         title=_text(raw.get("title"), _MAX_TITLE) or "Dashboard",
-        kpis=[PlannedKpi(id=f"k{n}", **k) for n, k in enumerate(kpis[:MAX_KPIS], start=1)],
-        checks=[PlannedCheck(id=f"c{n}", **c) for n, c in enumerate(checks[:MAX_CHECKS], start=1)],
+        kpis=[PlannedKpi(id=f"k{n}", **k) for n, k in enumerate(kpis, start=1)],
+        checks=[PlannedCheck(id=f"c{n}", **c) for n, c in enumerate(checks, start=1)],
+        filters=[PlannedFilter(id=f"f{n}", **f) for n, f in enumerate(filters[:MAX_FILTERS], start=1)],
     )
     return plan, problems, warnings
 
@@ -325,8 +399,9 @@ _SYSTEM_PROMPT = """\
 You plan one dashboard page that answers a question about the user's data.
 
 You get the selected sources (tables), each with its columns, types and a small profile, and the
-question. You do not build the charts yourself. You write a plan: a title, a few KPIs, and an
-ordered list of checks. Each check is one chart that another model builds from your one-sentence
+question. You do not build the charts yourself. You write a plan: a title, a few KPIs, an
+ordered list of checks, and filters when the question asks for them. Each check is one chart
+that another model builds from your one-sentence
 description, and that tests one thing about the data. After the charts are built, their real
 numbers are read and the page's text is written from them. So plan what should be LOOKED AT; do
 not state findings, and do not guess what the data will show.
@@ -336,7 +411,8 @@ Answer with one JSON object and nothing else:
 {"title": "<page title>",
  "kpis": [{"source": "<source>", "label": "<label>", "field": "<column>", "agg": "<agg>"}],
  "checks": [{"source": "<source>", "title": "<chart title>", "chart": "<which chart to build>",
-             "tests": "<what this chart tests>", "relation": ["<number column>", "<number column>"]}]}
+             "tests": "<what this chart tests>", "relation": ["<number column>", "<number column>"]}],
+ "filters": [{"source": "<source>", "field": "<column>", "label": "<label>"}]}
 
 Rules that matter most:
 
@@ -356,6 +432,14 @@ Rules that matter most:
 - "relation" is optional: add it only to a check that asks whether two NUMBER columns of the same
   source move together (a scatter plot). Give the two column names. Leave it out everywhere else.
 - A high-cardinality text column (many distinct values) needs a top-N: say "top 10 ... by ...".
+- "filters": 0 to 3 controls the READER uses to narrow the page. Add one only when the question
+  asks to filter, select, choose, slice or drill by something ("that I can filter per month",
+  "for a region I pick", "by period"). Name the column the reader filters by, in a source that a
+  check or KPI reads. A date column gives a period picker: that is how "filter per month", "per
+  week" or "by year" is done, so use the date column itself. A text column gives a list of values
+  to tick. A number column gives a range. Leave "filters" out when the question does not ask.
+- A filter is NOT a chart. "Sales per category that I can filter per month" is one chart of sales
+  per category PLUS one filter on the date column. Do not put the month on the chart's axis for it.
 - When a "Possible links" line says two sources share a column, you may plan one check on each
   side of it, but still never join.
 - If the sources cannot answer the question at all, answer
@@ -409,6 +493,21 @@ Example 3. Sources: "orders" as in example 1. Question: "What will the weather b
 
 {"title": null, "kpis": [], "checks": [],
  "explanation": "The orders table holds sales, not weather."}
+
+Example 4. Sources: "orders" as in example 1. Question: "A dashboard with sales per category on
+which I can filter per month and pick a region."
+
+{"title": "Sales per category",
+ "kpis": [{"source": "orders", "label": "Total revenue", "field": "revenue", "agg": "sum"}],
+ "checks": [
+  {"source": "orders", "title": "Revenue by category",
+   "chart": "Bar chart of the sum of revenue by category, sorted descending.",
+   "tests": "Which categories sell the most in the period the reader picks."},
+  {"source": "orders", "title": "Quantity by category",
+   "chart": "Bar chart of the sum of quantity by category, sorted descending.",
+   "tests": "Whether the categories rank the same by units as by revenue."}],
+ "filters": [{"source": "orders", "field": "order_date", "label": "Order date"},
+             {"source": "orders", "field": "region", "label": "Region"}]}
 """
 
 
@@ -425,14 +524,14 @@ def user_message(*, sources: Sequence[PlanSource], prompt: str) -> str:
     if len(sources) > 1:
         parts.append("## Possible links\n\n" + ("\n".join(links) if links else "None found by column name."))
     parts.append(f"## Question\n\n{prompt}")
-    parts.append('Answer now with the JSON object {"title": ..., "kpis": [...], "checks": [...]}.')
+    parts.append('Answer now with the JSON object {"title": ..., "kpis": [...], "checks": [...], "filters": [...]}.')
     return "\n\n".join(parts)
 
 
 def retry_message(problem_text: str) -> str:
     return (
         f"{problem_text}\n\n"
-        'Answer again with the whole JSON object {"title": ..., "kpis": [...], "checks": [...]}, '
+        'Answer again with the whole JSON object {"title": ..., "kpis": [...], "checks": [...], "filters": [...]}, '
         "with these problems fixed. Change nothing else."
     )
 
@@ -555,6 +654,7 @@ async def plan_dashboard(
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "MAX_CHECKS",
+    "MAX_FILTERS",
     "MAX_KPIS",
     "MAX_SOURCES",
     "MAX_TIMEOUT_SECONDS",
@@ -564,6 +664,7 @@ __all__ = [
     "DashboardPlanResponse",
     "PlanSource",
     "PlannedCheck",
+    "PlannedFilter",
     "PlannedKpi",
     "PlannedRelation",
     "check_plan",

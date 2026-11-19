@@ -317,6 +317,231 @@ export const generateChart = async (
   }
 };
 
+// Dashboard building — POST /ai/plan_dashboard, then /ai/generate_chart per planned chart,
+// then POST /ai/dashboard_story. The plan says which charts to build and what each tests;
+// the story is written from what the built charts returned.
+
+export interface PlannedRelation {
+  x: string;
+  y: string;
+}
+
+export interface PlannedKpi {
+  id: string;
+  table_id: number;
+  label: string;
+  field: string | null;
+  agg: "sum" | "mean" | "median" | "min" | "max" | "count" | "distinctCount";
+}
+
+export interface PlannedCheck {
+  id: string;
+  table_id: number;
+  title: string;
+  /** The prompt the chart model gets for this chart. */
+  brief: string;
+  /** What the chart is there to find out. */
+  purpose: string;
+  relation: PlannedRelation | null;
+}
+
+/** A dashboard filter the plan asks for, on one column of a source. */
+export interface PlannedFilter {
+  id: string;
+  table_id: number;
+  field: string;
+  kind: "categorical" | "date_range" | "numeric_range";
+  label: string | null;
+}
+
+export interface DashboardPlan {
+  title: string;
+  kpis: PlannedKpi[];
+  checks: PlannedCheck[];
+  /** Absent from a core that plans no filters. */
+  filters?: PlannedFilter[];
+}
+
+/** Every `reason` a degraded plan can carry (core's `dashboard_plan.REASONS`). */
+export type DashboardPlanReason =
+  | "empty_prompt"
+  | "no_columns"
+  | "timeout"
+  | "provider_error"
+  | "empty_response"
+  | "parse_error"
+  | "validation_error"
+  | "no_plan"
+  | "invalid_plan";
+
+export interface DashboardPlanResponse {
+  plan: DashboardPlan | null;
+  explanation: string | null;
+  warnings: string[];
+  degraded: boolean;
+  reason: DashboardPlanReason | null;
+  message: string | null;
+  attempts: number;
+}
+
+export interface PlanDashboardRequest {
+  tableIds: number[];
+  prompt: string;
+  sendValues?: boolean;
+  provider?: string | null;
+  model?: string | null;
+}
+
+/** A built chart as the story route takes it; `payload` is the query its tile runs. */
+export interface StoryChartBody {
+  id: string;
+  table_id: number;
+  title: string;
+  purpose?: string | null;
+  chart: ChartRequest;
+  payload?: Record<string, unknown> | null;
+  relation?: PlannedRelation | null;
+}
+
+export interface StoryFailureBody {
+  id: string;
+  title: string;
+  reason: string;
+}
+
+export interface StoryChartOut {
+  id: string;
+  title: string;
+  finding: string | null;
+  width: "half" | "full";
+}
+
+export interface DashboardStory {
+  title: string;
+  summary_md: string;
+  charts: StoryChartOut[];
+  left_out: { id: string; reason: string }[];
+}
+
+export interface EvidenceNote {
+  id: string;
+  kind: "kpi" | "chart" | "relation";
+  status: "measured" | "not_measured" | "withheld";
+  detail: string | null;
+}
+
+/** Every `reason` a degraded story can carry (core's `dashboard_story.REASONS`). */
+export type DashboardStoryReason =
+  | "empty_prompt"
+  | "no_charts"
+  | "timeout"
+  | "provider_error"
+  | "empty_response"
+  | "parse_error"
+  | "validation_error"
+  | "invalid_story";
+
+export interface DashboardStoryResponse {
+  story: DashboardStory | null;
+  /** True when the text rests on numbers read from the data. */
+  grounded: boolean;
+  evidence: EvidenceNote[];
+  warnings: string[];
+  degraded: boolean;
+  reason: DashboardStoryReason | null;
+  message: string | null;
+  attempts: number;
+}
+
+export interface DashboardStoryRequest {
+  tableIds: number[];
+  prompt: string;
+  title?: string | null;
+  kpis: PlannedKpi[];
+  charts: StoryChartBody[];
+  failed: StoryFailureBody[];
+  sendValues?: boolean;
+  provider?: string | null;
+  model?: string | null;
+}
+
+/**
+ * Each route waits up to 120 s for the model, plus the table profiles (plan) or the evidence
+ * queries (story); the client waits longer so the server's own answer is the one shown.
+ */
+export const DASHBOARD_CLIENT_TIMEOUT_MS = 150_000;
+
+const dashboardTarget = (body: {
+  sendValues?: boolean;
+  provider?: string | null;
+  model?: string | null;
+}): Record<string, unknown> => {
+  const target: Record<string, unknown> = {};
+  if (body.sendValues !== undefined) target.send_values = body.sendValues;
+  if (body.provider) target.provider = body.provider;
+  if (body.model) target.model = body.model;
+  return target;
+};
+
+export const planDashboard = async (
+  body: PlanDashboardRequest,
+  signal?: AbortSignal,
+): Promise<DashboardPlanResponse> => {
+  const payload = { table_ids: body.tableIds, prompt: body.prompt, ...dashboardTarget(body) };
+  try {
+    const { data } = await axios.post<DashboardPlanResponse>("/ai/plan_dashboard", payload, {
+      signal,
+      timeout: DASHBOARD_CLIENT_TIMEOUT_MS,
+    });
+    return {
+      plan: data.plan ?? null,
+      explanation: data.explanation ?? null,
+      warnings: data.warnings ?? [],
+      degraded: Boolean(data.degraded),
+      reason: data.reason ?? null,
+      message: data.message ?? null,
+      attempts: data.attempts ?? 0,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+export const writeDashboardStory = async (
+  body: DashboardStoryRequest,
+  signal?: AbortSignal,
+): Promise<DashboardStoryResponse> => {
+  const payload = {
+    table_ids: body.tableIds,
+    prompt: body.prompt,
+    title: body.title ?? null,
+    kpis: body.kpis,
+    charts: body.charts,
+    failed: body.failed,
+    ...dashboardTarget(body),
+  };
+  try {
+    const { data } = await axios.post<DashboardStoryResponse>("/ai/dashboard_story", payload, {
+      signal,
+      timeout: DASHBOARD_CLIENT_TIMEOUT_MS,
+    });
+    return {
+      story: data.story ?? null,
+      grounded: Boolean(data.grounded),
+      evidence: data.evidence ?? [],
+      warnings: data.warnings ?? [],
+      degraded: Boolean(data.degraded),
+      reason: data.reason ?? null,
+      message: data.message ?? null,
+      attempts: data.attempts ?? 0,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
 // Edge ghost-node suggestions — non-streaming JSON wrapper around
 // /ai/suggest_next_node.
 

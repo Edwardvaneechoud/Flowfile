@@ -160,7 +160,7 @@
         <p class="hint-text models-intro">
           The AI always gets names: the table, its columns and their types, plus your prompt. With
           this on it also gets data values: row counts, summary statistics and some of the values,
-          masked for emails and card numbers. Today this applies to charts.
+          masked for emails and card numbers. Today this applies to charts and dashboards.
         </p>
         <div class="option-list">
           <label class="option" :class="{ 'option--disabled': !aiStore.sendDataAllowed }">
@@ -402,6 +402,11 @@ const onMainModelChange = (value: string): void => {
 // here; `surface` is the name its store passes to `aiStore.resolveSurface`.
 const TASK_MODELS: ReadonlyArray<{ surface: string; label: string; hint: string }> = [
   { surface: "chart", label: "Charts", hint: "Used when you ask the AI for a chart." },
+  {
+    surface: "dashboard",
+    label: "Dashboards",
+    hint: "Plans and writes a dashboard page; each chart on it is built by the Charts model.",
+  },
   { surface: "cron", label: "Schedules", hint: "Used to turn a schedule in words into cron." },
   {
     surface: "settings_autocomplete",

@@ -100,6 +100,28 @@ Core sends the model a small profile of the table (column names and types, the r
 
 ---
 
+## Building a dashboard page from a question
+
+The dashboard builder sits above the chart surface and reuses it. The browser orchestrates three stages, because a chart request becomes a Graphic Walker chart only in the browser and every chart tile needs a saved visualization (`stores/ai-dashboard-store.ts`, dialog `views/DashboardsView/DashboardAiBuilder.vue`):
+
+| Stage | Route | Model | What comes back |
+|---|---|---|---|
+| Plan | `POST /ai/plan_dashboard` | `dashboard` task | A title, up to four KPIs, up to eight *checks* (a source table, a chart brief in words, and what the chart tests) and up to three filters |
+| Build | `POST /ai/generate_chart`, one call per check, three at a time | `chart` task | A chart request, converted with `chartFromRequest` and turned into its query with Graphic Walker's `chartToWorkflow` |
+| Story | `POST /ai/dashboard_story` | `dashboard` task | A summary, the charts in reading order with one finding each, and the charts left off with a reason |
+
+The plan names a source by key and core assigns the ids (`ai/dashboard_plan.py`). `check_plan` sends every problem back to the model once and then keeps the valid items, so one bad KPI never costs the page; only a plan with no valid check is refused.
+
+The story route (`ai/dashboard_story.py`) is where claims meet data. Core runs each built chart's query through `compute_ad_hoc_visualization` (the route a tile uses, with the caller's access), reads at most 400 rows and shows the model 40 of them, with the highest and lowest group of each measure worked out in core. A KPI is one aggregate. A relation between two number columns, named by the plan or implied by a raw scatter, is Pearson's r from one catalog SQL query built from validated, quoted column names. Only an aggregate query's rows are read: a chart of raw rows gets no row evidence. Every value is masked and cut as in the table profile. An evidence query that fails or runs past the 12 s budget marks its item "not measured" and the story is still written.
+
+With data values withheld (`send_values` false or `FLOWFILE_AI_SEND_DATA` off) the browser sends no queries, core runs none, and the model is told to describe each chart and claim nothing; the response's `grounded` is false and the summary tile says the text was written without the data.
+
+A planned filter names one column of a source. Core gives it the kind the filter dialog would (`_FILTER_KINDS`: date → `date_range`, number → `numeric_range`, text or boolean → `categorical`; a whole-number column may be `categorical` when the model asks) and drops one whose table nothing on the page reads. The browser turns it into a `DashboardFilter` bound to that table (`aiDashboard.ts::pageFilters`): `target: "all"` on an empty dashboard, the page's own tiles on a tab, and none at all when the dashboard already applies a filter on that column to every tile of the table.
+
+The browser saves only the charts the story kept, lays the page out (`views/DashboardsView/aiDashboard.ts`: summary across the grid, KPIs four to a row, charts two to a row) and applies it as one layout change, so one undo step. A story call that fails still places the built charts in the planned order, without findings.
+
+---
+
 ## Dashboard tiles that read rows
 
 A dashboard tile reaches data through a saved visualization (`viz_id`) or, for a KPI or a table tile, through a catalog table directly (`table_id`, never both: `DashboardTile` refuses a layout that sets the two). A table-backed tile uses the same hot path as the chart builder's live preview, `POST /catalog/visualizations/compute` with a `table` source, so it gets the same session pool and the same access check (`use` on the table where sharing is on). A table tile sends three polars-gw payloads, each with the dashboard's filter step first: a page of rows (a `sort` step, a `raw` view of the shown columns, the payload's `limit` and `offset`), an empty-`groupBy` count for the total, and a capped CSV download. Rows never come back in bulk except for that download.

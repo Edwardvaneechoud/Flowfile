@@ -17,6 +17,16 @@
             <el-icon><Search /></el-icon>
           </template>
         </el-input>
+        <el-button
+          v-if="aiDashboardStore.available"
+          size="small"
+          data-testid="dashboard-ai-new"
+          title="Ask a question over your tables; the AI builds a dashboard that answers it"
+          @click="onNewWithAi"
+        >
+          <span class="material-icons dash-library-ai-icon" aria-hidden="true">auto_awesome</span>
+          <span>Build with AI</span>
+        </el-button>
         <el-button type="primary" size="small" @click="onNew">
           <el-icon><Plus /></el-icon>
           <span>New dashboard</span>
@@ -71,6 +81,8 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { Plus, Search } from "@element-plus/icons-vue";
 import { useDashboardsStore } from "../../stores/dashboards-store";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useAiDashboardStore } from "../../stores/ai-dashboard-store";
+import { useAiStore } from "../../stores/ai-store";
 import DashboardCard from "./DashboardCard.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
@@ -79,6 +91,7 @@ import type { Dashboard } from "../../types";
 const router = useRouter();
 const store = useDashboardsStore();
 const catalogStore = useCatalogStore();
+const aiDashboardStore = useAiDashboardStore();
 const search = ref("");
 
 const thumbnails = computed<Record<number, string>>(() => {
@@ -109,6 +122,9 @@ const filtered = computed(() => {
 });
 
 onMounted(() => {
+  useAiStore()
+    .loadProviders()
+    .catch(() => undefined);
   store.loadLibrary().catch(() => {
     ElMessage.error(store.error ?? "Failed to load dashboards");
   });
@@ -120,6 +136,10 @@ onMounted(() => {
 
 const onNew = () => {
   router.push({ name: "dashboard-new" });
+};
+
+const onNewWithAi = () => {
+  router.push({ name: "dashboard-new", query: { ai: "1" } });
 };
 
 const onView = (d: Dashboard) => {
@@ -150,6 +170,11 @@ const onDelete = async (d: Dashboard) => {
 </script>
 
 <style scoped>
+.dash-library-ai-icon {
+  margin-right: 4px;
+  font-size: 15px;
+  color: var(--color-accent);
+}
 .dash-library {
   display: flex;
   flex-direction: column;

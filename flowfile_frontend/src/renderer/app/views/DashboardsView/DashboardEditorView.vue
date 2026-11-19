@@ -69,6 +69,15 @@
             :value="choice ?? 0"
           />
         </el-select>
+        <el-button
+          v-if="canBuildWithAi"
+          data-testid="dashboard-ai-open"
+          title="Ask a question over your tables; the AI builds a page that answers it"
+          @click="aiBuilderOpen = true"
+        >
+          <span class="material-icons ai-build-icon" aria-hidden="true">auto_awesome</span>
+          Build with AI
+        </el-button>
         <el-button v-if="store.current" :loading="refreshing" @click="onRefresh">
           <el-icon><Refresh /></el-icon> Refresh
         </el-button>
@@ -194,6 +203,8 @@
 
     <VisualizationSourcePicker v-model="sourcePickerOpen" @picked="onSourcePicked" />
 
+    <DashboardAiBuilder v-if="canBuildWithAi" v-model="aiBuilderOpen" :place="placeAiPage" />
+
     <el-dialog
       v-model="vizCreatorOpen"
       title="New visualization"
@@ -244,8 +255,22 @@ import DashboardTabBar from "./DashboardTabBar.vue";
 import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
 import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
-import { dashboardChartNames } from "../CatalogView/chartNaming";
+import { dashboardChartNames, distinctName, nameFromAiTitle } from "../CatalogView/chartNaming";
+import { chartTypeOf } from "../CatalogView/vizAutosave";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useAiDashboardStore } from "../../stores/ai-dashboard-store";
+import { useAiStore } from "../../stores/ai-store";
+import DashboardAiBuilder, { type PlacedPage } from "./DashboardAiBuilder.vue";
+import {
+  landsOnTab,
+  layoutPage,
+  pageFilters,
+  placeOnDashboard,
+  type BuiltPage,
+  type PageNote,
+  type PlacedChart,
+} from "./aiDashboard";
+import { mayEdit } from "./dashboardAccess";
 import { historyShortcutFor } from "../../composables/useFlowHotkeys";
 import { IS_MAC } from "../../utils/shortcuts";
 import { upgradeLayoutGrid } from "./gridVersion";
@@ -808,6 +833,78 @@ const buildTextTile = (x: number, y: number): DashboardTile => ({
 
 const onAddTextTile = () => addToActiveTab((row) => buildTextTile(0, row));
 
+const aiStore = useAiStore();
+const aiDashboardStore = useAiDashboardStore();
+const aiBuilderOpen = ref(false);
+// The name a new dashboard opened with; null for one opened from the library.
+let untitledName: string | null = null;
+const canBuildWithAi = computed(
+  () => Boolean(store.current) && aiDashboardStore.available && mayEdit(store.current?.access),
+);
+
+// Saves the charts the AI's page kept, then puts the whole page on the dashboard in one layout
+// change, so one undo step. A chart that cannot be saved is left off and reported.
+const placeAiPage = async (page: BuiltPage): Promise<PlacedPage> => {
+  if (!store.current) throw new Error("No dashboard is open.");
+  const library = new Map(catalogStore.visualizationLibrary.map((v) => [v.id, v.name]));
+  const taken = dashboardChartNames(layoutRef.value.tiles, (id) => library.get(id));
+  const saved: PlacedChart[] = [];
+  const failed: PageNote[] = [];
+  for (const chart of page.charts) {
+    const spec = [toPlainJson(chart.chart)] as unknown as Record<string, any>[];
+    try {
+      const viz = await catalogStore.createVisualization({
+        name: nameFromAiTitle(chart.title, taken) ?? distinctName("Chart", taken),
+        spec,
+        chart_type: chartTypeOf(spec),
+        source_type: "table",
+        catalog_table_id: chart.tableId,
+      });
+      taken.push(viz.name);
+      saved.push({ ...chart, vizId: viz.id });
+    } catch (error) {
+      failed.push({
+        title: chart.title,
+        reason: catalogSaveErrorMessage(error, "The chart could not be saved."),
+      });
+    }
+  }
+  if (page.charts.length && !saved.length) throw new Error(failed[0].reason);
+  const tiles = layoutPage(page, saved, gridCols());
+  const filters = pageFilters(
+    page.filters,
+    tiles,
+    saved,
+    layoutRef.value.filters,
+    landsOnTab(layoutRef.value),
+  );
+  const placed = placeOnDashboard(layoutRef.value, tiles, page.title, filters);
+  // A new dashboard still on its opening name takes the page's title, in the same undo step.
+  if (placed.tabId === null && nameDraft.value === untitledName) {
+    nameDraft.value = distinctName(
+      page.title.slice(0, 120),
+      store.library.map((d) => d.name),
+    );
+  }
+  onLayoutChange(placed.layout);
+  if (placed.tabId) activeTabId.value = placed.tabId;
+  return {
+    charts: saved.length,
+    kpis: page.kpis.length,
+    filters: filters.map((f) => f.label || f.field_name),
+    failed,
+  };
+};
+
+// ?ai=1 (the library's "Build with AI") opens the builder once; the param is stripped on consume.
+const consumeAiQuery = async () => {
+  if (route.query.ai !== "1" || typeof route.name !== "string") return;
+  aiBuilderOpen.value = true;
+  const query = { ...route.query };
+  delete query.ai;
+  await router.replace({ name: route.name, params: { ...route.params }, query });
+};
+
 const onAddTextAt = ({ x, y }: { x: number; y: number }) =>
   addToActiveTab((row) => buildTextTile(x, row), y);
 
@@ -896,6 +993,7 @@ const initialise = async () => {
   if (openedNew) {
     const blank = store.newBlankDashboard(newDashboardName(store.library.map((d) => d.name)));
     nameDraft.value = blank.name;
+    untitledName = blank.name;
     descriptionDraft.value = "";
     // The blank state is the baseline: nothing is sent until it changes.
     startAutosaveSession(blank);
@@ -971,6 +1069,8 @@ onMounted(async () => {
   window.addEventListener("keydown", handleHistoryKeydown);
   await initialise();
   await consumeEditVizQuery();
+  aiStore.loadProviders().catch(() => undefined);
+  await consumeAiQuery();
 });
 
 onBeforeUnmount(() => {
@@ -1142,6 +1242,11 @@ const onConflictOverwrite = async () => {
 </script>
 
 <style scoped>
+.ai-build-icon {
+  margin-right: 4px;
+  font-size: 15px;
+  color: var(--color-accent);
+}
 /* Padding stacks on .catalog-detail's so the header lines up with the library page. */
 .dashboard-editor {
   display: flex;

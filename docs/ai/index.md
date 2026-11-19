@@ -103,6 +103,24 @@ When a node fails, the run report's **Fix With AI** button streams a diagnosis �
 
 Streams a markdown spec for every node (what it does, input/output schemas, key settings). Drop into a wiki, README, or runbook.
 
+### Dashboard page from a question
+
+In the Catalog's **Visuals** tab, **Build with AI** (beside **New dashboard**, and in the dashboard editor's toolbar) builds a whole dashboard page. Select up to six catalog tables or saved queries, ask a question, and press **Build page**. The build runs in three stages, each shown as it happens:
+
+1. **Plan.** The model reads a profile of every selected table and plans a title, up to four KPIs and up to eight charts, each with what it is there to test. When the question asks to filter by something ("…that I can filter per month", "for a region I pick"), it also plans up to three dashboard filters.
+2. **Build.** Each chart is built the way the chart builder's prompt bar builds one, a few at a time. Each chart reads one of the selected tables; to chart two tables together, save a query that joins them and select it.
+3. **Write.** Flowfile runs each built chart's query and reads the result: the highest and lowest group of every measure, the KPI values, and for a scatter of two number columns their correlation. The model writes the page from those numbers: a summary that answers the question, the order of the charts, one finding per chart, and which charts to leave off.
+
+A planned filter becomes an ordinary dashboard filter in the strip above the page: a date column gives a period picker (the way to filter per month, week or year), a text column a list of values, a number column a range. It starts empty and reaches the page's tiles that read its table; on a dashboard that already holds tiles it targets only the new page's tiles.
+
+The page lands as one undo step: on the dashboard itself when it is empty, otherwise on a new tab named after the page. A new dashboard takes the page's title as its name. The dialog then lists the relations that were measured, the charts that were built and left off with the reason, and the charts that could not be built. Each chart's finding is the note behind the ⓘ on its tile.
+
+A relation the data does not support is reported as such ("no linear relation (r = 0.04)"), not left out silently. Only aggregated results are read: a chart of raw rows contributes no rows, only the correlation of its two columns.
+
+With **Send data values** off under Settings → AI → Assistant (or `FLOWFILE_AI_SEND_DATA=0` on the server), the model gets table and column names and types only, no query is run for it, and the page's text describes each chart without stating what it shows; the summary tile says so.
+
+The plan and the text run on the **Dashboards** model under Settings → AI → Assistant, the charts on the **Charts** model; both default to the main model.
+
 ---
 
 ## Diff preview & accept/reject
@@ -147,7 +165,7 @@ In the drawer, per conversation:
 
 Under **Settings → AI → Assistant**, for every AI feature on this device:
 
-- **Default provider and model**, plus an optional model of its own for single tasks (charts, schedule text, settings suggestions).
+- **Default provider and model**, plus an optional model of its own for single tasks (charts, dashboards, schedule text, settings suggestions).
 - **Agent variant** — *Live (REPL)*, *Staged*, or *Single-shot full* (see [Agent](#agent-multi-step-builder)).
 - **Verify plan completion** — extra LLM round at the end of an agent run for self-check.
 

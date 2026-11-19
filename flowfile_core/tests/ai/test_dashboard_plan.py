@@ -83,6 +83,7 @@ def test_a_valid_plan_gets_core_ids_and_table_ids() -> None:
     assert (problems, warnings) == ([], [])
     assert plan.model_dump() == {
         "title": "Sales",
+        "filters": [],
         "kpis": [
             {"id": "k1", "table_id": 11, "label": "Total revenue", "field": "revenue", "agg": "sum"},
             {"id": "k2", "table_id": 11, "label": "Orders", "field": None, "agg": "count"},
@@ -202,6 +203,76 @@ def test_items_over_the_caps_are_trimmed_with_a_warning() -> None:
     ]
 
 
+def test_filters_take_their_kind_from_the_column() -> None:
+    raw = {
+        **_plan([TREND, SEGMENTS]),
+        "filters": [
+            {"source": "orders", "field": "Order_Date", "label": "Order date"},
+            {"source": "orders", "field": "region"},
+            {"source": "orders", "field": "quantity"},
+            {"source": "orders", "column": "customer_id", "kind": "categorical"},
+        ],
+    }
+    plan, problems, warnings = check_plan(raw, SOURCES)
+    assert problems == []
+    assert [f.model_dump() for f in plan.filters] == [
+        {"id": "f1", "table_id": 11, "field": "order_date", "kind": "date_range", "label": "Order date"},
+        {"id": "f2", "table_id": 11, "field": "region", "kind": "categorical", "label": None},
+        {"id": "f3", "table_id": 11, "field": "quantity", "kind": "numeric_range", "label": None},
+    ]
+    assert warnings == [f"The plan had 4 filters; the first {dp.MAX_FILTERS} were kept."]
+
+
+def test_a_filter_kind_the_column_cannot_take_becomes_the_columns_own() -> None:
+    raw = {**_plan([TREND]), "filters": [{"source": "orders", "field": "region", "kind": "date_range"}, "revenue"]}
+    plan, problems, _ = check_plan(raw, [ORDERS])
+    assert problems == []
+    assert [(f.field, f.kind) for f in plan.filters] == [("region", "categorical"), ("revenue", "numeric_range")]
+
+
+def test_a_repeated_filter_is_kept_once_and_one_nothing_reads_is_left_out() -> None:
+    raw = {
+        **_plan([TREND]),
+        "filters": [
+            {"source": "orders", "field": "region"},
+            {"source": "orders", "field": "REGION"},
+            {"source": "customers", "field": "segment"},
+        ],
+    }
+    plan, problems, warnings = check_plan(raw, SOURCES)
+    assert problems == []
+    assert [(f.table_id, f.field) for f in plan.filters] == [(11, "region")]
+    assert warnings == ['The filter on "segment" was left out: nothing on the page reads "customers".']
+
+
+@pytest.mark.parametrize(
+    ("item", "expected"),
+    [
+        ({"source": "orders", "field": "regoin"}, 'filters[0].field "regoin" is not a column. Closest: "region".'),
+        ({"source": "orders"}, "filters[0].field is missing"),
+        ({"source": "nowhere", "field": "region"}, 'filters[0].source "nowhere" is not a source'),
+        (7, "filters[0] must be an object"),
+    ],
+)
+def test_a_bad_filter_is_a_problem_and_the_rest_of_the_plan_stays(item: Any, expected: str) -> None:
+    plan, problems, _ = check_plan({**_plan([TREND], [ROWS]), "filters": [item]}, SOURCES)
+    assert (len(plan.checks), len(plan.kpis), plan.filters) == (1, 1, [])
+    assert len(problems) == 1 and expected in problems[0]
+
+
+def test_a_column_that_cannot_be_charted_cannot_be_filtered_by() -> None:
+    blobs = PlanSource(
+        key="docs",
+        table_id=5,
+        columns=(ColumnInfo("title", "string"), ColumnInfo("payload", "other")),
+        profile_text="",
+    )
+    check = {"title": "Docs", "chart": "Bar of the count of rows by title."}
+    plan, problems, _ = check_plan({**_plan([check]), "filters": [{"field": "payload"}]}, [blobs])
+    assert plan.filters == []
+    assert problems == ['filters[0]: "payload" cannot be filtered by; pick a text, number or date column.']
+
+
 @pytest.mark.parametrize("raw", [[], "plan", {"title": "x"}, {"title": "x", "checks": []}])
 def test_an_answer_without_checks_is_refused(raw: Any) -> None:
     plan, problems, _ = check_plan(raw, SOURCES)
@@ -277,7 +348,7 @@ def test_every_example_in_the_prompt_passes_the_checks() -> None:
     )
     decoder = json.JSONDecoder()
     answers = []
-    for marker in ("Example 1.", "Example 2.", "Example 3."):
+    for marker in ("Example 1.", "Example 2.", "Example 3.", "Example 4."):
         start = prompt.index('{"title"', prompt.index(marker))
         answers.append(decoder.raw_decode(prompt[start:])[0])
     for answer, sources in zip(answers[:2], ([orders], [customers, tickets]), strict=True):
@@ -285,6 +356,12 @@ def test_every_example_in_the_prompt_passes_the_checks() -> None:
         assert (problems, warnings) == ([], [])
         assert len(plan.checks) == 4
     assert dp.read_answer(json.dumps(answers[2]), [orders]).reason == "no_plan"
+    plan, problems, warnings = check_plan(answers[3], [orders])
+    assert (problems, warnings) == ([], [])
+    assert [(f.field, f.kind, f.label) for f in plan.filters] == [
+        ("order_date", "date_range", "Order date"),
+        ("region", "categorical", "Region"),
+    ]
 
 
 # The model loop, with a scripted provider.
@@ -495,6 +572,7 @@ def _route_plan() -> str:
             ],
             [{"source": "plan_orders", "label": "Revenue", "field": "revenue", "agg": "sum"}],
         )
+        | {"filters": [{"source": "plan_orders", "field": "region", "label": "Region"}]}
     )
 
 
@@ -513,6 +591,9 @@ def test_route_plans_over_every_selected_table(
     assert [(c["id"], c["table_id"]) for c in body["plan"]["checks"]] == [("c1", orders), ("c2", customers)]
     assert body["plan"]["kpis"] == [
         {"id": "k1", "table_id": orders, "label": "Revenue", "field": "revenue", "agg": "sum"}
+    ]
+    assert body["plan"]["filters"] == [
+        {"id": "f1", "table_id": orders, "field": "region", "kind": "categorical", "label": "Region"}
     ]
     user = provider.calls[0]["messages"][1].content
     assert user.count("### Source ") == 2
