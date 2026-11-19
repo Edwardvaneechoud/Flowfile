@@ -109,6 +109,7 @@
 
 <script lang="ts" setup>
 import { ref, computed, nextTick, watch } from "vue";
+import type { Edge } from "@vue-flow/core";
 import { CodeLoader } from "vue-content-loader";
 import { ElMessage } from "element-plus";
 
@@ -153,6 +154,13 @@ const updateNodeOutputHandles = () => {
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeFilter,
+  getEdgesToDrop: () =>
+    splitModeEnabled.value
+      ? []
+      : (flowStore.vueFlowInstance?.getEdges.value.filter(
+          (edge: Edge) =>
+            edge.source === String(nodeFilter.value?.node_id) && edge.sourceHandle === "output-1",
+        ) ?? []),
   onBeforeSave: () => {
     if (nodeFilter.value) {
       if (isAdvancedFilter.value) {

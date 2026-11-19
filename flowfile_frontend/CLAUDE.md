@@ -8,6 +8,14 @@ Pure client. Talks to `flowfile_core` over HTTP; never to `flowfile_worker` dire
 - **desktop** (`tauri dev`): Rust shell in `src-tauri/` spawns the two Python services as **sidecars** on a discovered free `(core, worker)` port pair (scan starts at 63578, `core = 63578 + k*2`, `worker = core+1`), injects them into `window.__FLOWFILE_PORTS__` before any renderer script runs; the renderer then hits `http://127.0.0.1:<core>/` directly (no `/api` prefix).
 - Axios baseURL is resolved once in `src/renderer/config/constants.ts` (`flowfileCorebaseURL`). Desktop runtime detected via `window.__TAURI_INTERNALS__` (`isDesktop` in `lib/desktop.ts`).
 
+## Declarative node ports
+- Prefer core's computed `inputs` / `outputs` descriptors for handle IDs, names, kinds, visibility and multiplicity. `utils/nodeHandles.ts` retains legacy count/name derivation for older snapshots and unsaved previews without descriptors; do not create another node-specific port registry.
+- Palette templates and live node instances are different: configured dynamic ports come from instance names. Run Flow's optional parameter handle remains `input-0` even when hidden; data handles begin at `input-1` and must not shift when that parameter pip is hidden.
+- Frontend connection checks and autoconnect are immediate-feedback projections of the metadata. Core remains authoritative and may reject a gesture; do not treat frontend prechecks as a substitute for backend validation.
+
+- Paste renders current backend-returned node and edge metadata, not clipboard handle snapshots. Generation checks prevent delayed paste responses from modifying a newer canvas after flow switches or reloads.
+- Run Flow settings previews retain the effective "Run summary" output when no named child outputs exist.
+
 ## Layout
 - `src/renderer/main.ts` — Vue bootstrap (createApp, router, i18n, Element Plus, theme + auth init). Vite `root` is `src/renderer/`, entry `index.html`.
 - `src/renderer/app/` — all renderer code; the `@` alias points here.

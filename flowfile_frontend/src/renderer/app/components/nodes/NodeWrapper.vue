@@ -86,6 +86,9 @@
         <Handle
           :id="input.id"
           v-native-title="input.title"
+          :connectable="data.inputs.some((handle) => handle.id === input.id)"
+          :connectable-start="data.inputs.some((handle) => handle.id === input.id)"
+          :connectable-end="data.inputs.some((handle) => handle.id === input.id)"
           type="target"
           :position="input.position"
         />
@@ -100,19 +103,22 @@
         <Handle :id="parameterInput.id" type="target" :position="parameterInput.position" />
       </div>
       <div
-        v-for="(output, index) in data.outputs"
+        v-for="(output, index) in displayedHandles.outputs"
         :key="output.id"
         class="handle-output"
-        :style="getHandleStyle(index, data.outputs.length)"
+        :style="getHandleStyle(index, displayedHandles.outputs.length)"
       >
         <Handle
           :id="output.id"
           v-native-title="output.title"
+          :connectable="data.outputs.some((handle) => handle.id === output.id)"
+          :connectable-start="data.outputs.some((handle) => handle.id === output.id)"
+          :connectable-end="data.outputs.some((handle) => handle.id === output.id)"
           type="source"
           :position="output.position"
         />
         <span
-          v-if="output.label && data.outputs.length > 1"
+          v-if="output.label && displayedHandles.outputs.length > 1"
           class="handle-label handle-label--output"
         >
           {{ output.label }}
@@ -128,7 +134,8 @@
 //   - NodeHandles.vue: handle rendering loops (~lines 64-89)
 // (The per-node context menu moved to the canvas ContextMenu —
 //  Canvas.vue @node-context-menu + composables/useContextMenu.)
-import { Handle } from "@vue-flow/core";
+import { Handle, useVueFlow } from "@vue-flow/core";
+import { withConnectedHandles } from "../../utils/nodeHandles";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
 import { useNodeStore } from "../../stores/column-store";
 import { recoverFromFailedMutation } from "../../services/mutationFailure";
@@ -175,9 +182,26 @@ const vNativeTitle = {
 
 // The parameter-data handle (run_flow) renders bottom-center; only real data
 // inputs share the left edge spacing.
-const sideInputs = computed(() => props.data.inputs.filter((input) => input.kind !== "parameter"));
+const { getEdges, updateNodeInternals } = useVueFlow();
+const displayedHandles = computed(() =>
+  withConnectedHandles(props.data, String(props.data.id), getEdges.value),
+);
+const sideInputs = computed(() =>
+  displayedHandles.value.inputs.filter((input) => input.kind !== "parameter"),
+);
 const parameterInput = computed(() =>
-  props.data.inputs.find((input) => input.kind === "parameter"),
+  displayedHandles.value.inputs.find((input) => input.kind === "parameter"),
+);
+watch(
+  () =>
+    [
+      displayedHandles.value.inputs.map((handle) => `${handle.id}:${handle.position}`).join(","),
+      displayedHandles.value.outputs.map((handle) => `${handle.id}:${handle.position}`).join(","),
+    ].join("|"),
+  async () => {
+    await nextTick();
+    updateNodeInternals([String(props.data.id)]);
+  },
 );
 
 const onTitleClick = () => {

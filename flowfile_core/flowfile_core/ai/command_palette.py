@@ -606,6 +606,13 @@ async def run_command_palette(
                 mode="stage",
                 flow=graph,
                 staged_offset_index=fresh_id_offset,
+                audit_meta={
+                    "staged_modified_node_ids_at_stage": [
+                        result.staged_node_payload.get("node_id")
+                        for result in staged_results
+                        if result.tool_name == "flowfile.graph.update_node_settings" and result.staged_node_payload
+                    ],
+                } if call.name == "flowfile.graph.connect" else None,
             )
         except Exception as exc:  # noqa: BLE001 — defensive; executor catches its own raises but we never want a route-level 500.
             logger.warning(

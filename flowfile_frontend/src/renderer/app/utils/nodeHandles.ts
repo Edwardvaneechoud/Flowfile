@@ -1,7 +1,7 @@
 // Handle derivation shared by drop / copy / import paths. Pure (no VueFlow
 // instance access) so it stays unit-testable in the node environment.
 import { Position } from "@vue-flow/core";
-import type { NodeHandle } from "../types/flow.types";
+import type { InputPort, NodeHandle, OutputPort } from "../types/flow.types";
 import { handleLetters, outputHandle } from "./outputHandle";
 
 // Fixed parameter-data handle on dynamic-input nodes (run_flow).
@@ -102,6 +102,8 @@ export function buildDynamicOutputHandles(outputNames: string[]): NodeHandle[] {
 }
 
 export interface HandleSource {
+  inputs?: InputPort[];
+  outputs?: OutputPort[];
   input: number;
   output: number;
   multi?: boolean;
@@ -121,10 +123,90 @@ export interface DerivedHandles {
   outputs: NodeHandle[];
 }
 
+// Saved edges may outlive a port declaration (or its custom-node installation).
+// Keep their endpoints visible without mutating the ports used for new wiring.
+export function withConnectedHandles(
+  declared: DerivedHandles,
+  nodeId: string,
+  edges: {
+    source: string;
+    target: string;
+    sourceHandle?: string | null;
+    targetHandle?: string | null;
+  }[],
+): DerivedHandles {
+  const inputs = [...declared.inputs];
+  const outputs = [...declared.outputs];
+  for (const edge of edges) {
+    if (edge.target === nodeId) {
+      const id = edge.targetHandle ?? "input-0";
+      if (!inputs.some((handle) => handle.id === id)) {
+        inputs.push({ id, position: Position.Left, title: "Saved connection (port unavailable)" });
+      }
+    }
+    if (edge.source === nodeId) {
+      const id = edge.sourceHandle ?? outputHandle(0);
+      if (!outputs.some((handle) => handle.id === id)) {
+        outputs.push({
+          id,
+          position: Position.Right,
+          title: "Saved connection (port unavailable)",
+        });
+      }
+    }
+  }
+  return { inputs, outputs };
+}
+
 // Single source of truth for a node's canvas handles. Dynamic nodes derive
 // them from per-instance input_names/output_names (a fresh run_flow shows no
 // handles until a flow is picked); static nodes keep today's behavior.
 export function deriveHandles(node: HandleSource): DerivedHandles {
+  if (node.inputs !== undefined && node.outputs !== undefined) {
+    const dynamic = node.dynamic_inputs || node.input_names != null;
+    const side = node.inputs.filter((port) => port.kind === "data");
+    const inputLetters = handleLetters(
+      side.length,
+      side.map((port) => port.name ?? ""),
+    );
+    const outputLetters = handleLetters(
+      node.outputs.length,
+      node.outputs.map((port) => port.name ?? ""),
+    );
+    let sideIndex = 0;
+    return {
+      inputs: node.inputs
+        .filter((port) => !port.hidden)
+        .map((port): NodeHandle => {
+          if (port.kind === "parameter") {
+            return {
+              id: port.id,
+              position: Position.Bottom,
+              kind: "parameter",
+              multiple: port.multiple,
+              required: port.required,
+              title: dynamic ? "Parameter data (optional)" : (port.name ?? undefined),
+            };
+          }
+          return {
+            id: port.id,
+            position: Position.Left,
+            kind: dynamic ? "data" : undefined,
+            multiple: port.multiple,
+            required: port.required,
+            label: dynamic ? (port.name ?? undefined) : inputLetters[sideIndex++],
+            title: port.name ?? undefined,
+          };
+        }),
+      outputs: node.outputs.map((port, i) => ({
+        id: port.id,
+        position: Position.Right,
+        label: dynamic ? (port.name ?? undefined) : outputLetters[i],
+        title: dynamic || node.outputs!.length > 1 ? (port.name ?? undefined) : undefined,
+      })),
+    };
+  }
+  // Compatibility for old clipboard snapshots and unsaved settings previews.
   if (node.dynamic_inputs || node.input_names != null) {
     return {
       inputs: buildDynamicInputHandles(node.input_names ?? [""]),
