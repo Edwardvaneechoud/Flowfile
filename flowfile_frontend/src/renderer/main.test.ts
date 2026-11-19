@@ -34,6 +34,7 @@ vi.mock("./app/services/auth.service", () => ({
     getCurrentUser: mocks.getCurrentUser,
     setModeFromBackend: mocks.setModeFromBackend,
     isInDesktopMode: () => true,
+    followSession: () => () => undefined,
   },
 }));
 
