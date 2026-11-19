@@ -152,6 +152,48 @@
             Lighter tasks: cron text→schedule and settings autocomplete.
           </p>
 
+          <template v-for="task in TASK_MODELS" :key="task.surface">
+            <div class="model-row model-row--simple">
+              <div class="model-field">
+                <label class="model-field__label" :for="`ai-task-provider-${task.surface}`">
+                  {{ task.label }} provider
+                </label>
+                <el-select
+                  :id="`ai-task-provider-${task.surface}`"
+                  size="default"
+                  popper-class="model-select-dropdown"
+                  :model-value="aiStore.surfaceModels[task.surface]?.provider ?? ''"
+                  @change="(value: string) => onTaskProviderChange(task.surface, value)"
+                >
+                  <el-option value="" label="Same as main" />
+                  <el-option
+                    v-for="opt in providerOptions"
+                    :key="opt.value"
+                    :value="opt.value"
+                    :label="opt.label"
+                    :disabled="opt.disabled"
+                  />
+                </el-select>
+              </div>
+              <div v-if="aiStore.surfaceModels[task.surface]" class="model-field">
+                <label class="model-field__label" :for="`ai-task-model-${task.surface}`">
+                  Model
+                </label>
+                <el-select
+                  :id="`ai-task-model-${task.surface}`"
+                  size="default"
+                  popper-class="model-select-dropdown"
+                  :model-value="aiStore.surfaceModels[task.surface].model ?? ''"
+                  @change="(value: string) => onTaskModelChange(task.surface, value)"
+                >
+                  <el-option value="" label="Provider default" />
+                  <el-option v-for="m in taskModels(task.surface)" :key="m" :value="m" :label="m" />
+                </el-select>
+              </div>
+            </div>
+            <p class="model-tier__hint">{{ task.hint }}</p>
+          </template>
+
           <el-checkbox
             class="model-split-toggle"
             :model-value="aiStore.splitModels"
@@ -160,6 +202,41 @@
             Use a separate, cheaper model for simple tasks
           </el-checkbox>
         </template>
+      </div>
+    </div>
+
+    <div class="card mb-3" data-testid="ai-data-sharing">
+      <div class="card-header">
+        <h3 class="card-title">Data sent to the AI</h3>
+      </div>
+      <div class="card-content">
+        <p class="hint-text models-intro">
+          The AI always gets names: the table, its columns and their types, plus your prompt. With
+          this on it also gets data values: row counts, summary statistics and some of the values,
+          masked for emails and card numbers. Today this applies to charts.
+        </p>
+        <div class="option-list">
+          <label class="option" :class="{ 'option--disabled': !aiStore.sendDataAllowed }">
+            <input
+              type="checkbox"
+              name="ai-share-data"
+              data-testid="ai-share-data"
+              :checked="aiStore.sendsData"
+              :disabled="!aiStore.sendDataAllowed"
+              @change="aiStore.setShareData(($event.target as HTMLInputElement).checked)"
+            />
+            <span class="option__body">
+              <span class="option__name">Send data values</span>
+              <span class="option__desc">
+                {{
+                  aiStore.sendDataAllowed
+                    ? "Your choice, on this device."
+                    : "Turned off on this server (FLOWFILE_AI_SEND_DATA)."
+                }}
+              </span>
+            </span>
+          </label>
+        </div>
       </div>
     </div>
 
@@ -393,6 +470,26 @@ const onSimpleProviderChange = (value: string): void => {
 
 const onSimpleModelChange = (value: string): void => {
   aiStore.setSimpleModel(value || null);
+};
+
+// Tasks that can run on a model of their own. A new task gets its picker by adding a row
+// here; `surface` is the name its store passes to `aiStore.resolveSurface`.
+const TASK_MODELS: ReadonlyArray<{ surface: string; label: string; hint: string }> = [
+  { surface: "chart", label: "Charts", hint: "Used when you ask the AI for a chart." },
+];
+
+const taskModels = (surface: string): string[] => {
+  const pick = aiStore.surfaceModels[surface];
+  return _withSelected(aiStore.modelsForProvider(pick?.provider ?? null), pick?.model ?? null);
+};
+
+const onTaskProviderChange = (surface: string, value: string): void => {
+  aiStore.setSurfaceModel(surface, value ? { provider: value, model: null } : null);
+};
+
+const onTaskModelChange = (surface: string, value: string): void => {
+  const pick = aiStore.surfaceModels[surface];
+  if (pick) aiStore.setSurfaceModel(surface, { provider: pick.provider, model: value || null });
 };
 
 const onVerifyChange = (event: Event): void => {

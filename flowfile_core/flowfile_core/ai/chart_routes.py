@@ -25,6 +25,7 @@ from flowfile_core.ai.chart_request import (
     ChartGenerationResponse,
     generate_chart,
 )
+from flowfile_core.ai.feature_flag import send_data_allowed
 from flowfile_core.ai.node_codegen_routes import _ensure_known_provider, _resolve_provider
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.database.connection import get_db
@@ -36,12 +37,14 @@ class GenerateChartRequest(BaseModel):
     """Body for ``POST /ai/generate_chart``.
 
     ``current_chart`` is the chart on screen as a chart request; it is checked like a model
-    answer, and one that fails is dropped with a warning rather than refused.
+    answer, and one that fails is dropped with a warning rather than refused. ``send_values``
+    is the user's choice; the server's ``send_data_allowed`` can still withhold them.
     """
 
     table_id: int
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_LEN)
     current_chart: dict[str, Any] | None = None
+    send_values: bool = True
     provider: str | None = Field(default=None, min_length=1)
     model: str | None = None
     timeout: float = Field(default=DEFAULT_TIMEOUT_SECONDS, gt=0.0, le=MAX_TIMEOUT_SECONDS)
@@ -87,7 +90,8 @@ async def generate_chart_route(
     table = await asyncio.to_thread(_readable_table, db, current_user, body.table_id)
     provider = _resolve_provider(db, current_user.id, body.provider, model=body.model)
 
-    profile = await profile_table(table, current_user)
+    share_values = body.send_values and send_data_allowed()
+    profile = await profile_table(table, current_user, share_values=share_values)
     warnings = [] if profile.complete else [_profile_warning(profile.problem or "unknown error")]
     return await generate_chart(
         prompt=body.prompt,

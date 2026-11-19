@@ -684,6 +684,15 @@ describe("useAiStore - split model tiers (resolveSurface)", () => {
     });
   });
 
+  it("a model picked for one task wins for that task only", () => {
+    const store = _seed();
+    store.setSurfaceModel("chart", { provider: "local", model: null });
+    expect(store.resolveSurface("chart")).toEqual({ provider: "local", model: null });
+    expect(store.resolveSurface("ghost_node").provider).toBe("openrouter");
+    store.setSurfaceModel("chart", null);
+    expect(store.resolveSurface("chart").provider).toBe("openrouter");
+  });
+
   it("setSplitModels seeds the simple tier from the main selection", () => {
     const store = _seed();
     store.setSelectedModel("anthropic/claude-opus-4.5");

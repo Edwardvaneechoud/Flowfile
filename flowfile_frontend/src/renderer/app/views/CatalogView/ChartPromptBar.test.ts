@@ -22,7 +22,7 @@ import { chartFromRequest, type GraphicWalkerFunctions } from "./chartRequest";
 const mocks = vi.hoisted(() => ({
   generateChart: vi.fn(),
   loadProviders: vi.fn(),
-  ai: { aiDisabled: false, hasConfiguredProvider: true },
+  ai: { aiDisabled: false, hasConfiguredProvider: true, sendsData: true },
 }));
 
 vi.mock("../../api/ai.api", () => ({
@@ -37,6 +37,9 @@ vi.mock("../../stores/ai-store", () => ({
     },
     get hasConfiguredProvider() {
       return mocks.ai.hasConfiguredProvider;
+    },
+    get sendsData() {
+      return mocks.ai.sendsData;
     },
     providersLoading: false,
     loadProviders: mocks.loadProviders,
@@ -141,6 +144,7 @@ beforeEach(() => {
   mocks.loadProviders.mockReset();
   mocks.ai.aiDisabled = false;
   mocks.ai.hasConfiguredProvider = true;
+  mocks.ai.sendsData = true;
 });
 
 describe("ChartPromptBar", () => {
@@ -187,6 +191,18 @@ describe("ChartPromptBar", () => {
     expect(builder.applied[0].config.geoms).toEqual(["line"]);
     expect(text(bar.q("chart-prompt-explanation"))).toContain("Now a line.");
     expect(bar.onApplied).toHaveBeenCalledWith(expect.objectContaining({ title: "Revenue trend" }));
+  });
+
+  it("sends no data values when they are not shared, and says so", async () => {
+    mocks.ai.sendsData = false;
+    const builder = fakeBuilder(null);
+    mocks.generateChart.mockResolvedValueOnce(ok(BAR));
+    const bar = await mountBar(() => builder.handle);
+
+    expect(text(bar.q("chart-prompt-sends"))).toContain("names and types only");
+    await bar.generate("revenue by region");
+
+    expect(mocks.generateChart.mock.calls[0][0]).toMatchObject({ sendValues: false });
   });
 
   it("says which part cannot go along and sends the prompt alone", async () => {

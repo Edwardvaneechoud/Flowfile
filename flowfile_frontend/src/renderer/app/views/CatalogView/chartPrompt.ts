@@ -23,10 +23,14 @@ export interface ChartPromptMessage {
 }
 
 export const PLACEHOLDER_NEW = "Describe a chart";
+/** The same line when data values are not sent (the user's choice or the server's rule). */
+export const NAMES_ONLY_LINE = "The AI sees the column names and types only, no data values.";
+
 export const PLACEHOLDER_CHANGE = "Describe a change";
 
 /** The line that says what the AI sees. */
-export const SENDS_LINE = "The AI sees the column names, types and a few sample values.";
+export const SENDS_LINE =
+  "The AI sees the column names and types, summary statistics and some of the values.";
 
 /** `a`, `a and b`, `a, b and c`. */
 export function listPhrases(parts: string[]): string {

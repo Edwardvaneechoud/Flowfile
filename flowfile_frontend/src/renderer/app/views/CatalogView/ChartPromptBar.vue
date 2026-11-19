@@ -31,7 +31,9 @@
     </div>
 
     <div class="chart-prompt__meta">
-      <span data-testid="chart-prompt-sends">{{ SENDS_LINE }}</span>
+      <span data-testid="chart-prompt-sends">{{
+        aiStore.sendsData ? SENDS_LINE : NAMES_ONLY_LINE
+      }}</span>
       <span class="chart-prompt__keys">⌘/Ctrl+Enter</span>
     </div>
 
@@ -132,6 +134,7 @@ import {
   chartFromAnswer,
   chartKey,
   planRequest,
+  NAMES_ONLY_LINE,
   SENDS_LINE,
   type ChartBuilderHandle,
   type ChartPromptMessage,

@@ -84,6 +84,7 @@ export const useAiChartStore = defineStore("aiChart", () => {
       tableId: args.tableId,
       prompt: args.prompt,
       currentChart: args.currentChart ?? null,
+      sendValues: aiStore.sendsData,
       provider,
       model,
     };

@@ -102,6 +102,7 @@ class TableProfile:
     row_count: int | None = None
     complete: bool = False
     problem: str | None = None
+    values_withheld: bool = False
 
     def column_infos(self) -> list[ColumnInfo]:
         """The columns as the chart request checks see them."""
@@ -137,7 +138,7 @@ def _base_profile(table: Any) -> TableProfile:
     return TableProfile(table_id=table.id, table_name=table.name, columns=columns)
 
 
-def cache_key(table: Any, user_id: int | None) -> tuple:
+def cache_key(table: Any, user_id: int | None, share_values: bool = True) -> tuple:
     """What identifies the table's current data: a write moves the Delta version or ``updated_at``."""
     from flowfile_core.catalog.delta_utils import get_live_delta_version
 
@@ -149,7 +150,8 @@ def cache_key(table: Any, user_id: int | None) -> tuple:
         except Exception:  # noqa: BLE001
             version = None
     updated = table.updated_at.isoformat() if table.updated_at else ""
-    return (user_id, table.id, stored_in, version, updated, table.source_table_versions, table.sql_query)
+    data_version = (stored_in, version, updated, table.source_table_versions, table.sql_query)
+    return (user_id, table.id, share_values, *data_version)
 
 
 _cache: dict[tuple, tuple[float, TableProfile]] = {}
@@ -216,7 +218,7 @@ def _rows(service: Any, source: Any, payload: dict, max_rows: int, user_id: int 
     return result.rows
 
 
-def _fill(table: Any, user: Any, into: TableProfile) -> None:
+def _fill(table: Any, user: Any, into: TableProfile, share_values: bool = True) -> None:
     """Build the profile stage by stage, replacing ``into.columns`` whole after each one."""
     from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
     from flowfile_core.catalog.access import AccessResolver
@@ -235,6 +237,9 @@ def _fill(table: Any, user: Any, into: TableProfile) -> None:
         into.columns = [
             replace(c, role=roles[c.name]) if roles.get(c.name) in ("measure", "dimension") else c for c in into.columns
         ]
+        if not share_values:
+            into.complete = True
+            return
 
         [row] = _rows(service, source, stats_payload(into.columns), 1, user_id) or [{}]
         with_stats = []
@@ -291,21 +296,26 @@ def _snapshot(profile: TableProfile, problem: str) -> TableProfile:
     return replace(profile, columns=list(profile.columns), complete=False, problem=problem)
 
 
-async def profile_table(table: Any, user: Any, *, budget: float = PROFILE_BUDGET_SECONDS) -> TableProfile:
+async def profile_table(
+    table: Any, user: Any, *, budget: float = PROFILE_BUDGET_SECONDS, share_values: bool = True
+) -> TableProfile:
     """The profile of ``table`` (a ``CatalogTableOut`` the caller may read) for ``user``.
+
+    ``share_values=False`` reads the roles only: no row count, statistics, examples or values.
 
     Never raises: past ``budget`` seconds or on a failure the result holds what was finished
     and ``problem`` says why.
     """
     holder = _base_profile(table)
+    holder.values_withheld = not share_values
     user_id = getattr(user, "id", None)
 
     def work() -> TableProfile:
-        key = cache_key(table, user_id)
+        key = cache_key(table, user_id, share_values)
         cached = _cache_get(key)
         if cached is not None:
             return cached
-        _fill(table, user, holder)
+        _fill(table, user, holder, share_values)
         _cache_put(key, holder)
         return holder
 
@@ -331,7 +341,9 @@ def render_profile(profile: TableProfile) -> str:
     else:
         head += f": {len(profile.columns)} columns."
     lines = [head]
-    if not profile.complete:
+    if profile.values_withheld:
+        lines.append("Data values are not shared for this table; use the column names and types below.")
+    elif not profile.complete:
         lines.append(
             "Statistics and example values are not available for this table; use the column names and types below."
         )

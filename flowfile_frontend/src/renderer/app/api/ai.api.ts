@@ -256,6 +256,8 @@ export interface GenerateChartRequest {
   tableId: number;
   prompt: string;
   currentChart?: ChartRequest | null;
+  /** False sends names and types only; the server can withhold values regardless. */
+  sendValues?: boolean;
   provider?: string | null;
   model?: string | null;
   timeout?: number;
@@ -287,6 +289,7 @@ export const generateChart = async (
 ): Promise<ChartGenerationResponse> => {
   const payload: Record<string, unknown> = { table_id: body.tableId, prompt: body.prompt };
   if (body.currentChart) payload.current_chart = body.currentChart;
+  if (body.sendValues !== undefined) payload.send_values = body.sendValues;
   if (body.provider) payload.provider = body.provider;
   if (body.model) payload.model = body.model;
   if (body.timeout !== undefined) payload.timeout = body.timeout;

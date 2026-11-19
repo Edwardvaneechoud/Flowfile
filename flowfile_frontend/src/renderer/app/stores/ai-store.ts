@@ -31,6 +31,7 @@ import {
   type InlineActionType,
   type RouteHistoryEntry,
 } from "../api/ai.api";
+import { fetchAiDataPolicy } from "../views/AiSettingsView/api";
 import { parseMentions } from "../features/ai/mentionVocabulary";
 import type { AiProvider } from "../views/AiSettingsView/aiProviderTypes";
 import {
@@ -51,6 +52,7 @@ import {
   persistAiState,
   type PersistedAgentSurface,
   type PersistedSimpleBuildOutput,
+  type SurfaceModel,
 } from "./ai-store-persistence";
 import { useEditorStore } from "./editor-store";
 import { useFlowStore } from "./flow-store";
@@ -192,6 +194,15 @@ export const useAiStore = defineStore("ai", () => {
 
   // Simple build output (see PersistedSimpleBuildOutput); Settings → AI → Assistant flips it.
   const simpleBuildOutput = ref<PersistedSimpleBuildOutput>("code");
+
+  // A model picked for one task, keyed by surface (today only ``chart``); absent → the main pick.
+  const surfaceModels = ref<Record<string, SurfaceModel>>({});
+
+  // Sending data values to the AI: the user's choice within the server's rule (from core).
+  // Every AI feature that sends data reads ``sendsData``; core enforces the rule regardless.
+  const shareData = ref<boolean>(true);
+  const sendDataAllowed = ref<boolean>(true);
+  const sendsData = computed(() => shareData.value && sendDataAllowed.value);
 
   // Local model (offline llama.cpp) status. Surfaced as a synthetic
   // ``"local"`` entry in ``providers`` so the chat drawer's picker lists it
@@ -335,6 +346,8 @@ export const useAiStore = defineStore("ai", () => {
   if (_seedSettings.simpleBuildOutput !== null) {
     simpleBuildOutput.value = _seedSettings.simpleBuildOutput;
   }
+  if (_settings?.surfaceModels) surfaceModels.value = _settings.surfaceModels;
+  if (typeof _settings?.shareData === "boolean") shareData.value = _settings.shareData;
   const _snapshotSettings = () => ({
     selectedProvider: selectedProvider.value,
     selectedModel: selectedModel.value,
@@ -344,6 +357,8 @@ export const useAiStore = defineStore("ai", () => {
     selectedAgentSurface: selectedAgentSurface.value,
     verifyPlanCompletion: verifyPlanCompletion.value,
     simpleBuildOutput: simpleBuildOutput.value,
+    surfaceModels: surfaceModels.value,
+    shareData: shareData.value,
   });
   if (_settings === null && Object.values(_seedSettings).some((v) => v !== null)) {
     persistAiSettings(_snapshotSettings());
@@ -421,6 +436,8 @@ export const useAiStore = defineStore("ai", () => {
       selectedAgentSurface,
       verifyPlanCompletion,
       simpleBuildOutput,
+      surfaceModels,
+      shareData,
     ],
     queuePersistSettings,
     { flush: "sync" },
@@ -587,10 +604,12 @@ export const useAiStore = defineStore("ai", () => {
       // Fetch BYOK providers and the local-model status concurrently. The
       // local status is best-effort: a failure (or AI disabled) just omits
       // the synthetic entry rather than failing the whole picker.
-      const [list, localStatus] = await Promise.all([
+      const [list, localStatus, dataAllowed] = await Promise.all([
         fetchAiProviders(),
         fetchLocalModelStatus().catch(() => null),
+        fetchAiDataPolicy().catch(() => null),
       ]);
+      if (dataAllowed !== null) sendDataAllowed.value = dataAllowed;
       providers.value = list;
       aiDisabled.value = false;
       // Inject/refresh the synthetic ``local`` entry through the single writer
@@ -706,6 +725,8 @@ export const useAiStore = defineStore("ai", () => {
   // to the main provider). ``null`` model → let the backend resolve the
   // provider's per-surface preset.
   const resolveSurface = (surface: string): { provider: string | null; model: string | null } => {
+    const own = surfaceModels.value[surface];
+    if (own) return { provider: own.provider, model: own.model };
     const useSimple = splitModels.value && _SIMPLE_SURFACES.has(surface);
     if (useSimple) {
       return {
@@ -726,6 +747,18 @@ export const useAiStore = defineStore("ai", () => {
     const meta = providers.value.find((p) => p.provider === provider);
     if (!meta) return null;
     return meta.surfaces?.[surface] ?? meta.credential?.defaultModel ?? meta.defaultModel ?? null;
+  };
+
+  /** Pick a provider and model for one task; ``null`` goes back to the main pick. */
+  const setSurfaceModel = (surface: string, pick: SurfaceModel | null): void => {
+    const next = { ...surfaceModels.value };
+    if (pick) next[surface] = pick;
+    else delete next[surface];
+    surfaceModels.value = next;
+  };
+
+  const setShareData = (on: boolean): void => {
+    shareData.value = on;
   };
 
   const setSelectedAgentSurface = (surface: PersistedAgentSurface): void => {
@@ -1667,6 +1700,12 @@ export const useAiStore = defineStore("ai", () => {
     setVerifyPlanCompletion,
     simpleBuildOutput,
     setSimpleBuildOutput,
+    surfaceModels,
+    setSurfaceModel,
+    shareData,
+    setShareData,
+    sendDataAllowed,
+    sendsData,
     // Exposed so ai-agent-store's status watcher can flip it to
     // "agent" when a run terminates.
     lastInteractionKind,

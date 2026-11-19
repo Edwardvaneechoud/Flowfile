@@ -59,7 +59,29 @@ export interface PersistedAiSettings {
   verifyPlanCompletion: boolean | null;
   /** Simple build output. `null` → the store default (``code``). */
   simpleBuildOutput: PersistedSimpleBuildOutput | null;
+  /** A model picked for one task (keyed by surface, e.g. ``chart``). Absent → the main pick. */
+  surfaceModels?: Record<string, SurfaceModel> | null;
+  /** The user's choice to send data values to the AI. Absent → on. */
+  shareData?: boolean | null;
 }
+
+export interface SurfaceModel {
+  provider: string;
+  model: string | null;
+}
+
+const readSurfaceModels = (raw: unknown): Record<string, SurfaceModel> | null => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out: Record<string, SurfaceModel> = {};
+  for (const [surface, pick] of Object.entries(raw as Record<string, Partial<SurfaceModel>>)) {
+    if (typeof pick?.provider !== "string") continue;
+    out[surface] = {
+      provider: pick.provider,
+      model: typeof pick.model === "string" ? pick.model : null,
+    };
+  }
+  return out;
+};
 
 export interface PersistedAiState {
   messages: ChatMessage[];
@@ -161,6 +183,8 @@ const readSettingsFields = (payload: Record<string, unknown>): PersistedAiSettin
   simpleBuildOutput: isSimpleBuildOutput(payload.simpleBuildOutput)
     ? payload.simpleBuildOutput
     : null,
+  surfaceModels: readSurfaceModels(payload.surfaceModels),
+  shareData: typeof payload.shareData === "boolean" ? payload.shareData : null,
 });
 
 /** Parse one JSON entry into a plain object, scrubbing a corrupt entry so
