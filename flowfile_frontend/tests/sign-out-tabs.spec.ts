@@ -64,9 +64,8 @@ async function openDesigner(page: Page) {
 
 /** The page is on the sign-in page of the address it was served under, saying the sign-in ended. */
 async function expectSentToSignIn(page: Page) {
-  await expect(page).toHaveURL(new RegExp(`^${BASE_URL.replace(/[.?]/g, "\\$&")}/?#/login`), {
-    timeout: 15_000,
-  });
+  const base = BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  await expect(page).toHaveURL(new RegExp(`^${base}/?#/login`), { timeout: 15_000 });
   await expect(page.locator('[data-testid="login-ended"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("form #username")).toBeVisible();
 }
