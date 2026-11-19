@@ -88,6 +88,16 @@ The row also records which Graphic Walker version last wrote the spec (`spec_gw_
 
 A visualization never embeds the data — it embeds *how to find the data*. That's why deleting the underlying table doesn't cascade-delete the visualization (it becomes orphaned and the library labels it as such), why moving a visualization between namespaces is free, and why a SQL visualization can reference whatever tables exist in the catalog at query time.
 
+The row's `chart_type` is the mark the chart draws, set by the frontend on every save from the first tab (`vizAutosave.ts::chartTypeOf`, which reads Graphic Walker's mark, or for the automatic mark the one the worksheet renderer picks). The library shows it and its search matches it; a chart saved before it was set, or one with nothing on its shelves, has none.
+
+---
+
+## Building a chart from a prompt
+
+The chart builder (a new chart and an existing one, so also the dashboard editor's chart dialog) has an AI prompt bar above Graphic Walker for a chart on a catalog table. The model never writes a Graphic Walker spec: `POST /ai/generate_chart` answers a small *chart request* (mark, fields with an aggregate, date grain or bin, filters, sort, limit), which core validates against the table's columns and the browser expands with Graphic Walker's own `expandTerse` and `normalize` (`views/CatalogView/chartRequest.ts`). For a follow-up the browser describes the chart on screen the same way and sends it as `current_chart`, so "split by region" changes the chart instead of starting over; a chart with a part a request cannot express (a formula field, a map, a regex filter) is named under the bar and the prompt goes alone. The answer is applied in the builder as one step Graphic Walker's undo takes back, and nothing is saved by the AI: an existing chart autosaves it through the same path a manual edit takes.
+
+Core sends the model a small profile of the table (column names and types, the row count, per-column statistics, a few example values and short lists of a text column's values) through the same access-checked catalog functions the chart routes use. The data values in it go only when the server allows it (`FLOWFILE_AI_SEND_DATA`, on by default) and the user has **Send data values** on under Settings → AI → Assistant; otherwise the model gets names, types and roles only. A chart on a free SQL query gets no bar, because core has no column types for it. The browser keeps its own copy of core's rules for what a follow-up may send (`coreRefusals`), and `flowfile_core/tests/ai/chart_request_cases.json` holds requests with core's verdict that both test suites read, so the two copies cannot drift apart unnoticed.
+
 ---
 
 ## Dashboard tiles that read rows
@@ -160,3 +170,5 @@ Path validation and source resolution live in core on purpose. The worker child 
 - `flowfile_core/tests/flowfile/analytics/test_analytics_processor.py` — the setup payload carries no rows, and the readiness gate clears in all four execution mode/location combinations.
 - `flowfile_worker/tests/test_catalog_visualize.py` — registry behaviour and the spawned-child path, including a structural test that the per-handle lock really is per-handle, plus `cache_key` naming, reuse, and superseded-snapshot pruning.
 - `flowfile_worker/tests/test_resolve_virtual_table.py` — the IPC materialisation step used when a visualization reads from a Python flow.
+- `flowfile_core/tests/ai/test_chart_request.py` and `test_chart_request_cases.py` — the chart request rules, the model loop and `POST /ai/generate_chart`; the cases file is shared with the frontend's `chartRequestCases.test.ts`.
+- `flowfile_frontend/tests/chart-ai.spec.ts` — the prompt bar in the real builder with stubbed AI routes: draw, follow-up, undo, save with the model's title, autosave and Revert, a degraded answer, and the bar hidden without a provider or on a SQL chart.

@@ -141,6 +141,33 @@ def test_prepare_samples_off_returns_empty() -> None:
     assert prepare_samples(rows, FlowSafetyConfig()) == []
 
 
+@pytest.mark.parametrize(("env", "sent"), [("true", 1), ("false", 0), ("0", 0)])
+def test_prepare_samples_follows_the_server_data_rule(monkeypatch: pytest.MonkeyPatch, env: str, sent: int) -> None:
+    monkeypatch.setenv("FLOWFILE_AI_SEND_DATA", env)
+    rows = [{"name": "Alice", "email": "alice@example.com"}]
+    assert len(prepare_samples(rows, FlowSafetyConfig(sample_mode="regex"))) == sent
+
+
+@pytest.mark.parametrize(("env", "reads"), [("true", 1), ("false", 0)])
+def test_the_agent_observation_reads_no_rows_when_the_server_withholds_data(
+    monkeypatch: pytest.MonkeyPatch, env: str, reads: int
+) -> None:
+    from types import SimpleNamespace
+
+    from flowfile_core.ai.agents.live_observation import _extract_sample_rows
+
+    monkeypatch.setenv("FLOWFILE_AI_SEND_DATA", env)
+    calls: list[int] = []
+
+    def grid() -> Any:
+        calls.append(1)
+        raise RuntimeError("no grid in this test")
+
+    node = SimpleNamespace(results=SimpleNamespace(result_ref=object(), example_data_generator=grid))
+    assert _extract_sample_rows(node) == []
+    assert len(calls) == reads
+
+
 def test_prepare_samples_off_does_not_consume_iterator() -> None:
     consumed = 0
 

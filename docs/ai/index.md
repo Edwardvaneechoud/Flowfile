@@ -147,7 +147,7 @@ In the drawer, per conversation:
 
 Under **Settings → AI → Assistant**, for every AI feature on this device:
 
-- **Default provider and model**, plus an optional cheaper model for simple tasks (schedule text, settings autocomplete).
+- **Default provider and model**, plus an optional model of its own for single tasks (charts, schedule text, settings suggestions).
 - **Agent variant** — *Live (REPL)*, *Staged*, or *Single-shot full* (see [Agent](#agent-multi-step-builder)).
 - **Verify plan completion** — extra LLM round at the end of an agent run for self-check.
 

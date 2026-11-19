@@ -65,3 +65,14 @@ export function suggestChartName(
   const base = fromSource || (source.source_type === "sql" ? "Query chart" : "Table chart");
   return distinctName(base, taken);
 }
+
+const MAX_AI_TITLE = 120;
+
+/** An AI answer's title as a new chart's name, made distinct from `taken`; null when it has none. */
+export function nameFromAiTitle(
+  title: string | null | undefined,
+  taken: Iterable<string> = [],
+): string | null {
+  const base = (title ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_AI_TITLE).trim();
+  return base ? distinctName(base, taken) : null;
+}

@@ -59,6 +59,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from flowfile_core.ai import safety
+from flowfile_core.ai.json_payload import parse_json_payload as _parse_json_payload
 from flowfile_core.ai.metrics import record_autocomplete_call
 from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.scheduler import RateLimitScheduler, default_scheduler
@@ -338,26 +339,6 @@ async def _call_provider_for_json(
         logger.warning("suggest_next_node provider call failed: %s", exc, exc_info=False)
         return None, "provider_error"
     return content, None
-
-
-def _parse_json_payload(content: str | None) -> tuple[Any, str | None]:
-    """Strict JSON parse with a Markdown-fence fallback."""
-    if content is None or not content.strip():
-        return None, "empty_response"
-    try:
-        return json.loads(content), None
-    except json.JSONDecodeError:
-        pass
-    stripped = content.strip()
-    if stripped.startswith("```"):
-        without_open = stripped.split("\n", 1)[-1]
-        if without_open.rstrip().endswith("```"):
-            without_open = without_open.rstrip()[: -len("```")].rstrip()
-        try:
-            return json.loads(without_open), None
-        except json.JSONDecodeError:
-            pass
-    return None, "parse_error"
 
 
 # Candidate validation
