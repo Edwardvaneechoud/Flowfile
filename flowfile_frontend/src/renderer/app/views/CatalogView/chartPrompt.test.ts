@@ -15,9 +15,7 @@ import {
   degradedMessage,
   listPhrases,
   planRequest,
-  providerName,
   requestFailureMessage,
-  sendsLine,
 } from "./chartPrompt";
 import { chartFromRequest, type GraphicWalkerFunctions } from "./chartRequest";
 
@@ -135,15 +133,6 @@ describe("requestFailureMessage", () => {
 });
 
 describe("the bar's wording", () => {
-  it("names the provider data goes to", () => {
-    expect(sendsLine("openai")).toBe(
-      "Sends this table's column names, types and a few example values to OpenAI.",
-    );
-    expect(sendsLine("local")).toContain("on-device model, which runs on this machine");
-    expect(sendsLine(null)).toContain("to your AI provider.");
-    expect(providerName("acme")).toBe("acme");
-  });
-
   it("lists the parts it cannot carry over", () => {
     expect(listPhrases(["a map"])).toBe("a map");
     expect(listPhrases(["a map", "a formula field", "a text label"])).toBe(

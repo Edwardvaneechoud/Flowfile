@@ -280,7 +280,7 @@ describe("ChartPromptBar", () => {
     const bar = await mountBar(() => builder.handle);
 
     await bar.generate("anything");
-    expect(text(bar.q("chart-prompt-busy"))).toContain("Building the chart with OpenAI");
+    expect(text(bar.q("chart-prompt-busy"))).toContain("Building the chart…");
     bar.q("chart-prompt-cancel")!.click();
     await settle();
 

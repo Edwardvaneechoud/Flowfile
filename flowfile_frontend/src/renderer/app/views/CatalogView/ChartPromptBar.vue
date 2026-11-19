@@ -31,13 +31,13 @@
     </div>
 
     <div class="chart-prompt__meta">
-      <span data-testid="chart-prompt-sends">{{ sends }}</span>
+      <span data-testid="chart-prompt-sends">{{ SENDS_LINE }}</span>
       <span class="chart-prompt__keys">⌘/Ctrl+Enter</span>
     </div>
 
     <div v-if="store.loading" class="chart-prompt__line is-busy" data-testid="chart-prompt-busy">
       <el-icon class="is-loading"><Loading /></el-icon>
-      <span>Building the chart with {{ providerLabel }}…</span>
+      <span>Building the chart…</span>
       <button
         type="button"
         class="chart-prompt__link"
@@ -132,8 +132,7 @@ import {
   chartFromAnswer,
   chartKey,
   planRequest,
-  providerName,
-  sendsLine,
+  SENDS_LINE,
   type ChartBuilderHandle,
   type ChartPromptMessage,
 } from "./chartPrompt";
@@ -176,8 +175,6 @@ let unmounted = false;
 
 const visible = computed(() => props.tableId != null && store.available);
 const placeholder = computed(() => (hasChart.value ? PLACEHOLDER_CHANGE : PLACEHOLDER_NEW));
-const providerLabel = computed(() => providerName(store.target.provider));
-const sends = computed(() => sendsLine(store.target.provider));
 const canGenerate = computed(() => ready.value && prompt.value.trim().length > 0);
 
 const iconFor = (tone: ChartPromptMessage["tone"]) =>

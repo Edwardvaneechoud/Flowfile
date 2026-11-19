@@ -169,7 +169,7 @@ test.describe("Chart builder AI prompt", () => {
     const input = page.getByTestId("chart-prompt-input");
     await expect(input).toHaveAttribute("placeholder", "Describe a chart");
     await expect(page.getByTestId("chart-prompt-sends")).toHaveText(
-      "Sends this table's column names, types and a few example values to OpenAI.",
+      "The AI sees the column names, types and a few sample values.",
     );
 
     await generate(page, "revenue by region");

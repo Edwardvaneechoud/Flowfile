@@ -25,29 +25,8 @@ export interface ChartPromptMessage {
 export const PLACEHOLDER_NEW = "Describe a chart";
 export const PLACEHOLDER_CHANGE = "Describe a change";
 
-const PROVIDER_NAMES: Record<string, string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  google: "Google",
-  groq: "Groq",
-  openrouter: "OpenRouter",
-  ollama: "Ollama",
-  local: "the on-device model",
-};
-
-/** A provider id as a reader names it. */
-export function providerName(id: string | null | undefined): string {
-  if (!id) return "your AI provider";
-  return PROVIDER_NAMES[id] ?? id;
-}
-
-/** The line that says what leaves the machine. */
-export function sendsLine(provider: string | null | undefined): string {
-  if (provider === "local") {
-    return "Sends this table's column names, types and a few example values to the on-device model, which runs on this machine.";
-  }
-  return `Sends this table's column names, types and a few example values to ${providerName(provider)}.`;
-}
+/** The line that says what the AI sees. */
+export const SENDS_LINE = "The AI sees the column names, types and a few sample values.";
 
 /** `a`, `a and b`, `a, b and c`. */
 export function listPhrases(parts: string[]): string {
