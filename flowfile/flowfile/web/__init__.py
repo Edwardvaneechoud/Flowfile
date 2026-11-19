@@ -168,6 +168,8 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     process as serving, so the worker's jobs run in its pool or a child, never in the serving process.
     ``FLOWFILE_WORKER_POOL_SIZE`` sizes the pool. ``host`` and ``port`` are where it serves; a
     server bound to every address (``0.0.0.0``) is reached from this machine on the loopback address.
+    ``CORE_HOST`` and ``CORE_PORT`` are set to that address before any worker child starts, so the children
+    send their logs to this server, wherever it serves, and not to the default port.
 
     A host other machines reach needs ``FLOWFILE_MODE=docker``, where everyone signs in with a password; in the
     default mode, where the editor signs in whoever reaches it as this machine's administrator, any host but a
@@ -197,6 +199,7 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     settings.OFFLOAD_TO_WORKER.value = True
     settings.SINGLE_FILE_MODE.value = True
     settings.WORKER_URL = f"http://{local}:{port}/worker"
+    os.environ["CORE_HOST"], os.environ["CORE_PORT"] = local, str(port)
 
     extend_app(core_app)
 

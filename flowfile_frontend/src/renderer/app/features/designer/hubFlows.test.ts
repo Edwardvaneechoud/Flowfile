@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HubFlowVersion } from "../../api/hubFlows.api";
 import {
   conflictLabel,
+  newFlowName,
   openInsteadLabel,
   publishOverLabel,
+  publishedAsNewHint,
   publishedLabel,
   publishedTime,
   refusalMessage,
@@ -24,6 +26,19 @@ const current: HubFlowVersion = { ...base, version: 2, author_id: 7, message: "t
 describe("publish dialog words", () => {
   it("names the version a publish became", () => {
     expect(publishedLabel(3)).toBe("Published as version 3");
+  });
+
+  it("starts a new flow's name from the open flow's, and leaves it blank for a flow with none", () => {
+    expect(newFlowName("Sales report")).toBe("Sales report copy");
+    expect(newFlowName("  Sales  ")).toBe("Sales copy");
+    expect(newFlowName("")).toBe("");
+    expect(newFlowName(null)).toBe("");
+  });
+
+  it("says a publish as a new flow made this tab the new flow and left the original", () => {
+    expect(publishedAsNewHint("Sales copy", 1)).toBe(
+      "Sales copy is a new flow on the hub at version 1. This tab is that flow now, so your next publish builds on it; the original is unchanged.",
+    );
   });
 
   it("warns once per node with a local path, naming the node and the path", () => {

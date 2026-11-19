@@ -19,16 +19,26 @@ const h = vi.hoisted(() => ({
   },
   streams: [] as Stream[],
   streamFlowLogs: vi.fn(),
+  getToken: vi.fn(),
+  refreshAccessToken: vi.fn(),
 }));
 
 vi.mock("../../../stores/column-store", () => ({ useNodeStore: () => h.stores.node }));
 vi.mock("../../../stores/editor-store", () => ({ useEditorStore: () => h.stores.editor }));
 vi.mock("../../../stores/flow-store", () => ({ useFlowStore: () => h.stores.flow }));
 vi.mock("../../../services/auth.service", () => ({
-  default: { getToken: vi.fn(async () => "jwt"), hasValidToken: () => true },
+  default: {
+    getToken: h.getToken,
+    refreshAccessToken: h.refreshAccessToken,
+    hasValidToken: () => true,
+  },
 }));
-vi.mock("../../../services/logStreamClient", () => ({ streamFlowLogs: h.streamFlowLogs }));
+vi.mock("../../../services/logStreamClient", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../services/logStreamClient")>()),
+  streamFlowLogs: h.streamFlowLogs,
+}));
 
+import { LogStreamHttpError } from "../../../services/logStreamClient";
 import { useLogStream } from "./useLogStream";
 
 const settle = async () => {
@@ -58,6 +68,8 @@ describe("useLogStream", () => {
     h.stores.editor = reactive({ isShowingLogViewer: false });
     h.stores.flow = reactive({ pendingRunStateCounter: 0 });
     h.streams.length = 0;
+    h.getToken.mockResolvedValue("jwt");
+    h.refreshAccessToken.mockResolvedValue("renewed-jwt");
     h.streamFlowLogs.mockImplementation(
       (options: Omit<Stream, "end">) =>
         new Promise<void>((resolve, reject) => {
@@ -166,5 +178,41 @@ describe("useLogStream", () => {
     expect(h.streams).toHaveLength(1);
     expect(api.errorMessage.value).toBeNull();
     expect(api.logs.value).toBe("Flow completed!\n");
+  });
+
+  it("a 401 renews the session and reads the log again with the new token", async () => {
+    const api = mount();
+    await settle();
+    h.stores.editor.isShowingLogViewer = true;
+    await settle();
+    h.streamFlowLogs.mockImplementationOnce(() => Promise.reject(new LogStreamHttpError(401)));
+    h.refreshAccessToken.mockImplementation(async () => {
+      h.getToken.mockResolvedValue("renewed-jwt");
+      return "renewed-jwt";
+    });
+    h.stores.flow.pendingRunStateCounter += 1;
+    await settle();
+
+    expect(h.refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(h.streams).toHaveLength(2);
+    expect((h.streamFlowLogs.mock.calls.at(-1)?.[0] as { token: string }).token).toBe(
+      "renewed-jwt",
+    );
+    expect(api.connectionStatus.value).not.toBe("error");
+  });
+
+  it("a 401 whose renewal is refused opens nothing more", async () => {
+    vi.useFakeTimers();
+    h.refreshAccessToken.mockResolvedValue(null);
+    h.streamFlowLogs.mockImplementation(() => Promise.reject(new LogStreamHttpError(401)));
+    const api = mount();
+    await settle();
+    h.stores.node.isRunning = true;
+    await settle();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(h.refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(h.streamFlowLogs).toHaveBeenCalledTimes(1);
+    expect(api.connectionStatus.value).toBe("error");
   });
 });

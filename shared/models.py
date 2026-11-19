@@ -99,6 +99,13 @@ class ScheduleTriggerTable(Base):
     created_at = Column(DateTime, nullable=False)
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    disabled = Column(Boolean, default=False)
+
+
 class SchedulerLock(Base):
     __tablename__ = "scheduler_lock"
 

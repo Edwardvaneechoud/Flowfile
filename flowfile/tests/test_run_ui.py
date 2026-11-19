@@ -107,6 +107,8 @@ def served(monkeypatch) -> dict:
     monkeypatch.setattr(settings, "WORKER_URL", settings.WORKER_URL)
     monkeypatch.setenv("FLOWFILE_MODE", os.environ.get("FLOWFILE_MODE", "electron"))
     monkeypatch.setenv("FLOWFILE_WORKER_LOCAL_FILES", "0")
+    for name in ("CORE_HOST", "CORE_PORT"):
+        monkeypatch.setenv(name, os.environ.get(name, ""))
     return seen
 
 
@@ -185,3 +187,18 @@ def test_the_editor_is_served_at_ui_slash_and_never_a_file_outside_its_folder(se
     for path in (f"/ui/{editor_files / 'secret.txt'}", "/ui/..%2Fsecret.txt", "/ui/%2Fetc%2Fhosts"):
         response = client.get(path, follow_redirects=False)
         assert (response.status_code, response.text) == (200, "<html>editor</html>"), path
+
+
+def test_the_worker_s_children_send_their_logs_to_the_port_it_serves_on(served, editor_files, monkeypatch):
+    import subprocess
+
+    monkeypatch.setenv("FLOWFILE_MODE", "server")
+
+    web.start_server(host="0.0.0.0", port=8123, open_browser=False)
+
+    assert (os.environ["CORE_HOST"], os.environ["CORE_PORT"]) == ("127.0.0.1", "8123")
+    child = subprocess.run(
+        [sys.executable, "-c", "from flowfile_worker import configs; print(configs.FLOWFILE_CORE_URI)"],
+        capture_output=True, text=True, env=os.environ, check=True,
+    )
+    assert child.stdout.strip().splitlines()[-1] == "http://127.0.0.1:8123"

@@ -27,6 +27,7 @@ from shared.models import (
     FlowRun,
     FlowSchedule,
     ScheduleTriggerTable,
+    User,
 )
 from shared.notifications import processor as notifications
 from shared.run_completion import reap_orphaned_runs
@@ -73,6 +74,7 @@ def _set_now(monkeypatch, dt: datetime = NOW) -> None:
 
 
 def _add_registration(db) -> FlowRegistration:
+    db.merge(User(id=1, disabled=False))
     reg = FlowRegistration(name="flow", flow_path="/tmp/flow.flowfile", owner_id=1)
     db.add(reg)
     db.commit()

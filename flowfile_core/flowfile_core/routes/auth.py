@@ -326,6 +326,34 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
         synchronize_session=False
     )
 
+    # Published APIs run as their owner: their endpoints, consumers, grants and keys go with them.
+    endpoint_ids = db.query(db_models.FlowApiEndpoint.id).filter_by(owner_id=user_id)
+    consumer_ids = db.query(db_models.ApiConsumer.id).filter_by(owner_id=user_id)
+    db.query(db_models.ApiConsumerEndpoint).filter(
+        db_models.ApiConsumerEndpoint.endpoint_id.in_(endpoint_ids)
+        | db_models.ApiConsumerEndpoint.consumer_id.in_(consumer_ids)
+    ).delete(synchronize_session=False)
+    db.query(db_models.FlowApiKey).filter(
+        (db_models.FlowApiKey.owner_id == user_id)
+        | db_models.FlowApiKey.endpoint_id.in_(endpoint_ids)
+        | db_models.FlowApiKey.consumer_id.in_(consumer_ids)
+    ).delete(synchronize_session=False)
+    db.query(db_models.ApiConsumer).filter_by(owner_id=user_id).delete(synchronize_session=False)
+    db.query(db_models.FlowApiEndpoint).filter_by(owner_id=user_id).delete(synchronize_session=False)
+    # Schedules go with their trigger tables and rules, so an account that later gets this id inherits none.
+    schedule_ids = db.query(db_models.FlowSchedule.id).filter_by(owner_id=user_id)
+    # Their runs stay as the flow's history, no longer pointing at a schedule.
+    db.query(db_models.FlowRun).filter(db_models.FlowRun.schedule_id.in_(schedule_ids)).update(
+        {db_models.FlowRun.schedule_id: None}, synchronize_session=False
+    )
+    db.query(db_models.ScheduleTriggerTable).filter(
+        db_models.ScheduleTriggerTable.schedule_id.in_(schedule_ids)
+    ).delete(synchronize_session=False)
+    db.query(db_models.NotificationRule).filter(db_models.NotificationRule.schedule_id.in_(schedule_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(db_models.FlowSchedule).filter_by(owner_id=user_id).delete(synchronize_session=False)
+
     db.delete(user)
     db.commit()
     invalidate_user_cache(user.username)

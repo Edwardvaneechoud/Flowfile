@@ -15,7 +15,7 @@ import pytest
 from flowfile_scheduler import engine as engine_mod
 from flowfile_scheduler.engine import FlowScheduler
 from shared import subprocess_utils
-from shared.models import CatalogTable, FlowRegistration, FlowRun, FlowSchedule
+from shared.models import CatalogTable, FlowRegistration, FlowRun, FlowSchedule, User
 
 BASE_TS = datetime(2026, 5, 25, 9, 0, 0)
 NOW = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
@@ -49,6 +49,7 @@ def _flow_path(tmp_path) -> str:
 
 def _seed(sched: FlowScheduler, flow_path: str, schedule_type: str, backend: str | None) -> tuple[int, int | None]:
     with sched._session_factory() as db:
+        db.merge(User(id=1, disabled=False))
         reg = FlowRegistration(name="flow", flow_path=flow_path, owner_id=1)
         db.add(reg)
         db.commit()

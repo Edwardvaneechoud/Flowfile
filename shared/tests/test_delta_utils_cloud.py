@@ -188,3 +188,37 @@ def test_scd2_initial_load_and_merge_s3():
         storage_options=opts,
     )
     assert rerun.skipped is True
+
+
+@requires_minio
+def test_a_vacuumed_version_on_s3_is_file_not_found_like_on_disk(tmp_path):
+    """The preview of a version whose data files were vacuumed away is ``FileNotFoundError`` on object storage too,
+    where the store reports a missing object as a plain ``OSError``; callers answer that as a version not kept."""
+    from deltalake import DeltaTable
+
+    from shared.delta_utils import read_delta_preview
+
+    _ensure_bucket()
+    prefix = "delta-utils-vacuumed"
+    _purge_prefix(prefix)
+    options = _minio_storage_options()
+    uri = f"s3://{_BUCKET}/{prefix}"
+    try:
+        write_delta(pl.DataFrame({"a": [1, 2]}), uri, "overwrite", storage_options=options)
+        write_delta(pl.DataFrame({"a": [3]}), uri, "overwrite", storage_options=options)
+        DeltaTable(uri, storage_options=options).vacuum(
+            retention_hours=0, enforce_retention_duration=False, dry_run=False
+        )
+        rows, _ = read_delta_preview(DeltaTable(uri, version=1, storage_options=options), 10, options)
+        assert rows.num_rows == 1
+        with pytest.raises(FileNotFoundError):
+            read_delta_preview(DeltaTable(uri, version=0, storage_options=options), 10, options)
+
+        local = str(tmp_path / "t")
+        write_delta(pl.DataFrame({"a": [1]}), local, "overwrite")
+        write_delta(pl.DataFrame({"a": [2]}), local, "overwrite")
+        DeltaTable(local).vacuum(retention_hours=0, enforce_retention_duration=False, dry_run=False)
+        with pytest.raises(FileNotFoundError):
+            read_delta_preview(DeltaTable(local, version=0), 10)
+    finally:
+        _purge_prefix(prefix)
