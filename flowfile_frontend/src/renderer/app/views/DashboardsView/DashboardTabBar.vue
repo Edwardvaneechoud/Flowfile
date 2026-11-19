@@ -197,7 +197,8 @@ const onCommand = (command: string) => {
 .dashboard-tabs :deep(.el-tabs__content) {
   display: none;
 }
-.dashboard-tabs :deep(.el-tabs__item) {
+/* Outranks Element Plus's zero padding on the first and last top tab. */
+.dashboard-tabs.el-tabs--top :deep(.el-tabs__item.is-top) {
   padding: 0 var(--spacing-4);
   height: 36px;
 }
