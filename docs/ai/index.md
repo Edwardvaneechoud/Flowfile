@@ -113,7 +113,7 @@ In the Catalog's **Visuals** tab, **Build with AI** (beside **New dashboard**, a
 
 A planned filter becomes an ordinary dashboard filter in the strip above the page: a date column gives a period picker (the way to filter per month, week or year), a text column a list of values, a number column a range. It starts empty and reaches the page's tiles that read its table; on a dashboard that already holds tiles it targets only the new page's tiles.
 
-The page lands as one undo step: on the dashboard itself when it is empty, otherwise on a new tab named after the page. A new dashboard takes the page's title as its name. The dialog then lists the relations that were measured, the charts that were built and left off with the reason, and the charts that could not be built. Each chart's finding is the note behind the ⓘ on its tile.
+The page lands as one undo step: on the dashboard itself when it is empty, otherwise on a new tab named after the page. A new dashboard takes the page's title as its name. The charts of the page belong to the dashboard: they stay out of the Charts list, and a build you undo or replace takes its charts with it when you leave the editor (see [Charts that belong to a dashboard](../users/visual-editor/catalog/visualizations.md#charts-that-belong-to-a-dashboard)). The dialog then lists the relations that were measured, the charts that were built and left off with the reason, and the charts that could not be built. Each chart's finding is the note behind the ⓘ on its tile.
 
 A relation the data does not support is reported as such ("no linear relation (r = 0.04)"), not left out silently. Only aggregated results are read: a chart of raw rows contributes no rows, only the correlation of its two columns.
 

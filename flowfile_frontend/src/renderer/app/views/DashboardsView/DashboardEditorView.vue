@@ -166,6 +166,7 @@
             :no-tile-hints="noTileHints"
             @update:layout="onCanvasLayoutChange"
             @edit-viz="onEditViz"
+            @keep-chart="onKeepChart"
             @add-viz-at="onAddVizAt"
             @add-text-at="onAddTextAt"
             @add-separator-at="onAddSeparatorAt"
@@ -219,6 +220,7 @@
         ref="vizCreatorRef"
         :source="pendingSource"
         :taken-names="pendingTakenNames"
+        :owner-dashboard-id="ensureDashboardCreated"
         :appearance="appearance"
         @saved="onVizCreated"
         @cancel="vizCreatorOpen = false"
@@ -410,6 +412,29 @@ const adoptCreated = (created: Dashboard, payload: DashboardUpdatePayload) => {
   showCreatedInUrl();
   // Edits made while the create was out go now, not a debounce later.
   void engine.flush();
+};
+
+/**
+ * The dashboard's id, creating the dashboard first when it is not on the server yet, as its first
+ * edit would. A chart made from here names it as the dashboard it belongs to.
+ */
+const ensureDashboardCreated = async (): Promise<number> => {
+  if (creation.isCreated()) return dashboardId();
+  const name = nameDraft.value.trim();
+  if (!store.current || !name) throw new Error("Give the dashboard a name first.");
+  const payload = {
+    name,
+    description: descriptionValue(),
+    layout: toPlainJson(store.current.layout) as DashboardLayout,
+  };
+  // A create already out is the autosave's, and the autosave adopts its result.
+  const ours = creationPhase.value !== "creating";
+  const created = await creation.create({
+    ...payload,
+    namespace_id: store.current.namespace_id ?? null,
+  });
+  if (ours) adoptCreated(created, payload);
+  return created.id;
 };
 
 const canRevert = computed(() => {
@@ -746,18 +771,32 @@ const onEditViz = (vizId: number | null) => {
   vizDialogOpen.value = true;
 };
 
+const refreshVizTiles = (id: number) => {
+  vizCache.invalidate(id);
+  vizRefreshNonces.value = {
+    ...vizRefreshNonces.value,
+    [id]: (vizRefreshNonces.value[id] ?? 0) + 1,
+  };
+};
+
 const onCloseVizDialog = () => {
   // Refresh tiles bound to this viz only when the viewer reported a save.
-  if (editingVizId.value != null && vizPendingRefresh.value) {
-    const id = editingVizId.value;
-    vizCache.invalidate(id);
-    vizRefreshNonces.value = {
-      ...vizRefreshNonces.value,
-      [id]: (vizRefreshNonces.value[id] ?? 0) + 1,
-    };
-  }
+  if (editingVizId.value != null && vizPendingRefresh.value) refreshVizTiles(editingVizId.value);
   vizPendingRefresh.value = false;
   editingVizId.value = null;
+};
+
+// A chart this dashboard owns becomes a chart of its own: in the Charts list, and kept when the
+// dashboard is deleted or stops using it.
+const onKeepChart = async (vizId: number | null) => {
+  if (vizId == null) return;
+  try {
+    const kept = await catalogStore.detachVisualization(vizId);
+    refreshVizTiles(vizId);
+    ElMessage.success(`"${kept.name}" is now in Charts`);
+  } catch (error) {
+    ElMessage.error(catalogSaveErrorMessage(error, "The chart could not be kept."));
+  }
 };
 
 const buildVizTile = (vizId: number, x: number, y: number): DashboardTile => ({
@@ -842,10 +881,12 @@ const canBuildWithAi = computed(
   () => Boolean(store.current) && aiDashboardStore.available && mayEdit(store.current?.access),
 );
 
-// Saves the charts the AI's page kept, then puts the whole page on the dashboard in one layout
-// change, so one undo step. A chart that cannot be saved is left off and reported.
+// Saves the charts the AI's page kept as this dashboard's own, then puts the whole page on the
+// dashboard in one layout change, so one undo step. A chart that cannot be saved is left off and
+// reported.
 const placeAiPage = async (page: BuiltPage): Promise<PlacedPage> => {
   if (!store.current) throw new Error("No dashboard is open.");
+  const ownerId = await ensureDashboardCreated();
   const library = new Map(catalogStore.visualizationLibrary.map((v) => [v.id, v.name]));
   const taken = dashboardChartNames(layoutRef.value.tiles, (id) => library.get(id));
   const saved: PlacedChart[] = [];
@@ -859,6 +900,7 @@ const placeAiPage = async (page: BuiltPage): Promise<PlacedPage> => {
         chart_type: chartTypeOf(spec),
         source_type: "table",
         catalog_table_id: chart.tableId,
+        dashboard_id: ownerId,
       });
       taken.push(viz.name);
       saved.push({ ...chart, vizId: viz.id });
@@ -870,30 +912,38 @@ const placeAiPage = async (page: BuiltPage): Promise<PlacedPage> => {
     }
   }
   if (page.charts.length && !saved.length) throw new Error(failed[0].reason);
-  const tiles = layoutPage(page, saved, gridCols());
-  const filters = pageFilters(
-    page.filters,
-    tiles,
-    saved,
-    layoutRef.value.filters,
-    landsOnTab(layoutRef.value),
-  );
-  const placed = placeOnDashboard(layoutRef.value, tiles, page.title, filters);
-  // A new dashboard still on its opening name takes the page's title, in the same undo step.
-  if (placed.tabId === null && nameDraft.value === untitledName) {
-    nameDraft.value = distinctName(
-      page.title.slice(0, 120),
-      store.library.map((d) => d.name),
+  try {
+    const tiles = layoutPage(page, saved, gridCols());
+    const filters = pageFilters(
+      page.filters ?? [],
+      tiles,
+      saved,
+      layoutRef.value.filters,
+      landsOnTab(layoutRef.value),
     );
+    const placed = placeOnDashboard(layoutRef.value, tiles, page.title, filters);
+    // A new dashboard still on its opening name takes the page's title, in the same undo step.
+    if (placed.tabId === null && nameDraft.value === untitledName) {
+      nameDraft.value = distinctName(
+        page.title.slice(0, 120),
+        store.library.map((d) => d.name),
+      );
+    }
+    onLayoutChange(placed.layout);
+    // Saved at once, so the charts just made are on a saved page.
+    void engine.flush();
+    if (placed.tabId) activeTabId.value = placed.tabId;
+    return {
+      charts: saved.length,
+      kpis: page.kpis.length,
+      filters: filters.map((f) => f.label || f.field_name),
+      failed,
+    };
+  } catch (error) {
+    // The page is not on the dashboard, so its charts would be on none.
+    await Promise.allSettled(saved.map((c) => catalogStore.deleteVisualization(c.vizId)));
+    throw error;
   }
-  onLayoutChange(placed.layout);
-  if (placed.tabId) activeTabId.value = placed.tabId;
-  return {
-    charts: saved.length,
-    kpis: page.kpis.length,
-    filters: filters.map((f) => f.label || f.field_name),
-    failed,
-  };
 };
 
 // ?ai=1 (the library's "Build with AI") opens the builder once; the param is stripped on consume.
@@ -1081,6 +1131,18 @@ onBeforeUnmount(() => {
 });
 
 // Flush-first leave guard: a confirm only appears when a flush could not land.
+// Leaving ends the undo history, so a chart this dashboard owns and no longer uses cannot come
+// back. A draft still on offer may use such a chart, so nothing is removed while one is.
+const pruneOwnCharts = async () => {
+  const id = props.id !== undefined ? Number(props.id) : creation.id();
+  if (id === null || restoreAvailable.value || !mayEdit(store.current?.access)) return;
+  try {
+    await catalogStore.pruneDashboardCharts(id);
+  } catch {
+    // The next visit to this editor prunes.
+  }
+};
+
 onBeforeRouteLeave(async (to) => {
   const createdId = creation.id();
   if (createdId !== null && to.name === "dashboard-edit" && Number(to.params.id) === createdId) {
@@ -1091,7 +1153,10 @@ onBeforeRouteLeave(async (to) => {
     ? ((await vizViewerRef.value?.flushAutosave()) ?? true)
     : true;
   const clean = (await engine.flush()) && viewerClean;
-  if (clean) return true;
+  if (clean) {
+    await pruneOwnCharts();
+    return true;
+  }
   try {
     await ElMessageBox.confirm(
       "Some changes couldn't be saved. Leave anyway and lose them?",

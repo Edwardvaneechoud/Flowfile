@@ -113,6 +113,7 @@ from flowfile_core.schemas.catalog_schema import (
     CdcCursorOut,
     CdcStatusOut,
     ColumnStatsResponse,
+    DashboardChartPruneOut,
     DashboardCreate,
     DashboardOut,
     DashboardUpdate,
@@ -1605,6 +1606,8 @@ class CatalogService:
             self._require_use("catalog_table", payload.catalog_table_id)
         # A None namespace_id defaults to the source table's, which the use check above covers.
         self._require_namespace_writable(payload.namespace_id)
+        if payload.dashboard_id is not None:
+            self._require_manage_dashboard(payload.dashboard_id)
         return self._stamp_access([self._visualizations.create_visualization(payload, user_id)], "visualization")[0]
 
     def update_visualization(self, viz_id: int, payload: VisualizationUpdate, user_id: int) -> VisualizationOut:
@@ -1622,6 +1625,17 @@ class CatalogService:
         """Delete a visualization by ID."""
         self._require_manage_visualization(viz_id)
         self._visualizations.delete_visualization(viz_id, user_id)
+
+    def detach_visualization(self, viz_id: int, user_id: int) -> VisualizationOut:
+        """Make a dashboard's chart a chart of its own. Open to whoever manages the chart or its dashboard."""
+        try:
+            self._require_manage_visualization(viz_id)
+        except NotAuthorizedError:
+            viz = self.repo.get_visualization(viz_id)
+            if viz is None or viz.dashboard_id is None:
+                raise
+            self._require_manage_dashboard(viz.dashboard_id)
+        return self._stamp_access([self._visualizations.detach_visualization(viz_id, user_id)], "visualization")[0]
 
     def list_notebooks(self, user_id: int | None = None) -> list[NotebookSummaryOut]:
         """List saved notebooks (own ∪ granted in restricted mode)."""
@@ -1681,9 +1695,14 @@ class CatalogService:
         ]
 
     def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
-        """Delete a dashboard by ID."""
+        """Delete a dashboard by ID, with the charts that belong to it."""
         self._require_manage_dashboard(dashboard_id)
         self._visualizations.delete_dashboard(dashboard_id, user_id)
+
+    def prune_dashboard_charts(self, dashboard_id: int, user_id: int) -> DashboardChartPruneOut:
+        """Remove the dashboard's own charts that its layout no longer uses."""
+        self._require_manage_dashboard(dashboard_id)
+        return self._visualizations.prune_dashboard_charts(dashboard_id, user_id)
 
     # Compute
 

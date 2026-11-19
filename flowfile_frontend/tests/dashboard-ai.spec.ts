@@ -174,7 +174,13 @@ async function pickTableAndAsk(page: Page, tableName: string, question: string) 
   await builder.getByTestId("dashboard-ai-sources").click();
   await page.keyboard.type(tableName);
   await page.locator(".el-select-dropdown__item:visible", { hasText: tableName }).click();
-  await builder.getByTestId("dashboard-ai-question").fill(question);
+  // The select takes focus back after a pick and can swallow the question, so the text is checked.
+  const asked = builder.getByTestId("dashboard-ai-question");
+  await expect(async () => {
+    await asked.click();
+    await asked.fill(question);
+    await expect(asked).toHaveValue(question, { timeout: 1000 });
+  }).toPass({ timeout: 15000 });
   return builder;
 }
 
@@ -190,6 +196,38 @@ const deleteDashboard = async (request: APIRequestContext, token: string, id: nu
 };
 
 const tiles = (page: Page) => page.locator(".vgl-item:not(.vgl-item--placeholder)");
+
+/** The charts that belong to a dashboard, as the chart library lists them. */
+const chartsOf = async (request: APIRequestContext, token: string, dashboardId: number) => {
+  const listed = await request.get(`${API_URL}/catalog/visualizations`, {
+    headers: authHeaders(token),
+  });
+  return ((await listed.json()) as Json[]).filter((v) => v.dashboard_id === dashboardId);
+};
+
+/** Builds the stubbed page on a new dashboard and returns the dashboard's id. */
+async function buildPage(page: Page, token: string, tableName: string): Promise<number> {
+  await login(page, token, "#/main/dashboards/new?ai=1");
+  const builder = await pickTableAndAsk(page, tableName, "How are sales doing?");
+  await builder.getByTestId("dashboard-ai-build").click();
+  await expect(builder.getByTestId("dashboard-ai-result")).toBeVisible({ timeout: 60000 });
+  await builder.getByTestId("dashboard-ai-done").click();
+  await expect(tiles(page)).toHaveCount(3);
+  return createdDashboardId(page);
+}
+
+/** Leaves the editor through the router, as a click on a link does, and waits for its clean-up. */
+async function leaveToCharts(page: Page) {
+  const pruned = page.waitForResponse((r) => /\/prune_charts$/.test(r.url()), { timeout: 30000 });
+  await page.evaluate(() => {
+    window.location.hash = "#/main/catalog?tab=visuals&kind=charts";
+  });
+  await pruned;
+  await expect(page.locator(".viz-library-header")).toBeVisible({ timeout: 30000 });
+}
+
+const chartCard = (page: Page, name: string) =>
+  page.locator(".viz-library-card", { hasText: name });
 
 test.describe("AI dashboard builder", () => {
   test.describe.configure({ mode: "serial" });
@@ -315,11 +353,14 @@ test.describe("AI dashboard builder", () => {
           headers: authHeaders(token),
         })
       ).json();
+      // The chart is the dashboard's own.
       expect(viz).toMatchObject({
         name: "Amount by region",
         chart_type: "bar",
         source_type: "table",
         catalog_table_id: seeded.tableId,
+        dashboard_id: createdId,
+        dashboard_name: "Sales overview",
       });
 
       // One undo takes the whole page back; redo brings it back.
@@ -398,6 +439,145 @@ test.describe("AI dashboard builder", () => {
     } finally {
       await deleteDashboard(request, token, createdId);
     }
+  });
+
+  test("a built chart stays out of the Charts list, and an undone build takes its charts along", async ({
+    page,
+    request,
+  }) => {
+    await stubProviders(page, true);
+    await stubBuilderRoutes(page, seeded.tableId);
+    let createdId: number | null = null;
+    try {
+      createdId = await buildPage(page, token, seeded.tableName);
+      expect((await chartsOf(request, token, createdId)).map((v) => v.name)).toEqual([
+        "Amount by region",
+      ]);
+
+      // Leaving with the chart on the page keeps it; the Charts list shows it only when asked.
+      await leaveToCharts(page);
+      expect(await chartsOf(request, token, createdId)).toHaveLength(1);
+      await expect(chartCard(page, "detail chart").first()).toBeVisible();
+      await expect(chartCard(page, "Amount by region")).toHaveCount(0);
+      await page.getByTestId("charts-include-owned").click();
+      const card = chartCard(page, "Amount by region");
+      await expect(card.getByTestId("chart-owner")).toHaveText("On Sales overview");
+      await shot(page, "4-charts-list");
+      // Left on for the next visit; off again so later tests start from the default.
+      await page.getByTestId("charts-include-owned").click();
+      await expect(card).toHaveCount(0);
+
+      // Back in the editor the page is removed; leaving then deletes its chart.
+      await page.evaluate((id) => {
+        window.location.hash = `#/main/dashboards/${id}/edit`;
+      }, createdId);
+      await expect(tiles(page)).toHaveCount(3, { timeout: 30000 });
+      await page.locator(".tile-header", { hasText: "Amount by region" }).hover();
+      await page
+        .locator(".vgl-item", { hasText: "Amount by region" })
+        .locator(".tile-menu")
+        .click();
+      await page.locator(".el-dropdown-menu__item:visible", { hasText: "Remove from" }).click();
+      await expect(tiles(page)).toHaveCount(2);
+      await leaveToCharts(page);
+      expect(await chartsOf(request, token, createdId)).toHaveLength(0);
+      await expect(page.getByTestId("charts-include-owned")).toHaveCount(0);
+    } finally {
+      await deleteDashboard(request, token, createdId);
+    }
+  });
+
+  test("Keep as a chart makes a built chart a chart of its own that outlives the dashboard", async ({
+    page,
+    request,
+  }) => {
+    await stubProviders(page, true);
+    await stubBuilderRoutes(page, seeded.tableId);
+    const headers = authHeaders(token);
+    let createdId: number | null = null;
+    let keptId: number | null = null;
+    try {
+      createdId = await buildPage(page, token, seeded.tableName);
+      const [own] = await chartsOf(request, token, createdId);
+      keptId = own.id;
+
+      await page
+        .locator(".vgl-item", { hasText: "Amount by region" })
+        .locator(".tile-menu")
+        .click();
+      const keep = page.getByTestId("tile-keep-chart");
+      await expect(keep).toBeVisible();
+      await keep.click();
+      await expect(page.locator(".el-message", { hasText: "is now in Charts" })).toBeVisible();
+      const kept = await (
+        await request.get(`${API_URL}/catalog/visualizations/${keptId}`, { headers })
+      ).json();
+      expect(kept.dashboard_id).toBeNull();
+      // The tile's menu no longer offers it, and the chart still draws.
+      await page
+        .locator(".vgl-item", { hasText: "Amount by region" })
+        .locator(".tile-menu")
+        .click();
+      await expect(page.locator(".el-dropdown-menu__item:visible").first()).toBeVisible();
+      await expect(page.getByTestId("tile-keep-chart")).toHaveCount(0);
+      await page.keyboard.press("Escape");
+
+      await leaveToCharts(page);
+      await expect(chartCard(page, "Amount by region")).toBeVisible();
+
+      await deleteDashboard(request, token, createdId);
+      createdId = null;
+      const after = await request.get(`${API_URL}/catalog/visualizations/${keptId}`, { headers });
+      expect(after.status()).toBe(200);
+    } finally {
+      await deleteDashboard(request, token, createdId);
+      if (keptId != null) {
+        await request.delete(`${API_URL}/catalog/visualizations/${keptId}`, { headers });
+      }
+    }
+  });
+
+  test("a dashboard that cannot be created gets no page and no chart is saved", async ({
+    page,
+    request,
+  }) => {
+    await stubProviders(page, true);
+    await stubBuilderRoutes(page, seeded.tableId);
+    const headers = authHeaders(token);
+    const onTable = async () =>
+      (
+        (await (
+          await request.get(`${API_URL}/catalog/tables/${seeded.tableId}/visualizations`, {
+            headers,
+          })
+        ).json()) as Json[]
+      ).length;
+    const before = await onTable();
+    let chartSaves = 0;
+    page.on("request", (r) => {
+      if (r.method() === "POST" && /\/catalog\/visualizations\/?$/.test(r.url())) chartSaves += 1;
+    });
+    await page.route(/\/catalog\/dashboards\/?$/, (route) =>
+      route.request().method() === "POST"
+        ? route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ detail: "The catalog is not available." }),
+          })
+        : route.fallback(),
+    );
+    await login(page, token, "#/main/dashboards/new?ai=1");
+    const builder = await pickTableAndAsk(page, seeded.tableName, "How are sales doing?");
+    await builder.getByTestId("dashboard-ai-build").click();
+    await expect(builder.getByTestId("dashboard-ai-message")).toContainText(
+      "The page was built, but it could not be added to the dashboard.",
+      { timeout: 60000 },
+    );
+    expect(chartSaves).toBe(0);
+    expect(await onTable()).toBe(before);
+    await builder.getByTestId("dashboard-ai-close").click();
+    await expect(tiles(page)).toHaveCount(0);
+    await expect(page).toHaveURL(/#\/main\/dashboards\/new/);
   });
 
   test("Cancel stops a build and adds nothing", async ({ page }) => {

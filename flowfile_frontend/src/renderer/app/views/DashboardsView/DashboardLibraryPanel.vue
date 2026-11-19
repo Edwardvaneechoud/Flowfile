@@ -151,9 +151,12 @@ const onEdit = (d: Dashboard) => {
 };
 
 const onDelete = async (d: Dashboard) => {
+  // The charts made on a dashboard are its own and go with it.
+  const own = catalogStore.visualizationLibrary.filter((v) => v.dashboard_id === d.id).length;
+  const charts = own ? ` and the ${own === 1 ? "chart" : `${own} charts`} made on it` : "";
   try {
     await ElMessageBox.confirm(
-      `Delete dashboard "${d.name}"? This cannot be undone.`,
+      `Delete dashboard "${d.name}"${charts}? This cannot be undone.`,
       "Delete dashboard",
       { type: "warning", confirmButtonText: "Delete", cancelButtonText: "Cancel" },
     );
@@ -162,6 +165,7 @@ const onDelete = async (d: Dashboard) => {
   }
   try {
     await store.deleteDashboard(d.id);
+    if (own) catalogStore.loadVisualizationLibrary().catch(() => undefined);
     ElMessage.success(`Deleted "${d.name}"`);
   } catch {
     ElMessage.error(store.error ?? "Failed to delete");

@@ -980,3 +980,117 @@ def test_the_cap_counts_files_and_the_entries_of_an_older_list():
     older["dashboards.yaml"]["dashboards"].append({"name": "b"})
     with pytest.raises(importer.ImportTooLargeError, match=f"dashboards manifest exceeds the {cap}-entry cap"):
         importer._assert_kind_caps(files, lambda rel: older[rel], only={"dashboards"})
+
+
+def _owned_by(viz_uuid: str) -> str | None:
+    """The dashboard_uuid of the dashboard a chart belongs to; None for a chart of its own."""
+    with get_db_context() as db:
+        viz = db.query(CatalogVisualization).filter_by(viz_uuid=viz_uuid).one()
+        if viz.dashboard_id is None:
+            return None
+        return db.get(CatalogDashboard, viz.dashboard_id).dashboard_uuid
+
+
+def _board_with_its_chart(chart_name: str, board_name: str) -> tuple[str, str]:
+    """A dashboard and a chart that belongs to it; returns ``(viz_uuid, dashboard_uuid)``."""
+    viz_id, vuuid = _make_viz(chart_name, source_type="sql", sql_query="SELECT 1")
+    dash_id, duuid = _make_dashboard(board_name, _board(viz_id))
+    with get_db_context() as db:
+        db.get(CatalogVisualization, viz_id).dashboard_id = dash_id
+        db.commit()
+    return vuuid, duuid
+
+
+def test_a_chart_that_belongs_to_a_dashboard_names_it_and_is_its_again_after_a_rebuild(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    own, duuid = _board_with_its_chart("Revenue", "Sales board")
+    _, free = _make_viz("Of its own", source_type="sql", sql_query="SELECT 2")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Owned", OWNER)
+        charts = _viz_yaml(root)
+        assert charts[own]["dashboard"] == duuid
+        assert "dashboard" not in charts[free]
+        viz_bytes = _viz_bytes(root)
+
+        # Rebuild: charts import before dashboards, so the dashboard is found once both exist.
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        assert (_owned_by(own), _owned_by(free)) == (duuid, None)
+        write_export(root, OWNER)
+        assert _viz_bytes(root) == viz_bytes, "an owned chart must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_a_chart_whose_dashboard_left_the_folder_is_kept_as_a_chart_of_its_own(tmp_path):
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    own, duuid = _board_with_its_chart("Revenue", "Sales board")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Left", OWNER)
+        for path in (root / "dashboards").iterdir():
+            path.unlink()
+        project_sync.reload_from_disk(OWNER, force=True)
+
+        with get_db_context() as db:
+            assert db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first() is None
+        assert _owned_by(own) is None
+        write_export(root, OWNER)
+        assert "dashboard" not in _viz_yaml(root)[own]
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_a_chart_file_without_the_dashboard_key_makes_the_chart_its_own(tmp_path):
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    own, duuid = _board_with_its_chart("Revenue", "Sales board")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Edited", OWNER)
+        path = next((root / "visualizations").glob("*.visualization.yaml"))
+        entry = yaml.safe_load(path.read_text(encoding="utf-8"))
+        del entry["dashboard"]
+        path.write_text(yaml.safe_dump(entry, sort_keys=False), encoding="utf-8")
+        project_sync.reload_from_disk(OWNER, force=True)
+        assert _owned_by(own) is None
+
+        # Named again, it is the dashboard's again; a uuid no dashboard answers to leaves it on its own.
+        entry["dashboard"] = duuid
+        path.write_text(yaml.safe_dump(entry, sort_keys=False), encoding="utf-8")
+        project_sync.reload_from_disk(OWNER, force=True)
+        assert _owned_by(own) == duuid
+        entry["dashboard"] = str(uuid4())
+        path.write_text(yaml.safe_dump(entry, sort_keys=False), encoding="utf-8")
+        project_sync.reload_from_disk(OWNER, force=True)
+        assert _owned_by(own) is None
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_a_chart_file_whose_dashboard_is_not_a_uuid_is_refused_by_its_path(tmp_path):
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    own, _ = _board_with_its_chart("Revenue", "Sales board")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Bad owner", OWNER)
+        path = next((root / "visualizations").glob("*.visualization.yaml"))
+        entry = yaml.safe_load(path.read_text(encoding="utf-8"))
+        entry["dashboard"] = {"name": "Sales board"}
+        path.write_text(yaml.safe_dump(entry, sort_keys=False), encoding="utf-8")
+        with pytest.raises(importer.ProjectFileError, match=r"visualizations/Revenue\.visualization\.yaml"):
+            project_sync.reload_from_disk(OWNER, force=True)
+        assert _owned_by(own) is not None
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)

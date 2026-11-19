@@ -576,6 +576,10 @@ def _visualization_entry(db: Session, viz: CatalogVisualization) -> dict:
         value = getattr(viz, key)
         if value is not None:
             entry[key] = value
+    # Written only for a chart that belongs to a dashboard, so every other chart's file is unchanged.
+    owner = db.get(CatalogDashboard, viz.dashboard_id) if viz.dashboard_id is not None else None
+    if owner is not None:
+        entry["dashboard"] = owner.dashboard_uuid
     return entry
 
 

@@ -740,7 +740,16 @@ export interface CatalogVisualization {
   table_full_name?: string | null;
   table_type?: string | null;
   namespace_name?: string | null;
+  /** The dashboard the chart belongs to, and its name; absent or null for a chart of its own. */
+  dashboard_id?: number | null;
+  dashboard_name?: string | null;
   access?: AccessInfo | null;
+}
+
+/** What pruning a dashboard's own charts did: the ids deleted, and the ids made charts of their own. */
+export interface DashboardChartPrune {
+  deleted: number[];
+  released: number[];
 }
 
 export interface VisualizationCreatePayload {
@@ -754,6 +763,8 @@ export interface VisualizationCreatePayload {
   sql_query?: string | null;
   namespace_id?: number | null;
   thumbnail_data_url?: string | null;
+  /** Makes the chart that dashboard's own. */
+  dashboard_id?: number | null;
 }
 
 export interface VisualizationUpdatePayload {

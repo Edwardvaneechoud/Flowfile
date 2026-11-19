@@ -349,10 +349,10 @@ class NamespaceService:
                 version_counts=self.repo.artifact_version_counts_for_namespace(ns_id),
             )
 
-        # A visualization sits in the namespace it was saved into, not its table's.
+        # A visualization sits in the namespace it was saved into, not its table's; a dashboard's own is not listed.
         viz_by_namespace: dict[int, list[VisualizationOut]] = {}
         for v in list_visualizations(user_id):
-            if v.namespace_id is None:
+            if v.namespace_id is None or v.dashboard_id is not None:
                 continue
             viz_by_namespace.setdefault(v.namespace_id, []).append(v)
 

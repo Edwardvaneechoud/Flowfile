@@ -120,6 +120,8 @@ const props = defineProps<{
   saveTargetTableId?: number | null;
   /** Names a new chart's suggested name must not repeat, e.g. the charts on the dashboard it is made for. */
   takenNames?: string[];
+  /** Set when the chart is made from inside a dashboard: asked at Save for the dashboard it belongs to. */
+  ownerDashboardId?: () => Promise<number>;
 }>();
 
 const emit = defineEmits<{
@@ -347,6 +349,7 @@ const save = async () => {
         sql_query: props.source.source_type === "sql" ? (props.source.sql_query ?? null) : null,
       };
       if (thumbnail_data_url) createPayload.thumbnail_data_url = thumbnail_data_url;
+      if (props.ownerDashboardId) createPayload.dashboard_id = await props.ownerDashboardId();
       saved = await store.createVisualization(createPayload);
       // Created for real now; createCompleted keeps the unmount write from reviving the draft.
       createCompleted.value = true;

@@ -31,7 +31,7 @@ A project folder holds YAML files of your resources:
 | `connections/database/`, `connections/cloud/` | One `.yaml` per connection (no credentials). |
 | `schedules/` | One `.yaml` per flow, listing its interval and cron schedules, each with an `id`. |
 | `notebooks/` | One `.notebook.yaml` per notebook. |
-| `visualizations/` | One `.visualization.yaml` per saved chart: its spec and its source, a table by name or a SQL query. |
+| `visualizations/` | One `.visualization.yaml` per saved chart: its spec and its source, a table by name or a SQL query. A chart that belongs to a dashboard names it under `dashboard`, by the dashboard's `dashboard_uuid`. |
 | `dashboards/` | One `.dashboard.yaml` per dashboard: its layout, tabs, tiles and filters. A tile names its chart by the chart's `viz_uuid`, so a dashboard is its file plus the files of the charts it uses. |
 | `secrets.yaml` | The names of the secrets you created on the Secrets page (no values). Secrets a feature keeps for itself, such as an AI provider key, a Kafka connection's password or the GitHub publish token, are not listed. |
 | `namespaces.yaml`, `tables.yaml`, `models.yaml`, `kernels.yaml` | Catalog metadata manifests. `tables.yaml` names a table's producing flow only when that flow is in the project. |

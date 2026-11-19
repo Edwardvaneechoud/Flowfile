@@ -24,6 +24,7 @@ import type {
   ColumnStatsResponse,
   CatalogVisualization,
   Dashboard,
+  DashboardChartPrune,
   DashboardCreatePayload,
   DashboardUpdatePayload,
   DeltaTableHistory,
@@ -711,6 +712,14 @@ export class CatalogApi {
     await axios.delete(`/catalog/visualizations/${vizId}`);
   }
 
+  /** Make a dashboard's chart a chart of its own. */
+  static async detachVisualization(vizId: number): Promise<CatalogVisualization> {
+    const response = await axios.post<CatalogVisualization>(
+      `/catalog/visualizations/${vizId}/detach`,
+    );
+    return response.data;
+  }
+
   /** Compute rows for a saved viz.
    *
    * Pass ``payload`` (a GraphicWalker IDataQueryPayload) to push a chart
@@ -794,6 +803,14 @@ export class CatalogApi {
 
   static async deleteDashboard(id: number): Promise<void> {
     await axios.delete(`/catalog/dashboards/${id}`);
+  }
+
+  /** Remove the dashboard's own charts that its saved layout no longer uses. */
+  static async pruneDashboardCharts(id: number): Promise<DashboardChartPrune> {
+    const response = await axios.post<DashboardChartPrune>(
+      `/catalog/dashboards/${id}/prune_charts`,
+    );
+    return response.data;
   }
 
   // ====== Demo catalog ======

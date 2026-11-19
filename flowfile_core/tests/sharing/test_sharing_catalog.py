@@ -386,6 +386,30 @@ def test_dashboard_private_then_shared(users, client_for, alice_dashboard, team,
     assert bob.delete(f"/catalog/dashboards/{alice_dashboard}").status_code == 403
 
 
+def test_a_chart_is_made_for_a_dashboard_only_by_who_manages_it(
+    users, client_for, alice_catalog, alice_dashboard, team, grant_factory
+):
+    grant_factory("catalog_table", alice_catalog["table"], team, granted_by=users["alice"].id)
+    bob = client_for("bob")
+    body = {
+        "name": "bobs_chart",
+        "spec": [{}],
+        "source_type": "table",
+        "catalog_table_id": alice_catalog["table"],
+        "dashboard_id": alice_dashboard,
+    }
+    assert bob.post("/catalog/visualizations", json=body).status_code == 403
+
+    grant_factory("dashboard", alice_dashboard, team, permission="manage", granted_by=users["alice"].id)
+    created = bob.post("/catalog/visualizations", json=body)
+    assert created.status_code == 201, created.text
+    assert created.json()["dashboard_id"] == alice_dashboard
+    # Whoever manages the dashboard may keep its chart, and the dashboard's delete takes the rest.
+    kept = bob.post(f"/catalog/visualizations/{created.json()['id']}/detach")
+    assert kept.status_code == 200 and kept.json()["dashboard_id"] is None
+    assert bob.delete(f"/catalog/visualizations/{created.json()['id']}").status_code == 204
+
+
 @pytest.fixture
 def alice_sql_viz(users, resource_factory, alice_catalog):
     return resource_factory(

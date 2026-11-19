@@ -867,7 +867,38 @@ def _import_dashboards(root: Path, owner_id: int) -> set[str]:
                 db.add(dashboard)
             db.commit()
             kept.add(dashboard_uuid)
+    _assign_chart_dashboards(root, owner_id)
     return kept
+
+
+def _assign_chart_dashboards(root: Path, owner_id: int) -> None:
+    """Point each of the owner's charts at the dashboard its file names under ``dashboard``, and make a
+    chart whose file names none a chart of its own. Runs once the dashboards exist, since charts import
+    first. A file can make a chart belong only to a dashboard of the owner's; the dashboard a chart
+    already belongs to is kept when the file still names it, whoever owns it. A name no dashboard answers
+    to leaves the chart on its own."""
+    for entry in _object_entries(root, "visualizations"):
+        viz_uuid = entry.get("viz_uuid")
+        if not viz_uuid:
+            continue
+        wanted = entry.get("dashboard")
+        with get_db_context() as db:
+            viz = repository.owned_or_none(db, CatalogVisualization, "created_by", owner_id, viz_uuid=viz_uuid)
+            if viz is None:
+                continue
+            target: int | None = None
+            if wanted:
+                current = db.get(CatalogDashboard, viz.dashboard_id) if viz.dashboard_id is not None else None
+                if current is not None and current.dashboard_uuid == wanted:
+                    target = current.id
+                else:
+                    owned = repository.owned_or_none(
+                        db, CatalogDashboard, "created_by", owner_id, dashboard_uuid=wanted
+                    )
+                    target = owned.id if owned is not None else None
+            if viz.dashboard_id != target:
+                viz.dashboard_id = target
+                db.commit()
 
 
 def _import_notebooks(root: Path, owner_id: int, kernel_ids: dict[str, str] | None = None) -> set[str]:
@@ -1321,6 +1352,10 @@ def _delete_dashboards(ctx: kinds.ExportContext, keys: list) -> None:
         CatalogDashboard.created_by == ctx.owner_id, CatalogDashboard.dashboard_uuid.in_(keys)
     ):
         sharing.delete_grants_for_resource(ctx.db, "dashboard", dash_id)
+        # A chart that belonged to it and is still in the folder is kept, on its own (SQLite reuses row ids).
+        ctx.db.query(CatalogVisualization).filter_by(dashboard_id=dash_id).update(
+            {CatalogVisualization.dashboard_id: None}
+        )
         ctx.db.query(CatalogDashboard).filter_by(id=dash_id).delete()
     ctx.db.commit()
 
@@ -1599,6 +1634,7 @@ def _validate_entry(rel: str, stem: str, entry: dict, where: str = "") -> None:
         _check_file(
             rel, _optional(entry.get("source_table"), dict), f"{where}has a 'source_table' that is not a mapping"
         )
+        _check_file(rel, _optional(entry.get("dashboard"), str), f"{where}has a 'dashboard' that is not a uuid")
     elif stem == "dashboards":
         layout = entry.get("layout")
         _check_file(rel, _optional(layout, dict), f"{where}has a 'layout' that is not a mapping")
