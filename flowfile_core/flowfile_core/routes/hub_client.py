@@ -467,13 +467,13 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
     instead (``_publish_as_new``); a flow on no hub publishes as a first publish, ``as_new`` and ``name`` unread.
     """
     flow = get_flow_or_404(request.flow_id, current_user)
-    if request.as_new and request.overwrite_version is not None:
+    origin = getattr(flow.flow_settings, "hub_origin", None)
+    if origin is not None and request.as_new and request.overwrite_version is not None:
         raise HTTPException(status_code=422, detail="A new flow has no version to publish over.")
     hub_url, token = _hub(current_user)
     flow_path = flow.flow_settings.path or flow.flow_settings.save_location
     if not flow_path:
         raise HTTPException(status_code=422, detail="save the flow first")
-    origin = getattr(flow.flow_settings, "hub_origin", None)
     if origin is not None and request.as_new:
         return _publish_as_new(flow, flow_path, request, hub_url, token, current_user)
     if origin is not None and origin.hub_url.rstrip("/") != hub_url.rstrip("/"):
@@ -533,7 +533,8 @@ def _publish_as_new(
     Nothing of the flow it came from is sent or changed: a new uuid, no base, the given name (else the flow's catalog
     name, else its own) and the place picked (none lets the hub use its default schema). Where the open flow will live
     is checked before the hub is asked, so a refusal from either side leaves the open flow, its file and its origin as
-    they were.
+    they were. A save here that fails once the hub accepted the publish still leaves the open flow, its file and its
+    origin as they were, but the new flow stays on the hub, which nothing here then points at.
     """
     document = flow.get_flowfile_data()
     name = (

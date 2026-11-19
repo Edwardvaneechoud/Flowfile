@@ -813,6 +813,8 @@ class TestDeleteUserRemovesTheirApis:
             assert verify_api_key(slug=kept_slug, x_api_key=kept_key, db=db).slug == kept_slug
 
     def test_delete_removes_the_persons_schedules_and_what_hangs_on_them(self, admin_user, create_test_user):
+        """The person schedules flows the admin owns, so on PostgreSQL only the schedule's own keys are in play."""
+        from datetime import datetime
         from uuid import uuid4
 
         schedule_ids: dict[int, int] = {}
@@ -821,7 +823,7 @@ class TestDeleteUserRemovesTheirApis:
             for owner_id in (create_test_user, admin_user["id"]):
                 slug = f"sched-{uuid4().hex[:10]}"
                 reg = db_models.FlowRegistration(
-                    flow_uuid=str(uuid4()), name=slug, flow_path=f"/tmp/{slug}.yaml", owner_id=owner_id
+                    flow_uuid=str(uuid4()), name=slug, flow_path=f"/tmp/{slug}.yaml", owner_id=admin_user["id"]
                 )
                 db.add(reg)
                 db.flush()
@@ -833,7 +835,25 @@ class TestDeleteUserRemovesTheirApis:
                 db.flush()
                 schedule_ids[owner_id] = schedule.id
             gone_id = schedule_ids[create_test_user]
-            db.add(db_models.ScheduleTriggerTable(schedule_id=gone_id, table_id=987654))
+            table = db_models.CatalogTable(name=f"trigger-{uuid4().hex[:8]}", owner_id=admin_user["id"])
+            db.add(table)
+            db.flush()
+            table_id = table.id
+            db.add(db_models.ScheduleTriggerTable(schedule_id=gone_id, table_id=table_id))
+            run = db_models.FlowRun(
+                registration_id=registration_ids[0],
+                flow_name="scheduled",
+                user_id=admin_user["id"],
+                started_at=datetime(2026, 1, 1),
+                ended_at=datetime(2026, 1, 1),
+                success=True,
+                notification_processed_at=datetime(2026, 1, 1),
+                run_type="scheduled",
+                schedule_id=gone_id,
+            )
+            db.add(run)
+            db.flush()
+            run_id = run.id
             channel = db_models.NotificationChannel(
                 owner_id=admin_user["id"], name="ops", channel_type="generic", webhook_url_encrypted="x"
             )
@@ -852,11 +872,15 @@ class TestDeleteUserRemovesTheirApis:
                 assert db.get(db_models.FlowSchedule, gone_id) is None
                 assert db.query(db_models.ScheduleTriggerTable).filter_by(schedule_id=gone_id).count() == 0
                 assert db.query(db_models.NotificationRule).filter_by(schedule_id=gone_id).count() == 0
+                kept_run = db.get(db_models.FlowRun, run_id)
+                assert kept_run is not None and kept_run.schedule_id is None
                 kept = db.get(db_models.FlowSchedule, schedule_ids[admin_user["id"]])
                 assert (kept.enabled, kept.disabled_reason) == (True, None)
         finally:
             with get_db_context() as db:
+                db.query(db_models.FlowRun).filter_by(id=run_id).delete()
                 db.query(db_models.ScheduleTriggerTable).filter_by(schedule_id=gone_id).delete()
+                db.query(db_models.CatalogTable).filter_by(id=table_id).delete()
                 db.query(db_models.NotificationRule).filter_by(channel_id=channel_id).delete()
                 db.query(db_models.NotificationChannel).filter_by(id=channel_id).delete()
                 db.query(db_models.FlowSchedule).filter(

@@ -695,6 +695,7 @@ def test_a_refused_publish_as_new_changes_nothing_here(connected, hub, user_id, 
 
 def test_publish_as_new_over_a_version_is_refused_before_the_hub_is_called(connected, hub, user_id, tmp_path):
     flow = _new_flow(user_id, tmp_path / "over.yaml")
+    assert connected.post("/hub_client/publish", json={"flow_id": flow.flow_id}).status_code == 201
 
     response = connected.post(
         "/hub_client/publish", json={"flow_id": flow.flow_id, "as_new": True, "overwrite_version": 2}
@@ -702,7 +703,21 @@ def test_publish_as_new_over_a_version_is_refused_before_the_hub_is_called(conne
 
     assert response.status_code == 422, response.text
     assert response.json()["detail"] == "A new flow has no version to publish over."
-    assert hub.publishes == []
+    assert len(hub.publishes) == 1
+
+
+def test_publish_as_new_over_a_version_of_a_flow_on_no_hub_is_an_ordinary_publish_over_it(
+    connected, hub, user_id, tmp_path
+):
+    flow = _new_flow(user_id, tmp_path / "never_over.yaml")
+
+    response = connected.post(
+        "/hub_client/publish", json={"flow_id": flow.flow_id, "as_new": True, "overwrite_version": 2}
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["kind"] == "stale_base"
+    assert [body["base_version"] for _, body in hub.publishes] == [2]
 
 
 def test_publish_as_new_of_a_flow_on_no_hub_is_a_first_publish(connected, hub, user_id, tmp_path):

@@ -253,6 +253,7 @@ def access_refused(token: str) -> None:
         if stored is None or stored.get("kind") != "browser":
             return
         try:
+            # The person's lock is an RLock, so access_token takes it again on this thread.
             access_token(user_id)
         except (client.HubRefused, client.HubUnreachable, client.HubVersionRefused):
             pass

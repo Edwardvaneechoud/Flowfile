@@ -342,6 +342,10 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
     db.query(db_models.FlowApiEndpoint).filter_by(owner_id=user_id).delete(synchronize_session=False)
     # Schedules go with their trigger tables and rules, so an account that later gets this id inherits none.
     schedule_ids = db.query(db_models.FlowSchedule.id).filter_by(owner_id=user_id)
+    # Their runs stay as the flow's history, no longer pointing at a schedule.
+    db.query(db_models.FlowRun).filter(db_models.FlowRun.schedule_id.in_(schedule_ids)).update(
+        {db_models.FlowRun.schedule_id: None}, synchronize_session=False
+    )
     db.query(db_models.ScheduleTriggerTable).filter(
         db_models.ScheduleTriggerTable.schedule_id.in_(schedule_ids)
     ).delete(synchronize_session=False)

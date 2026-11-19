@@ -3532,6 +3532,37 @@ class TestCronSchedules:
         assert bad_tz.json()["valid"] is False
 
 
+def test_deleting_a_schedule_keeps_its_runs_without_it():
+    flow_id = TestCronSchedules._register_flow()
+    created = client.post(
+        "/catalog/schedules", json={"registration_id": flow_id, "schedule_type": "interval", "interval_seconds": 3600}
+    )
+    assert created.status_code == 201, created.text
+    sched_id = created.json()["id"]
+    with get_db_context() as db:
+        run = FlowRun(
+            registration_id=flow_id,
+            flow_name="cron_flow",
+            user_id=1,
+            started_at=datetime(2026, 1, 1),
+            ended_at=datetime(2026, 1, 1),
+            success=True,
+            notification_processed_at=datetime(2026, 1, 1),
+            run_type="scheduled",
+            schedule_id=sched_id,
+        )
+        db.add(run)
+        db.commit()
+        run_id = run.id
+
+    assert client.delete(f"/catalog/schedules/{sched_id}").status_code == 204
+
+    with get_db_context() as db:
+        assert db.get(FlowSchedule, sched_id) is None
+        kept = db.get(FlowRun, run_id)
+        assert kept is not None and kept.schedule_id is None
+
+
 class TestScheduleBackend:
     """A schedule names the backend its runs go to; Run now and the push trigger pass it as ``--backend``."""
 
