@@ -108,6 +108,7 @@ jobs:
 
       # Start backend server in background; `poetry -P` keeps the empty working directory (Poetry 2's -C cds into the repo).
       - name: Start backend server
+        id: backend
         working-directory: ${{ runner.temp }}/core_cwd
         # Telemetry off: an undecided consent renders a modal over the designer.
         env:
@@ -168,7 +169,8 @@ jobs:
       # Clipboard lifecycle tests inspect live stores to detect recovery reloads
       # and control paste races. Keep these separate from production-build E2E.
       - name: Run clipboard lifecycle regressions against Vite
-        if: success() || failure()
+        # Without a backend every test only reports a refused connection.
+        if: (success() || failure()) && steps.backend.outcome == 'success'
         working-directory: flowfile_frontend
         env:
           TEST_URL: http://localhost:4174
