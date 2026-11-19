@@ -294,18 +294,23 @@ def test_a_column_named_like_a_shorthand_wins() -> None:
     assert cr.ref_from_string("sum(revenue)", ["sum(revenue)", "revenue"]) == {"field": "sum(revenue)"}
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "A(" + " " * 200_000,
-        "A(" + ")" + " " * 200_000 + "x",
-        "A(" + ") " * 100_000 + "x",
-        " " * 200_000 + "(",
-        "sum(" + " " * 200_000 + "revenue)",
-    ],
-)
-def test_shorthand_parsing_is_linear_in_the_text(text: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The pattern alone, without the length guard: the old one took minutes on a few thousand spaces."""
+_WORST_CASES = {
+    "unclosed_then_spaces": "A(" + " " * 200_000,
+    "closed_then_spaces": "A(" + ")" + " " * 200_000 + "x",
+    "many_closing_parens": "A(" + ") " * 100_000 + "x",
+    "leading_spaces": " " * 200_000 + "(",
+    "spaces_inside": "sum(" + " " * 200_000 + "revenue)",
+}
+
+
+@pytest.mark.parametrize("case", sorted(_WORST_CASES))
+def test_shorthand_parsing_is_linear_in_the_text(case: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pattern alone, without the length guard: the old one took minutes on a few thousand spaces.
+
+    Parametrized by name: pytest puts the test id in an environment variable, and Windows
+    refuses one longer than 32,767 characters.
+    """
+    text = _WORST_CASES[case]
     monkeypatch.setattr(cr, "_MAX_SHORTHAND_LEN", len(text))
     started = time.perf_counter()
     cr.ref_from_string(text, [])
