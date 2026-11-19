@@ -651,34 +651,14 @@ describe("useAiStore - split model tiers (resolveSurface)", () => {
     return store;
   };
 
-  it("routes every surface to the main selection when split is off", () => {
+  it("routes every surface to the main selection when no task has its own model", () => {
     const store = _seed();
     store.setSelectedModel("anthropic/claude-opus-4.5");
-    expect(store.splitModels).toBe(false);
     expect(store.resolveSurface("ghost_node")).toEqual({
       provider: "openrouter",
       model: "anthropic/claude-opus-4.5",
     });
-    // cron is a simple surface but split is off → still the main selection.
     expect(store.resolveSurface("cron")).toEqual({
-      provider: "openrouter",
-      model: "anthropic/claude-opus-4.5",
-    });
-  });
-
-  it("routes simple surfaces to the simple tier (own provider) when split is on", () => {
-    const store = _seed();
-    store.setSelectedModel("anthropic/claude-opus-4.5");
-    store.setSplitModels(true);
-    // Simple tier can be a different provider entirely (e.g. local).
-    store.setSimpleProvider("local");
-    expect(store.resolveSurface("cron")).toEqual({
-      provider: "local",
-      model: "qwen2.5-coder-3b",
-    });
-    expect(store.resolveSurface("settings_autocomplete").provider).toBe("local");
-    // Complex surfaces still use the main selection.
-    expect(store.resolveSurface("ghost_node")).toEqual({
       provider: "openrouter",
       model: "anthropic/claude-opus-4.5",
     });
@@ -691,21 +671,6 @@ describe("useAiStore - split model tiers (resolveSurface)", () => {
     expect(store.resolveSurface("ghost_node").provider).toBe("openrouter");
     store.setSurfaceModel("chart", null);
     expect(store.resolveSurface("chart").provider).toBe("openrouter");
-  });
-
-  it("setSplitModels seeds the simple tier from the main selection", () => {
-    const store = _seed();
-    store.setSelectedModel("anthropic/claude-opus-4.5");
-    store.setSplitModels(true);
-    expect(store.simpleProvider).toBe("openrouter");
-    expect(store.simpleModel).toBe("anthropic/claude-opus-4.5");
-  });
-
-  it("setSimpleProvider defaults the simple model to that provider's default", () => {
-    const store = _seed();
-    store.setSplitModels(true);
-    store.setSimpleProvider("local");
-    expect(store.simpleModel).toBe("qwen2.5-coder-3b");
   });
 
   it("modelForSurface falls back to the surface preset, then provider default", () => {
@@ -721,13 +686,10 @@ describe("useAiStore - split model tiers (resolveSurface)", () => {
     expect(store.modelForSurface("ghost_node")).toBeNull();
   });
 
-  it("changing the complex provider leaves the independent simple tier intact", () => {
+  it("changing the main provider leaves a task's own pick intact", () => {
     const store = _seed();
-    store.setSplitModels(true);
-    store.setSimpleProvider("local");
+    store.setSurfaceModel("cron", { provider: "local", model: null });
     store.setSelectedProvider("openrouter");
-    // Simple tier is independent — not reset by a complex-provider change.
-    expect(store.simpleProvider).toBe("local");
     expect(store.resolveSurface("cron").provider).toBe("local");
   });
 
@@ -790,12 +752,13 @@ describe("useAiStore - device-wide settings hydration", () => {
     const store = useAiStore();
     expect(store.selectedProvider).toBe("openai");
     expect(store.selectedModel).toBe("gpt-5");
-    expect(store.splitModels).toBe(true);
-    expect(store.simpleProvider).toBe("groq");
+    // The old simple tier is carried over as the two tasks' own picks.
+    expect(store.resolveSurface("cron")).toEqual({ provider: "groq", model: null });
+    expect(store.resolveSurface("settings_autocomplete").provider).toBe("groq");
     expect(store.selectedAgentSurface).toBe("agent_staged");
     expect(store.verifyPlanCompletion).toBe(true);
-    // Bucket already exists → no migration write.
-    expect(mockSymbols.persistAiSettings).not.toHaveBeenCalled();
+    // Saved once so the carry-over happens exactly once.
+    expect(mockSymbols.persistAiSettings).toHaveBeenCalledTimes(1);
   });
 
   it("migrates legacy per-flow settings into the bucket once when it is missing", () => {
@@ -909,7 +872,7 @@ describe("useAiStore - loadProviders resets a saved model the provider no longer
     await store.loadProviders();
     expect(store.selectedProvider).toBe("openrouter");
     expect(store.selectedModel).toBe("qwen/qwen3.6-35b-a3b");
-    expect(store.simpleModel).toBe("qwen/qwen3.6-35b-a3b");
+    expect(store.resolveSurface("cron").model).toBe("qwen/qwen3.6-35b-a3b");
   });
 
   it("keeps a model the user picked from their curated list", async () => {

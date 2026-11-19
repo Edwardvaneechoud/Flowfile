@@ -46,13 +46,11 @@ export type PersistedSimpleBuildOutput = "code" | "json";
 export interface PersistedAiSettings {
   selectedProvider: string | null;
   selectedModel: string | null;
-  /** When true, simple-tier surfaces (cron, settings autocomplete) run on
-   * ``simpleProvider`` / ``simpleModel`` instead of the main selection. */
-  splitModels: boolean | null;
-  /** Simple-tier provider. `null` → fall back to the main provider. */
-  simpleProvider: string | null;
-  /** Simple-tier model. `null` → use the provider's per-surface preset. */
-  simpleModel: string | null;
+  /** **LEGACY** — the old "simple tier" for cron and settings autocomplete. Read once so
+   * the store can carry it over into ``surfaceModels``; never written. */
+  splitModels?: boolean | null;
+  simpleProvider?: string | null;
+  simpleModel?: string | null;
   /** User-selected agent surface. `null` → the store default (``agent_live``). */
   selectedAgentSurface: PersistedAgentSurface | null;
   /** Opt-in verify-completion gate. `null` → off. */

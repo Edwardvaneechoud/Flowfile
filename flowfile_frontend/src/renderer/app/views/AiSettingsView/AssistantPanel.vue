@@ -41,9 +41,7 @@
           <!-- Main selection — drives everything unless a split is enabled. -->
           <div class="model-row">
             <div class="model-field">
-              <label class="model-field__label" for="ai-main-provider">
-                {{ aiStore.splitModels ? "Complex provider" : "Provider" }}
-              </label>
+              <label class="model-field__label" for="ai-main-provider"> Provider </label>
               <el-select
                 id="ai-main-provider"
                 size="default"
@@ -97,59 +95,7 @@
             </div>
           </div>
           <p class="model-tier__hint">
-            {{
-              aiStore.splitModels
-                ? "Heavier tasks: chat, agent, next-node suggestions, command palette (⌘K), code generation."
-                : "Used by every AI feature."
-            }}
-          </p>
-
-          <!-- Simple tier — own provider + model, shown only when split on. -->
-          <div v-if="aiStore.splitModels" class="model-row model-row--simple">
-            <div class="model-field">
-              <label class="model-field__label" for="ai-simple-provider">Simple provider</label>
-              <el-select
-                id="ai-simple-provider"
-                size="default"
-                popper-class="model-select-dropdown"
-                :model-value="simpleProviderName ?? ''"
-                @change="onSimpleProviderChange"
-              >
-                <el-option
-                  v-for="opt in providerOptions"
-                  :key="opt.value"
-                  :value="opt.value"
-                  :label="opt.label"
-                  :disabled="opt.disabled"
-                />
-              </el-select>
-              <p v-if="simpleProviderUnconfigured" class="model-field__sub model-field__sub--warn">
-                <i class="fa-solid fa-triangle-exclamation"></i>
-                {{ providerLabel(simpleProviderName ?? "") }} has no API key, so simple-task calls
-                will fail.
-              </p>
-            </div>
-            <div class="model-field">
-              <label class="model-field__label" for="ai-simple-model">Model</label>
-              <div v-if="isLocalSimple" id="ai-simple-model" class="model-static">
-                <i class="fa-solid fa-microchip"></i>
-                <span>{{ localActiveModelName }}</span>
-              </div>
-              <el-select
-                v-else
-                id="ai-simple-model"
-                size="default"
-                popper-class="model-select-dropdown"
-                :model-value="aiStore.simpleModel ?? ''"
-                @change="onSimpleModelChange"
-              >
-                <el-option value="" label="Provider default" />
-                <el-option v-for="m in simpleModels" :key="m" :value="m" :label="m" />
-              </el-select>
-            </div>
-          </div>
-          <p v-if="aiStore.splitModels" class="model-tier__hint">
-            Lighter tasks: cron text→schedule and settings autocomplete.
+            Used by every AI feature, unless a task below has a model of its own.
           </p>
 
           <template v-for="task in TASK_MODELS" :key="task.surface">
@@ -161,6 +107,7 @@
                 <el-select
                   :id="`ai-task-provider-${task.surface}`"
                   size="default"
+                  placeholder="Same as main"
                   popper-class="model-select-dropdown"
                   :model-value="aiStore.surfaceModels[task.surface]?.provider ?? ''"
                   @change="(value: string) => onTaskProviderChange(task.surface, value)"
@@ -174,6 +121,13 @@
                     :disabled="opt.disabled"
                   />
                 </el-select>
+                <p
+                  v-if="isUnconfigured(aiStore.surfaceModels[task.surface]?.provider ?? null)"
+                  class="model-field__sub model-field__sub--warn"
+                >
+                  <i class="fa-solid fa-triangle-exclamation"></i>
+                  This provider has no API key, so these calls will fail.
+                </p>
               </div>
               <div v-if="aiStore.surfaceModels[task.surface]" class="model-field">
                 <label class="model-field__label" :for="`ai-task-model-${task.surface}`">
@@ -182,6 +136,7 @@
                 <el-select
                   :id="`ai-task-model-${task.surface}`"
                   size="default"
+                  placeholder="Provider default"
                   popper-class="model-select-dropdown"
                   :model-value="aiStore.surfaceModels[task.surface].model ?? ''"
                   @change="(value: string) => onTaskModelChange(task.surface, value)"
@@ -193,14 +148,6 @@
             </div>
             <p class="model-tier__hint">{{ task.hint }}</p>
           </template>
-
-          <el-checkbox
-            class="model-split-toggle"
-            :model-value="aiStore.splitModels"
-            @change="onSplitToggle"
-          >
-            Use a separate, cheaper model for simple tasks
-          </el-checkbox>
         </template>
       </div>
     </div>
@@ -343,7 +290,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { ElCheckbox, ElOption, ElSelect } from "element-plus";
+import { ElOption, ElSelect } from "element-plus";
 import { useAiStore } from "../../stores/ai-store";
 import type {
   PersistedAgentSurface,
@@ -410,16 +357,9 @@ const mainModels = computed(() =>
   _withSelected(aiStore.modelsForProvider(aiStore.selectedProvider), aiStore.selectedModel),
 );
 
-const simpleProviderName = computed(() => aiStore.simpleProvider ?? aiStore.selectedProvider);
-
-const simpleModels = computed(() =>
-  _withSelected(aiStore.modelsForProvider(simpleProviderName.value), aiStore.simpleModel),
-);
-
 // When a tier's provider is On-device AI, its model isn't a separate pick — it's
 // whatever the single local server has loaded (chosen on the On-device tab).
 const isLocalComplex = computed(() => aiStore.selectedProvider === LOCAL_PROVIDER_ID);
-const isLocalSimple = computed(() => simpleProviderName.value === LOCAL_PROVIDER_ID);
 const localActiveModelName = computed(
   () => aiStore.localModelStatus?.modelName ?? "the on-device model",
 );
@@ -449,12 +389,6 @@ const isUnconfigured = (name: string | null): boolean =>
   name !== null &&
   aiStore.providers.some((p) => p.provider === name && p.status === "unconfigured");
 const mainProviderUnconfigured = computed(() => isUnconfigured(aiStore.selectedProvider));
-const simpleProviderUnconfigured = computed(() => isUnconfigured(simpleProviderName.value));
-
-// el-checkbox emits CheckboxValueType (string | number | boolean).
-const onSplitToggle = (checked: unknown): void => {
-  aiStore.setSplitModels(checked === true);
-};
 
 const onMainProviderChange = (value: string): void => {
   if (value) aiStore.setSelectedProvider(value);
@@ -464,18 +398,16 @@ const onMainModelChange = (value: string): void => {
   aiStore.setSelectedModel(value || null);
 };
 
-const onSimpleProviderChange = (value: string): void => {
-  if (value) aiStore.setSimpleProvider(value);
-};
-
-const onSimpleModelChange = (value: string): void => {
-  aiStore.setSimpleModel(value || null);
-};
-
 // Tasks that can run on a model of their own. A new task gets its picker by adding a row
 // here; `surface` is the name its store passes to `aiStore.resolveSurface`.
 const TASK_MODELS: ReadonlyArray<{ surface: string; label: string; hint: string }> = [
   { surface: "chart", label: "Charts", hint: "Used when you ask the AI for a chart." },
+  { surface: "cron", label: "Schedules", hint: "Used to turn a schedule in words into cron." },
+  {
+    surface: "settings_autocomplete",
+    label: "Settings suggestions",
+    hint: "Used for suggestions inside node settings, such as join keys.",
+  },
 ];
 
 const taskModels = (surface: string): string[] => {
@@ -598,20 +530,6 @@ const onVerifyChange = (event: Event): void => {
 
 .model-field__sub--warn i {
   margin-right: 2px;
-}
-
-.model-split-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  margin-top: var(--spacing-4);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-  cursor: pointer;
-}
-
-.model-split-toggle :deep(.el-checkbox__label) {
-  font-weight: 400;
 }
 
 .agent-note {
