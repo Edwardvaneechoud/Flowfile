@@ -39,6 +39,7 @@ _FLOW_INPUT_REASON = "Subflow inputs have no data source in the browser"
 _ALWAYS_PLACEHOLDER = {
     "catalog_reader": _CATALOG_REASON,
     "catalog_writer": _CATALOG_REASON,
+    "sharepoint_reader": "SharePoint connections are not available in shared flows.",
     "polars_code": _CODE_REASON,
     "flow_input": _FLOW_INPUT_REASON,
 }

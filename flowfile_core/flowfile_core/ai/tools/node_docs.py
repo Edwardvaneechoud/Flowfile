@@ -586,6 +586,10 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "wants GA4 metrics / dimensions inside the flow. Don't use for ad-platform "
         "data — those need their own connectors / 'external_source'."
     ),
+    "sharepoint_reader": (
+        "Read CSV, XLSX, Parquet, or JSON from a SharePoint document library using a saved connection. "
+        "This source node has no upstream input and does not read SharePoint Lists."
+    ),
     "rest_api_reader": (
         "Read JSON from a REST API (optionally paginated) into the flow. Not for "
         "streaming (use 'kafka_source') or a source with a typed node (database / "
@@ -1191,6 +1195,10 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "metric=sessions, dimension=country. Pitfall: GA4 has hard rate "
         "limits — large date ranges with high-cardinality dimensions "
         "may be sampled."
+    ),
+    "sharepoint_reader": (
+        "Select a saved SharePoint connection and file. For CSV, set the delimiter if needed; "
+        "for XLSX, optionally enter a sheet name (defaults to the first sheet)."
     ),
     "rest_api_reader": (
         "Settings: a Request ('Method', 'URL', optional 'Record path' to the records "

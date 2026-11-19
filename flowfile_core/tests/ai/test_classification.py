@@ -47,6 +47,7 @@ def test_source_set_includes_all_readers() -> None:
         "kafka_source",
         "google_analytics_reader",
         "rest_api_reader",
+        "sharepoint_reader",
         "external_source",
         # Flow-in-flow entry point: no input port, source-shaped.
         "flow_input",

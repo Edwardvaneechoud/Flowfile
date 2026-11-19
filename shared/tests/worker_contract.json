@@ -16,7 +16,7 @@
     "operation polars_code": "aba18e5cf40e9386e17ae72a01260818b12f8e7a43c34988f9a2224e0bffa300",
     "operation random_split": "a6e9d1c4a279140190607114431e49ff6a1c8014f105e1c4b3af0a96c12ff4dd",
     "operation rest_api_read": "b6fdf0716e1418e0d22180286932fd5d8cdb7dd1d4e1ea6e0d99dbaa651a90c6",
-    "operation sharepoint_read": "7b743537bce5ed3858861995f468170e2ddc8350163c35a4dd750b0eb7518428",
+    "operation sharepoint_read": "f175862dc92234a57233f5004009dfca2421265666eaef9c1fe66f790d87cc72",
     "operation sql_query": "3e956aac0b1d12764524183f882fa771395a4996b8d056e72afa116e51ee35f7",
     "operation task:calculate_number_of_records": "6101690c9787c615a286039fa6fdcb94265c136e32c8bc2662efb1eb7c71f589",
     "operation task:calculate_schema": "6101690c9787c615a286039fa6fdcb94265c136e32c8bc2662efb1eb7c71f589",

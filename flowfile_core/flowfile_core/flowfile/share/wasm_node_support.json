@@ -176,6 +176,9 @@
       "tier": "supported",
       "wasm_type": "select"
     },
+    "sharepoint_reader": {
+      "tier": "absent"
+    },
     "sort": {
       "tier": "supported",
       "wasm_type": "sort"
@@ -258,6 +261,6 @@
   "counts": {
     "supported": 24,
     "locked": 17,
-    "absent": 10
+    "absent": 11
   }
 }
