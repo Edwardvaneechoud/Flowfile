@@ -1358,18 +1358,20 @@ async def _call(
     timeout: float,
     scheduler: RateLimitScheduler | None,
     user_id: int | None,
+    surface: str = SURFACE,
+    max_tokens: int = _MAX_TOKENS,
 ) -> tuple[str | None, str | None, str | None]:
     """One JSON-mode call under ``timeout``: ``(content, reason, message)``."""
     sched = scheduler or default_scheduler()
 
     async def _do_call() -> str | None:
-        async with sched.acquire(provider.name, surface=SURFACE):
+        async with sched.acquire(provider.name, surface=surface):
             response = await provider.chat(
                 messages=messages,
                 tools=None,
-                max_tokens=_MAX_TOKENS,
+                max_tokens=max_tokens,
                 response_format={"type": "json_object"},
-                surface=SURFACE,
+                surface=surface,
                 user_id=user_id,
             )
         return response.content
@@ -1379,13 +1381,13 @@ async def _call(
     except asyncio.TimeoutError:
         return None, "timeout", "The model did not answer in time."
     except Exception as exc:  # noqa: BLE001
-        logger.warning("chart generation provider call failed: %s", exc, exc_info=False)
+        logger.warning("%s provider call failed: %s", surface, exc, exc_info=False)
         return None, "provider_error", f"The AI provider call failed ({type(exc).__name__})."
 
 
-def _record(provider: Provider, started: float, reason: str | None) -> None:
+def _record(provider: Provider, started: float, reason: str | None, surface: str = SURFACE) -> None:
     record_autocomplete_call(
-        surface=SURFACE,
+        surface=surface,
         provider=provider.name,
         latency_ms=int((time.monotonic() - started) * 1000),
         suggestion_count=0 if reason else 1,
