@@ -9,7 +9,7 @@ from contextlib import contextmanager
 import boto3
 from botocore.client import Config
 
-from test_utils.docker_images import is_image_present
+from test_utils.docker_images import docker_daemon_responds, is_image_present
 from test_utils.s3.data_generator import populate_test_data
 from test_utils.s3.demo_data_generator import create_demo_data
 
@@ -136,23 +136,7 @@ def is_docker_available() -> bool:
         logger.warning("Docker executable not found in PATH")
         return False
 
-    try:
-        result = subprocess.run(
-            ["docker", "info"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=5,
-            check=False  # Don't raise exception on non-zero return code
-        )
-
-        if result.returncode != 0:
-            logger.warning("Docker is not operational")
-            return False
-
-        return True
-    except (subprocess.SubprocessError, OSError):
-        logger.warning("Error running Docker command")
-        return False
+    return docker_daemon_responds(logger)
 
 
 # Auth/existence failures never succeed on a retry; registry 5xx and rate limits do.
