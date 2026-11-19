@@ -346,6 +346,7 @@ class FlowNode:
         self.node_information = schemas.NodeInformation()
         self.node_inputs = NodeStepInputs()
         self.node_stats = NodeStepStats()
+        self.sharepoint_worksheet_names: list[str] | None = None
         self.node_settings = NodeStepSettings()
         self.node_schema = NodeSchemaInformation()
         self.results = NodeResults()
@@ -2733,6 +2734,7 @@ class FlowNode:
             is_setup=bool(self.is_setup),
             setting_input=self.setting_input,
             settings_fingerprint=self.settings_fingerprint(),
+            sharepoint_worksheet_names=self.sharepoint_worksheet_names,
             flow_type=self.node_type,
         )
         if include_inputs:
@@ -2742,7 +2744,15 @@ class FlowNode:
                 if param_node is not None:
                     node.main_input = param_node.get_table_example()
             elif self.main_input:
-                node.main_input = self.main_input[0].get_table_example()
+                upstream = self.main_input[0]
+                node.main_input = upstream.get_table_example()
+                if (
+                    upstream.node_type == "sharepoint_reader"
+                    and upstream.deferred_until_run
+                    and node.main_input is not None
+                    and not node.main_input.columns
+                ):
+                    node.prediction_warning = "SharePoint schema unavailable until run."
             if self.left_input:
                 node.left_input = self.left_input.get_table_example()
             if self.right_input:
@@ -2757,11 +2767,17 @@ class FlowNode:
                     pass
                 if self.node_schema.result_schema or self.node_schema.predicted_schema:
                     warning = None
-            node.prediction_warning = warning
+            node.prediction_warning = warning or node.prediction_warning
         if self.is_setup and include_output:
             node.main_output = self.get_table_example(include_example)
             # A refusal of this node's own prediction is known only once its output was asked for.
             node.prediction_warning = node.prediction_warning or self._prediction_refused
+            if (
+                self.node_type == "sharepoint_reader"
+                and self.deferred_until_run
+                and (node.main_output is None or not node.main_output.columns)
+            ):
+                node.prediction_warning = node.prediction_warning or "SharePoint schema unavailable until run."
         # Generated/updated settings are only a proposal for the panel; a save applies them.
         node = setting_generator.get_setting_generator(self.node_type)(node)
         node = setting_updator.get_setting_updator(self.node_type)(node)

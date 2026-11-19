@@ -72,6 +72,7 @@ from flowfile_core.flowfile.execution.payloads import (
     PolarsCodePayload,
     RandomSplitPayload,
     RestApiReadPayload,
+    SharePointReadPayload,
     SqlQueryPayload,
     VizSessionPayload,
     unpack,
@@ -319,6 +320,7 @@ class WorkerBackend(_WorkerReferences):
             OperationKind.database_read: self._database_read,
             OperationKind.kafka_read: self._kafka_read,
             OperationKind.google_analytics_read: self._google_analytics_read,
+            OperationKind.sharepoint_read: self._sharepoint_read_legacy,
             OperationKind.rest_api_read: self._rest_api_read,
             OperationKind.file_read: self._file_read,
             OperationKind.fuzzy_join: self._fuzzy_join,
@@ -1184,6 +1186,9 @@ class WorkerBackend(_WorkerReferences):
             read.job_id, lambda: ExternalGoogleAnalyticsFetcher(settings, wait_on_completion=False, worker_url=self.url)
         )
         return OpResult(refs={"result": ref})
+
+    def _sharepoint_read_legacy(self, payload: OpPayload) -> OpResult:
+        raise OperationUnsupported("SharePoint reads require the v1 worker compute protocol")
 
     def _rest_api_read(self, payload: OpPayload) -> OpResult:
         """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
@@ -2093,6 +2098,12 @@ V1_OPS: dict[OperationKind, V1Op] = {
     ),
     OperationKind.google_analytics_read: V1Op(
         GoogleAnalyticsReadPayload, lambda job: _google_analytics_read_settings(job).model_dump(mode="json")
+    ),
+    OperationKind.sharepoint_read: V1Op(
+        SharePointReadPayload,
+        lambda job: job.settings.model_dump(mode="json")
+        | {"flowfile_flow_id": job.flow_id, "flowfile_node_id": job.node_id},
+        metadata=_all_metadata,
     ),
     OperationKind.rest_api_read: V1Op(
         RestApiReadPayload,

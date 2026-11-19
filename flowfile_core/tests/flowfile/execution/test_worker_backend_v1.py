@@ -911,6 +911,24 @@ def test_a_rest_api_read_runs_over_v1(backend, kept, json_api, no_file_read_in_c
 
 
 @SOCKET_ONLY
+def test_sharepoint_read_dispatches_to_worker(backend):
+    from flowfile_core.flowfile.execution import payloads
+    from shared.sharepoint import SharePointReadSettings
+
+    settings = SharePointReadSettings(
+        tenant_id="a01b7819-6a0a-47c9-a6ff-e1563529ac33",
+        client_id="45d666c4-a4d2-4aad-905a-15443f348233",
+        client_secret_encrypted="invalid-fixture-ciphertext",
+        drive_id="test-drive",
+        file_path="sales.csv",
+    )
+    read = payloads.SharePointReadPayload(flow_id=1, node_id=2, settings=settings)
+    with pytest.raises(TaskFailed, match="SharePoint connection credentials are unavailable"):
+        backend.run_op(OperationKind.sharepoint_read, op_payload(read))
+    assert backend.status(JobHandle("worker", read.job_id)).state == "failed"
+
+
+@SOCKET_ONLY
 def test_a_read_that_fails_on_the_worker_names_the_error_and_fails_its_job(backend):
     node = input_schema.NodeGoogleAnalyticsReader(
         flow_id=1,

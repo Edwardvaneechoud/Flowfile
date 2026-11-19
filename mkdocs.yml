@@ -163,6 +163,7 @@ nav:
     - Databases: users/visual-editor/tutorials/database-connectivity.md
     - Cloud Storage: users/visual-editor/tutorials/cloud-connections.md
     - Kafka: users/connect/kafka.md
+    - SharePoint Online: users/connect/sharepoint.md
     - REST APIs & Google Analytics: users/connect/apis.md
 
   - Catalog & Automation:

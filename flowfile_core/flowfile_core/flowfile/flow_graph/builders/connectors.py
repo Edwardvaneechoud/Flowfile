@@ -22,6 +22,7 @@ from flowfile_core.flowfile.execution.payloads import (
     GoogleAnalyticsReadPayload,
     KafkaReadPayload,
     RestApiReadPayload,
+    SharePointReadPayload,
     op_payload,
 )
 from flowfile_core.flowfile.execution.protocol import ComputeBackend, OperationKind, ResultRef
@@ -563,6 +564,73 @@ class ConnectorBuildersMixin(GraphMixinBase):
             self._node_db[node_ga_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_ga_reader.node_id)
+        self._notify_node_observers(node, is_new=is_new)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_sharepoint_reader(self, settings: input_schema.NodeSharePointReader) -> None:
+        """Read one document library file on the worker using a saved connection."""
+        from flowfile_core.routes.sharepoint_connections import build_read_settings
+
+        node_type = "sharepoint_reader"
+
+        def fetch(*, schema_only: bool = False):
+            if settings.user_id is None:
+                raise ValueError("A SharePoint reader requires a connection owner.")
+            with get_db_context() as db:
+                wire = build_read_settings(
+                    db, settings.user_id, settings.connection_id, settings.drive_id, settings.file_path,
+                    sheet_name=settings.sheet_name,
+                )
+            if schema_only:
+                wire = wire.model_copy(update={"schema_only": True})
+            wire.csv_delimiter = settings.csv_delimiter
+            backend = registry.backend(registry.WORKER_BACKEND_ID)
+            read = SharePointReadPayload(flow_id=settings.flow_id, node_id=settings.node_id, settings=wire)
+            result = node.run_op(backend, OperationKind.sharepoint_read, op_payload(read), job_id=read.job_id)
+            return backend, result
+
+        def schema_callback() -> list[FlowfileColumn]:
+            if not settings.file_path.lower().endswith((".csv", ".parquet", ".json")):
+                return []
+            backend, result = fetch(schema_only=True)
+            ref = result.refs["result"]
+            try:
+                return ref.schema
+            finally:
+                backend.release(ref)
+
+        def read_file() -> FlowDataEngine:
+            if node.setting_input is settings:
+                node.sharepoint_worksheet_names = None
+            backend, result = fetch()
+            if node.setting_input is settings:
+                node.sharepoint_worksheet_names = result.metadata.get("worksheet_names")
+            return engine_from_read(backend, result.refs["result"])
+
+        node = self.get_node(settings.node_id)
+        is_new = node is None
+        if node is None:
+            node = FlowNode(
+                settings.node_id,
+                function=read_file,
+                setting_input=settings,
+                name=node_type,
+                node_type=node_type,
+                parent_uuid=self.uuid,
+                schema_callback=schema_callback,
+            )
+            self._node_db[settings.node_id] = node
+            self._node_ids.append(settings.node_id)
+        else:
+            node.function = read_file
+            node.user_provided_schema_callback = schema_callback
+            node.schema_callback = schema_callback
+            node.sharepoint_worksheet_names = None
+            node.setting_input = settings
+            node.node_type = node.name = node_type
+            node.node_settings.cache_results = settings.cache_results
+        node.placed_deferred = node.deferred_until_run = True
+        self.add_node_to_starting_list(node)
         self._notify_node_observers(node, is_new=is_new)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)

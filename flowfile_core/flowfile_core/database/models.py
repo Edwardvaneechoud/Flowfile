@@ -818,6 +818,19 @@ class GoogleAnalyticsConnection(Base):
     credential_secret = relationship("Secret", foreign_keys=[credential_secret_id], lazy="joined")
 
 
+class SharePointConnection(Base):
+    __tablename__ = "sharepoint_connections"
+
+    id = Column(Integer, primary_key=True)
+    connection_name = Column(String, nullable=False)
+    tenant_id = Column(String, nullable=False)
+    client_id = Column(String, nullable=False)
+    default_site_url = Column(String, nullable=True)
+    auth_method = Column(String, nullable=False)
+    credential_secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+
 class KafkaConnection(Base):
     __tablename__ = "kafka_connections"
 

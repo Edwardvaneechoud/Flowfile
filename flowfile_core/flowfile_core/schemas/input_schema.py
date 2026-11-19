@@ -1437,6 +1437,14 @@ class NodeGoogleAnalyticsReader(NodeBase):
         return " | ".join(pieces)
 
 
+class NodeSharePointReader(NodeBase):
+    connection_id: int = Field(gt=0)
+    drive_id: str = Field(min_length=1, max_length=512, pattern=r"^[A-Za-z0-9_!.-]+$")
+    file_path: str = Field(min_length=1)
+    sheet_name: str | None = Field(default=None, min_length=1)
+    csv_delimiter: str = Field(default=",", pattern=r"^[\x20-\x7e\t]$")
+
+
 class RestApiAuthSettings(BaseModel):
     """Authentication settings for a REST API reader node.
 

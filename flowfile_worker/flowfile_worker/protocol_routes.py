@@ -49,6 +49,7 @@ from shared.compute_protocol import (
     SubmitResult,
 )
 from shared.kafka.models import KafkaReadSettings
+from shared.sharepoint import SharePointReadSettings
 
 __all__ = [
     "ARROW_STREAM",
@@ -198,6 +199,7 @@ _OPS: dict[str, type] = {
     "database_read": DatabaseReadSettings,
     "kafka_read": KafkaReadSettings,
     "google_analytics_read": GoogleAnalyticsReadSettings,
+    "sharepoint_read": SharePointReadSettings,
     "rest_api_read": RestApiReadSettings,
     "fuzzy_join": models.FuzzyJoinInput,
     "custom_node": models.CustomNodeExecuteInput,

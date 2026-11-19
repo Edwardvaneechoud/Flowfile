@@ -30,6 +30,7 @@ from flowfile_core.flowfile.execution.protocol import OpPayload, ResultRef, Sche
 
 if TYPE_CHECKING:
     import polars as pl
+    from shared.sharepoint import SharePointReadSettings
 
     from flowfile_core.configs.flow_logger import NodeLogger
     from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
@@ -119,6 +120,13 @@ class GoogleAnalyticsReadPayload(OperationPayload):
     encrypted_credential: str
     oauth_client_id: str | None = None
     oauth_client_secret_encrypted: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class SharePointReadPayload(OperationPayload):
+    """Exact-path CSV read with an encrypted credential."""
+
+    settings: SharePointReadSettings
 
 
 @dataclass(frozen=True, kw_only=True)
