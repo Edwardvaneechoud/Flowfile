@@ -33,10 +33,10 @@
         :description="
           search
             ? 'No dashboards match your filter.'
-            : 'No dashboards yet. Create one and drop saved visualizations onto the canvas.'
+            : 'No dashboards yet. Start one and drop saved visualizations onto the canvas.'
         "
       >
-        <el-button v-if="!search" type="primary" @click="onNew">Create dashboard</el-button>
+        <el-button v-if="!search" type="primary" @click="onNew">New dashboard</el-button>
       </el-empty>
     </div>
 

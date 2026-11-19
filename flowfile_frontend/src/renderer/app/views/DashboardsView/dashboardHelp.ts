@@ -93,6 +93,12 @@ export const dashboardHelp: PageHelpContent = {
             "Markdown with headings, lists, code, links, tables, images, blockquotes, horizontal rules. Sanitized through DOMPurify.",
         },
         {
+          icon: "fa-solid fa-image",
+          title: "Image tile",
+          description:
+            "A picture such as a logo, stored in the dashboard itself so it travels when the dashboard is shared or exported. Add one from the Insert list and choose a file, or drop a PNG, JPEG, WebP, GIF or SVG file onto the canvas. A large photo or screenshot is scaled down until it fits; an image may take 300 KB and a dashboard 2 MB of images, and a GIF or SVG is kept as it is. Its menu replaces the image, switches between fitting the whole image and filling the tile, and sets its alt text.",
+        },
+        {
           icon: "fa-solid fa-minus",
           title: "Separator",
           description:
@@ -103,6 +109,12 @@ export const dashboardHelp: PageHelpContent = {
           title: "Edit text",
           description:
             "Double-click a text tile (or click the pen icon) in edit mode to enter the editor; click outside or press the check icon to commit.",
+        },
+        {
+          icon: "fa-solid fa-circle-info",
+          title: "Tile notes",
+          description:
+            "Add note… in a chart, KPI, table or filter tile's menu puts a Markdown note (a definition, a source or a caveat) behind an ⓘ beside its title. Readers hover the ⓘ to read it, or click or tap it to keep it open; Esc or a click elsewhere closes it. Links in a note or a text block open in your browser, never in place of the dashboard. Save an empty note to remove it.",
         },
         {
           icon: "fa-solid fa-eye",
@@ -174,7 +186,7 @@ export const dashboardHelp: PageHelpContent = {
       title: "Editor workflow",
       icon: "fa-solid fa-pen-ruler",
       description:
-        "In edit mode the sidebar lets you insert tiles, the filter bar manages dashboard-wide filters, and the toolbar saves or discards your changes.",
+        "In edit mode the sidebar lets you insert tiles, the filter bar manages dashboard-wide filters, and the toolbar holds undo, redo and revert. Every change saves itself.",
       features: [
         {
           icon: "fa-solid fa-plus",
@@ -196,17 +208,17 @@ export const dashboardHelp: PageHelpContent = {
         },
         {
           icon: "fa-solid fa-floppy-disk",
-          title: "Save & discard",
+          title: "Autosave",
           description:
-            "Edits are local until you click Save. The unsaved-changes badge tracks divergence from the persisted copy.",
+            "Changes save automatically; the dot beside the name says whether they are saved. A new dashboard is created by its first change, so a New dashboard you leave untouched leaves nothing behind. Revert takes the dashboard back to how it was when you opened it.",
         },
       ],
       tips: [
         {
           type: "warning",
-          title: "Closing with unsaved changes prompts for confirmation",
+          title: "Leaving with changes that could not be saved asks first",
           description:
-            "Leaving the editor with the unsaved-changes badge active asks you to confirm before discarding.",
+            "If a save failed, leaving the editor asks you to confirm before the changes are lost.",
         },
         {
           type: "success",

@@ -8,19 +8,13 @@
   >
     <el-form label-width="100px" size="small" @submit.prevent>
       <el-form-item label="Source">
-        <el-select
-          v-model="draft.viz_id"
-          placeholder="Select a visualization"
-          filterable
-          :loading="catalogStore.loadingVisualizationLibrary"
-          @change="onVizChange"
-        >
-          <el-option-group v-for="group in sourceGroups" :key="group.label" :label="group.label">
-            <el-option v-for="v in group.items" :key="v.id" :value="v.id" :label="v.name" />
-          </el-option-group>
-        </el-select>
+        <TileSourcePicker
+          :viz-id="draft.viz_id"
+          :table-id="draft.table_id"
+          @change="onSourceChange"
+        />
         <div class="kpi-hint">
-          Aggregates this visualization's data source with the dashboard filters applied.
+          Aggregates this table, or the chart's data source, with the dashboard filters applied.
         </div>
       </el-form-item>
       <el-form-item label="Aggregation">
@@ -36,7 +30,7 @@
       <el-form-item label="Field">
         <el-select
           v-model="fieldModel"
-          :disabled="draft.viz_id == null"
+          :disabled="!hasSource"
           :loading="fieldsLoading"
           :placeholder="fieldsError ?? 'Select a column'"
           filterable
@@ -107,6 +101,46 @@
           <el-radio-button :value="false">Lower</el-radio-button>
         </el-radio-group>
       </el-form-item>
+      <el-form-item label="Trend">
+        <el-switch
+          v-model="trendOn"
+          :disabled="!hasSource"
+          active-text="Show a line under the number"
+          data-testid="kpi-trend-switch"
+        />
+        <div v-if="trendOn && !fieldsLoading && !dateFields.length" class="kpi-hint">
+          {{
+            fieldsError ??
+            "This source has no date column, so there is nothing to draw a trend over."
+          }}
+        </div>
+      </el-form-item>
+      <template v-if="trendOn && draft.kpi.trend && dateFields.length">
+        <el-form-item label="Date column">
+          <el-select
+            v-model="draft.kpi.trend.field"
+            placeholder="Select a date column"
+            filterable
+            data-testid="kpi-trend-field"
+          >
+            <el-option v-for="f in dateFields" :key="f.fid" :value="f.fid" :label="f.fid" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Per">
+          <el-select v-model="draft.kpi.trend.grain" data-testid="kpi-trend-grain">
+            <el-option
+              v-for="opt in KPI_TREND_GRAIN_OPTIONS"
+              :key="opt.value"
+              :value="opt.value"
+              :label="opt.label"
+            />
+          </el-select>
+          <div class="kpi-hint">
+            The KPI's {{ aggPhrase }} per {{ grainHint }}, with the same filters as the number; the
+            most recent {{ KPI_TREND_MAX_BUCKETS }} are drawn.
+          </div>
+        </el-form-item>
+      </template>
     </el-form>
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">Cancel</el-button>
@@ -116,14 +150,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
-import { CatalogApi } from "../../api/catalog.api";
-import { useCatalogStore } from "../../stores/catalog-store";
-import type { TileField } from "../../composables/useDashboardComputation";
+import { computed, reactive, watch } from "vue";
+import { useDraftSourceFields } from "../../composables/useDashboardTileSource";
 import type { DashboardFilter, DashboardKpi, DashboardTile } from "../../types";
+import { resolveDateRange } from "./dateRange";
+import TileSourcePicker from "./TileSourcePicker.vue";
 import {
   DEFAULT_KPI,
   KPI_AGG_OPTIONS,
+  KPI_TREND_GRAIN_OPTIONS,
+  KPI_TREND_MAX_BUCKETS,
   KPI_VALUE_SIZE_OPTIONS,
   autoKpiLabel,
   fieldEligible,
@@ -139,7 +175,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: boolean): void;
-  (e: "save", patch: { viz_id: number; kpi: DashboardKpi }): void;
+  (e: "save", patch: { viz_id: number | null; table_id: number | null; kpi: DashboardKpi }): void;
 }>();
 
 // el-select treats null as "no selection", so null-valued choices use sentinels.
@@ -147,45 +183,26 @@ const ALL_ROWS = "__kpi_all_rows__";
 const AUTO_DECIMALS = -1;
 const DECIMAL_CHOICES = [0, 1, 2, 3, 4, 5, 6];
 
-const catalogStore = useCatalogStore();
-
-const draft = reactive<{ viz_id: number | null; kpi: DashboardKpi }>({
+const draft = reactive<{ viz_id: number | null; table_id: number | null; kpi: DashboardKpi }>({
   viz_id: null,
+  table_id: null,
   kpi: { ...DEFAULT_KPI },
 });
 
-const fields = ref<TileField[]>([]);
-const fieldsLoading = ref(false);
-const fieldsError = ref<string | null>(null);
-let fieldsSeq = 0;
+const hasSource = computed(() => draft.viz_id != null || draft.table_id != null);
 
-const loadFields = async (vizId: number | null) => {
-  const seq = ++fieldsSeq;
-  fields.value = [];
-  fieldsError.value = null;
-  if (vizId == null) return;
-  fieldsLoading.value = true;
-  try {
-    const resp = await CatalogApi.getSavedVisualizationFields(vizId);
-    if (seq !== fieldsSeq) return;
-    fields.value = (resp.fields ?? []).map((f) => ({
-      fid: String(f.fid),
-      semanticType: f.semanticType,
-    }));
-  } catch {
-    if (seq === fieldsSeq) fieldsError.value = "Could not load columns";
-  } finally {
-    if (seq === fieldsSeq) fieldsLoading.value = false;
-  }
-};
+const { fields, fieldsLoading, fieldsError, loadFields: loadSourceFields } = useDraftSourceFields();
+const loadFields = () => loadSourceFields(draft);
 
 const onOpen = () => {
   draft.viz_id = props.tile.viz_id;
-  draft.kpi = { ...DEFAULT_KPI, ...(props.tile.kpi ?? {}) };
-  if (!catalogStore.visualizationLibrary.length) {
-    catalogStore.loadVisualizationLibrary().catch(() => undefined);
-  }
-  void loadFields(draft.viz_id);
+  draft.table_id = props.tile.table_id ?? null;
+  draft.kpi = {
+    ...DEFAULT_KPI,
+    ...(props.tile.kpi ?? {}),
+    trend: props.tile.kpi?.trend ? { ...props.tile.kpi.trend } : null,
+  };
+  void loadFields();
 };
 
 // Mounted already open (v-if + v-model in one tick), so el-dialog's @open never fires.
@@ -197,38 +214,59 @@ watch(
   { immediate: true },
 );
 
-const sourceGroups = computed(() => {
-  const groups = new Map<string, { label: string; items: { id: number; name: string }[] }>();
-  for (const v of catalogStore.visualizationLibrary) {
-    const label =
-      v.source_type === "sql"
-        ? "SQL"
-        : (v.table_full_name ?? v.table_name ?? `Table #${v.catalog_table_id}`);
-    if (!groups.has(label)) groups.set(label, { label, items: [] });
-    groups.get(label)!.items.push({ id: v.id, name: v.name });
-  }
-  return [...groups.values()].sort((a, b) =>
-    a.label === "SQL" ? 1 : b.label === "SQL" ? -1 : a.label.localeCompare(b.label),
-  );
-});
-
 const fieldOptions = computed(() =>
   fields.value.filter((f) => fieldEligible(draft.kpi.agg, f.semanticType)),
 );
+
+const dateFields = computed(() => fields.value.filter((f) => f.semanticType === "temporal"));
+
+// The draft keeps an empty trend while the author picks its column; Save requires one.
+const trendOn = computed<boolean>({
+  get: () => draft.kpi.trend != null,
+  set: (on) => {
+    draft.kpi.trend = on ? { field: dateFields.value[0]?.fid ?? "", grain: "auto" } : null;
+  },
+});
+
+watch(dateFields, (list) => {
+  if (draft.kpi.trend && !draft.kpi.trend.field && list.length) {
+    draft.kpi.trend.field = list[0].fid;
+  }
+});
+
+const aggPhrase = computed(
+  () => KPI_AGG_OPTIONS.find((o) => o.value === draft.kpi.agg)?.label.toLowerCase() ?? "value",
+);
+
+const grainHint = computed(() =>
+  draft.kpi.trend?.grain && draft.kpi.trend.grain !== "auto"
+    ? draft.kpi.trend.grain
+    : "day, week, month, quarter or year, picked from the dates in view",
+);
+
+const dropStaleTrendField = () => {
+  const trend = draft.kpi.trend;
+  if (trend && !dateFields.value.some((f) => f.fid === trend.field)) {
+    trend.field = dateFields.value[0]?.fid ?? "";
+  }
+};
 
 const onAggChange = () => {
   const field = draft.kpi.field;
   if (field && !fieldOptions.value.some((f) => f.fid === field)) draft.kpi.field = null;
 };
 
-const onVizChange = async (vizId: number | null) => {
-  await loadFields(vizId);
+const onSourceChange = async (next: { viz_id: number | null; table_id: number | null }) => {
+  draft.viz_id = next.viz_id;
+  draft.table_id = next.table_id;
+  await loadFields();
   onAggChange();
+  dropStaleTrendField();
 };
 
 const fieldModel = computed<string | undefined>({
   get: () =>
-    draft.kpi.field ?? (draft.kpi.agg === "count" && draft.viz_id != null ? ALL_ROWS : undefined),
+    draft.kpi.field ?? (draft.kpi.agg === "count" && hasSource.value ? ALL_ROWS : undefined),
   set: (v) => {
     draft.kpi.field = !v || v === ALL_ROWS ? null : v;
   },
@@ -266,34 +304,36 @@ const previousPeriodStatus = computed(() => {
     );
   }
   const name = f.label || f.field_name;
-  const start = f.state?.start;
-  const end = f.state?.end;
-  if (typeof start !== "string" || !start || typeof end !== "string" || !end) {
+  const range = resolveDateRange(f.state);
+  if (!range?.start || !range.end) {
     return `Uses the ‘${name}’ date range filter. Pick a start and end date in the filter strip to see the comparison.`;
   }
   const fmt = (d: string) => new Date(d).toLocaleDateString();
-  return `Uses the ‘${name}’ date range filter (${fmt(start)} – ${fmt(end)}) and compares against the same-length window right before it.`;
+  return `Uses the ‘${name}’ date range filter (${fmt(range.start)} – ${fmt(range.end)}) and compares against the same-length window right before it.`;
 });
 
 const canSave = computed(
   () =>
-    draft.viz_id != null &&
+    hasSource.value &&
     (!kpiNeedsField(draft.kpi.agg) || !!draft.kpi.field) &&
-    (draft.kpi.comparison !== "target" || draft.kpi.target != null),
+    (draft.kpi.comparison !== "target" || draft.kpi.target != null) &&
+    (draft.kpi.trend == null || !!draft.kpi.trend.field || !dateFields.value.length),
 );
 
 const blankToNull = (s: string | null | undefined): string | null => (s && s.trim() ? s : null);
 
 const onSave = () => {
-  if (!canSave.value || draft.viz_id == null) return;
+  if (!canSave.value) return;
   emit("save", {
     viz_id: draft.viz_id,
+    table_id: draft.table_id,
     kpi: {
       ...draft.kpi,
       label: blankToNull(draft.kpi.label?.trim()),
       prefix: blankToNull(draft.kpi.prefix),
       suffix: blankToNull(draft.kpi.suffix),
       target: draft.kpi.comparison === "target" ? draft.kpi.target : null,
+      trend: draft.kpi.trend?.field ? { ...draft.kpi.trend } : null,
     },
   });
   emit("update:modelValue", false);

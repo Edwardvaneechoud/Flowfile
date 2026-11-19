@@ -321,6 +321,60 @@ class TestVisualizationCRUD:
         assert len(resp.json()) == 1
 
 
+class TestRendererReadRule:
+    """Graphic Walker before 0.6 wrote its default renderer into every chart; such a chart reads
+    without it, so it is drawn by today's default. The stored spec is never rewritten."""
+
+    @staticmethod
+    def _saved_layout(client, renderer: str | None, gw_version: str | None) -> dict:
+        layout = {"showActions": False}
+        if renderer is not None:
+            layout["renderer"] = renderer
+        created = client.post(
+            "/catalog/visualizations",
+            json={
+                "name": f"chart {renderer} {gw_version}",
+                "spec": [{**SAMPLE_CHART, "layout": layout}],
+                "spec_gw_version": gw_version,
+                "source_type": "sql",
+                "sql_query": "SELECT 1 AS x",
+            },
+        )
+        assert created.status_code == 201, created.text
+        return client.get(f"/catalog/visualizations/{created.json()['id']}").json()["spec"][0]["layout"]
+
+    @pytest.mark.parametrize("gw_version", [None, "0.5.2", "0.4.84"])
+    def test_default_written_before_0_6_is_dropped(self, client, gw_version):
+        assert self._saved_layout(client, "vega-lite", gw_version) == {"showActions": False}
+
+    @pytest.mark.parametrize(
+        ("renderer", "gw_version"),
+        [
+            ("vega-lite", "0.6.0"),
+            ("vega-lite", "1.2.0"),
+            ("native", "0.6.0"),
+            ("observable-plot", None),
+            ("observable-plot", "0.5.2"),
+            ("vega-lite", "not-a-version"),
+        ],
+    )
+    def test_a_choice_is_kept(self, client, renderer, gw_version):
+        assert self._saved_layout(client, renderer, gw_version)["renderer"] == renderer
+
+    def test_chart_without_a_layout_reads_as_stored(self, client):
+        created = client.post(
+            "/catalog/visualizations",
+            json={"name": "bare", "spec": SAMPLE_SPEC, "source_type": "sql", "sql_query": "SELECT 1 AS x"},
+        )
+        assert client.get(f"/catalog/visualizations/{created.json()['id']}").json()["spec"] == SAMPLE_SPEC
+
+    def test_stored_spec_is_not_rewritten(self, client):
+        self._saved_layout(client, "vega-lite", None)
+        with get_db_context() as db:
+            row = db.query(CatalogVisualization).one()
+            assert json.loads(row.spec_json)[0]["layout"]["renderer"] == "vega-lite"
+
+
 class TestVisualizationConcurrency:
     def _create(self, client, table_id: int, name: str = "cas-viz") -> dict:
         return client.post(
@@ -656,14 +710,32 @@ class TestVersionAddressedSessionKeys:
         try:
             source = {"source_type": "table", "table_id": table_id}
             key_v0 = self._capture_session_key(client, source)
-            assert key_v0 == f"tbl:{table_id}:v0"
+            assert key_v0 == f"tbl:{table_id}:{dir_name}:v0"
 
             self._overwrite_delta_table(dir_name)
 
             key_v1 = self._capture_session_key(client, source)
-            assert key_v1 == f"tbl:{table_id}:v1"
+            assert key_v1 == f"tbl:{table_id}:{dir_name}:v1"
         finally:
             self._cleanup_delta_dir(dir_name)
+
+    def test_table_session_key_names_the_storage_directory(self, client):
+        """SQLite gives a new table a deleted table's id; the two must not share a worker session."""
+        first_dir, second_dir = "viz_reuse_first", "viz_reuse_second"
+        first_id = self._make_delta_table(first_dir)
+        try:
+            first_key = self._capture_session_key(client, {"source_type": "table", "table_id": first_id})
+            with get_db_context() as db:
+                db.query(CatalogTable).filter(CatalogTable.id == first_id).delete()
+                db.query(CatalogNamespace).filter(CatalogNamespace.name == "VerNs").delete()
+                db.commit()
+            second_id = self._make_delta_table(second_dir)
+            second_key = self._capture_session_key(client, {"source_type": "table", "table_id": second_id})
+            assert second_id == first_id, "the test needs the id to be reused"
+            assert second_key != first_key
+        finally:
+            self._cleanup_delta_dir(first_dir)
+            self._cleanup_delta_dir(second_dir)
 
     def test_sql_session_key_rotates_after_table_change(self, client):
         dir_name = "viz_ver_sql"

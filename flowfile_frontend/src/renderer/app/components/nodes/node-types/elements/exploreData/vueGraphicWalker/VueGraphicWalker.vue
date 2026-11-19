@@ -8,15 +8,14 @@ import type {
   IGWProps,
   IGWHandler,
 } from "@kanaries/graphic-walker/interfaces";
-import { ISegmentKey } from "@kanaries/graphic-walker/interfaces";
 import type { VizSpecStore } from "@kanaries/graphic-walker/store/visualSpecStore";
+import { flowfileVizTheme } from "./vizTheme";
 
 interface VueGWProps {
   data?: IRow[];
   fields?: IMutField[];
   specList?: IChart[];
   appearance?: IGWProps["appearance"];
-  themeKey?: IGWProps["themeKey"];
   /** Initial tab: "data" or "vis" (default "vis"). */
   defaultTab?: "data" | "vis";
   /** Server-side compute callback; when set, GW aggregates through this instead of in-browser `data`. */
@@ -132,7 +131,8 @@ const getReactProps = () => {
   const reactProps: Record<string, any> = {
     fields: props.fields ? toRaw(props.fields) : undefined,
     appearance: props.appearance || "light",
-    themeKey: props.themeKey,
+    vizThemeConfig: flowfileVizTheme,
+    defaultTab: props.defaultTab === "data" ? "data" : undefined,
     storeRef: internalStoreRef.value,
     hideProfiling: true,
     ...(chartSpecArray.length > 0 && { chart: chartSpecArray }),
@@ -182,18 +182,6 @@ onMounted(async () => {
       React.createElement(GraphicWalker, { ...componentProps, ref: gwHandleRef }),
     );
     isLoading.value = false;
-
-    if (props.defaultTab) {
-      const tab = props.defaultTab;
-      const checkStore = setInterval(() => {
-        const store = internalStoreRef.value?.current;
-        if (store && typeof store.setSegmentKey === "function") {
-          store.setSegmentKey(tab as ISegmentKey);
-          clearInterval(checkStore);
-        }
-      }, 50);
-      setTimeout(() => clearInterval(checkStore), 3000);
-    }
 
     if (props.watchSpec) {
       armSpecWatch();
