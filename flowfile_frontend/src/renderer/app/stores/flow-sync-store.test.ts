@@ -8,13 +8,23 @@ const mocks = vi.hoisted(() => ({
   flowStore: null as any,
   editorStore: { isRunning: false, bumpGraphVersion: vi.fn() },
   getToken: vi.fn(),
+  refreshAccessToken: vi.fn(),
+  hasSession: vi.fn(),
+  isInDesktopMode: vi.fn(),
   stream: vi.fn(),
 }));
 
 vi.mock("../../config/constants", () => ({ flowfileCorebaseURL: "http://127.0.0.1:63578/" }));
 vi.mock("./flow-store", () => ({ useFlowStore: () => mocks.flowStore }));
 vi.mock("./editor-store", () => ({ useEditorStore: () => mocks.editorStore }));
-vi.mock("../services/auth.service", () => ({ default: { getToken: mocks.getToken } }));
+vi.mock("../services/auth.service", () => ({
+  default: {
+    getToken: mocks.getToken,
+    refreshAccessToken: mocks.refreshAccessToken,
+    hasSession: mocks.hasSession,
+    isInDesktopMode: mocks.isInDesktopMode,
+  },
+}));
 vi.mock("../services/flowEventsClient", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/flowEventsClient")>()),
   streamFlowEvents: mocks.stream,
@@ -79,6 +89,9 @@ beforeEach(() => {
   mocks.editorStore.isRunning = false;
   mocks.editorStore.bumpGraphVersion.mockReset();
   mocks.getToken.mockReset().mockResolvedValue("jwt");
+  mocks.refreshAccessToken.mockReset().mockResolvedValue("renewed-jwt");
+  mocks.hasSession.mockReset().mockReturnValue(true);
+  mocks.isInDesktopMode.mockReset().mockReturnValue(false);
   mocks.stream.mockReset().mockImplementation(streamImpl);
   streams = [];
 });
@@ -182,6 +195,53 @@ describe("flow-sync-store", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(mocks.stream).toHaveBeenCalledTimes(1);
     expect(store.connected).toBe(false);
+  });
+
+  it("renews the session on a 401 and reconnects with the new token", async () => {
+    await open();
+    mocks.getToken.mockResolvedValue("renewed-jwt");
+    current().fail(new FlowEventsHttpError(401));
+    await settle();
+    expect(mocks.refreshAccessToken).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS);
+    expect(mocks.stream).toHaveBeenCalledTimes(2);
+    expect(current().opts.token).toBe("renewed-jwt");
+  });
+
+  it("stops for good on a 401 whose renewal ended the session", async () => {
+    const store = await open();
+    mocks.refreshAccessToken.mockResolvedValue(null);
+    mocks.hasSession.mockReturnValue(false);
+    current().fail(new FlowEventsHttpError(401));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mocks.refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(mocks.stream).toHaveBeenCalledTimes(1);
+    expect(store.connected).toBe(false);
+  });
+
+  it("stops for good when there is no token and no session", async () => {
+    mocks.getToken.mockResolvedValue(null);
+    mocks.hasSession.mockReturnValue(false);
+    await open();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mocks.getToken).toHaveBeenCalledTimes(1);
+    expect(mocks.stream).not.toHaveBeenCalled();
+  });
+
+  it("keeps reconnecting on the desktop while core cannot hand out a token", async () => {
+    mocks.isInDesktopMode.mockReturnValue(true);
+    mocks.getToken.mockResolvedValue(null);
+    mocks.hasSession.mockReturnValue(false);
+    await open();
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS * 3);
+    expect(mocks.getToken.mock.calls.length).toBeGreaterThan(1);
+
+    mocks.getToken.mockResolvedValue("desktop-jwt");
+    mocks.hasSession.mockReturnValue(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mocks.stream).toHaveBeenCalledTimes(1);
+    expect(current().opts.token).toBe("desktop-jwt");
   });
 
   it("switches streams when the active flow changes and stops when none is open", async () => {

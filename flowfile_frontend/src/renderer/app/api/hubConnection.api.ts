@@ -23,6 +23,8 @@ export interface HubConnection {
   server_name: string | null;
   /** On a joined server, the organisation's storage root as the hub shows it; null when not known. */
   organisation_storage: string | null;
+  /** Whether this machine may sign in to a hub through the system browser (not on a multi-user server). */
+  browser_sign_in?: boolean;
 }
 
 export interface HubConnectInput {
@@ -31,6 +33,27 @@ export interface HubConnectInput {
   password: string;
   device_name?: string;
 }
+
+export interface HubBrowserSignInInput {
+  hub_url: string;
+  device_name?: string;
+}
+
+export interface HubBrowserSignIn {
+  /** The sign-in's id, to poll its status with. */
+  flow_id: string;
+  /** The hub's sign-in page, opened in the system browser. */
+  authorize_url: string;
+}
+
+export interface HubBrowserSignInStatus {
+  status: "waiting" | "connected" | "failed";
+  detail: string | null;
+  connection: HubConnection | null;
+}
+
+/** The refusal `kind` core answers when this hub or this machine can only sign in with a username and password. */
+export const PASSWORD_ONLY = "password_only";
 
 export async function getHubConnection(): Promise<HubConnection> {
   const response = await axios.get<HubConnection>(CONNECTION_URL);
@@ -46,7 +69,28 @@ export async function connectHub(input: HubConnectInput): Promise<HubConnection>
   return response.data;
 }
 
-/** Forgets the hub session on this machine; the hub is not told. */
+/** Forgets the hub session on this machine; a sign-in through the browser is also ended on the hub. */
 export async function disconnectHub(): Promise<void> {
   await axios.delete(CONNECTION_URL);
+}
+
+/**
+ * Starts a sign-in through the system browser: core opens a one-shot listener on this machine and answers the hub's
+ * page to open. A hub or machine that cannot do it answers 400 with `detail.kind` `password_only`.
+ */
+export async function startBrowserSignIn(input: HubBrowserSignInInput): Promise<HubBrowserSignIn> {
+  const response = await axios.post<HubBrowserSignIn>(`${CONNECTION_URL}/browser`, input);
+  return response.data;
+}
+
+export async function getBrowserSignIn(flowId: string): Promise<HubBrowserSignInStatus> {
+  const response = await axios.get<HubBrowserSignInStatus>(
+    `${CONNECTION_URL}/browser/${encodeURIComponent(flowId)}`,
+  );
+  return response.data;
+}
+
+/** Stops waiting for a sign-in through the browser and closes its local port. */
+export async function cancelBrowserSignIn(flowId: string): Promise<void> {
+  await axios.delete(`${CONNECTION_URL}/browser/${encodeURIComponent(flowId)}`);
 }

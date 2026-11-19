@@ -1205,6 +1205,11 @@ class FlowNode:
         with self._execution_lock:
             if self.node_schema.predicted_schema and not force:
                 return self.node_schema.predicted_schema
+            # Execution may have finished while prediction waited for this lock. Re-running the
+            # function here can replace operation outputs that its result still needs to materialize.
+            if not force and self.results.resulting_data is not None and self.node_schema.result_schema is not None:
+                self.node_schema.predicted_schema = self.node_schema.result_schema
+                return self.node_schema.predicted_schema
             predicted_data = self._predicted_data_getter()
             if predicted_data is not None and predicted_data.schema is not None:
                 self.print("Calculating the schema based on the predicted resulting data")

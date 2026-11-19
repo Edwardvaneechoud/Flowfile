@@ -1363,6 +1363,10 @@ class SQLAlchemyCatalogRepository:
         return schedule
 
     def delete_schedule(self, schedule_id: int) -> None:
+        # Its runs stay as the flow's history, no longer pointing at the schedule.
+        self._db.query(FlowRun).filter_by(schedule_id=schedule_id).update(
+            {FlowRun.schedule_id: None}, synchronize_session=False
+        )
         self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
         # Rules scoped to this schedule die with it — a stale rule would alert the old
         # owner's webhook about whichever future schedule reuses the SQLite rowid.

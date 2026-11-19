@@ -218,6 +218,10 @@ def seeded_at_build(
 
 def output_names_of(setting_input: Any) -> list[str]:
     """The node's output names from its settings; ``["main"]`` when it declares none."""
+    # The implicit Run Flow summary has a canvas label, not a declared API name.
+    # Preserve Python's unnamed-output contract, including node["main"].
+    if isinstance(setting_input, input_schema.NodeRunFlow) and not setting_input.output_slots:
+        return ["main"]
     return list(getattr(setting_input, "output_names", None) or ["main"])
 
 

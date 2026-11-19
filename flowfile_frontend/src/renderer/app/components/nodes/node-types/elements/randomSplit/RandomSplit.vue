@@ -67,7 +67,7 @@
 
 <script lang="ts" setup>
 import { ref, computed, nextTick } from "vue";
-import { Position } from "@vue-flow/core";
+import { Position, type Edge } from "@vue-flow/core";
 import { ElMessage } from "element-plus";
 import { outputHandle, outputLabel } from "@/utils/outputHandle";
 import type { NodeRandomSplit, RandomSplitGroup } from "@/types/node.types";
@@ -133,6 +133,16 @@ const removeSplit = (index: number) => {
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeRandomSplit,
+  getEdgesToDrop: () => {
+    const handles = new Set(splits.value.map((_, index) => outputHandle(index)));
+    return (
+      flowStore.vueFlowInstance?.getEdges.value.filter(
+        (edge: Edge) =>
+          edge.source === String(nodeRandomSplit.value?.node_id) &&
+          !handles.has(edge.sourceHandle ?? outputHandle(0)),
+      ) ?? []
+    );
+  },
   onBeforeSave: () => {
     if (!nodeRandomSplit.value) return false;
     if (splits.value.length === 0) {
@@ -159,6 +169,7 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
         : Number(seedInput.value);
     return true;
   },
+  onAfterSave: () => updateNodeOutputHandles(),
 });
 
 const loadNodeData = async (nodeId: number) => {

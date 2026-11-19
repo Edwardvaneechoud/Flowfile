@@ -52,6 +52,7 @@ import {
   markAutoConnectNode,
 } from "../../composables/useDragAndDrop";
 import type { AutoConnectMatch } from "../../utils/autoConnect";
+import { connectionPortError } from "../../utils/connectionPorts";
 import { useStaleModifierGuard } from "../../composables/useStaleModifierGuard";
 import { isMultiSelectClick } from "./multiSelect";
 import NodeList from "./NodeList.vue";
@@ -629,6 +630,11 @@ function rejectConnection(reason: string): false {
 }
 
 function isValidConnection(connection: Connection): boolean {
+  // VueFlow also validates programmatic addEdges calls with full edges (which
+  // have an id). Restore core's existing wires even when their ports are no
+  // longer declared; NodeWrapper renders non-connectable fallback handles.
+  // New gestures have no edge id and still pass all checks below.
+  if ("id" in connection) return true;
   const source = connection.source;
   const target = connection.target;
   if (!source || !target) return false;
@@ -640,31 +646,14 @@ function isValidConnection(connection: Connection): boolean {
 
   const currentEdges = instance.getEdges.value;
 
-  const targetNode = instance.findNode(target);
-  const targetTemplate = (targetNode?.data as { nodeTemplate?: NodeTemplate } | undefined)
-    ?.nodeTemplate;
-  // Every handle of a dynamic_inputs node (run_flow) is single-edge, including
-  // the parameter handle input-0.
-  if (
-    targetTemplate &&
-    (targetTemplate.dynamic_inputs || !targetTemplate.multi) &&
-    connection.targetHandle
-  ) {
-    // A same-flow reload re-sets every edge while the old copy is still in the store: the same
-    // connection does not occupy the handle it is re-added to.
-    const sameConnection = (e: { source: string; sourceHandle?: string | null }) =>
-      e.source === source &&
-      (e.sourceHandle ?? "output-0") === (connection.sourceHandle ?? "output-0");
-    const handleOccupied = currentEdges.some(
-      (e) =>
-        e.target === target && e.targetHandle === connection.targetHandle && !sameConnection(e),
-    );
-    if (handleOccupied) {
-      return rejectConnection(
-        `Input on "${targetTemplate.name}" already has a connection — remove it first`,
-      );
-    }
-  }
+  const targetData = instance.findNode(target)?.data;
+  const portError = connectionPortError(
+    connection,
+    instance.findNode(source)?.data,
+    targetData ? { ...targetData, inputHandles: targetData.inputs } : undefined,
+    currentEdges,
+  );
+  if (portError) return rejectConnection(portError);
 
   const adjacency = new Map<string, string[]>();
   for (const e of currentEdges) {

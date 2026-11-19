@@ -132,10 +132,16 @@ export const useFlowSyncStore = defineStore("flow-sync", () => {
         ) {
           break;
         }
+        // A refused renewal ends the session; one that is granted is used at the reconnect.
+        if (error instanceof FlowEventsHttpError && error.status === 401) {
+          await authService.refreshAccessToken();
+        }
       } finally {
         connected.value = false;
       }
       if (signal.aborted) break;
+      // A session that ended stops the feed; the desktop's session never ends, so it keeps trying.
+      if (!authService.isInDesktopMode() && !authService.hasSession()) break;
       // Core ended the stream (a restart) or the connection dropped: back off, then reconnect.
       attempt += 1;
       await sleep(Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_MAX_MS), signal);

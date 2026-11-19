@@ -6,7 +6,14 @@ vi.mock("../services/axios.config", () => ({
   default: { get: mocks.get, post: mocks.post, delete: mocks.del },
 }));
 
-import { connectHub, disconnectHub, getHubConnection } from "./hubConnection.api";
+import {
+  cancelBrowserSignIn,
+  connectHub,
+  disconnectHub,
+  getBrowserSignIn,
+  getHubConnection,
+  startBrowserSignIn,
+} from "./hubConnection.api";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,5 +56,27 @@ describe("hubConnection.api", () => {
     await expect(
       connectHub({ hub_url: "https://hub.example.test", username: "ana", password: "x" }),
     ).rejects.toMatchObject({ response: { status: 426 } });
+  });
+
+  it("starts a sign-in through the browser with the URL and the device name", async () => {
+    const input = { hub_url: "https://hub.example.test", device_name: "ana-laptop" };
+    const started = { flow_id: "f1", authorize_url: "https://hub.example.test/hub/authorize?x=1" };
+    mocks.post.mockResolvedValueOnce({ data: started });
+
+    expect(await startBrowserSignIn(input)).toEqual(started);
+    expect(mocks.post).toHaveBeenCalledWith("/hub_client/connection/browser", input);
+  });
+
+  it("reads and cancels a sign-in through the browser by its id", async () => {
+    mocks.get.mockResolvedValueOnce({
+      data: { status: "waiting", detail: null, connection: null },
+    });
+    mocks.del.mockResolvedValueOnce({ data: { cancelled: true } });
+
+    expect((await getBrowserSignIn("f1")).status).toBe("waiting");
+    await cancelBrowserSignIn("f1");
+
+    expect(mocks.get).toHaveBeenCalledWith("/hub_client/connection/browser/f1");
+    expect(mocks.del).toHaveBeenCalledWith("/hub_client/connection/browser/f1");
   });
 });

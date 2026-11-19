@@ -608,6 +608,9 @@ def test_child_without_outputs_exposes_a_run_summary(schema):
 
     run = ff.RunFlow(ref, params={"region": "us"}, flow_graph=ff.create_flow_graph())
     assert run.outputs == ["main"]
+    assert run["main"] is run.output
+    assert run.get_output("main") is run.output
+    assert core_node(run).get_node_input().output_names == ["Run summary"]
     summary = pl.Schema({"run_index": pl.Int64, "success": pl.Boolean, "param_region": pl.String})
     assert run.output.data.collect_schema() == summary
     assert_frame_equal(
