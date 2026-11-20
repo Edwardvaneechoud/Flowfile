@@ -74,12 +74,17 @@ def _http_ssl_context():
     return httpx.create_ssl_context()
 
 
-def _async_client(timeout: float) -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=httpx.Timeout(timeout), verify=_http_ssl_context())
+def _async_client(timeout: float, headers: dict[str, str] | None = None) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=httpx.Timeout(timeout), verify=_http_ssl_context(), headers=headers)
 
 
-def _sync_client(timeout: float) -> httpx.Client:
-    return httpx.Client(timeout=httpx.Timeout(timeout), verify=_http_ssl_context())
+def _sync_client(timeout: float, headers: dict[str, str] | None = None) -> httpx.Client:
+    return httpx.Client(timeout=httpx.Timeout(timeout), verify=_http_ssl_context(), headers=headers)
+
+
+def _signed(kernel_token: str | None) -> dict[str, str]:
+    """The headers of a call to a kernel: its own token as the bearer, which is the only call it takes."""
+    return {"Authorization": f"Bearer {kernel_token}"} if kernel_token else {}
 
 
 def _resolve_image(
@@ -475,6 +480,8 @@ class KernelManager:
         # Per-process, unlike the install id: only the starter may tear a container down.
         self._runtime_id = uuid.uuid4().hex
         self._started_here: set[str] = set()
+        # container id -> the token that container was started with, which signs core's calls to it.
+        self._container_tokens: dict[str, str | None] = {}
         self._kernels: dict[str, KernelInfo] = {}
         self._kernel_owners: dict[str, int] = {}  # kernel_id -> user_id
         # Guards the registry dicts and port allocation; reentrant, never held over Docker I/O or the scratch lock.
@@ -1099,9 +1106,13 @@ class KernelManager:
                     # Kernel was restored from DB — update with runtime info
                     port = self._host_port_of(container) if not self._kernel_volume else None
                     kernel.container_id = container.id
+                    self._remember_token(container)
                     if port is not None:
                         kernel.port = port
                     kernel.state = KernelState.IDLE
+                    # A kernel found running without a token gets one; its next cell hands it over.
+                    if self._kernel_token(kernel_id) is None:
+                        self._kernel_token(kernel_id, new_run=True)
                     # Inherit shutdown duty from a dead owner, or the container outlives every restart.
                     if self._claims_ownership(container):
                         self._started_here.add(kernel_id)
@@ -1499,7 +1510,78 @@ class KernelManager:
             except (docker.errors.APIError, docker.errors.DockerException) as exc:
                 logger.warning("Could not remove orphan build container '%s': %s", container.name, exc)
 
-    def _build_kernel_env(self, kernel_id: str, kernel: KernelInfo) -> dict[str, str]:
+    def _kernel_token(self, kernel_id: str, *, new_run: bool = False) -> str | None:
+        """The token of the kernel's current run, minted from its row so every core process answers the same one.
+
+        ``new_run`` starts a run first, which ends the token of the one before it. ``None`` for a kernel with no
+        row or no run, and when core has no key to sign with.
+        """
+        try:
+            from flowfile_core.auth.jwt import create_kernel_token
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.kernel.persistence import kernel_token_identity
+
+            with get_db_context() as db:
+                identity = kernel_token_identity(db, kernel_id, new_run=new_run)
+            return create_kernel_token(*identity) if identity is not None else None
+        except Exception as exc:
+            logger.warning("Could not mint a token for kernel '%s': %s", kernel_id, exc)
+            return None
+
+    def kernel_token(self, kernel_id: str) -> str | None:
+        """The token the kernel signs its calls to core with, for its current run; ``None`` while it has none."""
+        return self._kernel_token(kernel_id)
+
+    def _call_headers(self, kernel: KernelInfo) -> dict[str, str]:
+        """Headers that sign a call to the kernel: the token its container was started with, which is the one it
+        takes calls with whatever its row says by now. Read from the container once and kept per container."""
+        container_id = kernel.container_id
+        if not container_id:
+            return {}
+        held = self._held_tokens()
+        if container_id not in held:
+            try:
+                held[container_id] = self._container_token(self._docker.containers.get(container_id))
+            except (docker.errors.APIError, docker.errors.DockerException) as exc:
+                logger.debug("Could not read the token of kernel '%s' from its container: %s", kernel.id, exc)
+                return {}
+        return _signed(held.get(container_id))
+
+    def _held_tokens(self) -> dict[str, str | None]:
+        """Container id to the token it was started with; made on first use for a manager built without ``__init__``."""
+        return self.__dict__.setdefault("_container_tokens", {})
+
+    def _remember_token(self, container) -> None:
+        """Keep the token ``container`` was started with, so calls to it need no further look at Docker."""
+        self._held_tokens()[container.id] = self._container_token(container)
+
+    @staticmethod
+    def _container_token(container) -> str | None:
+        """The token a container was started with, read from its environment; ``None`` when it has none."""
+        try:
+            env = (container.attrs.get("Config") or {}).get("Env") or []
+            if not isinstance(env, list | tuple):
+                return None
+            for entry in env:
+                name, _, value = str(entry).partition("=")
+                if name == "FLOWFILE_KERNEL_TOKEN" and value:
+                    return value
+        except Exception as exc:
+            logger.debug("Could not read a container's kernel token: %s", exc)
+        return None
+
+    def _end_kernel_token(self, kernel_id: str) -> None:
+        """End the token of the kernel's run, so core refuses it from here on."""
+        try:
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.kernel.persistence import clear_kernel_token
+
+            with get_db_context() as db:
+                clear_kernel_token(db, kernel_id)
+        except Exception as exc:
+            logger.warning("Could not end the token of kernel '%s': %s", kernel_id, exc)
+
+    def _build_kernel_env(self, kernel_id: str, kernel: KernelInfo, kernel_token: str | None = None) -> dict[str, str]:
         """Build the environment dictionary for a kernel container.
 
         This centralizes all environment variables passed to kernel containers,
@@ -1509,16 +1591,9 @@ class KernelManager:
         env = {"KERNEL_PACKAGES": ""}
         # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker.
         env["FLOWFILE_CORE_URL"] = core_base_url(bool(self._docker_network))
-        # Kernel-to-core auth; get_internal_token() mints the token in Electron mode before the kernel starts.
-        try:
-            from flowfile_core.auth.jwt import get_internal_token
-
-            env["FLOWFILE_INTERNAL_TOKEN"] = get_internal_token()
-        except (ValueError, ImportError):
-            # Token not configured (e.g. local dev without env var) – skip
-            internal_token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
-            if internal_token:
-                env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
+        # Kernel-to-core auth: the kernel's own token, never the internal one.
+        if kernel_token:
+            env["FLOWFILE_KERNEL_TOKEN"] = kernel_token
         # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
         env["FLOWFILE_KERNEL_ID"] = kernel_id
         # Lets the kernel translate core's paths to /shared; in Docker-in-Docker the paths already match.
@@ -1710,11 +1785,12 @@ class KernelManager:
         # The failure path may only remove a container this flight obtained.
         created_id: str | None = None
         try:
-            env = self._build_kernel_env(kernel_id, kernel)
+            env = self._build_kernel_env(kernel_id, kernel, self._kernel_token(kernel_id, new_run=True))
             run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
             container = self._create_or_adopt_container(kernel_id, kernel, image, run_kwargs)
             created_id = container.id
             kernel.container_id = container.id
+            self._remember_token(container)
             # An adopted container belongs to whoever started it; shutdown must leave it running.
             if self._container_label(container, _CONTAINER_LABEL_CORE_RUNTIME) == self._runtime_id:
                 self._started_here.add(kernel_id)
@@ -1730,6 +1806,7 @@ class KernelManager:
             kernel.error_message = str(exc)
             flow_logger.error(f"Failed to start kernel {kernel_id}: {exc}") if flow_logger else None
             logger.error("Failed to start kernel '%s': %s", kernel_id, exc)
+            self._end_kernel_token(kernel_id)
             if created_id is not None:
                 self._remove_container_by_id(created_id)
                 if kernel.container_id == created_id:
@@ -1801,6 +1878,7 @@ class KernelManager:
         # Don't tear down a container an in-progress start still owns.
         await asyncio.to_thread(self._wait_out_flight, kernel_id)
         self._cleanup_container(kernel_id)
+        self._end_kernel_token(kernel_id)
         kernel.state = KernelState.STOPPED
         kernel.container_id = None
         from flowfile_core.notebook import kernel_runner  # lazy: kernel_runner imports this package
@@ -1906,6 +1984,7 @@ class KernelManager:
                 continue
             logger.info("Shutting down kernel '%s'", kernel_id)
             self._cleanup_container(kernel_id)
+            self._end_kernel_token(kernel_id)
             kernel.state = KernelState.STOPPED
             kernel.container_id = None
             self._started_here.discard(kernel_id)
@@ -1974,13 +2053,8 @@ class KernelManager:
         if request.source_registration_id is None:
             request.source_registration_id = self.get_scratch_flow_id(kernel_id)
 
-        # Stamped server-side: client requests carry no token, and an adopted container may hold a stale one.
-        try:
-            from flowfile_core.auth.jwt import get_internal_token
-
-            request.internal_token = get_internal_token()
-        except (ValueError, ImportError):
-            pass
+        # Stamped server-side: the kernel's own token, also where an image from before a token per kernel reads it.
+        request.kernel_token = request.internal_token = self._kernel_token(kernel_id)
 
         # One token per execution, so a cancel names a cell; a flow run mints its own up front.
         if not request.exec_token:
@@ -2010,14 +2084,17 @@ class KernelManager:
         # The kernel may have died while we were queued behind another cell.
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
+            # A start begins a new token, so the one stamped before the wait is over.
+            request.kernel_token = request.internal_token = self._kernel_token(kernel_id)
 
         kernel.state = KernelState.EXECUTING
         try:
             url = f"{self._kernel_url(kernel)}/execute"
+            headers = self._call_headers(kernel)
 
             if cancel_event is None:
                 # Simple blocking call (no cancellation support)
-                with _sync_client(_CELL_EXECUTION_TIMEOUT) as client:
+                with _sync_client(_CELL_EXECUTION_TIMEOUT, headers) as client:
                     response = client.post(url, json=request.model_dump())
                     response.raise_for_status()
                     return ExecuteResult(**response.json())
@@ -2028,7 +2105,7 @@ class KernelManager:
 
             def _post() -> None:
                 try:
-                    with _sync_client(_CELL_EXECUTION_TIMEOUT) as client:
+                    with _sync_client(_CELL_EXECUTION_TIMEOUT, headers) as client:
                         resp = client.post(url, json=request.model_dump())
                         resp.raise_for_status()
                         result_holder[0] = ExecuteResult(**resp.json())
@@ -2117,7 +2194,7 @@ class KernelManager:
         if should_try_http:
             try:
                 url = f"{self._kernel_url(kernel)}/interrupt"
-                with _sync_client(5.0) as client:
+                with _sync_client(5.0, self._call_headers(kernel)) as client:
                     resp = client.post(url, json={"exec_token": exec_token or ""})
                     if resp.status_code == 200:
                         logger.info("Interrupted kernel '%s' via HTTP", kernel_id)
@@ -2148,7 +2225,7 @@ class KernelManager:
             await self._ensure_running(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/clear"
-        async with _async_client(30.0) as client:
+        async with _async_client(30.0, self._call_headers(kernel)) as client:
             response = await client.post(url)
             response.raise_for_status()
 
@@ -2159,7 +2236,7 @@ class KernelManager:
             self._ensure_running_sync(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/clear"
-        with _sync_client(30.0) as client:
+        with _sync_client(30.0, self._call_headers(kernel)) as client:
             response = client.post(url)
             response.raise_for_status()
 
@@ -2178,7 +2255,7 @@ class KernelManager:
         payload: dict = {"node_ids": node_ids}
         if flow_id is not None:
             payload["flow_id"] = flow_id
-        async with _async_client(30.0) as client:
+        async with _async_client(30.0, self._call_headers(kernel)) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             return ClearNodeArtifactsResult(**response.json())
@@ -2199,7 +2276,7 @@ class KernelManager:
         payload: dict = {"node_ids": node_ids}
         if flow_id is not None:
             payload["flow_id"] = flow_id
-        with _sync_client(30.0) as client:
+        with _sync_client(30.0, self._call_headers(kernel)) as client:
             response = client.post(url, json=payload)
             response.raise_for_status()
             return ClearNodeArtifactsResult(**response.json())
@@ -2211,7 +2288,7 @@ class KernelManager:
             await self._ensure_running(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/clear_namespace"
-        async with _async_client(30.0) as client:
+        async with _async_client(30.0, self._call_headers(kernel)) as client:
             response = await client.post(url, params={"flow_id": flow_id})
             response.raise_for_status()
 
@@ -2222,7 +2299,7 @@ class KernelManager:
             await self._ensure_running(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/artifacts/node/{node_id}"
-        async with _async_client(30.0) as client:
+        async with _async_client(30.0, self._call_headers(kernel)) as client:
             response = await client.get(url)
             response.raise_for_status()
             return response.json()
@@ -2243,7 +2320,7 @@ class KernelManager:
             return {}
         url = f"{self._kernel_url(kernel)}/lsp/{op}"
         try:
-            async with _async_client(5.0) as client:
+            async with _async_client(5.0, self._call_headers(kernel)) as client:
                 response = await client.post(url, json=payload)
                 response.raise_for_status()
                 return response.json()
@@ -2282,7 +2359,7 @@ class KernelManager:
             await self._ensure_running(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/display_outputs"
-        async with _async_client(30.0) as client:
+        async with _async_client(30.0, self._call_headers(kernel)) as client:
             response = await client.get(url, params={"flow_id": flow_id, "node_id": node_id})
             response.raise_for_status()
             return response.json()
@@ -2294,7 +2371,7 @@ class KernelManager:
             await self._ensure_running(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/artifact_preview"
-        async with _async_client(30.0) as client:
+        async with _async_client(30.0, self._call_headers(kernel)) as client:
             response = await client.get(url, params={"flow_id": flow_id, "name": name})
             response.raise_for_status()
             return response.json()
@@ -2308,7 +2385,7 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/recover"
-        async with _async_client(120.0) as client:
+        async with _async_client(120.0, self._call_headers(kernel)) as client:
             response = await client.post(url)
             response.raise_for_status()
             return RecoveryStatus(**response.json())
@@ -2320,7 +2397,7 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/recovery-status"
-        async with _async_client(30.0) as client:
+        async with _async_client(30.0, self._call_headers(kernel)) as client:
             response = await client.get(url)
             response.raise_for_status()
             return RecoveryStatus(**response.json())
@@ -2332,7 +2409,7 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/cleanup"
-        async with _async_client(60.0) as client:
+        async with _async_client(60.0, self._call_headers(kernel)) as client:
             response = await client.post(url, json=request.model_dump())
             response.raise_for_status()
             return CleanupResult(**response.json())
@@ -2344,7 +2421,7 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/persistence"
-        async with _async_client(30.0) as client:
+        async with _async_client(30.0, self._call_headers(kernel)) as client:
             response = await client.get(url)
             response.raise_for_status()
             return ArtifactPersistenceInfo(**response.json())
@@ -2357,7 +2434,7 @@ class KernelManager:
 
         url = f"{self._kernel_url(kernel)}/memory"
         try:
-            async with _async_client(5.0) as client:
+            async with _async_client(5.0, self._call_headers(kernel)) as client:
                 response = await client.get(url)
                 response.raise_for_status()
                 return KernelMemoryInfo(**response.json())
@@ -2371,7 +2448,7 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/artifacts"
-        async with _async_client(30.0) as client:
+        async with _async_client(30.0, self._call_headers(kernel)) as client:
             response = await client.get(url)
             response.raise_for_status()
             return response.json()
@@ -2431,6 +2508,7 @@ class KernelManager:
         self._remove_container_by_id(kernel.container_id)
 
     def _remove_container_by_id(self, container_id: str) -> None:
+        self._held_tokens().pop(container_id, None)
         try:
             container = self._docker.containers.get(container_id)
             container.stop(timeout=10)

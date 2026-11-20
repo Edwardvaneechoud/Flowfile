@@ -8,6 +8,7 @@ startup by reclaiming running Docker containers.
 
 import json
 import logging
+import uuid
 
 from sqlalchemy.orm import Session
 
@@ -59,6 +60,27 @@ def save_kernel(db: Session, kernel: KernelInfo, user_id: int) -> None:
 def delete_kernel(db: Session, kernel_id: str) -> None:
     """Remove a kernel record from the database."""
     db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id).delete()
+    db.commit()
+
+
+def kernel_token_identity(db: Session, kernel_id: str, *, new_run: bool = False) -> tuple[int, str, str] | None:
+    """What the token of a kernel's current run names: ``(owner id, kernel id, token id)``.
+
+    ``None`` when the kernel has no row or, without ``new_run``, no run. ``new_run`` starts one: the kernel gets a
+    new token id, which ends the token of the run before it.
+    """
+    row = db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id).first()
+    if row is None:
+        return None
+    if new_run:
+        row.token_id = uuid.uuid4().hex
+        db.commit()
+    return (row.user_id, row.id, row.token_id) if row.token_id else None
+
+
+def clear_kernel_token(db: Session, kernel_id: str) -> None:
+    """End the token of a kernel's run; a kernel with no row has none."""
+    db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id).update({"token_id": None})
     db.commit()
 
 

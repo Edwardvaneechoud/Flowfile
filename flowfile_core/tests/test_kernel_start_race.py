@@ -829,3 +829,73 @@ class TestStartupReconcile:
         resolver.remove.assert_called_once_with(force=True)
         bake_leftover.remove.assert_called_once_with(force=True)
         kernel_container.remove.assert_not_called()
+
+
+class TestAdoptedContainersToken:
+    """A container found under the kernel's name takes calls with the token it was started with, so core signs its
+    calls with that one, whatever token the kernel's row names by now."""
+
+    @pytest.fixture
+    def kernel_row(self):
+        """A kernel row of user 1 in the test database; yields its id."""
+        import uuid
+
+        from flowfile_core.database import models as db_models
+        from flowfile_core.database.connection import get_db_context
+
+        kernel_id = f"adopt-{uuid.uuid4().hex[:8]}"
+        with get_db_context() as db:
+            db.add(db_models.Kernel(id=kernel_id, name="k", user_id=1, token_id="run-0"))
+            db.commit()
+        yield kernel_id
+        with get_db_context() as db:
+            db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id).delete()
+            db.commit()
+
+    @staticmethod
+    def _started_with(container, token: str):
+        container.attrs["Config"] = {"Env": ["KERNEL_PACKAGES=", f"FLOWFILE_KERNEL_TOKEN={token}"]}
+        return container
+
+    def test_409_adopted_container_is_called_with_the_token_it_was_started_with(self, kernel_row):
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel)
+        existing = self._started_with(_fake_container("adopted-t", host_port="19005"), "token-of-its-start")
+        mgr._docker.containers.run.side_effect = _api_error(409)
+        mgr._docker.containers.get.return_value = existing
+
+        mgr.start_kernel_sync(kernel_row)
+
+        assert kernel.container_id == "adopted-t"
+        assert mgr._call_headers(kernel) == {"Authorization": "Bearer token-of-its-start"}
+        assert mgr.kernel_token(kernel_row) not in (None, "token-of-its-start"), "its calls to core get the new run's"
+
+    def test_a_kernel_found_running_at_startup_is_called_with_the_token_it_was_started_with(self, kernel_row):
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel)
+        mgr._end_kernel_token(kernel_row)
+        running = self._started_with(_fake_container("running-t", host_port="19005"), "token-of-its-start")
+        running.name = f"flowfile-kernel-{kernel_row}"
+        mgr._docker.containers.list.return_value = [running]
+
+        mgr._reclaim_running_containers(prune_orphans=False)
+
+        assert kernel.state == KernelState.IDLE
+        assert mgr._call_headers(kernel) == {"Authorization": "Bearer token-of-its-start"}
+        assert mgr.kernel_token(kernel_row) is not None, "a kernel found running has a run"
+
+    def test_a_removed_containers_token_is_forgotten(self, kernel_row):
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel)
+        mgr._docker.containers.run.side_effect = [
+            self._started_with(_fake_container("first"), "first-token"),
+            self._started_with(_fake_container("second"), "second-token"),
+        ]
+
+        mgr.start_kernel_sync(kernel_row)
+        assert mgr._call_headers(kernel) == {"Authorization": "Bearer first-token"}
+        asyncio.run(mgr.stop_kernel(kernel_row))
+        assert "first" not in mgr._held_tokens() and mgr._call_headers(kernel) == {}
+
+        mgr.start_kernel_sync(kernel_row)
+        assert mgr._call_headers(kernel) == {"Authorization": "Bearer second-token"}

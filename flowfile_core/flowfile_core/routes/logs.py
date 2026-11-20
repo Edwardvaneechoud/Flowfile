@@ -9,7 +9,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from flowfile_core import ServerRun, flow_file_handler
-from flowfile_core.auth.jwt import get_current_active_user, require_internal_token
+from flowfile_core.auth.jwt import (
+    KernelCaller,
+    calling_kernel,
+    get_current_active_user,
+    require_internal_or_kernel_token,
+)
 
 # Core modules
 from flowfile_core.configs import logger
@@ -36,14 +41,17 @@ async def format_sse_message(data: str) -> str:
 def _warn_unsigned_raw_log() -> None:
     """Say once per process why kernel output is missing from a flow log; the 401 alone is silent."""
     logger.warning(
-        "Rejected a /raw_logs post without a valid X-Internal-Token: check that FLOWFILE_INTERNAL_TOKEN is "
-        "set for core; a kernel image built before log posts were signed must be rebuilt."
+        "Rejected a /raw_logs post that is not signed: check that FLOWFILE_INTERNAL_TOKEN is set for core; a "
+        "kernel image built before log posts were signed must be rebuilt."
     )
 
 
-def _require_signed_raw_log(x_internal_token: str | None = Header(None, alias="X-Internal-Token")) -> None:
+def _require_signed_raw_log(
+    x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
+    kernel: KernelCaller | None = Depends(calling_kernel),
+) -> None:
     try:
-        require_internal_token(x_internal_token)
+        require_internal_or_kernel_token(x_internal_token, kernel)
     except HTTPException:
         _warn_unsigned_raw_log()
         raise
@@ -53,7 +61,8 @@ def _require_signed_raw_log(x_internal_token: str | None = Header(None, alias="X
 async def add_raw_log(raw_log_input: schemas.RawLogInput):
     """Adds a log message to the log file for a given flow_id.
 
-    Only the worker and kernels write here, signed with the internal token (``X-Internal-Token``).
+    Only the worker and kernels write here: the worker signed with the internal token (``X-Internal-Token``), a
+    kernel with its own token.
     """
     flow = flow_file_handler.get_flow(raw_log_input.flowfile_flow_id)
     if not flow:

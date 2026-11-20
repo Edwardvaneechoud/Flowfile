@@ -8,6 +8,7 @@ import importlib.util
 import io
 import logging
 import os
+import secrets
 import signal
 import sys
 import threading
@@ -18,7 +19,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Body, FastAPI, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from kernel_runtime import __version__, flowfile_client
@@ -311,7 +312,29 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="FlowFile Kernel Runtime", version=__version__, lifespan=_lifespan)
+# The token this kernel was started with, read before an execution can write the variable.
+_START_TOKEN: str | None = os.environ.get("FLOWFILE_KERNEL_TOKEN") or None
+
+
+async def _only_core(request: Request) -> None:
+    """Take a call only from Core, which signs it with the token this kernel was started with (else 401).
+
+    ``/health`` stays open for the container's own health check. A kernel started without a token, by a Core from
+    before a token per kernel, takes every call as before.
+    """
+    if _START_TOKEN is None or request.url.path == "/health":
+        return
+    supplied = request.headers.get("Authorization", "")
+    if not secrets.compare_digest(supplied.encode(), f"Bearer {_START_TOKEN}".encode()):
+        raise HTTPException(status_code=401, detail="Only Flowfile may call this kernel")
+
+
+app = FastAPI(
+    title="FlowFile Kernel Runtime",
+    version=__version__,
+    lifespan=_lifespan,
+    dependencies=[Depends(_only_core)],
+)
 
 
 # Request / Response models
@@ -384,7 +407,10 @@ class ExecuteRequest(BaseModel):
     source_registration_id: int | None = None
     log_callback_url: str = ""
     interactive: bool = False  # When True, auto-display last expression
-    internal_token: str | None = None  # Core→kernel auth token for artifact API calls
+    # This kernel's own token for its calls to Core, stamped per execution.
+    kernel_token: str | None = None
+    # What a Core from before a token per kernel sends instead: its internal token.
+    internal_token: str | None = None
     # artifact name -> source_node_id. None means no lineage context (no enforcement);
     # {} means lineage is known but nothing is in this node's input lineage.
     available_artifacts: dict[str, int] | None = None
@@ -549,6 +575,7 @@ def _run_user_code(
             source_registration_id=request.source_registration_id,
             log_callback_url=request.log_callback_url,
             internal_token=request.internal_token,
+            kernel_token=request.kernel_token,
             interactive=request.interactive,
             available_artifacts=request.available_artifacts,
             dry_run=request.dry_run,

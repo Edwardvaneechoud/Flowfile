@@ -179,17 +179,9 @@ def build_execute_request(
     source_registration_id: int | None,
     available_artifacts: dict[str, int] | None = None,
 ) -> ExecuteRequest:
-    """Assemble the kernel ExecuteRequest with log callback URL and auth token."""
+    """Assemble the kernel ExecuteRequest with its log callback URL; ``execute_sync`` stamps the kernel's token."""
     # Keyed on the network: the kernel resolves core by service name only once joined to core's network.
     log_callback_url = f"{core_base_url(bool(manager._docker_network))}/raw_logs"
-
-    internal_token: str | None = None
-    try:
-        from flowfile_core.auth.jwt import get_internal_token
-
-        internal_token = get_internal_token()
-    except (ValueError, ImportError):
-        pass
 
     return ExecuteRequest(
         node_id=node_id,
@@ -199,7 +191,6 @@ def build_execute_request(
         flow_id=flow_id,
         source_registration_id=source_registration_id,
         log_callback_url=log_callback_url,
-        internal_token=internal_token,
         available_artifacts=available_artifacts,
         # Minted here so the node holds it as its cancel address before the call; a cancel hits only this cell.
         exec_token=uuid.uuid4().hex,

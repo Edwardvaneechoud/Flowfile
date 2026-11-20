@@ -233,7 +233,7 @@ async def _remote_rows(
 router = APIRouter(
     prefix="/catalog",
     tags=["catalog"],
-    # JWT or the kernel's X-Internal-Token; a JWT-only endpoint re-checks with get_current_active_user.
+    # JWT or a kernel's own token; a JWT-only endpoint re-checks with get_current_active_user.
     dependencies=[Depends(get_user_or_internal_service), Depends(_remote_rows)],
     route_class=_RemoteRoute,
 )
