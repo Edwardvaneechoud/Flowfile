@@ -1,7 +1,6 @@
 """Catalog writer execution: SCD2 shaping, Delta writes, table registration and the write handlers."""
 
 import datetime
-import io as _io
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -41,9 +40,9 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
 from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _authorize_catalog_write,
     _effective_namespace_id,
-    _resolve_catalog_sql_tables,
 )
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.graph_tree.graph_tree import render_flow
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
@@ -496,22 +495,39 @@ def _ensure_catalog_cdc_enabled(
         logger.warning("Could not enable change tracking on catalog table %s", table_name, exc_info=True)
 
 
-def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
+_SELF_CONTAINED_SOURCE_TYPES = frozenset({"manual_input", "catalog_reader"})
+
+
+def _branch_nodes(graph: "FlowGraph", writer_node: "FlowNode") -> list["FlowNode"]:
+    """The writer and every node upstream of it, in graph order."""
+    branch = {writer_node.node_id}
+    stack = list(writer_node.all_inputs)
+    while stack:
+        node = stack.pop()
+        if node.node_id not in branch:
+            branch.add(node.node_id)
+            stack.extend(node.all_inputs)
+    return [node for node in graph.nodes if node.node_id in branch]
+
+
+def _collect_source_table_versions(graph: "FlowGraph", writer_node: "FlowNode | None" = None) -> str | None:
     """Collect delta versions of upstream catalog tables used by this flow.
 
     For each catalog_reader node that reads a physical delta table, records
     the current delta version. For optimized virtual table sources, includes
-    their transitive source_table_versions.
+    their transitive source_table_versions. With ``writer_node`` only its
+    branch is considered, else the whole graph.
 
-    Complete-or-nothing: returns None as soon as any catalog source can't be
-    fingerprinted (SQL reader, missing record, virtual source without its own
-    versions, cloud/non-delta path, probe failure). A partial fingerprint would
-    let version checks pass while the unfingerprinted source changed, so plan
-    replay and the worker's IPC cache would serve stale data. None degrades to
-    fall-back-to-flow-execution / always-rebuild, which is correct.
+    Complete-or-nothing: returns None as soon as any source can't be
+    fingerprinted (a file, cloud, database or other external source, SQL
+    reader, missing record, virtual source without its own versions,
+    cloud/non-delta path, probe failure). A partial fingerprint would let
+    version checks pass while the unfingerprinted source changed, so the
+    downstream cache and the worker's IPC cache would serve stale data. None
+    degrades to always-rebuild, which is correct.
 
-    A flow with no catalog sources at all returns "[]" — provably complete
-    (the serialized plan embeds all its data), so plan replay stays valid.
+    A flow whose only sources are manual inputs returns "[]": their rows live
+    in the flow file, which the producer fingerprint already covers.
 
     Returns a JSON string of SourceTableVersion entries ("[]" when none), or
     None when unfingerprintable.
@@ -523,13 +539,16 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
     versions: list[SourceTableVersion] = []
     seen_table_ids: set[int] = set()
 
+    nodes = _branch_nodes(graph, writer_node) if writer_node is not None else list(graph.nodes)
     table_ids: list[int] = []
-    for node in graph.nodes:
+    for node in nodes:
+        if not node.all_inputs and node.node_type not in _SELF_CONTAINED_SOURCE_TYPES:
+            return None
         if node.node_type != "catalog_reader":
             continue
         setting = node.setting_input
         if table_sources.is_remote(getattr(setting, "source", None)):
-            continue
+            return None
         if getattr(setting, "sql_query", None):
             return None
         table_id = getattr(setting, "catalog_table_id", None)
@@ -578,47 +597,18 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
     return json.dumps([v.model_dump() for v in versions])
 
 
-def _virtual_sources_use_cloud(graph: "FlowGraph") -> bool:
-    """Return ``True`` when any catalog source feeding this flow lives in object storage.
+def _readable_plan(graph: "FlowGraph", writer_node: "FlowNode") -> str | None:
+    """The print_tree drawing of the writer's branch, or None when it cannot be drawn.
 
-    Such a flow can't cache a serialized plan: it would freeze the source's decrypted cloud
-    credentials. A table on the hub is always in object storage. Detection is DB-only (no object-storage I/O).
+    The drawing is display-only, so a failure to draw it never fails the write.
     """
-    physical_ids: list[int] = []
-    seen: set[int] = set()
-    for node in graph.nodes:
-        if node.node_type != "catalog_reader":
-            continue
-        setting = node.setting_input
-        if table_sources.is_remote(getattr(setting, "source", None)):
-            return True
-        if getattr(setting, "sql_query", None):
-            try:
-                resolved = _resolve_catalog_sql_tables(setting.node_id, getattr(setting, "user_id", None))
-                if any(_is_cloud_uri(path) for path in resolved.table_paths.values()):
-                    return True
-            except Exception:
-                logger.warning("Could not resolve catalog SQL sources; treating as cloud", exc_info=True)
-                return True
-            continue
-        table_id = getattr(setting, "catalog_table_id", None)
-        if table_id and table_id not in seen:
-            seen.add(table_id)
-            physical_ids.append(table_id)
-
-    if not physical_ids:
-        return False
     try:
-        with get_db_context() as db:
-            repo = SQLAlchemyCatalogRepository(db)
-            for table_id in physical_ids:
-                record = repo.get_table(table_id)
-                if record is not None and record.file_path and _is_cloud_uri(record.file_path):
-                    return True
+        return render_flow(_branch_nodes(graph, writer_node))
     except Exception:
-        logger.warning("Could not determine catalog cloud sources; treating as cloud", exc_info=True)
-        return True
-    return False
+        logger.warning(
+            "Could not draw the producer branch of virtual table writer %s", writer_node.node_id, exc_info=True
+        )
+        return None
 
 
 PICK_REMOTE_SCHEMA = "No schema on the hub is picked for this table; pick one you may write to."
@@ -653,14 +643,13 @@ def _handle_virtual_table_write(
             "flowfile_frame.register_flow_with_catalog(...)."
         )
 
-    serialized_lf: bytes | None = None
-    polars_plan: str | None = None
     source_table_versions: str | None = None
     changed_execution_mode = False
 
     writer_node = graph.get_node(node_catalog_writer.node_id)
     is_lazy, _reasons = writer_node.check_upstream_laziness()
-    optimize = is_lazy and not _virtual_sources_use_cloud(graph)
+    optimize = is_lazy
+    polars_plan = _readable_plan(graph, writer_node)
     if optimize:
         if graph.execution_mode != "performance":
             graph.execution_mode = "performance"
@@ -668,12 +657,8 @@ def _handle_virtual_table_write(
             changed_execution_mode = True
             incoming_node = graph.get_node(node_catalog_writer.node_id).node_inputs.main_inputs[0]
             df = incoming_node.get_resulting_data()
-        polars_plan = df.data_frame.explain()
-        graph.flow_logger.info(f"creating a virtual table with: {polars_plan}")
-        buf = _io.BytesIO()
-        df.data_frame.serialize(buf)
-        serialized_lf = buf.getvalue()
-        source_table_versions = _collect_source_table_versions(graph)
+        graph.flow_logger.info("creating a lazy virtual table")
+        source_table_versions = _collect_source_table_versions(graph, writer_node)
     else:
         graph.flow_logger.info("creating a virtual table from workflow")
 
@@ -696,7 +681,6 @@ def _handle_virtual_table_write(
                 name=settings.table_name or None,
                 producer_registration_id=reg_id,
                 description=settings.description,
-                serialized_lazy_frame=serialized_lf,
                 is_optimized=optimize,
                 schema_json=schema_json,
                 polars_plan=polars_plan,
@@ -709,7 +693,6 @@ def _handle_virtual_table_write(
                 producer_registration_id=reg_id,
                 namespace_id=ns_id,
                 description=settings.description,
-                serialized_lazy_frame=serialized_lf,
                 is_optimized=optimize,
                 schema_json=schema_json,
                 polars_plan=polars_plan,
@@ -759,7 +742,7 @@ def _handle_remote_table_write(
         table=table,
         connection=target.worker_interface,
         scd2_config=None,
-        run_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        run_timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
         flow_id=graph.flow_id,
         node_id=writer_node.node_id,
     )
@@ -844,7 +827,7 @@ def _handle_physical_table_write(
         _ensure_catalog_cdc_enabled(settings.table_name, namespace_id, dest_path, storage_options)
 
     # One instant per write: the surrogate key depends on valid_from, and the output read selects by it.
-    run_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    run_timestamp = datetime.datetime.now(datetime.UTC).isoformat()
 
     writer_node = graph.get_node(node_catalog_writer.node_id)
     operation, write = _catalog_delta_op(

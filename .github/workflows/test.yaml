@@ -140,10 +140,6 @@ jobs:
         include:
           - os: ubuntu-latest
             runner: ubuntu-24.04
-            python-version: "3.10"
-            core_marks: "not kernel and not docker_integration"
-          - os: ubuntu-latest
-            runner: ubuntu-24.04
             python-version: "3.11"
             core_marks: "not kernel"
           - os: ubuntu-latest
@@ -153,6 +149,10 @@ jobs:
           - os: ubuntu-latest
             runner: ubuntu-24.04
             python-version: "3.13"
+            core_marks: "not kernel and not docker_integration"
+          - os: ubuntu-latest
+            runner: ubuntu-24.04
+            python-version: "3.14"
             core_marks: "not kernel and not docker_integration"
           - os: macos-latest
             python-version: "3.11"

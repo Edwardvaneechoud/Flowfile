@@ -1368,7 +1368,7 @@ async def _call(
 
     try:
         return await asyncio.wait_for(_do_call(), timeout=timeout), None, None
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return None, "timeout", "The model did not answer in time."
     except Exception as exc:  # noqa: BLE001
         logger.warning("%s provider call failed: %s", surface, exc, exc_info=False)

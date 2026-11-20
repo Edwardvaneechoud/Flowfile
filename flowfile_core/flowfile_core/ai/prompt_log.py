@@ -49,7 +49,7 @@ import re
 import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -294,7 +294,7 @@ def grep(
 
 
 def _now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def _now_iso() -> str:

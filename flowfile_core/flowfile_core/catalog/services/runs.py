@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -217,7 +217,7 @@ class FlowRunService:
             flow_name=flow_name,
             flow_path=flow_path,
             user_id=user_id,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
             number_of_nodes=number_of_nodes,
             run_type=run_type,
             flow_snapshot=flow_snapshot,
@@ -246,7 +246,7 @@ class FlowRunService:
         run = self.repo.get_run(run_id)
         if run is None:
             raise RunNotFoundError(run_id=run_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         run.ended_at = now
         run.success = success
         run.cancelled = cancelled and not success
@@ -358,7 +358,7 @@ class FlowRunService:
         record exists.
         """
         flow_path = str(require_flow_in_storage(Path(flow.flow_path)))
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         run = FlowRun(
             registration_id=flow.id,
             flow_uuid=flow.flow_uuid,
@@ -377,7 +377,7 @@ class FlowRunService:
             run.pid = pid
         else:
             logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
-            run.ended_at = datetime.now(timezone.utc)
+            run.ended_at = datetime.now(UTC)
             run.success = False
         self.repo.update_run(run)
         if pid is not None and run.ended_at is not None:
@@ -428,7 +428,7 @@ class FlowRunService:
         if run is None:
             raise RunNotFoundError(run_id=run_id)
 
-        if not self.repo.cancel_active_run(run_id, datetime.now(timezone.utc)):
+        if not self.repo.cancel_active_run(run_id, datetime.now(UTC)):
             logger.info("Run %s already ended; not cancelling", run_id)
             return
 

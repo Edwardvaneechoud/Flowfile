@@ -253,7 +253,7 @@ def test_a_lookup_answers_metadata_only(notebook_corpus, database_connection, cl
     assert all({"node_key", "source", "source_hash"} <= set(row) for row in answers["custom_node_sources"])
     assert answers["custom_node_hashes"] == {row["node_key"]: row["source_hash"] for row in answers["custom_node_sources"]}
     assert decrypted == []
-    assert answers["catalog_table"]["table_name"] == "sales" and answers["catalog_table"]["serialized_lf"] is None
+    assert answers["catalog_table"]["table_name"] == "sales" and answers["catalog_table"]["producer_fingerprint"] is None
     assert answers["catalog_storage"] == {
         "is_cloud": True,
         "base": "s3://notebook-census/catalog",

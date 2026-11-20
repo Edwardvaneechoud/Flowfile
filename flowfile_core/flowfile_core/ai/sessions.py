@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -206,12 +206,12 @@ class AgentSession(BaseModel):
     plan_markdown: str | None = None
     plan_steps: list[str] = Field(default_factory=list)
     plan_completed_ops: list[CompletedOpEntry] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     def touch(self) -> None:
         """Bump ``updated_at`` to the current UTC instant."""
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)
 
 
 def reset_stage_state(session: AgentSession) -> None:

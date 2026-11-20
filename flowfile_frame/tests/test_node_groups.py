@@ -141,7 +141,7 @@ def test_a_group_follows_its_nodes_across_a_join_of_two_graphs():
     graph = joined.flow_graph
     assert group.flow_graph is graph
     assert sorted(graph._member_node_ids(group.id)) == sorted([left.node_id, joined.node_id])
-    assert joined.collect().to_dict(as_series=False) == {"id": [1, 2], "a": [1, 2], "b": [3, 4]}
+    assert joined.collect().sort("id").to_dict(as_series=False) == {"id": [1, 2], "a": [1, 2], "b": [3, 4]}
 
 
 def test_a_group_holds_nodes_of_one_graph():

@@ -544,7 +544,7 @@ class KNNClassifierTrainer:
         )
 
         return (
-            test_lf.join(voted, on="__test_pos", how="left")
+            test_lf.join(voted, on="__test_pos", how="left", maintain_order="left")
             .with_columns(pl.col(output_column).fill_null(0).cast(pl.Int64))
             .drop("__test_pos")
         )
