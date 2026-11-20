@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   disarmRefusedSave: vi.fn(),
   resolveConflict: vi.fn(),
   fingerprint: undefined as string | undefined,
+  removeEdges: vi.fn(),
+  removeCommittedEdges: vi.fn(),
 }));
 
 vi.mock("../stores/node-store", () => ({
@@ -17,8 +19,10 @@ vi.mock("../stores/node-store", () => ({
 vi.mock("../stores/editor-store", () => ({
   useEditorStore: () => ({ disarmRefusedSave: mocks.disarmRefusedSave }),
 }));
-vi.mock("../stores/flow-store", () => ({ useFlowStore: () => ({ vueFlowInstance: null }) }));
-vi.mock("./useDragAndDrop", () => ({ removeCommittedEdges: vi.fn() }));
+vi.mock("../stores/flow-store", () => ({
+  useFlowStore: () => ({ vueFlowInstance: { removeEdges: mocks.removeEdges } }),
+}));
+vi.mock("./useDragAndDrop", () => ({ removeCommittedEdges: mocks.removeCommittedEdges }));
 vi.mock("element-plus", () => ({ ElMessage: { error: mocks.messageError } }));
 vi.mock("./settingsConflict", () => ({
   isSettingsConflict: (error: unknown) =>
@@ -50,6 +54,45 @@ describe("useNodeSettings.saveSettings", () => {
     expect(onBeforeSave).not.toHaveBeenCalled();
     expect(mocks.updateSettings).not.toHaveBeenCalled();
   });
+
+  it.each(["saveSettings", "pushNodeData"] as const)(
+    "%s batches invalidated edges with settings, but preserves them on refusal",
+    async (method) => {
+      const nodeRef = ref<NodeBase | null>(loadedNode());
+      const edge = {
+        id: "stale",
+        source: "4",
+        target: "5",
+        sourceHandle: "output-1",
+        targetHandle: "input-0",
+      };
+      const settings = useNodeSettings({
+        nodeRef,
+        getEdgesToDrop: () => [edge],
+      });
+      expect(await settings[method]()).toBe(true);
+      expect(mocks.updateSettings).toHaveBeenCalledWith(
+        nodeRef,
+        undefined,
+        expect.objectContaining({
+          operations: [expect.objectContaining({ op: "delete_connection" })],
+        }),
+      );
+      expect(mocks.removeCommittedEdges).toHaveBeenCalledWith(mocks.removeEdges, ["stale"]);
+      mocks.removeCommittedEdges.mockClear();
+      mocks.updateSettings.mockRejectedValueOnce(new Error("Save failed"));
+      expect(await settings.saveSettings()).toBe(false);
+      expect(mocks.removeCommittedEdges).not.toHaveBeenCalled();
+      mocks.updateSettings.mockClear();
+      const refused = useNodeSettings({
+        nodeRef,
+        getEdgesToDrop: () => [edge],
+        onBeforeSave: () => false,
+      });
+      expect(await refused.saveSettings()).toBe(false);
+      expect(mocks.updateSettings).not.toHaveBeenCalled();
+    },
+  );
 
   it("saves a loaded node and marks it set up", async () => {
     const nodeRef = ref<NodeBase | null>(loadedNode());

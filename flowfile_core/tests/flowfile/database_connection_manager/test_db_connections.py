@@ -1,5 +1,8 @@
 import pytest
 from pydantic import SecretStr
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL
+from sqlalchemy.orm import sessionmaker
 
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -15,7 +18,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_database_connection,
     update_cloud_connection,
 )
-from flowfile_core.database.models import Secret
+from flowfile_core.database.models import Base, CloudStorageConnection, Secret, User
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
@@ -357,3 +360,59 @@ class TestAwsProfileAndSessionTokenPersistence:
         assert worker_interface.aws_profile == "analytics"
         assert worker_interface.aws_session_token.startswith(f"$ffsec$1${self.user_id}$")
         assert decrypt_secret(worker_interface.aws_session_token).get_secret_value() == "token-1"
+
+
+@pytest.fixture()
+def postgres_catalog():
+    """A fresh catalog in a scratch database on the Postgres the suite's fixtures reach; skips without one.
+
+    SQLite never enforces the foreign keys from a connection to its secrets, so only a Postgres run shows the
+    order in which the delete must drop them. The database is created and dropped here, so nothing of the
+    sample data in the fixture's own database is touched.
+    """
+    from test_utils.postgres import fixtures as pg_fixtures
+
+    if not pg_fixtures.can_connect_to_db():
+        pytest.skip("Postgres fixture is not available")
+    server_url = URL.create(
+        "postgresql+psycopg2",
+        username=pg_fixtures.POSTGRES_USER,
+        password=pg_fixtures.POSTGRES_PASSWORD,
+        host=pg_fixtures.POSTGRES_HOST,
+        port=pg_fixtures.POSTGRES_PORT,
+        database=pg_fixtures.POSTGRES_DB,
+    )
+    scratch = "flowfile_catalog_test"
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {scratch} WITH (FORCE)"))
+        conn.execute(text(f"CREATE DATABASE {scratch}"))
+    engine = create_engine(server_url.set(database=scratch))
+    try:
+        Base.metadata.create_all(engine)
+        yield sessionmaker(bind=engine)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f"DROP DATABASE IF EXISTS {scratch} WITH (FORCE)"))
+        admin.dispose()
+
+
+def test_delete_cloud_connection_on_postgres_removes_the_row_and_its_secrets(postgres_catalog, cloud_connection):
+    """On Postgres the connection row references its secrets, so the row must go before they do."""
+    with postgres_catalog() as db:
+        owner = User(username="owner", email="owner@example.com", hashed_password="unused")
+        db.add(owner)
+        db.commit()
+        user_id = owner.id
+        stored = store_cloud_connection(db, cloud_connection, user_id)
+        connection_id, secret_id = stored.id, stored.aws_secret_access_key_id
+        assert secret_id is not None
+
+    with postgres_catalog() as db:
+        delete_cloud_connection(db, cloud_connection.connection_name, user_id)
+
+    with postgres_catalog() as db:
+        assert db.get(CloudStorageConnection, connection_id) is None
+        assert db.get(Secret, secret_id) is None
+        assert get_cloud_connection(db, cloud_connection.connection_name, user_id) is None

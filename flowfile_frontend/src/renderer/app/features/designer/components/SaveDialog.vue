@@ -14,45 +14,59 @@
       <aside class="save-dialog-sidebar">
         <button
           class="sidebar-btn"
-          :class="{ active: saveMode === 'file' }"
+          :class="{ active: shownMode === 'file' }"
           @click="saveMode = 'file'"
         >
           <i class="fa-solid fa-folder"></i>
           <span>File System</span>
         </button>
         <button
+          v-if="ownCatalogOffered"
           class="sidebar-btn"
-          :class="{ active: saveMode === 'catalog' }"
+          :class="{ active: shownMode === 'catalog' }"
           @click="saveMode = 'catalog'"
         >
           <i class="fa-solid fa-book"></i>
           <span>Catalog</span>
         </button>
+        <button
+          v-else
+          class="sidebar-btn"
+          data-testid="save-dialog-publish"
+          @click="publishInstead"
+        >
+          <i class="fa-solid fa-cloud-arrow-up"></i>
+          <span>Publish to hub…</span>
+        </button>
       </aside>
 
       <section class="save-dialog-main">
         <!-- File System tab -->
-        <div v-show="saveMode === 'file'" class="save-panel">
+        <div v-show="shownMode === 'file'" class="save-panel">
           <file-browser
             ref="fileBrowserRef"
             :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
             mode="create"
             context="flows"
             :initial-file-path="initialPath"
-            :is-visible="isVisible && saveMode === 'file'"
+            :is-visible="isVisible && shownMode === 'file'"
             :default-new-file-name="defaultSaveFileName"
             dense
             @create-file="handleSaveFlow"
             @overwrite-file="handleSaveFlow"
           />
           <catalog-register-row
+            v-if="ownCatalogOffered"
             v-model="registerInCatalog"
             v-model:namespace-id="selectedNamespaceId"
           />
+          <span v-else class="form-hint" data-testid="own-catalog-note">
+            {{ OWN_CATALOG_NOT_OFFERED }}
+          </span>
         </div>
 
         <!-- Catalog tab -->
-        <div v-show="saveMode === 'catalog'" class="save-panel">
+        <div v-show="shownMode === 'catalog'" class="save-panel">
           <div class="catalog-save-form">
             <div class="form-group">
               <label>Browse the catalog</label>
@@ -105,7 +119,7 @@
       <div class="dialog-footer">
         <el-button @click="isVisible = false">Cancel</el-button>
         <el-button
-          v-if="saveMode === 'catalog'"
+          v-if="shownMode === 'catalog'"
           type="primary"
           :disabled="!canSaveToCatalog"
           @click="handleCatalogSave"
@@ -136,6 +150,8 @@ import CatalogFlowPicker from "./CatalogFlowPicker.vue";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import type { FlowRegistration } from "../../../types";
 import { catalogSaveErrorMessage } from "../../../composables/saveError";
+import { useOwnCatalog } from "../../../composables/useOwnCatalog";
+import { OWN_CATALOG_NOT_OFFERED } from "../../../views/CatalogView/hubRows";
 
 const props = defineProps({
   visible: {
@@ -148,7 +164,7 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(["save-complete", "save-cancelled", "update:visible"]);
+const emit = defineEmits(["save-complete", "save-cancelled", "update:visible", "publish"]);
 
 const isVisible = ref(props.visible);
 const initialPath = ref("");
@@ -171,6 +187,15 @@ function loadSaveMode(): "file" | "catalog" {
 const saveMode = ref<"file" | "catalog">(loadSaveMode());
 
 watch(saveMode, (m) => localStorage.setItem(DIALOG_MODE_STORAGE_KEY, m));
+
+// Where this Flowfile's own catalog takes no flows the dialog saves a file only, and the catalog is the hub's.
+const { ownCatalogOffered, refreshOwnCatalog } = useOwnCatalog();
+const shownMode = computed(() => (ownCatalogOffered.value ? saveMode.value : "file"));
+
+const publishInstead = () => {
+  isVisible.value = false;
+  emit("publish");
+};
 
 // Catalog options
 const registerInCatalog = ref(true);
@@ -244,6 +269,7 @@ const updateInitialPath = async () => {
   selectedRegistrationId.value = null;
   overwriteTargetHint.value = "";
   ownRegistrationId.value = null;
+  await refreshOwnCatalog();
 
   // Re-fetch the catalog listing every open — the dialog content persists
   // across open/close, so without this the picker shows the flow list as it
@@ -319,14 +345,12 @@ const handleSaveFlow = async (flowPath: string) => {
   try {
     // Unchecking must actually opt out: an undefined namespace_id alone still
     // routes into auto-registration on the backend.
-    const namespaceId = registerInCatalog.value ? selectedNamespaceId.value : undefined;
-    const newFlowId = await saveFlow(
-      props.flowId,
-      flowPath,
-      namespaceId ?? undefined,
-      registerInCatalog.value,
+    const registers = registerInCatalog.value && ownCatalogOffered.value;
+    const namespaceId = registers ? selectedNamespaceId.value : undefined;
+    const newFlowId = await saveFlow(props.flowId, flowPath, namespaceId ?? undefined, registers);
+    ElMessage.success(
+      ownCatalogOffered.value ? "Flow saved" : "Flow saved as a file on this server",
     );
-    ElMessage.success("Flow saved");
     isVisible.value = false;
     emit("save-complete", newFlowId || props.flowId);
   } catch (error: any) {

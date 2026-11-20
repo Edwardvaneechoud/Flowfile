@@ -5,13 +5,16 @@
   <span v-else-if="enabled" class="status-badge enabled">
     <i class="fa-solid fa-circle-check" /> Enabled
   </span>
-  <span v-else class="status-badge paused"> <i class="fa-solid fa-circle-pause" /> Disabled </span>
+  <span v-else class="status-badge paused" :title="reason ?? undefined">
+    <i class="fa-solid fa-circle-pause" /> Disabled<template v-if="reason">: {{ reason }}</template>
+  </span>
 </template>
 
 <script setup lang="ts">
 defineProps<{
   running: boolean;
   enabled: boolean;
+  reason?: string | null;
 }>();
 </script>
 

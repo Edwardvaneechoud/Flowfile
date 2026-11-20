@@ -94,6 +94,9 @@ class FullCloudStorageConnectionWorkerInterface(AuthSettingsInput):
     endpoint_url: str | None = None
     verify_ssl: bool = True
 
+    # What a hub vended to the run, sealed to its nodes (node name -> token); the node that runs the step opens it
+    sealed: dict[str, str] | None = None
+
 
 class FullCloudStorageConnection(AuthSettingsInput):
     """Internal model with decrypted secrets"""
@@ -123,6 +126,8 @@ class FullCloudStorageConnection(AuthSettingsInput):
     # Common
     endpoint_url: str | None = None
     verify_ssl: bool = True
+    # A connection a provider elsewhere keeps: no secret here, the run is granted them where the step runs
+    granted: bool = Field(default=False, exclude=True)
 
     def get_worker_interface(self, user_id: int) -> "FullCloudStorageConnectionWorkerInterface":
         """
@@ -175,6 +180,7 @@ class FullCloudStorageConnectionInterface(AuthSettingsInput):
     verify_ssl: bool = True
     id: int | None = None
     access: AccessInfo | None = None
+    source: Literal["local", "hub"] = "local"
 
 
 class CloudStorageSettings(BaseModel):

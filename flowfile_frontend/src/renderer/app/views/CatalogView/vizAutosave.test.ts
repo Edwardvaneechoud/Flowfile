@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildVizSaveBody, hashString, shouldCaptureThumbnail, vizDraftKey } from "./vizAutosave";
+import {
+  buildVizSaveBody,
+  chartTypeOf,
+  hashString,
+  shouldCaptureThumbnail,
+  vizDraftKey,
+} from "./vizAutosave";
 
 describe("hashString", () => {
   it("is stable for the same input", () => {
@@ -75,5 +81,35 @@ describe("buildVizSaveBody", () => {
       buildVizSaveBody(base, { reason: "debounce", thumbnail: null, expectedUpdatedAt: null })
         .expected_updated_at,
     ).toBeUndefined();
+  });
+});
+
+describe("chartTypeOf", () => {
+  const chart = (geom: string, rows: object[] = [], columns: object[] = []) => ({
+    config: { geoms: [geom], defaultAggregated: true },
+    layout: {},
+    encodings: { rows, columns, color: [], text: [] },
+  });
+  const region = { fid: "region", analyticType: "dimension", semanticType: "nominal" };
+  const amount = { fid: "amount", analyticType: "measure", semanticType: "quantitative" };
+
+  it("is the first tab's mark, or the one the automatic mark draws", () => {
+    expect(chartTypeOf([chart("arc")])).toBe("arc");
+    expect(chartTypeOf([chart("auto", [region], [amount])])).toBe("bar");
+  });
+
+  it("is null for an empty or unreadable spec", () => {
+    expect(chartTypeOf([])).toBeNull();
+    expect(chartTypeOf(null)).toBeNull();
+    expect(chartTypeOf([chart("auto")])).toBeNull();
+    expect(chartTypeOf([{ a: 1 }])).toBeNull();
+  });
+
+  it("rides along with every autosave", () => {
+    const body = buildVizSaveBody(
+      { name: "Revenue", spec: [chart("line")] },
+      { reason: "debounce", thumbnail: null, expectedUpdatedAt: null },
+    );
+    expect(body.chart_type).toBe("line");
   });
 });

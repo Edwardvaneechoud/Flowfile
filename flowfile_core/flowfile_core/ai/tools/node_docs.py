@@ -1115,7 +1115,9 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "connection, write a SQL query. Pitfall: don't confuse with "
         "'SQL Query' — that runs Polars SQL against upstream nodes; "
         "this issues a real network query against a remote database "
-        "via the saved connection."
+        "via the saved connection. A Snowflake connection also shows a "
+        "'Database' dropdown above 'Schema' (setting database_name); "
+        "empty means the connection's default database."
     ),
     "database_writer": (
         "Settings panel: 'Connection', 'Table' (target), and a 'Mode' "
@@ -1125,7 +1127,9 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "connection, target table=clean_orders, mode=replace. Pitfall: "
         "'replace' drops the existing table — make sure the column "
         "schema upstream matches the target's expected types, casting "
-        "upstream with 'Formula' or 'Select data' if needed."
+        "upstream with 'Formula' or 'Select data' if needed. A Snowflake "
+        "connection also shows a 'Database' dropdown (setting "
+        "database_name); a database needs a schema too."
     ),
     "cloud_storage_reader": (
         "Settings panel: a 'Cloud connection' dropdown (S3 / GCS / Azure), "
@@ -1193,8 +1197,10 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "array), 'Headers' / 'Query parameters', an 'Authentication' type (None / API "
         "key / Bearer / Basic) backed by a reusable secret from the Secrets manager, "
         "and a 'Pagination' strategy (Offset / Page / Cursor); 'Fetch sample' previews "
-        "the columns. Pitfalls: the credential is a named secret (not typed inline), "
-        "JSON only, and set 'Record path' (e.g. data.items) for nested payloads."
+        "the columns. A cursor path can index lists (data.-1._id = last record's _id) "
+        "and, for POST, 'Send cursor as' a JSON body field (keyset paging). Pitfalls: "
+        "the credential is a named secret (not typed inline), JSON only, and set "
+        "'Record path' (e.g. data.items) for nested payloads."
     ),
     "external_source": (
         "Settings panel: depends on the connector — each external "

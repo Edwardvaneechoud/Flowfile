@@ -1,4 +1,4 @@
-"""DB-backed projection determinism + import round-trip + hook isolation.
+"""DB-backed projection determinism + import round-trip.
 
 Uses the session test DB and the real store functions. Each test sets up and
 tears down its own project + resources so the project_sync singleton never
@@ -30,6 +30,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.project import project_sync, projection
+from flowfile_core.project.service import write_export
 from flowfile_core.schemas import input_schema, schemas
 from shared.storage_config import storage
 
@@ -130,8 +131,7 @@ def test_projection_is_deterministic_and_secret_free(tmp_path, monkeypatch):
         project_sync.init_project(str(root), "Det Test", OWNER)
 
         snap1 = _snapshot(root)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert _snapshot(root) == snap1, "re-projecting unchanged DB must be byte-identical"
 
         conn_text = (root / "connections" / "database" / f"{conn}.yaml").read_text(encoding="utf-8")
@@ -146,8 +146,7 @@ def test_projection_is_deterministic_and_secret_free(tmp_path, monkeypatch):
         from flowfile_core.project.importer import import_project
 
         import_project(root, OWNER)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert _snapshot(root) == snap1, "project->import->project must round-trip"
     finally:
         _cleanup([conn], [flow_uuid])
@@ -235,6 +234,8 @@ def test_commit_only_stages_managed_paths(tmp_path):
             "connections/",
             "schedules/",
             "notebooks/",
+            "visualizations/",
+            "dashboards/",
         )
         managed_root_files = {
             "project.yaml",
@@ -244,8 +245,6 @@ def test_commit_only_stages_managed_paths(tmp_path):
             "tables.yaml",
             "models.yaml",
             "kernels.yaml",
-            "visualizations.yaml",
-            "dashboards.yaml",
         }
         for path in committed_paths:
             is_managed = path in managed_root_files or any(path.startswith(p) for p in managed_prefixes)
@@ -308,29 +307,6 @@ def test_init_commit_excludes_unmanaged_files(tmp_path):
     assert "flows/a.flow.yaml" in committed, "managed flows/ file must be committed"
 
 
-def test_projection_failure_does_not_break_the_primary_operation(tmp_path, monkeypatch):
-    project_sync.close_project(OWNER)
-    seed = "proj_db_seed"
-    _make_connection(seed, "pw")
-    root = tmp_path / "project"
-    project_sync.init_project(str(root), "Isolation Test", OWNER)
-    conn = "proj_db_isolation"
-    try:
-        with get_db_context() as db:
-            delete_database_connection(db, conn, OWNER)
-
-        def _boom(*args, **kwargs):
-            raise RuntimeError("projection blew up")
-
-        monkeypatch.setattr(projection, "project_database_connection", _boom)
-        # The hook fires inside store_database_connection; it must swallow the error.
-        _make_connection(conn, "pw2")
-        with get_db_context() as db:
-            assert get_database_connection(db, conn, OWNER) is not None
-    finally:
-        _cleanup([seed, conn], [])
-
-
 def test_init_and_save_version_create_git_history(tmp_path):
     from flowfile_core.project import git_ops
 
@@ -345,25 +321,13 @@ def test_init_and_save_version_create_git_history(tmp_path):
         assert git_ops.is_repo(root)
         assert len(git_ops.log(root)) >= 1
 
-        # A new connection projects automatically; "Save version" commits it.
+        # "Save version" writes the new connection and commits it.
         _make_connection("proj_db_git2", "pw2")
         sha = project_sync.save_version(OWNER, "Add second connection")
         assert sha
         assert len(git_ops.log(root)) >= 2
     finally:
         _cleanup([conn, "proj_db_git2"], [])
-
-
-def test_no_op_when_no_active_project(monkeypatch):
-    project_sync.close_project(OWNER)
-    assert project_sync.get_active_project(OWNER) is None
-
-    def _boom(*args, **kwargs):
-        raise AssertionError("projection must not run without an active project")
-
-    monkeypatch.setattr(projection, "project_flow", _boom)
-    # No active project -> hook returns immediately, never touching projection.
-    project_sync.flow_saved("/some/path.flow.yaml", OWNER)
 
 
 # --- churn / naming-stability regressions (the reported bug) ------------------
@@ -427,6 +391,13 @@ def _make_flow_in_namespace(
         db.commit()
         db.refresh(reg)
         return reg.flow_uuid, sch.id, cat.id
+
+
+def _unlink_projected_flow(root: Path, flow_uuid: str) -> None:
+    """Drop one flow's projected file, as a version without that flow (but with others) would look."""
+    for p in (root / "flows").glob("*.flow.yaml"):
+        if (yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("flow_uuid") == flow_uuid:
+            p.unlink()
 
 
 def _cleanup_custom_namespaces(catalog_names: list[str]) -> None:
@@ -496,15 +467,13 @@ def test_namespaced_flow_projection_round_trips_byte_identical(tmp_path):
     try:
         project_sync.init_project(str(root), "Det NS Test", OWNER)
         snap1 = snap()
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert snap() == snap1, "re-projecting an unchanged namespaced flow must be byte-identical"
 
         from flowfile_core.project.importer import import_project
 
         import_project(root, OWNER)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert snap() == snap1, "project->import->project must round-trip with a namespaced flow"
     finally:
         _delete_flow(flow_uuid)
@@ -515,14 +484,15 @@ def test_namespaced_flow_projection_round_trips_byte_identical(tmp_path):
 def test_reload_prunes_emptied_custom_namespace(tmp_path):
     project_sync.close_project(OWNER)
     flow_uuid, _, _ = _make_flow_in_namespace(tmp_path, "del_flow", "DelCat", "DelSchema")
+    # A version that keeps another flow: a flows folder with no file at all is not pruned.
+    keep_uuid = _make_flow_named(tmp_path, "del_keep_flow", "del_keep_flow", flow_id=424243)
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Del Test", OWNER)
         assert (root / "flows" / "del_flow.flow.yaml").exists()
 
         # Simulate restoring a version that no longer has the flow or its custom namespace.
-        for p in (root / "flows").glob("*.flow.yaml"):
-            p.unlink()
+        _unlink_projected_flow(root, flow_uuid)
         from flowfile_core.project.normalize import write_yaml
 
         write_yaml(root / "namespaces.yaml", {"namespaces": []})
@@ -533,42 +503,15 @@ def test_reload_prunes_emptied_custom_namespace(tmp_path):
             assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None
             assert db.query(CatalogNamespace).filter_by(name="DelSchema").first() is None
             assert db.query(CatalogNamespace).filter_by(name="DelCat", parent_id=None).first() is None
-            # Seeded public namespaces are never pruned.
+            # The built-in namespaces are never pruned.
             general = db.query(CatalogNamespace).filter_by(name="General", parent_id=None).first()
             assert general is not None
             assert db.query(CatalogNamespace).filter_by(name="Local Flows", parent_id=general.id).first() is not None
+            assert db.query(FlowRegistration).filter_by(flow_uuid=keep_uuid).first() is not None
     finally:
         _delete_flow(flow_uuid)
+        _delete_flow(keep_uuid)
         _cleanup_custom_namespaces(["DelCat"])
-        project_sync.close_project(OWNER)
-
-
-def test_namespace_hook_updates_manifest_under_active_project(tmp_path):
-    project_sync.close_project(OWNER)
-    root = tmp_path / "project"
-    ns_file = root / "namespaces.yaml"
-
-    def catalogs() -> dict:
-        return {c["catalog"]: c for c in yaml.safe_load(ns_file.read_text(encoding="utf-8"))["namespaces"]}
-
-    try:
-        project_sync.init_project(str(root), "Hook Test", OWNER)
-        assert "General" in catalogs() and "HookCat" not in catalogs()
-
-        with get_db_context() as db:
-            svc = CatalogService(SQLAlchemyCatalogRepository(db))
-            cat_id = svc.create_namespace(name="HookCat", owner_id=OWNER).id
-            svc.create_namespace(name="HookSchema", owner_id=OWNER, parent_id=cat_id).id
-        assert {s["name"] for s in catalogs()["HookCat"]["schemas"]} == {"HookSchema"}
-
-        with get_db_context() as db:
-            svc = CatalogService(SQLAlchemyCatalogRepository(db))
-            schema_id = svc.repo.get_namespace_by_name("HookSchema", cat_id).id
-            svc.delete_namespace(schema_id)
-            svc.delete_namespace(cat_id)
-        assert "HookCat" not in catalogs() and "General" in catalogs()  # seeded untouched
-    finally:
-        _cleanup_custom_namespaces(["HookCat"])
         project_sync.close_project(OWNER)
 
 
@@ -587,6 +530,7 @@ def test_flow_move_reprojects_namespace(tmp_path):
             reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
             svc.update_flow(registration_id=reg.id, requesting_user_id=OWNER, namespace_id=schema_b_id)
 
+        project_sync.save_version(OWNER, "move")
         doc = yaml.safe_load((root / "flows" / "mv_flow.flow.yaml").read_text(encoding="utf-8"))
         assert doc["namespace"] == {"catalog": "MoveCat", "schema": "SchemaB"}
     finally:
@@ -608,8 +552,7 @@ def test_public_namespace_recreated_on_import(tmp_path):
             for nm in ("DemoCat", "demo_schema"):
                 db.query(CatalogNamespace).filter_by(name=nm).first().is_public = True
             db.commit()
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         cats = {c["catalog"]: c for c in yaml.safe_load((root / "namespaces.yaml").read_text(encoding="utf-8"))["namespaces"]}
         assert cats["DemoCat"]["is_public"] is True
 
@@ -936,8 +879,7 @@ def test_table_projection_deterministic_and_stub_free(tmp_path):
         assert "row_count" not in entry and "size_bytes" not in entry and "file_path" not in entry
 
         snap1 = _snapshot(root)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert _snapshot(root) == snap1, "re-projecting an unchanged table must be byte-identical"
     finally:
         _delete_tables_by_name(name)
@@ -1135,12 +1077,13 @@ def test_prune_removes_flow_with_its_artifact(tmp_path):
     flow_uuid, schema_id, _ = _make_flow_in_namespace(tmp_path, f"ord_flow_{uuid4().hex[:6]}", "OrdCat", "OrdSchema")
     _, table_dir = _make_table(name, namespace_id=schema_id)
     _make_artifact(model, _reg_id(flow_uuid))
+    # A version that keeps another flow: a flows folder with no file at all is not pruned.
+    keep_uuid = _make_flow_named(tmp_path, "ord_keep_flow", "ord_keep_flow", flow_id=424243)
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Ord Test", OWNER)
-        # Restore to an empty version: flow + its artifact + table + custom namespace all removed.
-        for p in (root / "flows").glob("*.flow.yaml"):
-            p.unlink()
+        # Restore to a version without the flow: flow + its artifact + table + custom namespace removed.
+        _unlink_projected_flow(root, flow_uuid)
         write_yaml(root / "tables.yaml", {"tables": []})
         write_yaml(root / "models.yaml", {"models": []})
         write_yaml(root / "namespaces.yaml", {"namespaces": []})
@@ -1158,49 +1101,8 @@ def test_prune_removes_flow_with_its_artifact(tmp_path):
         _delete_tables_by_name(name)
         _delete_artifacts(model)
         _delete_flow(flow_uuid)
+        _delete_flow(keep_uuid)
         _cleanup_custom_namespaces(["OrdCat"])
-        project_sync.close_project(OWNER)
-
-
-def test_table_and_model_hooks_and_failure_isolation(tmp_path, monkeypatch):
-    from flowfile_core.artifacts import get_storage_backend
-    from flowfile_core.artifacts.service import ArtifactService
-
-    project_sync.close_project(OWNER)
-    name = f"hook_tbl_{uuid4().hex[:6]}"
-    model = f"hook_mdl_{uuid4().hex[:6]}"
-    flow_uuid, _ = _make_flow(tmp_path, f"hook_flow_{uuid4().hex[:6]}")
-    root = tmp_path / "project"
-    try:
-        project_sync.init_project(str(root), "Hook Test", OWNER)
-
-        # Table create/delete hooks add then drop the entry.
-        _make_table(name)
-        assert name in _tables_yaml(root)
-        _delete_table_row_only(name)
-        assert name not in _tables_yaml(root)
-
-        # Model finalize/delete hooks: simulate finalize via the service hook, then delete via the service.
-        _make_artifact(model, _reg_id(flow_uuid))
-        project_sync.artifacts_changed(OWNER)
-        assert (model, 1) in _models_yaml(root)
-        with get_db_context() as db:
-            ArtifactService(db, get_storage_backend()).delete_all_versions(model)
-        assert (model, 1) not in _models_yaml(root)
-
-        # A projection failure must never break the primary mutation.
-        def _boom(*_args, **_kwargs):
-            raise RuntimeError("projection boom")
-
-        monkeypatch.setattr(projection, "regenerate_tables_manifest", _boom)
-        _make_table(f"{name}_2")
-        with get_db_context() as db:
-            assert SQLAlchemyCatalogRepository(db).get_table_by_name(f"{name}_2", None) is not None
-    finally:
-        _delete_tables_by_name(name)
-        _delete_tables_by_name(f"{name}_2")
-        _delete_artifacts(model)
-        _delete_flow(flow_uuid)
         project_sync.close_project(OWNER)
 
 
@@ -1226,71 +1128,42 @@ def test_namespace_resolver_by_full_name(tmp_path):
         _cleanup_custom_namespaces(["ResCat"])
 
 
-def test_strip_node_namespace_ids_only_when_name_present():
-    from flowfile_core.project.normalize import _strip_node_namespace_ids
-
-    data = {
-        "nodes": [
-            {
-                "id": 1,
-                "type": "catalog_writer",
-                "catalog_write_settings": {
-                    "table_name": "t",
-                    "namespace_id": 6,
-                    "namespace_full_name": "Demo.sales_analytics",
-                },
-            },
-            {
-                "id": 2,
-                "type": "train_model",
-                "train_input": {"model_name": "m", "namespace_id": 7, "namespace_full_name": "Demo.market"},
-            },
-            {"id": 3, "type": "apply_model", "apply_input": {"model_name": "m", "namespace_id": 9}},
-            {"id": 4, "type": "manual_input"},
-        ]
-    }
-    _strip_node_namespace_ids(data)
-    writer = data["nodes"][0]["catalog_write_settings"]
-    assert writer["namespace_full_name"] == "Demo.sales_analytics" and writer["namespace_id"] is None
-    train = data["nodes"][1]["train_input"]
-    assert train["namespace_full_name"] == "Demo.market" and train["namespace_id"] is None
-    # No portable name → the (possibly stale) id is left untouched, never rewritten.
-    apply = data["nodes"][2]["apply_input"]
-    assert apply["namespace_id"] == 9 and "namespace_full_name" not in apply
-
-
 def test_flow_writer_projects_portable_namespace(tmp_path):
     project_sync.close_project(OWNER)
     flow_uuid, schema_id, _ = _make_flow_in_namespace(tmp_path, "wr_flow", "WrCat", "WrSchema")
     root = tmp_path / "project"
-    # Inject a catalog_writer node carrying the portable name (as the editor now stores) + the id.
+    # One writer carrying the portable name and the id, one with only the id, as the app writes them.
     with get_db_context() as db:
         flow_path = Path(db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first().flow_path)
     doc = yaml.safe_load(flow_path.read_text(encoding="utf-8"))
-    doc["nodes"].append(
-        {
-            "id": 99,
-            "type": "catalog_writer",
-            "catalog_write_settings": {
-                "table_name": "out_tbl",
-                "namespace_id": schema_id,
-                "namespace_full_name": "WrCat.WrSchema",
-                "write_mode": "overwrite",
-            },
-        }
-    )
+    for node_id, full_name in ((99, "WrCat.WrSchema"), (98, None)):
+        doc["nodes"].append(
+            {
+                "id": node_id,
+                "type": "catalog_writer",
+                "setting_input": {
+                    "catalog_write_settings": {
+                        "table_name": "out_tbl",
+                        "namespace_id": schema_id,
+                        "namespace_full_name": full_name,
+                        "write_mode": "overwrite",
+                    }
+                },
+            }
+        )
     flow_path.write_text(yaml.safe_dump(doc), encoding="utf-8")
     try:
         project_sync.init_project(str(root), "Writer NS", OWNER)
         projected = yaml.safe_load((root / "flows" / "wr_flow.flow.yaml").read_text(encoding="utf-8"))
-        writer = next(n for n in projected["nodes"] if n["type"] == "catalog_writer")
-        ws = writer["catalog_write_settings"]
-        assert ws["namespace_full_name"] == "WrCat.WrSchema"  # portable name preserved
-        assert ws["namespace_id"] is None  # install-local id dropped
+        nodes = projected["nodes"]
+        writers = [n["setting_input"]["catalog_write_settings"] for n in nodes if n["type"] == "catalog_writer"]
+        assert len(writers) == 2
+        for ws in writers:
+            assert ws["namespace_full_name"] == "WrCat.WrSchema"
+            assert ws["namespace_id"] is None
 
         snap1 = _snapshot(root)
-        with get_db_context() as db:
-            projection.project_all(db, root, OWNER)
+        write_export(root, OWNER)
         assert _snapshot(root) == snap1, "re-projection with a writer node must be byte-identical"
     finally:
         _delete_flow(flow_uuid)
@@ -1361,3 +1234,222 @@ def test_cloud_connection_profile_and_session_token_round_trip(tmp_path):
         with get_db_context() as db:
             for name in (cli, key):
                 delete_cloud_connection(db, name, OWNER)
+
+
+def _schedule_backends(flow_uuid: str) -> list[str | None]:
+    with get_db_context() as db:
+        reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+        return [s.backend for s in db.query(FlowSchedule).filter_by(registration_id=reg.id).all()]
+
+
+def test_a_schedule_s_backend_round_trips_and_an_unset_one_writes_no_key(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    flow_uuid, flow_name = _make_flow(tmp_path, "proj_flow_backend")
+    _make_schedule(flow_uuid)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Backend Test", OWNER)
+        schedule_file = root / "schedules" / f"{flow_name}.yaml"
+        assert "backend" not in yaml.safe_load(schedule_file.read_text())["schedules"][0]
+
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+            db.query(FlowSchedule).filter_by(registration_id=reg.id).one().backend = "worker:team"
+            db.commit()
+            write_export(root, OWNER)
+        assert yaml.safe_load(schedule_file.read_text())["schedules"][0]["backend"] == "worker:team"
+        snap = _snapshot(root)
+
+        import_project(root, OWNER)
+        assert _schedule_backends(flow_uuid) == ["worker:team"]
+        write_export(root, OWNER)
+        assert _snapshot(root) == snap
+    finally:
+        _cleanup([], [flow_uuid])
+
+
+def test_a_schedule_file_without_a_backend_imports_null(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    flow_uuid, flow_name = _make_flow(tmp_path, "proj_flow_no_backend")
+    _make_schedule(flow_uuid)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "No Backend Test", OWNER)
+        with get_db_context() as db:
+            reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+            db.query(FlowSchedule).filter_by(registration_id=reg.id).one().backend = "worker:team"
+            db.commit()
+        schedule_file = root / "schedules" / f"{flow_name}.yaml"
+        assert "backend" not in yaml.safe_load(schedule_file.read_text())["schedules"][0]
+
+        import_project(root, OWNER)
+        assert _schedule_backends(flow_uuid) == [None]
+    finally:
+        _cleanup([], [flow_uuid])
+
+
+def _snowflake_key_pem() -> str:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+
+
+def _make_snowflake_connection(name: str, auth_method: str, secret: str) -> None:
+    with get_db_context() as db:
+        store_database_connection(
+            db,
+            input_schema.FullDatabaseConnection(
+                connection_name=name,
+                database_type="snowflake",
+                username="" if auth_method == "oauth" else "ETL_USER",
+                password=secret,
+                host="https://app.snowflake.com/myorg/myaccount/worksheets",
+                database="SALES",
+                auth_method=auth_method,
+                role="ANALYST",
+                warehouse="COMPUTE_WH",
+            ),
+            OWNER,
+        )
+
+
+def _stored_secret(name: str) -> str:
+    from flowfile_core.database.models import Secret
+    from flowfile_core.secret_manager.secret_manager import decrypt_secret
+
+    with get_db_context() as db:
+        row = get_database_connection(db, name, OWNER)
+        secret = db.query(Secret).filter(Secret.id == row.password_id).first()
+        return decrypt_secret(secret.encrypted_value).get_secret_value()
+
+
+def _stored_fields(name: str) -> dict:
+    with get_db_context() as db:
+        row = get_database_connection(db, name, OWNER)
+        return {
+            "database_type": row.database_type,
+            "host": row.host,
+            "port": row.port,
+            "username": row.username,
+            "database": row.database,
+            "auth_method": row.auth_method,
+            "role": row.role,
+            "warehouse": row.warehouse,
+        }
+
+
+def test_postgres_connection_file_is_unchanged_by_the_snowflake_fields(tmp_path):
+    project_sync.close_project(OWNER)
+    conn = "proj_db_pg_shape"
+    _make_connection(conn, "pw")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Postgres Shape", OWNER)
+        text = (root / "connections" / "database" / f"{conn}.yaml").read_text(encoding="utf-8")
+        assert yaml.safe_load(text) == {
+            "kind": "database_connection",
+            "connection_name": conn,
+            "database_type": "postgresql",
+            "host": "db.internal",
+            "port": 5432,
+            "database": "sales",
+            "username": "etl_reader",
+            "ssl_enabled": True,
+            "password": "${secret:" + conn + "}",
+        }
+        assert list(yaml.safe_load(text)) == [
+            "kind",
+            "connection_name",
+            "database_type",
+            "host",
+            "port",
+            "database",
+            "username",
+            "ssl_enabled",
+            "password",
+        ]
+    finally:
+        _cleanup([conn], [])
+
+
+def test_snowflake_connections_round_trip_for_every_sign_in_method(tmp_path, monkeypatch):
+    project_sync.close_project(OWNER)
+    sign_ins = {
+        "proj_sf_token": ("access_token", "pat-token-value"),
+        "proj_sf_key": ("key_pair", _snowflake_key_pem()),
+        "proj_sf_oauth": ("oauth", "refresh-token-value"),
+    }
+    for name, (method, secret) in sign_ins.items():
+        _make_snowflake_connection(name, method, secret)
+    before = {name: (_stored_fields(name), _stored_secret(name)) for name in sign_ins}
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Snowflake Round Trip", OWNER)
+        snap = _snapshot(root)
+        for name, (method, secret) in sign_ins.items():
+            text = (root / "connections" / "database" / f"{name}.yaml").read_text(encoding="utf-8")
+            data = yaml.safe_load(text)
+            assert data["host"] == "myorg-myaccount.snowflakecomputing.com"
+            assert data["auth_method"] == method
+            assert data["role"] == "ANALYST"
+            assert data["warehouse"] == "COMPUTE_WH"
+            assert data["password"] == "${secret:" + name + "}"
+            assert before[name][1] not in text
+        assert before["proj_sf_key"][1] != sign_ins["proj_sf_key"][1], "the key is stored normalised"
+
+        project_sync.close_project(OWNER)
+        for name in sign_ins:
+            with get_db_context() as db:
+                delete_database_connection(db, name, OWNER)
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_TOKEN", sign_ins["proj_sf_token"][1])
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_KEY", before["proj_sf_key"][1])
+        monkeypatch.setenv("FLOWFILE_SECRET_PROJ_SF_OAUTH", sign_ins["proj_sf_oauth"][1])
+        from flowfile_core.project.importer import import_project
+
+        result = import_project(root, OWNER)
+        assert result.imported_connections >= 3
+        for name in sign_ins:
+            assert (_stored_fields(name), _stored_secret(name)) == before[name]
+
+        write_export(root, OWNER)
+        assert _snapshot(root) == snap, "project -> import -> project must round-trip"
+    finally:
+        _cleanup(list(sign_ins), [])
+
+
+def test_snowflake_connection_imported_without_its_secret_fails_at_use(tmp_path, monkeypatch):
+    from shared.db_dialects.snowflake import SnowflakeDialect
+
+    project_sync.close_project(OWNER)
+    conn = "proj_sf_nosecret"
+    _make_snowflake_connection(conn, "access_token", "pat-token-value")
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Snowflake Missing Secret", OWNER)
+        project_sync.close_project(OWNER)
+        with get_db_context() as db:
+            delete_database_connection(db, conn, OWNER)
+        monkeypatch.delenv("FLOWFILE_SECRET_PROJ_SF_NOSECRET", raising=False)
+        from flowfile_core.project.importer import import_project
+
+        result = import_project(root, OWNER)
+        assert conn in result.placeholder_secrets
+        fields = _stored_fields(conn)
+        assert fields["auth_method"] == "access_token"
+        assert _stored_secret(conn) == ""
+
+        uri = SnowflakeDialect().build_uri(
+            host=fields["host"], username=fields["username"], password="", auth=fields["auth_method"]
+        )
+        with pytest.raises(ValueError, match="no credential saved"):
+            SnowflakeDialect()._connect(uri)
+    finally:
+        _cleanup([conn], [])

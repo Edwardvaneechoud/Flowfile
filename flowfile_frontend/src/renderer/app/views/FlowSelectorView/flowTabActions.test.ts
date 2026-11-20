@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeCloseTargets, tabMenuOptions } from "./flowTabActions";
+import { computeCloseTargets, tabMenuOptions, withSettings } from "./flowTabActions";
 
 const ids = [10, 20, 30, 40];
 
@@ -87,5 +87,20 @@ describe("tabMenuOptions", () => {
     expect(disabledOf(opts, "close-others")).toBe(true);
     expect(disabledOf(opts, "close-left")).toBe(true);
     expect(disabledOf(opts, "close-right")).toBe(true);
+  });
+});
+
+describe("withSettings", () => {
+  const tab = {
+    flow_id: 1,
+    name: "f",
+    has_unsaved_changes: false,
+    save_note: null as string | null,
+  };
+
+  it("marks a tab with the catalog's note and clears it once the catalog sends none", () => {
+    const noted = withSettings(tab, { has_unsaved_changes: true, save_note: "Draft on the hub." });
+    expect(noted).toEqual({ ...tab, has_unsaved_changes: true, save_note: "Draft on the hub." });
+    expect(withSettings(noted, { has_unsaved_changes: false }).save_note).toBeNull();
   });
 });

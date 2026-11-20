@@ -54,13 +54,6 @@ logger = logging.getLogger(__name__)
 REFERENCE_SEPARATOR = "::"
 
 
-def _project_sync_artifacts(owner_id: int) -> None:
-    """Mirror an artifact finalize/delete into the active project's models.yaml (no-op when none active)."""
-    from flowfile_core.project import project_sync
-
-    project_sync.artifacts_changed(owner_id)
-
-
 class ArtifactService:
     """Coordinates all artifact business logic.
 
@@ -315,7 +308,6 @@ class ArtifactService:
         artifact.sha256 = sha256
         artifact.size_bytes = verified_size
         self.db.commit()
-        _project_sync_artifacts(artifact.owner_id)
 
         return FinalizeUploadResponse(
             status="ok",
@@ -668,10 +660,8 @@ class ArtifactService:
             if not force and artifact.version > max(s.version for s in siblings):
                 raise CannotDeleteLatestVersionError(artifact.id, artifact.name, artifact.version)
 
-        owner_id = artifact.owner_id
         self._delete_row(artifact)
         self.db.commit()
-        _project_sync_artifacts(owner_id)
 
         return 1
 
@@ -765,7 +755,6 @@ class ArtifactService:
                 continue
 
             self.db.refresh(promoted)
-            _project_sync_artifacts(promoted.owner_id)
             return self._artifact_to_out(promoted, include_download=True)
 
         raise ArtifactUploadError(
@@ -812,11 +801,9 @@ class ArtifactService:
         if dry_run or not candidates:
             return ArtifactPruneResponse(would_delete=would_delete, freed_bytes=freed_bytes, deleted=0)
 
-        owner_id = candidates[0].owner_id
         for artifact in candidates:
             self._delete_row(artifact)
         self.db.commit()
-        _project_sync_artifacts(owner_id)
 
         return ArtifactPruneResponse(
             would_delete=would_delete,
@@ -857,14 +844,12 @@ class ArtifactService:
         for artifact in artifacts:
             self._require_manage(artifact)
 
-        owner_id = artifacts[0].owner_id
         count = 0
         for artifact in artifacts:
             self._delete_row(artifact)
             count += 1
 
         self.db.commit()
-        _project_sync_artifacts(owner_id)
         return count
 
     # ------------------------------------------------------------------ #

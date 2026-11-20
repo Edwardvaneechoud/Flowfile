@@ -25,7 +25,7 @@ const handleClick = (event: MouseEvent): void => {
 
 <template>
   <button
-    class="action-btn ai-trigger__pill"
+    class="header-btn action-btn ai-trigger__pill"
     :class="{ active: isOpen }"
     type="button"
     title="AI Assistant"
@@ -42,28 +42,9 @@ const handleClick = (event: MouseEvent): void => {
 </template>
 
 <style scoped>
+/* The header's button base is the shared .header-btn; only the pill's own letter-spacing stays here. */
 .action-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-primary);
-  background: var(--color-background-primary);
-  color: var(--color-text-primary);
-  font-size: 12px;
-  font-weight: 500;
   letter-spacing: 0.01em;
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    border-color var(--transition-fast),
-    color var(--transition-fast),
-    box-shadow var(--transition-fast),
-    transform var(--transition-fast);
-  box-shadow: var(--shadow-xs);
-  white-space: nowrap;
 }
 
 .action-btn:hover {

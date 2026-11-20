@@ -2,6 +2,22 @@
 // existing node is wired up without a cable drag. Pure geometry over flow
 // coordinates so it stays unit-testable in the node environment.
 
+import { Position } from "@vue-flow/core";
+import type { NodeHandle } from "../types/flow.types";
+
+export function freeInputHandles(
+  handles: NodeHandle[],
+  occupied: ReadonlySet<string>,
+  legacyMultiple: boolean,
+): string[] {
+  return handles
+    .filter(
+      (h) =>
+        h.position === Position.Left && ((h.multiple ?? legacyMultiple) || !occupied.has(h.id)),
+    )
+    .map((h) => h.id);
+}
+
 export const AUTO_CONNECT_RADIUS = 180;
 
 export interface AutoConnectNode {

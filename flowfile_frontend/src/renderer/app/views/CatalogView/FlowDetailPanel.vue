@@ -29,7 +29,7 @@
       </div>
       <div class="header-actions">
         <button
-          v-if="flow.file_exists && !isFlowRunning"
+          v-if="runnable && !isFlowRunning"
           class="btn btn-success btn-sm"
           @click="$emit('runFlow', flow.id)"
         >
@@ -45,7 +45,7 @@
           Cancel Run
         </button>
         <button
-          v-if="flow.file_exists"
+          v-if="hasFile"
           class="btn btn-primary btn-sm"
           @click="$emit('openFlow', flow.flow_path)"
         >
@@ -53,7 +53,7 @@
           Open in Designer
         </button>
         <button
-          v-if="flow.file_exists"
+          v-if="hasFile"
           class="btn btn-secondary btn-sm"
           title="Open in the designer with the notebook, where edits sync back to the canvas"
           data-testid="flow-modify-in-notebook"
@@ -62,12 +62,7 @@
           <i class="fa-solid fa-book"></i>
           Modify in notebook
         </button>
-        <el-dropdown
-          v-if="flow.file_exists"
-          trigger="click"
-          placement="bottom-start"
-          @command="copyAs"
-        >
+        <el-dropdown v-if="hasFile" trigger="click" placement="bottom-start" @command="copyAs">
           <button
             class="btn btn-secondary btn-sm"
             :disabled="copying"
@@ -129,7 +124,7 @@
     />
 
     <!-- File missing banner -->
-    <div v-if="!flow.file_exists" class="missing-banner">
+    <div v-if="!remote && !flow.file_exists" class="missing-banner">
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div>
         <strong>Flow file not found</strong>
@@ -149,6 +144,8 @@
     </div>
 
     <!-- Metadata Grid -->
+    <slot name="remote" />
+
     <div class="meta-grid">
       <div class="meta-card">
         <span class="meta-label">Total Runs</span>
@@ -192,9 +189,9 @@
       title="Schedules"
       icon="fa-solid fa-calendar-days"
       persist-key="flow.schedules"
-      :count="catalogStore.flowSchedules.length"
+      :count="schedulesPending ? undefined : catalogStore.flowSchedules.length"
     >
-      <template v-if="flow.file_exists" #actions>
+      <template v-if="runnable" #actions>
         <el-button size="small" type="primary" @click="$emit('addSchedule', flow.id)">
           <i class="fa-solid fa-plus" /> Add
         </el-button>
@@ -205,28 +202,45 @@
         <div class="summary-card">
           <i class="fa-solid fa-calendar-days summary-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ catalogStore.flowSchedules.length }}</span>
+            <span class="summary-value">
+              <span v-if="schedulesPending" class="skeleton-value"></span>
+              <template v-else>{{ catalogStore.flowSchedules.length }}</template>
+            </span>
             <span class="summary-label">Total</span>
           </div>
         </div>
         <div class="summary-card">
           <i class="fa-solid fa-circle-check summary-icon enabled-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ scheduleEnabledCount }}</span>
+            <span class="summary-value">
+              <span v-if="schedulesPending" class="skeleton-value"></span>
+              <template v-else>{{ scheduleEnabledCount }}</template>
+            </span>
             <span class="summary-label">Enabled</span>
           </div>
         </div>
         <div class="summary-card">
           <i class="fa-solid fa-spinner summary-icon running-icon"></i>
           <div class="summary-info">
-            <span class="summary-value">{{ scheduleRunningCount }}</span>
+            <span class="summary-value">
+              <span v-if="schedulesPending" class="skeleton-value"></span>
+              <template v-else>{{ scheduleRunningCount }}</template>
+            </span>
             <span class="summary-label">Running</span>
           </div>
         </div>
       </div>
 
+      <div
+        v-if="schedulesPending"
+        class="skeleton-list"
+        aria-busy="true"
+        data-testid="flow-schedules-pending"
+      >
+        <div v-for="i in 2" :key="i" class="skeleton-block skeleton-row"></div>
+      </div>
       <EmptyState
-        v-if="catalogStore.flowSchedules.length === 0"
+        v-else-if="catalogStore.flowSchedules.length === 0"
         icon="fa-solid fa-calendar-xmark"
         description="No schedules configured"
       />
@@ -246,7 +260,7 @@
     </CollapsibleSection>
 
     <!-- Expose as API -->
-    <ApiEndpointPanel :flow="flow" />
+    <ApiEndpointPanel v-if="!remote" :flow="flow" />
 
     <!-- Data Lineage -->
     <CollapsibleSection
@@ -312,9 +326,17 @@
       icon="fa-solid fa-cube"
       persist-key="flow.artifacts"
       :default-open="false"
-      :count="artifacts.length"
+      :count="artifactsPending ? undefined : artifacts.length"
     >
-      <div v-if="artifacts.length === 0" class="empty-state">
+      <div
+        v-if="artifactsPending"
+        class="skeleton-list"
+        aria-busy="true"
+        data-testid="flow-artifacts-pending"
+      >
+        <div v-for="i in 2" :key="i" class="skeleton-block skeleton-row"></div>
+      </div>
+      <div v-else-if="artifacts.length === 0" class="empty-state">
         <i class="fa-solid fa-cube empty-state-icon"></i>
         <span>No artifacts published yet</span>
       </div>
@@ -365,12 +387,14 @@ import { formatDate, formatSize, formatType } from "./catalog-formatters";
 import { copyTextEverywhere } from "../../utils/clipboardUtils";
 import type { FlowCodeFormat } from "../../types";
 import RunHistoryTable from "./RunHistoryTable.vue";
+import { RUN_OUTCOME_LABEL, RUN_OUTCOME_TEXT, runOutcome } from "./runStatus";
 import { CollapsibleSection, EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
 import ApiEndpointPanel from "./ApiEndpointPanel.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { isHubRow } from "./hubRows";
 
 const catalogStore = useCatalogStore();
 const showShareDialog = ref(false);
@@ -403,6 +427,11 @@ const emit = defineEmits([
 ]);
 
 const runHistorySection = ref<HTMLElement | null>(null);
+
+// A remote catalog's flow has this page too; what needs the flow's file here is left out.
+const remote = computed(() => isHubRow(props.flow));
+const hasFile = computed(() => !remote.value && props.flow.file_exists);
+const runnable = computed(() => remote.value || hasFile.value);
 
 const COPY_OPTIONS: { format: FlowCodeFormat; label: string }[] = [
   { format: "yaml", label: "Flow file (YAML)" },
@@ -445,13 +474,14 @@ watch(
   { immediate: true },
 );
 
-const latestSnapshotRunId = computed((): number | null => {
-  const runs = catalogStore.runs.filter(
-    (r) => r.registration_id === props.flow.id && r.has_snapshot,
-  );
-  if (runs.length === 0) return null;
-  return runs[0].id;
-});
+// Each slice names the flow it holds; until it holds this one the section shows a placeholder.
+const schedulesPending = computed(() => catalogStore.flowSchedulesFlowId !== props.flow.id);
+const artifactsPending = computed(() => catalogStore.flowArtifactsFlowId !== props.flow.id);
+
+// Read off the flow's newest runs, whatever page or filter its Run History shows.
+const latestSnapshotRunId = computed((): number | null =>
+  catalogStore.flowRunsPageFor(props.flow.id) ? catalogStore.flowLatestSnapshotRunId : null,
+);
 
 const isEditing = ref(false);
 const editName = ref("");
@@ -500,20 +530,28 @@ function isScheduleRunning(schedule: FlowSchedule): boolean {
 
 async function handleCancelScheduleRun(schedule: FlowSchedule) {
   const activeRuns = catalogStore.activeRuns.filter((r) => r.schedule_id === schedule.id);
-  for (const run of activeRuns) {
-    await catalogStore.cancelRun(run.id);
+  try {
+    for (const run of activeRuns) {
+      await catalogStore.cancelRun(run.id);
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Failed to cancel run");
   }
-  await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(props.flow.id)]);
+  await Promise.all([catalogStore.loadActiveRuns(), catalogStore.refreshRuns()]);
 }
+
+const lastRunOutcome = computed(() =>
+  runOutcome(props.flow.last_run_success, props.flow.last_run_cancelled),
+);
 
 const statusClass = computed(() => {
   if (props.flow.last_run_success === null) return "";
-  return props.flow.last_run_success ? "text-success" : "text-danger";
+  return RUN_OUTCOME_TEXT[lastRunOutcome.value];
 });
 
 const statusText = computed(() => {
   if (props.flow.last_run_success === null) return "No runs";
-  return props.flow.last_run_success ? "Success" : "Failed";
+  return RUN_OUTCOME_LABEL[lastRunOutcome.value];
 });
 
 async function onSaveDescription(scheduleId: number, description: string | null) {
@@ -524,7 +562,7 @@ async function onSaveDescription(scheduleId: number, description: string | null)
 async function handleRunNow(scheduleId: number) {
   try {
     await CatalogApi.triggerScheduleNow(scheduleId);
-    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.loadRuns(props.flow.id)]);
+    await Promise.all([catalogStore.loadActiveRuns(), catalogStore.refreshRuns()]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to trigger run");
   }

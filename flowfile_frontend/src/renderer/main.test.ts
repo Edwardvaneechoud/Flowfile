@@ -34,6 +34,7 @@ vi.mock("./app/services/auth.service", () => ({
     getCurrentUser: mocks.getCurrentUser,
     setModeFromBackend: mocks.setModeFromBackend,
     isInDesktopMode: () => true,
+    followSession: () => () => undefined,
   },
 }));
 
@@ -77,6 +78,7 @@ describe("startup navigation", () => {
       expect(mocks.use).toHaveBeenCalledWith(mocks.router);
       expect(auth.isAdmin).toBe(isAdmin);
       expect(visibleAtMount.includes("backends")).toBe(isAdmin);
+      expect(visibleAtMount.includes("hub")).toBe(isAdmin);
       expect(visibleAtMount).toContain("kernels");
     },
   );

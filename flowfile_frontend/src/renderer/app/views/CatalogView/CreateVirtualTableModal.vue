@@ -89,6 +89,7 @@ import { validateCatalogName } from "../../composables/catalogNameValidation";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
 import type { CatalogTable, FlowRegistration } from "../../types";
+import { withoutHubRows } from "./hubRows";
 
 const props = defineProps<{
   visible: boolean;
@@ -106,7 +107,7 @@ const selectedFlowId = ref<number | null>(null);
 const submitting = ref(false);
 const createdTable = ref<CatalogTable | null>(null);
 
-const flows = computed((): FlowRegistration[] => catalogStore.allFlows);
+const flows = computed((): FlowRegistration[] => withoutHubRows(catalogStore.allFlows));
 const { writableSchemaNamespaces } = useWritableNamespaces();
 
 const nameError = computed(() => validateCatalogName(name.value, "Table"));

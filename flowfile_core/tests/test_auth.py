@@ -688,3 +688,205 @@ class TestUserLookupCache:
                 statuses = list(pool.map(lambda _: client.get("/auth/users/me", headers=headers).status_code, range(40)))
             assert statuses == [200] * 40
             assert time.monotonic() - started < 10
+
+
+class TestDeleteUserRemovesTheirApis:
+    """A deleted person's published APIs, consumers and keys go with the account."""
+
+    @pytest.fixture(autouse=True)
+    def setup_docker_mode(self, monkeypatch):
+        monkeypatch.setenv("FLOWFILE_MODE", "docker")
+        monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
+
+    @pytest.fixture
+    def admin_user(self):
+        with get_db_context() as db:
+            existing = db.query(db_models.User).filter(db_models.User.username == "api_admin").first()
+            if existing:
+                db.delete(existing)
+                db.commit()
+            admin = db_models.User(
+                username="api_admin",
+                email="api_admin@flowfile.app",
+                hashed_password=get_password_hash("adminpassword123"),
+                disabled=False,
+                is_admin=True,
+            )
+            db.add(admin)
+            db.commit()
+            admin_id = admin.id
+        yield {"id": admin_id, "username": "api_admin", "password": "adminpassword123"}
+        with get_db_context() as db:
+            db.query(db_models.User).filter(db_models.User.id == admin_id).delete()
+            db.commit()
+
+    @pytest.fixture
+    def published(self):
+        """Publish an endpoint with a key for an owner; the owner's rows are removed on teardown."""
+        from uuid import uuid4
+
+        from flowfile_core.auth.api_key import generate_api_key
+        from flowfile_core.flowfile import api_consumer_manager
+
+        owners: list[int] = []
+
+        def _publish(owner_id: int, *, explicit_consumer: bool = False):
+            slug = f"del-{uuid4().hex[:10]}"
+            with get_db_context() as db:
+                reg = db_models.FlowRegistration(
+                    flow_uuid=str(uuid4()), name=slug, flow_path=f"/tmp/{slug}.yaml", owner_id=owner_id
+                )
+                db.add(reg)
+                db.commit()
+                ep = db_models.FlowApiEndpoint(registration_id=reg.id, owner_id=owner_id, slug=slug)
+                db.add(ep)
+                db.commit()
+                if explicit_consumer:
+                    consumer = db_models.ApiConsumer(name=f"client-{slug}", owner_id=owner_id)
+                    db.add(consumer)
+                    db.flush()
+                    db.add(db_models.ApiConsumerEndpoint(consumer_id=consumer.id, endpoint_id=ep.id))
+                else:
+                    consumer = api_consumer_manager.get_or_create_implicit_consumer(db, ep)
+                raw, key_hash, prefix = generate_api_key()
+                db.add(
+                    db_models.FlowApiKey(
+                        consumer_id=consumer.id,
+                        endpoint_id=ep.id,
+                        owner_id=owner_id,
+                        name="k",
+                        key_hash=key_hash,
+                        key_prefix=prefix,
+                    )
+                )
+                db.commit()
+                owners.append(owner_id)
+                return slug, raw
+
+        yield _publish
+        with get_db_context() as db:
+            for owner_id in owners:
+                consumer_ids = [c.id for c in db.query(db_models.ApiConsumer).filter_by(owner_id=owner_id)]
+                db.query(db_models.FlowApiKey).filter(db_models.FlowApiKey.owner_id == owner_id).delete()
+                db.query(db_models.ApiConsumerEndpoint).filter(
+                    db_models.ApiConsumerEndpoint.consumer_id.in_(consumer_ids)
+                ).delete(synchronize_session=False)
+                db.query(db_models.ApiConsumer).filter(db_models.ApiConsumer.owner_id == owner_id).delete()
+                db.query(db_models.FlowApiEndpoint).filter(db_models.FlowApiEndpoint.owner_id == owner_id).delete()
+                db.query(db_models.FlowRegistration).filter(db_models.FlowRegistration.owner_id == owner_id).delete()
+            db.commit()
+
+    @staticmethod
+    def _login(client, username, password):
+        response = client.post("/auth/token", data={"username": username, "password": password})
+        assert response.status_code == 200
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    def test_delete_removes_the_persons_endpoints_consumers_and_keys(
+        self, admin_user, create_test_user, published
+    ):
+        from fastapi import HTTPException
+
+        from flowfile_core.auth.api_key import verify_api_key
+
+        gone_slug, gone_key = published(create_test_user)
+        published(create_test_user, explicit_consumer=True)
+        kept_slug, kept_key = published(admin_user["id"])
+
+        with TestClient(main.app) as client:
+            admin_headers = self._login(client, admin_user["username"], admin_user["password"])
+            response = client.delete(f"/auth/users/{create_test_user}", headers=admin_headers)
+            assert response.status_code == 200, response.text
+
+        with get_db_context() as db:
+            assert db.query(db_models.FlowApiEndpoint).filter_by(owner_id=create_test_user).count() == 0
+            assert db.query(db_models.ApiConsumer).filter_by(owner_id=create_test_user).count() == 0
+            assert db.query(db_models.FlowApiKey).filter_by(owner_id=create_test_user).count() == 0
+            grants = db.query(db_models.ApiConsumerEndpoint)
+            assert grants.filter(
+                ~db_models.ApiConsumerEndpoint.consumer_id.in_(db.query(db_models.ApiConsumer.id))
+                | ~db_models.ApiConsumerEndpoint.endpoint_id.in_(db.query(db_models.FlowApiEndpoint.id))
+            ).count() == 0
+            with pytest.raises(HTTPException) as exc:
+                verify_api_key(slug=gone_slug, x_api_key=gone_key, db=db)
+            assert exc.value.status_code == 401
+            assert verify_api_key(slug=kept_slug, x_api_key=kept_key, db=db).slug == kept_slug
+
+    def test_delete_removes_the_persons_schedules_and_what_hangs_on_them(self, admin_user, create_test_user):
+        """The person schedules flows the admin owns, so on PostgreSQL only the schedule's own keys are in play."""
+        from datetime import datetime
+        from uuid import uuid4
+
+        schedule_ids: dict[int, int] = {}
+        registration_ids: list[int] = []
+        with get_db_context() as db:
+            for owner_id in (create_test_user, admin_user["id"]):
+                slug = f"sched-{uuid4().hex[:10]}"
+                reg = db_models.FlowRegistration(
+                    flow_uuid=str(uuid4()), name=slug, flow_path=f"/tmp/{slug}.yaml", owner_id=admin_user["id"]
+                )
+                db.add(reg)
+                db.flush()
+                registration_ids.append(reg.id)
+                schedule = db_models.FlowSchedule(
+                    registration_id=reg.id, owner_id=owner_id, schedule_type="interval", interval_seconds=60
+                )
+                db.add(schedule)
+                db.flush()
+                schedule_ids[owner_id] = schedule.id
+            gone_id = schedule_ids[create_test_user]
+            table = db_models.CatalogTable(name=f"trigger-{uuid4().hex[:8]}", owner_id=admin_user["id"])
+            db.add(table)
+            db.flush()
+            table_id = table.id
+            db.add(db_models.ScheduleTriggerTable(schedule_id=gone_id, table_id=table_id))
+            run = db_models.FlowRun(
+                registration_id=registration_ids[0],
+                flow_name="scheduled",
+                user_id=admin_user["id"],
+                started_at=datetime(2026, 1, 1),
+                ended_at=datetime(2026, 1, 1),
+                success=True,
+                notification_processed_at=datetime(2026, 1, 1),
+                run_type="scheduled",
+                schedule_id=gone_id,
+            )
+            db.add(run)
+            db.flush()
+            run_id = run.id
+            channel = db_models.NotificationChannel(
+                owner_id=admin_user["id"], name="ops", channel_type="generic", webhook_url_encrypted="x"
+            )
+            db.add(channel)
+            db.flush()
+            channel_id = channel.id
+            db.add(db_models.NotificationRule(owner_id=admin_user["id"], channel_id=channel_id, schedule_id=gone_id))
+            db.commit()
+        try:
+            with TestClient(main.app) as client:
+                admin_headers = self._login(client, admin_user["username"], admin_user["password"])
+                response = client.delete(f"/auth/users/{create_test_user}", headers=admin_headers)
+                assert response.status_code == 200, response.text
+
+            with get_db_context() as db:
+                assert db.get(db_models.FlowSchedule, gone_id) is None
+                assert db.query(db_models.ScheduleTriggerTable).filter_by(schedule_id=gone_id).count() == 0
+                assert db.query(db_models.NotificationRule).filter_by(schedule_id=gone_id).count() == 0
+                kept_run = db.get(db_models.FlowRun, run_id)
+                assert kept_run is not None and kept_run.schedule_id is None
+                kept = db.get(db_models.FlowSchedule, schedule_ids[admin_user["id"]])
+                assert (kept.enabled, kept.disabled_reason) == (True, None)
+        finally:
+            with get_db_context() as db:
+                db.query(db_models.FlowRun).filter_by(id=run_id).delete()
+                db.query(db_models.ScheduleTriggerTable).filter_by(schedule_id=gone_id).delete()
+                db.query(db_models.CatalogTable).filter_by(id=table_id).delete()
+                db.query(db_models.NotificationRule).filter_by(channel_id=channel_id).delete()
+                db.query(db_models.NotificationChannel).filter_by(id=channel_id).delete()
+                db.query(db_models.FlowSchedule).filter(
+                    db_models.FlowSchedule.id.in_(schedule_ids.values())
+                ).delete(synchronize_session=False)
+                db.query(db_models.FlowRegistration).filter(
+                    db_models.FlowRegistration.id.in_(registration_ids)
+                ).delete(synchronize_session=False)
+                db.commit()

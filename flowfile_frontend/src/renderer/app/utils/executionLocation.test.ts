@@ -9,6 +9,7 @@ import {
   executionLocationOptions,
   nodeExecutionLocationLabel,
   nodeExecutionLocationOptions,
+  scheduleBackendOptions,
   verdictSummary,
 } from "./executionLocation";
 
@@ -159,5 +160,40 @@ describe("backend names in placement text", () => {
     expect(backendName("worker:polars")).toBe("worker:polars");
     expect(backendInSentence("worker")).toBe("the default worker");
     expect(backendInSentence("local")).toBe('backend "local"');
+  });
+});
+
+describe("scheduleBackendOptions", () => {
+  const scheduleKeys = (current: string, backendIds: string[]) =>
+    scheduleBackendOptions(current, rows(backendIds)).map((option) => option.key);
+
+  it("offers the flow's own setting, the default worker and the configured backends", () => {
+    expect(scheduleKeys("", ["worker:team", "worker:gpu"])).toEqual([
+      "",
+      "worker",
+      "worker:team",
+      "worker:gpu",
+    ]);
+    const labels = scheduleBackendOptions("", rows(["worker:team"])).map((option) => option.label);
+    expect(labels).toEqual([
+      "The flow's own setting",
+      "Default worker",
+      "worker:team · Not checked",
+    ]);
+  });
+
+  it("keeps a schedule's backend that is no longer configured, last", () => {
+    expect(scheduleKeys("worker:gone", ["worker:team"])).toEqual([
+      "",
+      "worker",
+      "worker:team",
+      "worker:gone",
+    ]);
+    expect(scheduleKeys("worker", ["worker:team"])).toEqual(["", "worker", "worker:team"]);
+  });
+
+  it("labels a configured backend with its verdict", () => {
+    const options = scheduleBackendOptions("", [{ id: "worker:team", verdict: verdict({}) }]);
+    expect(options[2]).toEqual({ key: "worker:team", label: "worker:team · Compatible" });
   });
 });

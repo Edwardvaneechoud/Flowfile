@@ -35,6 +35,7 @@ _FLOW_YAML_FILENAMES = [
     "house_price_regression.yaml",
     "customer_churn_classification.yaml",
     "customer_churn_knn.yaml",
+    "bill_of_materials_explosion.yaml",
 ]
 
 

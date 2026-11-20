@@ -9,6 +9,11 @@ import type {
 } from "../types";
 import { EMPTY_DASHBOARD_LAYOUT } from "../types";
 import { upgradeLayoutGrid } from "../views/DashboardsView/gridVersion";
+import { healTabs } from "../views/DashboardsView/dashboardTabs";
+import { NEW_DASHBOARD_NAME } from "../views/DashboardsView/dashboardCreation";
+
+// Newest-wins: a dashboard page reused for another dashboard keeps only the last load's answer.
+let currentRequest = 0;
 
 interface DashboardsState {
   library: Dashboard[];
@@ -44,16 +49,22 @@ export const useDashboardsStore = defineStore("dashboards", {
     },
 
     async loadDashboard(id: number) {
+      const request = ++currentRequest;
       this.loadingCurrent = true;
       this.error = null;
       try {
         const loaded = await CatalogApi.getDashboard(id);
-        this.current = { ...loaded, layout: upgradeLayoutGrid(loaded.layout) };
+        if (request !== currentRequest) return;
+        // Like the grid upgrade, a healed tile is stored with the author's next edit.
+        this.current = { ...loaded, layout: healTabs(upgradeLayoutGrid(loaded.layout)) };
       } catch (err) {
+        if (request !== currentRequest) return;
+        // Another dashboard must not stay on screen under this one's address.
+        if (this.current?.id !== id) this.current = null;
         this.error = err instanceof Error ? err.message : "Failed to load dashboard";
         throw err;
       } finally {
-        this.loadingCurrent = false;
+        if (request === currentRequest) this.loadingCurrent = false;
       }
     },
 
@@ -62,6 +73,7 @@ export const useDashboardsStore = defineStore("dashboards", {
       this.error = null;
       try {
         const created = await CatalogApi.createDashboard(payload);
+        currentRequest++;
         this.current = created;
         this.library.unshift(created);
         return created;
@@ -115,6 +127,18 @@ export const useDashboardsStore = defineStore("dashboards", {
       return updated;
     },
 
+    // Autosave's first write: the editor keeps its layout, edits made meanwhile included.
+    async autosaveCreateDashboard(payload: DashboardCreatePayload): Promise<Dashboard> {
+      const created = await CatalogApi.createDashboard(payload, {
+        timeout: AUTOSAVE_REQUEST_TIMEOUT_MS,
+      });
+      if (this.current && this.current.id === 0) {
+        this.current = { ...created, layout: this.current.layout };
+      }
+      this.library.unshift(created);
+      return created;
+    },
+
     async deleteDashboard(id: number): Promise<void> {
       this.error = null;
       try {
@@ -131,10 +155,10 @@ export const useDashboardsStore = defineStore("dashboards", {
       if (this.current) this.current = { ...this.current, layout };
     },
 
-    newBlankDashboard(): Dashboard {
+    newBlankDashboard(name = NEW_DASHBOARD_NAME): Dashboard {
       const blank: Dashboard = {
         id: 0,
-        name: "Untitled dashboard",
+        name,
         description: null,
         layout: { ...EMPTY_DASHBOARD_LAYOUT, tiles: [], filters: [] },
         layout_version: 1,
@@ -144,11 +168,15 @@ export const useDashboardsStore = defineStore("dashboards", {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
+      currentRequest++;
+      this.loadingCurrent = false;
       this.current = blank;
       return blank;
     },
 
     reset() {
+      currentRequest++;
+      this.loadingCurrent = false;
       this.current = null;
       this.error = null;
     },

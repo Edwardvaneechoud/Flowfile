@@ -1,7 +1,6 @@
-"""Regression tests for Theme E (M-E1, L6, L7, L9, L11) concurrency / DoS fixes.
+"""Regression tests for Theme E (L6, L7, L9, L11) concurrency / DoS fixes.
 
-M-E1: per-owner suppression — user A's import must not suppress user B's projection hooks.
-L6:   _by_owner / _suppressed guarded by _cache_lock; no dict-mutation-during-iteration.
+L6:   _by_owner guarded by _cache_lock; no dict-mutation-during-iteration.
 L7:   /versions?limit clamped to 1-500.
 L9:   oversized YAML file and excess entries raise ValueError (surfaced as 413 by route).
 """
@@ -13,86 +12,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from flowfile_core.project.service import ProjectSyncService
-
-
-# ---------------------------------------------------------------------------
-# M-E1: per-owner suppression
-# ---------------------------------------------------------------------------
-
-
-class TestPerOwnerSuppression:
-    def setup_method(self):
-        self.svc = ProjectSyncService()
-
-    def test_suppress_only_affects_target_owner(self):
-        owner_a, owner_b = 1, 2
-        with self.svc.suppress_projection(owner_a):
-            assert owner_a in self.svc._suppressed
-            assert owner_b not in self.svc._suppressed
-
-    def test_suppression_released_on_exit(self):
-        owner = 1
-        with self.svc.suppress_projection(owner):
-            assert owner in self.svc._suppressed
-        assert owner not in self.svc._suppressed
-
-    def test_suppression_released_on_exception(self):
-        owner = 1
-        try:
-            with self.svc.suppress_projection(owner):
-                raise RuntimeError("boom")
-        except RuntimeError:
-            pass
-        assert owner not in self.svc._suppressed
-
-    def test_get_active_project_suppressed_owner_returns_none(self, tmp_path):
-        from flowfile_core.project.models import ActiveProject
-
-        owner = 42
-        self.svc._by_owner = {owner: ActiveProject(1, "p", tmp_path, owner, True)}
-        with self.svc.suppress_projection(owner):
-            assert self.svc.get_active_project(owner) is None
-
-    def test_get_active_project_other_owner_not_suppressed(self, tmp_path):
-        from flowfile_core.project.models import ActiveProject
-
-        owner_a, owner_b = 1, 2
-        self.svc._by_owner = {
-            owner_a: ActiveProject(1, "pa", tmp_path, owner_a, True),
-            owner_b: ActiveProject(2, "pb", tmp_path, owner_b, True),
-        }
-        with self.svc.suppress_projection(owner_a):
-            assert self.svc.get_active_project(owner_a) is None
-            assert self.svc.get_active_project(owner_b) is not None
-
-    def test_two_concurrent_suppressions_are_independent(self, tmp_path):
-        from flowfile_core.project.models import ActiveProject
-
-        owner_a, owner_b = 10, 20
-        self.svc._by_owner = {
-            owner_a: ActiveProject(1, "pa", tmp_path, owner_a, True),
-            owner_b: ActiveProject(2, "pb", tmp_path, owner_b, True),
-        }
-        results: list[tuple[bool, bool]] = []
-
-        def suppress_a():
-            with self.svc.suppress_projection(owner_a):
-                threading.Event().wait(0.05)  # hold for 50 ms
-                a_suppressed = self.svc.get_active_project(owner_a) is None
-                b_visible = self.svc.get_active_project(owner_b) is not None
-                results.append((a_suppressed, b_visible))
-
-        t = threading.Thread(target=suppress_a)
-        t.start()
-        # While A's suppression is held, B must still be visible from main thread.
-        import time
-
-        time.sleep(0.01)
-        assert self.svc.get_active_project(owner_b) is not None
-        t.join()
-        assert results == [(True, True)]
 
 
 # ---------------------------------------------------------------------------
@@ -310,9 +232,9 @@ class TestFlowUuidLock:
 
         captured: dict = {}
 
-        def fake_write_yaml(path, payload):
+        def fake_stage_file(path, text, label):
             captured["path"] = path
-            captured["uuid"] = payload["flow_uuid"]
+            captured["uuid"] = yaml.safe_load(text)["flow_uuid"]
 
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=db)
@@ -320,9 +242,9 @@ class TestFlowUuidLock:
 
         with patch.object(importer, "get_db_context", return_value=ctx), patch.object(
             importer.repository, "owned_or_none", return_value=None
-        ), patch.object(importer, "write_yaml", side_effect=fake_write_yaml), patch.object(
+        ), patch.object(importer, "_stage_file", side_effect=fake_stage_file), patch.object(
             importer.flow_file_handler, "import_flow"
-        ), patch.object(importer, "auto_register_flow"):
+        ), patch.object(importer, "CatalogService"):
             returned = importer._import_flow(data, owner_id=7)
 
         assert returned != crafted  # a fresh uuid was minted
@@ -344,9 +266,9 @@ class TestFlowUuidLock:
 
         captured: dict = {}
 
-        def fake_write_yaml(path, payload):
+        def fake_stage_file(path, text, label):
             captured["path"] = path
-            captured["uuid"] = payload["flow_uuid"]
+            captured["uuid"] = yaml.safe_load(text)["flow_uuid"]
 
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=db)
@@ -354,9 +276,9 @@ class TestFlowUuidLock:
 
         with patch.object(importer, "get_db_context", return_value=ctx), patch.object(
             importer.repository, "owned_or_none", return_value=None
-        ), patch.object(importer, "write_yaml", side_effect=fake_write_yaml), patch.object(
+        ), patch.object(importer, "_stage_file", side_effect=fake_stage_file), patch.object(
             importer.flow_file_handler, "import_flow"
-        ), patch.object(importer, "auto_register_flow"):
+        ), patch.object(importer, "CatalogService"):
             returned = importer._import_flow(data, owner_id=7)
 
         assert returned == original

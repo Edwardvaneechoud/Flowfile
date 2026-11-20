@@ -36,9 +36,9 @@ def rewrite_qualified_references(query: str, qualified_names: Iterable[str]) -> 
             esc = re.escape(part)
             bare = esc
             if i == 0:
-                bare = rf'(?<![\w"\']){bare}'
+                bare = rf'(?<![\w"\'.-]){bare}'
             if i == len(parts) - 1:
-                bare = rf'{bare}(?![\w"\'])'
+                bare = rf'{bare}(?![\w"\'-])'
             segments.append(rf"""(?:"{esc}"|'{esc}'|{bare})""")
         pattern = re.compile(r"\s*\.\s*".join(segments))
         query = pattern.sub(f'"{qualified_name}"', query)
@@ -71,6 +71,25 @@ def friendly_relation_error(error: str, query: str) -> str:
         f"Table '{display}' was not found in the catalog. "
         f"Check the name is spelled correctly and the table is registered."
     )
+
+
+_NAME = r'(?:"[^"]+"|[\w-]+)'
+_READ_FROM = re.compile(rf"\b(?:FROM|JOIN)\s+({_NAME}(?:\s*\.\s*{_NAME})*)", re.IGNORECASE)
+_WITH_NAME = re.compile(rf"({_NAME})\s+AS\s*\(", re.IGNORECASE)
+
+
+def plain_reference(reference: str) -> str:
+    """A table reference without its quotes and spaces: ``"a" . b`` as ``a.b``."""
+    if re.fullmatch(_NAME, reference):
+        return reference.strip('"')
+    return ".".join(part.strip().strip('"') for part in reference.split("."))
+
+
+def reads_other(query: str, own: set[str]) -> bool:
+    """Whether ``query`` reads from a name that is neither one of ``own`` nor one of its own ``WITH`` names."""
+    collapsed = rewrite_qualified_references(query, own)
+    known = own | {plain_reference(name) for name in _WITH_NAME.findall(collapsed)}
+    return any(plain_reference(name) not in known for name in _READ_FROM.findall(collapsed))
 
 
 def is_table_reference(name: str, query: str) -> bool:

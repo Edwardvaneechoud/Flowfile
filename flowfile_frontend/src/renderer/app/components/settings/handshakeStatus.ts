@@ -34,3 +34,15 @@ export function handshakeStatus(verdict: HandshakeVerdict | null | undefined): H
   }
   return { tone: "success", icon: "fa-solid fa-circle-check", label: "Matches this server" };
 }
+
+/** A worker's versions as label and value, leaving out any it did not report. */
+export function versionRows(verdict: HandshakeVerdict | null | undefined): [string, string][] {
+  const backend = verdict?.backend;
+  const rows: [string, string | undefined][] = [
+    ["Flowfile", backend?.app_version],
+    ["Polars", backend?.polars_version],
+    ["Python", backend?.python_version],
+    ["Platform", backend?.platform],
+  ];
+  return rows.filter((row): row is [string, string] => !!row[1]?.trim());
+}

@@ -2,7 +2,7 @@
 import { defineStore } from "pinia";
 import type { VueFlowStore } from "@vue-flow/core";
 import type { HistoryState, FlowArtifactData, NodeArtifactSummary } from "../types";
-import type { FlowParameter } from "../types/flow.types";
+import type { FlowParameter, PlacementPreview } from "../types/flow.types";
 import { FlowApi } from "../api/flow.api";
 import { useEditorStore } from "./editor-store";
 import { useResultsStore } from "./results-store";
@@ -62,11 +62,20 @@ export const useFlowStore = defineStore("flow", {
       pendingLayoutResetCounter: 0,
       // A run started or ended elsewhere; HeaderButtons re-reads the run state on it.
       pendingRunStateCounter: 0,
+      placementRequestId: 0,
     };
   },
 
   getters: {
     currentFlowId: (state) => state.flowId,
+    isNodeCached:
+      (state) =>
+      (nodeId: number): boolean => {
+        return (
+          !useEditorStore().isRunning &&
+          (useResultsStore().placements[state.flowId]?.cached_node_ids ?? []).includes(nodeId)
+        );
+      },
     canUndo: (state) => state.historyState.can_undo,
     canRedo: (state) => state.historyState.can_redo,
     undoDescription: (state) => state.historyState.undo_description,
@@ -76,6 +85,7 @@ export const useFlowStore = defineStore("flow", {
   actions: {
     setFlowId(flowId: number) {
       if (this.flowId === flowId) return;
+      this.placementRequestId++;
       this.flowId = flowId;
       try {
         sessionStorage.setItem(FLOW_ID_STORAGE_KEY, flowId.toString());
@@ -154,14 +164,31 @@ export const useFlowStore = defineStore("flow", {
     // Placement is advisory and every edit asks for it, so the request waits for edits to settle.
     fetchPlacement(flowId?: number) {
       const targetId = flowId ?? this.flowId;
-      if (targetId < 0) return;
+      if (targetId < 0 || targetId !== this.flowId) return;
+      const requestId = ++this.placementRequestId;
+      const graphVersion = useEditorStore().graphVersion;
       if (placementTimer) clearTimeout(placementTimer);
       placementTimer = setTimeout(async () => {
         placementTimer = null;
-        try {
-          const data = await FlowApi.getPlacement(targetId);
-          if (this.flowId !== targetId) return;
+        if (this.flowId !== targetId || requestId !== this.placementRequestId) return;
+        const apply = (data: PlacementPreview): boolean => {
+          if (
+            this.flowId !== targetId ||
+            requestId !== this.placementRequestId ||
+            graphVersion !== useEditorStore().graphVersion
+          )
+            return false;
           useResultsStore().applyPlacement(targetId, data);
+          return true;
+        };
+        try {
+          const probe = useResultsStore().placements[targetId] !== undefined;
+          const data = await FlowApi.getPlacement(targetId, probe);
+          if (!apply(data)) return;
+          // Only cold previews need a live follow-up.
+          if (!probe && data.unchecked_backend_ids?.length) {
+            apply(await FlowApi.getPlacement(targetId, true));
+          }
         } catch {
           // A failed preview keeps the last one shown
         }

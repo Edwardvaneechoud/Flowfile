@@ -31,6 +31,7 @@ import {
   type InlineActionType,
   type RouteHistoryEntry,
 } from "../api/ai.api";
+import { fetchAiDataPolicy } from "../views/AiSettingsView/api";
 import { parseMentions } from "../features/ai/mentionVocabulary";
 import type { AiProvider } from "../views/AiSettingsView/aiProviderTypes";
 import {
@@ -51,6 +52,7 @@ import {
   persistAiState,
   type PersistedAgentSurface,
   type PersistedSimpleBuildOutput,
+  type SurfaceModel,
 } from "./ai-store-persistence";
 import { useEditorStore } from "./editor-store";
 import { useFlowStore } from "./flow-store";
@@ -179,19 +181,16 @@ export const useAiStore = defineStore("ai", () => {
   const selectedProvider = ref<string | null>(null);
   const selectedModel = ref<string | null>(null);
 
-  // Optional two-tier model selection. When ``splitModels`` is false (default),
-  // ``selectedProvider`` / ``selectedModel`` drive *every* AI feature. When
-  // true, the *simple* surfaces (cron-from-text, join-key suggestions) run on
-  // their own ``simpleProvider`` / ``simpleModel`` instead — so a user can run
-  // simple tasks on a cheap/local model while chat & agents use a stronger one.
-  // ``null`` on a simple tier field falls back to the main provider / the
-  // provider's per-surface preset. Resolve per-surface via ``resolveSurface``.
-  const splitModels = ref<boolean>(false);
-  const simpleProvider = ref<string | null>(null);
-  const simpleModel = ref<string | null>(null);
-
   // Simple build output (see PersistedSimpleBuildOutput); Settings → AI → Assistant flips it.
   const simpleBuildOutput = ref<PersistedSimpleBuildOutput>("code");
+
+  // A model picked for one task, keyed by surface (``chart``, ``cron``, …); absent → the main pick.
+  const surfaceModels = ref<Record<string, SurfaceModel>>({});
+
+  // Sending data values: the user's choice within the server's rule, which core enforces.
+  const shareData = ref<boolean>(true);
+  const sendDataAllowed = ref<boolean>(true);
+  const sendsData = computed(() => shareData.value && sendDataAllowed.value);
 
   // Local model (offline llama.cpp) status. Surfaced as a synthetic
   // ``"local"`` entry in ``providers`` so the chat drawer's picker lists it
@@ -317,15 +316,6 @@ export const useAiStore = defineStore("ai", () => {
   if (_seedSettings.selectedModel !== null) {
     selectedModel.value = _seedSettings.selectedModel;
   }
-  if (_seedSettings.splitModels !== null) {
-    splitModels.value = _seedSettings.splitModels;
-  }
-  if (_seedSettings.simpleProvider !== null) {
-    simpleProvider.value = _seedSettings.simpleProvider;
-  }
-  if (_seedSettings.simpleModel !== null) {
-    simpleModel.value = _seedSettings.simpleModel;
-  }
   if (_seedSettings.selectedAgentSurface !== null) {
     selectedAgentSurface.value = _seedSettings.selectedAgentSurface;
   }
@@ -335,17 +325,25 @@ export const useAiStore = defineStore("ai", () => {
   if (_seedSettings.simpleBuildOutput !== null) {
     simpleBuildOutput.value = _seedSettings.simpleBuildOutput;
   }
+  if (_settings?.surfaceModels) surfaceModels.value = _settings.surfaceModels;
+  // Older saves had one "simple tier" for these two tasks; carry it over as their own picks.
+  const _legacyProvider = _seedSettings.simpleProvider ?? _seedSettings.selectedProvider;
+  const _migrated = _seedSettings.splitModels === true && Boolean(_legacyProvider);
+  if (_migrated && _legacyProvider) {
+    const pick = { provider: _legacyProvider, model: _seedSettings.simpleModel ?? null };
+    surfaceModels.value = { cron: pick, settings_autocomplete: pick, ...surfaceModels.value };
+  }
+  if (typeof _settings?.shareData === "boolean") shareData.value = _settings.shareData;
   const _snapshotSettings = () => ({
     selectedProvider: selectedProvider.value,
     selectedModel: selectedModel.value,
-    splitModels: splitModels.value,
-    simpleProvider: simpleProvider.value,
-    simpleModel: simpleModel.value,
     selectedAgentSurface: selectedAgentSurface.value,
     verifyPlanCompletion: verifyPlanCompletion.value,
     simpleBuildOutput: simpleBuildOutput.value,
+    surfaceModels: surfaceModels.value,
+    shareData: shareData.value,
   });
-  if (_settings === null && Object.values(_seedSettings).some((v) => v !== null)) {
+  if (_migrated || (_settings === null && Object.values(_seedSettings).some((v) => v !== null))) {
     persistAiSettings(_snapshotSettings());
   }
 
@@ -415,12 +413,11 @@ export const useAiStore = defineStore("ai", () => {
     [
       selectedProvider,
       selectedModel,
-      splitModels,
-      simpleProvider,
-      simpleModel,
       selectedAgentSurface,
       verifyPlanCompletion,
       simpleBuildOutput,
+      surfaceModels,
+      shareData,
     ],
     queuePersistSettings,
     { flush: "sync" },
@@ -574,9 +571,9 @@ export const useAiStore = defineStore("ai", () => {
       if (selectedProvider.value === LOCAL_PROVIDER_ID) {
         selectedModel.value = status.selectedModelId;
       }
-      if (simpleProvider.value === LOCAL_PROVIDER_ID) {
-        simpleModel.value = status.selectedModelId;
-      }
+      _updateTaskModels((pick) =>
+        pick.provider === LOCAL_PROVIDER_ID ? status.selectedModelId : pick.model,
+      );
     }
   };
 
@@ -587,10 +584,12 @@ export const useAiStore = defineStore("ai", () => {
       // Fetch BYOK providers and the local-model status concurrently. The
       // local status is best-effort: a failure (or AI disabled) just omits
       // the synthetic entry rather than failing the whole picker.
-      const [list, localStatus] = await Promise.all([
+      const [list, localStatus, dataAllowed] = await Promise.all([
         fetchAiProviders(),
         fetchLocalModelStatus().catch(() => null),
+        fetchAiDataPolicy().catch(() => null),
       ]);
+      if (dataAllowed !== null) sendDataAllowed.value = dataAllowed;
       providers.value = list;
       aiDisabled.value = false;
       // Inject/refresh the synthetic ``local`` entry through the single writer
@@ -601,7 +600,9 @@ export const useAiStore = defineStore("ai", () => {
       // to the provider's current default, so a better default reaches users
       // who never picked a model. A pick from the user's curated list stays.
       selectedModel.value = _offeredOrDefault(selectedProvider.value, selectedModel.value);
-      simpleModel.value = _offeredOrDefault(simpleProvider.value, simpleModel.value);
+      _updateTaskModels((pick) =>
+        pick.model === null ? null : _offeredOrDefault(pick.provider, pick.model),
+      );
       if (selectedProvider.value === null) {
         const first = providers.value.find(
           (p) => p.status === "configured" || p.status === "env_fallback",
@@ -672,47 +673,13 @@ export const useAiStore = defineStore("ai", () => {
     }
   };
 
-  const setSimpleModel = (model: string | null): void => {
-    simpleModel.value = model;
-  };
-
-  const setSimpleProvider = (name: string): void => {
-    simpleProvider.value = name;
-    const meta = providers.value.find((p) => p.provider === name);
-    // Default the simple model to the new provider's default so the picker
-    // opens on a valid model rather than an empty preset.
-    simpleModel.value = meta ? (meta.credential?.defaultModel ?? meta.defaultModel ?? null) : null;
-  };
-
-  const setSplitModels = (on: boolean): void => {
-    splitModels.value = on;
-    // Seed the simple tier from the main selection the first time it's enabled
-    // so toggling on is a no-op until the user actually changes it.
-    if (on && simpleProvider.value === null) {
-      simpleProvider.value = selectedProvider.value;
-      simpleModel.value = selectedModel.value;
-    }
-  };
-
-  // Surfaces driven by the *simple* tier (cheap/fast) when ``splitModels`` is
-  // on. Everything else is *complex*. Mirrors the backend surface names
-  // (``cron``, ``settings_autocomplete``); keep in lockstep with the backend
-  // ``surface_models`` keys those endpoints resolve against.
-  const _SIMPLE_SURFACES = new Set<string>(["cron", "settings_autocomplete"]);
-
   // Resolve the (provider, model) pair that actually runs for a given AI
-  // surface — the source of truth call sites send to the backend. Simple
-  // surfaces use the simple tier only when ``splitModels`` is on (falling back
-  // to the main provider). ``null`` model → let the backend resolve the
-  // provider's per-surface preset.
+  // surface — the source of truth call sites send to the backend: the task's
+  // own pick when it has one, else the main selection. ``null`` model → let the
+  // backend resolve the provider's per-surface preset.
   const resolveSurface = (surface: string): { provider: string | null; model: string | null } => {
-    const useSimple = splitModels.value && _SIMPLE_SURFACES.has(surface);
-    if (useSimple) {
-      return {
-        provider: simpleProvider.value ?? selectedProvider.value,
-        model: simpleModel.value,
-      };
-    }
+    const own = surfaceModels.value[surface];
+    if (own) return { provider: own.provider, model: own.model };
     return { provider: selectedProvider.value, model: selectedModel.value };
   };
 
@@ -726,6 +693,27 @@ export const useAiStore = defineStore("ai", () => {
     const meta = providers.value.find((p) => p.provider === provider);
     if (!meta) return null;
     return meta.surfaces?.[surface] ?? meta.credential?.defaultModel ?? meta.defaultModel ?? null;
+  };
+
+  /** Rewrite each task pick's model; the map is replaced only when one changed. */
+  const _updateTaskModels = (model: (pick: SurfaceModel) => string | null): void => {
+    const entries = Object.entries(surfaceModels.value);
+    const next = entries.map(([surface, pick]) => [surface, { ...pick, model: model(pick) }]);
+    if (next.some(([, pick], i) => (pick as SurfaceModel).model !== entries[i][1].model)) {
+      surfaceModels.value = Object.fromEntries(next);
+    }
+  };
+
+  /** Pick a provider and model for one task; ``null`` goes back to the main pick. */
+  const setSurfaceModel = (surface: string, pick: SurfaceModel | null): void => {
+    const next = { ...surfaceModels.value };
+    if (pick) next[surface] = pick;
+    else delete next[surface];
+    surfaceModels.value = next;
+  };
+
+  const setShareData = (on: boolean): void => {
+    shareData.value = on;
   };
 
   const setSelectedAgentSurface = (surface: PersistedAgentSurface): void => {
@@ -1627,9 +1615,6 @@ export const useAiStore = defineStore("ai", () => {
     aiDisabled,
     selectedProvider,
     selectedModel,
-    splitModels,
-    simpleProvider,
-    simpleModel,
     messages,
     streamingState,
     streamError,
@@ -1658,15 +1643,18 @@ export const useAiStore = defineStore("ai", () => {
     applyLocalModelStatus,
     setSelectedProvider,
     setSelectedModel,
-    setSimpleModel,
-    setSimpleProvider,
-    setSplitModels,
     selectedAgentSurface,
     setSelectedAgentSurface,
     verifyPlanCompletion,
     setVerifyPlanCompletion,
     simpleBuildOutput,
     setSimpleBuildOutput,
+    surfaceModels,
+    setSurfaceModel,
+    shareData,
+    setShareData,
+    sendDataAllowed,
+    sendsData,
     // Exposed so ai-agent-store's status watcher can flip it to
     // "agent" when a run terminates.
     lastInteractionKind,

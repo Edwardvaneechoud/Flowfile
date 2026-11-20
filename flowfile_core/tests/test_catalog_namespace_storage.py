@@ -452,10 +452,13 @@ def test_update_route_omit_preserves_storage_explicit_null_clears(authed_client)
     assert r3.json()["storage_connection_name"] is None
 
 
-# ---- Cloud tables are refused (with a clear error) by the viz worker path --- #
+# ---- Cloud tables are served to the viz worker as a plan source ------------ #
 
 
-def test_cloud_table_visualization_raises_clear_error():
+def test_cloud_table_visualization_is_a_plan_source_without_secrets():
+    """Since 9bc925c4a a visual over an object-storage table is read through a lazy plan, not refused."""
+    import base64
+
     from flowfile_core.schemas.catalog_schema import VizSourceDescriptor
 
     _ensure_connection()
@@ -464,8 +467,31 @@ def test_cloud_table_visualization_raises_clear_error():
     with get_db_context() as db:
         svc = CatalogService(SQLAlchemyCatalogRepository(db))
         source = VizSourceDescriptor(source_type="table", table_id=table_id)
-        with pytest.raises(ValueError, match="object-storage"):
-            svc._visualizations._resolve_source_for_worker(source, user_id=None)
+        worker_source = svc._visualizations._resolve_source_for_worker(source, user_id=None)
+    assert worker_source["kind"] == "plan"
+    assert worker_source["session_key"].startswith("plan:")
+    assert b"minioadmin" not in base64.b64decode(worker_source["plan_bytes"])
+
+
+def test_a_sql_visual_does_not_read_a_cloud_table_its_caller_may_not_read(monkeypatch):
+    """The SQL editor's rule: a person without a grant on a table cannot name it in a visual's query either."""
+    from types import SimpleNamespace
+
+    from flowfile_core.catalog.access import AccessResolver
+    from flowfile_core.schemas.catalog_schema import VizSourceDescriptor
+
+    _ensure_connection()
+    cat_id = _create_catalog(storage_uri="s3://flowfile-test/vizsql", storage_connection_name=_CONNECTION_NAME)
+    name = f"t_{uuid.uuid4().hex[:8]}"
+    _add_physical_table(cat_id, f"s3://flowfile-test/vizsql/{name}", name=name)
+    source = VizSourceDescriptor(source_type="sql", sql_query=f"SELECT * FROM {name}")
+    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    stranger = SimpleNamespace(id=999_998, username="viz_stranger", is_admin=False)
+    with get_db_context() as db:
+        svc = CatalogService(SQLAlchemyCatalogRepository(db), access=AccessResolver(db, stranger))
+        assert name in svc._virtual_tables._object_storage_tables(None, set())
+        worker_source = svc._visualizations._resolve_source_for_worker(source, user_id=stranger.id)
+    assert worker_source["kind"] != "plan"
 
 
 # ---- Real S3 round-trip (against the already-running MinIO mock) ------------ #
@@ -540,10 +566,11 @@ def test_cloud_physical_read_path_existence_preview_version_history(monkeypatch)
         assert len(hist.history) >= 2
 
 
-def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
-    """With catalog I/O going to the worker (``uses_worker``), a cloud non-versioned preview routes through the
-    worker (trigger_delta_preview) carrying the storage payload, and the catalog's stored
-    row_count stays authoritative for total_rows (a page-bounded read never sees the whole table).
+@pytest.mark.parametrize("stored_count", [1, 4242])
+def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch, stored_count):
+    """With catalog I/O going to the worker, a cloud non-versioned preview routes through the worker
+    (trigger_delta_preview) carrying the storage payload. The worker's snapshot
+    total takes precedence over stale catalog metadata in either direction.
 
     No MinIO/worker needed: the worker call is faked, so this exercises core's routing + total_rows
     contract deterministically. The read in this process, the one a process on its embedded worker makes, is covered
@@ -558,14 +585,14 @@ def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
     table_id = _add_physical_table(cat_id, dest)
     with get_db_context() as db:
         t = db.get(db_models.CatalogTable, table_id)
-        t.row_count = 4242
+        t.row_count = stored_count
         db.commit()
 
     captured = {}
 
     def _fake_trigger(table_name, n_rows, storage=None, *, worker_url):
         captured.update(table_name=table_name, n_rows=n_rows, storage=storage)
-        return CatalogTablePreview(columns=["a"], dtypes=["Int64"], rows=[[1], [2]], total_rows=2)
+        return CatalogTablePreview(columns=["a"], dtypes=["Int64"], rows=[[1], [2]], total_rows=250)
 
     monkeypatch.setattr("flowfile_core.catalog.services.previews.uses_worker", lambda: True)
     monkeypatch.setattr("flowfile_core.catalog.services.previews.trigger_delta_preview", _fake_trigger)
@@ -577,7 +604,7 @@ def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
     assert captured["n_rows"] == 10
     assert captured["storage"] is not None and captured["storage"]["base_uri"] == prefix
     assert preview.rows == [[1], [2]]  # rows come from the worker
-    assert preview.total_rows == 4242  # catalog row_count, not the worker's page-bounded count
+    assert preview.total_rows == 250  # the snapshot total, not cached metadata or the page length
 
 
 def test_cloud_table_file_exists_false_when_connection_missing():

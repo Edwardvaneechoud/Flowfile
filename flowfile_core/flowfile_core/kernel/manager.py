@@ -352,6 +352,7 @@ def _validate_custom_image(uri: str) -> None:
 
 _BASE_PORT = 19000
 _PORT_RANGE = 1000  # 19000-19999
+_KERNEL_PUBLISH_HOST = "127.0.0.1"
 _HEALTH_TIMEOUT = 120
 _HEALTH_POLL_INTERVAL = 2
 _START_FLIGHT_GRACE = 600
@@ -378,10 +379,10 @@ def _is_docker_mode() -> bool:
 
 
 def _is_port_available(port: int) -> bool:
-    """Check whether a TCP port is free on localhost."""
+    """Check whether a TCP port is free on the address kernels are published on."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
-            s.bind(("127.0.0.1", port))
+            s.bind((_KERNEL_PUBLISH_HOST, port))
             return True
         except OSError:
             return False
@@ -626,11 +627,14 @@ class KernelManager:
         """Return the base URL for communicating with a kernel container.
 
         In Docker-in-Docker mode, use the container name on the shared
-        Docker network.  Otherwise, use localhost with the mapped host port.
+        Docker network.  Otherwise, use the host port, which is published on
+        ``127.0.0.1`` only (``_build_run_kwargs``). The address is spelled out
+        rather than ``localhost``: a name that resolves to ``::1`` first would
+        try an address nothing listens on before the one that answers.
         """
         if self._docker_network:
             return f"http://flowfile-kernel-{kernel.id}:9999"
-        return f"http://localhost:{kernel.port}"
+        return f"http://{_KERNEL_PUBLISH_HOST}:{kernel.port}"
 
     def to_kernel_path(self, local_path: str) -> str:
         """Translate a local filesystem path to the path visible inside a kernel container.
@@ -754,7 +758,8 @@ class KernelManager:
                 self._shared_volume: {"bind": "/shared", "mode": "rw"},
                 self._catalog_tables_dir: {"bind": "/catalog_tables", "mode": "rw"},
             }
-            run_kwargs["ports"] = {"9999/tcp": kernel.port}
+            # Loopback only: core on this machine is the kernel's one client.
+            run_kwargs["ports"] = {"9999/tcp": (_KERNEL_PUBLISH_HOST, kernel.port)}
             run_kwargs["extra_hosts"] = {"host.docker.internal": "host-gateway"}
 
         return run_kwargs
@@ -891,16 +896,13 @@ class KernelManager:
                     self._kernel_owners[kernel_id] = user_id
 
     def _persist_kernel(self, kernel: KernelInfo, user_id: int) -> None:
-        """Save a kernel record to the database, then re-project the project's kernels manifest."""
+        """Save a kernel record to the database."""
         try:
             from flowfile_core.database.connection import get_db_context
             from flowfile_core.kernel.persistence import save_kernel
 
             with get_db_context() as db:
                 save_kernel(db, kernel, user_id)
-            from flowfile_core.project import project_sync
-
-            project_sync.kernels_changed(user_id)
         except Exception as exc:
             logger.warning("Could not persist kernel '%s': %s", kernel.id, exc)
 
@@ -1870,7 +1872,6 @@ class KernelManager:
         kernel = self._get_kernel_or_raise(kernel_id)
         if kernel.state == KernelState.CREATING:
             raise ValueError(f"Kernel '{kernel_id}' is still being created — wait for creation to finish")
-        owner_id = self._kernel_owners.get(kernel_id)  # capture before the pop, for the project hook
         # Unconditional: a STOPPED/ERROR kernel may still track a leftover container.
         await self.stop_kernel(kernel_id)
         had_packages = bool(kernel.packages)
@@ -1882,10 +1883,6 @@ class KernelManager:
         self._remove_kernel_from_db(kernel_id)
         if had_packages:
             self._remove_derived_image(kernel_id)
-        # Fine after the row is gone, as the manifest is regenerated whole; a None owner (older kernel) no-ops.
-        from flowfile_core.project import project_sync
-
-        project_sync.kernels_changed(owner_id)
         logger.info("Deleted kernel '%s'", kernel_id)
 
     def shutdown_all(self) -> None:

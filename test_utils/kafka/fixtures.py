@@ -15,6 +15,8 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from confluent_kafka import KafkaException, KafkaError
 
+from test_utils.docker_images import docker_daemon_responds
+
 logger = logging.getLogger("kafka_fixture")
 
 REDPANDA_HOST = os.environ.get("TEST_REDPANDA_HOST", "localhost")
@@ -38,17 +40,7 @@ def is_docker_available() -> bool:
         logger.warning("Docker executable not found in PATH")
         return False
 
-    try:
-        result = subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            timeout=5,
-            check=False,
-        )
-        return result.returncode == 0
-    except (subprocess.SubprocessError, OSError):
-        logger.warning("Error running Docker command")
-        return False
+    return docker_daemon_responds(logger)
 
 
 def is_container_running(container_name: str) -> bool:

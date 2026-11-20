@@ -25,11 +25,19 @@ export interface FlowParameter {
 
 // Flow Settings
 
+/** The hub flow and version a document came from or was last published as; travels with the file. */
+export interface HubOrigin {
+  hub_url: string;
+  flow_uuid: string;
+  version: number;
+}
+
 export interface FlowSettings {
   flow_id: number;
   name: string;
   description?: string;
   source_registration_id?: number | null;
+  hub_origin?: HubOrigin | null;
   save_location?: string;
   auto_save: boolean;
   modified_on?: number;
@@ -44,6 +52,10 @@ export interface FlowSettings {
   parameters?: FlowParameter[];
   has_unsaved_changes?: boolean;
   display_name?: string | null;
+  // What the catalog a flow came from said of its last save, shown as given; null for a flow saved as a file.
+  save_note?: string | null;
+  // The flow's file is this install's working copy of a flow a remote catalog keeps: never shown or reopened.
+  working_copy?: boolean;
   validate_settings: boolean;
 }
 
@@ -82,7 +94,10 @@ export interface PlacementRefusal {
 }
 
 export interface PlacementPreview {
+  /** Backends needing a live check, including cached negative verdicts. */
+  unchecked_backend_ids?: string[];
   available: boolean;
+  cached_node_ids?: number[];
   assignment: Record<number, string>;
   fallbacks: PlacementFallback[];
   refusals: PlacementRefusal[];
@@ -96,6 +111,8 @@ export interface RunInformation {
   start_time: string | null; // datetime in ISO format; null when the flow never ran
   end_time: string | null; // datetime in ISO format
   success: boolean | null; // null while the flow is still running
+  // A cancel stopped the run and no node failed on its own; read with success false. Absent from an older core.
+  cancelled?: boolean;
   is_running: boolean;
   execution_mode: ExecutionMode | null;
   nodes_completed: number;
@@ -152,7 +169,21 @@ export interface LocalFileInfo {
 
 // Node Template Types (for flow designer)
 
+export interface OutputPort {
+  id: string;
+  name: string | null;
+}
+
+export interface InputPort extends OutputPort {
+  hidden?: boolean;
+  kind: "data" | "parameter";
+  multiple: boolean;
+  required: boolean;
+}
+
 export interface NodeTemplate {
+  inputs?: InputPort[];
+  outputs?: OutputPort[];
   name: string;
   color: string;
   item: string;
@@ -199,6 +230,8 @@ export interface NodeInput extends NodeTemplate {
 // Handle Types
 
 export interface NodeHandle {
+  multiple?: boolean;
+  required?: boolean;
   id: string;
   position: Position;
   label?: string;

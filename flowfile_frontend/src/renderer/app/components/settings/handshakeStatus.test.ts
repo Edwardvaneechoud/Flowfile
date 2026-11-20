@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { verdict } from "../../api/__fixtures__/computeBackends";
-import { handshakeStatus } from "./handshakeStatus";
+import { capabilities, verdict } from "../../api/__fixtures__/computeBackends";
+import { handshakeStatus, versionRows } from "./handshakeStatus";
 
 describe("handshakeStatus", () => {
   it("is not checked without a verdict", () => {
@@ -41,5 +41,26 @@ describe("handshakeStatus", () => {
       tone: "error",
       label: "Handshake failed",
     });
+  });
+});
+
+describe("versionRows", () => {
+  it("lists the worker's Flowfile, Polars, Python and platform", () => {
+    expect(versionRows(verdict())).toEqual([
+      ["Flowfile", "0.23.0"],
+      ["Polars", "1.43.2"],
+      ["Python", "3.12.15"],
+      ["Platform", "linux-x86_64"],
+    ]);
+  });
+
+  it("leaves out a version the worker did not report", () => {
+    const rows = versionRows(verdict({ backend: capabilities({ platform: "" }) }));
+    expect(rows.map(([label]) => label)).toEqual(["Flowfile", "Polars", "Python"]);
+  });
+
+  it("is empty without a verdict or capabilities", () => {
+    expect(versionRows(null)).toEqual([]);
+    expect(versionRows(verdict({ backend: null }))).toEqual([]);
   });
 });

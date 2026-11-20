@@ -22,7 +22,7 @@
       <summary>{{ compact ? "Compatibility details" : "Handshake details" }}</summary>
       <div class="handshake__detail-content">
         <dl v-if="verdict.backend" class="handshake__versions">
-          <div v-for="(value, label) in versions" :key="label">
+          <div v-for="[label, value] in versions" :key="label">
             <dt>{{ label }}</dt>
             <dd>{{ value }}</dd>
           </div>
@@ -60,7 +60,7 @@
 import { computed } from "vue";
 import type { HandshakeVerdict } from "../../api/computeBackends.api";
 import { absentLabel } from "../../utils/executionLocation";
-import { handshakeStatus } from "./handshakeStatus";
+import { handshakeStatus, versionRows } from "./handshakeStatus";
 
 const props = defineProps<{ verdict?: HandshakeVerdict | null; compact?: boolean }>();
 
@@ -68,12 +68,7 @@ const accepted = computed(() => props.verdict?.ok && !!props.verdict.backend);
 const unavailable = computed(() => Object.keys(props.verdict?.absent ?? {}));
 const status = computed(() => handshakeStatus(props.verdict));
 
-const versions = computed(() => ({
-  Flowfile: props.verdict?.backend?.app_version,
-  Polars: props.verdict?.backend?.polars_version,
-  Python: props.verdict?.backend?.python_version,
-  Platform: props.verdict?.backend?.platform,
-}));
+const versions = computed(() => versionRows(props.verdict));
 </script>
 
 <style scoped>

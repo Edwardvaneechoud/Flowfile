@@ -172,4 +172,10 @@ export const setAiFeatureFlag = async (enabled: boolean): Promise<AiFeatureFlagS
   }
 };
 
+/** Whether the server lets AI features send data values (FLOWFILE_AI_SEND_DATA). */
+export const fetchAiDataPolicy = async (): Promise<boolean> => {
+  const response = await axios.get<{ send_data_allowed: boolean }>("/ai/data_policy");
+  return response.data.send_data_allowed !== false;
+};
+
 export { AI_DISABLED_DETAIL };

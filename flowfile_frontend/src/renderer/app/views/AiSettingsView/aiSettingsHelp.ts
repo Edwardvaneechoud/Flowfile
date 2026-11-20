@@ -8,7 +8,7 @@ export const aiSettingsHelp: PageHelpContent = {
       title: "Two tabs, one assistant",
       icon: "fa-solid fa-info-circle",
       description:
-        "Everything the AI features need lives here. What you set applies to every AI surface: the chat drawer, ⌘K, next-node suggestions, schedule text and code generation.",
+        "Everything the AI features need lives here. What you set applies to every AI surface: the chat drawer, ⌘K, next-node suggestions, schedule text, code generation and the chart builder's prompt bar.",
       features: [
         {
           icon: "fa-solid fa-plug",
@@ -34,7 +34,7 @@ export const aiSettingsHelp: PageHelpContent = {
           icon: "fa-solid fa-layer-group",
           title: "Two tiers",
           description:
-            "With the cheaper-model split on, chat, agent runs, ⌘K and code generation use the main model while schedule text and settings autocomplete use the simple one.",
+            "With the cheaper-model split on, chat, agent runs, ⌘K, code generation and chart prompts use the main model while schedule text and settings autocomplete use the simple one.",
         },
         {
           icon: "fa-solid fa-diagram-project",

@@ -27,6 +27,7 @@ from shared.models import (
     FlowRun,
     FlowSchedule,
     ScheduleTriggerTable,
+    User,
 )
 from shared.notifications import processor as notifications
 from shared.run_completion import reap_orphaned_runs
@@ -45,7 +46,7 @@ def sched(tmp_path, monkeypatch):
     s = FlowScheduler(poll_interval=1)
     s.spawned: list[tuple[str, int]] = []
     monkeypatch.setattr(
-        s, "_spawn_flow", lambda flow_path, run_id: (s.spawned.append((flow_path, run_id)) or 4242)
+        s, "_spawn_flow", lambda flow_path, run_id, backend=None: (s.spawned.append((flow_path, run_id)) or 4242)
     )
     return s
 
@@ -73,6 +74,7 @@ def _set_now(monkeypatch, dt: datetime = NOW) -> None:
 
 
 def _add_registration(db) -> FlowRegistration:
+    db.merge(User(id=1, disabled=False))
     reg = FlowRegistration(name="flow", flow_path="/tmp/flow.flowfile", owner_id=1)
     db.add(reg)
     db.commit()
@@ -248,7 +250,7 @@ def test_active_run_blocks_launch_and_keeps_watermark(sched, monkeypatch):
 
 @pytest.mark.parametrize("mode", ["returns_none", "raises"])
 def test_spawn_failure_advances_watermark(sched, monkeypatch, mode):
-    def _fail(flow_path, run_id):
+    def _fail(flow_path, run_id, backend=None):
         if mode == "raises":
             raise OSError("boom")
         return None

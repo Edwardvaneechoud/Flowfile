@@ -141,6 +141,12 @@ const readErrorBody = async (response: Response): Promise<string> => {
   }
 };
 
+/** The error for a refused response; a 401 first renews the session, or ends it when the server refuses that too. */
+const refusal = async (response: Response): Promise<AiStreamHttpError> => {
+  if (response.status === 401) await authService.refreshAccessToken();
+  return new AiStreamHttpError(response.status, await readErrorBody(response));
+};
+
 export interface ExplainRunFailureRequest {
   flow_id: number;
   node_id: number;
@@ -257,10 +263,7 @@ const _postSseRequest = async (
     credentials: "include",
   });
 
-  if (!response.ok) {
-    const detail = await readErrorBody(response);
-    throw new AiStreamHttpError(response.status, detail);
-  }
+  if (!response.ok) throw await refusal(response);
 
   await _consumeSseResponse(response, handlers);
 };
@@ -637,10 +640,7 @@ export const streamAgentSession = async (
     signal,
     credentials: "include",
   });
-  if (!response.ok) {
-    const detail = await readErrorBody(response);
-    throw new AiStreamHttpError(response.status, detail);
-  }
+  if (!response.ok) throw await refusal(response);
   await _consumePlannerSse(response, handlers);
 };
 
@@ -706,10 +706,7 @@ export const streamAgentFollowup = async (
     signal,
     credentials: "include",
   });
-  if (!response.ok) {
-    const detail = await readErrorBody(response);
-    throw new AiStreamHttpError(response.status, detail);
-  }
+  if (!response.ok) throw await refusal(response);
   await _consumePlannerSse(response, handlers);
 };
 
@@ -749,10 +746,7 @@ export const resumeAgentSessionStream = async (
     signal,
     credentials: "include",
   });
-  if (!response.ok) {
-    const detail = await readErrorBody(response);
-    throw new AiStreamHttpError(response.status, detail);
-  }
+  if (!response.ok) throw await refusal(response);
   await _consumePlannerSse(response, handlers);
 };
 
@@ -823,10 +817,7 @@ export const routeMessage = async (
     credentials: "include",
   });
 
-  if (!response.ok) {
-    const detail = await readErrorBody(response);
-    throw new AiStreamHttpError(response.status, detail);
-  }
+  if (!response.ok) throw await refusal(response);
 
   const raw = (await response.json()) as PyRouteResponseBody;
   return {

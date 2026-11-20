@@ -499,6 +499,9 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
     if "source_registration_id" not in fs.__dict__:
         object.__setattr__(fs, "__dict__", {**fs.__dict__, "source_registration_id": None})
 
+    if "hub_origin" not in fs.__dict__:
+        object.__setattr__(fs, "__dict__", {**fs.__dict__, "hub_origin": None})
+
     if "parameters" not in fs.__dict__:
         object.__setattr__(fs, "__dict__", {**fs.__dict__, "parameters": []})
 

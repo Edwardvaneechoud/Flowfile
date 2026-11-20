@@ -1,3 +1,7 @@
+"""The editor's cloud storage connections: this machine's own, which these routes add, change and delete, listed with
+the ones a provider elsewhere lists for the person, read-only and marked with their ``source``
+(``credential_sources``)."""
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -21,6 +25,7 @@ from flowfile_core.routes._connection_sharing import (
 
 # Schema and models
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
+from flowfile_core.secret_manager import credential_sources
 
 # External dependencies
 # File handling
@@ -119,7 +124,7 @@ def delete_cloud_connection_with_connection_name(
     logger.info(f"Deleting cloud connection {connection_name}")
     db_connection = get_cloud_connection(db, connection_name, current_user.id)
     if db_connection is None:
-        raise HTTPException(404, "Cloud connection connection not found")
+        raise HTTPException(404, "Cloud connection not found")
     authorize_connection_mutation(db, current_user, "cloud_connection", db_connection)
     delete_cloud_connection(db, connection_name, db_connection.user_id)
     return {"message": "Cloud connection deleted successfully"}
@@ -130,7 +135,7 @@ def get_cloud_connections(
     db: Session = Depends(get_db), current_user=Depends(get_current_active_user)
 ) -> list[FullCloudStorageConnectionInterface]:
     """
-    Get all cloud storage connections for the current user.
+    Get all cloud storage connections for the current user: their own and granted ones, then a provider's (own wins).
     Parameters
         db: Session obtained from Depends(get_db)
         current_user: User obtained from Depends(get_current_active_user)
@@ -138,4 +143,7 @@ def get_cloud_connections(
     Returns
         List[FullCloudStorageConnectionInterface]
     """
-    return get_all_cloud_connections_interface(db, current_user.id)
+    own = get_all_cloud_connections_interface(db, current_user.id)
+    names = {connection.connection_name for connection in own}
+    listed = credential_sources.connection_rows(current_user.id, "cloud", names)
+    return own + [FullCloudStorageConnectionInterface.model_validate(row) for row in listed]

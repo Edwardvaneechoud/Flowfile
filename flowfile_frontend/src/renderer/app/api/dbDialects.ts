@@ -7,6 +7,16 @@ export interface DbDialectInfo {
   default_port: number | null;
   supports_ssl: boolean;
   available: boolean;
+  // Sign-in methods, in the order the form offers them; empty for every dialect but Snowflake.
+  auth_methods: string[];
+  // Usable through a saved connection only, never an inline node connection.
+  saved_connection_only: boolean;
+  // One login reaches many databases, so a node may pick one (Snowflake); absent from an older core.
+  browses_databases?: boolean;
+  // Names may hold $ or be double-quoted (Snowflake); absent from an older core.
+  quoted_identifiers?: boolean;
+  // How to install a missing driver; absent from an older core.
+  install_hint?: string | null;
 }
 
 // Rendered when the catalog request fails (offline, older core). Must mirror the
@@ -19,6 +29,8 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: 5432,
     supports_ssl: true,
     available: true,
+    auth_methods: [],
+    saved_connection_only: false,
   },
   {
     name: "mysql",
@@ -27,6 +39,8 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: 3306,
     supports_ssl: false,
     available: true,
+    auth_methods: [],
+    saved_connection_only: false,
   },
   {
     name: "sqlite",
@@ -35,6 +49,8 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: null,
     supports_ssl: false,
     available: true,
+    auth_methods: [],
+    saved_connection_only: false,
   },
   {
     name: "duckdb",
@@ -43,6 +59,8 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: null,
     supports_ssl: false,
     available: true,
+    auth_methods: [],
+    saved_connection_only: false,
   },
   {
     name: "mssql",
@@ -51,6 +69,8 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: 1433,
     supports_ssl: false,
     available: true,
+    auth_methods: [],
+    saved_connection_only: false,
   },
   {
     name: "denodo",
@@ -59,23 +79,61 @@ export const FALLBACK_DIALECTS: DbDialectInfo[] = [
     default_port: 9996,
     supports_ssl: true,
     available: true,
+    auth_methods: [],
+    saved_connection_only: false,
+  },
+  {
+    name: "snowflake",
+    display_name: "Snowflake",
+    file_based: false,
+    default_port: 443,
+    supports_ssl: false,
+    available: true,
+    auth_methods: ["oauth", "access_token", "key_pair"],
+    saved_connection_only: true,
+    browses_databases: true,
+    quoted_identifiers: true,
   },
 ];
 
-let dialectsPromise: Promise<DbDialectInfo[]> | null = null;
+// An older core omits the newer fields.
+const withDefaults = (dialect: DbDialectInfo): DbDialectInfo => ({
+  ...dialect,
+  auth_methods: Array.isArray(dialect.auth_methods) ? dialect.auth_methods : [],
+  saved_connection_only: dialect.saved_connection_only === true,
+  browses_databases: dialect.browses_databases === true,
+  quoted_identifiers: dialect.quoted_identifiers === true,
+});
 
-export const getDbDialects = (): Promise<DbDialectInfo[]> => {
-  if (!dialectsPromise) {
-    dialectsPromise = axios
+let catalogPromise: Promise<DbDialectInfo[]> | null = null;
+
+// Every dialect core knows, installed or not; empty when the request fails.
+const getDialectCatalog = (): Promise<DbDialectInfo[]> => {
+  if (!catalogPromise) {
+    catalogPromise = axios
       .get<DbDialectInfo[]>("/db_dialects")
-      .then((response) => {
-        const dialects = (response.data || []).filter((dialect) => dialect.available);
-        return dialects.length > 0 ? dialects : FALLBACK_DIALECTS;
-      })
+      .then((response) => (response.data || []).map(withDefaults))
       .catch(() => {
-        dialectsPromise = null; // allow a retry on the next call
-        return FALLBACK_DIALECTS;
+        catalogPromise = null; // allow a retry on the next call
+        return [];
       });
   }
-  return dialectsPromise;
+  return catalogPromise;
 };
+
+export const getDbDialects = async (): Promise<DbDialectInfo[]> => {
+  const dialects = (await getDialectCatalog()).filter((dialect) => dialect.available);
+  return dialects.length > 0 ? dialects : FALLBACK_DIALECTS;
+};
+
+// Dialects core reports whose driver is not installed; only the connection form lists them.
+export const getUnavailableDbDialects = async (): Promise<DbDialectInfo[]> =>
+  (await getDialectCatalog()).filter((dialect) => !dialect.available);
+
+export const notInstalledLabel = (dialect: DbDialectInfo): string =>
+  `${dialect.display_name} (not installed)`;
+
+export const installNote = (dialect: DbDialectInfo): string | null =>
+  dialect.install_hint
+    ? `${dialect.display_name} is not installed. Run: ${dialect.install_hint}`
+    : null;

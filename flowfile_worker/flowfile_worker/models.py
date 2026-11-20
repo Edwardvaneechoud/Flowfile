@@ -360,6 +360,25 @@ class CatalogAddKeyColumnResponse(BaseModel):
     size_bytes: int | None = None
 
 
+class CatalogRestoreVersionRequest(WireModel):
+    """Restore a Delta catalog table to an earlier version with one RESTORE commit."""
+
+    table_path: str  # Bare table directory name (no path separators)
+    version: int
+    expected_version: int | None = None
+    commit_metadata: dict[str, str] | None = None
+    storage: CatalogStorageInterface | None = None
+
+
+class CatalogRestoreVersionResponse(BaseModel):
+    restored_version: int
+    new_version: int | None = None
+    column_schema: list[ColumnSchema] = []
+    row_count: int = 0
+    column_count: int = 0
+    size_bytes: int | None = None
+
+
 class TableMetadataRequest(WireModel):
     table_path: str  # Bare table directory name (no path separators)
     storage: CatalogStorageInterface | None = None
@@ -450,7 +469,7 @@ class VizWorkerSource(WireModel):
     """Source descriptor for a viz session.
 
     The ``session_key`` is the cache key in ``VizSessionRegistry``; core builds
-    it deterministically and version-addressed (``tbl:{id}:v{delta_version}``,
+    it deterministically and version-addressed (``tbl:{id}:{dir}:v{delta_version}``,
     a sql digest over query + referenced-table versions, fvt ipc path+mtime) so
     successive requests against the same source data skip the load step while
     any Delta write rotates the key and spawns a fresh child.

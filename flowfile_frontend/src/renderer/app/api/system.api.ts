@@ -170,9 +170,11 @@ export interface ExchangeStoreState {
   maxRows: number | null;
   /** Why the environment's row limit is not a whole number; every crossing is refused until it is fixed. */
   maxRowsError: string | null;
-  source: "env" | "saved" | "none";
+  source: "env" | "saved" | "hub" | "none";
   envOverride: boolean;
   saved: ExchangeStoreSaved;
+  /** What this node's hub sets; it applies while nothing is saved here. */
+  hub: ExchangeStoreSaved | null;
   connections: string[];
 }
 
@@ -193,9 +195,10 @@ interface PyExchangeStoreState {
   connection: string | null;
   max_rows: number | null;
   max_rows_error?: string | null;
-  source: "env" | "saved" | "none";
+  source: "env" | "saved" | "hub" | "none";
   env_override: boolean;
   saved: PyExchangeStoreSaved;
+  hub?: PyExchangeStoreSaved | null;
   connections: string[];
 }
 
@@ -207,6 +210,9 @@ const fromPyExchangeStore = (raw: PyExchangeStoreState): ExchangeStoreState => (
   source: raw.source,
   envOverride: raw.env_override,
   saved: { uri: raw.saved.uri, connection: raw.saved.connection, maxRows: raw.saved.max_rows },
+  hub: raw.hub
+    ? { uri: raw.hub.uri, connection: raw.hub.connection, maxRows: raw.hub.max_rows }
+    : null,
   connections: raw.connections,
 });
 

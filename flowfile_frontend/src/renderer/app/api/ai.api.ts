@@ -3,6 +3,7 @@
 import axios from "../services/axios.config";
 import { fetchAiProviders } from "../views/AiSettingsView/api";
 import { AiDisabledError, AI_DISABLED_DETAIL } from "../views/AiSettingsView/api";
+import type { ChartRequest } from "../views/CatalogView/chartRequest";
 import {
   routeMessage,
   streamChat,
@@ -229,6 +230,310 @@ export const generateNodeCode = async (
       explanation: response.data.explanation,
       degraded: response.data.degraded,
       reason: response.data.reason,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+// Chart generation: POST /ai/generate_chart, a prompt for a catalog table → a chart request.
+
+/** Every `reason` a degraded chart answer can carry (core's `chart_request.REASONS`). */
+export type ChartGenerationReason =
+  | "empty_prompt"
+  | "no_columns"
+  | "timeout"
+  | "provider_error"
+  | "empty_response"
+  | "parse_error"
+  | "validation_error"
+  | "no_chart"
+  | "invalid_chart";
+
+export interface GenerateChartRequest {
+  tableId: number;
+  prompt: string;
+  currentChart?: ChartRequest | null;
+  /** False sends names and types only; the server can withhold values regardless. */
+  sendValues?: boolean;
+  provider?: string | null;
+  model?: string | null;
+  timeout?: number;
+}
+
+export interface ChartGenerationResponse {
+  chart: ChartRequest | null;
+  title: string | null;
+  explanation: string | null;
+  warnings: string[];
+  degraded: boolean;
+  reason: ChartGenerationReason | null;
+  message: string | null;
+  /** Model calls this answer took (2 when the correction round ran); absent from an older core. */
+  attempts?: number;
+  /** Codes of the silent repairs core applied (`chart_request.REPAIRS`); absent from an older core. */
+  repairs?: string[];
+}
+
+/**
+ * The route waits up to 90 s for the model plus up to 8 s for the table profile; the client
+ * waits longer so the server's own timeout answer is the one the user sees.
+ */
+export const GENERATE_CHART_CLIENT_TIMEOUT_MS = 110_000;
+
+export const generateChart = async (
+  body: GenerateChartRequest,
+  signal?: AbortSignal,
+): Promise<ChartGenerationResponse> => {
+  const payload: Record<string, unknown> = { table_id: body.tableId, prompt: body.prompt };
+  if (body.currentChart) payload.current_chart = body.currentChart;
+  if (body.sendValues !== undefined) payload.send_values = body.sendValues;
+  if (body.provider) payload.provider = body.provider;
+  if (body.model) payload.model = body.model;
+  if (body.timeout !== undefined) payload.timeout = body.timeout;
+
+  try {
+    const response = await axios.post<ChartGenerationResponse>("/ai/generate_chart", payload, {
+      signal,
+      timeout: GENERATE_CHART_CLIENT_TIMEOUT_MS,
+    });
+    const data = response.data;
+    return {
+      chart: data.chart ?? null,
+      title: data.title ?? null,
+      explanation: data.explanation ?? null,
+      warnings: data.warnings ?? [],
+      degraded: Boolean(data.degraded),
+      reason: data.reason ?? null,
+      message: data.message ?? null,
+      ...(typeof data.attempts === "number" ? { attempts: data.attempts } : {}),
+      ...(Array.isArray(data.repairs) ? { repairs: data.repairs } : {}),
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+// Dashboard building — POST /ai/plan_dashboard, then /ai/generate_chart per planned chart,
+// then POST /ai/dashboard_story. The plan says which charts to build and what each tests;
+// the story is written from what the built charts returned.
+
+export interface PlannedRelation {
+  x: string;
+  y: string;
+}
+
+export interface PlannedKpi {
+  id: string;
+  table_id: number;
+  label: string;
+  field: string | null;
+  agg: "sum" | "mean" | "median" | "min" | "max" | "count" | "distinctCount";
+}
+
+export interface PlannedCheck {
+  id: string;
+  table_id: number;
+  title: string;
+  /** The prompt the chart model gets for this chart. */
+  brief: string;
+  /** What the chart is there to find out. */
+  purpose: string;
+  relation: PlannedRelation | null;
+}
+
+/** A dashboard filter the plan asks for, on one column of a source. */
+export interface PlannedFilter {
+  id: string;
+  table_id: number;
+  field: string;
+  kind: "categorical" | "date_range" | "numeric_range";
+  label: string | null;
+}
+
+export interface DashboardPlan {
+  title: string;
+  kpis: PlannedKpi[];
+  checks: PlannedCheck[];
+  /** Absent from a core that plans no filters. */
+  filters?: PlannedFilter[];
+}
+
+/** Every `reason` a degraded plan can carry (core's `dashboard_plan.REASONS`). */
+export type DashboardPlanReason =
+  | "empty_prompt"
+  | "no_columns"
+  | "timeout"
+  | "provider_error"
+  | "empty_response"
+  | "parse_error"
+  | "validation_error"
+  | "no_plan"
+  | "invalid_plan";
+
+export interface DashboardPlanResponse {
+  plan: DashboardPlan | null;
+  explanation: string | null;
+  warnings: string[];
+  degraded: boolean;
+  reason: DashboardPlanReason | null;
+  message: string | null;
+  attempts: number;
+}
+
+export interface PlanDashboardRequest {
+  tableIds: number[];
+  prompt: string;
+  sendValues?: boolean;
+  provider?: string | null;
+  model?: string | null;
+}
+
+/** A built chart as the story route takes it; `payload` is the query its tile runs. */
+export interface StoryChartBody {
+  id: string;
+  table_id: number;
+  title: string;
+  purpose?: string | null;
+  chart: ChartRequest;
+  payload?: Record<string, unknown> | null;
+  relation?: PlannedRelation | null;
+}
+
+export interface StoryFailureBody {
+  id: string;
+  title: string;
+  reason: string;
+}
+
+export interface StoryChartOut {
+  id: string;
+  title: string;
+  finding: string | null;
+  width: "half" | "full";
+}
+
+export interface DashboardStory {
+  title: string;
+  summary_md: string;
+  charts: StoryChartOut[];
+  left_out: { id: string; reason: string }[];
+}
+
+export interface EvidenceNote {
+  id: string;
+  kind: "kpi" | "chart" | "relation";
+  status: "measured" | "not_measured" | "withheld";
+  detail: string | null;
+}
+
+/** Every `reason` a degraded story can carry (core's `dashboard_story.REASONS`). */
+export type DashboardStoryReason =
+  | "empty_prompt"
+  | "no_charts"
+  | "timeout"
+  | "provider_error"
+  | "empty_response"
+  | "parse_error"
+  | "validation_error"
+  | "invalid_story";
+
+export interface DashboardStoryResponse {
+  story: DashboardStory | null;
+  /** True when the text rests on numbers read from the data. */
+  grounded: boolean;
+  evidence: EvidenceNote[];
+  warnings: string[];
+  degraded: boolean;
+  reason: DashboardStoryReason | null;
+  message: string | null;
+  attempts: number;
+}
+
+export interface DashboardStoryRequest {
+  tableIds: number[];
+  prompt: string;
+  title?: string | null;
+  kpis: PlannedKpi[];
+  charts: StoryChartBody[];
+  failed: StoryFailureBody[];
+  sendValues?: boolean;
+  provider?: string | null;
+  model?: string | null;
+}
+
+/**
+ * Each route waits up to 120 s for the model, plus the table profiles (plan) or the evidence
+ * queries (story); the client waits longer so the server's own answer is the one shown.
+ */
+export const DASHBOARD_CLIENT_TIMEOUT_MS = 150_000;
+
+const dashboardTarget = (body: {
+  sendValues?: boolean;
+  provider?: string | null;
+  model?: string | null;
+}): Record<string, unknown> => {
+  const target: Record<string, unknown> = {};
+  if (body.sendValues !== undefined) target.send_values = body.sendValues;
+  if (body.provider) target.provider = body.provider;
+  if (body.model) target.model = body.model;
+  return target;
+};
+
+export const planDashboard = async (
+  body: PlanDashboardRequest,
+  signal?: AbortSignal,
+): Promise<DashboardPlanResponse> => {
+  const payload = { table_ids: body.tableIds, prompt: body.prompt, ...dashboardTarget(body) };
+  try {
+    const { data } = await axios.post<DashboardPlanResponse>("/ai/plan_dashboard", payload, {
+      signal,
+      timeout: DASHBOARD_CLIENT_TIMEOUT_MS,
+    });
+    return {
+      plan: data.plan ?? null,
+      explanation: data.explanation ?? null,
+      warnings: data.warnings ?? [],
+      degraded: Boolean(data.degraded),
+      reason: data.reason ?? null,
+      message: data.message ?? null,
+      attempts: data.attempts ?? 0,
+    };
+  } catch (error) {
+    if (isAiDisabledError(error)) throw new AiDisabledError();
+    throw error;
+  }
+};
+
+export const writeDashboardStory = async (
+  body: DashboardStoryRequest,
+  signal?: AbortSignal,
+): Promise<DashboardStoryResponse> => {
+  const payload = {
+    table_ids: body.tableIds,
+    prompt: body.prompt,
+    title: body.title ?? null,
+    kpis: body.kpis,
+    charts: body.charts,
+    failed: body.failed,
+    ...dashboardTarget(body),
+  };
+  try {
+    const { data } = await axios.post<DashboardStoryResponse>("/ai/dashboard_story", payload, {
+      signal,
+      timeout: DASHBOARD_CLIENT_TIMEOUT_MS,
+    });
+    return {
+      story: data.story ?? null,
+      grounded: Boolean(data.grounded),
+      evidence: data.evidence ?? [],
+      warnings: data.warnings ?? [],
+      degraded: Boolean(data.degraded),
+      reason: data.reason ?? null,
+      message: data.message ?? null,
+      attempts: data.attempts ?? 0,
     };
   } catch (error) {
     if (isAiDisabledError(error)) throw new AiDisabledError();

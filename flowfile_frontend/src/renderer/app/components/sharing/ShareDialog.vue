@@ -89,7 +89,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { UserGroupsApi } from "../../api/userGroups.api";
+import { SharesApi } from "../../api/shares.api";
 import { useSharingStore } from "../../stores/sharing-store";
 import { useAuthStore } from "../../stores/auth-store";
 import type { PermissionLevel, ResourceType, Share, UserGroup } from "../../types/sharing.types";
@@ -166,11 +166,9 @@ async function onOpen() {
   selectedPermission.value = "use";
   loading.value = true;
   try {
-    // Fetch groups and existing shares in parallel — they're independent.
-    // Admins can share to ANY group, so list all; everyone else lists their own.
-    // Always fresh — a group created after the page loaded must show up.
+    // Groups and shares in parallel, always fresh; a remote catalog's row is answered with that catalog's groups.
     const [groupList, shareList] = await Promise.all([
-      authStore.isAdmin ? UserGroupsApi.list(true) : sharing.loadMyGroups(true),
+      SharesApi.groups(props.resourceType, props.resourceId),
       sharing.listShares(props.resourceType, props.resourceId),
     ]);
     groups.value = groupList;

@@ -17,6 +17,13 @@
             <el-icon><Search /></el-icon>
           </template>
         </el-input>
+        <el-switch
+          v-if="ownedCount"
+          v-model="includeOwned"
+          size="small"
+          :active-text="`Include charts on dashboards (${ownedCount})`"
+          data-testid="charts-include-owned"
+        />
         <el-button type="primary" size="small" @click="openSourcePicker">
           <el-icon><Plus /></el-icon>
           <span>New chart</span>
@@ -33,7 +40,9 @@
         :description="
           search
             ? 'No charts match your filter.'
-            : 'No charts yet. Create one from a catalog table or an ad-hoc SQL query.'
+            : ownedCount
+              ? 'No charts of their own yet. The charts made on a dashboard are listed with the switch above.'
+              : 'No charts yet. Create one from a catalog table or an ad-hoc SQL query.'
         "
       >
         <el-button v-if="!search" type="primary" @click="openSourcePicker">
@@ -66,6 +75,9 @@
           <div class="viz-library-card-title">
             <div class="viz-name">{{ item.name }}</div>
             <div class="viz-source">{{ sourceLabel(item) }}</div>
+            <div v-if="ownerLabel(item)" class="viz-owner" data-testid="chart-owner">
+              <i class="fa-solid fa-table-columns"></i> {{ ownerLabel(item) }}
+            </div>
           </div>
           <el-dropdown trigger="click" @click.stop>
             <el-icon class="viz-card-menu" @click.stop><MoreFilled /></el-icon>
@@ -79,6 +91,13 @@
                   @click="emit('viewTable', item.catalog_table_id!)"
                 >
                   <el-icon><FolderOpened /></el-icon> Source table
+                </el-dropdown-item>
+                <el-dropdown-item
+                  v-if="item.dashboard_id != null"
+                  data-testid="chart-keep"
+                  @click="onKeep(item)"
+                >
+                  <el-icon><FolderAdd /></el-icon> Keep as a chart
                 </el-dropdown-item>
                 <el-dropdown-item divided @click="onDelete(item)">
                   <el-icon><Delete /></el-icon> Delete
@@ -145,12 +164,27 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Delete, Edit, FolderOpened, MoreFilled, Plus, Search } from "@element-plus/icons-vue";
+import {
+  Delete,
+  Edit,
+  FolderAdd,
+  FolderOpened,
+  MoreFilled,
+  Plus,
+  Search,
+} from "@element-plus/icons-vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useGraphicWalkerAppearance } from "../../composables/useGraphicWalkerAppearance";
 import { formatDate } from "./catalog-formatters";
+import {
+  belongsToDashboard,
+  libraryCharts,
+  ownerLabel,
+  readIncludeOwned,
+  writeIncludeOwned,
+} from "./chartLibraryFilter";
 import type { CatalogVisualization, VizSourceDescriptor } from "../../types";
 import VisualizationViewer from "./VisualizationViewer.vue";
 import VisualizationEditor from "./VisualizationEditor.vue";
@@ -182,14 +216,21 @@ function sourceLabel(item: CatalogVisualization): string {
   return item.table_full_name ?? "Catalog table";
 }
 
+// A chart made on a dashboard belongs to it and is listed here only when asked for.
+const includeOwned = ref(readIncludeOwned(globalThis.localStorage));
+watch(includeOwned, (include) => writeIncludeOwned(globalThis.localStorage, include));
+const ownedCount = computed(() => store.visualizationLibrary.filter(belongsToDashboard).length);
+
 const filtered = computed<CatalogVisualization[]>(() => {
+  const listed = libraryCharts(store.visualizationLibrary, includeOwned.value);
   const q = search.value.trim().toLowerCase();
-  if (!q) return store.visualizationLibrary;
-  return store.visualizationLibrary.filter((it) => {
+  if (!q) return listed;
+  return listed.filter((it) => {
     const haystack = [
       it.name,
       it.table_full_name ?? "",
       it.namespace_name ?? "",
+      it.dashboard_name ?? "",
       it.chart_type ?? "",
       it.source_type,
     ]
@@ -231,9 +272,21 @@ function closeViewer() {
     .catch((err) => console.warn("[catalog] viz library refresh failed", err));
 }
 
-async function onDelete(item: CatalogVisualization) {
+async function onKeep(item: CatalogVisualization) {
   try {
-    await ElMessageBox.confirm(`Delete visualization "${item.name}"?`, "Confirm delete", {
+    await store.detachVisualization(item.id);
+    ElMessage.success(`"${item.name}" is now a chart of its own`);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail ?? err?.message ?? String(err));
+  }
+}
+
+async function onDelete(item: CatalogVisualization) {
+  const owner = belongsToDashboard(item)
+    ? ` Its dashboard${item.dashboard_name ? `, "${item.dashboard_name}",` : ""} will show an empty tile.`
+    : "";
+  try {
+    await ElMessageBox.confirm(`Delete visualization "${item.name}"?${owner}`, "Confirm delete", {
       type: "warning",
     });
   } catch {
@@ -392,6 +445,14 @@ onMounted(() => {
 .viz-source {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.viz-owner {
+  font-size: 12px;
+  color: var(--el-color-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -15,6 +15,8 @@ import type {
   CatalogTableKeyColumnRequest,
   CatalogTableKeyColumnResponse,
   CatalogTablePreview,
+  CatalogTableRestoreRequest,
+  CatalogTableRestoreResponse,
   CatalogTableUpdate,
   CdcCursor,
   CdcCursorResetRequest,
@@ -22,6 +24,7 @@ import type {
   ColumnStatsResponse,
   CatalogVisualization,
   Dashboard,
+  DashboardChartPrune,
   DashboardCreatePayload,
   DashboardUpdatePayload,
   DeltaTableHistory,
@@ -66,6 +69,14 @@ import type {
 // namespace, so namespace_id is only sent alongside a bare name.
 function artifactRefParams(ref: string, namespaceId: number | null): Record<string, any> {
   return !ref.includes("::") && namespaceId !== null ? { namespace_id: namespaceId } : {};
+}
+
+/** A payload that writes a chart spec also says which Graphic Walker wrote it. */
+function stampGwVersion<T extends { spec?: unknown; spec_gw_version?: string | null }>(
+  payload: T,
+): T {
+  if (payload.spec == null || typeof __GW_VERSION__ === "undefined") return payload;
+  return { ...payload, spec_gw_version: __GW_VERSION__ };
 }
 
 export class CatalogApi {
@@ -478,6 +489,18 @@ export class CatalogApi {
     return response.data;
   }
 
+  /** Restore a table to an earlier Delta version (one RESTORE commit; history is kept). */
+  static async restoreTableVersion(
+    tableId: number,
+    body: CatalogTableRestoreRequest,
+  ): Promise<CatalogTableRestoreResponse> {
+    const response = await axios.post<CatalogTableRestoreResponse>(
+      `/catalog/tables/${tableId}/restore`,
+      body,
+    );
+    return response.data;
+  }
+
   /** Distinct values + min/max for a single column on a catalog table.
    * Used by the dashboard filter UI to pre-populate categorical
    * dropdowns and pre-fill numeric / date range inputs. */
@@ -586,8 +609,8 @@ export class CatalogApi {
 
   // ====== Scheduler ======
 
-  static async getSchedulerStatus(): Promise<SchedulerStatus> {
-    const response = await axios.get<SchedulerStatus>("/catalog/scheduler/status");
+  static async getSchedulers(): Promise<SchedulerStatus[]> {
+    const response = await axios.get<SchedulerStatus[]>("/catalog/schedulers");
     return response.data;
   }
 
@@ -665,7 +688,10 @@ export class CatalogApi {
   static async createVisualization(
     payload: VisualizationCreatePayload,
   ): Promise<CatalogVisualization> {
-    const response = await axios.post<CatalogVisualization>("/catalog/visualizations", payload);
+    const response = await axios.post<CatalogVisualization>(
+      "/catalog/visualizations",
+      stampGwVersion(payload),
+    );
     return response.data;
   }
 
@@ -676,7 +702,7 @@ export class CatalogApi {
   ): Promise<CatalogVisualization> {
     const response = await axios.put<CatalogVisualization>(
       `/catalog/visualizations/${vizId}`,
-      payload,
+      stampGwVersion(payload),
       config,
     );
     return response.data;
@@ -684,6 +710,14 @@ export class CatalogApi {
 
   static async deleteVisualization(vizId: number): Promise<void> {
     await axios.delete(`/catalog/visualizations/${vizId}`);
+  }
+
+  /** Make a dashboard's chart a chart of its own. */
+  static async detachVisualization(vizId: number): Promise<CatalogVisualization> {
+    const response = await axios.post<CatalogVisualization>(
+      `/catalog/visualizations/${vizId}/detach`,
+    );
+    return response.data;
   }
 
   /** Compute rows for a saved viz.
@@ -750,8 +784,11 @@ export class CatalogApi {
     return response.data;
   }
 
-  static async createDashboard(payload: DashboardCreatePayload): Promise<Dashboard> {
-    const response = await axios.post<Dashboard>("/catalog/dashboards", payload);
+  static async createDashboard(
+    payload: DashboardCreatePayload,
+    config?: AxiosRequestConfig,
+  ): Promise<Dashboard> {
+    const response = await axios.post<Dashboard>("/catalog/dashboards", payload, config);
     return response.data;
   }
 
@@ -766,6 +803,14 @@ export class CatalogApi {
 
   static async deleteDashboard(id: number): Promise<void> {
     await axios.delete(`/catalog/dashboards/${id}`);
+  }
+
+  /** Remove the dashboard's own charts that its saved layout no longer uses. */
+  static async pruneDashboardCharts(id: number): Promise<DashboardChartPrune> {
+    const response = await axios.post<DashboardChartPrune>(
+      `/catalog/dashboards/${id}/prune_charts`,
+    );
+    return response.data;
   }
 
   // ====== Demo catalog ======

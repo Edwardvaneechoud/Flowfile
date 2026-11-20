@@ -754,3 +754,16 @@ def test_compute_unavailable_adds_the_hint_once_and_only_for_a_refused_connectio
     windows = "[WinError 10061] No connection could be made because the target machine actively refused it"
     assert str(ComputeUnavailable(windows)) == f"{windows}{HINT}"
     assert str(ComputeUnavailable("Read timed out")) == "Read timed out"
+
+
+def test_a_worker_that_is_no_hub_server_keeps_the_transports_text_when_it_did_not_answer(closed_port_url):
+    """Only a server filled from a hub gets the short sentence in place of the transport's text; the URL and the cause
+    are kept on the error either way."""
+    failure = requests.ConnectionError("HTTPConnectionPool(host='127.0.0.1'): [Errno 61] Connection refused")
+    try:
+        raise ComputeUnavailable(
+            f"Could not reach the worker at {closed_port_url}: {failure}", backend_id=TEAM, url=closed_port_url
+        ) from failure
+    except ComputeUnavailable as raised:
+        assert str(raised) == f"Could not reach the worker at {closed_port_url}: {failure}{TEAM_HINT}"
+        assert (raised.url, raised.__cause__) == (closed_port_url, failure)

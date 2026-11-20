@@ -10,6 +10,7 @@ Runs in docker-mode via the `multi_user_mode` autouse fixture from conftest.py.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from uuid import uuid4
@@ -34,6 +35,7 @@ from flowfile_core.project.manifest import (
 from flowfile_core.project.models import ActiveProject
 from flowfile_core.project.normalize import write_yaml, dump_yaml
 from flowfile_core.project.service import project_root_base, _confine_project_root
+from shared.storage_config import storage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -515,9 +517,9 @@ class TestH3_H6_FlowUuidCollisionMintsFresh:
                 reg.flow_path = str(b_file)
                 db.commit()
 
-        # Redirect Alice's new-flow storage to a tmp dir so the write doesn't hit /data.
-        alice_flows_dir = tmp_path / "alice_flows"
-        alice_flows_dir.mkdir()
+        # Redirect Alice's new-flow storage to a tmp dir inside the server's flow folders, where it may register.
+        storage.temp_directory_for_flows.mkdir(parents=True, exist_ok=True)
+        alice_flows_dir = Path(tempfile.mkdtemp(prefix="alice_flows_", dir=storage.temp_directory_for_flows))
         mock_storage = MagicMock()
         type(mock_storage).flows_directory = PropertyMock(return_value=alice_flows_dir)
 
@@ -547,6 +549,7 @@ class TestH3_H6_FlowUuidCollisionMintsFresh:
             if returned_uuid and returned_uuid != b_flow_uuid:
                 _cleanup_flows(returned_uuid)
             project_sync.close_project(alice_id)
+            shutil.rmtree(alice_flows_dir, ignore_errors=True)
 
 
 class TestH5_VizDashboardCollisionMintsFresh:
@@ -763,6 +766,47 @@ class TestMA3_NamespaceResolutionOwnFirst:
             _cleanup_namespaces(ns_name)
             project_sync.close_project(alice_id)
 
+    def test_import_reconciles_a_row_stored_under_a_links_spelling_before_the_rule(self, tmp_path, users):
+        """A flow registered before the rule under a link's spelling of the flows folder is the row the import
+        updates: its name follows the project, no second row appears, and the file is written where the link
+        leads."""
+        from flowfile_core.project.importer import import_project
+
+        alice_id = users["alice"].id
+        flow_uuid = str(uuid4())
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        link = tmp_path / "store_link"
+        link.symlink_to(storage.flows_directory, target_is_directory=True)
+        real_file = storage.flows_directory / f"alice_{flow_uuid[:8]}.flow.yaml"
+        with get_db_context() as db:
+            reg = db_models.FlowRegistration(
+                name="old_name",
+                flow_path=str(link / real_file.name),
+                flow_uuid=flow_uuid,
+                namespace_id=None,
+                owner_id=alice_id,
+            )
+            db.add(reg)
+            db.commit()
+            row_id = reg.id
+
+        root = _minimal_project_dir(tmp_path, "linked_import")
+        _write_flow_manifest_with_namespace(flows_dir(root), flow_uuid, "General", "default", "renamed_flow")
+        project_sync.close_project(alice_id)
+        try:
+            result = import_project(root, alice_id)
+            assert result is not None and result.imported_flows == 1
+            assert real_file.exists()
+            with get_db_context() as db:
+                rows = db.query(db_models.FlowRegistration).filter_by(flow_uuid=flow_uuid).all()
+                assert [(r.id, r.name) for r in rows] == [(row_id, "renamed_flow")]
+        finally:
+            project_sync.close_project(alice_id)
+            real_file.unlink(missing_ok=True)
+            with get_db_context() as db:
+                db.query(db_models.FlowRegistration).filter_by(flow_uuid=flow_uuid).delete()
+                db.commit()
+
     def test_public_namespace_import_succeeds_and_places_flow_without_mutating_seed(self, tmp_path, users):
         # M-A3 (Phase-4 re-open): a non-seed docker user imports a project whose flows reference the
         # public General/default namespace (owned by local_user, is_public=True).
@@ -792,10 +836,11 @@ class TestMA3_NamespaceResolutionOwnFirst:
         assert seed_owner != alice_id, "test requires Alice to be a non-seed user"
 
         flow_uuid = str(uuid4())
-        # Pre-register Alice's flow with NO namespace and a writable on-disk path (so the importer
-        # re-points to it instead of writing under the real flows_directory). The reconcile step in
-        # _import_flow is what must set namespace_id from the public-fallback resolution.
-        seeded_path = str(tmp_path / f"alice_{flow_uuid[:8]}.flow.yaml")
+        # Pre-register Alice's flow with NO namespace and a path inside the server's flows folder (the
+        # importer writes over a registration's file only there). The reconcile step in _import_flow is
+        # what must set namespace_id from the public-fallback resolution.
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        seeded_path = str(storage.flows_directory / f"alice_{flow_uuid[:8]}.flow.yaml")
         with get_db_context() as db:
             reg = db_models.FlowRegistration(
                 name="public_ns_flow",
@@ -1222,6 +1267,7 @@ class TestH8_PruneGrantCleanup:
     def test_prune_viz_cleans_grants(self, tmp_path, users, group_factory, grant_factory):
         # Finding H8: grants must not survive a prune of their resource.
         from flowfile_core.auth import sharing
+        from flowfile_core.project import kinds
         from flowfile_core.project.importer import import_project
 
         alice_id = users["alice"].id
@@ -1245,7 +1291,7 @@ class TestH8_PruneGrantCleanup:
         project_sync.close_project(alice_id)
 
         try:
-            import_project(root, alice_id, prune=True)
+            import_project(root, alice_id, [kinds.Change("visualizations", a_vuuid, "removed", "", "")])
 
             # The viz should be gone.
             with get_db_context() as db:
@@ -1258,3 +1304,58 @@ class TestH8_PruneGrantCleanup:
         finally:
             _cleanup_vizs(a_vuuid)
             project_sync.close_project(alice_id)
+
+
+class TestPublicNamespaceRemoval:
+    """An apply removes an emptied public namespace of its owner; another user's table in it keeps it."""
+
+    def test_another_users_table_keeps_a_public_namespace(self, users):
+        from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+        from flowfile_core.catalog.demo_seed import _ensure_namespace
+        from flowfile_core.project import importer, kinds, projection
+
+        alice_id, bob_id = users["alice"].id, users["bob"].id
+        catalog, schema = f"shared_{uuid4().hex[:8]}", f"shared_schema_{uuid4().hex[:8]}"
+
+        def rows() -> tuple[int, int]:
+            with get_db_context() as db:
+                namespaces = db.query(db_models.CatalogNamespace).filter(
+                    db_models.CatalogNamespace.name.in_([catalog, schema])
+                )
+                return namespaces.count(), db.query(db_models.CatalogTable).filter_by(owner_id=bob_id).count()
+
+        try:
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                service = CatalogService(repo)
+                catalog_id = _ensure_namespace(service, repo, db, catalog, None, alice_id, None).id
+                schema_id = _ensure_namespace(service, repo, db, schema, catalog_id, alice_id, None).id
+                db.add(
+                    db_models.CatalogTable(
+                        name="bobs_view",
+                        owner_id=bob_id,
+                        namespace_id=schema_id,
+                        storage_format="delta",
+                        table_type="virtual",
+                        sql_query="SELECT 1 AS id",
+                    )
+                )
+                db.commit()
+                held = {"namespaces.yaml": dump_yaml(projection.namespace_manifest_data(db, alice_id))}
+            target = {"namespaces.yaml": dump_yaml({"namespaces": []})}
+            removed = [c for c in kinds.compare(held, target) if c.change == "removed"]
+            assert {c.label for c in removed} == {catalog, f"{catalog}.{schema}"}
+
+            importer._delete_removed(alice_id, removed)
+            assert rows() == (2, 1), "a namespace holding another user's table was deleted"
+
+            with get_db_context() as db:
+                db.query(db_models.CatalogTable).filter_by(owner_id=bob_id).delete()
+                db.commit()
+            importer._delete_removed(alice_id, removed)
+            assert rows() == (0, 0), "an emptied public namespace was kept"
+        finally:
+            with get_db_context() as db:
+                db.query(db_models.CatalogTable).filter_by(owner_id=bob_id).delete()
+                db.commit()
+            _cleanup_namespaces(schema, catalog)

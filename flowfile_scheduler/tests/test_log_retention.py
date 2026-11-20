@@ -20,7 +20,7 @@ import pytest
 from flowfile_scheduler import engine as engine_mod
 from flowfile_scheduler.engine import LOG_SWEEP_INTERVAL, FlowScheduler
 from shared import run_completion
-from shared.models import FlowRegistration, FlowSchedule
+from shared.models import FlowRegistration, FlowSchedule, User
 from shared.run_logs import cleanup_old_logs
 from shared.notifications import processor as notifications
 from shared.storage_config import storage
@@ -38,7 +38,7 @@ def sched(tmp_path, monkeypatch):
     s = FlowScheduler(poll_interval=1)
     s.spawned: list[tuple[str, int]] = []
     monkeypatch.setattr(
-        s, "_spawn_flow", lambda flow_path, run_id: (s.spawned.append((flow_path, run_id)) or 4242)
+        s, "_spawn_flow", lambda flow_path, run_id, backend=None: (s.spawned.append((flow_path, run_id)) or 4242)
     )
     return s
 
@@ -53,6 +53,7 @@ def sweeps(monkeypatch) -> list[int]:
 
 def _seed_due_interval_schedule(sched: FlowScheduler) -> None:
     with sched._session_factory() as db:
+        db.merge(User(id=1, disabled=False))
         reg = FlowRegistration(name="flow", flow_path="/tmp/flow.flowfile", owner_id=1)
         db.add(reg)
         db.commit()

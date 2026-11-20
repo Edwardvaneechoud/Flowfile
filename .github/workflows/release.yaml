@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14
+          - platform: macos-15
             target: aarch64-apple-darwin
           - platform: macos-15-intel
             target: x86_64-apple-darwin
@@ -101,7 +101,7 @@ jobs:
           poetry env use "$PYBIN"
 
       - name: Install Python deps
-        run: poetry install --with build,runtime64 --no-interaction --no-ansi
+        run: poetry install --with build,runtime64 --extras snowflake --no-interaction --no-ansi
 
       - name: Build Python services (PyInstaller)
         run: poetry run build_backends

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeDropCell } from "./gridDrop";
+import { computeDropCell, firstFreeRow } from "./gridDrop";
 
 // Defaults matching DashboardCanvas: 12 cols, row height 40, margin [8,8],
 // default tile width 6. A 1000px-wide grid → colW = (1000 - 8*13)/12 = 74.6667.
@@ -31,5 +31,18 @@ describe("computeDropCell", () => {
       x: 0,
       y: 0,
     });
+  });
+});
+
+describe("firstFreeRow", () => {
+  it("is the row below the tiles, in a column span when one is given", () => {
+    const tiles = [
+      { x: 0, y: 0, w: 24, h: 4 },
+      { x: 24, y: 0, w: 24, h: 10 },
+    ];
+    expect(firstFreeRow([])).toBe(0);
+    expect(firstFreeRow(tiles)).toBe(10);
+    expect(firstFreeRow(tiles, { x: 0, w: 24 })).toBe(4);
+    expect(firstFreeRow(tiles, { x: 20, w: 10 })).toBe(10);
   });
 });

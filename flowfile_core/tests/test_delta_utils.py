@@ -1,14 +1,13 @@
 """Tests for flowfile_core.catalog.delta_utils module.
 
 Covers Delta table detection, legacy Parquet detection, table existence,
-size calculation, preview reading, and storage deletion.
+size calculation and storage deletion.
 """
 
 import shutil
 from pathlib import Path
 
 import polars as pl
-import pyarrow as pa
 import pytest
 
 from flowfile_core.catalog.delta_utils import (
@@ -16,7 +15,6 @@ from flowfile_core.catalog.delta_utils import (
     get_delta_table_size_bytes,
     is_delta_table,
     is_legacy_parquet,
-    read_delta_preview,
     table_exists,
 )
 
@@ -122,26 +120,6 @@ class TestGetDeltaTableSizeBytes:
         fs_size = sum(f.stat().st_size for f in delta_table_path.rglob("*.parquet"))
         delta_size = get_delta_table_size_bytes(delta_table_path)
         assert delta_size == fs_size
-
-
-# read_delta_preview
-
-
-class TestReadDeltaPreview:
-    def test_reads_all_rows(self, delta_table_path: Path):
-        df = read_delta_preview(delta_table_path, n_rows=100)
-        assert isinstance(df, pa.Table)
-        assert df.num_rows == 3
-        assert set(df.column_names) == {"id", "name"}
-
-    def test_limits_rows(self, delta_table_path: Path):
-        df = read_delta_preview(delta_table_path, n_rows=2)
-        assert df.num_rows == 2
-
-    def test_preserves_dtypes(self, delta_table_path: Path):
-        df = read_delta_preview(delta_table_path, n_rows=100)
-        assert df.schema.field("id").type == pa.int64()
-        assert df.schema.field("name").type == pa.string()
 
 
 # delete_table_storage

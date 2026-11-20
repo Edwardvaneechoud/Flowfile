@@ -15,7 +15,6 @@ at module load.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from typing import Any
@@ -23,6 +22,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from flowfile_core.ai.context import render_prompt_context
+from flowfile_core.ai.json_payload import parse_json_payload as _parse_json_payload
 from flowfile_core.ai.metrics import record_autocomplete_call
 from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.scheduler import RateLimitScheduler, default_scheduler
@@ -36,9 +36,7 @@ _MAX_TOKENS: int = 1500
 
 # Node types whose primary configuration is a code snippet. Matches the
 # inline-action ``_CODE_BEARING_NODE_TYPES`` set.
-CODE_BEARING_NODE_TYPES: frozenset[str] = frozenset(
-    {"polars_code", "python_script", "sql_query"}
-)
+CODE_BEARING_NODE_TYPES: frozenset[str] = frozenset({"polars_code", "python_script", "sql_query"})
 
 # Per-node-type contract the generated code must satisfy. Mirrors the default
 # templates the editors ship (polarsCode/utils.ts, pythonScript/utils.ts,
@@ -170,26 +168,6 @@ async def _call_provider_for_json(
         logger.warning("node code generation provider call failed: %s", exc, exc_info=False)
         return None, "provider_error"
     return content, None
-
-
-def _parse_json_payload(content: str | None) -> tuple[Any, str | None]:
-    """Parse JSON, tolerating a ```json code fence around the whole object."""
-    if content is None or not content.strip():
-        return None, "empty_response"
-    try:
-        return json.loads(content), None
-    except json.JSONDecodeError:
-        pass
-    stripped = content.strip()
-    if stripped.startswith("```"):
-        without_open = stripped.split("\n", 1)[-1]
-        if without_open.rstrip().endswith("```"):
-            without_open = without_open.rstrip()[: -len("```")].rstrip()
-        try:
-            return json.loads(without_open), None
-        except json.JSONDecodeError:
-            pass
-    return None, "parse_error"
 
 
 def _strip_code_fences(code: str) -> str:

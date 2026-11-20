@@ -1,0 +1,1787 @@
+{
+  "about": "Prompts for tools/chart_ai_eval, each with what a correct answer must contain (partial, never one exact chart; the vocabulary is in tools/chart_ai_eval/scoring.py). A follow_up case sends each step the chart the step before returned as current_chart, or fallback_current when that step returned none.",
+  "cases": [
+    {
+      "id": "tidy-revenue-by-region",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "revenue by region",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "region",
+                "aggregate": null
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-monthly-trend",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "monthly revenue trend",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "line",
+              "area",
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "order_date",
+                "timeUnit": "month"
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "sort": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-top5-products",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "top 5 products by revenue",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "product",
+                "aggregate": null
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "sort": "descending",
+            "limit": 5
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-bottom3-regions",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "the 3 regions with the lowest total quantity",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "region",
+                "aggregate": null
+              },
+              {
+                "field": "quantity",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "sort": "ascending",
+            "limit": 3
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-pie-category",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "share of revenue per category as a pie chart",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "arc"
+            ],
+            "fields": [
+              {
+                "field": "category",
+                "aggregate": null,
+                "channel": [
+                  "color"
+                ]
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ],
+                "channel": [
+                  "theta"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-scatter",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "unit price against quantity, one dot per order",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "point"
+            ],
+            "raw_rows": true,
+            "fields": [
+              {
+                "field": "unit_price",
+                "aggregate": null
+              },
+              {
+                "field": "quantity",
+                "aggregate": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-histogram",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "histogram of unit price",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar",
+              "area"
+            ],
+            "fields": [
+              {
+                "field": "unit_price",
+                "bin": true
+              },
+              {
+                "aggregate": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-west-2024",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "revenue by category in the West during 2024",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "category",
+                "aggregate": null
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "filters": [
+              {
+                "field": "region",
+                "include": [
+                  "West"
+                ],
+                "exclude": [
+                  "East",
+                  "North",
+                  "South"
+                ]
+              },
+              {
+                "field": "order_date",
+                "include": [
+                  "2024-01-01",
+                  "2024-12-31"
+                ],
+                "exclude": [
+                  "2023-12-31",
+                  "2025-01-01"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-stacked-orders",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "number of orders per region, stacked by category",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "region",
+                "aggregate": null
+              },
+              {
+                "field": "category",
+                "aggregate": null,
+                "channel": [
+                  "color"
+                ]
+              },
+              {
+                "aggregate": [
+                  "count"
+                ]
+              }
+            ],
+            "stack": [
+              "stack",
+              null
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-share-normalized",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "percentage of revenue by category within each region",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar",
+              "area"
+            ],
+            "fields": [
+              {
+                "field": "region",
+                "aggregate": null
+              },
+              {
+                "field": "category",
+                "aggregate": null
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "stack": [
+              "normalize"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-heatmap",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "heatmap of quantity by region and category",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "rect"
+            ],
+            "fields": [
+              {
+                "field": "region",
+                "aggregate": null
+              },
+              {
+                "field": "category",
+                "aggregate": null
+              },
+              {
+                "field": "quantity",
+                "aggregate": [
+                  "sum",
+                  "mean",
+                  "median"
+                ],
+                "channel": [
+                  "color"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-boxplot",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "distribution of unit price per category as a box plot",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "boxplot"
+            ],
+            "fields": [
+              {
+                "field": "category",
+                "aggregate": null
+              },
+              {
+                "field": "unit_price",
+                "aggregate": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-returns-per-month",
+      "table": "tidy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "how many returns were there each month in 2025",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar",
+              "line",
+              "area"
+            ],
+            "fields": [
+              {
+                "field": "order_date",
+                "timeUnit": "month"
+              },
+              {
+                "aggregate": [
+                  "count"
+                ]
+              }
+            ],
+            "filters": [
+              {
+                "field": "is_return",
+                "include": [
+                  true
+                ],
+                "exclude": [
+                  false
+                ]
+              },
+              {
+                "field": "order_date",
+                "include": [
+                  "2025-01-01",
+                  "2025-12-31"
+                ],
+                "exclude": [
+                  "2024-12-31",
+                  "2026-01-01"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-chain-trend",
+      "table": "tidy",
+      "kind": "follow_up",
+      "steps": [
+        {
+          "prompt": "monthly revenue as bars",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "order_date",
+                "timeUnit": "month"
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "prompt": "make it a line",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "line"
+            ],
+            "fields": [
+              {
+                "field": "order_date",
+                "timeUnit": "month"
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          },
+          "fallback_current": {
+            "mark": "bar",
+            "x": {
+              "field": "order_date",
+              "timeUnit": "month"
+            },
+            "y": {
+              "field": "revenue",
+              "aggregate": "sum"
+            }
+          }
+        },
+        {
+          "prompt": "split by region",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "line"
+            ],
+            "fields": [
+              {
+                "field": "order_date",
+                "timeUnit": "month"
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              },
+              {
+                "field": "region",
+                "aggregate": null,
+                "channel": [
+                  "color"
+                ]
+              }
+            ]
+          },
+          "fallback_current": {
+            "mark": "line",
+            "x": {
+              "field": "order_date",
+              "timeUnit": "month"
+            },
+            "y": {
+              "field": "revenue",
+              "aggregate": "sum"
+            }
+          }
+        },
+        {
+          "prompt": "only 2025",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "line"
+            ],
+            "fields": [
+              {
+                "field": "order_date",
+                "timeUnit": "month"
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              },
+              {
+                "field": "region",
+                "aggregate": null,
+                "channel": [
+                  "color"
+                ]
+              }
+            ],
+            "filters": [
+              {
+                "field": "order_date",
+                "include": [
+                  "2025-01-01",
+                  "2025-12-31"
+                ],
+                "exclude": [
+                  "2024-12-31",
+                  "2026-01-01"
+                ]
+              }
+            ]
+          },
+          "fallback_current": {
+            "mark": "line",
+            "x": {
+              "field": "order_date",
+              "timeUnit": "month"
+            },
+            "y": {
+              "field": "revenue",
+              "aggregate": "sum"
+            },
+            "color": {
+              "field": "region"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-chain-top",
+      "table": "tidy",
+      "kind": "follow_up",
+      "steps": [
+        {
+          "prompt": "top 5 products by revenue",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "product",
+                "aggregate": null
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "sort": "descending",
+            "limit": 5
+          }
+        },
+        {
+          "prompt": "show the top 10 instead",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "product",
+                "aggregate": null
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "sort": "descending",
+            "limit": 10
+          },
+          "fallback_current": {
+            "mark": "bar",
+            "x": {
+              "field": "product"
+            },
+            "y": {
+              "field": "revenue",
+              "aggregate": "sum"
+            },
+            "sort": "descending",
+            "limit": 5
+          }
+        },
+        {
+          "prompt": "use quantity instead of revenue",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "product",
+                "aggregate": null
+              },
+              {
+                "field": "quantity",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "absent": [
+              {
+                "field": "revenue"
+              }
+            ],
+            "sort": "descending",
+            "limit": 10
+          },
+          "fallback_current": {
+            "mark": "bar",
+            "x": {
+              "field": "product"
+            },
+            "y": {
+              "field": "revenue",
+              "aggregate": "sum"
+            },
+            "sort": "descending",
+            "limit": 10
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-chain-remove-split",
+      "table": "tidy",
+      "kind": "follow_up",
+      "steps": [
+        {
+          "prompt": "orders per region, split by category",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "region",
+                "aggregate": null
+              },
+              {
+                "field": "category",
+                "aggregate": null
+              },
+              {
+                "aggregate": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "prompt": "remove the category split",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "region",
+                "aggregate": null
+              },
+              {
+                "aggregate": [
+                  "count"
+                ]
+              }
+            ],
+            "absent": [
+              {
+                "field": "category"
+              }
+            ]
+          },
+          "fallback_current": {
+            "mark": "bar",
+            "x": {
+              "field": "region"
+            },
+            "y": {
+              "field": "*",
+              "aggregate": "count"
+            },
+            "color": {
+              "field": "category"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-top5-with-colour",
+      "table": "tidy",
+      "kind": "rule_clash",
+      "steps": [
+        {
+          "prompt": "top 5 products by revenue, coloured by region",
+          "expect": {
+            "outcome": [
+              "chart",
+              "decline"
+            ],
+            "fields": [
+              {
+                "field": "product",
+                "aggregate": null
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-sorted-pie",
+      "table": "tidy",
+      "kind": "rule_clash",
+      "steps": [
+        {
+          "prompt": "a pie of revenue by region, sorted from largest to smallest",
+          "expect": {
+            "outcome": [
+              "chart",
+              "decline"
+            ],
+            "marks": [
+              "arc",
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "region",
+                "aggregate": null
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-two-measures-line",
+      "table": "tidy",
+      "kind": "rule_clash",
+      "steps": [
+        {
+          "prompt": "revenue and quantity per month in one line chart",
+          "expect": {
+            "outcome": [
+              "chart",
+              "decline"
+            ],
+            "fields": [
+              {
+                "field": "order_date",
+                "timeUnit": "month"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-weather",
+      "table": "tidy",
+      "kind": "decline",
+      "steps": [
+        {
+          "prompt": "what will the weather be tomorrow",
+          "expect": {
+            "outcome": "decline"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-missing-columns",
+      "table": "tidy",
+      "kind": "decline",
+      "steps": [
+        {
+          "prompt": "profit margin per supplier",
+          "expect": {
+            "outcome": "decline"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-how-are-sales",
+      "table": "tidy",
+      "kind": "vague",
+      "steps": [
+        {
+          "prompt": "show me how sales are doing",
+          "expect": {
+            "outcome": "chart"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-best-region",
+      "table": "tidy",
+      "kind": "vague",
+      "steps": [
+        {
+          "prompt": "which region performs best?",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "region",
+                "aggregate": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tidy-dutch",
+      "table": "tidy",
+      "kind": "language",
+      "steps": [
+        {
+          "prompt": "omzet per regio als staafdiagram",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "region",
+                "aggregate": null
+              },
+              {
+                "field": "revenue",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-net-by-segment",
+      "table": "messy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "net amount by customer segment",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "cust_seg_cd",
+                "aggregate": null
+              },
+              {
+                "field": "AMT_NET_EUR",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-monthly-text-date",
+      "table": "messy",
+      "kind": "decline",
+      "steps": [
+        {
+          "prompt": "monthly net amount",
+          "expect": {
+            "outcome": "decline"
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-returned-orders",
+      "table": "messy",
+      "kind": "vague",
+      "steps": [
+        {
+          "prompt": "how many orders were returned?",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "aggregate": [
+                  "count"
+                ]
+              }
+            ],
+            "mentions": [
+              "ret_flg"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-returns-by-segment",
+      "table": "messy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "returned orders per customer segment",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "cust_seg_cd",
+                "aggregate": null
+              },
+              {
+                "aggregate": [
+                  "count"
+                ]
+              }
+            ],
+            "filters": [
+              {
+                "field": "ret_flg",
+                "include": [
+                  "Y"
+                ],
+                "exclude": [
+                  "N"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-count-column",
+      "table": "messy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "total of the count column per shipping mode",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "ShipMode",
+                "aggregate": null
+              },
+              {
+                "field": "count",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-orders-per-mode",
+      "table": "messy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "number of orders per shipping mode",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "ShipMode",
+                "aggregate": null
+              },
+              {
+                "any_of": [
+                  {
+                    "aggregate": [
+                      "count"
+                    ]
+                  },
+                  {
+                    "field": "ORD_ID",
+                    "aggregate": [
+                      "distinctCount"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "absent": [
+              {
+                "field": "count",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-priority-levels",
+      "table": "messy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "number of orders per priority level",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "prio_lvl",
+                "aggregate": null
+              },
+              {
+                "aggregate": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-top-postcodes",
+      "table": "messy",
+      "kind": "rule_clash",
+      "steps": [
+        {
+          "prompt": "which 10 postcodes have the highest net amount?",
+          "expect": {
+            "outcome": [
+              "chart",
+              "decline"
+            ],
+            "mentions": [
+              "zip_cd"
+            ],
+            "absent": [
+              {
+                "field": "zip_cd",
+                "aggregate": [
+                  "sum",
+                  "mean",
+                  "median",
+                  "min",
+                  "max"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-top-customers",
+      "table": "messy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "top 10 customers by net amount",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "Cust_Name",
+                "aggregate": null
+              },
+              {
+                "field": "AMT_NET_EUR",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "sort": "descending",
+            "limit": 10
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-discount-scatter",
+      "table": "messy",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "discount against net amount, one point per order",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "point"
+            ],
+            "raw_rows": true,
+            "fields": [
+              {
+                "field": "disc_pct",
+                "aggregate": null
+              },
+              {
+                "field": "AMT_NET_EUR",
+                "aggregate": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-amount-distribution",
+      "table": "messy",
+      "kind": "vague",
+      "steps": [
+        {
+          "prompt": "distribution of net amounts",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar",
+              "area",
+              "boxplot"
+            ],
+            "fields": [
+              {
+                "field": "AMT_NET_EUR",
+                "aggregate": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-missing-column",
+      "table": "messy",
+      "kind": "decline",
+      "steps": [
+        {
+          "prompt": "orders by product colour",
+          "expect": {
+            "outcome": "decline"
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-chain-segment",
+      "table": "messy",
+      "kind": "follow_up",
+      "steps": [
+        {
+          "prompt": "net amount by shipping mode",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "ShipMode",
+                "aggregate": null
+              },
+              {
+                "field": "AMT_NET_EUR",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "prompt": "only the online segment",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "ShipMode",
+                "aggregate": null
+              },
+              {
+                "field": "AMT_NET_EUR",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "filters": [
+              {
+                "field": "cust_seg_cd",
+                "include": [
+                  "ONL"
+                ],
+                "exclude": [
+                  "RTL",
+                  "WHS",
+                  "GOV"
+                ]
+              }
+            ]
+          },
+          "fallback_current": {
+            "mark": "bar",
+            "x": {
+              "field": "ShipMode"
+            },
+            "y": {
+              "field": "AMT_NET_EUR",
+              "aggregate": "sum"
+            }
+          }
+        },
+        {
+          "prompt": "as horizontal bars",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "ShipMode",
+                "aggregate": null,
+                "channel": [
+                  "y"
+                ]
+              },
+              {
+                "field": "AMT_NET_EUR",
+                "aggregate": [
+                  "sum"
+                ],
+                "channel": [
+                  "x"
+                ]
+              }
+            ],
+            "filters": [
+              {
+                "field": "cust_seg_cd",
+                "include": [
+                  "ONL"
+                ],
+                "exclude": [
+                  "RTL",
+                  "WHS",
+                  "GOV"
+                ]
+              }
+            ]
+          },
+          "fallback_current": {
+            "mark": "bar",
+            "x": {
+              "field": "ShipMode"
+            },
+            "y": {
+              "field": "AMT_NET_EUR",
+              "aggregate": "sum"
+            },
+            "filters": [
+              {
+                "field": "cust_seg_cd",
+                "oneOf": [
+                  "ONL"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "messy-french",
+      "table": "messy",
+      "kind": "language",
+      "steps": [
+        {
+          "prompt": "montant net moyen par segment client",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "cust_seg_cd",
+                "aggregate": null
+              },
+              {
+                "field": "AMT_NET_EUR",
+                "aggregate": [
+                  "mean"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-sales-by-country",
+      "table": "wide",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "sales by country",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "country",
+                "aggregate": null
+              },
+              {
+                "field": "sales_amt",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-monthly-footfall",
+      "table": "wide",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "monthly footfall",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "line",
+              "area",
+              "bar"
+            ],
+            "fields": [
+              {
+                "field": "report_month",
+                "timeUnit": [
+                  "month",
+                  null
+                ]
+              },
+              {
+                "field": "footfall",
+                "aggregate": [
+                  "sum",
+                  "mean"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-conversion-by-format",
+      "table": "wide",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "average conversion rate by store format",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "store_format",
+                "aggregate": null
+              },
+              {
+                "field": "conversion_rate",
+                "aggregate": [
+                  "mean",
+                  "median"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-rent-vs-sales",
+      "table": "wide",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "rent against sales for each store",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "point"
+            ],
+            "fields": [
+              {
+                "field": "rent_eur"
+              },
+              {
+                "field": "sales_amt"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-nps-heatmap",
+      "table": "wide",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "heatmap of average NPS by country and store format",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "rect"
+            ],
+            "fields": [
+              {
+                "field": "country",
+                "aggregate": null
+              },
+              {
+                "field": "store_format",
+                "aggregate": null
+              },
+              {
+                "field": "nps_score",
+                "aggregate": [
+                  "mean",
+                  "median"
+                ],
+                "channel": [
+                  "color"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-top-stores-2025",
+      "table": "wide",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "top 5 stores by units sold in 2025",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "bar"
+            ],
+            "fields": [
+              {
+                "any_of": [
+                  {
+                    "field": "store_name",
+                    "aggregate": null
+                  },
+                  {
+                    "field": "store_id",
+                    "aggregate": null
+                  }
+                ]
+              },
+              {
+                "field": "units_sold",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ],
+            "sort": "descending",
+            "limit": 5,
+            "filters": [
+              {
+                "field": "report_month",
+                "include": [
+                  "2025-01-01",
+                  "2025-12-31"
+                ],
+                "exclude": [
+                  "2024-12-31",
+                  "2026-01-01"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-city-table",
+      "table": "wide",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "a table of total sales, units sold and returns per city",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "table"
+            ],
+            "fields": [
+              {
+                "field": "city",
+                "aggregate": null
+              },
+              {
+                "field": "sales_amt",
+                "aggregate": [
+                  "sum"
+                ]
+              },
+              {
+                "field": "units_sold",
+                "aggregate": [
+                  "sum"
+                ]
+              },
+              {
+                "field": "returns_cnt",
+                "aggregate": [
+                  "sum"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-basket-boxplot",
+      "table": "wide",
+      "kind": "single",
+      "steps": [
+        {
+          "prompt": "box plot of the average basket value per country",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "boxplot"
+            ],
+            "fields": [
+              {
+                "field": "country",
+                "aggregate": null
+              },
+              {
+                "field": "avg_basket",
+                "aggregate": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-missing-columns",
+      "table": "wide",
+      "kind": "decline",
+      "steps": [
+        {
+          "prompt": "employee satisfaction by department",
+          "expect": {
+            "outcome": "decline"
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-what-drives-sales",
+      "table": "wide",
+      "kind": "vague",
+      "steps": [
+        {
+          "prompt": "what drives sales?",
+          "expect": {
+            "outcome": [
+              "chart",
+              "decline"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "wide-chain-energy",
+      "table": "wide",
+      "kind": "follow_up",
+      "steps": [
+        {
+          "prompt": "energy use per store format",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "store_format",
+                "aggregate": null
+              },
+              {
+                "field": "energy_kwh",
+                "aggregate": [
+                  "sum",
+                  "mean"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "prompt": "split by country",
+          "expect": {
+            "outcome": "chart",
+            "fields": [
+              {
+                "field": "store_format",
+                "aggregate": null
+              },
+              {
+                "field": "energy_kwh",
+                "aggregate": [
+                  "sum",
+                  "mean"
+                ]
+              },
+              {
+                "field": "country",
+                "aggregate": null
+              }
+            ]
+          },
+          "fallback_current": {
+            "mark": "bar",
+            "x": {
+              "field": "store_format"
+            },
+            "y": {
+              "field": "energy_kwh",
+              "aggregate": "sum"
+            }
+          }
+        },
+        {
+          "prompt": "show it as a table",
+          "expect": {
+            "outcome": "chart",
+            "marks": [
+              "table"
+            ],
+            "fields": [
+              {
+                "field": "store_format",
+                "aggregate": null
+              },
+              {
+                "field": "country",
+                "aggregate": null
+              },
+              {
+                "field": "energy_kwh",
+                "aggregate": true
+              }
+            ]
+          },
+          "fallback_current": {
+            "mark": "bar",
+            "x": {
+              "field": "store_format"
+            },
+            "y": {
+              "field": "energy_kwh",
+              "aggregate": "sum"
+            },
+            "color": {
+              "field": "country"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

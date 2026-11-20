@@ -72,6 +72,11 @@ def current_context(graph: FlowGraph | None = None) -> ExecutionContext:
     return ExecutionContext(backend_id=registry.default_backend_id(), parallelism=1, preview_rows=DEFAULT_PREVIEW_ROWS)
 
 
+def entered() -> bool:
+    """Whether a ``use_context`` block is open here: a run, or a fetch of one node, is executing in this context."""
+    return _current.get() is not None
+
+
 @contextmanager
 def use_context(context: ExecutionContext) -> Iterator[ExecutionContext]:
     """Make ``context`` the current one for the block, restoring the previous one after it."""

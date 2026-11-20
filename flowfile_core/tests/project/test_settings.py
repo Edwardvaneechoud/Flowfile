@@ -1,14 +1,16 @@
-"""Per-project track_data_artifacts toggle: projection, hooks, import/prune, and the DB mirror.
+"""Per-project track_data_artifacts toggle: projection, import/prune, and the DB mirror.
 
 The toggle is all-or-nothing for catalog tables (tables.yaml) + global artifacts (models.yaml),
 stored in project.yaml (source of truth) and mirrored onto the WorkspaceProject row. Default True
 keeps the existing always-track behavior. When off, the two manifests are never written/committed,
-the projection hooks no-op, and import leaves those DB resources entirely alone (never pruned).
+and import leaves those DB resources entirely alone (never pruned).
 """
 
 import json
 from pathlib import Path
 from uuid import uuid4
+
+import yaml
 
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
@@ -138,11 +140,6 @@ def test_tracking_off_at_init_excludes_tables_and_models(tmp_path):
         assert _db_flag(root) is False
         assert not (root / "tables.yaml").exists()
         assert not (root / "models.yaml").exists()
-        # Hooks must be no-ops while tracking is off (no file is (re)created on a table/model change).
-        project_sync.tables_changed(OWNER)
-        project_sync.artifacts_changed(OWNER)
-        assert not (root / "tables.yaml").exists()
-        assert not (root / "models.yaml").exists()
     finally:
         _cleanup(table, model, flow_uuid)
 
@@ -204,16 +201,18 @@ def test_prune_removes_flow_with_artifact_when_tracking_off(tmp_path):
     table, model = f"ghost_tbl_{uuid4().hex[:6]}", f"ghost_mdl_{uuid4().hex[:6]}"
     flow_uuid = _make_flow(tmp_path, f"ghost_flow_{uuid4().hex[:6]}")
     artifact_id = _make_artifact(model, _reg_id(flow_uuid))
+    # A version that keeps another flow: a flows folder with no file at all is not pruned.
+    keep_uuid = _make_flow(tmp_path, f"ghost_keep_{uuid4().hex[:6]}")
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Ghost Test", OWNER, track_data_artifacts=False)
         # Drop the flow from the project files, keeping tracking off (no tables.yaml/models.yaml).
         for p in (root / "flows").glob("*.flow.yaml"):
-            p.unlink()
+            if (yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("flow_uuid") == flow_uuid:
+                p.unlink()
 
-        result = project_sync.reload_from_disk(OWNER, force=True)
+        project_sync.reload_from_disk(OWNER, force=True)
 
-        assert result.prune_errors == [], "the flow delete must not silently fail"
         with get_db_context() as db:
             assert db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is None, (
                 "pruned flow must be removed, not left as a ghost"
@@ -221,8 +220,10 @@ def test_prune_removes_flow_with_artifact_when_tracking_off(tmp_path):
             # The flow's artifact is released (no longer active) so the delete could succeed.
             a = db.query(GlobalArtifact).filter_by(id=artifact_id).first()
             assert a is None or a.status != "active", "the flow's active artifact must be released"
+            assert db.query(FlowRegistration).filter_by(flow_uuid=keep_uuid).first() is not None
     finally:
         _cleanup(table, model, flow_uuid)
+        _cleanup(table, model, keep_uuid)
 
 
 def test_restore_to_tracked_version_readopts_setting(tmp_path):

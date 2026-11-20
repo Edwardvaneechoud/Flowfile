@@ -57,6 +57,7 @@ class KafkaConnectionOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None
+    source: Literal["local", "hub"] = "local"
 
 
 class KafkaTopicInfo(BaseModel):

@@ -3,17 +3,49 @@
     ref="rootEl"
     class="tile"
     :class="{
+      'tile-card': (isViz || isKpi || isTable) && !blankInView,
+      'tile-blank': blankInView,
       'tile-text': isText,
       'tile-text-view': isText && mode === 'view',
       'tile-separator': isSeparator,
       'tile-separator-vertical': isSeparator && isVertical,
       'tile-separator-edit': isSeparator && mode === 'edit',
+      'tile-filter': isFilter,
+      'tile-filter-edit': isFilter && mode === 'edit',
+      'tile-image': isImage,
+      'tile-image-edit': isImage && mode === 'edit',
+      'tile-image-unset': isImage && !tile.image,
     }"
     :style="tileStyle"
     @contextmenu="onTileContextMenu"
   >
-    <div v-if="isViz" class="tile-header" :class="{ 'tile-handle': mode === 'edit' }">
-      <span class="tile-title">{{ headerTitle }}</span>
+    <div
+      v-if="showHeader"
+      class="tile-header"
+      :class="{ 'tile-handle': mode === 'edit' && !titleEditing }"
+    >
+      <input
+        v-if="titleEditing"
+        ref="titleInputEl"
+        v-model="titleDraft"
+        class="tile-title-input"
+        maxlength="120"
+        :placeholder="vizName"
+        @mousedown.stop
+        @keydown.enter.prevent="commitTitle"
+        @keydown.esc.prevent="titleEditing = false"
+        @blur="commitTitle"
+      />
+      <span v-else class="tile-title-group">
+        <span
+          class="tile-title"
+          :class="{ 'tile-title-hidden': titleHidden }"
+          :title="mode === 'edit' ? 'Double-click to rename' : undefined"
+          @dblclick="startTitleEdit"
+          >{{ titleHidden ? "Title hidden" : headerTitle }}</span
+        >
+        <TileNoteInfo v-if="note" :note="note" :label="menuTitle" />
+      </span>
       <div class="tile-header-actions">
         <span v-if="lastError" class="tile-error" :title="lastError"
           ><el-icon><Warning /></el-icon
@@ -25,19 +57,75 @@
           <el-icon class="tile-menu" @click.stop><MoreFilled /></el-icon>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item :disabled="tile.viz_id == null" @click="emit('edit-viz')">
+              <el-dropdown-item v-if="isTable" @click="tableRef?.openSettings()">
+                <el-icon><Grid /></el-icon> Edit table
+              </el-dropdown-item>
+              <el-dropdown-item v-else :disabled="tile.viz_id == null" @click="emit('edit-viz')">
                 <el-icon><Edit /></el-icon> Edit chart
               </el-dropdown-item>
+              <el-dropdown-item
+                v-if="isViz && viz?.dashboard_id != null"
+                data-testid="tile-keep-chart"
+                title="List this chart in Charts and keep it when the dashboard goes"
+                @click="emit('keep-chart')"
+              >
+                <el-icon><FolderAdd /></el-icon> Keep as a chart
+              </el-dropdown-item>
+              <el-dropdown-item
+                v-if="isViz"
+                :disabled="!tileChart"
+                data-testid="tile-format"
+                @click="openFormat"
+              >
+                <el-icon><Operation /></el-icon> Format
+              </el-dropdown-item>
+              <el-dropdown-item @click="renameFromMenu">
+                <el-icon><EditPen /></el-icon> Rename
+              </el-dropdown-item>
+              <el-dropdown-item @click="toggleTitle">
+                <el-icon><component :is="titleHidden ? View : Hide" /></el-icon>
+                {{ titleHidden ? "Show title" : "Hide title" }}
+              </el-dropdown-item>
+              <el-dropdown-item data-testid="tile-note-edit" @click="openNoteDialog">
+                <el-icon><InfoFilled /></el-icon> {{ noteMenuLabel(tile) }}
+              </el-dropdown-item>
+              <el-dropdown-item @click="emit('duplicate')">
+                <el-icon><CopyDocument /></el-icon> Duplicate
+              </el-dropdown-item>
+              <TileMoveToTabItems :tabs="moveTargets ?? []" @select="emit('move-to-tab', $event)" />
               <el-dropdown-item divided @click="emit('remove')">
                 <el-icon><Delete /></el-icon> Remove from dashboard
               </el-dropdown-item>
+              <TileActionItems :actions="actions" divided @select="onAction" />
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        <TileActionsMenu
+          v-else-if="actions.length"
+          class="tile-view-actions"
+          :actions="actions"
+          @select="onAction"
+        />
       </div>
     </div>
 
-    <div v-if="!isViz && mode === 'edit' && !textEditing" class="tile-text-actions" @mousedown.stop>
+    <!-- Without a header the viewer's menu and the note's ⓘ float over the tile's corner. -->
+    <div v-if="floatingNote && note" class="tile-note-float">
+      <TileNoteInfo :note="note" :label="menuTitle" />
+    </div>
+    <TileActionsMenu
+      v-if="floatingActions"
+      class="tile-view-actions tile-view-actions-float"
+      :class="{ 'tile-float-beside-note': floatingNote }"
+      :actions="actions"
+      @select="onAction"
+    />
+
+    <div
+      v-if="!isViz && !isTable && !isFilter && mode === 'edit' && !textEditing"
+      class="tile-text-actions"
+      @mousedown.stop
+    >
       <el-dropdown trigger="click" @click.stop>
         <el-icon class="tile-menu"><MoreFilled /></el-icon>
         <template #dropdown>
@@ -48,8 +136,33 @@
             <el-dropdown-item v-if="isKpi" @click="kpiRef?.openSettings()">
               <el-icon><Odometer /></el-icon> Edit KPI
             </el-dropdown-item>
+            <template v-if="isImage">
+              <el-dropdown-item data-testid="image-replace" @click="imageRef?.chooseImage()">
+                <el-icon><Picture /></el-icon> {{ tile.image ? "Replace image…" : "Choose image…" }}
+              </el-dropdown-item>
+              <template v-if="tile.image">
+                <el-dropdown-item
+                  v-for="option in imageFitOptions"
+                  :key="option.value"
+                  :data-testid="`image-fit-${option.value}`"
+                  @click="setImageFit(option.value)"
+                >
+                  <el-icon
+                    ><Check
+                      :style="{ visibility: imageFit === option.value ? 'visible' : 'hidden' }"
+                  /></el-icon>
+                  {{ option.label }}
+                </el-dropdown-item>
+                <el-dropdown-item data-testid="image-alt" @click="editImageAlt">
+                  <el-icon><ChatLineSquare /></el-icon> Alt text…
+                </el-dropdown-item>
+              </template>
+            </template>
             <el-dropdown-item v-if="isSeparator || isKpi" @click="openStyleMenu">
               <el-icon><Brush /></el-icon> Style
+            </el-dropdown-item>
+            <el-dropdown-item v-if="isKpi" data-testid="tile-note-edit" @click="openNoteDialog">
+              <el-icon><InfoFilled /></el-icon> {{ noteMenuLabel(tile) }}
             </el-dropdown-item>
             <el-dropdown-item
               v-if="isSeparator"
@@ -57,15 +170,26 @@
             >
               <el-icon><Switch /></el-icon> Make {{ isVertical ? "horizontal" : "vertical" }}
             </el-dropdown-item>
+            <el-dropdown-item @click="emit('duplicate')">
+              <el-icon><CopyDocument /></el-icon> Duplicate
+            </el-dropdown-item>
+            <TileMoveToTabItems :tabs="moveTargets ?? []" @select="emit('move-to-tab', $event)" />
             <el-dropdown-item divided @click="emit('remove')">
               <el-icon><Delete /></el-icon> Remove from dashboard
             </el-dropdown-item>
+            <TileActionItems :actions="actions" divided @select="onAction" />
           </el-dropdown-menu>
         </template>
       </el-dropdown>
     </div>
 
-    <div class="tile-body" :class="{ 'tile-handle': !isViz && mode === 'edit' && !textEditing }">
+    <div
+      v-if="!blankInView"
+      class="tile-body"
+      :class="{
+        'tile-handle': !isViz && !isTable && !isFilter && mode === 'edit' && !textEditing,
+      }"
+    >
       <div v-if="isSeparator" class="tile-separator-line" :style="separatorLineStyle" />
       <template v-else-if="isText">
         <textarea
@@ -89,11 +213,82 @@
           :class="{ 'tile-text-colored': !!tile.text_color }"
           :style="textStyle"
           :title="mode === 'edit' ? 'Double-click to edit' : undefined"
+          @click="openTileLink"
           @dblclick="enterTextEdit"
           v-html="renderedHtml"
         />
         <!-- eslint-enable vue/no-v-html -->
       </template>
+      <div v-else-if="isFilter" class="tile-filter-body">
+        <div
+          class="tile-filter-label"
+          :class="{ 'tile-handle': mode === 'edit' }"
+          :title="mode === 'edit' ? 'Drag to move' : undefined"
+        >
+          <el-icon v-if="mode === 'edit'" class="tile-drag-icon"><Rank /></el-icon>
+          <span class="tile-filter-title">
+            <span class="tile-filter-name">{{
+              tileFilter ? tileFilter.label || tileFilter.field_name : "Filter removed"
+            }}</span>
+            <TileNoteInfo
+              v-if="note && tileFilter"
+              :note="note"
+              :label="tileFilter.label || tileFilter.field_name"
+            />
+          </span>
+          <span
+            v-if="mode === 'edit' && tileFilter && targetsNoTile(tileFilter)"
+            class="tile-filter-no-tiles"
+            title="The tiles this filter applied to were removed, so it filters nothing — edit it to choose tiles"
+            >no tiles</span
+          >
+          <span
+            v-else-if="mode === 'edit' && tileFilter && noTileHints?.[tileFilter.id]"
+            class="tile-filter-no-tiles"
+            data-testid="filter-no-source-tile"
+            :title="noTileHints[tileFilter.id]"
+            >no tiles yet</span
+          >
+          <el-dropdown v-if="mode === 'edit'" trigger="click" @click.stop>
+            <el-icon class="tile-menu" @click.stop><MoreFilled /></el-icon>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <template v-if="tileFilter">
+                  <el-dropdown-item @click="emit('edit-filter', tileFilter.id)">
+                    <el-icon><EditPen /></el-icon> Edit filter
+                  </el-dropdown-item>
+                  <el-dropdown-item data-testid="tile-note-edit" @click="openNoteDialog">
+                    <el-icon><InfoFilled /></el-icon> {{ noteMenuLabel(tile) }}
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="emit('move-filter-to-bar', tileFilter.id)">
+                    <el-icon><Top /></el-icon> Move to filter bar
+                  </el-dropdown-item>
+                  <TileMoveToTabItems
+                    :tabs="moveTargets ?? []"
+                    @select="emit('move-to-tab', $event)"
+                  />
+                  <el-dropdown-item divided @click="emit('delete-filter', tileFilter.id)">
+                    <el-icon><Delete /></el-icon> Delete filter
+                  </el-dropdown-item>
+                </template>
+                <el-dropdown-item v-else @click="emit('remove')">
+                  <el-icon><Delete /></el-icon> Remove from dashboard
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+        <DashboardFilterControl
+          v-if="tileFilter"
+          :filter="tileFilter"
+          variant="tile"
+          :get-column-stats="getColumnStats"
+          :search-values="searchValues"
+          :stats-refresh-nonce="dataRefreshNonce"
+          @update:filter="emit('update:filter', $event)"
+        />
+        <div v-else class="tile-filter-missing">Its filter was deleted; remove this tile.</div>
+      </div>
       <KpiTile
         v-else-if="isKpi"
         ref="kpiRef"
@@ -101,7 +296,28 @@
         :mode="mode"
         :filters="filters"
         :tile-datasource="tileDatasource"
-        :viz-refresh-nonce="vizRefreshNonce"
+        :viz-refresh-nonce="refreshNonce"
+        @update:tile="emit('update:tile', $event)"
+      >
+        <template v-if="note" #label-after>
+          <TileNoteInfo :note="note" :label="menuTitle" />
+        </template>
+      </KpiTile>
+      <TableTile
+        v-else-if="isTable"
+        ref="tableRef"
+        :tile="tile"
+        :mode="mode"
+        :filters="filters"
+        :tile-datasource="tileDatasource"
+        :refresh-nonce="refreshNonce"
+        @update:tile="emit('update:tile', $event)"
+      />
+      <ImageTile
+        v-else-if="isImage"
+        ref="imageRef"
+        :tile="tile"
+        :mode="mode"
         @update:tile="emit('update:tile', $event)"
       />
       <template v-else>
@@ -114,6 +330,11 @@
           <button
             v-if="vizClickable"
             class="tile-viz-edit-badge"
+            :class="{
+              'tile-viz-edit-badge-shifted': floatingActions && !floatingNote,
+              'tile-viz-edit-badge-beside-note': floatingNote && !floatingActions,
+              'tile-viz-edit-badge-shifted-note': floatingNote && floatingActions,
+            }"
             type="button"
             title="Edit chart"
             @click.stop="emit('edit-viz')"
@@ -132,15 +353,67 @@
           </div>
           <VueGraphicRenderer
             v-else
+            ref="rendererRef"
             :key="rendererKey"
             :chart="chart as any"
-            :fields="fields as any"
             :computation="computation"
             :appearance="appearance"
+            :category-colors="categoryColors"
           />
         </div>
       </template>
     </div>
+
+    <TileExpandDialog
+      v-if="expandMounted"
+      v-model="expandOpen"
+      :title="menuTitle"
+      :note="note"
+      :body-style="tileStyle"
+    >
+      <KpiTile
+        v-if="isKpi"
+        :tile="tile"
+        mode="view"
+        :filters="filters"
+        :tile-datasource="tileDatasource"
+        :viz-refresh-nonce="refreshNonce"
+      />
+      <TableTile
+        v-else-if="isTable"
+        :tile="tile"
+        mode="view"
+        :filters="filters"
+        :tile-datasource="tileDatasource"
+        :refresh-nonce="refreshNonce"
+      />
+      <VueGraphicRenderer
+        v-else-if="chart"
+        :chart="chart as any"
+        :computation="computation"
+        :appearance="appearance"
+        :category-colors="categoryColors"
+      />
+    </TileExpandDialog>
+    <TileRowsDialog
+      v-if="rowsMounted"
+      v-model="rowsOpen"
+      :tile="tile"
+      :title="menuTitle"
+      :filters="filters"
+      :tile-datasource="tileDatasource"
+      :chart-filters="tileChart?.filters ?? []"
+      :refresh-nonce="refreshNonce"
+    />
+    <TileNoteDialog v-if="noteMounted" v-model="noteOpen" :note="note" @save="onNoteSave" />
+    <ChartFormatDialog
+      v-if="formatMounted"
+      v-model="formatOpen"
+      :chart-format="tile.chart_format"
+      :default-titles="defaultAxisTitles"
+      @preview="formatDraft = $event"
+      @save="onFormatSave"
+    />
 
     <Teleport to="body">
       <div
@@ -269,35 +542,75 @@
 //   - Move :deep() markdown styles (~lines 399-484) to an external _markdown.css import
 //   - TextTile.vue (~62-88) and VizTile.vue (~91-108) child components
 //   - useDashboardTileViz composable: viz loading (~lines 155-234)
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from "vue";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, toRef, watch } from "vue";
+import { ElMessageBox } from "element-plus";
 import {
   Brush,
+  ChatLineSquare,
+  Check,
   Close,
+  CopyDocument,
   Delete,
   Edit,
+  FolderAdd,
   EditPen,
+  Grid,
+  Hide,
+  InfoFilled,
   MoreFilled,
   Odometer,
+  Operation,
+  Picture,
   Rank,
   Switch,
+  Top,
+  View,
   Warning,
   WarningFilled,
 } from "@element-plus/icons-vue";
-import { CatalogApi } from "../../api/catalog.api";
+import { useDashboardVizCache } from "../../composables/useDashboardVizCache";
+import { useDashboardColors } from "../../composables/useDashboardColors";
 import {
   useDashboardComputation,
   filtersTargetingTile,
+  splitChartFilters,
+  tileSourceOf,
   type TileField,
 } from "../../composables/useDashboardComputation";
 import type {
   CatalogVisualization,
+  ColumnStatsResponse,
+  DashboardChartFormat,
+  DashboardImageFit,
   DashboardFilter,
+  DashboardTab,
   DashboardTile,
   SeparatorOrientation,
 } from "../../types";
+import type { IChart } from "@kanaries/graphic-walker/interfaces";
+import ChartFormatDialog from "./ChartFormatDialog.vue";
+import { applyTilePresentation } from "./chartPresentation";
+import DashboardFilterControl from "./DashboardFilterControl.vue";
+import { filterOfTile, targetsNoTile } from "./filterPlacement";
+import type { ValueSearchResult } from "./filterValues";
+import ImageTile from "./ImageTile.vue";
+import { IMAGE_ALT_MAX_LENGTH, withImageAlt, withImageFit } from "./imageTile";
 import KpiTile from "./KpiTile.vue";
+import TableTile from "./TableTile.vue";
+import { autoKpiLabel, isKpiComplete } from "./kpi";
+import { mayEdit } from "./dashboardAccess";
+import { tileActions, type TileAction } from "./tileActions";
+import TileActionItems from "./TileActionItems.vue";
+import TileActionsMenu from "./TileActionsMenu.vue";
+import TileMoveToTabItems from "./TileMoveToTabItems.vue";
+import TileExpandDialog from "./TileExpandDialog.vue";
+import TileNoteDialog from "./TileNoteDialog.vue";
+import TileNoteInfo from "./TileNoteInfo.vue";
+import { noteMenuLabel, tileNote, withNote } from "./tileNote";
+import { openTileLink } from "./tileLinks";
+import { renderTileMarkdown } from "./tileMarkdown";
+import TileRowsDialog from "./TileRowsDialog.vue";
+import { downloadChartCsv, downloadChartImage } from "./tileDownloads";
 import VueGraphicRenderer from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicRenderer.vue";
 
 const props = defineProps<{
@@ -307,24 +620,105 @@ const props = defineProps<{
   filters: DashboardFilter[];
   /** Bumped by the parent after a viz edit so the renderer remounts and re-fetches. */
   vizRefreshNonce?: number;
-  /** Resolver for the tile's underlying CatalogTable id (used to gate datasource-bound filters). */
-  tileDatasource?: (tileId: string) => number | null;
+  /** Bumped on every dashboard refresh; KPI and table tiles that read a table follow it. */
+  dataRefreshNonce?: number;
+  /** Resolver for the source key a tile reads (used to gate datasource-bound filters). */
+  tileDatasource?: (tileId: string) => string | null;
   /** Column count of the hosting grid; a horizontal separator spans all of them. */
   gridCols?: number;
+  /** A filter tile's value list; the same cached lookup the filter strip uses. */
+  getColumnStats?: (
+    tableId: number,
+    column: string,
+    limit?: number,
+  ) => Promise<ColumnStatsResponse>;
+  /** A filter tile's value search; the same cached search the filter strip uses. */
+  searchValues?: (filter: DashboardFilter, text: string) => Promise<ValueSearchResult>;
+  /** False when the viewer may not edit the dashboard, so the chart's edit shortcut is hidden. */
+  canEditChart?: boolean;
+  /** The editor's other tabs, offered as "Move to <tab>". */
+  moveTargets?: DashboardTab[];
+  /** Editor only: why a filter filters nothing because no tile reads its source, by filter id. */
+  noTileHints?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
   (e: "remove"): void;
+  (e: "duplicate"): void;
   (e: "edit-viz"): void;
+  /** Make the tile's chart, which this dashboard owns, a chart of its own. */
+  (e: "keep-chart"): void;
   (e: "update:tile", value: DashboardTile): void;
+  /** A filter tile's control changed its filter (state only). */
+  (e: "update:filter", value: DashboardFilter): void;
+  (e: "edit-filter", filterId: string): void;
+  (e: "move-filter-to-bar", filterId: string): void;
+  (e: "delete-filter", filterId: string): void;
+  (e: "move-to-tab", tabId: string): void;
 }>();
 
 const isText = computed(() => props.tile.type === "text");
 const isSeparator = computed(() => props.tile.type === "separator");
 const isKpi = computed(() => props.tile.type === "kpi");
 const isViz = computed(() => props.tile.type === "viz");
+const isTable = computed(() => props.tile.type === "table");
+const isFilter = computed(() => props.tile.type === "filter");
+const isImage = computed(() => props.tile.type === "image");
+const tileFilter = computed(() => filterOfTile(props.tile, props.filters));
 const rootEl = ref<HTMLElement | null>(null);
 const kpiRef = ref<InstanceType<typeof KpiTile> | null>(null);
+const tableRef = ref<InstanceType<typeof TableTile> | null>(null);
+const imageRef = ref<InstanceType<typeof ImageTile> | null>(null);
+
+// Both only ever grow, so their sum moves whenever either does.
+const refreshNonce = computed(() => (props.vizRefreshNonce ?? 0) + (props.dataRefreshNonce ?? 0));
+const tableSource = computed(() => (isTable.value ? tileSourceOf(props.tile) : null));
+
+// A viewer sees the space a KPI or table still to be set up takes, not a note about it.
+const blankInView = computed(
+  () =>
+    props.mode === "view" &&
+    ((isKpi.value && (tileSourceOf(props.tile) == null || !isKpiComplete(props.tile.kpi))) ||
+      (isTable.value && tableSource.value == null) ||
+      (isFilter.value && tileFilter.value == null) ||
+      (isImage.value && !props.tile.image)),
+);
+
+// ---- image branch ----
+const imageFitOptions: { value: DashboardImageFit; label: string }[] = [
+  { value: "contain", label: "Fit whole image" },
+  { value: "cover", label: "Fill the tile" },
+];
+const imageFit = computed(() => props.tile.image?.fit ?? "contain");
+
+const setImageFit = (fit: DashboardImageFit) => {
+  const next = withImageFit(props.tile, fit);
+  if (next) emit("update:tile", next);
+};
+
+const editImageAlt = async () => {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      "Describe the image for people who cannot see it. Leave it empty for a decorative image.",
+      "Alt text",
+      {
+        inputValue: props.tile.image?.alt ?? "",
+        inputPlaceholder: "e.g. Acme company logo",
+        inputValidator: (v: string) =>
+          (v ?? "").trim().length <= IMAGE_ALT_MAX_LENGTH ||
+          `At most ${IMAGE_ALT_MAX_LENGTH} characters`,
+        confirmButtonText: "Save",
+        cancelButtonText: "Cancel",
+      },
+    );
+    const next = withImageAlt(props.tile, value ?? "");
+    if (next) emit("update:tile", next);
+  } catch {
+    // cancelled
+  }
+};
+
+const downloadTableCsv = () => tableRef.value?.downloadCsv(headerTitle.value);
 
 // ---- separator branch ----
 const isVertical = computed(() => props.tile.orientation === "vertical");
@@ -375,6 +769,9 @@ const openStyleMenu = () => {
 };
 
 // ---- viz branch (unchanged behaviour) ----
+const vizCache = useDashboardVizCache();
+const dashboardColors = useDashboardColors();
+const categoryColors = computed(() => dashboardColors?.categoryColors.value);
 const viz = ref<CatalogVisualization | null>(null);
 const fields = ref<Record<string, any>[]>([]);
 const loading = ref(true);
@@ -384,7 +781,13 @@ const vizMissing = ref(false);
 // jump straight into the chart editor. Edit mode already exposes "Edit chart"
 // in the tile dropdown, and dragging dominates there, so we don't compete.
 const vizClickable = computed(
-  () => isViz.value && props.mode === "view" && props.tile.viz_id != null && !vizMissing.value,
+  () =>
+    isViz.value &&
+    props.mode === "view" &&
+    props.tile.viz_id != null &&
+    !vizMissing.value &&
+    props.canEditChart !== false &&
+    mayEdit(viz.value?.access),
 );
 
 const onVizDblclick = (e: MouseEvent) => {
@@ -403,27 +806,72 @@ const tileFields = computed<TileField[] | null>(() =>
     : fields.value.map((f) => ({ fid: String(f.fid), semanticType: f.semanticType })),
 );
 
-const { computation, lastError } = useDashboardComputation({
+const { computation, lastError, query } = useDashboardComputation({
   tile: tileRef,
   filters: filtersRef,
   tileDatasource: (id) => props.tileDatasource?.(id) ?? null,
   tileFields: () => tileFields.value,
+  chartFilters: () => tileChart.value?.filters ?? [],
   onMissing: () => {
     vizMissing.value = true;
   },
 });
 
 const vizName = computed(() => {
+  if (isTable.value) {
+    if (tableRef.value?.sourceName) return tableRef.value.sourceName;
+    return tableSource.value ? "Loading…" : "Table";
+  }
   if (viz.value?.name) return viz.value.name;
   if (loading.value) return "Loading…";
   if (props.tile.viz_id != null) return `Visualization #${props.tile.viz_id}`;
   return "Untitled";
 });
 
-const chart = computed(() => {
-  if (!viz.value) return null;
-  return viz.value.spec?.[props.tile.chart_index] ?? null;
+// The chart as the tile draws it: its row filters go with the query, not into the tile.
+const tileChart = computed(() => {
+  const saved = viz.value?.spec?.[props.tile.chart_index];
+  return saved ? splitChartFilters(saved) : null;
 });
+
+// ---- chart tile format: the dialog's draft shows on the tile until it closes ----
+const formatOpen = ref(false);
+const formatMounted = ref(false);
+const formatDraft = ref<DashboardChartFormat | null | undefined>(undefined);
+
+const chart = computed(() => {
+  const drawn = tileChart.value?.chart;
+  if (!drawn) return null;
+  const overrides = formatDraft.value !== undefined ? formatDraft.value : props.tile.chart_format;
+  return applyTilePresentation(drawn as IChart, overrides);
+});
+
+const axisTitle = (shelf: Record<string, any>[] | undefined): string | null => {
+  const field = shelf?.[shelf.length - 1];
+  if (!field) return null;
+  const agg = field.analyticType === "measure" ? (field.aggName ?? "sum") : null;
+  return agg && agg !== "expr" && tileChart.value?.chart.config?.defaultAggregated !== false
+    ? `${agg}(${field.name})`
+    : field.name;
+};
+const defaultAxisTitles = computed(() => ({
+  x: axisTitle(tileChart.value?.chart.encodings?.columns),
+  y: axisTitle(tileChart.value?.chart.encodings?.rows),
+}));
+
+const openFormat = () => {
+  formatMounted.value = true;
+  formatOpen.value = true;
+};
+
+watch(formatOpen, (open) => {
+  if (!open) formatDraft.value = undefined;
+});
+
+const onFormatSave = (next: DashboardChartFormat | null) => {
+  if (JSON.stringify(next) === JSON.stringify(props.tile.chart_format ?? null)) return;
+  emit("update:tile", { ...props.tile, chart_format: next });
+};
 
 const filterKey = computed(() => {
   const targeted = filtersTargetingTile(
@@ -453,8 +901,8 @@ const reloadViz = async () => {
   }
   try {
     const [vizResp, fieldsResp] = await Promise.all([
-      CatalogApi.getVisualization(props.tile.viz_id),
-      CatalogApi.getSavedVisualizationFields(props.tile.viz_id),
+      vizCache.getViz(props.tile.viz_id),
+      vizCache.getFields(props.tile.viz_id),
     ]);
     viz.value = vizResp;
     fields.value = fieldsResp.fields ?? [];
@@ -490,13 +938,7 @@ watch(
   },
 );
 
-const renderedHtml = computed(() => {
-  const md = props.tile.text_md ?? "";
-  if (!md.trim()) return "";
-  // marked v15 returns string for sync parse; cast keeps TS happy across overloads.
-  const raw = marked.parse(md, { async: false }) as string;
-  return DOMPurify.sanitize(raw);
-});
+const renderedHtml = computed(() => renderTileMarkdown(props.tile.text_md));
 
 const commitText = () => {
   const next = textDraft.value;
@@ -521,7 +963,124 @@ const toggleTextEdit = async () => {
   }
 };
 
-const headerTitle = computed(() => vizName.value);
+const headerTitle = computed(() => props.tile.title?.trim() || vizName.value);
+
+// ---- viewer actions: expand, rows, downloads ----
+const actions = computed(() => {
+  const tile = props.tile;
+  const configured = isViz.value
+    ? tile.viz_id != null
+    : isKpi.value
+      ? tileSourceOf(tile) != null && isKpiComplete(tile.kpi)
+      : tableSource.value != null;
+  const missing = isViz.value
+    ? vizMissing.value
+    : isKpi.value
+      ? !!kpiRef.value?.missing
+      : !!tableRef.value?.missing;
+  return tileActions({
+    type: tile.type,
+    configured,
+    missing,
+    hasChart: isViz.value && !loading.value && chart.value != null,
+  });
+});
+
+// A viewer's menu sits in the header when there is one, else over the tile's corner.
+const floatingActions = computed(
+  () => props.mode === "view" && !showHeader.value && actions.value.length > 0,
+);
+
+// ---- the tile's note, behind an ⓘ beside its title ----
+const note = computed(() => tileNote(props.tile));
+// A chart or table with its title hidden keeps the ⓘ in its top right corner.
+const floatingNote = computed(
+  () => !!note.value && (isViz.value || isTable.value) && !showHeader.value && !blankInView.value,
+);
+const noteOpen = ref(false);
+const noteMounted = ref(false);
+
+const openNoteDialog = () => {
+  noteMounted.value = true;
+  noteOpen.value = true;
+};
+
+const onNoteSave = (draft: string) => {
+  const next = withNote(props.tile, draft);
+  if (next) emit("update:tile", next);
+};
+
+const menuTitle = computed(() =>
+  isKpi.value && props.tile.kpi
+    ? props.tile.kpi.label || autoKpiLabel(props.tile.kpi)
+    : headerTitle.value,
+);
+
+const rendererRef = ref<InstanceType<typeof VueGraphicRenderer> | null>(null);
+const expandOpen = ref(false);
+const expandMounted = ref(false);
+const rowsOpen = ref(false);
+const rowsMounted = ref(false);
+
+const onAction = (action: TileAction) => {
+  if (action === "expand") {
+    expandMounted.value = true;
+    expandOpen.value = true;
+  } else if (action === "see-rows") {
+    rowsMounted.value = true;
+    rowsOpen.value = true;
+  } else if (action === "download-csv") {
+    if (isTable.value) void downloadTableCsv();
+    // The saved chart, not the formatted copy: the CSV keeps raw values and field names.
+    else if (tileChart.value)
+      void downloadChartCsv(toRaw(tileChart.value.chart), query, headerTitle.value);
+  } else {
+    void downloadImage();
+  }
+};
+
+const downloadImage = async () =>
+  downloadChartImage(
+    await rendererRef.value?.exportImage(),
+    rootEl.value ? getComputedStyle(rootEl.value).backgroundColor : "",
+    headerTitle.value,
+  );
+
+// ---- chart tile title ----
+const titleHidden = computed(() => props.tile.show_title === false);
+// The header is also the drag handle and holds the menu, so the editor always shows it.
+const showHeader = computed(
+  () => (isViz.value || isTable.value) && (props.mode === "edit" || !titleHidden.value),
+);
+const titleEditing = ref(false);
+const titleDraft = ref("");
+const titleInputEl = ref<HTMLInputElement | null>(null);
+
+const startTitleEdit = async () => {
+  if (props.mode !== "edit" || !(isViz.value || isTable.value)) return;
+  titleDraft.value = props.tile.title ?? "";
+  titleEditing.value = true;
+  await nextTick();
+  titleInputEl.value?.focus();
+  titleInputEl.value?.select();
+};
+
+// The menu hands focus back to its trigger as it closes, which would blur the input at once.
+const renameFromMenu = () => setTimeout(startTitleEdit, 150);
+
+// An empty title falls back to the chart's own name.
+const commitTitle = () => {
+  if (!titleEditing.value) return;
+  titleEditing.value = false;
+  const next = titleDraft.value.trim() || null;
+  if (next !== (props.tile.title ?? null)) {
+    emit("update:tile", { ...props.tile, title: next, show_title: true });
+  }
+};
+
+const toggleTitle = () => {
+  emit("update:tile", { ...props.tile, show_title: titleHidden.value });
+};
 
 const tileStyle = computed(() =>
   (isText.value || isKpi.value) && props.tile.bg_color
@@ -559,7 +1118,16 @@ const closeColorMenu = () => {
 };
 
 const onTileContextMenu = (e: MouseEvent) => {
-  if (isViz.value || props.mode !== "edit" || textEditing.value) return;
+  if (
+    isViz.value ||
+    isTable.value ||
+    isFilter.value ||
+    isImage.value ||
+    props.mode !== "edit" ||
+    textEditing.value
+  ) {
+    return;
+  }
   e.preventDefault();
   colorMenu.value = {
     visible: true,
@@ -641,6 +1209,35 @@ onBeforeUnmount(() => {
 .tile:hover .tile-text-actions {
   opacity: 1;
 }
+.tile-view-actions {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.tile:hover .tile-view-actions,
+.tile:focus-within .tile-view-actions {
+  opacity: 1;
+}
+.tile-view-actions-float {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  border-radius: 4px;
+  background: inherit;
+}
+.tile-view-actions-float.tile-float-beside-note {
+  right: 30px;
+}
+/* Inset so the ⓘ's wider hit area is not clipped by the tile's edge. */
+.tile-note-float {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 2;
+  display: flex;
+  border-radius: 50%;
+  background: inherit;
+}
 /* In view mode text tiles look like part of the page, not a card. */
 .tile-text-view {
   border: none;
@@ -676,23 +1273,123 @@ onBeforeUnmount(() => {
 .tile-separator-edit:hover {
   outline-color: var(--el-color-primary-light-5);
 }
+.tile-filter {
+  background: transparent;
+}
+/* Part of the page, like a text block: no card and no background, in the editor too. */
+.tile-image {
+  background: transparent;
+}
+.tile-image-edit {
+  border-radius: 6px;
+  outline: 1px dashed transparent;
+  outline-offset: -1px;
+  transition: outline-color 0.12s ease;
+}
+.tile-image-edit:hover,
+.tile-image-edit.tile-image-unset {
+  outline-color: var(--el-border-color);
+}
+.tile-image-edit:hover {
+  outline-color: var(--el-color-primary-light-5);
+}
+.tile-filter .tile-body {
+  padding: 4px 6px;
+}
+.tile-filter-edit {
+  border-radius: 6px;
+  outline: 1px dashed var(--el-border-color);
+  outline-offset: -1px;
+}
+.tile-filter-edit:hover {
+  outline-color: var(--el-color-primary-light-5);
+}
+.tile-filter-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  min-width: 0;
+}
+.tile-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.tile-filter-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.tile-filter-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.tile-filter-no-tiles {
+  color: var(--el-color-warning);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.tile-filter-missing {
+  font-size: 12px;
+  color: var(--el-color-warning);
+}
+.tile-card {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+.tile-blank {
+  background: transparent;
+}
 .tile-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
-  font-size: 12px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  background: var(--el-fill-color-light);
+  gap: 8px;
+  padding: 8px 12px 0;
+  font-size: 13px;
 }
 .tile-handle {
   cursor: move;
 }
+.tile-title-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
 .tile-title {
   font-weight: 600;
+  color: var(--el-text-color-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.tile-title-hidden {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--el-text-color-placeholder);
+}
+.tile-title-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--el-color-primary-light-5);
+  border-radius: 4px;
+  outline: none;
+  font: inherit;
+  font-weight: 600;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-primary);
 }
 .tile-header-actions {
   display: flex;
@@ -753,6 +1450,15 @@ onBeforeUnmount(() => {
     opacity 0.15s,
     color 0.15s,
     border-color 0.15s;
+}
+.tile-viz-edit-badge-shifted {
+  right: 32px;
+}
+.tile-viz-edit-badge-beside-note {
+  right: 28px;
+}
+.tile-viz-edit-badge-shifted-note {
+  right: 52px;
 }
 .tile:hover .tile-viz-edit-badge,
 .tile-viz-edit-badge:focus-visible {

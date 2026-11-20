@@ -14,7 +14,7 @@ Installing Flowfile with `pip install flowfile` puts a `flowfile` command on you
 | `flowfile run worker` | Start only the compute worker service. |
 | `flowfile seed-demo` | Populate the optional demo catalog. |
 | `flowfile remove-demo` | Remove the demo catalog. |
-| `flowfile project init/open/save` | Git version control for your work (see [Projects](../projects.md)). |
+| `flowfile project init/open/save/plan/apply` | Git version control for your work (see [Projects](../projects.md)). |
 
 ## Start the app
 
@@ -27,9 +27,11 @@ This starts the core API with the worker embedded in the same process, its jobs 
 Flags:
 
 - `--no-browser` — start the services but don't open a browser tab.
+- `--host` and `--port` — where the UI is served, `127.0.0.1` and `63578` by default. A host other machines reach needs `FLOWFILE_MODE=docker` (below).
+- A server whose configuration names a server extension (`FLOWFILE_SERVER_EXTENSION`, [Compute protocol](../../for-developers/compute-protocol.md)) also takes that extension's flags; without it `flowfile run` refuses them as any unknown flag.
 
-!!! warning "The web UI is fixed to 127.0.0.1:63578"
-    `run ui` always binds the bundled UI to `127.0.0.1` on port `63578` — the server refuses to start on any other host or port. The `--host` and `--port` flags exist for `run core` and `run worker` (below); they do not move the bundled UI. To expose Flowfile on another address, run it behind a reverse proxy or use the [Docker deployment](docker.md).
+!!! warning "Other machines reach the UI only in docker mode"
+    By default `run ui` binds `127.0.0.1`, which only this machine reaches, and in the default mode it refuses any other host: there everyone who reaches the UI works as this machine's user without signing in. To serve other machines, set `FLOWFILE_MODE=docker` with `JWT_SECRET_KEY`, `FLOWFILE_INTERNAL_TOKEN`, `FLOWFILE_MASTER_KEY`, `FLOWFILE_ADMIN_USER` and `FLOWFILE_ADMIN_PASSWORD`, then `flowfile run ui --host 0.0.0.0`: everyone signs in with a password, the admin with that one, who adds the other users. Or use the [Docker deployment](docker.md).
 
 ## Run a flow headlessly
 
@@ -108,9 +110,11 @@ flowfile remove-demo    # remove everything under the demo catalog
 flowfile project init <folder>       # create a project in <folder>
 flowfile project open <folder>       # open a project and rebuild it into the database
 flowfile project save "<message>"    # save a version with a commit message
+flowfile project plan <sha|.>        # list what a restore of <sha>, or a reload of the folder (.), would change
+flowfile project apply               # reload: apply the folder's edits to the database
 ```
 
-These are the headless equivalents of the app's project controls. Opening a project reports what it imported and how many secret values still need to be set. See [Projects](../projects.md) for the full workflow, and note that in Docker mode the project commands require `FLOWFILE_ENABLE_PROJECTS` to be set.
+These are the headless equivalents of the app's project controls. Opening a project reports what it imported and how many secret values still need to be set. `plan` prints one line per object it would add, change or remove, a removal with its consequence; `apply` runs the reload and prints what it imported per kind, and stops with the message and exit code 1 when the database holds changes the last version does not (save a version first). `open` and `apply` also exit with code 1, after printing them, when steps that run once the database is updated did not finish (a flow file that could not be moved into place, a flow that did not load); run `apply` again to finish them. See [Projects](../projects.md) for the full workflow, and note that in Docker mode the project commands require `FLOWFILE_ENABLE_PROJECTS` to be set.
 
 ## Scheduling
 

@@ -31,6 +31,7 @@
 import { computed } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { FlowRun } from "../../types";
+import { RUN_OUTCOME_BADGE, runOutcome } from "./runStatus";
 import {
   formatDate,
   formatDuration,
@@ -49,8 +50,8 @@ const props = defineProps<{
 defineEmits(["select"]);
 
 const statusClass = computed(() => {
-  if (props.run.success === null) return "pending";
-  return props.run.success ? "success" : "failure";
+  const outcome = runOutcome(props.run.success, props.run.cancelled);
+  return outcome === "running" ? "pending" : RUN_OUTCOME_BADGE[outcome];
 });
 </script>
 
@@ -87,6 +88,9 @@ const statusClass = computed(() => {
 }
 .status-dot.pending {
   background: #eab308;
+}
+.status-dot.cancelled {
+  background: var(--color-text-muted);
 }
 
 .run-info {

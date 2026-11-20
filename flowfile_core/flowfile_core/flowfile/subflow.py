@@ -38,6 +38,7 @@ from flowfile_core.flowfile.param_types import (
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.notebook.lookup import metadata_lookup
 from flowfile_core.schemas import input_schema
+from shared.storage_config import require_flow_in_storage
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -189,8 +190,12 @@ def resolve_subflow_path(ref: input_schema.SubflowReference, user_id: int | None
     ``user_id`` None means an internal/CLI run and is unrestricted.
     """
     registration = _registration(ref, user_id)
+    try:
+        path = require_flow_in_storage(Path(registration["flow_path"]))
+    except ValueError as exc:
+        raise SubflowResolutionError(f"Flow '{registration['name']}': {exc}") from None
     resolved = ResolvedSubflow(
-        path=Path(registration["flow_path"]),
+        path=path,
         registration_id=registration["registration_id"],
         name=registration["name"],
         flow_uuid=registration["flow_uuid"],

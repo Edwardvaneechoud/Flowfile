@@ -71,9 +71,10 @@ def test_env_master_key_is_ignored_outside_docker(monkeypatch, tmp_path):
         crypto.get_master_key()
 
 
-def test_env_master_key_is_used_in_docker_mode(monkeypatch):
+@pytest.mark.parametrize("mode", ["docker", "server"])
+def test_env_master_key_is_used_in_docker_mode(monkeypatch, mode):
     monkeypatch.delenv("TEST_MODE", raising=False)
-    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
     key = Fernet.generate_key().decode()
     monkeypatch.setenv("FLOWFILE_MASTER_KEY", key)
 

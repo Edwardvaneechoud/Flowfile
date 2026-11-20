@@ -17,7 +17,7 @@ from flowfile_core.catalog.exceptions import NotAuthorizedError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowApiEndpoint, FlowRegistration
-from shared.storage_config import storage
+from shared.storage_config import flow_path_spellings, storage
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,10 @@ def require_flow_save_permitted(flow_path: str | None, namespace_id: int | None,
     with get_db_context() as db:
         resolver = AccessResolver(db, requesting_user)
         existing = (
-            db.query(FlowRegistration).filter(FlowRegistration.flow_path == flow_path).first()
+            db.query(FlowRegistration)
+            .filter(FlowRegistration.flow_path.in_(flow_path_spellings(flow_path)))
+            .order_by(FlowRegistration.id)
+            .first()
             if flow_path is not None
             else None
         )
@@ -123,6 +126,7 @@ def register_flow_in_namespace(
     namespace_id: int | None,
     *,
     requesting_user=None,
+    flow_uuid: str | None = None,
 ) -> None:
     """Register a flow in a specific namespace, or auto-register if namespace_id is None.
 
@@ -139,6 +143,9 @@ def register_flow_in_namespace(
     Unlike :func:`auto_register_flow`, this is an explicit save-to-namespace path:
     unexpected errors (e.g. DB failures) propagate to the caller instead of being
     swallowed.
+
+    ``flow_uuid`` registers a new flow under an identity it already has elsewhere (a flow
+    checked out from a hub); an existing registration keeps its own uuid.
     """
     if namespace_id is None:
         auto_register_flow(flow_path, name, user_id)
@@ -177,6 +184,7 @@ def register_flow_in_namespace(
             flow_path=flow_path,
             owner_id=user_id,
             namespace_id=namespace_id,
+            flow_uuid=flow_uuid,
         )
 
 
@@ -248,22 +256,23 @@ def resolve_display_names(flow_paths: Iterable[str | None]) -> dict[str, str]:
     Unregistered paths are simply absent. Best-effort — a catalog failure yields
     an empty map rather than breaking a settings read.
     """
-    paths = {p for p in flow_paths if p}
-    if not paths:
+    spellings = {p: flow_path_spellings(p) for p in flow_paths if p}
+    if not spellings:
         return {}
     try:
         with get_db_context() as db:
             rows = (
                 db.query(FlowRegistration.flow_path, FlowRegistration.name)
-                .filter(FlowRegistration.flow_path.in_(paths))
+                .filter(FlowRegistration.flow_path.in_({s for ss in spellings.values() for s in ss}))
                 .order_by(FlowRegistration.id)
                 .all()
             )
         names: dict[str, str] = {}
-        for path, name in rows:
+        for stored, name in rows:
             # Duplicate paths are possible; lowest id wins, matching get_flow_by_path.
-            if name and path not in names:
-                names[path] = name
+            for path, ss in spellings.items():
+                if name and stored in ss and path not in names:
+                    names[path] = name
         return names
     except Exception:
         logger.info("Catalog display-name lookup failed (non-critical)", exc_info=True)

@@ -1,3 +1,12 @@
+/** The first row below the given tiles in columns `x` to `x + w`; below all of them without a span. */
+export const firstFreeRow = (
+  tiles: { x: number; y: number; w: number; h: number }[],
+  span?: { x: number; w: number },
+): number => {
+  const under = span ? tiles.filter((t) => t.x < span.x + span.w && span.x < t.x + t.w) : tiles;
+  return under.length ? Math.max(...under.map((t) => t.y + t.h)) : 0;
+};
+
 export interface GridDropParams {
   /** Bounding box of the grid root (`.vgl-layout`), viewport-relative. */
   rect: { left: number; top: number; width: number };

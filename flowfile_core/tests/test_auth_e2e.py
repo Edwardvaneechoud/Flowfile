@@ -12,6 +12,8 @@ import docker
 from pathlib import Path
 from typing import Optional, Dict, Tuple
 
+pytestmark = pytest.mark.docker_integration
+
 # Test configuration
 TEST_ADMIN_USERNAME = "e2e_admin"
 TEST_ADMIN_PASSWORD = "e2e_test_password_123"

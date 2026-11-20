@@ -58,7 +58,7 @@ Build pipelines on a visual canvas with a live preview at every node, or write t
 
 **A visual canvas** with 49 node types — joins, fuzzy matching, bill-of-materials explosion, filters, pivots, aggregations, text-to-rows, window functions, conditional branching. Beyond the nodes, the formula editor brings 95 transformation functions, and a Polars code node gives you full Polars for anything the palette doesn't cover — all running in-process, no external engine.
 
-It connects to local files (CSV, Parquet, Excel, JSON and friends), five databases (PostgreSQL, MySQL, SQL Server, SQLite, DuckDB), cloud storage (S3, ADLS, GCS — Delta included, Iceberg read-only), Kafka (consumer only), Google Analytics, and REST APIs. That's the whole list — no Snowflake, BigQuery or Oracle driver yet, and no CDC; if your data lives there, land it somewhere Flowfile can reach first.
+It connects to local files (CSV, Parquet, Excel, JSON and friends), seven databases (PostgreSQL, MySQL, SQL Server, SQLite, DuckDB, Denodo, Snowflake — Snowflake needs `pip install "flowfile[snowflake]"` outside the desktop app and Docker images), cloud storage (S3, ADLS, GCS — Delta included, Iceberg read-only), Kafka (consumer only), Google Analytics, and REST APIs. That's the whole list — no BigQuery or Oracle driver yet, and no CDC; if your data lives there, land it somewhere Flowfile can reach first.
 
 **A Python API** with Polars-like syntax — write a pipeline, call `open_graph_in_editor()`, and it opens as an editable flow. Porting an existing Polars script over is mostly mechanical.
 

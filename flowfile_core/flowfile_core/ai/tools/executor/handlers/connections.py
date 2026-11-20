@@ -313,7 +313,18 @@ def _handle_connect(
 
     from_node = flow.get_node(from_id)
     if from_node is not None and to_node is not None:
-        connection_error = validate_connection(from_node, to_node)
+        modified_ids = (
+            set((audit_meta or {}).get("staged_modified_node_ids_at_stage") or []) if mode == "stage" else set()
+        )
+        # Modified nodes acquire their staged ports at Accept; unchanged endpoints
+        # still validate against live ports, and final validation remains strict.
+        connection_error = validate_connection(
+            from_node,
+            to_node,
+            None if from_id in modified_ids else connection.output_connection.connection_class,
+            None if to_id in modified_ids else connection.input_connection.connection_class,
+            staged=mode == "stage",
+        )
         if connection_error is not None:
             return _reject_and_audit(
                 tool_name=tool_name,
@@ -360,7 +371,7 @@ def _handle_connect(
             already_present = False
     if not already_present:
         try:
-            add_connection(flow, connection)
+            add_connection(flow, connection, validate_ports=True)
         except Exception as exc:
             return _reject_and_audit(
                 tool_name=tool_name,

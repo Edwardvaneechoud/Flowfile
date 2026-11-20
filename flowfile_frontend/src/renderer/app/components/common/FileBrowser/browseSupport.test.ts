@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 
-import { browseUnsupportedReason, canBrowseConnection } from "./browseSupport";
+import {
+  HUB_CONNECTION_BROWSE,
+  browseUnsupportedReason,
+  canBrowseConnection,
+} from "./browseSupport";
 
 describe("browseUnsupportedReason", () => {
   it.each([
@@ -42,5 +46,10 @@ describe("browseUnsupportedReason", () => {
 
   it("allows adls when the auth method is not yet known", () => {
     expect(canBrowseConnection("adls", null)).toBe(true);
+  });
+
+  it("says a connection from the hub is typed, not browsed, whatever its storage", () => {
+    expect(browseUnsupportedReason("s3", "access_key", "hub")).toBe(HUB_CONNECTION_BROWSE);
+    expect(browseUnsupportedReason("s3", "access_key", "local")).toBeNull();
   });
 });

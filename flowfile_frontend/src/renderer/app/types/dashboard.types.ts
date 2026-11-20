@@ -2,11 +2,38 @@
 
 import type { AccessInfo } from "./sharing.types";
 
-export type DashboardTileType = "viz" | "text" | "separator" | "kpi";
+export type DashboardTileType = "viz" | "text" | "separator" | "kpi" | "table" | "filter" | "image";
+export type TableSortDirection = "ascending" | "descending";
+
+export interface DashboardTableColumn {
+  field: string;
+  /** Header text; absent or null shows the column name. */
+  label?: string | null;
+  /** Number format; text cells ignore both. null = auto. */
+  decimals?: number | null;
+  thousands?: boolean;
+}
+
+export interface DashboardTableConfig {
+  /** Display order; empty shows every column. */
+  columns: DashboardTableColumn[];
+  sort_by: string[];
+  sort_direction: TableSortDirection;
+  page_size: number;
+}
 export type SeparatorOrientation = "horizontal" | "vertical";
 export type KpiAgg = "sum" | "mean" | "median" | "min" | "max" | "count" | "distinctCount";
 export type KpiComparison = "none" | "target" | "previous_period";
 export type KpiValueSize = "auto" | "sm" | "md" | "lg" | "xl";
+export type KpiTrendGrain = "auto" | "day" | "week" | "month" | "quarter" | "year";
+
+/** The KPI's measure per bucket of a date column, drawn as a line under the number. */
+export interface DashboardKpiTrend {
+  /** A date or datetime column of the KPI's source. */
+  field: string;
+  /** "auto" picks day to year from the span of the rows in view. */
+  grain: KpiTrendGrain;
+}
 
 export interface DashboardKpi {
   /** null with agg "count" = row count. */
@@ -23,18 +50,55 @@ export interface DashboardKpi {
   higher_is_better?: boolean;
   /** Fixed number size; "auto" fits the tile. */
   value_size?: KpiValueSize;
+  /** null/absent draws no trend line. */
+  trend?: DashboardKpiTrend | null;
+}
+
+/** How a chart tile presents its chart; the saved chart is never changed. null keeps the chart's own. */
+export interface DashboardChartFormat {
+  /** d3-format string, e.g. ",.2f" or ".3~s". */
+  number_format?: string | null;
+  /** d3-time-format string, e.g. "%Y-%m-%d". */
+  time_format?: string | null;
+  /** Display name of the field ending the columns shelf (an aggregated measure reads sum(<title>)). */
+  x_title?: string | null;
+  /** The same for the rows shelf. */
+  y_title?: string | null;
+}
+
+export type DashboardImageFit = "contain" | "cover";
+
+/** The picture an image tile shows, stored in the layout (`imageTile.ts` has the caps). */
+export interface DashboardTileImage {
+  /** A base64 `data:` URL of a PNG, JPEG, WebP, GIF or SVG image; only ever an `<img>` source. Empty in
+   * the dashboard list, which carries no image bytes (`getDashboard` does). */
+  data_url: string;
+  /** What a screen reader reads; at most 300 characters. */
+  alt?: string | null;
+  /** "contain" (default) shows the whole image, never past its own size; "cover" fills and crops. */
+  fit?: DashboardImageFit;
 }
 
 export interface DashboardTile {
   /** Client-generated UUID, stable across saves so component state survives. */
   id: string;
   type: DashboardTileType;
-  /** Required when type === "viz"; the KPI's source when type === "kpi". */
+  /** Required when type === "viz"; a KPI's or table's chart source (never with table_id). */
   viz_id: number | null;
+  /** A KPI's or table's catalog table source, read without a chart (never with viz_id). */
+  table_id?: number | null;
   /** Which entry of CatalogVisualization.spec[] to render. */
   chart_index: number;
+  /** A chart tile's own title; absent or null shows the chart's name. */
+  title?: string | null;
+  /** False hides a chart tile's title from viewers. */
+  show_title?: boolean;
+  /** A chart tile's number, date and axis-title overrides; absent or null draws the chart as saved. */
+  chart_format?: DashboardChartFormat | null;
   /** Markdown source when type === "text". */
   text_md?: string | null;
+  /** A chart, KPI, table or filter tile's note, Markdown shown behind an ⓘ; at most 4000 characters. */
+  note_md?: string | null;
   /** CSS colors for text tiles. */
   bg_color?: string | null;
   text_color?: string | null;
@@ -42,8 +106,16 @@ export interface DashboardTile {
   orientation?: SeparatorOrientation | null;
   thickness?: number | null;
   line_color?: string | null;
-  /** Headline-number config when type === "kpi"; the source is viz_id. */
+  /** Headline-number config when type === "kpi"; the source is table_id or viz_id. */
   kpi?: DashboardKpi | null;
+  /** Rows config when type === "table"; null = every column, default page size. */
+  table?: DashboardTableConfig | null;
+  /** The layout filter a `type === "filter"` tile shows; that filter then leaves the strip. */
+  filter_id?: string | null;
+  /** An image tile's picture; absent or null is an empty tile, blank to viewers. */
+  image?: DashboardTileImage | null;
+  /** The layout tab the tile is on; absent or null on a layout without tabs (`dashboardTabs.ts`). */
+  tab_id?: string | null;
   x: number;
   y: number;
   w: number;
@@ -74,19 +146,54 @@ export interface DashboardFilter {
    */
   datasource_id: number | null;
   /**
+   * Optional FK to a SQL-backed CatalogVisualization.id, never with
+   * `datasource_id`: the filter's fields and values come from that chart's
+   * source and scope "datasource" reaches the tiles reading that chart.
+   */
+  datasource_viz_id?: number | null;
+  /**
    * "datasource" (default, also when absent on legacy layouts) applies only
-   * to tiles reading from `datasource_id`; "all" applies to every targeted
+   * to tiles reading from the filter's source; "all" applies to every targeted
    * tile whose data has a column named `field_name` of a compatible type.
    */
   scope?: DashboardFilterScope;
+  /** False makes a categorical filter single-select (`state.selected` holds at most one value). */
+  multiple?: boolean;
 }
 
 export type DashboardFilterScope = "datasource" | "all";
+
+/** A value of a chart's colour field as the data holds it. */
+export type DashboardColorValue = string | number | boolean | null;
+
+/**
+ * The colour one value of a colour field has on every chart tile of the dashboard: the `slot`-th
+ * colour of the chart palette (`vizTheme.ts`), the same slot in light and dark.
+ */
+export interface DashboardColorAssignment {
+  field: string;
+  value: DashboardColorValue;
+  slot: number;
+}
+
+/** One tab of a dashboard, a canvas of its own; the id is layout-internal. */
+export interface DashboardTab {
+  id: string;
+  title: string;
+}
+
+export const DASHBOARD_TAB_TITLE_MAX = 60;
 
 export interface DashboardLayout {
   tiles: DashboardTile[];
   grid: DashboardGrid;
   filters: DashboardFilter[];
+  /** Absent on layouts saved before value colours existed. */
+  color_assignments?: DashboardColorAssignment[];
+  /** A viewer's default refresh interval; null or absent is off, never under 60. */
+  auto_refresh_seconds?: number | null;
+  /** Ordered; absent or empty is one canvas with no tab bar. */
+  tabs?: DashboardTab[];
 }
 
 export interface Dashboard {

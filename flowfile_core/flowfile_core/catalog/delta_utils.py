@@ -10,7 +10,6 @@ import logging
 import shutil
 from pathlib import Path
 
-import pyarrow as pa
 from deltalake import DeltaTable
 
 from shared.delta_utils import get_delta_size_bytes
@@ -51,15 +50,6 @@ def get_delta_table_size_bytes(path: str | Path) -> int:
     Delegates to ``shared.delta_utils.get_delta_size_bytes``.
     """
     return get_delta_size_bytes(path)
-
-
-def read_delta_preview(path: str, n_rows: int = 100) -> pa.Table:
-    """Read the first N rows from a Delta table using PyArrow."""
-    dt = DeltaTable(str(path))
-
-    dataset = dt.to_pyarrow_dataset()
-
-    return dataset.head(n_rows)
 
 
 def delete_table_storage(path: str | Path) -> None:

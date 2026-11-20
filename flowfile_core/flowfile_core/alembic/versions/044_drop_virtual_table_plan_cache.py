@@ -5,8 +5,8 @@ contents were a Polars plan serialised by the version that wrote it, which no ot
 ``polars_plan`` now holds the print_tree drawing of the producer's branch, so its old ``explain()`` text is
 cleared; the next producer run writes the drawing.
 
-Revision ID: 039
-Revises: 038
+Revision ID: 044
+Revises: 043
 Create Date: 2026-10-31
 """
 
@@ -16,8 +16,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision: str = "039"
-down_revision: str | None = "038"
+revision: str = "044"
+down_revision: str | None = "043"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

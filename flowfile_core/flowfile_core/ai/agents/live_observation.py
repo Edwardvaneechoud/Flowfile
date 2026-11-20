@@ -36,6 +36,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from flowfile_core.ai.feature_flag import send_data_allowed
 from flowfile_core.run_lock import get_flow_run_lock
 
 logger = logging.getLogger(__name__)
@@ -271,10 +272,11 @@ def _extract_sample_rows(node: Any) -> list[dict[str, Any]]:
     preview grid the fetch already sampled, else by ``sample`` on the
     backend that holds its reference, so core collects nothing of it.
     No reference or a failed read gives ``[]`` — a missing sample
-    shouldn't fail the observation when the schema is fine.
+    shouldn't fail the observation when the schema is fine. So does a
+    server that withholds data values (``feature_flag.send_data_allowed``).
     """
     ref = node.results.result_ref
-    if ref is None:
+    if ref is None or not send_data_allowed():
         return []
     import io
 

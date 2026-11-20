@@ -5,14 +5,13 @@ Mounted under ``/system`` in :mod:`flowfile_core.main` — **outside** the
 on; if it lived under the gated router it would be blocked by the very
 flag it's supposed to set.
 
-Mutates two pieces of state on every call:
-
-* ``flowfile_core.configs.settings.FEATURE_FLAG_AI`` (the ``MutableBool``)
-  so :func:`flowfile_core.ai.feature_flag.is_ai_enabled` sees the new value
-  on its next call (live attribute lookup, no module reload required).
-* ``os.environ["FEATURE_FLAG_AI"]`` so a hypothetical
-  ``importlib.reload(settings)`` would re-resolve to the same value, and
-  any future code that consults the env var directly stays in sync.
+Mutates one piece of state: ``flowfile_core.configs.settings.FEATURE_FLAG_AI``
+(the ``MutableBool``), so :func:`flowfile_core.ai.feature_flag.is_ai_enabled`
+sees the new value on its next call (live attribute lookup, no module reload
+required). ``os.environ`` is deliberately left alone: the route runs on a
+threadpool thread, and a ``setenv`` there races native code reading the
+environment (Polars, Rust threads) and can segfault the process. The env var
+is read once, when ``settings`` is imported.
 
 Persistence across process restarts is **not** part of this endpoint's
 contract — that requires writing the value to a config file the user owns
@@ -22,8 +21,6 @@ therefore always ``false`` in the response so the caller can distinguish
 """
 
 from __future__ import annotations
-
-import os
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -69,12 +66,9 @@ def set_ai_feature_flag(
 
     Sets ``settings.FEATURE_FLAG_AI`` (the ``MutableBool``
     :func:`flowfile_core.ai.feature_flag.is_ai_enabled` reads on every
-    call) and ``os.environ["FEATURE_FLAG_AI"]`` to the same boolean. The
-    env-var write keeps a future ``importlib.reload(settings)`` consistent
-    and unblocks any future code that consults the env var directly.
+    call); ``os.environ`` is left untouched (see the module docstring).
     """
     _settings.FEATURE_FLAG_AI.set(payload.enabled)
-    os.environ["FEATURE_FLAG_AI"] = "true" if payload.enabled else "false"
     return FeatureFlagState(enabled=bool(_settings.FEATURE_FLAG_AI), persisted=False)
 
 

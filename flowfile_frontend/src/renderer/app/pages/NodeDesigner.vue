@@ -62,8 +62,8 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
-import { onBeforeRouteLeave, useRoute } from "vue-router";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 
 import DesignerHeader from "./nodeDesigner/designer/DesignerHeader.vue";
@@ -94,18 +94,49 @@ const showPublishModal = ref(false);
 const publishFileName = ref("");
 
 const route = useRoute();
+const router = useRouter();
+
+/** Opens a linked node file; on failure says so and resolves false, leaving the node on screen. */
+async function openLinkedFile(openFile: string): Promise<boolean> {
+  try {
+    await loadNodeForEdit(openFile);
+    return true;
+  } catch (e: unknown) {
+    const err = e as { message?: string };
+    ElMessage.error(`Failed to open node: ${err.message || "error"}`);
+    return false;
+  }
+}
 
 onMounted(() => {
   store.initialize();
   window.addEventListener("beforeunload", handleBeforeUnload);
-  // Deep link from the catalog's Custom Nodes tab (?openFile=<file.py>).
+  // Deep link from the catalog's Custom Nodes tab and the global search (?openFile=<file.py>).
   const openFile = route.query.openFile;
-  if (typeof openFile === "string" && openFile) {
-    loadNodeForEdit(openFile).catch((error) => {
-      console.error("Failed to open node from query param:", error);
-    });
-  }
+  if (typeof openFile !== "string" || !openFile) return;
+  void openLinkedFile(openFile).then((opened) => {
+    if (opened || route.name !== "nodeDesigner" || route.query.openFile !== openFile) return;
+    void router.replace({ query: { ...route.query, openFile: store.sourceFile ?? undefined } });
+  });
 });
+
+// The same link followed while the designer is already open reuses this page.
+onBeforeRouteUpdate(async (to) => {
+  const openFile = to.query.openFile;
+  if (typeof openFile !== "string" || !openFile || openFile === store.sourceFile) return true;
+  if (!(await confirmDiscardChanges())) return false;
+  return openLinkedFile(openFile);
+});
+
+// ?openFile= names the node on screen, so following a link to it again is never a no-op navigation.
+watch(
+  () => store.sourceFile,
+  (sourceFile) => {
+    const linked = typeof route.query.openFile === "string" ? route.query.openFile : null;
+    if (route.name !== "nodeDesigner" || linked === (sourceFile ?? null)) return;
+    void router.replace({ query: { ...route.query, openFile: sourceFile ?? undefined } });
+  },
+);
 
 onBeforeUnmount(() => {
   window.removeEventListener("beforeunload", handleBeforeUnload);

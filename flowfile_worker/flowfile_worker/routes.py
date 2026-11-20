@@ -887,6 +887,53 @@ def add_catalog_key_column(payload: models.CatalogAddKeyColumnRequest) -> models
         gc.collect()
 
 
+@router.post("/catalog/restore_version", response_model=models.CatalogRestoreVersionResponse)
+def restore_catalog_version(payload: models.CatalogRestoreVersionRequest) -> models.CatalogRestoreVersionResponse:
+    """Restore a Delta catalog table to an earlier version with one RESTORE commit."""
+    try:
+        resolved_path, _, storage_options = _resolve_catalog_route(payload.table_path, payload.storage)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    queue = mp_context.Queue(maxsize=1)
+    p = mp_context.Process(
+        target=funcs.restore_catalog_version_task,
+        kwargs={
+            "table_path": resolved_path,
+            "version": payload.version,
+            "expected_version": payload.expected_version,
+            "commit_metadata": payload.commit_metadata,
+            "progress": progress,
+            "error_message": error_message,
+            "queue": queue,
+            "storage_options": storage_options,
+        },
+    )
+    p.start()
+    result = _drain_then_join(p, queue)
+    try:
+        with progress.get_lock():
+            final_progress = progress.value
+        if final_progress != 100 or result is None:
+            with error_message.get_lock():
+                err = error_message.value.decode(errors="replace").rstrip("\x00")
+            logger.error(f"Catalog restore_version subprocess failed: {err}")
+            _raise_typed_edit_error(err, "restore_version_failure")
+        return models.CatalogRestoreVersionResponse(
+            restored_version=result.get("restored_version", payload.version),
+            new_version=result.get("new_version"),
+            column_schema=result.get("schema", []),
+            row_count=result.get("row_count", 0),
+            column_count=result.get("column_count", 0),
+            size_bytes=result.get("size_bytes"),
+        )
+    finally:
+        del p, progress, error_message, queue
+        gc.collect()
+
+
 @router.post("/catalog/table_metadata", response_model=models.TableMetadataResponse)
 def read_table_metadata(payload: models.TableMetadataRequest) -> models.TableMetadataResponse:
     """Read schema, row_count, column_count, size_bytes from a table path.
