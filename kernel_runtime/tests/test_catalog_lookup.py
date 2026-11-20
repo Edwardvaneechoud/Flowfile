@@ -74,7 +74,7 @@ def test_resolves_table_with_authenticated_existing_routes(route_transport, refe
     assert result["table_id"] == 7
     assert result["authorized"] is True
     assert result["scd2_config"] == row["scd2"]
-    assert result["serialized_lf"] is None
+    assert result["producer_fingerprint"] is None
 
 
 @pytest.mark.parametrize("kind", ["catalog_table", "catalog_sql_tables"])

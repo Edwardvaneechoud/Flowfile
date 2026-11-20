@@ -33,8 +33,8 @@ def _table_info(row: dict) -> dict:
     return {
         "file_path": _physical_path(path) if path and row["table_type"] != "virtual" else None,
         "table_type": row["table_type"],
-        # Plans are not transported across the Core/kernel package boundary.
-        "serialized_lf": None,
+        # Core's producer fingerprint is not exposed by the catalog routes.
+        "producer_fingerprint": None,
         "is_optimized": False,
         "source_table_versions": row.get("source_table_versions"),
         "authorized": True,  # Only reached after a successful authorized route response.
