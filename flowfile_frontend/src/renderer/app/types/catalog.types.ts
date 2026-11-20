@@ -744,6 +744,8 @@ export interface CatalogVisualization {
   dashboard_id?: number | null;
   dashboard_name?: string | null;
   access?: AccessInfo | null;
+  // "hub" for a chart saved in a hub's catalog: its ids are the negatives of the hub's own.
+  source?: "local" | "hub";
 }
 
 /** What pruning a dashboard's own charts did: the ids deleted, and the ids made charts of their own. */

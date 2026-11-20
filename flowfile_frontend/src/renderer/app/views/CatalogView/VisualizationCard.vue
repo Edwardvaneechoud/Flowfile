@@ -12,6 +12,14 @@
       <div class="viz-card-title">
         <span class="viz-name">{{ viz.name }}</span>
         <SharedBadge :access="viz.access" />
+        <span
+          v-if="isHubRow(viz)"
+          class="viz-chart-type"
+          data-testid="chart-on-hub"
+          title="Saved in your organisation's catalog on the hub"
+        >
+          Hub
+        </span>
         <span v-if="viz.chart_type" class="viz-chart-type">{{ viz.chart_type }}</span>
         <span v-if="ownerLabel(viz)" class="viz-chart-type" data-testid="chart-owner">
           {{ ownerLabel(viz) }}
@@ -70,6 +78,7 @@ import { Delete, Edit, MoreFilled, Share } from "@element-plus/icons-vue";
 import type { CatalogVisualization } from "../../types";
 import { formatDate } from "./catalog-formatters";
 import { ownerLabel } from "./chartLibraryFilter";
+import { isHubRow } from "./hubRows";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 

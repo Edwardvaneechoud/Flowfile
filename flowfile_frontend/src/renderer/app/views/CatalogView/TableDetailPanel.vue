@@ -615,7 +615,7 @@
     </div>
 
     <!-- Visualizations -->
-    <div v-if="!isHub" class="section viz-section">
+    <div class="section viz-section" data-testid="table-visualizations">
       <VisualizationsTab :table-id="table.id" />
     </div>
   </div>

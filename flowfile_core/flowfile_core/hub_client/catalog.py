@@ -1,8 +1,10 @@
-"""The hub's catalogs, tables and flows as rows of the local catalog tree.
+"""The hub's catalogs, tables, flows and saved work as rows of the local catalog tree.
 
 A hub row carries ``source = "hub"`` and the hub's ids negated (local ids are positive). Nothing is kept; every
 metadata route of a hub catalog is the hub's same route (``relay``). A saved flow names a hub table by
-its qualified name, never by a hub database id, which is resolved when the flow runs.
+its qualified name, never by a hub database id, which is resolved when the flow runs. A notebook, chart or dashboard
+saved in a hub schema is a row of the hub's catalog like any other, and names only the hub's own rows
+(``LocalRowNamed``).
 """
 
 import re
@@ -30,7 +32,21 @@ _ROW_REFERENCES = (
     "trigger_namespace_id",
     "resource_id",
     "group_id",
+    "catalog_table_id",
+    "viz_id",
+    "dashboard_id",
+    "datasource_id",
+    "datasource_viz_id",
+    "notebook_id",
 )
+_NEVER_LOCAL = ("catalog_table_id", "viz_id", "dashboard_id", "datasource_id", "datasource_viz_id")
+"""The references of saved work: in a request for the hub each names a hub row, so a positive one is a mistake."""
+_IN_A_LAYOUT = (*_NEVER_LOCAL, "table_id")
+"""A dashboard's ``layout`` holds only rows of the catalog that keeps the dashboard, its tiles' tables too."""
+_SAVED_WORK = ("/catalog/visualizations", "/catalog/dashboards", "/catalog/notebooks")
+"""The routes of saved work: a request for the hub on one of them names a hub schema, never one of this Flowfile."""
+_OPAQUE = ("spec", "cells")
+"""A chart's spec and a notebook's cells are documents of their own: an ``id`` inside them names no catalog row."""
 _THEIR_ID = re.compile(r"(?<=/)-(\d+)(?=/|$)")
 _THEIR_VALUE = re.compile(r"-\d+")
 
@@ -39,6 +55,16 @@ NOT_CONNECTED = (
     f"This flow uses tables on the hub, but this Flowfile is not connected to it; {RECONNECT} (Compute → Hub)"
 )
 _WHAT_TO_DO = "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there."
+
+
+class LocalRowNamed(ValueError):
+    """A request for the hub names a row of this Flowfile's own catalog, which the hub would read as one of its own."""
+
+    def __init__(self, key: str, value: int):
+        super().__init__(
+            "What is saved in the hub's catalog can use only tables and charts of the hub's catalog; this names one "
+            f"kept in this Flowfile's own catalog ({key} {value})."
+        )
 
 
 @dataclass(frozen=True)
@@ -116,15 +142,24 @@ def relay(user_id: int | None, method: str, path: str, params: dict | None = Non
     """A metadata request on a hub catalog answered by the hub's same route, negative ids sent as the hub's own.
 
     A hub 401 answers 400 (the frontend reads 401 as an expired local session); a hub that does not answer is 502. The
-    hub's schedulers say they are the hub's, by the name its catalogs are placed under.
+    hub's schedulers say they are the hub's, by the name its catalogs are placed under. A request that names a row of
+    this Flowfile's own catalog (``LocalRowNamed``) is a 422 the hub never sees.
     """
     try:
-        status, answer = _relayed(*session.bearer(user_id, NOT_CONNECTED), method, path, params, body)
+        never_local = (*_NEVER_LOCAL, "namespace_id") if path.startswith(_SAVED_WORK) else _NEVER_LOCAL
+        their_params, their_body = _theirs(params, never_local), _theirs(body, never_local)
+        hub_url, access_token = session.bearer(user_id, NOT_CONNECTED)
+        status, answer = client.catalog_request(
+            hub_url, access_token, method, _THEIR_ID.sub(r"\1", path), params=their_params, body=their_body
+        )
+        answer = marked(answer)
         if path == SCHEDULERS and isinstance(answer, list):
             stored = session.load(user_id) or {}
             place = stored.get("org_name") or stored.get("hub_url")
             answer = [{**row, "place": row.get("place") or place} for row in answer if isinstance(row, dict)]
         return status, answer
+    except LocalRowNamed as e:
+        return 422, {"detail": str(e)}
     except LookupError as e:
         return 400, {"detail": str(e)}
     except HubRefused as e:
@@ -137,10 +172,8 @@ def relay(user_id: int | None, method: str, path: str, params: dict | None = Non
         return 502, {"detail": str(e)}
 
 
-def _relayed(hub_url: str, access_token: str, method: str, path: str, params=None, body=None) -> tuple[int, object]:
-    status, answer = client.catalog_request(
-        hub_url, access_token, method, _THEIR_ID.sub(r"\1", path), params=_theirs(params), body=_theirs(body)
-    )
+def _relayed(hub_url: str, access_token: str, method: str, path: str) -> tuple[int, object]:
+    status, answer = client.catalog_request(hub_url, access_token, method, _THEIR_ID.sub(r"\1", path))
     return status, marked(answer)
 
 
@@ -150,12 +183,12 @@ def _is_id(value) -> bool:
 
 def marked(answer):
     """A hub catalog answer as this machine shows it: rows with an id get ``source: "hub"``, and every reference in
-    ``_ROW_REFERENCES`` is negated."""
+    ``_ROW_REFERENCES`` is negated. What ``_OPAQUE`` names is handed on as it is."""
     if isinstance(answer, list):
         return [marked(item) for item in answer]
     if not isinstance(answer, dict):
         return answer
-    row = {key: marked(value) for key, value in answer.items()}
+    row = {key: value if key in _OPAQUE else marked(value) for key, value in answer.items()}
     if _is_id(answer.get("id")) and answer.get("source", "local") == "local":
         row["source"] = HUB
     for key in _ROW_REFERENCES:
@@ -164,12 +197,27 @@ def marked(answer):
     return row
 
 
-def _theirs(sent):
+def _theirs(sent, never_local: tuple[str, ...] = _NEVER_LOCAL):
+    """``sent`` with every row reference the hub's own id; what ``_OPAQUE`` names is sent as it is.
+
+    A positive reference in ``never_local`` names a row of this Flowfile and is ``LocalRowNamed``; inside a
+    dashboard's ``layout`` that holds for a tile's table too (``_IN_A_LAYOUT``).
+    """
     if isinstance(sent, list):
-        return [_theirs(item) for item in sent]
+        return [_theirs(item, never_local) for item in sent]
     if not isinstance(sent, dict):
         return sent
-    return {key: _their_id(value) if key in _ROW_REFERENCES else _theirs(value) for key, value in sent.items()}
+    theirs = {}
+    for key, value in sent.items():
+        if key in never_local and _is_id(value) and value > 0:
+            raise LocalRowNamed(key, value)
+        if key in _ROW_REFERENCES:
+            theirs[key] = _their_id(value)
+        elif key in _OPAQUE:
+            theirs[key] = value
+        else:
+            theirs[key] = _theirs(value, _IN_A_LAYOUT if key == "layout" else never_local)
+    return theirs
 
 
 def _their_id(value):

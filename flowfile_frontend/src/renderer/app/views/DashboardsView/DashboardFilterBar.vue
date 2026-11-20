@@ -308,6 +308,8 @@ import {
   type FilterSourceOption,
 } from "./filterDialog";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useDashboardsStore } from "../../stores/dashboards-store";
+import { tablesOfDashboardCatalog } from "./dashboardCatalog";
 
 const props = defineProps<{
   /** Every filter of the dashboard; the dialog edits any of them. */
@@ -438,7 +440,11 @@ const sourceGroups = computed(() => {
       : null;
   return filterSourceGroups(
     props.datasourcesInUse,
-    catalogStore.allTables.map((t) => ({ id: t.id, name: t.full_table_name ?? t.name })),
+    tablesOfDashboardCatalog(
+      catalogStore.allTables,
+      catalogStore.tree,
+      useDashboardsStore().current,
+    ).map((t) => ({ id: t.id, name: t.full_table_name ?? t.name })),
     current,
   );
 });

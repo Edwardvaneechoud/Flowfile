@@ -36,11 +36,14 @@ from flowfile_core.hub_client import secrets as hub_secrets
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
     CatalogTableOut,
+    DashboardOut,
     FlowRegistrationOut,
     FlowRunOut,
     FlowScheduleOut,
     NamespaceOut,
     NamespaceTree,
+    NotebookOut,
+    VisualizationOut,
 )
 from shared import sealed as sealed_carriers
 
@@ -306,6 +309,12 @@ class FakeHubWithCatalog(FakeHub):
     as core's bare reason. ``POST /hub/runs``
     keeps each run report in ``reports`` and answers 201; ``GET /catalog/scheduler/status`` answers
     ``scheduler_status``, the hub's own scheduler, and ``GET /catalog/schedulers`` the list of it alone.
+
+    Saved work is kept as core dumps it: ``charts`` (``VisualizationOut``), ``dashboards`` (``DashboardOut``) and
+    ``notebooks`` (``NotebookOut``), served on core's own routes (``_saved_work``); each request on them is kept in
+    ``saved`` as ``(method, path, body)``, the body as the hub received it. A create or a move into a namespace
+    whose grant in ``grants`` is not ``"manage"`` is core's 403, as is reading or drawing through the hub: the
+    chart routes that compute answer ``NEVER_RUNS``.
     """
 
     def __init__(self):
@@ -329,6 +338,114 @@ class FakeHubWithCatalog(FakeHub):
         self.schedules: list[dict] = []
         self.scheduler_status: dict = {"active": True, "holder_id": "hub", "heartbeat_at": _STAMP}
         self.cursors: dict[int, dict[str, dict]] = {}
+        self.charts: list[dict] = []
+        self.dashboards: list[dict] = []
+        self.notebooks: list[dict] = []
+        self.saved: list[tuple[str, str, object]] = []
+
+    def seed_chart(self, namespace: dict, name: str, table: dict | None = None, **fields) -> dict:
+        """A chart saved in ``namespace`` on the hub: of ``table``, or of the ``sql_query`` in ``fields``."""
+        row = VisualizationOut(
+            **{
+                "id": len(self.charts) + 301,
+                "name": name,
+                "source_type": "table" if table is not None else "sql",
+                "catalog_table_id": table["id"] if table is not None else None,
+                "table_name": table["name"] if table is not None else None,
+                "namespace_id": namespace["id"],
+                "namespace_name": namespace["name"],
+                "created_by": 1,
+                "created_at": _STAMP,
+                "updated_at": _STAMP,
+                **fields,
+            }
+        ).model_dump(mode="json")
+        self.charts.append(row)
+        return row
+
+    def seed_dashboard(self, namespace: dict, name: str, **fields) -> dict:
+        """A dashboard saved in ``namespace`` on the hub; ``layout`` in ``fields`` holds the hub's own ids."""
+        row = DashboardOut(
+            **{
+                "id": len(self.dashboards) + 401,
+                "name": name,
+                "layout": {},
+                "layout_version": 1,
+                "namespace_id": namespace["id"],
+                "namespace_name": namespace["name"],
+                "created_by": 1,
+                "created_at": _STAMP,
+                "updated_at": _STAMP,
+                **fields,
+            }
+        ).model_dump(mode="json")
+        self.dashboards.append(row)
+        return row
+
+    def seed_notebook(self, namespace: dict, name: str, **fields) -> dict:
+        """A notebook saved in ``namespace`` on the hub."""
+        row = NotebookOut(
+            **{
+                "id": len(self.notebooks) + 501,
+                "name": name,
+                "namespace_id": namespace["id"],
+                "namespace_name": namespace["name"],
+                "owner_id": 1,
+                "created_at": _STAMP,
+                "updated_at": _STAMP,
+                **fields,
+            }
+        ).model_dump(mode="json")
+        self.notebooks.append(row)
+        return row
+
+    def _saved_work(self, method: str, path: str, body) -> httpx.Response | None:
+        """Core's chart, dashboard and notebook routes as the hub serves them, ``None`` for another route: rows are
+        created, read, changed and deleted, a table lists its charts, and nothing is computed."""
+        parts = path.split("/")[2:]
+        if parts[:1] == ["tables"] and parts[2:] == ["visualizations"]:
+            self.saved.append((method, path, body))
+            return httpx.Response(200, json=[c for c in self.charts if str(c["catalog_table_id"]) == parts[1]])
+        kinds = {
+            "visualizations": (self.charts, self.seed_chart, "Visualization"),
+            "dashboards": (self.dashboards, self.seed_dashboard, "Dashboard"),
+            "notebooks": (self.notebooks, self.seed_notebook, "Notebook"),
+        }
+        if not parts or parts[0] not in kinds:
+            return None
+        rows, seed, label = kinds[parts[0]]
+        self.saved.append((method, path, body))
+        if parts[-1] in ("compute", "fields"):
+            return httpx.Response(403, json={"detail": NEVER_RUNS})
+        namespace_id = (body or {}).get("namespace_id")
+        if method in ("POST", "PUT") and namespace_id is not None and self.grants.get(namespace_id) != "manage":
+            return httpx.Response(403, json={"detail": "Not authorized to create items in this namespace"})
+        if len(parts) == 1:
+            if method == "GET":
+                return httpx.Response(200, json=rows)
+            namespace = next((ns for ns in self.namespaces if ns["id"] == namespace_id), None)
+            if namespace is None:
+                return httpx.Response(404, json={"detail": "Namespace not found"})
+            kept = {k: v for k, v in body.items() if k not in ("name", "namespace_id", "catalog_table_id")}
+            if parts[0] == "visualizations" and body.get("source_type", "table") == "table":
+                table = next((t for t in self.tables if t["id"] == body.get("catalog_table_id")), None)
+                if table is None:
+                    return httpx.Response(404, json={"detail": "Catalog table not found"})
+                kept["table"] = table
+            return httpx.Response(201, json=seed(namespace, body["name"], **kept))
+        row = next((r for r in rows if str(r["id"]) == parts[1]), None)
+        if row is None:
+            return httpx.Response(404, json={"detail": f"{label} not found"})
+        if parts[2:] == ["prune_charts"]:
+            return httpx.Response(200, json={"deleted": [], "released": []})
+        if parts[2:] == ["detach"]:
+            row["dashboard_id"] = None
+        elif method == "DELETE":
+            rows.remove(row)
+            return httpx.Response(204)
+        elif method == "PUT":
+            row.update({k: v for k, v in body.items() if not k.startswith("expected_")})
+        return httpx.Response(200, json=row)
 
     def seed_catalog(self, name: str, **fields) -> dict:
         """A root namespace (a catalog) on the hub."""
@@ -712,8 +829,11 @@ class FakeHubWithCatalog(FakeHub):
             return httpx.Response(200, json=[self.flow_row(f) for f in self.flows])
         rows = ("/catalog/tables/", "/catalog/flows/", "/catalog/schedules")
         cancel = path.startswith("/catalog/runs/") and path.endswith("/cancel")
+        body = json.loads(request.content) if request.content else None
+        saved_work = self._saved_work(request.method, path, body)
+        if saved_work is not None:
+            return saved_work
         if path.startswith(rows) or cancel or path in ("/catalog/runs", "/catalog/active-runs"):
-            body = json.loads(request.content) if request.content else None
             return self._catalog_row(request.method, path, body, request.url.params)
         if path == "/catalog/namespaces":
             parent = request.url.params.get("parent_id")

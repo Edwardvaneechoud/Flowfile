@@ -283,6 +283,14 @@
             this browser.
           </span>
         </div>
+        <el-alert
+          v-if="!ownCatalogOffered"
+          :title="QUERY_VIEW_NOT_ON_HUB"
+          type="info"
+          :closable="false"
+          show-icon
+          data-testid="query-view-not-on-hub"
+        />
         <el-form label-position="top" @submit.prevent="saveAsVirtualTable">
           <el-form-item label="Table name" required :error="sqlNameError">
             <el-input v-model="saveForm.name" placeholder="my_virtual_table" />
@@ -316,7 +324,7 @@
         <el-button @click="showSaveDialog = false">Cancel</el-button>
         <el-button
           type="primary"
-          :disabled="!saveForm.name.trim() || !!sqlNameError"
+          :disabled="!saveForm.name.trim() || !!sqlNameError || !ownCatalogOffered"
           :loading="savingVirtual"
           @click="saveAsVirtualTable"
         >
@@ -342,6 +350,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { QUERY_VIEW_NOT_ON_HUB, offersOwnCatalog } from "./hubRows";
 import {
   MIN_EDITOR_HEIGHT,
   clampEditorHeight,
@@ -646,6 +655,8 @@ const canUpdateLinked = computed(
 const sqlNameError = computed(() => validateCatalogName(saveForm.name, "Table") ?? "");
 
 const { writableSchemaNamespaces: schemaNamespaces } = useWritableNamespaces();
+// A query view is kept by the catalog that runs its SQL: this machine's, never a hub's.
+const ownCatalogOffered = computed(() => offersOwnCatalog(catalogStore.tree));
 
 function openSaveDialog() {
   const tab = active.value;
@@ -661,7 +672,7 @@ function openSaveDialog() {
 async function saveAsVirtualTable() {
   const trimmedName = saveForm.name.trim();
   const tab = active.value;
-  if (!trimmedName || sqlNameError.value || !tab) return;
+  if (!trimmedName || sqlNameError.value || !tab || !ownCatalogOffered.value) return;
   const tabId = tab.id;
   const query = tab.query.trim();
 
