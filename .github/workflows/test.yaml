@@ -122,12 +122,13 @@ jobs:
 
   # Backend tests - runs when Python code changes or test workflow changes
   backend-tests:
+    name: backend-tests (${{ matrix.os }}, ${{ matrix.python-version }}, ${{ matrix.core_marks }})
     needs: detect-changes
     if: |
       needs.detect-changes.outputs.any_backend == 'true' ||
       needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner || matrix.os }}
     env:
       # Exercise the warm worker pool in CI (Windows jobs get it by platform default).
       FLOWFILE_WORKER_POOL_SIZE: "2"
@@ -135,17 +136,22 @@ jobs:
       fail-fast: false
       matrix:
         # core_marks: the Docker auth E2E (docker_integration, ~200s image build) runs on one entry only.
+        # runner pins the image without renaming the required checks; ubuntu-latest (26.04) runs core ~20-50% slower.
         include:
           - os: ubuntu-latest
+            runner: ubuntu-24.04
             python-version: "3.11"
             core_marks: "not kernel"
           - os: ubuntu-latest
+            runner: ubuntu-24.04
             python-version: "3.12"
             core_marks: "not kernel and not docker_integration"
           - os: ubuntu-latest
+            runner: ubuntu-24.04
             python-version: "3.13"
             core_marks: "not kernel and not docker_integration"
           - os: ubuntu-latest
+            runner: ubuntu-24.04
             python-version: "3.14"
             core_marks: "not kernel and not docker_integration"
           - os: macos-latest
@@ -275,7 +281,7 @@ jobs:
       needs.detect-changes.outputs.any_backend == 'true' ||
       needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ubuntu-latest (26.04) runs the suite slower
     steps:
       - uses: actions/checkout@v4
 
@@ -639,7 +645,7 @@ jobs:
       needs.detect-changes.outputs.shared == 'true' ||
       needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ubuntu-latest (26.04) runs the suite slower
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
