@@ -89,7 +89,8 @@ Pure client. Talks to `flowfile_core` over HTTP; never to `flowfile_worker` dire
 From this dir (`npm install` first):
 - `npm run dev:web` — renderer at :8080 (needs `poetry run flowfile_core` running for `/api`).
 - `npm run dev` — full Tauri desktop; runs `npm run dev:web` as `beforeDevCommand`, then the shell spawns sidecars (requires staged sidecar binaries via `make build_python_services && make rename_sidecars` from repo root — see root doc).
-- `npm run build:web` — `npm run lint` + `vue-tsc --noEmit` + Vite build → `build/renderer/`.
+- `npm run build:web` — `npm run lint` + `npm run typecheck` + Vite build → `build/renderer/`.
+- `npm run typecheck` — `vue-tsc --noEmit` on a 4 GB heap: the check needs about 2.8 GB and Node's 2 GB default on a CI runner ran out.
 - `npm run build` — same checks + `tauri build`. `tauri.conf.json`: `devUrl http://localhost:8080`, `frontendDist ../build/renderer`, `beforeDevCommand npm run dev:web`, `beforeBuildCommand npm run build:renderer-only`.
 
 ## Testing
