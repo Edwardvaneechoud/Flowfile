@@ -10,6 +10,7 @@ import type {
 } from "@kanaries/graphic-walker/interfaces";
 import type { VizSpecStore } from "@kanaries/graphic-walker/store/visualSpecStore";
 import type { GraphicWalkerFunctions } from "@/views/CatalogView/chartRequest";
+import { graphicWalkerToolkit } from "@/views/CatalogView/graphicWalkerFunctions";
 import { toPlainJson } from "@/utils/structuredClone";
 import { flowfileVizTheme } from "./vizTheme";
 
@@ -177,13 +178,7 @@ onMounted(async () => {
     React = reactModule.default;
     ReactDOMClient = reactDomModule;
     GraphicWalker = gwModule.GraphicWalker;
-    gwFunctions = {
-      normalize: gwModule.normalize,
-      expandTerse: gwModule.expandTerse,
-      projectTerse: gwModule.projectTerse,
-      parseShorthand: gwModule.parseShorthand,
-      terseComputedFid: gwModule.terseComputedFid,
-    };
+    gwFunctions = graphicWalkerToolkit(gwModule);
 
     gwHandleRef = React.createRef();
     reactRootInstance = ReactDOMClient.createRoot(container.value);

@@ -179,6 +179,8 @@ import {
   Search,
 } from "@element-plus/icons-vue";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useDashboardsStore } from "../../stores/dashboards-store";
+import { chartsForDashboard } from "../CatalogView/chartLibraryFilter";
 import { useDashboardDragAndDrop } from "../../composables/useDashboardDragAndDrop";
 import type { CatalogVisualization, SeparatorOrientation } from "../../types";
 
@@ -196,6 +198,7 @@ const emit = defineEmits<{
 }>();
 
 const catalogStore = useCatalogStore();
+const dashboardsStore = useDashboardsStore();
 const {
   onVizDragStart,
   onTextDragStart,
@@ -211,7 +214,7 @@ const tableFilter = ref<number | null>(null);
 // Distinct catalog tables that back at least one saved visualization.
 const tableOptions = computed(() => {
   const seen = new Map<number, string>();
-  for (const v of catalogStore.visualizationLibrary) {
+  for (const v of offered.value) {
     if (v.source_type === "table" && v.catalog_table_id != null && !seen.has(v.catalog_table_id)) {
       seen.set(
         v.catalog_table_id,
@@ -228,10 +231,15 @@ const hasActiveFilter = computed(
   () => search.value.trim().length > 0 || typeof tableFilter.value === "number",
 );
 
+// The charts of their own and this dashboard's; another dashboard's charts are not offered.
+const offered = computed(() =>
+  chartsForDashboard(catalogStore.visualizationLibrary, dashboardsStore.current?.id),
+);
+
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase();
   const table = typeof tableFilter.value === "number" ? tableFilter.value : null;
-  return catalogStore.visualizationLibrary.filter((v) => {
+  return offered.value.filter((v) => {
     if (table !== null && v.catalog_table_id !== table) return false;
     if (!q) return true;
     return (

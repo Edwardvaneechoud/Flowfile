@@ -33,8 +33,8 @@ SPECS = {
     "tables": ("tables.yaml", "tables", "name", "storage_format"),
     "models": ("models.yaml", "models", "version", "serialization_format"),
     "kernels": ("kernels.yaml", "kernels", "id", "name"),
-    "visualizations": ("visualizations.yaml", "visualizations", "viz_uuid", "chart_type"),
-    "dashboards": ("dashboards.yaml", "dashboards", "dashboard_uuid", "name"),
+    "visualizations": ("visualizations/kinds_viz.visualization.yaml", None, "viz_uuid", "chart_type"),
+    "dashboards": ("dashboards/kinds_dashboard.dashboard.yaml", None, "dashboard_uuid", "name"),
     "notebook": ("notebooks/kinds_notebook.notebook.yaml", None, "notebook_uuid", "description"),
 }
 
@@ -84,6 +84,33 @@ def test_one_change_of_each_kind_is_one_row(kind, change):
     rows = [(c.kind, c.change) for c in kinds.compare(TREE, _changed(kind, change))]
     expected = [] if kind == "secrets" and change == "removed" else [(kind, change)]
     assert rows == expected
+
+
+OLDER_TREE = json.loads(FIXTURE.with_name("every_kind_tree_format2.json").read_text(encoding="utf-8"))
+
+
+def test_a_folder_of_the_older_layout_holds_the_same_objects():
+    """Charts and dashboards listed in one root file each are the objects their own files hold."""
+    assert kinds.compare(OLDER_TREE, TREE) == []
+    assert kinds.compare(TREE, OLDER_TREE) == []
+
+
+@pytest.mark.parametrize("kind", ["visualizations", "dashboards"])
+def test_a_change_across_the_two_layouts_is_one_row(kind):
+    path = SPECS[kind][0]
+    data = yaml.safe_load(TREE[path])
+    edited = {**TREE, path: yaml.safe_dump({**data, "name": "renamed"}, sort_keys=False)}
+    assert [(c.kind, c.change, c.label) for c in kinds.compare(OLDER_TREE, edited)] == [(kind, "modified", "renamed")]
+    without = {p: t for p, t in TREE.items() if p != path}
+    assert [(c.kind, c.change) for c in kinds.compare(OLDER_TREE, without)] == [(kind, "removed")]
+    assert [(c.kind, c.change) for c in kinds.compare(without, OLDER_TREE)] == [(kind, "added")]
+
+
+def test_an_objects_own_file_replaces_its_entry_in_the_older_list():
+    path = SPECS["visualizations"][0]
+    data = yaml.safe_load(TREE[path])
+    both = {**OLDER_TREE, path: yaml.safe_dump({**data, "name": "from its file"}, sort_keys=False)}
+    assert [(c.change, c.label, c.path) for c in kinds.compare(TREE, both)] == [("modified", "from its file", path)]
 
 
 def test_a_comment_in_a_root_file_is_no_change():

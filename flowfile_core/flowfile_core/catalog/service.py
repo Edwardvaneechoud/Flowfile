@@ -113,6 +113,7 @@ from flowfile_core.schemas.catalog_schema import (
     CdcCursorOut,
     CdcStatusOut,
     ColumnStatsResponse,
+    DashboardChartPruneOut,
     DashboardCreate,
     DashboardOut,
     DashboardUpdate,
@@ -420,6 +421,16 @@ class CatalogService:
             elif item.id in details:
                 item.access = details[item.id]
         return items
+
+    def _charts_out(self, charts: list[VisualizationOut]) -> list[VisualizationOut]:
+        """Stamp each chart's access, and name a chart's dashboard only to a caller the dashboards list shows it
+        to: reading a chart, or its table, is not reading the dashboard it belongs to."""
+        if self._restricted and any(chart.dashboard_name for chart in charts):
+            readable = self.access.accessible_ids("dashboard")
+            for chart in charts:
+                if chart.dashboard_id not in readable:
+                    chart.dashboard_name = None
+        return self._stamp_access(charts, "visualization")
 
     # Private helpers
 
@@ -1578,9 +1589,7 @@ class CatalogService:
     def list_visualizations_for_table(self, table_id: int, user_id: int | None = None) -> list[VisualizationOut]:
         """List visualizations bound to a specific catalog table."""
         self._require_use("catalog_table", table_id)
-        return self._stamp_access(
-            self._visualizations.list_visualizations_for_table(table_id, user_id), "visualization"
-        )
+        return self._charts_out(self._visualizations.list_visualizations_for_table(table_id, user_id))
 
     def list_visualization_library(self, user_id: int | None = None) -> list[VisualizationOut]:
         """Return all saved visualizations as catalog library entries (specs omitted)."""
@@ -1589,12 +1598,12 @@ class CatalogService:
             viz_ids = self.access.accessible_ids("visualization")  # own ∪ granted (+ ns-inherited)
             table_ids = self.access.accessible_ids("catalog_table")
             vizzes = [v for v in vizzes if v.id in viz_ids or (v.catalog_table_id in table_ids)]
-        return self._stamp_access(vizzes, "visualization")
+        return self._charts_out(vizzes)
 
     def get_visualization(self, viz_id: int, user_id: int | None = None) -> VisualizationOut:
         """Get a single visualization by ID."""
         self._require_use_visualization(viz_id)
-        return self._stamp_access([self._visualizations.get_visualization(viz_id, user_id)], "visualization")[0]
+        return self._charts_out([self._visualizations.get_visualization(viz_id, user_id)])[0]
 
     _validate_thumbnail = staticmethod(validate_thumbnail)
     _validate_viz_source = staticmethod(validate_viz_source)
@@ -1605,7 +1614,9 @@ class CatalogService:
             self._require_use("catalog_table", payload.catalog_table_id)
         # A None namespace_id defaults to the source table's, which the use check above covers.
         self._require_namespace_writable(payload.namespace_id)
-        return self._stamp_access([self._visualizations.create_visualization(payload, user_id)], "visualization")[0]
+        if payload.dashboard_id is not None:
+            self._require_manage_dashboard(payload.dashboard_id)
+        return self._charts_out([self._visualizations.create_visualization(payload, user_id)])[0]
 
     def update_visualization(self, viz_id: int, payload: VisualizationUpdate, user_id: int) -> VisualizationOut:
         """Update a visualization's spec, name, namespace or thumbnail."""
@@ -1614,14 +1625,23 @@ class CatalogService:
             self._require_use("catalog_table", payload.catalog_table_id)
         if payload.namespace_id is not None:
             self._require_namespace_writable(payload.namespace_id)
-        return self._stamp_access(
-            [self._visualizations.update_visualization(viz_id, payload, user_id)], "visualization"
-        )[0]
+        return self._charts_out([self._visualizations.update_visualization(viz_id, payload, user_id)])[0]
 
     def delete_visualization(self, viz_id: int, user_id: int) -> None:
         """Delete a visualization by ID."""
         self._require_manage_visualization(viz_id)
         self._visualizations.delete_visualization(viz_id, user_id)
+
+    def detach_visualization(self, viz_id: int, user_id: int) -> VisualizationOut:
+        """Make a dashboard's chart a chart of its own. Open to whoever manages the chart or its dashboard."""
+        try:
+            self._require_manage_visualization(viz_id)
+        except NotAuthorizedError:
+            viz = self.repo.get_visualization(viz_id)
+            if viz is None or viz.dashboard_id is None:
+                raise
+            self._require_manage_dashboard(viz.dashboard_id)
+        return self._charts_out([self._visualizations.detach_visualization(viz_id, user_id)])[0]
 
     def list_notebooks(self, user_id: int | None = None) -> list[NotebookSummaryOut]:
         """List saved notebooks (own ∪ granted in restricted mode)."""
@@ -1681,9 +1701,14 @@ class CatalogService:
         ]
 
     def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
-        """Delete a dashboard by ID."""
+        """Delete a dashboard by ID, with the charts that belong to it."""
         self._require_manage_dashboard(dashboard_id)
         self._visualizations.delete_dashboard(dashboard_id, user_id)
+
+    def prune_dashboard_charts(self, dashboard_id: int, user_id: int) -> DashboardChartPruneOut:
+        """Remove the dashboard's own charts that its layout no longer uses."""
+        self._require_manage_dashboard(dashboard_id)
+        return self._visualizations.prune_dashboard_charts(dashboard_id, user_id)
 
     # Compute
 

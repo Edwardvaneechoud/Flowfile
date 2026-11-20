@@ -22,6 +22,7 @@ from flowfile_core.ai.chart_routes import router as chart_router
 from flowfile_core.ai.chat_routes import router as chat_router
 from flowfile_core.ai.command_palette_routes import router as command_palette_router
 from flowfile_core.ai.cron_routes import router as cron_router
+from flowfile_core.ai.dashboard_routes import router as dashboard_router
 from flowfile_core.ai.diff_routes import router as diff_router
 from flowfile_core.ai.docgen_routes import router as docgen_router
 from flowfile_core.ai.feature_flag import require_ai_enabled, send_data_allowed
@@ -53,6 +54,7 @@ router.include_router(local_model_router)
 router.include_router(generate_router)
 router.include_router(node_codegen_router)
 router.include_router(chart_router)
+router.include_router(dashboard_router)
 
 
 @router.get("/data_policy", tags=["ai"])

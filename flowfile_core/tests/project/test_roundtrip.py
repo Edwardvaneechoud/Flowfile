@@ -234,6 +234,8 @@ def test_commit_only_stages_managed_paths(tmp_path):
             "connections/",
             "schedules/",
             "notebooks/",
+            "visualizations/",
+            "dashboards/",
         )
         managed_root_files = {
             "project.yaml",
@@ -243,8 +245,6 @@ def test_commit_only_stages_managed_paths(tmp_path):
             "tables.yaml",
             "models.yaml",
             "kernels.yaml",
-            "visualizations.yaml",
-            "dashboards.yaml",
         }
         for path in committed_paths:
             is_managed = path in managed_root_files or any(path.startswith(p) for p in managed_prefixes)

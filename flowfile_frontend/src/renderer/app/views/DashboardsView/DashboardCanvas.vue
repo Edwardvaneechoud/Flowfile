@@ -61,6 +61,7 @@
           @remove="onRemoveTile(item.i)"
           @duplicate="onDuplicateTile(item.i)"
           @edit-viz="emit('edit-viz', tileById[item.i].viz_id ?? null)"
+          @keep-chart="emit('keep-chart', tileById[item.i].viz_id ?? null)"
           @update:tile="onUpdateTile"
           @update:filter="emit('update:filter', $event)"
           @edit-filter="emit('edit-filter', $event)"
@@ -150,6 +151,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "update:layout", value: DashboardLayout): void;
   (e: "edit-viz", vizId: number | null): void;
+  /** A chart the dashboard owns is to become a chart of its own. */
+  (e: "keep-chart", vizId: number | null): void;
   (e: "add-viz-at", payload: { vizId: number; x: number; y: number }): void;
   (e: "add-text-at", payload: { x: number; y: number }): void;
   (e: "add-kpi-at", payload: { x: number; y: number }): void;

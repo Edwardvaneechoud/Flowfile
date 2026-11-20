@@ -56,6 +56,7 @@ from flowfile_core.database.models import CatalogDashboard, CatalogTable, Catalo
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.schemas.catalog_schema import (
     ColumnStatsResponse,
+    DashboardChartPruneOut,
     DashboardCreate,
     DashboardLayout,
     DashboardOut,
@@ -217,6 +218,7 @@ class VisualizationService:
 
         table = self.repo.get_table(viz.catalog_table_id) if viz.catalog_table_id is not None else None
         enrichment = self._resolve_viz_enrichment(viz, table)
+        owner = self.repo.get_dashboard(viz.dashboard_id) if viz.dashboard_id is not None else None
         return VisualizationOut(
             id=viz.id,
             name=viz.name,
@@ -237,6 +239,8 @@ class VisualizationService:
             table_full_name=enrichment.table_full_name,
             table_type=enrichment.table_type,
             namespace_name=enrichment.namespace_name,
+            dashboard_id=owner.id if owner is not None else None,
+            dashboard_name=owner.name if owner is not None else None,
         )
 
     # ---- Visualizations CRUD -------------------------------------------- #
@@ -262,10 +266,12 @@ class VisualizationService:
             t = self.repo.get_table(tid)
             if t is not None:
                 tables_by_id[tid] = t
+        owner_names = {d.id: d.name for d in self.repo.list_dashboards()} if any(r.dashboard_id for r in rows) else {}
         items: list[VisualizationOut] = []
         for viz in rows:
             table = tables_by_id.get(viz.catalog_table_id) if viz.catalog_table_id else None
             enrichment = self._resolve_viz_enrichment(viz, table)
+            owner_id = viz.dashboard_id if viz.dashboard_id in owner_names else None
             items.append(
                 VisualizationOut(
                     id=viz.id,
@@ -286,6 +292,8 @@ class VisualizationService:
                     table_full_name=enrichment.table_full_name,
                     table_type=enrichment.table_type,
                     namespace_name=enrichment.namespace_name,
+                    dashboard_id=owner_id,
+                    dashboard_name=owner_names.get(owner_id) if owner_id is not None else None,
                 )
             )
         return items
@@ -306,6 +314,8 @@ class VisualizationService:
                 raise TableNotFoundError(table_id=payload.catalog_table_id or 0)
             if namespace_id is None:
                 namespace_id = table.namespace_id
+        if payload.dashboard_id is not None and self.repo.get_dashboard(payload.dashboard_id) is None:
+            raise DashboardNotFoundError(dashboard_id=payload.dashboard_id)
 
         viz = CatalogVisualization(
             name=payload.name,
@@ -318,6 +328,7 @@ class VisualizationService:
             sql_query=payload.sql_query if payload.source_type == "sql" else None,
             thumbnail_data_url=validate_thumbnail(payload.thumbnail_data_url),
             namespace_id=namespace_id,
+            dashboard_id=payload.dashboard_id,
             created_by=user_id,
         )
         try:
@@ -382,6 +393,16 @@ class VisualizationService:
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
         self.repo.delete_visualization(viz_id)
+
+    def detach_visualization(self, viz_id: int, user_id: int) -> VisualizationOut:
+        """Make a dashboard's chart a chart of its own: it is listed in the library and outlives the dashboard."""
+        viz = self.repo.get_visualization(viz_id)
+        if viz is None:
+            raise VisualizationNotFoundError(viz_id=viz_id)
+        if viz.dashboard_id is not None:
+            viz.dashboard_id = None
+            viz = self.repo.update_visualization(viz)
+        return self._viz_to_out(viz)
 
     # ---- Dashboards CRUD ------------------------------------------------ #
 
@@ -586,10 +607,67 @@ class VisualizationService:
         updated = self.repo.update_dashboard(dashboard)
         return self._dashboard_to_out(updated)
 
-    def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
+    @staticmethod
+    def _stored_chart_ids(dashboard: CatalogDashboard) -> set[int] | None:
+        """Every chart a dashboard's stored layout uses: a tile's chart (a chart tile's, or the chart a KPI or
+        table tile reads through) and a filter's chart source. None, with a warning, when the layout does not
+        read as JSON."""
+        try:
+            raw = json.loads(dashboard.layout_json) if dashboard.layout_json else {}
+        except (TypeError, ValueError):
+            raw = None
+        if not isinstance(raw, dict):
+            logger.warning(
+                "The stored layout of dashboard %s does not read as JSON, so the charts it uses are not known",
+                dashboard.id,
+            )
+            return None
+        ids: set[int] = set()
+        for key, field in (("tiles", "viz_id"), ("filters", "datasource_viz_id")):
+            for item in raw.get(key) or []:
+                if isinstance(item, dict) and isinstance(item.get(field), int):
+                    ids.add(item[field])
+        return ids
+
+    def _drop_own_charts(self, dashboard: CatalogDashboard, keep: set[int]) -> DashboardChartPruneOut:
+        """Delete the charts that belong to ``dashboard`` and are not in ``keep``. One that another dashboard's
+        layout uses is made a chart of its own instead, so that dashboard keeps its tile. The other dashboards'
+        layouts are read only when there is a chart to drop."""
+        result = DashboardChartPruneOut()
+        dropped = [viz for viz in self.repo.list_dashboard_visualizations(dashboard.id) if viz.id not in keep]
+        if not dropped:
+            return result
+        elsewhere: set[int] = set()
+        for other in self.repo.list_dashboards():
+            if other.id != dashboard.id:
+                elsewhere |= self._stored_chart_ids(other) or set()
+        for viz in dropped:
+            if viz.id in elsewhere:
+                viz.dashboard_id = None
+                self.repo.update_visualization(viz)
+                result.released.append(viz.id)
+            else:
+                self.repo.delete_visualization(viz.id)
+                result.deleted.append(viz.id)
+        return result
+
+    def prune_dashboard_charts(self, dashboard_id: int, user_id: int) -> DashboardChartPruneOut:
+        """Remove the dashboard's own charts that its stored layout no longer uses. A layout that does not
+        read removes nothing."""
         dashboard = self.repo.get_dashboard(dashboard_id)
         if dashboard is None:
             raise DashboardNotFoundError(dashboard_id=dashboard_id)
+        used = self._stored_chart_ids(dashboard)
+        if used is None:
+            return DashboardChartPruneOut()
+        return self._drop_own_charts(dashboard, used)
+
+    def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
+        """Delete a dashboard and the charts that belong to it."""
+        dashboard = self.repo.get_dashboard(dashboard_id)
+        if dashboard is None:
+            raise DashboardNotFoundError(dashboard_id=dashboard_id)
+        self._drop_own_charts(dashboard, keep=set())
         self.repo.delete_dashboard(dashboard_id)
 
     # ---- Compute -------------------------------------------------------- #

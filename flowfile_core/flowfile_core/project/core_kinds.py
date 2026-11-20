@@ -1,6 +1,8 @@
 """Core's twelve project kinds, registered in the order an import applies them.
 
-Each export is a thin call into ``projection``; each ``cap`` is the most files or entries an import accepts."""
+Each export is a thin call into ``projection``; each ``cap`` is the most files or entries an import accepts.
+Charts and dashboards are one file each; the root list a folder of format 2 or older holds them in stays among
+their paths, so it is still read, and a save removes it."""
 
 from __future__ import annotations
 
@@ -105,6 +107,25 @@ def _per_file_entries(field: str, label_field: str | None = None):
         for path, text in files.items():
             data = _load(text) or {}
             out[data.get(field) or path] = Entry(str(data.get(label_field or field) or path), path, text)
+        return out
+
+    return entries
+
+
+def _object_entries(list_key: str, field: str, label_field: str = "name"):
+    """Entries of a kind stored one object per file, keyed by ``field``. An older folder's root file gives one
+    per item of its ``list_key`` list instead, which a file with the same key replaces; ``_same_yaml`` then
+    calls an item and its file the same object."""
+
+    def entries(files: dict[str, str]) -> dict:
+        out = {}
+        for path in sorted(files, key=lambda rel: "/" in rel):
+            data = _load(files[path]) or {}
+            if "/" in path:
+                out[data.get(field) or path] = Entry(str(data.get(label_field) or path), path, files[path])
+                continue
+            for item in data.get(list_key) or []:
+                out[item.get(field)] = Entry(str(item.get(label_field)), path, _canonical(item))
         return out
 
     return entries
@@ -265,28 +286,28 @@ register(
     Kind(
         "visualizations",
         "visualizations",
-        ("visualizations.yaml",),
-        _manifest("visualizations.yaml", projection.visualizations_manifest_data),
+        ("visualizations/*.visualization.yaml", "visualizations.yaml"),
+        lambda ctx: projection.export_visualizations(ctx.db, ctx.owner_id),
         after=("namespaces", "tables"),
         cap=500,
-        entries_key="visualizations",
-        entries=_list_entries("visualizations", lambda e: e.get("viz_uuid"), lambda e: str(e.get("name"))),
+        entries=_object_entries("visualizations", "viz_uuid"),
         delete_label="the chart is deleted",
         delete=importer._delete_visualizations,
+        same=_same_yaml,
     )
 )
 register(
     Kind(
         "dashboards",
         "dashboards",
-        ("dashboards.yaml",),
-        _manifest("dashboards.yaml", projection.dashboards_manifest_data),
+        ("dashboards/*.dashboard.yaml", "dashboards.yaml"),
+        lambda ctx: projection.export_dashboards(ctx.db, ctx.owner_id),
         after=("visualizations",),
         cap=200,
-        entries_key="dashboards",
-        entries=_list_entries("dashboards", lambda e: e.get("dashboard_uuid"), lambda e: str(e.get("name"))),
+        entries=_object_entries("dashboards", "dashboard_uuid"),
         delete_label="the dashboard is deleted",
         delete=importer._delete_dashboards,
+        same=_same_yaml,
     )
 )
 register(

@@ -587,7 +587,8 @@ def notebooks(ctx: SearchContext) -> list[Candidate]:
 
 
 def visualizations(ctx: SearchContext) -> list[Candidate]:
-    """Charts the caller may use, or whose table they may read; the table is named only when they may read it."""
+    """Charts the caller may use, or whose table they may read; the table is named only when they may read it.
+    A chart that belongs to a dashboard is left out: the dashboard is what a search finds."""
     readable_tables = ctx.accessible("catalog_table")
 
     def by_table(token: str, pattern: str) -> list[Any]:
@@ -612,7 +613,8 @@ def visualizations(ctx: SearchContext) -> list[Candidate]:
             [CatalogVisualization.name, CatalogVisualization.description, CatalogVisualization.chart_type],
             CatalogVisualization.namespace_id,
             extra=by_table,
-        )
+        ),
+        CatalogVisualization.dashboard_id.is_(None),
     )
     if ctx.restricted:
         query = query.filter(

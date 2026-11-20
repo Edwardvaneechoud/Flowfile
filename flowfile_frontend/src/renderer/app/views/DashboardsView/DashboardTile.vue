@@ -64,6 +64,14 @@
                 <el-icon><Edit /></el-icon> Edit chart
               </el-dropdown-item>
               <el-dropdown-item
+                v-if="isViz && viz?.dashboard_id != null"
+                data-testid="tile-keep-chart"
+                title="List this chart in Charts and keep it when the dashboard goes"
+                @click="emit('keep-chart')"
+              >
+                <el-icon><FolderAdd /></el-icon> Keep as a chart
+              </el-dropdown-item>
+              <el-dropdown-item
                 v-if="isViz"
                 :disabled="!tileChart"
                 data-testid="tile-format"
@@ -544,6 +552,7 @@ import {
   CopyDocument,
   Delete,
   Edit,
+  FolderAdd,
   EditPen,
   Grid,
   Hide,
@@ -637,6 +646,8 @@ const emit = defineEmits<{
   (e: "remove"): void;
   (e: "duplicate"): void;
   (e: "edit-viz"): void;
+  /** Make the tile's chart, which this dashboard owns, a chart of its own. */
+  (e: "keep-chart"): void;
   (e: "update:tile", value: DashboardTile): void;
   /** A filter tile's control changed its filter (state only). */
   (e: "update:filter", value: DashboardFilter): void;

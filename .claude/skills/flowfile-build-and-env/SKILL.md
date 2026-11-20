@@ -93,7 +93,7 @@ make all
 2. `poetry run build_backends` → PyInstaller onedir builds of core + worker into `services_dist/` (§4)
 3. `poetry run python tools/rename_sidecar.py` → stages `services_dist/` into `flowfile_frontend/src-tauri/binaries/<name>-<host-triple>` (§4b)
 4. `sign_sidecars` → no-op unless macOS **and** `APPLE_SIGNING_IDENTITY` is set (§5)
-5. `cd flowfile_frontend && npm install && npm run build` → `npm run build` = `npm run lint && vue-tsc --noEmit && tauri build`
+5. `cd flowfile_frontend && npm install && npm run build` → `npm run build` = `npm run lint && npm run typecheck && tauri build` (`typecheck` = `vue-tsc --noEmit` on a 4 GB heap)
 6. `generate_key` → writes repo-root `master_key.txt` **only if it doesn't already exist** (§4c — note this file is dev convenience, not what the running app reads)
 
 Day-to-day **dev-mode** desktop shell (skip the full release pipeline):

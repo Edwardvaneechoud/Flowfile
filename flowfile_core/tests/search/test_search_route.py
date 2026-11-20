@@ -256,6 +256,20 @@ def test_visualization_points_at_its_table(client, catalog, marker):
     assert hit["subtitle"] == "Bar · on orders"
 
 
+def test_a_chart_that_belongs_to_a_dashboard_is_not_a_hit(client, catalog, make, me, marker):
+    make(
+        db_models.CatalogVisualization,
+        name="revenue_on_the_board",
+        chart_type="bar",
+        spec_json="{}",
+        catalog_table_id=catalog.orders,
+        created_by=me,
+        dashboard_id=catalog.board,
+    )
+    hits = _of(_search(client, f"{marker} revenue", kinds="visualization"), "visualization")
+    assert [hit["id"] for hit in hits] == [catalog.chart]
+
+
 def test_kinds_filter_and_limit_per_kind(client, catalog, marker):
     body = _search(client, f"{marker} orders", kinds="table", limit_per_kind=1)
     assert body["kinds"] == ["table"]

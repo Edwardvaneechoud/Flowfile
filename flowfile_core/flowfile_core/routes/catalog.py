@@ -101,6 +101,7 @@ from flowfile_core.schemas.catalog_schema import (
     ColumnStatsResponse,
     CronValidationRequest,
     CronValidationResult,
+    DashboardChartPruneOut,
     DashboardCreate,
     DashboardOut,
     DashboardUpdate,
@@ -1393,6 +1394,17 @@ def delete_visualization(
     service.delete_visualization(viz_id, user_id=current_user.id)
 
 
+@router.post("/visualizations/{viz_id}/detach", response_model=VisualizationOut)
+@handle_catalog_exceptions()
+def detach_visualization(
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Make a dashboard's chart a chart of its own, listed in the library."""
+    return service.detach_visualization(viz_id, user_id=current_user.id)
+
+
 @router.post(
     "/visualizations/{viz_id}/compute",
     response_model=VisualizationComputeResponse,
@@ -1576,6 +1588,17 @@ def delete_dashboard(
     service: CatalogService = Depends(get_catalog_service),
 ):
     service.delete_dashboard(dashboard_id, user_id=current_user.id)
+
+
+@router.post("/dashboards/{dashboard_id}/prune_charts", response_model=DashboardChartPruneOut)
+@handle_catalog_exceptions()
+def prune_dashboard_charts(
+    dashboard_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Remove the dashboard's own charts that its saved layout no longer uses."""
+    return service.prune_dashboard_charts(dashboard_id, user_id=current_user.id)
 
 
 # Virtual Flow Tables
