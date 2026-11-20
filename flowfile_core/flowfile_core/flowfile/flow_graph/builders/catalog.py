@@ -47,6 +47,7 @@ from flowfile_core.flowfile.flow_node.flow_node import (
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     validate_sql_query,
 )
+from flowfile_core.notebook.lookup import metadata_lookup
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import (
     HistoryActionType,
@@ -71,6 +72,15 @@ def _filtered_frame(lf: pl.LazyFrame, row_filter: pl.Expr | None, backend: Compu
         return FlowDataEngine(plan)
     with _deferred(backend, plan) as ref:
         return FlowDataEngine(plan, schema=ref.schema)
+
+
+def _scan_catalog_snapshot(snapshot: dict[str, str]) -> pl.LazyFrame:
+    """Scan a worker snapshot already authorized and translated by the kernel client."""
+    if snapshot["format"] == "ipc":
+        return pl.scan_ipc(snapshot["path"])
+    if snapshot["format"] == "delta":
+        return pl.scan_delta(snapshot["path"])
+    raise ValueError(f"Unsupported catalog snapshot format: {snapshot['format']!r}")
 
 
 class CatalogBuildersMixin(GraphMixinBase):
@@ -102,10 +112,13 @@ class CatalogBuildersMixin(GraphMixinBase):
         """
 
         sql_code = node_catalog_reader.sql_query
-        resolved = _resolve_catalog_sql_tables(node_catalog_reader.node_id, node_catalog_reader.user_id)
+        resolved = _resolve_catalog_sql_tables(
+            node_catalog_reader.node_id, node_catalog_reader.user_id, sql_query=sql_code
+        )
         table_paths = resolved.table_paths
         virtual_tables = resolved.virtual_tables
         table_namespaces = resolved.table_namespaces
+        materialized_tables = resolved.materialized_tables or {}
 
         # Memoized per storage: one SQL query can join tables from catalogs with different storage.
         targets_by_name: dict[str, CatalogStorageTarget] = {}
@@ -118,12 +131,14 @@ class CatalogBuildersMixin(GraphMixinBase):
             targets_by_name[_name] = _targets[_key]
 
         def _func() -> FlowDataEngine:
-            if not table_paths and not virtual_tables:
+            if not table_paths and not virtual_tables and not materialized_tables:
                 raise ValueError("No catalog tables available to query")
             ctx = pl.SQLContext()
             for name, path in table_paths.items():
                 scan_kwargs = targets_by_name[name].scan_kwargs(node_catalog_reader.user_id)
                 ctx.register(name, pl.scan_delta(path, **scan_kwargs))
+            for name, snapshot in materialized_tables.items():
+                ctx.register(name, _scan_catalog_snapshot(snapshot))
             run_location = current_context(self).backend_id if FLOWFILE_COMPUTE_PROTOCOL else self.execution_location
             for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
                 ctx.register(
@@ -382,6 +397,24 @@ class CatalogBuildersMixin(GraphMixinBase):
 
         def _read_changes() -> FlowDataEngine:
             """Read the table's change feed for this run, the row resolved at execution time."""
+            if metadata_lookup.get() is not None:
+                if _cdc_mode == "since_last_run":
+                    raise ValueError(
+                        "Saved change cursors are not supported in notebook cells; "
+                        "pass a commit version or timestamp as changes_since instead."
+                    )
+                current = _resolve_catalog_table_info(node_catalog_reader)
+                if not current.authorized:
+                    raise PermissionError("Not authorized to read this catalog table's changes")
+                return self._read_table_changes(
+                    node_catalog_reader,
+                    current.table_id,
+                    current.table_name,
+                    current.file_path,
+                    current.cdc_enabled,
+                    current.cdc_enabled_version,
+                    _reader_target,
+                )
             with get_db_context() as db:
                 table = _resolve_table_row(db)
                 if table is None:
@@ -408,6 +441,8 @@ class CatalogBuildersMixin(GraphMixinBase):
             if _cdc_mode != "off":
                 return _read_changes()
             if _table_type == "virtual":
+                if info.materialized is not None:
+                    return FlowDataEngine(_scan_catalog_snapshot(info.materialized))
                 return FlowDataEngine(
                     _resolve_virtual_table(
                         _is_optimized,
