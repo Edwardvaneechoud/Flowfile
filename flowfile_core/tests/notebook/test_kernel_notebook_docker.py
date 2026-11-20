@@ -159,6 +159,290 @@ def _table_rows(result: dict) -> list:
     return tables[0]["data"]
 
 
+@pytest.fixture
+def catalog_cell_table():
+    """Seed real core-owned catalog data using the public frame API."""
+    import flowfile as ff
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+    from flowfile_core.catalog.service import CatalogService
+    from flowfile_core.database.connection import get_db_context
+
+    schema = ff.get_catalog("General").get_schema("default")
+    name = "notebook_cell_read_885"
+    schema.write_table(ff.from_dict({"id": [1, 2], "amount": [10, 20]}), name, write_mode="overwrite")
+    table_id = next(table.id for table in schema.list_tables() if table.name == name)
+    try:
+        yield name
+    finally:
+        with get_db_context() as db:
+            CatalogService(SQLAlchemyCatalogRepository(db)).delete_table(table_id, delete_file=True)
+
+
+@pytest.mark.parametrize("namespace_id", [-123, -1_500_000_123])
+def test_catalog_page_cells_read_core_metadata_without_a_local_database(
+    catalog_cell_table, notebook_kernel, client_as, namespace_id
+):
+    """Saved and unsaved Catalog notebooks use ordinary cells, not a canvas session."""
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": namespace_id, "node_id": 1}
+    code = (
+        "import flowfile as ff\n"
+        "print('catalogs', sorted(c.name for c in ff.list_catalogs()))\n"
+        "schema = ff.get_catalog('General').get_schema('default')\n"
+        "print('schema', schema.name)\n"
+        f"print('rows', schema.read_table({catalog_cell_table!r}).collect().to_dicts())\n"
+        "print('sql', ff.read_catalog_sql("
+        f"'SELECT SUM(amount) AS total FROM {catalog_cell_table}').collect().to_dicts())\n"
+    )
+    code = (
+        "from unittest.mock import patch\n"
+        "with patch('flowfile_frame.notebook_kernel._post_core', "
+        "side_effect=AssertionError('Catalog cells must not use notebook session lookup')):\n"
+        + "".join(f"    {line}\n" for line in code.splitlines())
+    )
+    result = client.post(f"/kernels/{KERNEL_ID}/execute_cell", json={**key, "code": code})
+    assert result.status_code == 200, result.text
+    assert result.json()["success"], result.text
+    assert "General" in result.json()["stdout"] and "schema default" in result.json()["stdout"]
+    assert "rows [{'id': 1, 'amount': 10}, {'id': 2, 'amount': 20}]" in result.json()["stdout"]
+    assert "sql [{'total': 30}]" in result.json()["stdout"]
+    database = f"{_kernel_storage()}/database/flowfile_catalog.db"
+    assert not _in_kernel(database)
+
+    failed = client.post(
+        f"/kernels/{KERNEL_ID}/execute_cell", json={**key, "code": "raise ValueError('cell failed')"}
+    )
+    assert failed.status_code == 200 and not failed.json()["success"], failed.text
+    repeated = client.post(f"/kernels/{KERNEL_ID}/execute_cell", json={**key, "code": code})
+    assert repeated.status_code == 200 and repeated.json()["success"], repeated.text
+    assert not _in_kernel(database)
+
+
+def test_catalog_page_ignores_stale_scd2_metadata(notebook_kernel, catalog_cell_table, client_as):
+    import flowfile as ff
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.schemas.catalog_schema import Scd2TableConfig
+
+    schema = ff.get_catalog("General").get_schema("default")
+    table_id = next(table.id for table in schema.list_tables() if table.name == catalog_cell_table)
+    with get_db_context() as db:
+        repo = SQLAlchemyCatalogRepository(db)
+        table = repo.get_table(table_id)
+        table.scd2_config = Scd2TableConfig(
+            business_keys=["id"],
+            surrogate_key_column="history_id",
+            valid_from_column="valid_from",
+            valid_to_column="valid_to",
+            is_current_column="is_current",
+        ).model_dump_json()
+        repo.update_table(table)
+
+    assert schema.read_table(catalog_cell_table, scd2_view="active").collect().height == 2
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    result = client.post(
+        f"/kernels/{KERNEL_ID}/execute_cell",
+        json={
+            "flow_id": -123,
+            "node_id": 1,
+            "code": "import flowfile as ff\n"
+            f"frame = ff.get_catalog('General').get_schema('default').read_table({catalog_cell_table!r}, scd2_view='active')\n"
+            "print(frame.collect().sort('id').to_dicts())",
+        },
+    )
+    assert result.status_code == 200 and result.json()["success"], result.text
+    assert "[{'id': 1, 'amount': 10}, {'id': 2, 'amount': 20}]" in result.json()["stdout"]
+
+
+def test_catalog_page_cell_reads_changes_without_a_catalog_database(notebook_kernel, catalog_cell_table):
+    """Repeated, empty and preimage windows use the actual Catalog-cell transport."""
+    from datetime import datetime, timezone
+
+    from deltalake import DeltaTable
+
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogTable
+    from flowfile_core.kernel.models import ExecuteRequest
+    from tests.flowfile.test_catalog_cdc import V1, V2, _write
+
+    with get_db_context() as db:
+        namespace_id = db.query(CatalogTable).filter_by(name=catalog_cell_table).one().namespace_id
+    name = "notebook_cell_changes"
+    _write(namespace_id, name, V1, flow_id=890201)
+    _write(namespace_id, name, V2, flow_id=890202)
+    with get_db_context() as db:
+        path = db.query(CatalogTable).filter_by(name=name, namespace_id=namespace_id).one().file_path
+    delta = DeltaTable(path)
+    head = delta.version()
+    timestamp = datetime.fromtimestamp(delta.history(1)[0]["timestamp"] / 1000, timezone.utc).isoformat()
+    result = notebook_kernel.execute_sync(
+        KERNEL_ID,
+        ExecuteRequest(
+            code=(
+                "import flowfile as ff\n"
+                "def changes(since, **kwargs):\n"
+                f"    return ff.read_catalog_table({name!r}, namespace_id={namespace_id}, "
+                "changes_since=since, **kwargs).collect().select('id', '_change_type')"
+                ".sort(['id', '_change_type']).to_dicts()\n"
+                f"first = changes({head - 1})\n"
+                "assert first == [{'id': 2, '_change_type': 'update_postimage'}, "
+                "{'id': 3, '_change_type': 'insert'}], first\n"
+                f"assert changes({head - 1}) == first\n"
+                f"assert changes({timestamp!r}) == first\n"
+                f"assert changes({head}) == []\n"
+                f"preimages = changes({head - 1}, include_change_preimage=True)\n"
+                "assert preimages == [{'id': 2, '_change_type': 'update_postimage'}, "
+                "{'id': 2, '_change_type': 'update_preimage'}, {'id': 3, '_change_type': 'insert'}], preimages\n"
+                "print('CDC_OK')\n"
+                f"for table, since, message in [({name!r}, 'last_run', 'Saved change cursors'), "
+                f"({catalog_cell_table!r}, 0, 'Change tracking is not enabled')]:\n"
+                "    try:\n"
+                "        options = {'changes_consumer': 'notebook-cdc-test'} if since == 'last_run' else {}\n"
+                f"        ff.read_catalog_table(table, namespace_id={namespace_id}, "
+                "changes_since=since, **options).collect()\n"
+                "    except ValueError as exc:\n"
+                "        assert message in str(exc), str(exc)\n"
+                "    else:\n"
+                "        raise AssertionError('Expected an actionable CDC error')\n"
+            ),
+            flow_id=-123,
+            node_id=1,
+            interactive=True,
+        ),
+    )
+    assert result.success, result.error
+    assert "CDC_OK" in result.stdout
+
+
+def test_catalog_page_reads_virtual_tables_through_the_kernel_client(catalog_cell_table, notebook_kernel):
+    """Virtual reads and SQL use worker snapshots, never the kernel's catalog database."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogTable
+    from flowfile_core.kernel.models import ExecuteRequest
+
+    with get_db_context() as db:
+        source = db.query(CatalogTable).filter(CatalogTable.name == catalog_cell_table).one()
+        namespace_id = source.namespace_id
+        view = CatalogTable(
+            name="catalog_cell_view", namespace_id=namespace_id, owner_id=NOTEBOOK_OWNER_ID,
+            table_type="virtual", storage_format="delta",
+            sql_query=f"SELECT id, amount FROM {catalog_cell_table} WHERE amount > 10",
+        )
+        db.add(view)
+        db.commit()
+        view_id = view.id
+        from flowfile_core.database.models import CatalogNamespace
+
+        duplicate_namespace = CatalogNamespace(name="sql_collision", owner_id=NOTEBOOK_OWNER_ID)
+        db.add(duplicate_namespace)
+        db.flush()
+        duplicate_namespace_id = duplicate_namespace.id
+        duplicate = CatalogTable(
+            name=view.name, namespace_id=duplicate_namespace_id, owner_id=NOTEBOOK_OWNER_ID,
+            table_type="physical", storage_format="delta", file_path=source.file_path,
+        )
+        db.add(duplicate)
+        db.commit()
+        duplicate_id = duplicate.id
+    try:
+        code = (
+            "import flowfile as ff\n"
+            f"print('view', ff.read_catalog_table('catalog_cell_view', namespace_id={namespace_id})"
+            ".collect().sort('id').to_dicts())\n"
+            "print('sql', ff.read_catalog_sql('SELECT sum(amount) AS total FROM catalog_cell_view')"
+            ".collect().to_dicts())\n"
+        )
+        result = notebook_kernel.execute_sync(KERNEL_ID, ExecuteRequest(
+            code=code, flow_id=-123, node_id=1, interactive=True,
+        ))
+        assert result.success, result.error
+        assert "view [{'id': 2, 'amount': 20}]" in result.stdout
+        assert "sql [{'total': 20}]" in result.stdout
+        import polars as pl
+
+        with get_db_context() as db:
+            source = db.query(CatalogTable).filter(CatalogTable.name == catalog_cell_table).one()
+            source_path = source.file_path
+        pl.DataFrame({"id": [3], "amount": [30]}).write_delta(source_path, mode="append")
+        refreshed = notebook_kernel.execute_sync(KERNEL_ID, ExecuteRequest(
+            code=code, flow_id=-123, node_id=1, interactive=True,
+        ))
+        assert refreshed.success, refreshed.error
+        assert "view [{'id': 2, 'amount': 20}, {'id': 3, 'amount': 30}]" in refreshed.stdout
+        assert "sql [{'total': 50}]" in refreshed.stdout
+    finally:
+        with get_db_context() as db:
+            db.delete(db.get(CatalogTable, duplicate_id))
+            db.delete(db.get(CatalogTable, view_id))
+            db.flush()
+            db.delete(db.get(CatalogNamespace, duplicate_namespace_id))
+            db.commit()
+
+
+def test_catalog_page_routes_use_the_kernel_owner(catalog_cell_table, notebook_kernel, monkeypatch, core_url):
+    """Internal-token requests retain the kernel owner's table grants, not service-user access."""
+    import secrets
+
+    import httpx
+
+    from flowfile_core.auth.jwt import create_access_token
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogTable, Kernel, User
+    from flowfile_core.kernel.models import ExecuteRequest
+
+    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    monkeypatch.setenv("JWT_SECRET_KEY", secrets.token_urlsafe(48))
+    with get_db_context() as db:
+        table = db.query(CatalogTable).filter(CatalogTable.name == catalog_cell_table).one()
+        kernel = db.get(Kernel, KERNEL_ID)
+        old_table_owner, old_kernel_owner = table.owner_id, kernel.user_id
+        table_id, namespace_id = table.id, table.namespace_id
+        users = [User(username=name, email=f"{name}@example.invalid", hashed_password="not-a-login",
+                      disabled=False, is_admin=False) for name in ("catalog_reader", "catalog_stranger")]
+        db.add_all(users)
+        db.flush()
+        owner_id, stranger_id = (user.id for user in users)
+        table.owner_id, kernel.user_id = owner_id, owner_id
+        db.commit()
+    try:
+        code = (
+            "import flowfile as ff\n"
+            f"print(ff.read_catalog_table({catalog_cell_table!r}, namespace_id={namespace_id}).collect().to_dicts())\n"
+        )
+        request = ExecuteRequest(code=code, flow_id=-123, node_id=1, interactive=True)
+        allowed = notebook_kernel.execute_sync(KERNEL_ID, request)
+        assert allowed.success, allowed.error
+        assert "[{'id': 1, 'amount': 10}, {'id': 2, 'amount': 20}]" in allowed.stdout
+        with get_db_context() as db:
+            db.get(Kernel, KERNEL_ID).user_id = stranger_id
+            db.commit()
+        token = create_access_token({"sub": "catalog_stranger"})
+        response = httpx.get(f"{core_url}/catalog/namespaces", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200, response.text
+        listed = notebook_kernel.execute_sync(KERNEL_ID, ExecuteRequest(
+            code="import json; import flowfile as ff; print(json.dumps(sorted(c.id for c in ff.list_catalogs())))",
+            flow_id=-123, node_id=1, interactive=True,
+        ))
+        assert listed.success, listed.error
+        assert json.loads(listed.stdout) == sorted(row["id"] for row in response.json())
+        denied = notebook_kernel.execute_sync(KERNEL_ID, request)
+        assert not denied.success
+        assert "not found" in denied.error or "403" in denied.error
+        direct = notebook_kernel.execute_sync(KERNEL_ID, ExecuteRequest(
+            code=("from kernel_runtime.catalog_lookup import lookup\n"
+                  f"lookup({{'kind': 'catalog_table', 'args': {{'catalog_table_id': {table_id}}}}})"),
+            flow_id=-123, node_id=1, interactive=True,
+        ))
+        assert not direct.success and "403" in direct.error, direct.error
+    finally:
+        with get_db_context() as db:
+            db.get(CatalogTable, table_id).owner_id = old_table_owner
+            db.get(Kernel, KERNEL_ID).user_id = old_kernel_owner
+            for user_id in (owner_id, stranger_id):
+                db.delete(db.get(User, user_id))
+            db.commit()
+
+
 def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client_as):
     client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
     key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}

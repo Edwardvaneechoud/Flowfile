@@ -1964,6 +1964,14 @@ def _read_virtual_table(
             )
         except Exception:  # noqa: BLE001 - warning is best-effort, never break the read
             pass
+    snapshot = _materialize_virtual_table(client, row, table_name)
+    if snapshot["format"] == "ipc":
+        return pl.scan_ipc(snapshot["path"])
+    return pl.scan_delta(snapshot["path"])
+
+
+def _materialize_virtual_table(client: httpx.Client, row: dict[str, Any], table_name: str) -> dict[str, str]:
+    """Return an authenticated worker snapshot reference, translated for this kernel."""
     # Producer re-runs can be slow; override the client's default timeout.
     resp = client.post(f"{_CORE_URL}/catalog/tables/{row['id']}/materialize", timeout=600.0)
     if resp.status_code == 403:
@@ -1978,11 +1986,9 @@ def _read_virtual_table(
     body = resp.json()
     kernel_path = _translate_host_path_to_container(body["path"])
     fmt = body.get("format", "ipc")
-    if fmt == "ipc":
-        return pl.scan_ipc(kernel_path)
-    if fmt == "delta":
-        return pl.scan_delta(kernel_path)
-    raise RuntimeError(f"Unsupported materialization format '{fmt}' for catalog view '{table_name}'")
+    if fmt not in ("ipc", "delta"):
+        raise RuntimeError(f"Unsupported materialization format '{fmt}' for catalog view '{table_name}'")
+    return {"path": kernel_path, "format": fmt}
 
 
 def write_catalog_table(

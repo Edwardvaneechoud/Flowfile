@@ -67,6 +67,7 @@ class CatalogSqlTables(NamedTuple):
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]]
     # Each physical table's namespace_id, for per-catalog storage resolution.
     table_namespaces: dict[str, int | None]
+    materialized_tables: dict[str, dict[str, str]] | None = None
 
 
 def _accessible_catalog_table_ids(db, user_id: int | None) -> set[int] | None:
@@ -118,7 +119,9 @@ def _authorize_catalog_write(db, user_id: int | None, *, existing, namespace_id:
         raise PermissionError("Not authorized to create a table in the target catalog namespace")
 
 
-def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) -> CatalogSqlTables:
+def _resolve_catalog_sql_tables(
+    node_id: int | str, user_id: int | None = None, *, sql_query: str | None = None
+) -> CatalogSqlTables:
     """Resolve all catalog tables (physical Delta + virtual) for a SQL query node.
 
     In multi-user mode the registered tables are restricted to those the
@@ -127,11 +130,13 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
     """
     remote = metadata_lookup.get()
     if remote is not None:
-        answer = remote("catalog_sql_tables", {"node_id": node_id})
+        args = {"node_id": node_id} if sql_query is None else {"node_id": node_id, "sql_query": sql_query}
+        answer = remote("catalog_sql_tables", args)
         return CatalogSqlTables(
             table_paths=dict(answer["table_paths"]),
             virtual_tables={name: tuple(entry) for name, entry in answer["virtual_tables"].items()},
             table_namespaces=dict(answer["table_namespaces"]),
+            materialized_tables=answer.get("materialized_tables"),
         )
     table_paths: dict[str, str] = {}
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]] = {}
@@ -190,6 +195,9 @@ class CatalogTableInfo(NamedTuple):
     scd2_config: dict | None = None
     # Persisted column schema (JSON [{name, dtype}]) to predict a change reader without opening the feed.
     schema_json: str | None = None
+    materialized: dict[str, str] | None = None
+    cdc_enabled: bool = False
+    cdc_enabled_version: int | None = None
 
 
 _CDF_COLUMN_DTYPES = (
@@ -200,7 +208,7 @@ _CDF_COLUMN_DTYPES = (
 """Dtypes ``load_cdf`` gives the three change columns, for schema prediction."""
 
 
-def _scd2_config_is_stale(cfg: dict, table_record) -> bool:
+def _scd2_config_is_stale(cfg: dict, raw_schema: str | None) -> bool:
     """True when a table's persisted SCD2 config names columns its stored schema no longer has.
 
     Defence in depth for a record that outlived its data (a kernel or ``/refresh`` write that
@@ -208,7 +216,6 @@ def _scd2_config_is_stale(cfg: dict, table_record) -> bool:
     ``ColumnNotFoundError`` at collect time; an unreadable or absent schema is left alone rather
     than guessed at.
     """
-    raw_schema = getattr(table_record, "schema_json", None)
     if not raw_schema:
         return False
     try:
@@ -228,7 +235,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     """
     remote = metadata_lookup.get()
     if remote is not None:
-        return CatalogTableInfo(
+        info = CatalogTableInfo(
             **remote(
                 "catalog_table",
                 {
@@ -240,6 +247,9 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                 },
             )
         )
+        if info.scd2_config and _scd2_config_is_stale(info.scd2_config, info.schema_json):
+            return info._replace(scd2_config=None)
+        return info
     file_path: str | None = None
     table_type: str = "physical"
     serialized_lf: bytes | None = None
@@ -250,6 +260,8 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     resolved_table_name: str | None = None
     resolved_scd2_config: dict | None = None
     resolved_schema_json: str | None = None
+    cdc_enabled = False
+    cdc_enabled_version = None
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -289,6 +301,8 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                 resolved_namespace_id = table_record.namespace_id
                 resolved_table_name = table_record.name
                 table_type = table_record.table_type
+                cdc_enabled = table_record.cdc_enabled
+                cdc_enabled_version = table_record.cdc_enabled_version
                 if table_type == "virtual":
                     is_optimized = table_record.is_optimized
                     serialized_lf = table_record.serialized_lazy_frame
@@ -302,7 +316,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                             resolved_scd2_config = json.loads(raw_scd2_config)
                         except (TypeError, ValueError):
                             logger.warning("Unreadable scd2_config on catalog table %s", table_record.id)
-                    if resolved_scd2_config and _scd2_config_is_stale(resolved_scd2_config, table_record):
+                    if resolved_scd2_config and _scd2_config_is_stale(resolved_scd2_config, resolved_schema_json):
                         logger.warning(
                             "Catalog table %s claims to be SCD2 but its schema no longer carries the "
                             "configured system columns; reading it unfiltered",
@@ -329,6 +343,8 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
         table_name=resolved_table_name,
         scd2_config=resolved_scd2_config,
         schema_json=resolved_schema_json,
+        cdc_enabled=cdc_enabled,
+        cdc_enabled_version=cdc_enabled_version,
     )
 
 
