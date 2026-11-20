@@ -10,7 +10,7 @@ A kind is a `kinds.Kind`, a frozen dataclass:
 |---|---|
 | `name` | The kind's identifier, written in `project.yaml`'s `kinds:` list. |
 | `label` | How a change summary names one of its objects. |
-| `paths` | One-level patterns of the files it owns, such as `widgets/*.yaml` or `widgets.yaml`. |
+| `paths` | One-level patterns of the files it owns, such as `widgets/*.yaml` or `widgets.yaml`. A kind that changed its layout keeps the old path here beside the new one and stops exporting it: imports, comparisons and status still read the old file, and the next save removes it, because a save removes every owned file the export does not hold. Core's charts and dashboards do this for the one-list files of project format 2. |
 | `export(ctx)` | The kind's files as `{path: text}`, read from the database through `ctx.db` for `ctx.owner_id`. The same database must always give the same text. |
 | `entries(files)` | Splits the kind's files into objects, `{key: Entry(label, path, text)}`; two entries are the same object when their keys are equal and unchanged when their texts are. An entry made with `kept=True` is an object the install never deletes: no plan lists it as removed. |
 | `same(a, b)` | Optional: whether two entry texts that differ still hold the same object, such as a file that only gained a comment. Called only when the texts differ. |

@@ -86,6 +86,8 @@ A visualization is a row in `catalog_visualizations`: a name, a Graphic Walker c
 
 The row also records which Graphic Walker version last wrote the spec (`spec_gw_version`, stamped by the frontend on every save). Graphic Walker 0.6 made its worksheet renderer the default, while earlier versions wrote their default, `vega-lite`, into every chart they exported. So a chart whose row is unstamped or stamped below 0.6 is read without that renderer and drawn by today's default; a row written by 0.6 or later keeps the renderer it names. The stored spec is not rewritten (`spec_for_reading` in `catalog/services/visualizations.py`).
 
+A row may belong to a dashboard (`dashboard_id`, migration 043, set when the chart is created from inside the dashboard editor and never by an update). Such a chart is left out of the catalog tree and search, and the library endpoint returns it with `dashboard_id` and `dashboard_name` so the frontend can hide it by default. Core deletes it with its dashboard, and `POST /catalog/dashboards/{id}/prune_charts` deletes the ones the stored layout no longer uses; the editor calls that when it is left, because that is when its undo history ends. In both cases a chart another dashboard's layout uses is released (owner cleared), not deleted. `POST /catalog/visualizations/{id}/detach` clears the owner on request. "Uses" covers a tile's `viz_id` on chart, KPI and table tiles and a filter's `datasource_viz_id` (`VisualizationService._stored_chart_ids`).
+
 A visualization never embeds the data — it embeds *how to find the data*. That's why deleting the underlying table doesn't cascade-delete the visualization (it becomes orphaned and the library labels it as such), why moving a visualization between namespaces is free, and why a SQL visualization can reference whatever tables exist in the catalog at query time.
 
 The row's `chart_type` is the mark the chart draws, set by the frontend on every save from the first tab (`vizAutosave.ts::chartTypeOf`, which reads Graphic Walker's mark, or for the automatic mark the one the worksheet renderer picks). The library shows it and its search matches it; a chart saved before it was set, or one with nothing on its shelves, has none.
@@ -97,6 +99,28 @@ The row's `chart_type` is the mark the chart draws, set by the frontend on every
 The chart builder (a new chart and an existing one, so also the dashboard editor's chart dialog) has an AI prompt bar above Graphic Walker for a chart on a catalog table. The model never writes a Graphic Walker spec: `POST /ai/generate_chart` answers a small *chart request* (mark, fields with an aggregate, date grain or bin, filters, sort, limit), which core validates against the table's columns and the browser expands with Graphic Walker's own `expandTerse` and `normalize` (`views/CatalogView/chartRequest.ts`). For a follow-up the browser describes the chart on screen the same way and sends it as `current_chart`, so "split by region" changes the chart instead of starting over; a chart with a part a request cannot express (a formula field, a map, a regex filter) is named under the bar and the prompt goes alone. The answer is applied in the builder as one step Graphic Walker's undo takes back, and nothing is saved by the AI: an existing chart autosaves it through the same path a manual edit takes.
 
 Core sends the model a small profile of the table (column names and types, the row count, per-column statistics, a few example values and short lists of a text column's values) through the same access-checked catalog functions the chart routes use. The data values in it go only when the server allows it (`FLOWFILE_AI_SEND_DATA`, on by default) and the user has **Send data values** on under Settings → AI → Assistant; otherwise the model gets names, types and roles only. A chart on a free SQL query gets no bar, because core has no column types for it. The browser keeps its own copy of core's rules for what a follow-up may send (`coreRefusals`), and `flowfile_core/tests/ai/chart_request_cases.json` holds requests with core's verdict that both test suites read, so the two copies cannot drift apart unnoticed.
+
+---
+
+## Building a dashboard page from a question
+
+The dashboard builder sits above the chart surface and reuses it. The browser orchestrates three stages, because a chart request becomes a Graphic Walker chart only in the browser and every chart tile needs a saved visualization (`stores/ai-dashboard-store.ts`, dialog `views/DashboardsView/DashboardAiBuilder.vue`):
+
+| Stage | Route | Model | What comes back |
+|---|---|---|---|
+| Plan | `POST /ai/plan_dashboard` | `dashboard` task | A title, up to four KPIs, up to eight *checks* (a source table, a chart brief in words, and what the chart tests) and up to three filters |
+| Build | `POST /ai/generate_chart`, one call per check, three at a time | `chart` task | A chart request, converted with `chartFromRequest` and turned into its query with Graphic Walker's `chartToWorkflow` |
+| Story | `POST /ai/dashboard_story` | `dashboard` task | A summary, the charts in reading order with one finding each, and the charts left off with a reason |
+
+The plan names a source by key and core assigns the ids (`ai/dashboard_plan.py`). `check_plan` sends every problem back to the model once and then keeps the valid items, so one bad KPI never costs the page; only a plan with no valid check is refused.
+
+The story route (`ai/dashboard_story.py`) is where claims meet data. Core runs each built chart's query through `compute_ad_hoc_visualization` (the route a tile uses, with the caller's access), reads at most 400 rows and shows the model 40 of them, with the highest and lowest group of each measure worked out in core. A KPI is one aggregate. A relation between two number columns, named by the plan or implied by a raw scatter, is Pearson's r from one catalog SQL query built from validated, quoted column names. Only an aggregate query's rows are read: a chart of raw rows gets no row evidence. Every value is masked and cut as in the table profile. An evidence query that fails or runs past the 12 s budget marks its item "not measured" and the story is still written.
+
+With data values withheld (`send_values` false or `FLOWFILE_AI_SEND_DATA` off) the browser sends no queries, core runs none, and the model is told to describe each chart and claim nothing; the response's `grounded` is false and the summary tile says the text was written without the data.
+
+A planned filter names one column of a source. Core gives it the kind the filter dialog would (`_FILTER_KINDS`: date → `date_range`, number → `numeric_range`, text or boolean → `categorical`; a whole-number column may be `categorical` when the model asks) and drops one whose table nothing on the page reads. The browser turns it into a `DashboardFilter` bound to that table (`aiDashboard.ts::pageFilters`): `target: "all"` on an empty dashboard, the page's own tiles on a tab, and none at all when the dashboard already applies a filter on that column to every tile of the table.
+
+The browser saves only the charts the story kept, as the dashboard's own (a new dashboard is created first, so the charts can name it), lays the page out (`views/DashboardsView/aiDashboard.ts`: summary across the grid, KPIs four to a row, charts two to a row) and applies it as one layout change, so one undo step. A story call that fails still places the built charts in the planned order, without findings.
 
 ---
 

@@ -712,6 +712,14 @@ class CatalogVisualization(Base):
 
     namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
 
+    # The dashboard this chart was made on and belongs to; null for a chart of its own.
+    dashboard_id = Column(
+        Integer,
+        ForeignKey("catalog_dashboards.id", name="fk_catalog_visualizations_dashboard_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)

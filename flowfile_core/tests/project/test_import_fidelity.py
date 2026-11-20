@@ -377,11 +377,11 @@ def test_every_kind_imports_twice_without_a_change(tmp_path):
             assert db.query(NotificationRule).filter_by(schedule_id=sched.id).count() == 1
             assert db.get(CatalogDashboard, dashboard_id).layout_version == 3
 
-        dashboards = yaml.safe_load(manifest.dashboards_manifest_path(root).read_text(encoding="utf-8"))
-        board = next(d for d in dashboards["dashboards"] if d["name"] == f"dash_{tag}")
+        board_path = manifest.dashboards_dir(root) / f"dash_{tag}.dashboard.yaml"
+        board = yaml.safe_load(board_path.read_text(encoding="utf-8"))
         assert "kpi" not in board["layout"]["tiles"][0]
         board["layout"]["tiles"][0]["w"] = 6
-        manifest.dashboards_manifest_path(root).write_text(yaml.safe_dump(dashboards), encoding="utf-8")
+        board_path.write_text(yaml.safe_dump(board), encoding="utf-8")
         import_project(root, OWNER)
         with get_db_context() as db:
             assert db.get(CatalogDashboard, dashboard_id).layout_version == 4

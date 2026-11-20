@@ -8,6 +8,7 @@ on persistence and shape.
 
 import base64
 import json
+import logging
 import struct
 import time
 import zlib
@@ -17,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
+from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogDashboard,
@@ -29,8 +31,10 @@ from flowfile_core.database.models import (
     FlowRegistration,
     FlowRun,
     FlowSchedule,
+    ResourceGrant,
     ScheduleTriggerTable,
     User,  # noqa: F401
+    UserGroup,
 )
 
 
@@ -1338,3 +1342,202 @@ class TestDashboardFilterChartSource:
         layout["filters"] = [_region_filter(datasource_viz_id=99999)]
         resp = client.put(f"/catalog/dashboards/{created['id']}", json={"layout": layout})
         assert resp.status_code == 422
+
+
+def _set_layout(dashboard_id: int, layout: dict) -> None:
+    with get_db_context() as db:
+        db.get(CatalogDashboard, dashboard_id).layout_json = json.dumps(layout)
+        db.commit()
+
+
+def _chart_ids() -> set[int]:
+    with get_db_context() as db:
+        return {row.id for row in db.query(CatalogVisualization.id)}
+
+
+class TestDashboardOwnCharts:
+    """A chart made for a dashboard belongs to it: named with it, removed with it, kept on request."""
+
+    @staticmethod
+    def _chart(client, table_id: int, name: str, **extra) -> dict:
+        body = {"name": name, "spec": [{"encodings": {}}], "source_type": "table", "catalog_table_id": table_id}
+        resp = client.post("/catalog/visualizations", json={**body, **extra})
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_a_chart_made_for_a_dashboard_names_it(self, client):
+        table_id = _make_table()
+        board = _store_dashboard("Sales board", _empty_layout())
+        own = self._chart(client, table_id, "Revenue", dashboard_id=board)
+        free = self._chart(client, table_id, "Of its own")
+
+        assert (own["dashboard_id"], own["dashboard_name"]) == (board, "Sales board")
+        assert (free["dashboard_id"], free["dashboard_name"]) == (None, None)
+        fetched = client.get(f"/catalog/visualizations/{own['id']}").json()
+        assert (fetched["dashboard_id"], fetched["dashboard_name"]) == (board, "Sales board")
+        library = {v["id"]: v for v in client.get("/catalog/visualizations").json()}
+        assert library[own["id"]]["dashboard_name"] == "Sales board"
+        assert library[free["id"]]["dashboard_id"] is None
+        on_table = {v["id"] for v in client.get(f"/catalog/tables/{table_id}/visualizations").json()}
+        assert on_table == {own["id"], free["id"]}
+
+    def test_an_unknown_dashboard_returns_404(self, client):
+        body = {"name": "x", "spec": [{}], "source_type": "table", "catalog_table_id": _make_table()}
+        resp = client.post("/catalog/visualizations", json={**body, "dashboard_id": 99999})
+        assert resp.status_code == 404
+        assert _chart_ids() == set()
+
+    def test_an_update_leaves_the_dashboard_as_it_is(self, client):
+        board = _store_dashboard("Board", _empty_layout())
+        own = self._chart(client, _make_table(), "Revenue", dashboard_id=board)
+        resp = client.put(f"/catalog/visualizations/{own['id']}", json={"name": "Renamed", "dashboard_id": None})
+        assert resp.status_code == 200, resp.text
+        assert (resp.json()["name"], resp.json()["dashboard_id"]) == ("Renamed", board)
+
+    def test_detach_makes_it_a_chart_of_its_own(self, client):
+        board = _store_dashboard("Board", _empty_layout())
+        own = self._chart(client, _make_table(), "Revenue", dashboard_id=board)
+        resp = client.post(f"/catalog/visualizations/{own['id']}/detach")
+        assert resp.status_code == 200, resp.text
+        assert (resp.json()["dashboard_id"], resp.json()["dashboard_name"]) == (None, None)
+        # Detaching one that is already its own changes nothing.
+        assert client.post(f"/catalog/visualizations/{own['id']}/detach").json()["dashboard_id"] is None
+
+        assert client.delete(f"/catalog/dashboards/{board}").status_code == 204
+        assert _chart_ids() == {own["id"]}
+
+    def test_detach_unknown_returns_404(self, client):
+        assert client.post("/catalog/visualizations/99999/detach").status_code == 404
+
+    def test_deleting_the_dashboard_deletes_its_charts_and_their_grants(self, client):
+        table_id = _make_table()
+        board = _store_dashboard("Board", _empty_layout())
+        own = self._chart(client, table_id, "Revenue", dashboard_id=board)
+        unused = self._chart(client, table_id, "Left over", dashboard_id=board)
+        free = self._chart(client, table_id, "Of its own")
+        _set_layout(
+            board,
+            {
+                **_empty_layout(),
+                "tiles": [
+                    {"id": "t1", "type": "viz", "viz_id": own["id"], "x": 0, "y": 0, "w": 6, "h": 4},
+                    {"id": "t2", "type": "viz", "viz_id": free["id"], "x": 6, "y": 0, "w": 6, "h": 4},
+                ],
+            },
+        )
+        with get_db_context() as db:
+            group = UserGroup(name=f"own-charts-{time.time_ns()}", created_by=1)
+            db.add(group)
+            db.commit()
+            db.refresh(group)
+            group_id = group.id
+            db.add(
+                ResourceGrant(
+                    resource_type="visualization",
+                    resource_id=own["id"],
+                    group_id=group_id,
+                    permission="use",
+                    granted_by=1,
+                )
+            )
+            db.commit()
+        try:
+            assert client.delete(f"/catalog/dashboards/{board}").status_code == 204
+            assert _chart_ids() == {free["id"]}
+            assert unused["id"] not in _chart_ids()
+            with get_db_context() as db:
+                assert db.query(ResourceGrant).filter_by(resource_type="visualization").count() == 0
+        finally:
+            with get_db_context() as db:
+                db.query(ResourceGrant).filter_by(group_id=group_id).delete()
+                db.query(UserGroup).filter_by(id=group_id).delete()
+                db.commit()
+
+    def test_prune_removes_only_the_charts_the_layout_no_longer_uses(self, client):
+        table_id = _make_table()
+        board = _store_dashboard("Board", _empty_layout())
+        other = _store_dashboard("Other", _empty_layout())
+        on_tile = self._chart(client, table_id, "On a chart tile", dashboard_id=board)
+        on_kpi = self._chart(client, table_id, "Read by a KPI", dashboard_id=board)
+        on_table = self._chart(client, table_id, "Read by a table tile", dashboard_id=board)
+        on_filter = self._chart(client, table_id, "Read by a filter", dashboard_id=board)
+        gone = self._chart(client, table_id, "Removed", dashboard_id=board)
+        elsewhere = self._chart(client, table_id, "Used on another dashboard", dashboard_id=board)
+        free = self._chart(client, table_id, "Of its own")
+        others = self._chart(client, table_id, "The other dashboard's", dashboard_id=other)
+        _set_layout(
+            board,
+            {
+                **_empty_layout(),
+                "tiles": [
+                    {"id": "t1", "type": "viz", "viz_id": on_tile["id"], "x": 0, "y": 0, "w": 6, "h": 4},
+                    {"id": "t2", "type": "kpi", "viz_id": on_kpi["id"], "x": 6, "y": 0, "w": 6, "h": 4},
+                    {"id": "t3", "type": "table", "viz_id": on_table["id"], "x": 0, "y": 4, "w": 6, "h": 4},
+                ],
+                "filters": [_region_filter(datasource_viz_id=on_filter["id"])],
+            },
+        )
+        _set_layout(
+            other,
+            {
+                **_empty_layout(),
+                "tiles": [{"id": "o1", "type": "viz", "viz_id": elsewhere["id"], "x": 0, "y": 0, "w": 6, "h": 4}],
+            },
+        )
+
+        resp = client.post(f"/catalog/dashboards/{board}/prune_charts")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"deleted": [gone["id"]], "released": [elsewhere["id"]]}
+        kept = {on_tile["id"], on_kpi["id"], on_table["id"], on_filter["id"], elsewhere["id"], free["id"], others["id"]}
+        assert _chart_ids() == kept
+        assert client.get(f"/catalog/visualizations/{elsewhere['id']}").json()["dashboard_id"] is None
+        assert client.get(f"/catalog/visualizations/{on_kpi['id']}").json()["dashboard_id"] == board
+        # A second prune finds nothing left to do.
+        assert client.post(f"/catalog/dashboards/{board}/prune_charts").json() == {"deleted": [], "released": []}
+
+    def test_prune_removes_nothing_when_the_layout_does_not_read(self, client, caplog):
+        board = _store_dashboard("Board", _empty_layout())
+        own = self._chart(client, _make_table(), "Revenue", dashboard_id=board)
+        with get_db_context() as db:
+            db.get(CatalogDashboard, board).layout_json = "{not json"
+            db.commit()
+        with caplog.at_level(logging.WARNING, logger="flowfile_core.catalog.services.visualizations"):
+            resp = client.post(f"/catalog/dashboards/{board}/prune_charts")
+        assert resp.json() == {"deleted": [], "released": []}
+        assert _chart_ids() == {own["id"]}
+        assert f"The stored layout of dashboard {board} does not read as JSON" in caplog.text
+
+    def test_nothing_to_drop_reads_no_other_dashboard(self, client):
+        board = _store_dashboard("Board", _empty_layout())
+        used = self._chart(client, _make_table(), "Revenue", dashboard_id=board)
+        tile = {"id": "t1", "type": "viz", "viz_id": used["id"], "x": 0, "y": 0, "w": 6, "h": 4}
+        _set_layout(board, {**_empty_layout(), "tiles": [tile]})
+        bare = _store_dashboard("No charts of its own", _empty_layout())
+        with patch.object(SQLAlchemyCatalogRepository, "list_dashboards") as every_dashboard:
+            assert client.post(f"/catalog/dashboards/{board}/prune_charts").json() == {"deleted": [], "released": []}
+            assert client.delete(f"/catalog/dashboards/{bare}").status_code == 204
+        every_dashboard.assert_not_called()
+        assert _chart_ids() == {used["id"]}
+
+    def test_prune_unknown_returns_404(self, client):
+        assert client.post("/catalog/dashboards/99999/prune_charts").status_code == 404
+
+    def test_the_catalog_tree_lists_only_charts_of_their_own(self, client):
+        with get_db_context() as db:
+            cat = CatalogNamespace(name="OwnChartsCat", parent_id=None, level=0, owner_id=1)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+            schema = CatalogNamespace(name="own", parent_id=cat.id, level=1, owner_id=1)
+            db.add(schema)
+            db.commit()
+            db.refresh(schema)
+            schema_id = schema.id
+        table_id = _make_table()
+        board = _store_dashboard("Board", _empty_layout())
+        self._chart(client, table_id, "On the board", dashboard_id=board, namespace_id=schema_id)
+        self._chart(client, table_id, "Of its own", namespace_id=schema_id)
+
+        tree = client.get("/catalog/namespaces/tree").json()
+        node = next(n for n in tree if n["name"] == "OwnChartsCat")
+        assert [v["name"] for child in node["children"] for v in child["visualizations"]] == ["Of its own"]

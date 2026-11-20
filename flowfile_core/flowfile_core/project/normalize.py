@@ -59,9 +59,9 @@ def write_yaml(path: Path, data: Any) -> None:
     atomic_write(path, dump_yaml(data))
 
 
-def safe_stem(name: str | None) -> str:
+def safe_stem(name: str | None, fallback: str = "flow") -> str:
     cleaned = _SAFE_STEM_RE.sub("_", name or "").strip("._-")
-    return cleaned or "flow"
+    return cleaned or fallback
 
 
 def unique_stem(name: str | None) -> str:

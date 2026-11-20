@@ -63,6 +63,17 @@ Click a card to open the visualization in viewer mode. From there you can edit, 
 
 A per-table view is also available from each table's detail panel — that one only lists visualizations whose source is that table.
 
+### Charts that belong to a dashboard
+
+A chart made from inside a dashboard, with **New visualization** in the editor's side panel or by **Build with AI**, belongs to that dashboard:
+
+- It is not listed in the Visualizations library, the catalog tree or search. The switch **Include charts on dashboards** in the library's header lists these charts too, each tagged with its dashboard. A table's detail panel always lists them, tagged the same way, because deleting the table deletes them.
+- It is deleted with its dashboard. One that the dashboard no longer uses (its tile was removed, or an AI build was undone) is deleted when you leave the dashboard editor.
+- **Keep as a chart**, in the tile's menu and in the chart's menu in the library, makes it a chart of its own: listed in the library and kept when the dashboard goes.
+- Other dashboards do not offer it in their chart pickers. Keep it as a chart first to use it on a second dashboard.
+
+A chart made in the library or from a table, and added to a dashboard afterwards, stays a chart of its own.
+
 ---
 
 ## Editing and reorganising

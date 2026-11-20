@@ -31,9 +31,16 @@ A project folder holds YAML files of your resources:
 | `connections/database/`, `connections/cloud/` | One `.yaml` per connection (no credentials). |
 | `schedules/` | One `.yaml` per flow, listing its interval and cron schedules, each with an `id`. |
 | `notebooks/` | One `.notebook.yaml` per notebook. |
+| `visualizations/` | One `.visualization.yaml` per saved chart: its spec and its source, a table by name or a SQL query. A chart that belongs to a dashboard names it under `dashboard`, by the dashboard's `dashboard_uuid`. |
+| `dashboards/` | One `.dashboard.yaml` per dashboard: its layout, tabs, tiles and filters. A tile names its chart by the chart's `viz_uuid`, so a dashboard is its file plus the files of the charts it uses. |
 | `secrets.yaml` | The names of the secrets you created on the Secrets page (no values). Secrets a feature keeps for itself, such as an AI provider key, a Kafka connection's password or the GitHub publish token, are not listed. |
-| `namespaces.yaml`, `tables.yaml`, `models.yaml`, `kernels.yaml`, `visualizations.yaml`, `dashboards.yaml` | Catalog metadata manifests. `tables.yaml` names a table's producing flow only when that flow is in the project. |
+| `namespaces.yaml`, `tables.yaml`, `models.yaml`, `kernels.yaml` | Catalog metadata manifests. `tables.yaml` names a table's producing flow only when that flow is in the project. |
 | `.gitignore` | Guards against committing secrets and local data. |
+
+A chart's or dashboard's file is named after it (`Sales overview` becomes `dashboards/Sales_overview.dashboard.yaml`). Renaming one moves its file; the id inside the file keeps it the same chart or dashboard. Two with the same name get the start of their id added to the file name.
+
+!!! note "Folders saved before charts and dashboards had their own files"
+    Project format 2 and older kept every chart in one `visualizations.yaml` and every dashboard in one `dashboards.yaml`. Such a folder still opens and reads as unchanged. Its next save writes the files above, removes those two, and sets the format to 3. A Flowfile that reads only format 2 then refuses the folder with "written by a newer Flowfile", so upgrade every machine that opens the project before you save from the new version. Releases from before that check exist do not refuse it and read the folder as holding no charts or dashboards.
 
 ## What a version holds
 

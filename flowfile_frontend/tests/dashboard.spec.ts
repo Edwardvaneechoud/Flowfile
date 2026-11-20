@@ -1158,6 +1158,8 @@ test.describe("Dashboards", () => {
       const response = await created;
       newVizId = (await response.json()).id;
       expect((await response.json()).name).toBe("Amount per region");
+      // Made from inside the dashboard, so it is the dashboard's own.
+      expect((await response.json()).dashboard_id).toBe(seededNew.dashboardId);
       await expect(page.locator(".tile-title", { hasText: "Amount per region" })).toBeVisible({
         timeout: 30000,
       });
@@ -1165,6 +1167,67 @@ test.describe("Dashboards", () => {
       if (newVizId != null) {
         await request.delete(`${API_URL}/catalog/dashboards/${seededNew.dashboardId}`, { headers });
         await request.delete(`${API_URL}/catalog/visualizations/${newVizId}`, { headers });
+      }
+      await seededNew.cleanup(request);
+    }
+  });
+
+  test("a chart made on a new dashboard creates the dashboard at Save and belongs to it", async ({
+    page,
+    request,
+  }) => {
+    const seededNew = await seedDashboard(request, token, `e2e own ${Date.now()}`);
+    const headers = authHeaders(token);
+    let createdId: number | null = null;
+    try {
+      const namespaceId = await (
+        await request.get(`${API_URL}/catalog/default-namespace-id`, { headers })
+      ).json();
+      const moved = await request.put(`${API_URL}/catalog/tables/${seededNew.tableId}`, {
+        headers,
+        data: { namespace_id: namespaceId },
+      });
+      const table = await moved.json();
+      let dashboardCreates = 0;
+      page.on("request", (r) => {
+        if (r.method() === "POST" && /\/catalog\/dashboards\/?$/.test(r.url()))
+          dashboardCreates += 1;
+      });
+      await login(page, token, "#/main/dashboards/new");
+
+      const openChartBuilder = async () => {
+        await page.getByRole("button", { name: "New visualization" }).click();
+        const picker = page.locator(".el-dialog", { hasText: "From a catalog table" });
+        await picker.locator(".picker-cascader input").fill(table.name);
+        await page.locator(".el-cascader__suggestion-item", { hasText: table.name }).click();
+        await picker.getByRole("button", { name: "Continue" }).click();
+        await expect(page.getByTestId("viz-save-button")).toBeEnabled({ timeout: 30000 });
+      };
+
+      // Cancelling the chart leaves the dashboard unsaved.
+      await openChartBuilder();
+      await page.locator(".el-dialog:visible").getByRole("button", { name: "Cancel" }).click();
+      await expect(page.getByTestId("viz-save-button")).toHaveCount(0);
+      expect(dashboardCreates).toBe(0);
+      await expect(page).toHaveURL(/#\/main\/dashboards\/new/);
+
+      await openChartBuilder();
+      await page.getByTestId("viz-name-input").fill("Made on a new dashboard");
+      const created = page.waitForResponse(
+        (r) => r.request().method() === "POST" && /\/catalog\/visualizations\/?$/.test(r.url()),
+      );
+      await page.getByTestId("viz-save-button").click();
+      const chart = await (await created).json();
+      await expect(page).toHaveURL(/#\/main\/dashboards\/\d+\/edit/, { timeout: 20000 });
+      createdId = Number(/dashboards\/(\d+)\/edit/.exec(page.url())?.[1]);
+      expect(dashboardCreates).toBe(1);
+      expect(chart.dashboard_id).toBe(createdId);
+      await expect(page.locator(".tile-title", { hasText: "Made on a new dashboard" })).toBeVisible(
+        { timeout: 30000 },
+      );
+    } finally {
+      if (createdId != null) {
+        await request.delete(`${API_URL}/catalog/dashboards/${createdId}`, { headers });
       }
       await seededNew.cleanup(request);
     }

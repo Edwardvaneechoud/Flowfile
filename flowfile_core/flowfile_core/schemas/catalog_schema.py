@@ -745,7 +745,10 @@ class VisualizationCreate(BaseModel):
     """Create a viz. The source must be either a catalog table or an inline
     SQL query — set ``source_type`` accordingly. ``namespace_id`` defaults to
     the parent table's namespace (when ``source_type="table"``) but can be
-    overridden so a viz can live anywhere in the catalog tree."""
+    overridden so a viz can live anywhere in the catalog tree.
+
+    ``dashboard_id`` makes the chart that dashboard's own: it is listed with the dashboard, not in the
+    chart library, and goes when the dashboard goes or stops using it."""
 
     name: str
     description: str | None = None
@@ -760,6 +763,7 @@ class VisualizationCreate(BaseModel):
     sql_query: str | None = None
     namespace_id: int | None = None
     thumbnail_data_url: str | None = None
+    dashboard_id: int | None = None
 
 
 class VisualizationUpdate(BaseModel):
@@ -806,9 +810,20 @@ class VisualizationOut(BaseModel):
     table_full_name: str | None = None
     table_type: str | None = None
     namespace_name: str | None = None
+    # The chart's dashboard: both None for a chart of its own, the name None for whoever may not read it.
+    dashboard_id: int | None = None
+    dashboard_name: str | None = None
     access: AccessInfo | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DashboardChartPruneOut(BaseModel):
+    """What a prune of a dashboard's own charts did: the ids it deleted, and the ids it made charts of
+    their own because another dashboard uses them."""
+
+    deleted: list[int] = Field(default_factory=list)
+    released: list[int] = Field(default_factory=list)
 
 
 class VizSourceDescriptor(BaseModel):

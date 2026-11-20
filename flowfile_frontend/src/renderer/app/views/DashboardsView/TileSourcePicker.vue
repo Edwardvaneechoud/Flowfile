@@ -33,6 +33,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useDashboardsStore } from "../../stores/dashboards-store";
+import { chartsForDashboard } from "../CatalogView/chartLibraryFilter";
 
 /** Picks what a KPI or table tile reads: a catalog table directly, or a saved chart's source
  * (how a SQL source is reached). Exactly one of the two is set. */
@@ -43,6 +45,7 @@ const emit = defineEmits<{
 }>();
 
 const catalogStore = useCatalogStore();
+const dashboardsStore = useDashboardsStore();
 const kind = ref<"table" | "viz">(props.vizId != null && props.tableId == null ? "viz" : "table");
 const tablesLoading = ref(false);
 
@@ -71,7 +74,10 @@ const tableOptions = computed(() =>
 
 const vizGroups = computed(() => {
   const groups = new Map<string, { label: string; items: { id: number; name: string }[] }>();
-  for (const v of catalogStore.visualizationLibrary) {
+  for (const v of chartsForDashboard(
+    catalogStore.visualizationLibrary,
+    dashboardsStore.current?.id,
+  )) {
     const label =
       v.source_type === "sql"
         ? "SQL"

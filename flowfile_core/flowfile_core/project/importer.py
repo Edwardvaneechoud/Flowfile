@@ -192,6 +192,36 @@ def _manifest_entries(root: Path, kind_name: str) -> list:
     return _applied_entries(rel, entries, _ENTRY_NAME_KEYS[kind_name])
 
 
+# The kinds stored one object per file, with the list key of the root file a folder of format 2 or older
+# holds them in and the field that identifies an object.
+_OBJECT_KINDS = {
+    "visualizations": ("visualizations", "viz_uuid"),
+    "dashboards": ("dashboards", "dashboard_uuid"),
+}
+
+
+def _is_object_file(kind_name: str, rel: str) -> bool:
+    """Whether ``rel`` is one object's own file, not the older root list of its kind."""
+    return kind_name in _OBJECT_KINDS and "/" in rel
+
+
+def _object_entries(root: Path, kind_name: str) -> list:
+    """The objects of a kind stored one per file, less those another user owns: each file's mapping, then the
+    items of an older folder's root list that no file holds."""
+    list_key, id_key = _OBJECT_KINDS[kind_name]
+    entries: list = []
+    held: set = set()
+    listed: list = []
+    for rel in kinds.kind_files(root, kinds.get(kind_name)):
+        data = _read_yaml(root / rel)
+        if not _is_object_file(kind_name, rel):
+            listed += _applied_entries(rel, data.get(list_key, []) or [], _ENTRY_NAME_KEYS[kind_name])
+        elif _applies(rel, data):
+            entries.append(data)
+            held.add(data.get(id_key))
+    return entries + [e for e in listed if e.get(id_key) is None or e.get(id_key) not in held]
+
+
 def _after_commit(label: str, action, *args, **kwargs) -> None:
     """Queue a disk or in-memory side effect of the import until the database has committed; run it
     at once when no import transaction is open (a direct call of one import function)."""
@@ -732,14 +762,14 @@ def _resolve_viz_id_by_uuid(viz_uuid: str | None, owner_id: int) -> int | None:
 
 
 def _import_visualizations(root: Path, owner_id: int) -> set[str]:
-    """Recreate the owner's saved charts from visualizations.yaml; return the kept viz_uuids.
+    """Recreate the owner's saved charts from their files; return the kept viz_uuids.
 
     Upserts by viz_uuid. The source table is re-resolved by its portable ``{catalog, schema, name}``
     (tables.yaml rebuilds physical tables first, so it is normally present); a table-source viz whose
     table is still absent keeps its definition with a null source rather than being dropped. The
     PNG thumbnail isn't restored — it re-exports on the next view."""
     kept: set[str] = set()
-    for entry in _manifest_entries(root, "visualizations"):
+    for entry in _object_entries(root, "visualizations"):
         name = entry.get("name")
         if not name:
             continue
@@ -797,13 +827,13 @@ def _stored_layout(layout_json: str | None) -> dict | None:
 
 
 def _import_dashboards(root: Path, owner_id: int) -> set[str]:
-    """Recreate the owner's dashboards from dashboards.yaml; return the kept dashboard_uuids.
+    """Recreate the owner's dashboards from their files; return the kept dashboard_uuids.
 
     Runs after visualizations so each tile's ``viz_uuid`` resolves to a local viz id. Upserts by
     dashboard_uuid; the localized layout is validated through ``DashboardLayout`` and stored with the
     keys the file holds, so a row written before a field existed exports the same file again."""
     kept: set[str] = set()
-    for entry in _manifest_entries(root, "dashboards"):
+    for entry in _object_entries(root, "dashboards"):
         name = entry.get("name")
         if not name:
             continue
@@ -837,7 +867,38 @@ def _import_dashboards(root: Path, owner_id: int) -> set[str]:
                 db.add(dashboard)
             db.commit()
             kept.add(dashboard_uuid)
+    _assign_chart_dashboards(root, owner_id)
     return kept
+
+
+def _assign_chart_dashboards(root: Path, owner_id: int) -> None:
+    """Point each of the owner's charts at the dashboard its file names under ``dashboard``, and make a
+    chart whose file names none a chart of its own. Runs once the dashboards exist, since charts import
+    first. A file can make a chart belong only to a dashboard of the owner's; the dashboard a chart
+    already belongs to is kept when the file still names it, whoever owns it. A name no dashboard answers
+    to leaves the chart on its own."""
+    for entry in _object_entries(root, "visualizations"):
+        viz_uuid = entry.get("viz_uuid")
+        if not viz_uuid:
+            continue
+        wanted = entry.get("dashboard")
+        with get_db_context() as db:
+            viz = repository.owned_or_none(db, CatalogVisualization, "created_by", owner_id, viz_uuid=viz_uuid)
+            if viz is None:
+                continue
+            target: int | None = None
+            if wanted:
+                current = db.get(CatalogDashboard, viz.dashboard_id) if viz.dashboard_id is not None else None
+                if current is not None and current.dashboard_uuid == wanted:
+                    target = current.id
+                else:
+                    owned = repository.owned_or_none(
+                        db, CatalogDashboard, "created_by", owner_id, dashboard_uuid=wanted
+                    )
+                    target = owned.id if owned is not None else None
+            if viz.dashboard_id != target:
+                viz.dashboard_id = target
+                db.commit()
 
 
 def _import_notebooks(root: Path, owner_id: int, kernel_ids: dict[str, str] | None = None) -> set[str]:
@@ -1291,6 +1352,10 @@ def _delete_dashboards(ctx: kinds.ExportContext, keys: list) -> None:
         CatalogDashboard.created_by == ctx.owner_id, CatalogDashboard.dashboard_uuid.in_(keys)
     ):
         sharing.delete_grants_for_resource(ctx.db, "dashboard", dash_id)
+        # A chart that belonged to it and is still in the folder is kept, on its own (SQLite reuses row ids).
+        ctx.db.query(CatalogVisualization).filter_by(dashboard_id=dash_id).update(
+            {CatalogVisualization.dashboard_id: None}
+        )
         ctx.db.query(CatalogDashboard).filter_by(id=dash_id).delete()
     ctx.db.commit()
 
@@ -1383,7 +1448,7 @@ def _assert_within_cap(items: list, cap: int, kind: str) -> None:
 
 
 def _cap_noun(kind: kinds.Kind) -> str:
-    return kind.label if kind.entries_key else f"{kind.label}s"
+    return kind.label if kind.entries_key or kind.name in _OBJECT_KINDS else f"{kind.label}s"
 
 
 def _by_kind(rels) -> dict[str, list[str]]:
@@ -1401,7 +1466,13 @@ def _assert_kind_caps(files: dict[str, list[str]], entries, only=None) -> None:
     capped = [k for k in kinds.ordered() if k.cap is not None and (only is None or k.name in only)]
     for kind in capped:
         if kind.entries_key is None:
-            _assert_within_cap(files.get(kind.name, []), kind.cap, _cap_noun(kind))
+            counted: list = []
+            for rel in files.get(kind.name, []):
+                if kind.name in _OBJECT_KINDS and not _is_object_file(kind.name, rel):
+                    counted += entries(rel).get(_OBJECT_KINDS[kind.name][0], []) or []
+                else:
+                    counted.append(rel)
+            _assert_within_cap(counted, kind.cap, _cap_noun(kind))
     for kind in capped:
         if kind.entries_key is not None:
             _assert_within_cap(entries(kind.paths[0]).get(kind.entries_key, []) or [], kind.cap, _cap_noun(kind))
@@ -1528,45 +1599,49 @@ def _dashboard_layout_shape(layout: dict) -> dict:
 
 
 def _validate_manifest_entries(rel: str, stem: str, data: dict) -> None:
-    key, name_key = kinds.get(stem).entries_key, _ENTRY_NAME_KEYS[stem]
+    key = _OBJECT_KINDS[stem][0] if stem in _OBJECT_KINDS else kinds.get(stem).entries_key
     entries = data.get(key)
     _check_file(rel, _is_mapping_list(entries), f"must list its {key} as mappings under {key!r}")
     for i, entry in enumerate(entries or []):
-        where = f"entry {i + 1} of {key!r}"
-        _check_file(rel, _is_text(entry.get(name_key)), f"{where} has no {name_key!r}")
-        _check_file(rel, _optional(entry.get("namespace"), dict), f"{where} has a 'namespace' that is not a mapping")
-        _check_file(rel, _optional(entry.get("owner"), str), f"{where} has an 'owner' that is not text")
-        if stem == "namespaces":
-            schemas = entry.get("schemas")
-            _check_file(rel, _is_mapping_list(schemas), f"{where} must list its 'schemas' as mappings")
-            for schema in schemas or []:
-                _check_file(rel, _is_text(schema.get("name")), f"{where} has a schema with no 'name'")
-        elif stem == "tables":
-            _check_file(
-                rel, _is_mapping_list(entry.get("schema")), f"{where} must list its 'schema' columns as mappings"
-            )
-            _check_file(rel, _optional(entry.get("pointer"), dict), f"{where} has a 'pointer' that is not a mapping")
-            _check_file(
-                rel,
-                _optional(entry.get("partition_columns"), list),
-                f"{where} has 'partition_columns' that is not a list",
-            )
-        elif stem == "models":
-            _check_file(rel, isinstance(entry.get("version"), int), f"{where} has no integer 'version'")
-            _check_file(rel, _optional(entry.get("tags"), list), f"{where} has 'tags' that is not a list")
-        elif stem == "kernels":
-            _check_file(rel, _optional(entry.get("packages"), list), f"{where} has 'packages' that is not a list")
-        elif stem == "visualizations":
-            _check_file(
-                rel, _optional(entry.get("source_table"), dict), f"{where} has a 'source_table' that is not a mapping"
-            )
-        elif stem == "dashboards":
-            layout = entry.get("layout")
-            _check_file(rel, _optional(layout, dict), f"{where} has a 'layout' that is not a mapping")
-            try:
-                DashboardLayout.model_validate(_dashboard_layout_shape(layout or {}))
-            except ValidationError as e:
-                _check_file(rel, False, f"{where} has an invalid layout ({_invalid_fields(e)})")
+        _validate_entry(rel, stem, entry, f"entry {i + 1} of {key!r} ")
+
+
+def _validate_entry(rel: str, stem: str, entry: dict, where: str = "") -> None:
+    """One entry of a root list (``where`` names it) or one object's own file (``where`` empty)."""
+    name_key = _ENTRY_NAME_KEYS[stem]
+    _check_file(rel, _is_text(entry.get(name_key)), f"{where}has no {name_key!r}")
+    _check_file(rel, _optional(entry.get("namespace"), dict), f"{where}has a 'namespace' that is not a mapping")
+    _check_file(rel, _optional(entry.get("owner"), str), f"{where}has an 'owner' that is not text")
+    if stem == "namespaces":
+        schemas = entry.get("schemas")
+        _check_file(rel, _is_mapping_list(schemas), f"{where}must list its 'schemas' as mappings")
+        for schema in schemas or []:
+            _check_file(rel, _is_text(schema.get("name")), f"{where}has a schema with no 'name'")
+    elif stem == "tables":
+        _check_file(rel, _is_mapping_list(entry.get("schema")), f"{where}must list its 'schema' columns as mappings")
+        _check_file(rel, _optional(entry.get("pointer"), dict), f"{where}has a 'pointer' that is not a mapping")
+        _check_file(
+            rel,
+            _optional(entry.get("partition_columns"), list),
+            f"{where}has 'partition_columns' that is not a list",
+        )
+    elif stem == "models":
+        _check_file(rel, isinstance(entry.get("version"), int), f"{where}has no integer 'version'")
+        _check_file(rel, _optional(entry.get("tags"), list), f"{where}has 'tags' that is not a list")
+    elif stem == "kernels":
+        _check_file(rel, _optional(entry.get("packages"), list), f"{where}has 'packages' that is not a list")
+    elif stem == "visualizations":
+        _check_file(
+            rel, _optional(entry.get("source_table"), dict), f"{where}has a 'source_table' that is not a mapping"
+        )
+        _check_file(rel, _optional(entry.get("dashboard"), str), f"{where}has a 'dashboard' that is not a uuid")
+    elif stem == "dashboards":
+        layout = entry.get("layout")
+        _check_file(rel, _optional(layout, dict), f"{where}has a 'layout' that is not a mapping")
+        try:
+            DashboardLayout.model_validate(_dashboard_layout_shape(layout or {}))
+        except ValidationError as e:
+            _check_file(rel, False, f"{where}has an invalid layout ({_invalid_fields(e)})")
 
 
 def _validate_project_file(rel: str, kind: str, text: str) -> None:
@@ -1579,6 +1654,8 @@ def _validate_project_file(rel: str, kind: str, text: str) -> None:
         names = data.get("required_secrets")
         ok = names is None or (isinstance(names, list) and all(_is_text(n) for n in names))
         _check_file(rel, ok, "must list 'required_secrets' as names")
+    elif _is_object_file(kind, rel):
+        _validate_entry(rel, kind, data)
     elif kind in _ENTRY_NAME_KEYS:
         _validate_manifest_entries(rel, kind, data)
     elif kind == "flow":
