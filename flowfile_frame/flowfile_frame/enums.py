@@ -83,6 +83,7 @@ class NodeType(str, Enum):
     KAFKA_SOURCE = "kafka_source"
     GOOGLE_ANALYTICS_READER = "google_analytics_reader"
     SHAREPOINT_READER = "sharepoint_reader"
+    SHAREPOINT_WRITER = "sharepoint_writer"
     REST_API_READER = "rest_api_reader"
     EXTERNAL_SOURCE = "external_source"
     TRAIN_MODEL = "train_model"
@@ -137,6 +138,7 @@ NodeTypeLiteral: TypeAlias = Literal[
     "kafka_source",
     "google_analytics_reader",
     "sharepoint_reader",
+    "sharepoint_writer",
     "rest_api_reader",
     "external_source",
     "train_model",

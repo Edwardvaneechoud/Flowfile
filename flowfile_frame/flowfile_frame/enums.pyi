@@ -9,7 +9,7 @@ from flowfile_core.schemas import transform_schema
 
 GateOperatorLiteral: TypeAlias = transform_schema.GateOperator
 ParamTypeLiteral: TypeAlias = param_types.ParamType
-NodeTypeLiteral: TypeAlias = Literal['manual_input', 'filter', 'formula', 'multi_field_formula', 'dynamic_rename', 'data_cleansing', 'select', 'sort', 'record_id', 'sample', 'random_split', 'unique', 'group_by', 'window_functions', 'pivot', 'unpivot', 'text_to_rows', 'graph_solver', 'explode_hierarchy', 'python_script', 'polars_code', 'sql_query', 'join', 'cross_join', 'fuzzy_match', 'record_count', 'explore_data', 'union', 'gate', 'output', 'api_response', 'read', 'list_files', 'database_reader', 'database_writer', 'cloud_storage_reader', 'cloud_storage_writer', 'catalog_reader', 'catalog_writer', 'kafka_source', 'google_analytics_reader', 'sharepoint_reader', 'rest_api_reader', 'external_source', 'train_model', 'apply_model', 'evaluate_model', 'wait_for', 'flow_input', 'flow_output', 'run_flow']
+NodeTypeLiteral: TypeAlias = Literal['manual_input', 'filter', 'formula', 'multi_field_formula', 'dynamic_rename', 'data_cleansing', 'select', 'sort', 'record_id', 'sample', 'random_split', 'unique', 'group_by', 'window_functions', 'pivot', 'unpivot', 'text_to_rows', 'graph_solver', 'explode_hierarchy', 'python_script', 'polars_code', 'sql_query', 'join', 'cross_join', 'fuzzy_match', 'record_count', 'explore_data', 'union', 'gate', 'output', 'api_response', 'read', 'list_files', 'database_reader', 'database_writer', 'cloud_storage_reader', 'cloud_storage_writer', 'catalog_reader', 'catalog_writer', 'kafka_source', 'google_analytics_reader', 'sharepoint_reader', 'sharepoint_writer', 'rest_api_reader', 'external_source', 'train_model', 'apply_model', 'evaluate_model', 'wait_for', 'flow_input', 'flow_output', 'run_flow']
 
 class GateOperator(str, Enum):
     EQUALS = 'equals'
@@ -70,6 +70,7 @@ class NodeType(str, Enum):
     KAFKA_SOURCE = 'kafka_source'
     GOOGLE_ANALYTICS_READER = 'google_analytics_reader'
     SHAREPOINT_READER = 'sharepoint_reader'
+    SHAREPOINT_WRITER = 'sharepoint_writer'
     REST_API_READER = 'rest_api_reader'
     EXTERNAL_SOURCE = 'external_source'
     TRAIN_MODEL = 'train_model'
