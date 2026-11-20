@@ -135,13 +135,10 @@ def _set_owner(sched: FlowScheduler, *, disabled: bool | None) -> None:
         db.commit()
 
 
-@pytest.mark.parametrize("with_launcher", [True, False])
 @pytest.mark.parametrize("disabled", [True, None], ids=["owner_disabled", "owner_deleted"])
-def test_a_schedule_whose_owner_is_disabled_or_gone_is_disabled_with_a_reason_and_launches_nothing(
-    db_url, with_launcher, disabled
-):
+def test_a_schedule_whose_owner_is_disabled_or_gone_is_disabled_with_a_reason_and_launches_nothing(db_url, disabled):
     calls: list = []
-    sched = _scheduler(Launch(pid=4242) if with_launcher else None, calls)
+    sched = _scheduler(None, calls)
     sched._spawn_flow = lambda *args, **kwargs: pytest.fail("no run may start for this schedule")
     schedule_id, _ = _seed(sched)
     _set_owner(sched, disabled=disabled)
@@ -153,6 +150,35 @@ def test_a_schedule_whose_owner_is_disabled_or_gone_is_disabled_with_a_reason_an
     with sched._session_factory() as db:
         row = db.get(FlowSchedule, schedule_id)
         assert (row.enabled, row.disabled_reason) == (False, engine_mod.OWNER_NOT_ACTIVE)
+
+
+def test_with_a_launcher_a_disabled_owners_schedule_reaches_the_launcher_and_fires(db_url):
+    calls: list = []
+    sched = _scheduler(Launch(pid=4242), calls)
+    schedule_id, _ = _seed(sched)
+    _set_owner(sched, disabled=True)
+
+    assert _fire(sched) == 1
+    assert len(calls) == 1
+    assert len(_runs(sched)) == 1
+    with sched._session_factory() as db:
+        row = db.get(FlowSchedule, schedule_id)
+        assert (row.enabled, row.disabled_reason) == (True, None)
+
+
+@pytest.mark.parametrize("disabled", [True, None], ids=["owner_disabled", "owner_deleted"])
+def test_with_a_launcher_a_disabled_or_gone_owners_schedule_takes_the_launchers_reason(db_url, disabled):
+    calls: list = []
+    sched = _scheduler(Launch(refused="No longer here"), calls)
+    schedule_id, _ = _seed(sched)
+    _set_owner(sched, disabled=disabled)
+
+    assert _fire(sched) == 0
+    assert len(calls) == 1
+    assert _runs(sched) == []
+    with sched._session_factory() as db:
+        row = db.get(FlowSchedule, schedule_id)
+        assert (row.enabled, row.disabled_reason) == (False, "No longer here")
 
 
 def test_a_schedule_whose_owner_is_enabled_fires_as_before(db_url):

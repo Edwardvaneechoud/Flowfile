@@ -76,7 +76,7 @@ class Launch:
 
 
 Launcher = Callable[[Session, FlowSchedule, FlowRegistration, datetime], Launch]
-"""Starts one run of a due schedule's flow, given the session, the schedule, the flow and the fire time."""
+"""Starts one run of a due schedule's flow; answers ``refused`` when the owner may no longer run it."""
 
 
 def _utcnow() -> datetime:
@@ -522,18 +522,19 @@ class FlowScheduler:
         )
 
     def _maybe_launch(self, db: Session, sched: FlowSchedule, now: datetime) -> LaunchOutcome:
-        """Create a run record and spawn the flow if no run is active; disable it if the owner is gone or disabled."""
+        """Create a run record and start the flow if no run is active; a run spawned here checks the owner first."""
         reg: FlowRegistration | None = db.get(FlowRegistration, sched.registration_id)
         if reg is None:
             logger.warning("Schedule %s references missing flow registration %s", sched.id, sched.registration_id)
             return LaunchOutcome.FAILED
 
-        owner: User | None = db.get(User, sched.owner_id)
-        if owner is None or owner.disabled:
-            logger.warning("Schedule %s disabled — %s", sched.id, OWNER_NOT_ACTIVE)
-            sched.enabled, sched.disabled_reason = False, OWNER_NOT_ACTIVE
-            db.commit()
-            return LaunchOutcome.FAILED
+        if self._launcher is None:
+            owner: User | None = db.get(User, sched.owner_id)
+            if owner is None or owner.disabled:
+                logger.warning("Schedule %s disabled — %s", sched.id, OWNER_NOT_ACTIVE)
+                sched.enabled, sched.disabled_reason = False, OWNER_NOT_ACTIVE
+                db.commit()
+                return LaunchOutcome.FAILED
 
         if self._has_active_run(db, reg):
             logger.info("Skipping schedule %s — flow '%s' already has an active run", sched.id, reg.name)
