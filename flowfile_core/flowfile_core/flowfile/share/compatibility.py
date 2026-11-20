@@ -40,6 +40,7 @@ _ALWAYS_PLACEHOLDER = {
     "catalog_reader": _CATALOG_REASON,
     "catalog_writer": _CATALOG_REASON,
     "sharepoint_reader": "SharePoint connections are not available in shared flows.",
+    "sharepoint_writer": "SharePoint connections are not available in shared flows.",
     "polars_code": _CODE_REASON,
     "flow_input": _FLOW_INPUT_REASON,
 }
@@ -180,15 +181,15 @@ _SETTINGS_PREDICATES = {
 
 def classify_node(node_id: int, node_type: str, settings: dict | None) -> NodeShareStatus:
     """Classify one node from its **dumped** ``setting_input`` dict."""
+    always = _ALWAYS_PLACEHOLDER.get(node_type)
+    if always:
+        return NodeShareStatus(node_id, node_type, "placeholder", always)
+
     tier = support.tier_for(node_type)
     if tier is support.SupportTier.LOCKED:
         return NodeShareStatus(node_id, node_type, "placeholder", _LOCKED_REASON)
     if tier is not support.SupportTier.SUPPORTED:
         return NodeShareStatus(node_id, node_type, "placeholder", _ABSENT_REASON)
-
-    always = _ALWAYS_PLACEHOLDER.get(node_type)
-    if always:
-        return NodeShareStatus(node_id, node_type, "placeholder", always)
 
     predicate = _SETTINGS_PREDICATES.get(node_type)
     if predicate is not None:

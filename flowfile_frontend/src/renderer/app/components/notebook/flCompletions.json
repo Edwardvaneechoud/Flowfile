@@ -727,6 +727,12 @@
       "doc_first_line": "Read a Parquet file into a FlowFrame."
     },
     {
+      "name": "read_sharepoint",
+      "kind": "function",
+      "signature": "(connection_id, *, drive_id=None, file_path=None, list_source=None, sheet_name=None, csv_delimiter=',', delta_generation=None, flow_graph=None)",
+      "doc_first_line": "Read a document-library file or a SharePoint list using a saved connection."
+    },
+    {
       "name": "register_flow",
       "kind": "function",
       "signature": "(flow_or_frame, *, name, schema=None, overwrite=False)",
@@ -1597,6 +1603,12 @@
       "kind": "method",
       "signature": "(path, connection_name=None, compression='snappy', description=None)",
       "doc_first_line": "Write the data frame to cloud storage in Parquet format."
+    },
+    {
+      "name": "write_sharepoint",
+      "kind": "method",
+      "signature": "(connection_id, *, drive_id=None, file_path=None, format=None, conflict_mode='error', list_target=None)",
+      "doc_first_line": "Write a file or append list items on flow run, using a saved SharePoint app connection."
     }
   ],
   "group_colors": [

@@ -73,6 +73,7 @@ from flowfile_core.flowfile.execution.payloads import (
     RandomSplitPayload,
     RestApiReadPayload,
     SharePointReadPayload,
+    SharePointWritePayload,
     SqlQueryPayload,
     VizSessionPayload,
     unpack,
@@ -321,6 +322,7 @@ class WorkerBackend(_WorkerReferences):
             OperationKind.kafka_read: self._kafka_read,
             OperationKind.google_analytics_read: self._google_analytics_read,
             OperationKind.sharepoint_read: self._sharepoint_read_legacy,
+            OperationKind.sharepoint_write: self._sharepoint_write_legacy,
             OperationKind.rest_api_read: self._rest_api_read,
             OperationKind.file_read: self._file_read,
             OperationKind.fuzzy_join: self._fuzzy_join,
@@ -1189,6 +1191,9 @@ class WorkerBackend(_WorkerReferences):
 
     def _sharepoint_read_legacy(self, payload: OpPayload) -> OpResult:
         raise OperationUnsupported("SharePoint reads require the v1 worker compute protocol")
+
+    def _sharepoint_write_legacy(self, payload: OpPayload) -> OpResult:
+        raise OperationUnsupported("SharePoint writes require the v1 worker compute protocol")
 
     def _rest_api_read(self, payload: OpPayload) -> OpResult:
         """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
@@ -2104,6 +2109,11 @@ V1_OPS: dict[OperationKind, V1Op] = {
         lambda job: job.settings.model_dump(mode="json")
         | {"flowfile_flow_id": job.flow_id, "flowfile_node_id": job.node_id},
         metadata=_all_metadata,
+    ),
+    OperationKind.sharepoint_write: V1Op(
+        SharePointWritePayload,
+        lambda job: job.settings.model_dump(mode="json")
+        | {"operation": base64.b64encode(job.plan.serialize()).decode("ascii")},
     ),
     OperationKind.rest_api_read: V1Op(
         RestApiReadPayload,

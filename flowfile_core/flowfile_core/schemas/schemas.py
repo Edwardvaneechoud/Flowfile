@@ -73,6 +73,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "kafka_source": input_schema.NodeKafkaSource,
     "google_analytics_reader": input_schema.NodeGoogleAnalyticsReader,
     "sharepoint_reader": input_schema.NodeSharePointReader,
+    "sharepoint_writer": input_schema.NodeSharePointWriter,
     "rest_api_reader": input_schema.NodeRestApiReader,
     "external_source": input_schema.NodeExternalSource,
     "promise": input_schema.NodePromise,

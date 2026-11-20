@@ -73,8 +73,8 @@ from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.routes import router
 from flowfile_core.routes.search import router as search_router
 from flowfile_core.routes.secrets import router as secrets_router
-from flowfile_core.routes.shares import router as shares_router
 from flowfile_core.routes.sharepoint_connections import router as sharepoint_connections_router
+from flowfile_core.routes.shares import router as shares_router
 from flowfile_core.routes.snowflake import router as snowflake_router
 from flowfile_core.routes.storage_browser import router as storage_browser_router
 from flowfile_core.routes.system_backups import router as system_backups_router

@@ -1,8 +1,10 @@
-"""Connection sharing (db / cloud / GA / Kafka): resolution, manage rules, credential re-entry."""
+"""Connection sharing: resolution, manage rules, credential re-entry."""
 
 import json
+from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
@@ -15,6 +17,8 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_ga_connection,
 )
 from flowfile_core.kafka.connection_manager import get_kafka_connection
+from flowfile_core.routes.sharepoint_connections import build_read_settings, build_write_settings
+from flowfile_core.schemas.input_schema import NodeSharePointWriter
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
 
 
@@ -299,6 +303,98 @@ def test_shared_ga_connection(users, client_for, team):
     with get_db_context() as db:
         grants = db.query(db_models.ResourceGrant).filter_by(resource_type="ga_connection", resource_id=conn_id).count()
     assert grants == 0
+
+
+# ---------- SharePoint connections ----------
+
+
+def _sharepoint_target():
+    return {"connection_name": "Team SharePoint", "tenant_id": str(uuid4()), "client_id": str(uuid4())}
+
+
+def test_sharepoint_group_grant_allows_use_but_not_credential_access(users, client_for, team):
+    alice, bob, carol = (client_for(name) for name in ("alice", "bob", "carol"))
+    secret = f"synthetic-sharepoint-{uuid4()}"
+    target = _sharepoint_target()
+    invalid = alice.post("/sharepoint_connections", json={"client_secret": secret})
+    assert invalid.status_code == 422
+    created = alice.post("/sharepoint_connections", json={**target, "client_secret": secret})
+    assert created.status_code == 201
+    connection_id = created.json()["id"]
+    path = f"/sharepoint_connections/{connection_id}"
+    try:
+        grant = _share(alice, "sharepoint_connection", connection_id, team)
+        listed = bob.get("/sharepoint_connections")
+        assert [(row["id"], row["is_owner"], row["can_manage"]) for row in listed.json()] == [
+            (connection_id, False, False)
+        ]
+        assert carol.get("/sharepoint_connections").json() == []
+        assert bob.patch(path, json={"connection_name": "not allowed"}).status_code == 404
+        assert bob.delete(path).status_code == 404
+
+        with get_db_context() as db:
+            stored = db.get(db_models.SharePointConnection, connection_id)
+            stored_secret = db.get(db_models.Secret, stored.credential_secret_id)
+            ciphertext, secret_id = stored_secret.encrypted_value, stored_secret.id
+            for name in ("bob", "carol"):
+                user_id = users[name].id
+                writer = NodeSharePointWriter(
+                    flow_id=1, node_id=2, depending_on_id=1, user_id=user_id,
+                    connection_id=connection_id, drive_id="drive", file_path="report.csv", format="csv",
+                )
+                if name == "bob":
+                    for settings in (
+                        build_read_settings(db, user_id, connection_id, "drive", "report.csv"),
+                        build_write_settings(db, writer),
+                    ):
+                        assert settings.client_secret_encrypted == ciphertext
+                        assert decrypt_secret(ciphertext, users["alice"].id).get_secret_value() == secret
+                        assert ciphertext not in repr(settings)
+                else:
+                    with pytest.raises(HTTPException) as denied:
+                        build_read_settings(db, user_id, connection_id, "drive", "report.csv")
+                    assert denied.value.status_code == 404
+                    with pytest.raises(HTTPException) as denied:
+                        build_write_settings(db, writer)
+                    assert denied.value.status_code == 404
+
+        denied = alice.post("/shares", json={
+            "resource_type": "secret", "resource_id": secret_id, "group_id": team, "permission": "use",
+        })
+        assert denied.status_code == 404
+        secrets = alice.get("/secrets/secrets")
+        assert secrets.status_code == 200
+        assert f"SharePoint: {target['connection_name']}" not in secrets.text
+        for body in (invalid.text, created.text, listed.text, json.dumps(grant), denied.text, secrets.text):
+            assert secret not in body and ciphertext not in body, "Credential material reached an API response"
+
+        assert alice.delete(f"/shares/{grant['id']}").status_code in (200, 204)
+        assert bob.get("/sharepoint_connections").json() == []
+    finally:
+        assert alice.delete(path).status_code == 204
+
+
+def test_sharepoint_saved_delegated_connection_is_unavailable_in_docker(users, client_for, team, resource_factory):
+    alice = client_for("alice")
+    target = _sharepoint_target()
+    # Model a personal connection previously saved on desktop; Docker cannot create one.
+    secret_id = resource_factory(
+        db_models.Secret, name="Desktop SharePoint", user_id=users["alice"].id, encrypted_value="unused",
+    )
+    connection_id = resource_factory(
+        db_models.SharePointConnection, **target, auth_method="delegated",
+        user_id=users["alice"].id, credential_secret_id=secret_id,
+    )
+    assert alice.post("/sharepoint_connections/device/start", json=target).status_code == 404
+    assert alice.post(f"/sharepoint_connections/{connection_id}/reconnect").status_code == 404
+    assert alice.get("/sharepoint_connections").json() == []
+    assert alice.post("/sharepoint_connections/test", json={
+        "connection_id": connection_id, "drive_id": "drive",
+    }).status_code == 404
+    assert alice.post("/shares", json={
+        "resource_type": "sharepoint_connection", "resource_id": connection_id,
+        "group_id": team, "permission": "use",
+    }).status_code == 422
 
 
 # ---------- Kafka connections ----------

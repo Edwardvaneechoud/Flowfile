@@ -30,7 +30,6 @@ from flowfile_core.flowfile.execution.protocol import OpPayload, ResultRef, Sche
 
 if TYPE_CHECKING:
     import polars as pl
-    from shared.sharepoint import SharePointReadSettings
 
     from flowfile_core.configs.flow_logger import NodeLogger
     from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
@@ -48,6 +47,7 @@ if TYPE_CHECKING:
         OutputSettings,
     )
     from shared.kafka.models import KafkaReadSettings
+    from shared.sharepoint import SharePointReadSettings, SharePointWriteSettings
 
 PAYLOAD_KEY = "payload"
 """The one key of an operation's ``OpPayload``."""
@@ -124,9 +124,15 @@ class GoogleAnalyticsReadPayload(OperationPayload):
 
 @dataclass(frozen=True, kw_only=True)
 class SharePointReadPayload(OperationPayload):
-    """Exact-path CSV read with an encrypted credential."""
+    """SharePoint source read or preview with an encrypted credential."""
 
     settings: SharePointReadSettings
+
+
+@dataclass(frozen=True, kw_only=True)
+class SharePointWritePayload(OperationPayload):
+    settings: SharePointWriteSettings
+    plan: pl.LazyFrame
 
 
 @dataclass(frozen=True, kw_only=True)

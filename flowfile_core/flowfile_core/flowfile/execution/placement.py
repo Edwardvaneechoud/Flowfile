@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 
 _PINNED_BACKENDS: dict[str, str] = {
     "google_analytics_reader": registry.WORKER_BACKEND_ID,
-    "sharepoint_reader": registry.WORKER_BACKEND_ID,
 }
 """Node type -> the backend its builder pins it to, whatever the flow says. The Google Analytics reader runs on
 the worker (``builders/connectors.py``)."""

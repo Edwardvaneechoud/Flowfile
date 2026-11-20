@@ -6,6 +6,7 @@ export type ResourceType =
   | "cloud_connection"
   | "ga_connection"
   | "kafka_connection"
+  | "sharepoint_connection"
   | "catalog_namespace"
   | "catalog_table"
   | "flow"

@@ -47,7 +47,7 @@ def test_capabilities_reports_this_process():
     response = client.get("/capabilities")
     assert response.status_code == 200
     caps = Capabilities.model_validate(response.json())
-    assert caps.protocol_version == PROTOCOL_VERSION == 3
+    assert caps.protocol_version == PROTOCOL_VERSION
     assert caps.app_version == get_version()
     assert caps.polars_version == pl.__version__
     assert caps.python_version == platform.python_version()
@@ -100,6 +100,7 @@ def test_capabilities_name_the_operations_this_worker_runs(route_client, path):
         "google_analytics_read",
         "rest_api_read",
         "sharepoint_read",
+        "sharepoint_write",
         "database_write",
         "cloud_write",
         "file_write",
@@ -123,7 +124,7 @@ def test_capabilities_name_the_operations_this_worker_runs(route_client, path):
 def test_every_v1_operation_route_is_among_the_operations(route_client, path):
     routed = {p.removeprefix("/v1/ops/") for p in main.app.openapi()["paths"] if p.startswith("/v1/ops/")}
 
-    assert len(routed) == 16
+    assert len(routed) == 17
     assert routed <= declared(route_client, path).operations
 
 

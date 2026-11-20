@@ -2189,6 +2189,21 @@ class FlowNode:
         self.node_stats.is_canceled = True
         self._execution_state.is_canceled = True
 
+    def require_source_access(self) -> None:
+        """Check access to sources before serving or reusing derived results."""
+        pending = [self]
+        seen = set()
+        while pending:
+            node = pending.pop()
+            if node.node_id in seen:
+                continue
+            seen.add(node.node_id)
+            if node.is_setup and node.node_type == "sharepoint_reader":
+                from flowfile_core.flowfile.flow_graph.builders.connectors import require_sharepoint_access
+
+                require_sharepoint_access(node.setting_input)
+            pending.extend(node.all_inputs)
+
     def execute_node(
         self,
         reset_cache: bool = False,
@@ -2227,6 +2242,13 @@ class FlowNode:
             node_logger.warning(f"Node {self.__name__} is not setup, cannot run")
             return
 
+        if unreachable is None:
+            from fastapi import HTTPException
+
+            try:
+                self.require_source_access()
+            except HTTPException as exc:
+                unreachable = exc
         self.executor.execute(
             reset_cache=reset_cache,
             performance_mode=performance_mode,
@@ -2525,6 +2547,7 @@ class FlowNode:
         Never executes or re-pulls data. Raises ``ColumnStatsUnavailable`` when
         there is no such result.
         """
+        self.require_source_access()
         if sink := self._sink_source():
             return sink[0].get_cached_result(sink[1])
         engine = self.peek_output_engine(output_handle)
@@ -2600,6 +2623,8 @@ class FlowNode:
         Returns:
             A `TableExample` object, or None if the node is not set up.
         """
+        if include_data:
+            self.require_source_access()
         self.print("Getting a table example")
         if self.is_setup and include_data and self.node_stats.has_completed_last_run:
             if self.node_template.node_group == "output" and not getattr(self.setting_input, "output_names", None):

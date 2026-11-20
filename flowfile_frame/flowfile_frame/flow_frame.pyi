@@ -555,3 +555,6 @@ class FlowFrame:
 
     # Write the data frame to cloud storage in Parquet format.
     def write_parquet_to_cloud_storage(self, path: str, connection_name: str | None = None, compression: Literal['snappy', 'gzip', 'brotli', 'lz4', 'zstd'] = 'snappy', description: str | None = None) -> 'FlowFrame': ...
+
+    # Write a file or append list items on flow run, using a saved SharePoint app connection.
+    def write_sharepoint(self, connection_id: int, *, drive_id: str | None = None, file_path: str | None = None, format: Literal['csv', 'xlsx', 'parquet'] | None = None, conflict_mode: Literal['overwrite', 'error', 'append_suffix'] = 'error', list_target: dict | None = None, description: Optional[str] = None) -> 'FlowFrame': ...

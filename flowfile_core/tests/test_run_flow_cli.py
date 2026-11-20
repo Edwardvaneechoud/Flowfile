@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -82,10 +83,10 @@ def _frozen_runner(flow_path: str, backend: str | None = None) -> int:
     return run_flow_cli(flow_path, int(RUN_ID), backend=backend)
 
 
-def _dev_runner(flow_path: str, backend: str | None = None) -> int:
+def _dev_runner(flow_path: str, backend: str | None = None, *, run_id: int | None = None) -> int:
     from flowfile.__main__ import run_flow
 
-    return run_flow(flow_path, backend=backend)
+    return run_flow(flow_path, run_id=run_id, backend=backend)
 
 
 @pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
@@ -141,18 +142,62 @@ def counting() -> list[CountingBackend]:
 
 
 @pytest.fixture
-def in_process_run(monkeypatch):
+def run_catalog(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from shared import run_completion
+    from shared.models import FlowRun
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
+    FlowRun.__table__.create(engine)
+    monkeypatch.setattr(run_completion, "get_catalog_engine", lambda _: engine)
+    try:
+        with Session(engine) as session:
+            yield session
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def in_process_run(monkeypatch, run_catalog):
     """A runner called in this process installs no telemetry, and the default override it sets and the pool size its
     embedded worker takes are undone after."""
     from flowfile_core import telemetry
     from flowfile_core.flowfile.execution import registry
     from flowfile_worker import pool
+    from shared.models import FlowRun
+
+    run_catalog.add(
+        FlowRun(id=int(RUN_ID), flow_name="Headless test", user_id=1, started_at=datetime.now(timezone.utc))
+    )
+    run_catalog.commit()
 
     monkeypatch.setattr(telemetry, "install_headless", lambda: None)
     monkeypatch.setattr(pool.task_pool, "_size", pool.task_pool._size)
     previous = registry.default_override()
     yield
     registry.set_default_override(previous)
+
+
+@pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
+def test_managed_run_without_a_record_stops_before_loading_flow(tmp_path, monkeypatch, run_catalog, runner):
+    from flowfile_core.flowfile.execution import registry
+    from flowfile_core.flowfile.manage import io_flowfile
+
+    path = tmp_path / "flow.yaml"
+    path.touch()
+
+    def unexpected_load(*args, **kwargs):
+        pytest.fail("Must not load a flow without a run owner")
+
+    monkeypatch.setattr(io_flowfile, "open_flow", unexpected_load)
+    options = {"run_id": int(RUN_ID)} if runner is _dev_runner else {}
+    previous = registry.default_override()
+    try:
+        assert runner(str(path), **options) == 1
+    finally:
+        registry.set_default_override(previous)
 
 
 @pytest.fixture
@@ -207,8 +252,7 @@ def _record_embedded_submits(monkeypatch) -> list[tuple[str, int | str]]:
 
 
 def _record_job_pids(monkeypatch, pid_file: Path) -> None:
-    """Every plan with a column ``a`` an ``EmbeddedWorkerBackend`` gets from here on, but the handshake's, calls a Python
-    function on it that appends the pid of the process running the plan to ``pid_file``."""
+    """Record the PID for embedded-worker plans with column ``a``, except the handshake plan."""
     path = str(pid_file)
 
     def record_pid(series):

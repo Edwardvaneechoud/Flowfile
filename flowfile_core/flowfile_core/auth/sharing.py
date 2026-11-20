@@ -16,7 +16,7 @@ import os
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from sqlalchemy import event, or_
+from sqlalchemy import event, or_, select
 from sqlalchemy.orm import Session
 
 from flowfile_core.database import models as db_models
@@ -49,6 +49,7 @@ RESOURCE_REGISTRY: dict[str, ResourceSpec] = {
     "database_connection": ResourceSpec(db_models.DatabaseConnection, "user_id", "database connection"),
     "cloud_connection": ResourceSpec(db_models.CloudStorageConnection, "user_id", "cloud storage connection"),
     "ga_connection": ResourceSpec(db_models.GoogleAnalyticsConnection, "user_id", "Google Analytics connection"),
+    "sharepoint_connection": ResourceSpec(db_models.SharePointConnection, "user_id", "SharePoint connection"),
     "kafka_connection": ResourceSpec(db_models.KafkaConnection, "user_id", "Kafka connection"),
     "catalog_namespace": ResourceSpec(db_models.CatalogNamespace, "owner_id", "namespace"),
     "catalog_table": ResourceSpec(db_models.CatalogTable, "owner_id", "table"),
@@ -101,8 +102,14 @@ PERSONAL_CONNECTION_MESSAGE = (
 )
 
 
+def public_secret_filter():
+    return ~db_models.Secret.id.in_(select(db_models.SharePointConnection.credential_secret_id))
+
+
 def is_personal_connection(db: Session, resource_type: str, resource_id: int) -> bool:
     """Whether a resource may never be shared: a database connection signed in through the browser."""
+    if resource_type == "sharepoint_connection":
+        return db.query(db_models.SharePointConnection.auth_method).filter_by(id=resource_id).scalar() == "delegated"
     if resource_type != "database_connection":
         return False
     method = (
@@ -292,6 +299,10 @@ def granted_resource_ids(
     if not sharing_enabled():
         return set()
     ids = _direct_granted_ids(db, user_id, resource_type, permission, group_ids=group_ids)
+    if resource_type == "secret" and ids:
+        ids = {
+            row[0] for row in db.query(db_models.Secret.id).filter(db_models.Secret.id.in_(ids), public_secret_filter())
+        }
     if resource_type in _NAMESPACE_SCOPED_TYPES:
         ns_ids = expand_namespace_grants(db, user_id, permission, group_ids=group_ids, ns_perms=ns_perms)
         if ns_ids:
@@ -407,12 +418,10 @@ def shared_resource_rows(db: Session, user_id: int, resource_type: str) -> list[
         return []
     spec = RESOURCE_REGISTRY[resource_type]
     owner_col = getattr(spec.model, spec.owner_attr)
-    rows = (
-        db.query(spec.model)
-        .filter(spec.model.id.in_(details.keys()), owner_col != user_id)
-        .order_by(spec.model.id.asc())
-        .all()
-    )
+    query = db.query(spec.model).filter(spec.model.id.in_(details.keys()), owner_col != user_id)
+    if resource_type == "secret":
+        query = query.filter(public_secret_filter())
+    rows = query.order_by(spec.model.id.asc()).all()
     granter_ids = {details[row.id][1] for row in rows if details[row.id][1] is not None}
     usernames = {}
     if granter_ids:
@@ -474,9 +483,7 @@ def _register_grant_cleanup_backstop() -> None:
 
         def _on_delete(mapper, connection, target, _resource_type=resource_type):
             connection.execute(
-                grants.delete()
-                .where(grants.c.resource_type == _resource_type)
-                .where(grants.c.resource_id == target.id)
+                grants.delete().where(grants.c.resource_type == _resource_type).where(grants.c.resource_id == target.id)
             )
 
         event.listen(spec.model, "after_delete", _on_delete)
