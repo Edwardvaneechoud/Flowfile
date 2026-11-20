@@ -610,12 +610,17 @@ class VisualizationService:
     @staticmethod
     def _stored_chart_ids(dashboard: CatalogDashboard) -> set[int] | None:
         """Every chart a dashboard's stored layout uses: a tile's chart (a chart tile's, or the chart a KPI or
-        table tile reads through) and a filter's chart source. None when the layout does not read as JSON."""
+        table tile reads through) and a filter's chart source. None, with a warning, when the layout does not
+        read as JSON."""
         try:
             raw = json.loads(dashboard.layout_json) if dashboard.layout_json else {}
         except (TypeError, ValueError):
-            return None
+            raw = None
         if not isinstance(raw, dict):
+            logger.warning(
+                "The stored layout of dashboard %s does not read as JSON, so the charts it uses are not known",
+                dashboard.id,
+            )
             return None
         ids: set[int] = set()
         for key, field in (("tiles", "viz_id"), ("filters", "datasource_viz_id")):
@@ -626,15 +631,17 @@ class VisualizationService:
 
     def _drop_own_charts(self, dashboard: CatalogDashboard, keep: set[int]) -> DashboardChartPruneOut:
         """Delete the charts that belong to ``dashboard`` and are not in ``keep``. One that another dashboard's
-        layout uses is made a chart of its own instead, so that dashboard keeps its tile."""
+        layout uses is made a chart of its own instead, so that dashboard keeps its tile. The other dashboards'
+        layouts are read only when there is a chart to drop."""
+        result = DashboardChartPruneOut()
+        dropped = [viz for viz in self.repo.list_dashboard_visualizations(dashboard.id) if viz.id not in keep]
+        if not dropped:
+            return result
         elsewhere: set[int] = set()
         for other in self.repo.list_dashboards():
             if other.id != dashboard.id:
                 elsewhere |= self._stored_chart_ids(other) or set()
-        result = DashboardChartPruneOut()
-        for viz in self.repo.list_dashboard_visualizations(dashboard.id):
-            if viz.id in keep:
-                continue
+        for viz in dropped:
             if viz.id in elsewhere:
                 viz.dashboard_id = None
                 self.repo.update_visualization(viz)

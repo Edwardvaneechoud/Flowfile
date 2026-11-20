@@ -8,6 +8,7 @@ on persistence and shape.
 
 import base64
 import json
+import logging
 import struct
 import time
 import zlib
@@ -17,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
+from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     CatalogDashboard,
@@ -1493,15 +1495,29 @@ class TestDashboardOwnCharts:
         # A second prune finds nothing left to do.
         assert client.post(f"/catalog/dashboards/{board}/prune_charts").json() == {"deleted": [], "released": []}
 
-    def test_prune_removes_nothing_when_the_layout_does_not_read(self, client):
+    def test_prune_removes_nothing_when_the_layout_does_not_read(self, client, caplog):
         board = _store_dashboard("Board", _empty_layout())
         own = self._chart(client, _make_table(), "Revenue", dashboard_id=board)
         with get_db_context() as db:
             db.get(CatalogDashboard, board).layout_json = "{not json"
             db.commit()
-        resp = client.post(f"/catalog/dashboards/{board}/prune_charts")
+        with caplog.at_level(logging.WARNING, logger="flowfile_core.catalog.services.visualizations"):
+            resp = client.post(f"/catalog/dashboards/{board}/prune_charts")
         assert resp.json() == {"deleted": [], "released": []}
         assert _chart_ids() == {own["id"]}
+        assert f"The stored layout of dashboard {board} does not read as JSON" in caplog.text
+
+    def test_nothing_to_drop_reads_no_other_dashboard(self, client):
+        board = _store_dashboard("Board", _empty_layout())
+        used = self._chart(client, _make_table(), "Revenue", dashboard_id=board)
+        tile = {"id": "t1", "type": "viz", "viz_id": used["id"], "x": 0, "y": 0, "w": 6, "h": 4}
+        _set_layout(board, {**_empty_layout(), "tiles": [tile]})
+        bare = _store_dashboard("No charts of its own", _empty_layout())
+        with patch.object(SQLAlchemyCatalogRepository, "list_dashboards") as every_dashboard:
+            assert client.post(f"/catalog/dashboards/{board}/prune_charts").json() == {"deleted": [], "released": []}
+            assert client.delete(f"/catalog/dashboards/{bare}").status_code == 204
+        every_dashboard.assert_not_called()
+        assert _chart_ids() == {used["id"]}
 
     def test_prune_unknown_returns_404(self, client):
         assert client.post("/catalog/dashboards/99999/prune_charts").status_code == 404
