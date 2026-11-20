@@ -10,7 +10,7 @@
     </div>
 
     <!-- Models: pick the provider + model AI features run on. Optionally
-         split off a cheaper model for lightweight tasks. -->
+         give a task (charts, dashboards, schedules, settings) its own model. -->
     <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title">Models</h3>

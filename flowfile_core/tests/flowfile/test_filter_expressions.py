@@ -746,6 +746,7 @@ _MEMBERSHIP_CASES = [
     (pl.Int64, [-1, 2, -3, None], "-1, -3", True),
     (pl.Int64, [1, 2, 3, None], "1, 2.5", True),
     (pl.Float64, [0.1, 2.5, 3.0, None], "0.1, 2.5", True),
+    (pl.Float64, [1.0, 2.5, 3.0, None], "1, 3", True),
     (pl.Decimal(10, 2), [Decimal("0.10"), Decimal("1.50"), Decimal("2.00"), None], "0.1, 2", False),
     (pl.String, ["a", "b", "c", None], "a, c", True),
     (pl.Categorical, ["a", "b", "c", None], "a, z", True),

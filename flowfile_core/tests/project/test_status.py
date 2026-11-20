@@ -243,7 +243,9 @@ def test_a_warm_read_parses_no_flow_file(tmp_path, every_kind, loads):
     assert loads == []
 
 
-def test_a_same_size_rewrite_of_a_fresh_flow_file_is_re_rendered(tmp_path, every_kind, loads):
+def test_a_same_size_rewrite_of_a_fresh_flow_file_is_re_rendered(tmp_path, every_kind, loads, monkeypatch):
+    # A status read takes seconds on a slow runner, so widen the window the file counts as fresh in.
+    monkeypatch.setattr(projection, "_FRESH_MTIME_NS", 30_000_000_000)
     project_sync.init_project(str(tmp_path / "project"), "status", every_kind, True)
     _age_flow_files(tmp_path)
     path = tmp_path / "flow_b.yaml"

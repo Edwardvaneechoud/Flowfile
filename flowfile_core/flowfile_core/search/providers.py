@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -835,7 +835,7 @@ def custom_nodes(ctx: SearchContext) -> list[Candidate]:
             "description": (manifest.intro or manifest.title or None) if manifest else None,
             "subtitle": " · ".join(p for p in parts if p),
             "uri": resource_uri(SearchKind.CUSTOM_NODE, item_id),
-            "updated_at": datetime.fromtimestamp(entry.mtime, timezone.utc) if entry.mtime else None,
+            "updated_at": datetime.fromtimestamp(entry.mtime, UTC) if entry.mtime else None,
             "details": {
                 "node_key": entry.node_key,
                 "file_name": entry.file_name,

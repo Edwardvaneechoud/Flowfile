@@ -19,7 +19,7 @@ import logging
 import re
 import shutil
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -116,7 +116,7 @@ class ArtifactPersistence:
 
         meta = {k: v for k, v in metadata.items() if k in self._PERSISTABLE_FIELDS}
         meta["checksum"] = checksum
-        meta["persisted_at"] = datetime.now(timezone.utc).isoformat()
+        meta["persisted_at"] = datetime.now(UTC).isoformat()
         meta["data_size_bytes"] = len(data)
 
         self._meta_path(flow_id, name).write_text(json.dumps(meta, indent=2))

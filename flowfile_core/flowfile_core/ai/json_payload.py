@@ -10,13 +10,33 @@ from collections.abc import Callable
 from typing import Any
 
 _FENCE = "```"
+_MAX_DEPTH = 200
+
+
+def _too_deep(value: Any) -> bool:
+    """Whether *value* nests lists and objects deeper than ``_MAX_DEPTH``, checked without recursing.
+
+    Python 3.14's scanner parses far deeper than the recursion limit, so the depth cannot be left to a
+    ``RecursionError``; code reading the payload recursively would still hit one.
+    """
+    stack = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > _MAX_DEPTH:
+            return True
+        children = node.values() if isinstance(node, dict) else node
+        stack.extend((child, depth + 1) for child in children if isinstance(child, dict | list))
+    return False
 
 
 def _loads(text: str) -> tuple[bool, Any]:
     try:
-        return True, json.loads(text)
+        parsed = json.loads(text)
     except (json.JSONDecodeError, RecursionError):
         return False, None
+    if isinstance(parsed, dict | list) and _too_deep(parsed):
+        return False, None
+    return True, parsed
 
 
 def parse_json_payload(

@@ -6,7 +6,7 @@ core's catalog, whose ids are not the hub's.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from flowfile_core.catalog import run_records
 from flowfile_core.configs import logger
@@ -186,8 +186,8 @@ def build_run_report(
         "flow_name": getattr(flow.flow_settings, "name", None) or None,
         "executed_on": executed_on,
         "log_ref": run_records.log_ref(executed_on, run_row_id) if executed_on and run_row_id is not None else None,
-        "started_at": started_at.astimezone(timezone.utc).isoformat(),
-        "ended_at": ended_at.astimezone(timezone.utc).isoformat(),
+        "started_at": started_at.astimezone(UTC).isoformat(),
+        "ended_at": ended_at.astimezone(UTC).isoformat(),
         "success": bool(run_info.success),
         "nodes": nodes,
         "inputs": inputs,

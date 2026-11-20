@@ -5,6 +5,10 @@ from flowfile_core.schemas import input_schema, transform_schema
 class JoinHandlersMixin(ConverterMixinBase):
     """Join node handlers (standard / semi-anti / cross-join, key transforms, post-processing)."""
 
+    def _emitted_how(self, how: str) -> str:
+        """The join strategy as written in the export: Polars' name in Polars code; FlowFrame keeps Flowfile's."""
+        return transform_schema.polars_join_how(how) if self.framework == "pl" else how
+
     def _handle_join(self, settings: input_schema.NodeJoin, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle join nodes by routing to appropriate join type handler.
 
@@ -57,7 +61,7 @@ class JoinHandlersMixin(ConverterMixinBase):
         self._add_code(f"        {right_sel},")
         self._add_code(f"        left_on={left_on},")
         self._add_code(f"        right_on={right_on},")
-        self._add_code(f'        how="{settings.join_input.how}"')
+        self._add_code(f'        how="{self._emitted_how(settings.join_input.how)}"')
         self._add_code("    )")
 
     def _handle_standard_join(
@@ -159,7 +163,7 @@ class JoinHandlersMixin(ConverterMixinBase):
         keep_right_keys: bool,
     ) -> None:
         """``left.join(right, ..., suffix=...)``: one call, right-side clashes renamed by Polars itself."""
-        kwargs = [f"left_on={left_on}", f"right_on={right_on}", f'how="{settings.join_input.how}"']
+        kwargs = [f"left_on={left_on}", f"right_on={right_on}", f'how="{self._emitted_how(settings.join_input.how)}"']
         if suffix != "_right":
             kwargs.append(f"suffix={self._py_str(suffix)}")
         if keep_right_keys:
@@ -500,7 +504,7 @@ class JoinHandlersMixin(ConverterMixinBase):
         self._add_code(f"        {right_df},")
         self._add_code(f"        left_on={left_on},")
         self._add_code(f"        right_on={right_on},")
-        self._add_code(f'        how="{settings.join_input.how}"')
+        self._add_code(f'        how="{self._emitted_how(settings.join_input.how)}"')
         self._add_code("    )")
 
         # TODO(FlowFrame): The .collect().lazy() pattern for right joins returns a

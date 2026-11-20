@@ -316,7 +316,7 @@ Returns a `FlowFrame`. Use `.collect()` to materialize, `.data` to access the un
     See [Catalog References](catalog-references.md) for the `CatalogReference` / `SchemaReference` API. The legacy `namespace_id=<int>` keyword is still accepted but discouraged — passing both `schema=` and `namespace_id=` raises `ValueError`.
 
 !!! info "Virtual table resolution"
-    When reading a virtual table, the data is resolved on demand. Optimized virtual tables deserialize a stored execution plan instantly. Non-optimized virtual tables execute the producer flow to produce results. See [Virtual Flow Tables](../../visual-editor/catalog/virtual-tables.md) for details.
+    When reading a virtual table, the data is resolved on demand from its producer flow. An optimized virtual table builds the producer's lazy plan without computing anything; a non-optimized one executes the producer flow to produce results. See [Virtual Flow Tables](../../visual-editor/catalog/virtual-tables.md) for details.
 
 ### Query with SQL
 

@@ -298,7 +298,7 @@ async def _call_provider_for_tools(
 
     try:
         response = await asyncio.wait_for(_do_call(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return None, "timeout"
     except Exception as exc:  # noqa: BLE001 — collapse to a single reason
         logger.warning("command_palette provider call failed: %s", exc, exc_info=False)

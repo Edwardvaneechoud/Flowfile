@@ -357,7 +357,7 @@ async def profile_table(
             flight.done.add_done_callback(lambda done, key=key, flight=flight: _landed(key, flight, done))
         holder = flight.holder
         return await asyncio.wait_for(asyncio.shield(flight.done), timeout=max(deadline - loop.time(), 0.0))
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.info("chart profile of table %s ran past its %.1f s budget", table.id, budget)
         return _snapshot(holder, f"timed out after {budget:g} s")
     except Exception as exc:  # noqa: BLE001

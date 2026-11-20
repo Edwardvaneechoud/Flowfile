@@ -7,7 +7,7 @@ field carries a description because those descriptions are what an agent reads.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal
 
@@ -103,7 +103,7 @@ class SearchHit(BaseModel):
     @classmethod
     def _as_utc(cls, value: datetime | None) -> datetime | None:
         """The catalog stores naive UTC timestamps; answer them with their offset."""
-        return value.replace(tzinfo=timezone.utc) if value is not None and value.tzinfo is None else value
+        return value.replace(tzinfo=UTC) if value is not None and value.tzinfo is None else value
 
 
 class SearchRequest(BaseModel):

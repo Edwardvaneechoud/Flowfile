@@ -1110,6 +1110,8 @@ def test_an_escalated_csv_read_holds_its_result_under_its_hash_and_is_served_fro
     graph = create_test_graph(flow_id=8518, execution_location=filter_on)
     source = read_csv_on_worker(graph, path)
     add_filter_on(graph, 2, 1, "[id] > 10", user_id=1)
+    # the conflict at row 60 000 fails the 1 000 and 10 000 inference windows, so the read is submitted three times
+    read_submits = [(WORKER, 1, True)] * 3
     submits: list[tuple[str, int | str, bool]] = []
     for backend in (local, worker):
 
@@ -1154,7 +1156,7 @@ def test_an_escalated_csv_read_holds_its_result_under_its_hash_and_is_served_fro
         ref_2 = graph.get_node(2).results.result_ref
         assert ref_2.backend_id == filter_on
         assert registry.backend(filter_on).count(ref_2) == 119_989
-        assert submits == [(WORKER, 1, True), (WORKER, 1, True), (filter_on, 2, False)]
+        assert submits == [*read_submits, (filter_on, 2, False)]
         assert run_info.boundaries == ([(1, 2)] if flag else [])
         assert costs == ([(1, None)] if flag else [])
         del submits[:]
@@ -1187,7 +1189,7 @@ def test_an_escalated_csv_read_holds_its_result_under_its_hash_and_is_served_fro
             assert exports == []
             assert submits == [(WORKER, 2, False)]
             return
-        assert submits == [(WORKER, 1, True), (WORKER, 1, True), (LOCAL, 2, False)]
+        assert submits == [*read_submits, (LOCAL, 2, False)]
         assert len(exports) == 2 and exports[0] == exports[1], exports
         prefix = rf"s3://{_BUCKET}/{re.escape(root)}/8518/[0-9a-f]{{32}}/"
         assert re.fullmatch(rf"{prefix}1-{DEFAULT_OUTPUT_HANDLE}-2\.parquet", exports[0]), exports[0]
