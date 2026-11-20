@@ -20,6 +20,7 @@ from flowfile_core.auth.secrets import get_password, set_password
 from flowfile_core.configs.settings import ACCESS_TOKEN_EXPIRE_MINUTES
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from shared import server_extension
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,17 @@ def get_current_user_sync(token: str, db: Session):
     except JWTError:
         raise credentials_exception from None
 
-    return _resolve_token_user(db, token_data.username, credentials_exception)
+    return _taken_here(_resolve_token_user(db, token_data.username, credentials_exception), payload)
+
+
+def _taken_here(user: User, claims: dict) -> User:
+    """``user``, unless this server's extension refuses the person whose access token core has just taken
+    (``access_refusal``). The one place such a rule joins core's check, so both ways core takes a person's token,
+    and ``get_user_or_internal_service`` after them, obey it without any of them being replaced."""
+    refusal = server_extension.call("access_refusal", user, claims)
+    if refusal is not None:
+        raise refusal
+    return user
 
 
 USER_CACHE_TTL_SECONDS = 60
@@ -293,7 +304,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError:
         raise credentials_exception from None
 
-    return _resolve_token_user(db, token_data.username, credentials_exception)
+    return _taken_here(_resolve_token_user(db, token_data.username, credentials_exception), payload)
 
 
 def get_current_active_user(current_user=Depends(get_current_user)):

@@ -65,7 +65,7 @@ RELIED_ON = {
     "shared.net": ("is_loopback_host",),
     "shared.run_logs": ("HUB_RUN_LOG_PREFIX", "run_log_path"),
     "shared.sealed": ("SealedCredentialRefused", "b64url", "unb64url"),
-    "shared.server_extension": ("Identity", "MARKER_FILE", "Refused", "mark_storage_dir"),
+    "shared.server_extension": ("HOOKS", "Identity", "MARKER_FILE", "Refused", "mark_storage_dir"),
     "shared.storage_config": ("storage",),
 }
 """The names a server's extension is known to use, by module. Renaming one stops that server, so it fails here first;
@@ -107,6 +107,50 @@ def test_the_setup_status_names_the_server_its_storage_dir_keeps(monkeypatch):
     told = Identity(name="team-1", url="http://hub.example", issuer="http://hub.example")
     toy.use(monkeypatch, SimpleNamespace(identity=lambda: told))
     assert asyncio.run(public_routes.get_setup_status()).node is None
+
+
+def test_the_extension_refuses_a_person_wherever_core_takes_their_token_and_is_not_asked_about_other_callers(
+    monkeypatch,
+):
+    from fastapi.testclient import TestClient
+
+    from flowfile_core.auth import jwt as core_jwt
+    from flowfile_core.database.connection import get_db_context
+
+    asked: list[tuple] = []
+
+    def access_refusal(user, claims):
+        asked.append((user.username, claims.get("sid")))
+        return None if claims.get("sid") == "kept" else HTTPException(status_code=401, detail="This sign-in ended")
+
+    kept = core_jwt.create_access_token({"sub": "local_user", "sid": "kept"})
+    ended = core_jwt.create_access_token({"sub": "local_user", "sid": "ended"})
+    client = TestClient(core_main.app)
+
+    def answers(token: str, route: str) -> tuple:
+        response = client.get(route, headers={"Authorization": f"Bearer {token}"})
+        return response.status_code, response.json().get("detail") if response.status_code != 200 else None
+
+    toy.use(monkeypatch, None)
+    assert answers(ended, "/auth/users/me") == (200, None), "with no extension core takes the token as it always has"
+
+    toy.use(monkeypatch, SimpleNamespace(access_refusal=access_refusal))
+    for route in ("/auth/users/me", "/catalog/namespaces", "/kernels/"):
+        assert answers(kept, route) == (200, None), route
+        assert answers(ended, route) == (401, "This sign-in ended"), route
+    with get_db_context() as db:
+        assert core_jwt.get_current_user_sync(kept, db).username == "local_user"
+        with pytest.raises(HTTPException) as refused:
+            core_jwt.get_current_user_sync(ended, db)
+        assert refused.value.detail == "This sign-in ended"
+        with pytest.raises(HTTPException):
+            core_jwt.get_user_or_internal_service(ended, None, None, db)
+
+    asked.clear()
+    internal = {"X-Internal-Token": core_jwt.get_internal_token()}
+    assert client.get("/catalog/namespaces", headers=internal).status_code == 200
+    assert client.get("/auth/users/me").status_code == 401
+    assert asked == [], "a caller that is no person, and a token core refuses itself, are not put to the extension"
 
 
 @pytest.fixture
