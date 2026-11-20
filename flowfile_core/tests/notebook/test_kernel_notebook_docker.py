@@ -14,14 +14,11 @@ import ast
 import asyncio
 import json
 import os
-import shutil
 import socket
 import subprocess
-import tempfile
 import threading
 import time
 from http.server import ThreadingHTTPServer
-from pathlib import Path
 
 import pytest
 
@@ -107,12 +104,13 @@ def notebook_kernel(core_url, monkeypatch):
     from flowfile_core.kernel.manager import KernelManager
     from flowfile_core.kernel.models import ImageFlavour, KernelConfig
     from flowfile_core.notebook import kernel_runner
+    from shared.storage_config import storage
 
     monkeypatch.setenv("FLOWFILE_MODE", "electron")
     # Pin the checkout's image explicitly: a published tag on this machine would otherwise win.
     monkeypatch.setenv("FLOWFILE_KERNEL_IMAGE_NOTEBOOK", IMAGE)
-    shared = str(Path(tempfile.mkdtemp(prefix="nb_kernel_shared_")).resolve())
-    manager = KernelManager(shared_volume_path=shared)
+    # Mount the same exchange directory the worker uses for view snapshots.
+    manager = KernelManager(shared_volume_path=str(storage.shared_directory))
     monkeypatch.setattr(kernel_package, "get_kernel_manager", lambda: manager)
     loop = asyncio.new_event_loop()
     subprocess.run(["docker", "rm", "-f", f"flowfile-kernel-{KERNEL_ID}"], capture_output=True)
@@ -129,7 +127,6 @@ def notebook_kernel(core_url, monkeypatch):
         finally:
             loop.close()
             subprocess.run(["docker", "rm", "-f", f"flowfile-kernel-{KERNEL_ID}"], capture_output=True)
-            shutil.rmtree(shared, ignore_errors=True)
             kernel_runner._sessions.clear()
             kernel_runner._verified.clear()
 

@@ -12,9 +12,8 @@ import re
 from collections.abc import Iterable
 
 from flowfile_core.schemas.catalog_schema import DeltaVersionCommit
+from shared.catalog_sql import is_table_reference as is_table_reference
 from shared.delta_utils import NO_VERSIONS_HASH, format_delta_timestamp
-
-_TABLE_INTRODUCERS = r"\b(?:FROM|JOIN|INTO|UPDATE)\b|,"
 
 
 def rewrite_qualified_references(query: str, qualified_names: Iterable[str]) -> str:
@@ -90,23 +89,6 @@ def reads_other(query: str, own: set[str]) -> bool:
     collapsed = rewrite_qualified_references(query, own)
     known = own | {plain_reference(name) for name in _WITH_NAME.findall(collapsed)}
     return any(plain_reference(name) not in known for name in _READ_FROM.findall(collapsed))
-
-
-def is_table_reference(name: str, query: str) -> bool:
-    """Return True iff ``name`` appears as an actual table reference in ``query``.
-
-    Matches after a table-introducing keyword (``FROM``/``JOIN``/``INTO``/``UPDATE``)
-    or a comma (continuation of a ``FROM`` list). Accepts both the bare identifier
-    and its double-quoted form; rejects lookalikes that continue into a longer
-    identifier (e.g. ``t`` should not match inside ``test-table``). This avoids
-    false positives from column aliases (``SELECT x AS t``) and substrings.
-    """
-    escaped = re.escape(name)
-    pattern = re.compile(
-        rf'(?:{_TABLE_INTRODUCERS})\s+(?:"{escaped}"|{escaped}(?![\w"-]))',
-        re.IGNORECASE,
-    )
-    return bool(pattern.search(query))
 
 
 def parse_delta_history(raw_history: list[dict]) -> list[DeltaVersionCommit]:

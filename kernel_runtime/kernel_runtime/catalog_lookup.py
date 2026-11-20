@@ -104,7 +104,7 @@ def lookup(payload: dict[str, Any]) -> dict[str, Any]:
             if row["table_type"] == "virtual":
                 result["materialized"] = client._materialize_virtual_table(connection, row, row["name"])
         elif kind == "catalog_sql_tables":
-            from flowfile_core.catalog.text_utils import is_table_reference
+            from shared.catalog_sql import is_table_reference
 
             query = args["sql_query"]
             paths, namespaces_by_name, materialized = {}, {}, {}
