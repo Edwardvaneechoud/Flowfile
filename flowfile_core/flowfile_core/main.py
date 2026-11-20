@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import os
 import signal
@@ -22,17 +23,19 @@ if __name__ == "__main__" and "--run-flow" in sys.argv:
     sys.exit(_run_flow_main(sys.argv))
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from flowfile_core import change_feed
 from flowfile_core import telemetry as core_telemetry
 from flowfile_core.ai import router as ai_router
 from flowfile_core.ai.admin_routes import router as ai_admin_router
 from flowfile_core.artifacts import router as artifacts_router
+from flowfile_core.auth.jwt import internal_token_valid
 from flowfile_core.configs.access_log import install_access_log_redaction
 from flowfile_core.configs.settings import (
     SERVER_HOST,
@@ -294,14 +297,34 @@ app.include_router(compute_backends_router, tags=["compute_backends"])
 core_telemetry.install(app)
 
 
-@app.post("/shutdown")
-async def shutdown(background_tasks: BackgroundTasks):
-    """An API endpoint to gracefully shut down the server.
+def _supervising_shell(request: Request) -> bool:
+    """Whether the caller can be the desktop shell that runs this server: a loopback peer, when a shell supervises it.
 
-    This endpoint sets a flag that the Uvicorn server checks, allowing it
-    to terminate cleanly. A background task is used to trigger the shutdown
-    after the HTTP response has been sent.
+    The shell sets ``FLOWFILE_SUPERVISOR_PID`` for its sidecars only. Uvicorn takes the peer from ``X-Forwarded-For``
+    behind a trusted (loopback) proxy, so behind a same-host proxy that sends none every client reads as loopback.
+    That is why no server a shell does not supervise trusts the peer.
     """
+    if not os.environ.get("FLOWFILE_SUPERVISOR_PID"):
+        return False
+    host = request.client.host if request.client else ""
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+@app.post("/shutdown")
+async def shutdown(request: Request, background_tasks: BackgroundTasks):
+    """Shut the server down gracefully, for a caller with the internal token or for the desktop shell that runs it.
+
+    The internal token, in ``X-Internal-Token`` as core's other internal routes take it, is accepted from any peer;
+    without it only the supervising shell is (``_supervising_shell``), which posts from the same host and holds no
+    token. Anything else is 403. The token is read on a pool thread, since its first read may load it from the
+    store. Uvicorn is told to exit from a background task, once the answer has been sent.
+    """
+    token = request.headers.get("X-Internal-Token")
+    if not (_supervising_shell(request) or await run_in_threadpool(internal_token_valid, token)):
+        raise HTTPException(status_code=403, detail="Shutdown needs the internal token")
     background_tasks.add_task(trigger_shutdown)
     return {"message": "Server is shutting down"}
 

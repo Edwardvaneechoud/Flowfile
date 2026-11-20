@@ -1,15 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../api/catalog.api", () => ({ CatalogApi: {} }));
-vi.mock("./useGraphicWalkerCompute", () => ({ useGraphicWalkerCompute: vi.fn() }));
+const { computeSavedMock } = vi.hoisted(() => ({ computeSavedMock: vi.fn() }));
+vi.mock("../api/catalog.api", () => ({
+  CatalogApi: { computeSavedVisualization: computeSavedMock },
+}));
+vi.mock("./useGraphicWalkerCompute", () => ({
+  useGraphicWalkerCompute: vi.fn(() => ({ computation: vi.fn(), lastError: { value: null } })),
+}));
 
 import {
   buildFilterStep,
   describeFieldFit,
+  filterSourceKey,
   filtersTargetingTile,
+  missingSourceText,
+  splitChartFilters,
+  tileSourceOf,
+  useDashboardComputation,
+  withFilterStep,
   type TileField,
 } from "./useDashboardComputation";
-import type { DashboardFilter } from "../types";
+import { ref } from "vue";
+import type { DashboardFilter, DashboardTile } from "../types";
 
 const filterOf = (over: Partial<DashboardFilter>): DashboardFilter => ({
   id: "f",
@@ -22,8 +34,11 @@ const filterOf = (over: Partial<DashboardFilter>): DashboardFilter => ({
   ...over,
 });
 
-const datasourceOf = (map: Record<string, number | null>) => (tileId: string) =>
-  map[tileId] ?? null;
+const datasourceOf = (map: Record<string, number | string | null>) => (tileId: string) => {
+  const v = map[tileId];
+  if (v == null) return null;
+  return typeof v === "number" ? `table:${v}` : v;
+};
 
 const fieldsOf = (spec: Record<string, string | undefined>): TileField[] =>
   Object.entries(spec).map(([fid, semanticType]) => ({ fid, semanticType }));
@@ -164,6 +179,69 @@ describe("buildFilterStep", () => {
   });
 });
 
+describe("buildFilterStep with a date filter", () => {
+  const dateFilter = (state: Record<string, unknown>) =>
+    filterOf({ field_name: "order_date", kind: "date_range", state });
+
+  it("sends a fixed window as stored", () => {
+    const start = "2026-07-01T00:00:00.000Z";
+    const end = "2026-07-07T00:00:00.000Z";
+    expect(buildFilterStep([dateFilter({ start, end })], null)?.filters[0]).toEqual({
+      fid: "order_date",
+      rule: { type: "temporal range", value: [Date.parse(start), Date.parse(end)] },
+    });
+  });
+
+  it("works a named window out when the query is built", () => {
+    const [from, to] = buildFilterStep([dateFilter({ preset: "last_7_days" })], null)?.filters[0]
+      ?.rule.value as number[];
+    expect(to).toBeGreaterThan(Date.now() - 1);
+    expect(Math.round((to - from) / 86_400_000)).toBe(7);
+  });
+});
+
+describe("splitChartFilters", () => {
+  const row = { fid: "product", rule: { type: "not in", value: ["Desk Lamp"] } };
+  const unset = { fid: "status", rule: null };
+  const computed = { fid: "gw_margin", rule: { type: "range", value: [0, 1] }, computed: true };
+  const aggregated = {
+    fid: "amount",
+    rule: { type: "range", value: [100, null] },
+    enableAgg: true,
+  };
+  const chartOf = (filters: unknown[]) =>
+    ({ name: "c", encodings: { rows: ["r"], filters } }) as any;
+
+  it("moves row filters into the query and takes them out of the chart", () => {
+    const { chart, filters } = splitChartFilters(chartOf([row, unset]));
+    expect(filters).toEqual([{ fid: "product", rule: row.rule }]);
+    expect(chart.encodings.filters).toEqual([]);
+    expect(chart.encodings.rows).toEqual(["r"]);
+  });
+
+  it("leaves filters on computed and aggregated fields where the chart runs them", () => {
+    const { chart, filters } = splitChartFilters(chartOf([row, computed, aggregated]));
+    expect(filters).toEqual([{ fid: "product", rule: row.rule }]);
+    expect(chart.encodings.filters).toEqual([computed, aggregated]);
+  });
+
+  it("hands the same chart back when there is nothing to move", () => {
+    const withLateFilters = chartOf([computed]);
+    expect(splitChartFilters(withLateFilters).chart).toBe(withLateFilters);
+    const plain = { name: "c" } as any;
+    expect(splitChartFilters(plain)).toEqual({ chart: plain, filters: [] });
+  });
+
+  it("joins the dashboard's own filters in one step", () => {
+    const { filters } = splitChartFilters(chartOf([row]));
+    expect(buildFilterStep([filterOf({})], null, filters)?.filters.map((f) => f.fid)).toEqual([
+      "product",
+      "region",
+    ]);
+    expect(buildFilterStep([], null, filters)?.filters).toHaveLength(1);
+  });
+});
+
 describe("describeFieldFit", () => {
   it("reports unknown, missing, fitting and unclassified columns", () => {
     expect(describeFieldFit("categorical", "region", null)).toEqual({ status: "unknown" });
@@ -197,6 +275,152 @@ describe("describeFieldFit", () => {
     expect(describeFieldFit("categorical", "when", fieldsOf({ when: "temporal" }))).toEqual({
       status: "type",
       reason: "when is a date column here; a categorical filter needs text or number",
+    });
+  });
+});
+
+describe("tileSourceOf", () => {
+  const tileOf = (over: Partial<DashboardTile>): DashboardTile => ({
+    id: "t",
+    type: "table",
+    viz_id: null,
+    chart_index: 0,
+    x: 0,
+    y: 0,
+    w: 6,
+    h: 6,
+    ...over,
+  });
+
+  it("reads a table directly when the tile names one, else its chart", () => {
+    expect(tileSourceOf(tileOf({ table_id: 5 }))).toEqual({ kind: "table", tableId: 5 });
+    expect(tileSourceOf(tileOf({ type: "kpi", table_id: 5 }))).toEqual({
+      kind: "table",
+      tableId: 5,
+    });
+    expect(tileSourceOf(tileOf({ viz_id: 3 }))).toEqual({ kind: "viz", vizId: 3 });
+    expect(tileSourceOf(tileOf({}))).toBeNull();
+  });
+
+  it("never reads a table for a chart tile", () => {
+    expect(tileSourceOf(tileOf({ type: "viz", viz_id: 3, table_id: 5 }))).toEqual({
+      kind: "viz",
+      vizId: 3,
+    });
+  });
+
+  it("a filter tile reads no data, so the datasource lists and filter targets leave it out", () => {
+    expect(tileSourceOf(tileOf({ type: "filter", filter_id: "f", viz_id: 3 }))).toBeNull();
+  });
+
+  it("an image tile reads no data either", () => {
+    expect(tileSourceOf(tileOf({ type: "image", viz_id: 3, table_id: 5 }))).toBeNull();
+  });
+
+  it("names the missing source", () => {
+    expect(missingSourceText({ kind: "table", tableId: 5 })).toBe("Table #5 no longer exists.");
+    expect(missingSourceText({ kind: "viz", vizId: 3 })).toBe("Visualization #3 no longer exists.");
+  });
+});
+
+describe("a filter on a SQL chart's source", () => {
+  const onChart = filterOf({ datasource_id: null, datasource_viz_id: 2 });
+  const ds = datasourceOf({ chart: "viz:2", kpi: "viz:2", other: "viz:3", table: 5 });
+  const fields = fieldsOf({ region: "nominal" });
+
+  it("is keyed by its chart, a table filter by its table, an untied one by nothing", () => {
+    expect(filterSourceKey(onChart)).toBe("viz:2");
+    expect(filterSourceKey(filterOf({}))).toBe("table:5");
+    expect(filterSourceKey(filterOf({ datasource_id: null }))).toBeNull();
+  });
+
+  it("reaches the tiles reading that chart, not another chart nor a table", () => {
+    expect(filtersTargetingTile([onChart], "chart", ds, fields)).toEqual([onChart]);
+    expect(filtersTargetingTile([onChart], "kpi", ds, fields)).toEqual([onChart]);
+    expect(filtersTargetingTile([onChart], "other", ds, fields)).toEqual([]);
+    expect(filtersTargetingTile([onChart], "table", ds, fields)).toEqual([]);
+  });
+
+  it("scope all still reaches any tile with the column", () => {
+    const wide = { ...onChart, scope: "all" as const };
+    expect(filtersTargetingTile([wide], "table", ds, fields)).toEqual([wide]);
+    expect(filtersTargetingTile([wide], "other", ds, fieldsOf({ amount: "nominal" }))).toEqual([]);
+  });
+});
+
+describe("buildFilterStep with a single-select filter", () => {
+  it("sends at most one value, even from a state that holds several", () => {
+    const f = filterOf({ multiple: false, state: { selected: ["EU", "US"] } });
+    expect(buildFilterStep([f], null)?.filters).toEqual([
+      { fid: "region", rule: { type: "one of", value: ["EU"] } },
+    ]);
+  });
+
+  it("does nothing when cleared", () => {
+    expect(
+      buildFilterStep([filterOf({ multiple: false, state: { selected: [] } })], null),
+    ).toBeNull();
+  });
+});
+
+describe("withFilterStep", () => {
+  const view = { type: "view", query: [{ op: "raw", fields: ["region"] }] };
+  const step = { type: "filter" as const, filters: [{ fid: "region", rule: { type: "one of" } }] };
+
+  it("runs the filter step first and keeps the rest of the payload", () => {
+    expect(withFilterStep({ workflow: [view], limit: 5 }, step)).toEqual({
+      workflow: [step, view],
+      limit: 5,
+    });
+  });
+
+  it("leaves a payload alone with no step or no workflow", () => {
+    const payload = { workflow: [view] };
+    expect(withFilterStep(payload, null)).toBe(payload);
+    const bare = { limit: 1 } as { workflow?: unknown[]; limit: number };
+    expect(withFilterStep(bare, step)).toBe(bare);
+  });
+});
+
+describe("useDashboardComputation's query", () => {
+  it("sends one payload as the tile does, through the chart's route, with its filters first", async () => {
+    computeSavedMock.mockResolvedValue({
+      rows: [{ region: "West", amount_sum: 150 }],
+      error: null,
+    });
+    const tile = ref<DashboardTile>({
+      id: "t1",
+      type: "viz",
+      viz_id: 3,
+      chart_index: 0,
+      x: 0,
+      y: 0,
+      w: 4,
+      h: 4,
+    } as DashboardTile);
+    const chartFilter = { fid: "amount", rule: { type: "range", value: [1, null] } };
+    const { query } = useDashboardComputation({
+      tile,
+      filters: ref([filterOf({ datasource_id: null, scope: "all" })]),
+      tileFields: () => fieldsOf({ region: "nominal", amount: "quantitative" }),
+      chartFilters: () => [chartFilter],
+    });
+    const view = { type: "view", query: [{ op: "aggregate", groupBy: ["region"] }] };
+
+    const result = await query({ workflow: [view] });
+
+    expect(result).toEqual({ rows: [{ region: "West", amount_sum: 150 }], error: null });
+    expect(computeSavedMock).toHaveBeenCalledWith(3, {
+      payload: {
+        workflow: [
+          {
+            type: "filter",
+            filters: [chartFilter, { fid: "region", rule: { type: "one of", value: ["EU"] } }],
+          },
+          view,
+        ],
+      },
+      maxRows: undefined,
     });
   });
 });

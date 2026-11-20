@@ -12,7 +12,7 @@ def start_minio():
     """Start MinIO container for S3 testing"""
     from . import fixtures
     if not fixtures.is_docker_available():
-        logger.warning("Docker is not available. Cannot start PostgreSQL container.")
+        logger.warning("Docker is not available. Cannot start MinIO container.")
         print("\n" + "=" * 50)
         print("SKIPPING: Docker is not available on this system")
         print("Tests requiring Docker will need to be skipped")

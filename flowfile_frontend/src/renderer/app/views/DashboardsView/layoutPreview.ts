@@ -5,12 +5,15 @@ import {
   type SeparatorOrientation,
 } from "../../types";
 import { upgradeLayoutGrid } from "./gridVersion";
+import { resolveTabId, tilesOfTab } from "./dashboardTabs";
 
 export interface PreviewRect {
   id: string;
   type: DashboardTileType;
   vizId: number | null;
   orientation: SeparatorOrientation;
+  /** An image tile that holds a picture; the library list carries no image bytes, so a card shows an icon. */
+  hasImage: boolean;
   /** Percentages of the preview box, so the wireframe scales with the card. */
   left: number;
   top: number;
@@ -23,19 +26,22 @@ const MIN_PREVIEW_ROWS = 8;
 
 /**
  * Turn a dashboard layout into normalised rectangles for a miniature wireframe.
- * Legacy grids are upgraded first so old and new layouts land on the same columns.
+ * Legacy grids are upgraded first so old and new layouts land on the same columns. A dashboard
+ * with tabs previews its first tab.
  */
 export function buildLayoutPreview(layout: DashboardLayout): PreviewRect[] {
   const current = upgradeLayoutGrid(layout);
-  if (!current.tiles.length) return [];
+  const tiles = tilesOfTab(current, resolveTabId(current, null));
+  if (!tiles.length) return [];
   const stored = current.grid?.cols;
   const cols = stored && stored > 0 ? stored : DASHBOARD_GRID_COLS;
-  const rows = Math.max(MIN_PREVIEW_ROWS, ...current.tiles.map((t) => t.y + t.h));
-  return current.tiles.map((t) => ({
+  const rows = Math.max(MIN_PREVIEW_ROWS, ...tiles.map((t) => t.y + t.h));
+  return tiles.map((t) => ({
     id: t.id,
     type: t.type,
     vizId: t.viz_id ?? null,
     orientation: t.orientation ?? "horizontal",
+    hasImage: t.type === "image" && t.image != null,
     left: (t.x / cols) * 100,
     top: (t.y / rows) * 100,
     width: (t.w / cols) * 100,

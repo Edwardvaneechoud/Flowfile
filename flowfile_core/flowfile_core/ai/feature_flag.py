@@ -29,11 +29,24 @@ added per-route alongside the AI endpoints.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import HTTPException, status
 
 from flowfile_core.configs import settings as _settings
 
 DISABLED_DETAIL = "AI features are disabled. Set FEATURE_FLAG_AI=true to enable."
+SEND_DATA_ENV_VAR = "FLOWFILE_AI_SEND_DATA"
+
+
+def send_data_allowed() -> bool:
+    """Whether this server lets AI features send data values (statistics, examples) to a model.
+
+    The one gate every AI route that sends data asks; each user may still turn it off for
+    themselves. Reads ``FLOWFILE_AI_SEND_DATA`` on every call: unset or empty means allowed,
+    ``0``/``false``/``no``/``off`` turns it off. Names and types are not data values.
+    """
+    return os.environ.get(SEND_DATA_ENV_VAR, "").strip().lower() not in ("0", "false", "no", "off")
 
 
 def is_ai_enabled() -> bool:

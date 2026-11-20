@@ -1368,6 +1368,40 @@ export const useCatalogStore = defineStore("catalog", {
       this.visualizationLibrary = this.visualizationLibrary.filter((v) => v.id !== vizId);
     },
 
+    /** Make a dashboard's chart a chart of its own; the lists that hold it follow. */
+    async detachVisualization(vizId: number) {
+      const kept = await CatalogApi.detachVisualization(vizId);
+      const own = { dashboard_id: kept.dashboard_id, dashboard_name: kept.dashboard_name };
+      const next = { ...this.visualizationsByTable };
+      for (const tid of Object.keys(next)) {
+        next[Number(tid)] = next[Number(tid)].map((v) => (v.id === vizId ? { ...v, ...own } : v));
+      }
+      this.visualizationsByTable = next;
+      this.visualizationLibrary = this.visualizationLibrary.map((v) =>
+        v.id === vizId ? { ...v, ...own } : v,
+      );
+      return kept;
+    },
+
+    /** Remove a dashboard's own charts its saved layout no longer uses; the lists follow. */
+    async pruneDashboardCharts(dashboardId: number) {
+      const pruned = await CatalogApi.pruneDashboardCharts(dashboardId);
+      const deleted = new Set(pruned.deleted);
+      const released = new Set(pruned.released);
+      if (!deleted.size && !released.size) return pruned;
+      const settle = (items: CatalogVisualization[]) =>
+        items
+          .filter((v) => !deleted.has(v.id))
+          .map((v) =>
+            released.has(v.id) ? { ...v, dashboard_id: null, dashboard_name: null } : v,
+          );
+      const next = { ...this.visualizationsByTable };
+      for (const tid of Object.keys(next)) next[Number(tid)] = settle(next[Number(tid)]);
+      this.visualizationsByTable = next;
+      this.visualizationLibrary = settle(this.visualizationLibrary);
+      return pruned;
+    },
+
     /** Always refetch: the worker caches fields per Delta version, so a
      * frontend cache keyed by source descriptor would go stale as soon as a
      * column is added to the table. */

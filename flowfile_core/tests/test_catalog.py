@@ -2287,6 +2287,33 @@ class TestPushTableTrigger:
             runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
             assert len(runs) == 0
 
+    @pytest.mark.parametrize("owner_state", ["disabled", "deleted"])
+    def test_push_trigger_switches_off_a_schedule_whose_owner_is_not_active(self, monkeypatch, owner_state):
+        """A write to the watched table starts no run for a disabled or deleted owner and switches the schedule off."""
+        from flowfile_scheduler.engine import OWNER_NOT_ACTIVE
+
+        _schema_id, flow_id, table_id, schedule_id, parquet_path = self._setup_table_and_schedule()
+        monkeypatch.setattr("flowfile_core.catalog.services.runs.spawn_flow_subprocess", lambda *a, **kw: None)
+        with get_db_context() as db:
+            owner = User(username=f"push_owner_{uuid.uuid4().hex[:8]}", disabled=True)
+            db.add(owner)
+            db.flush()
+            db.get(FlowSchedule, schedule_id).owner_id = owner.id
+            if owner_state == "deleted":
+                db.delete(owner)
+            db.commit()
+            owner_id = owner.id
+        try:
+            with get_db_context() as db:
+                CatalogService(SQLAlchemyCatalogRepository(db)).overwrite_table_data(table_id, parquet_path)
+                assert db.query(FlowRun).filter_by(registration_id=flow_id).count() == 0
+                schedule = db.get(FlowSchedule, schedule_id)
+                assert (schedule.enabled, schedule.disabled_reason) == (False, OWNER_NOT_ACTIVE)
+        finally:
+            with get_db_context() as db:
+                db.query(User).filter_by(id=owner_id).delete()
+                db.commit()
+
 
 # Trigger arming, metadata-edit suppression, scheduler-run visibility
 
@@ -3503,6 +3530,37 @@ class TestCronSchedules:
         )
         assert bad_tz.status_code == 200, bad_tz.text
         assert bad_tz.json()["valid"] is False
+
+
+def test_deleting_a_schedule_keeps_its_runs_without_it():
+    flow_id = TestCronSchedules._register_flow()
+    created = client.post(
+        "/catalog/schedules", json={"registration_id": flow_id, "schedule_type": "interval", "interval_seconds": 3600}
+    )
+    assert created.status_code == 201, created.text
+    sched_id = created.json()["id"]
+    with get_db_context() as db:
+        run = FlowRun(
+            registration_id=flow_id,
+            flow_name="cron_flow",
+            user_id=1,
+            started_at=datetime(2026, 1, 1),
+            ended_at=datetime(2026, 1, 1),
+            success=True,
+            notification_processed_at=datetime(2026, 1, 1),
+            run_type="scheduled",
+            schedule_id=sched_id,
+        )
+        db.add(run)
+        db.commit()
+        run_id = run.id
+
+    assert client.delete(f"/catalog/schedules/{sched_id}").status_code == 204
+
+    with get_db_context() as db:
+        assert db.get(FlowSchedule, sched_id) is None
+        kept = db.get(FlowRun, run_id)
+        assert kept is not None and kept.schedule_id is None
 
 
 class TestScheduleBackend:

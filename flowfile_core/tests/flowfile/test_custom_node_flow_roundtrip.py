@@ -197,6 +197,42 @@ class TestBuiltinKeyCollision:
 
 
 class TestMissingNodeGracefulDegradation:
+    @pytest.mark.parametrize("suffix", ["yaml", "json"])
+    def test_unconfigured_missing_node_roundtrip(self, temp_dir, store_snapshot, suffix):
+        store_snapshot.add_to_custom_node_store(RoundtripFixedColumn)
+        flow = create_graph(6010)
+        flow.add_node_promise(input_schema.NodePromise(flow_id=6010, node_id=1, node_type="manual_input"))
+        flow.add_node_promise(
+            input_schema.NodePromise(
+                flow_id=6010, node_id=2, node_type=NODE_TYPE,
+                description="Configure this later", node_reference="pending_custom",
+            )
+        )
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        saved_path = temp_dir / f"unconfigured.{suffix}"
+        flow.save_flow(str(saved_path))
+        store_snapshot.remove_from_custom_node_store(NODE_TYPE)
+
+        loaded = open_flow(saved_path)
+        node = loaded.get_node(2)
+        assert node is not None
+        assert node.node_type == NODE_TYPE
+        assert isinstance(node.setting_input, input_schema.NodePromise)
+        assert node.setting_input.description == "Configure this later"
+        assert node.setting_input.node_reference == "pending_custom"
+        assert [n.node_id for n in node.all_inputs] == [1]
+
+        resaved_path = temp_dir / f"resaved_unconfigured.{suffix}"
+        loaded.save_flow(str(resaved_path))
+        reloaded = open_flow(resaved_path)
+        assert isinstance(reloaded.get_node(2).setting_input, input_schema.NodePromise)
+        assert [n.node_id for n in reloaded.get_node(2).all_inputs] == [1]
+
+        store_snapshot.add_to_custom_node_store(RoundtripFixedColumn)
+        recovered = open_flow(resaved_path)
+        assert recovered.get_node(2).node_template.name == RoundtripFixedColumn().node_name
+        assert isinstance(recovered.get_node(2).setting_input, input_schema.NodePromise)
+
     @pytest.fixture
     def saved_flow_path(self, temp_dir, store_snapshot):
         store_snapshot.add_to_custom_node_store(RoundtripFixedColumn)

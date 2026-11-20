@@ -48,6 +48,9 @@ def db_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     db_models.Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
+    session.add(db_models.User(id=1, username="owner1", disabled=False))
+    session.add(db_models.User(id=2, username="owner2", disabled=False))
+    session.commit()
     try:
         yield session
     finally:

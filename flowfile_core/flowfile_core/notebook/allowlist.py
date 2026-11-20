@@ -94,8 +94,8 @@ _READERS = ("scan_ipc", "scan_ndjson", "read_avro", "read_ipc_stream")
 _WINDOW = ("rolling_sum", "rolling_mean", "rolling_min", "rolling_max", "rolling_std")
 _CUMULATIVE = ("cum_sum", "cum_count", "cum_min", "cum_max")
 _FORMULA_EXPR = (
-    "abs", "arccos", "arcsin", "arctan", "ceil", "cos", "eq", "exp", "floor", "hash", "is_between", "log", "mod",
-    "neg", "pow", "sign", "sin", "sqrt", "tan", "tanh",
+    "abs", "arccos", "arcsin", "arctan", "ceil", "cos", "eq", "exp", "floor", "hash", "implode", "is_between", "log",
+    "mod", "neg", "pow", "sign", "sin", "sqrt", "tan", "tanh",
 )  # fmt: skip
 _FORMULA_STR = (
     "decode", "encode", "len_chars", "reverse", "strip_chars", "strip_chars_end", "strip_chars_start", "to_date",
@@ -140,7 +140,7 @@ ALLOWLIST: dict[str, dict[str, str]] = {
 
 _FRAME_PURE_TRANSFORMS = (
     "bottom_k", "cast", "count", "drop_nans", "drop_nulls", "explode", "fill_nan", "fill_null", "first",
-    "gather_every", "interpolate", "last", "limit", "max", "mean", "median", "melt", "min", "null_count", "quantile",
+    "gather_every", "interpolate", "last", "limit", "max", "mean", "median", "min", "null_count", "quantile",
     "reverse", "shift", "slice", "std", "sum", "tail", "top_k", "unnest", "var",
 )  # fmt: skip
 _FRAME_NODE_BUILDERS = (

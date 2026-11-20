@@ -368,6 +368,8 @@ def test_derived_values_are_what_they_were():
         ":(glob)connections/cloud/*.yaml",
         ":(glob)flows/*.flow.yaml",
         ":(glob)schedules/*.yaml",
+        ":(glob)visualizations/*.visualization.yaml",
+        ":(glob)dashboards/*.dashboard.yaml",
         ":(glob)notebooks/*.notebook.yaml",
     ]
     cases = {
@@ -381,6 +383,8 @@ def test_derived_values_are_what_they_were():
         "tables.yaml": (("catalog tables", "tables"), "tables"),
         "models.yaml": (("models", "models"), "models"),
         "kernels.yaml": (("kernels", "kernels"), "kernels"),
+        "visualizations/sales.visualization.yaml": (("visualizations", "sales"), "visualizations"),
+        "dashboards/kpis.dashboard.yaml": (("dashboards", "kpis"), "dashboards"),
         "visualizations.yaml": (("visualizations", "visualizations"), "visualizations"),
         "dashboards.yaml": (("dashboards", "dashboards"), "dashboards"),
         "project.yaml": (("settings", "project.yaml"), "project"),

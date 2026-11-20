@@ -9,11 +9,13 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
+from packaging.version import InvalidVersion, Version
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from flowfile_core.catalog.constants import (
@@ -54,6 +56,7 @@ from flowfile_core.database.models import CatalogDashboard, CatalogTable, Catalo
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.schemas.catalog_schema import (
     ColumnStatsResponse,
+    DashboardChartPruneOut,
     DashboardCreate,
     DashboardLayout,
     DashboardOut,
@@ -104,6 +107,35 @@ def _kept_plan_source(user_id: int | None, key: str, build: Callable[[], pl.Lazy
     }
     _plan_sources[(user_id, key)] = (now, source)
     return source
+
+
+WORKSHEET_DEFAULT_SINCE = Version("0.6")
+"""The Graphic Walker release that made its worksheet renderer the default."""
+
+
+def spec_for_reading(spec_list: list[dict], gw_version: str | None) -> list[dict]:
+    """A saved spec as the current chart builder should read it.
+
+    Graphic Walker before 0.6 wrote its then-default renderer, ``vega-lite``, into every chart it
+    exported. A chart in a row last written by such a version, or by one that left no version,
+    therefore names a default and not a choice, and reads without it, so it is drawn by today's
+    default. A row written by 0.6 or later keeps the renderer it names, and so does one whose
+    version does not parse.
+    """
+    if gw_version is not None:
+        try:
+            if Version(gw_version) >= WORKSHEET_DEFAULT_SINCE:
+                return spec_list
+        except InvalidVersion:
+            return spec_list
+    read: list[dict] = []
+    for chart in spec_list:
+        layout = chart.get("layout")
+        if isinstance(layout, dict) and layout.get("renderer") == "vega-lite":
+            layout = {k: v for k, v in layout.items() if k != "renderer"}
+            chart = {**chart, "layout": layout}
+        read.append(chart)
+    return read
 
 
 # polars-gw workflow that returns rows un-aggregated (raw select-all).
@@ -182,9 +214,11 @@ class VisualizationService:
             spec_list = [item for item in raw if isinstance(item, dict)]
         else:
             spec_list = []
+        spec_list = spec_for_reading(spec_list, viz.spec_gw_version)
 
         table = self.repo.get_table(viz.catalog_table_id) if viz.catalog_table_id is not None else None
         enrichment = self._resolve_viz_enrichment(viz, table)
+        owner = self.repo.get_dashboard(viz.dashboard_id) if viz.dashboard_id is not None else None
         return VisualizationOut(
             id=viz.id,
             name=viz.name,
@@ -205,6 +239,8 @@ class VisualizationService:
             table_full_name=enrichment.table_full_name,
             table_type=enrichment.table_type,
             namespace_name=enrichment.namespace_name,
+            dashboard_id=owner.id if owner is not None else None,
+            dashboard_name=owner.name if owner is not None else None,
         )
 
     # ---- Visualizations CRUD -------------------------------------------- #
@@ -230,10 +266,12 @@ class VisualizationService:
             t = self.repo.get_table(tid)
             if t is not None:
                 tables_by_id[tid] = t
+        owner_names = {d.id: d.name for d in self.repo.list_dashboards()} if any(r.dashboard_id for r in rows) else {}
         items: list[VisualizationOut] = []
         for viz in rows:
             table = tables_by_id.get(viz.catalog_table_id) if viz.catalog_table_id else None
             enrichment = self._resolve_viz_enrichment(viz, table)
+            owner_id = viz.dashboard_id if viz.dashboard_id in owner_names else None
             items.append(
                 VisualizationOut(
                     id=viz.id,
@@ -254,6 +292,8 @@ class VisualizationService:
                     table_full_name=enrichment.table_full_name,
                     table_type=enrichment.table_type,
                     namespace_name=enrichment.namespace_name,
+                    dashboard_id=owner_id,
+                    dashboard_name=owner_names.get(owner_id) if owner_id is not None else None,
                 )
             )
         return items
@@ -274,6 +314,8 @@ class VisualizationService:
                 raise TableNotFoundError(table_id=payload.catalog_table_id or 0)
             if namespace_id is None:
                 namespace_id = table.namespace_id
+        if payload.dashboard_id is not None and self.repo.get_dashboard(payload.dashboard_id) is None:
+            raise DashboardNotFoundError(dashboard_id=payload.dashboard_id)
 
         viz = CatalogVisualization(
             name=payload.name,
@@ -286,6 +328,7 @@ class VisualizationService:
             sql_query=payload.sql_query if payload.source_type == "sql" else None,
             thumbnail_data_url=validate_thumbnail(payload.thumbnail_data_url),
             namespace_id=namespace_id,
+            dashboard_id=payload.dashboard_id,
             created_by=user_id,
         )
         try:
@@ -301,7 +344,7 @@ class VisualizationService:
         if payload.expected_updated_at is not None and viz.updated_at != payload.expected_updated_at:
             raise StaleWriteError("visualization", viz_id, expected=payload.expected_updated_at, current=viz.updated_at)
         # Atomic guard (see repo docstring); must precede attribute edits (autoflush would fire onupdate).
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not self.repo.stamp_visualization_updated_at(viz_id, payload.expected_updated_at, now):
             if payload.expected_updated_at is None:
                 raise VisualizationNotFoundError(viz_id=viz_id)
@@ -351,51 +394,153 @@ class VisualizationService:
             raise VisualizationNotFoundError(viz_id=viz_id)
         self.repo.delete_visualization(viz_id)
 
+    def detach_visualization(self, viz_id: int, user_id: int) -> VisualizationOut:
+        """Make a dashboard's chart a chart of its own: it is listed in the library and outlives the dashboard."""
+        viz = self.repo.get_visualization(viz_id)
+        if viz is None:
+            raise VisualizationNotFoundError(viz_id=viz_id)
+        if viz.dashboard_id is not None:
+            viz.dashboard_id = None
+            viz = self.repo.update_visualization(viz)
+        return self._viz_to_out(viz)
+
     # ---- Dashboards CRUD ------------------------------------------------ #
 
-    def _validate_filter_datasources(self, layout: DashboardLayout) -> None:
-        """Ensure filter datasource_ids and target_tile_ids refer to known entities."""
+    @staticmethod
+    def _validate_tabs(layout: DashboardLayout) -> None:
+        """Refuse a save whose tab ids repeat or that leaves a tile off the layout's tabs: with tabs every
+        tile names one of them, without tabs none names any. Reading a stored layout never refuses it."""
+        tab_ids: set[str] = set()
+        for tab in layout.tabs:
+            if tab.id in tab_ids:
+                raise ValueError(f"tab '{tab.id}' appears more than once")
+            tab_ids.add(tab.id)
+        for tile in layout.tiles:
+            if not tab_ids and tile.tab_id is not None:
+                raise ValueError(f"tile '{tile.id}' is on tab '{tile.tab_id}', but the layout has no tabs")
+            if tab_ids and tile.tab_id is None:
+                raise ValueError(f"tile '{tile.id}' is on no tab (tab_id is not set)")
+            if tab_ids and tile.tab_id not in tab_ids:
+                raise ValueError(f"tile '{tile.id}' is on unknown tab '{tile.tab_id}'")
+
+    def _caller_can_read(self, resource_type: str, resource_id: int) -> bool:
+        return self._facade is None or self._facade.caller_can_read(resource_type, resource_id)
+
+    def _validate_filter_datasources(self, layout: DashboardLayout, kept: DashboardLayout | None = None) -> None:
+        """Ensure filter datasource_ids, datasource_viz_ids (a SQL chart's) and target_tile_ids refer to
+        known entities, and that each filter tile places a filter of this layout, at most one tile per filter.
+
+        A source the caller may not read is unknown to them, unless ``kept`` (the stored layout) already
+        binds it: a manage grantee keeps the owner's filters, and learns nothing they could not read."""
+        self._validate_tabs(layout)
+        kept_viz = {f.datasource_viz_id for f in kept.filters} if kept else set()
+        kept_tables = {f.datasource_id for f in kept.filters} if kept else set()
+        filter_ids = {f.id for f in layout.filters}
+        placed: set[str] = set()
+        for tile in layout.tiles:
+            if tile.type != "filter":
+                continue
+            if tile.filter_id not in filter_ids:
+                raise ValueError(f"filter tile '{tile.id}' places unknown filter '{tile.filter_id}'")
+            if tile.filter_id in placed:
+                raise ValueError(f"filter '{tile.filter_id}' is placed on the canvas more than once")
+            placed.add(tile.filter_id)
         seen: dict[int, bool] = {}
+        viz_sources: dict[int, str | None] = {}
         tile_ids = {t.id for t in layout.tiles}
         for f in layout.filters:
             for tid in f.target_tile_ids:
                 if tid not in tile_ids:
                     raise ValueError(f"filter '{f.id}' targets unknown tile_id={tid}")
+            if f.datasource_viz_id is not None:
+                if f.datasource_viz_id not in viz_sources:
+                    viz = self.repo.get_visualization(f.datasource_viz_id)
+                    if (
+                        viz is not None
+                        and viz.id not in kept_viz
+                        and not self._caller_can_read("visualization", viz.id)
+                    ):
+                        viz = None
+                    viz_sources[f.datasource_viz_id] = (viz.source_type or "table") if viz is not None else None
+                source_type = viz_sources[f.datasource_viz_id]
+                if source_type is None:
+                    raise ValueError(f"filter '{f.id}' references unknown visualization_id={f.datasource_viz_id}")
+                if source_type != "sql":
+                    raise ValueError(
+                        f"filter '{f.id}' takes chart {f.datasource_viz_id} as its source, but that chart reads a "
+                        "catalog table: bind the table (datasource_id) instead"
+                    )
             if f.datasource_id is None:
                 continue
             if f.datasource_id in seen:
                 if not seen[f.datasource_id]:
                     raise ValueError(f"filter '{f.id}' references unknown catalog_table_id={f.datasource_id}")
                 continue
-            exists = self.repo.get_table(f.datasource_id) is not None
+            exists = self.repo.get_table(f.datasource_id) is not None and (
+                f.datasource_id in kept_tables or self._caller_can_read("catalog_table", f.datasource_id)
+            )
             seen[f.datasource_id] = exists
             if not exists:
                 raise ValueError(f"filter '{f.id}' references unknown catalog_table_id={f.datasource_id}")
 
-    def _dashboard_to_out(self, dashboard: CatalogDashboard) -> DashboardOut:
+    @staticmethod
+    def _stored_layout(dashboard: CatalogDashboard) -> DashboardLayout:
+        """The layout a row holds, read without the save-time limits it may predate."""
         try:
             raw = json.loads(dashboard.layout_json) if dashboard.layout_json else {}
         except (TypeError, ValueError):
             raw = {}
-        layout = DashboardLayout.model_validate(raw) if raw else DashboardLayout()
+        return DashboardLayout.model_validate(raw, context={"stored": True}) if raw else DashboardLayout()
+
+    def _dashboard_to_out(self, dashboard: CatalogDashboard, layout: DashboardLayout | None = None) -> DashboardOut:
+        if layout is None:
+            layout = self._stored_layout(dashboard)
         ns_name: str | None = None
         if dashboard.namespace_id is not None:
             ns_name = self._namespaces.resolve_namespace_name(dashboard.namespace_id)
-        return DashboardOut(
-            id=dashboard.id,
-            name=dashboard.name,
-            description=dashboard.description,
-            layout=layout,
-            layout_version=dashboard.layout_version or 1,
-            namespace_id=dashboard.namespace_id,
-            namespace_name=ns_name,
-            created_by=dashboard.created_by,
-            created_at=dashboard.created_at,
-            updated_at=dashboard.updated_at,
+        # The layout's after-validators run again on nesting, so this read carries the stored context too.
+        return DashboardOut.model_validate(
+            {
+                "id": dashboard.id,
+                "name": dashboard.name,
+                "description": dashboard.description,
+                "layout": layout,
+                "layout_version": dashboard.layout_version or 1,
+                "namespace_id": dashboard.namespace_id,
+                "namespace_name": ns_name,
+                "created_by": dashboard.created_by,
+                "created_at": dashboard.created_at,
+                "updated_at": dashboard.updated_at,
+            },
+            context={"stored": True},
         )
 
+    @staticmethod
+    def _without_image_data(layout: DashboardLayout) -> DashboardLayout:
+        """The layout a library card draws: an image tile keeps its alt and fit, its ``data_url`` is empty."""
+        if all(t.image is None for t in layout.tiles):
+            return layout
+        tiles = [
+            t if t.image is None else t.model_copy(update={"image": t.image.model_copy(update={"data_url": ""})})
+            for t in layout.tiles
+        ]
+        return layout.model_copy(update={"tiles": tiles})
+
     def list_dashboards(self, user_id: int | None = None) -> list[DashboardOut]:
-        return [self._dashboard_to_out(d) for d in self.repo.list_dashboards()]
+        """Every dashboard, without its images' bytes (``get_dashboard`` carries them). One whose stored layout
+        no longer reads is listed with an empty layout, so it cannot break the library for everyone (opening
+        it still reports the error)."""
+        out: list[DashboardOut] = []
+        for dashboard in self.repo.list_dashboards():
+            try:
+                layout = self._without_image_data(self._stored_layout(dashboard))
+            except ValidationError as exc:
+                logger.warning(
+                    "Dashboard %s has a layout that does not read; listing it without one: %s", dashboard.id, exc
+                )
+                layout = DashboardLayout()
+            out.append(self._dashboard_to_out(dashboard, layout))
+        return out
 
     def get_dashboard(self, dashboard_id: int, user_id: int | None = None) -> DashboardOut:
         dashboard = self.repo.get_dashboard(dashboard_id)
@@ -452,16 +597,77 @@ class VisualizationService:
         if "layout" in provided:
             if payload.layout is None:
                 raise ValueError("layout cannot be cleared")
-            self._validate_filter_datasources(payload.layout)
+            try:
+                kept = self._stored_layout(dashboard)
+            except ValidationError:
+                kept = None
+            self._validate_filter_datasources(payload.layout, kept)
             dashboard.layout_json = payload.layout.model_dump_json()
-        dashboard.updated_at = datetime.now(timezone.utc)
+        dashboard.updated_at = datetime.now(UTC)
         updated = self.repo.update_dashboard(dashboard)
         return self._dashboard_to_out(updated)
 
-    def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
+    @staticmethod
+    def _stored_chart_ids(dashboard: CatalogDashboard) -> set[int] | None:
+        """Every chart a dashboard's stored layout uses: a tile's chart (a chart tile's, or the chart a KPI or
+        table tile reads through) and a filter's chart source. None, with a warning, when the layout does not
+        read as JSON."""
+        try:
+            raw = json.loads(dashboard.layout_json) if dashboard.layout_json else {}
+        except (TypeError, ValueError):
+            raw = None
+        if not isinstance(raw, dict):
+            logger.warning(
+                "The stored layout of dashboard %s does not read as JSON, so the charts it uses are not known",
+                dashboard.id,
+            )
+            return None
+        ids: set[int] = set()
+        for key, field in (("tiles", "viz_id"), ("filters", "datasource_viz_id")):
+            for item in raw.get(key) or []:
+                if isinstance(item, dict) and isinstance(item.get(field), int):
+                    ids.add(item[field])
+        return ids
+
+    def _drop_own_charts(self, dashboard: CatalogDashboard, keep: set[int]) -> DashboardChartPruneOut:
+        """Delete the charts that belong to ``dashboard`` and are not in ``keep``. One that another dashboard's
+        layout uses is made a chart of its own instead, so that dashboard keeps its tile. The other dashboards'
+        layouts are read only when there is a chart to drop."""
+        result = DashboardChartPruneOut()
+        dropped = [viz for viz in self.repo.list_dashboard_visualizations(dashboard.id) if viz.id not in keep]
+        if not dropped:
+            return result
+        elsewhere: set[int] = set()
+        for other in self.repo.list_dashboards():
+            if other.id != dashboard.id:
+                elsewhere |= self._stored_chart_ids(other) or set()
+        for viz in dropped:
+            if viz.id in elsewhere:
+                viz.dashboard_id = None
+                self.repo.update_visualization(viz)
+                result.released.append(viz.id)
+            else:
+                self.repo.delete_visualization(viz.id)
+                result.deleted.append(viz.id)
+        return result
+
+    def prune_dashboard_charts(self, dashboard_id: int, user_id: int) -> DashboardChartPruneOut:
+        """Remove the dashboard's own charts that its stored layout no longer uses. A layout that does not
+        read removes nothing."""
         dashboard = self.repo.get_dashboard(dashboard_id)
         if dashboard is None:
             raise DashboardNotFoundError(dashboard_id=dashboard_id)
+        used = self._stored_chart_ids(dashboard)
+        if used is None:
+            return DashboardChartPruneOut()
+        return self._drop_own_charts(dashboard, used)
+
+    def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
+        """Delete a dashboard and the charts that belong to it."""
+        dashboard = self.repo.get_dashboard(dashboard_id)
+        if dashboard is None:
+            raise DashboardNotFoundError(dashboard_id=dashboard_id)
+        self._drop_own_charts(dashboard, keep=set())
         self.repo.delete_dashboard(dashboard_id)
 
     # ---- Compute -------------------------------------------------------- #
@@ -478,17 +684,22 @@ class VisualizationService:
         must rotate whenever the Delta data changes — including out-of-band
         writes the catalog row never sees. Falls back to the ``updated_at``
         timestamp for legacy parquet / unreadable tables.
+
+        The table's storage directory is part of the key: SQLite gives a new
+        table the id of a deleted one, and a key on the id alone would serve
+        the deleted table's files, or its rows, for the new table.
         """
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
+        stored_in = Path(table.file_path).name if table.file_path else ""
         if table.file_path:
             try:
-                return f"tbl:{table_id}:v{get_live_delta_version(table.file_path)}"
+                return f"tbl:{table_id}:{stored_in}:v{get_live_delta_version(table.file_path)}"
             except Exception:
                 pass
         ts = int(table.updated_at.timestamp()) if table.updated_at else 0
-        return f"tbl:{table_id}:{ts}"
+        return f"tbl:{table_id}:{stored_in}:{ts}"
 
     def _resolve_source_for_worker(self, source: VizSourceDescriptor, user_id: int | None) -> dict:
         """Translate a frontend source descriptor into a worker source spec."""

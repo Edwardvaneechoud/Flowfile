@@ -4,6 +4,7 @@ import concurrent.futures
 import contextlib
 import ctypes
 import functools
+import importlib.util
 import io
 import logging
 import os
@@ -581,7 +582,21 @@ def _run_user_code(
                 user_code = _maybe_wrap_last_expression(user_code)
 
             try:
-                exec(user_code, exec_globals)  # noqa: S102
+                # Catalog cells are interactive; Designer dry runs also use negative IDs.
+                if (
+                    request.interactive
+                    and request.flow_id < 0
+                    and importlib.util.find_spec("flowfile_frame") is not None
+                ):
+                    from flowfile_frame import _metadata, notebook_kernel
+                    from kernel_runtime.catalog_lookup import lookup
+
+                    notebook_kernel._refuse_database()
+                    metadata_context = _metadata.installed(request.flow_id, lookup)
+                else:
+                    metadata_context = contextlib.nullcontext()
+                with metadata_context:
+                    exec(user_code, exec_globals)  # noqa: S102
             finally:
                 _capture_open_figures()
 
@@ -692,7 +707,7 @@ async def lsp_complete(request: LspRequest):
             asyncio.to_thread(lsp_analysis.complete, request.code, request.line, request.column, live),
             timeout=_LSP_TIMEOUT_S,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return CompleteResponse(items=[])
 
 
@@ -704,7 +719,7 @@ async def lsp_hover(request: LspRequest):
             asyncio.to_thread(lsp_analysis.hover, request.code, request.line, request.column, live),
             timeout=_LSP_TIMEOUT_S,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return HoverResponse(contents=None)
 
 
@@ -716,7 +731,7 @@ async def lsp_signature(request: LspRequest):
             asyncio.to_thread(lsp_analysis.signature, request.code, request.line, request.column, live),
             timeout=_LSP_TIMEOUT_S,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return SignatureResponse(signatures=[], active_signature=0)
 
 
@@ -727,7 +742,7 @@ async def lsp_diagnostics(request: LspRequest):
             asyncio.to_thread(lsp_analysis.diagnostics, request.code),
             timeout=_LSP_TIMEOUT_S,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return DiagnosticsResponse(diagnostics=[])
 
 
@@ -760,7 +775,7 @@ async def lsp_dataframe_schemas(request: DataframeSchemasRequest):
             asyncio.to_thread(collect_dataframe_schemas, live),
             timeout=deadline - loop.time(),
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return DataframeSchemasResponse(namespace_generation=generation, revision=revision)
     if request.resolve_lazy_frames:
         for index, frame in enumerate(frames):
@@ -774,7 +789,7 @@ async def lsp_dataframe_schemas(request: DataframeSchemasRequest):
                 frames[index] = await asyncio.wait_for(
                     loop.run_in_executor(_LAZY_SCHEMA_EXECUTOR, job), timeout=remaining
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break  # the one worker is stuck on this plan, so later frames would only queue behind it
     return DataframeSchemasResponse(
         namespace_generation=generation,

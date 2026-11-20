@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from flowfile_core.auth.jwt import active_db_user
 from flowfile_core.catalog.exceptions import (
     FlowAlreadyRunningError,
     FlowNotFoundError,
@@ -20,6 +21,7 @@ from flowfile_core.catalog.validators import (
 )
 from flowfile_core.database.models import FlowSchedule
 from flowfile_core.schemas.catalog_schema import FlowRunOut, FlowScheduleOut
+from flowfile_scheduler.engine import OWNER_NOT_ACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -307,11 +309,17 @@ class ScheduleService:
                 logger.warning("Schedule %s references missing flow %s", schedule.id, schedule.registration_id)
                 continue
 
+            if active_db_user(self.repo._db, schedule.owner_id) is None:
+                logger.warning("Schedule %s disabled — %s", schedule.id, OWNER_NOT_ACTIVE)
+                schedule.enabled, schedule.disabled_reason = False, OWNER_NOT_ACTIVE
+                self.repo.update_schedule(schedule)
+                continue
+
             if self.repo.has_active_run(schedule.registration_id):
                 logger.info("Skipping push trigger for flow %s — active run exists", schedule.registration_id)
                 continue
 
-            schedule.last_triggered_at = datetime.now(timezone.utc)
+            schedule.last_triggered_at = datetime.now(UTC)
             schedule.last_trigger_table_updated_at = table_updated_at
             self.repo.update_schedule(schedule)
 

@@ -11,7 +11,7 @@ This module is a thin HTTP adapter: it delegates all business logic to
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
 
@@ -101,6 +101,7 @@ from flowfile_core.schemas.catalog_schema import (
     ColumnStatsResponse,
     CronValidationRequest,
     CronValidationResult,
+    DashboardChartPruneOut,
     DashboardCreate,
     DashboardOut,
     DashboardUpdate,
@@ -1393,6 +1394,17 @@ def delete_visualization(
     service.delete_visualization(viz_id, user_id=current_user.id)
 
 
+@router.post("/visualizations/{viz_id}/detach", response_model=VisualizationOut)
+@handle_catalog_exceptions()
+def detach_visualization(
+    viz_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Make a dashboard's chart a chart of its own, listed in the library."""
+    return service.detach_visualization(viz_id, user_id=current_user.id)
+
+
 @router.post(
     "/visualizations/{viz_id}/compute",
     response_model=VisualizationComputeResponse,
@@ -1532,7 +1544,7 @@ def list_dashboards(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return every saved dashboard."""
+    """Return every saved dashboard; an image tile's ``data_url`` is empty here, ``GET /dashboards/{id}`` carries it."""
     return service.list_dashboards(user_id=current_user.id)
 
 
@@ -1576,6 +1588,17 @@ def delete_dashboard(
     service: CatalogService = Depends(get_catalog_service),
 ):
     service.delete_dashboard(dashboard_id, user_id=current_user.id)
+
+
+@router.post("/dashboards/{dashboard_id}/prune_charts", response_model=DashboardChartPruneOut)
+@handle_catalog_exceptions()
+def prune_dashboard_charts(
+    dashboard_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Remove the dashboard's own charts that its saved layout no longer uses."""
+    return service.prune_dashboard_charts(dashboard_id, user_id=current_user.id)
 
 
 # Virtual Flow Tables
@@ -1895,8 +1918,8 @@ def _scheduler_status(db: Session) -> SchedulerStatusOut:
     if lock.heartbeat_at is not None:
         heartbeat = lock.heartbeat_at
         if heartbeat.tzinfo is None:
-            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
-        elapsed = (datetime.now(timezone.utc) - heartbeat).total_seconds()
+            heartbeat = heartbeat.replace(tzinfo=UTC)
+        elapsed = (datetime.now(UTC) - heartbeat).total_seconds()
         if elapsed > STALE_THRESHOLD:
             active = False
             logger.warning(

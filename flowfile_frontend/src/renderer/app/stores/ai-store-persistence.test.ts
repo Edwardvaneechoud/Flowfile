@@ -68,6 +68,8 @@ const sampleSettings = (): PersistedAiSettings => ({
   selectedAgentSurface: "agent_staged",
   verifyPlanCompletion: true,
   simpleBuildOutput: "json",
+  surfaceModels: { chart: { provider: "openai", model: null } },
+  shareData: false,
 });
 
 describe("loadPersistedAiState", () => {

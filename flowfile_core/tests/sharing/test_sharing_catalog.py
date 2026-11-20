@@ -1,5 +1,7 @@
 """Catalog private-by-default + sharing: visibility filtering, by-id guards, manage checks."""
 
+import json
+
 import pytest
 
 from flowfile_core.database import models as db_models
@@ -382,6 +384,189 @@ def test_dashboard_private_then_shared(users, client_for, alice_dashboard, team,
     assert shared is not None and shared["access"]["access_level"] == "use"
     assert bob.get(f"/catalog/dashboards/{alice_dashboard}").status_code == 200
     assert bob.delete(f"/catalog/dashboards/{alice_dashboard}").status_code == 403
+
+
+def test_a_chart_is_made_for_a_dashboard_only_by_who_manages_it(
+    users, client_for, alice_catalog, alice_dashboard, team, grant_factory
+):
+    grant_factory("catalog_table", alice_catalog["table"], team, granted_by=users["alice"].id)
+    bob = client_for("bob")
+    body = {
+        "name": "bobs_chart",
+        "spec": [{}],
+        "source_type": "table",
+        "catalog_table_id": alice_catalog["table"],
+        "dashboard_id": alice_dashboard,
+    }
+    assert bob.post("/catalog/visualizations", json=body).status_code == 403
+
+    grant_factory("dashboard", alice_dashboard, team, permission="manage", granted_by=users["alice"].id)
+    created = bob.post("/catalog/visualizations", json=body)
+    assert created.status_code == 201, created.text
+    assert created.json()["dashboard_id"] == alice_dashboard
+    # Whoever manages the dashboard may keep its chart, and the dashboard's delete takes the rest.
+    kept = bob.post(f"/catalog/visualizations/{created.json()['id']}/detach")
+    assert kept.status_code == 200 and kept.json()["dashboard_id"] is None
+    assert bob.delete(f"/catalog/visualizations/{created.json()['id']}").status_code == 204
+
+
+@pytest.fixture
+def alice_dashboard_chart(users, resource_factory, alice_catalog, alice_dashboard):
+    """A chart on alice's table that belongs to her dashboard."""
+    return resource_factory(
+        db_models.CatalogVisualization,
+        name="alice_dashboard_chart",
+        spec_json="[]",
+        source_type="table",
+        catalog_table_id=alice_catalog["table"],
+        namespace_id=alice_catalog["schema"],
+        dashboard_id=alice_dashboard,
+        created_by=users["alice"].id,
+    )
+
+
+def test_a_chart_names_its_dashboard_only_to_who_may_read_the_dashboard(
+    users, client_for, alice_catalog, alice_dashboard, alice_dashboard_chart, team, grant_factory
+):
+    def as_seen_by(client) -> list[dict]:
+        """The chart from each route that answers it: the library, its table's charts and the chart itself."""
+        table_charts = client.get(f"/catalog/tables/{alice_catalog['table']}/visualizations").json()
+        return [
+            next(v for v in client.get("/catalog/visualizations").json() if v["id"] == alice_dashboard_chart),
+            next(v for v in table_charts if v["id"] == alice_dashboard_chart),
+            client.get(f"/catalog/visualizations/{alice_dashboard_chart}").json(),
+        ]
+
+    # Reading the table shows bob the chart and that a dashboard owns it, never which dashboard by name.
+    grant_factory("catalog_table", alice_catalog["table"], team, granted_by=users["alice"].id)
+    bob = client_for("bob")
+    assert alice_dashboard not in [d["id"] for d in bob.get("/catalog/dashboards").json()]
+    for chart in as_seen_by(bob):
+        assert chart["dashboard_id"] == alice_dashboard
+        assert chart["dashboard_name"] is None
+
+    for chart in as_seen_by(client_for("alice")):
+        assert chart["dashboard_name"] == "alice_dashboard"
+    for chart in as_seen_by(client_for("admin")):
+        assert chart["dashboard_name"] == "alice_dashboard"
+
+    grant_factory("dashboard", alice_dashboard, team, permission="use", granted_by=users["alice"].id)
+    for chart in as_seen_by(bob):
+        assert chart["dashboard_name"] == "alice_dashboard"
+
+
+def test_a_dashboards_manager_detaches_a_chart_that_is_not_theirs(
+    users, client_for, alice_dashboard, alice_dashboard_chart, team, group_factory, grant_factory
+):
+    bob = client_for("bob")
+    detach = f"/catalog/visualizations/{alice_dashboard_chart}/detach"
+    assert bob.post(detach).status_code == 403
+
+    # Reading the dashboard is not managing it.
+    readers = group_factory("cat-readers", users["admin"].id, {users["bob"].id: "member"})
+    grant_factory("dashboard", alice_dashboard, readers, permission="use", granted_by=users["alice"].id)
+    assert bob.post(detach).status_code == 403
+
+    grant_factory("dashboard", alice_dashboard, team, permission="manage", granted_by=users["alice"].id)
+    kept = bob.post(detach)
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["dashboard_id"] is None
+    with get_db_context() as db:
+        assert db.get(db_models.CatalogVisualization, alice_dashboard_chart).dashboard_id is None
+
+    # The chart is alice's own now: managing her dashboard gave bob no right over it, nor a second detach.
+    assert bob.delete(f"/catalog/visualizations/{alice_dashboard_chart}").status_code == 403
+    assert bob.post(detach).status_code == 403
+
+
+@pytest.fixture
+def alice_sql_viz(users, resource_factory, alice_catalog):
+    return resource_factory(
+        db_models.CatalogVisualization,
+        name="alice_sql_viz",
+        spec_json="[]",
+        source_type="sql",
+        sql_query="SELECT 1 AS region",
+        namespace_id=alice_catalog["schema"],
+        created_by=users["alice"].id,
+    )
+
+
+def _filter_layout(*bindings: dict) -> dict:
+    filters = [{"id": f"f{i}", "field_name": "region", "kind": "categorical", **b} for i, b in enumerate(bindings)]
+    return {"tiles": [], "filters": filters}
+
+
+def _delete_dashboards_named(name: str) -> None:
+    with get_db_context() as db:
+        db.query(db_models.CatalogDashboard).filter_by(name=name).delete()
+        db.commit()
+
+
+def test_a_filter_source_the_saver_cannot_read_reads_as_unknown(
+    users, client_for, alice_catalog, alice_viz, alice_sql_viz
+):
+    bob = client_for("bob")
+    for binding in (
+        {"datasource_id": alice_catalog["table"]},
+        {"datasource_viz_id": alice_viz},
+        {"datasource_viz_id": alice_sql_viz},
+    ):
+        resp = bob.post("/catalog/dashboards", json={"name": "bob_probe", "layout": _filter_layout(binding)})
+        assert resp.status_code == 422, resp.text
+        assert "references unknown" in resp.text
+        assert "reads a catalog table" not in resp.text
+    _delete_dashboards_named("bob_probe")
+
+
+def test_a_filter_source_the_saver_can_read_is_checked_as_before(
+    users, client_for, alice_viz, alice_sql_viz, team, grant_factory
+):
+    grant_factory("visualization", alice_viz, team, permission="use", granted_by=users["alice"].id)
+    grant_factory("visualization", alice_sql_viz, team, permission="use", granted_by=users["alice"].id)
+    bob = client_for("bob")
+    try:
+        table_chart = bob.post(
+            "/catalog/dashboards",
+            json={"name": "bob_bound", "layout": _filter_layout({"datasource_viz_id": alice_viz})},
+        )
+        assert table_chart.status_code == 422
+        assert "reads a catalog table" in table_chart.text
+        sql_chart = bob.post(
+            "/catalog/dashboards",
+            json={"name": "bob_bound", "layout": _filter_layout({"datasource_viz_id": alice_sql_viz})},
+        )
+        assert sql_chart.status_code == 201, sql_chart.text
+    finally:
+        _delete_dashboards_named("bob_bound")
+
+
+def test_a_manage_grantee_keeps_the_owners_filter_sources(
+    users, client_for, alice_catalog, alice_sql_viz, resource_factory, team, grant_factory
+):
+    owner_layout = _filter_layout({"datasource_id": alice_catalog["table"]}, {"datasource_viz_id": alice_sql_viz})
+    dashboard_id = resource_factory(
+        db_models.CatalogDashboard,
+        name="alice_filtered",
+        layout_json=json.dumps(owner_layout),
+        layout_version=1,
+        created_by=users["alice"].id,
+    )
+    grant_factory("dashboard", dashboard_id, team, permission="manage", granted_by=users["alice"].id)
+    bob = client_for("bob")
+    kept = bob.put(f"/catalog/dashboards/{dashboard_id}", json={"layout": owner_layout, "description": "edited"})
+    assert kept.status_code == 200, kept.text
+    other_table = resource_factory(
+        db_models.CatalogTable, name="alice_other", namespace_id=alice_catalog["schema"], owner_id=users["alice"].id
+    )
+    added = _filter_layout(
+        {"datasource_id": alice_catalog["table"]},
+        {"datasource_viz_id": alice_sql_viz},
+        {"datasource_id": other_table},
+    )
+    resp = bob.put(f"/catalog/dashboards/{dashboard_id}", json={"layout": added})
+    assert resp.status_code == 422
+    assert f"unknown catalog_table_id={other_table}" in resp.text
 
 
 def test_write_responses_stamp_owner_access(users, client_for, alice_viz, alice_dashboard):

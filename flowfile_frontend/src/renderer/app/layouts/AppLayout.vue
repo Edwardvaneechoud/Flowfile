@@ -1,7 +1,11 @@
 <template>
   <div class="app-layout">
     <div class="app-layout__content">
-      <div class="app-layout__sidebar-wrapper" :class="{ minimized: isCollapse }">
+      <div
+        v-if="!presentation.presenting"
+        class="app-layout__sidebar-wrapper"
+        :class="{ minimized: isCollapse }"
+      >
         <Sidebar :is-collapse="isCollapse" @toggle-collapse="toggleCollapse" />
       </div>
       <div class="app-layout__page">
@@ -21,7 +25,7 @@
     <TutorialOverlay />
 
     <!-- Floating Tutorial Start Button -->
-    <TutorialStartButton />
+    <TutorialStartButton v-if="!presentation.presenting" />
 
     <!-- One-time anonymous telemetry opt-in (shows itself only when undecided) -->
     <TelemetryConsentModal />
@@ -51,6 +55,7 @@ import { useProjectStore } from "../stores/project-store";
 import { useTelemetryStore } from "../stores/telemetry-store";
 import { useUpdateStore } from "../stores/update-store";
 import { useGlobalSearchStore } from "../stores/global-search-store";
+import { usePresentationStore } from "../stores/presentation-store";
 import { IS_MAC } from "../utils/shortcuts";
 import authService from "../services/auth.service";
 
@@ -59,6 +64,7 @@ const projectStore = useProjectStore();
 const telemetryStore = useTelemetryStore();
 const updateStore = useUpdateStore();
 const globalSearch = useGlobalSearchStore();
+const presentation = usePresentationStore();
 
 const onGlobalSearchKey = (event: KeyboardEvent) => {
   if (!isGlobalSearchShortcut(event, IS_MAC)) return;

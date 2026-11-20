@@ -3,7 +3,7 @@
     {
       "name": "Array",
       "kind": "class",
-      "signature": "(inner, shape=None, *, width=None)",
+      "signature": "(inner, shape=None)",
       "doc_first_line": "Fixed length list type."
     },
     {
@@ -27,7 +27,7 @@
     {
       "name": "Categorical",
       "kind": "class",
-      "signature": "(categories=None, *, ordering=None)",
+      "signature": "(categories=None)",
       "doc_first_line": "A categorical encoding of a set of strings."
     },
     {
@@ -105,7 +105,7 @@
     {
       "name": "FlowDataEngine",
       "kind": "class",
-      "signature": "(raw_data=None, path_ref=None, name=None, optimize_memory=True, schema=None, number_of_records=None, calculate_schema_stats=False, streamable=True, number_of_records_callback=None, data_callback=None)",
+      "signature": "(raw_data=None, path_ref=None, name=None, optimize_memory=True, schema=None, number_of_records=None, calculate_schema_stats=False, number_of_records_callback=None, data_callback=None)",
       "doc_first_line": "The core data handling engine for Flowfile."
     },
     {
@@ -189,7 +189,7 @@
     {
       "name": "GateOperator",
       "kind": "class",
-      "signature": "(*values)",
+      "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
       "doc_first_line": "Operators of a parameter-mode gate condition."
     },
     {
@@ -255,7 +255,7 @@
     {
       "name": "NodeType",
       "kind": "class",
-      "signature": "(*values)",
+      "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
       "doc_first_line": "Every built-in node type the canvas can place."
     },
     {
@@ -273,7 +273,7 @@
     {
       "name": "ParamType",
       "kind": "class",
-      "signature": "(*values)",
+      "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
       "doc_first_line": "Types of a flow parameter."
     },
     {
@@ -867,12 +867,6 @@
       "doc_first_line": "Score the data using a trained model."
     },
     {
-      "name": "approx_n_unique",
-      "kind": "method",
-      "signature": "()",
-      "doc_first_line": "Approximate count of unique values."
-    },
-    {
       "name": "bottom_k",
       "kind": "method",
       "signature": "(k, *, by, reverse=False)",
@@ -1007,7 +1001,7 @@
     {
       "name": "explain",
       "kind": "method",
-      "signature": "(*, format='plain', optimized=True, type_coercion=True, predicate_pushdown=True, projection_pushdown=True, simplify_expression=True, slice_pushdown=True, comm_subplan_elim=True, comm_subexpr_elim=True, cluster_with_columns=True, collapse_joins=True, streaming=False, engine='auto', tree_format=None, optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
+      "signature": "(*, format='plain', optimized=True, engine='auto', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
       "doc_first_line": "Create a string representation of the query plan."
     },
     {
@@ -1021,12 +1015,6 @@
       "kind": "method",
       "signature": "(parent, child, quantity=None, *, output_detail='totals', top_level_only=False, include_self=False, max_depth=None, description=None)",
       "doc_first_line": "Explode a parent -> child hierarchy (bill of materials, chart of accounts) into all its levels."
-    },
-    {
-      "name": "fetch",
-      "kind": "method",
-      "signature": "(n_rows=500, **kwargs)",
-      "doc_first_line": "Collect a small number of rows for debugging purposes."
     },
     {
       "name": "fill_nan",
@@ -1057,6 +1045,12 @@
       "kind": "method",
       "signature": "()",
       "doc_first_line": "Get the first row of the DataFrame."
+    },
+    {
+      "name": "from_lazyframe_resolver",
+      "kind": "method",
+      "signature": "(resolver)",
+      "doc_first_line": "Create a LazyFrame from a LazyFrame resolver."
     },
     {
       "name": "fuzzy_join",
@@ -1139,7 +1133,7 @@
     {
       "name": "join_where",
       "kind": "method",
-      "signature": "(other, *predicates, suffix='_right')",
+      "signature": "(other, *predicates, how='inner', suffix='_right')",
       "doc_first_line": "Perform a join based on one or multiple (in)equality predicates."
     },
     {
@@ -1163,7 +1157,7 @@
     {
       "name": "map_batches",
       "kind": "method",
-      "signature": "(function, *, predicate_pushdown=False, projection_pushdown=False, slice_pushdown=False, no_optimizations=None, schema=None, validate_output_schema=True, streamable=False)",
+      "signature": "(function, *, predicate_pushdown=False, projection_pushdown=False, slice_pushdown=False, schema=None, validate_output_schema=True, streamable=False)",
       "doc_first_line": "Apply a custom function."
     },
     {
@@ -1189,12 +1183,6 @@
       "kind": "method",
       "signature": "()",
       "doc_first_line": "Aggregate the columns in the LazyFrame to their median value."
-    },
-    {
-      "name": "melt",
-      "kind": "method",
-      "signature": "(id_vars=None, value_vars=None, variable_name=None, value_name=None, *, streamable=True)",
-      "doc_first_line": "Unpivot a DataFrame from wide to long format."
     },
     {
       "name": "merge_sorted",
@@ -1249,12 +1237,6 @@
       "kind": "method",
       "signature": "(code, *others, description=None)",
       "doc_first_line": "Place one Polars Code node over this frame, and ``others`` as its further inputs, in order."
-    },
-    {
-      "name": "profile",
-      "kind": "method",
-      "signature": "(*, type_coercion=True, predicate_pushdown=True, projection_pushdown=True, simplify_expression=True, no_optimization=False, slice_pushdown=True, comm_subplan_elim=True, comm_subexpr_elim=True, cluster_with_columns=True, collapse_joins=True, show_plot=False, truncate_nodes=0, figsize=(18, 8), engine='auto', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>, **_kwargs)",
-      "doc_first_line": "Profile a LazyFrame."
     },
     {
       "name": "quantile",
@@ -1367,7 +1349,7 @@
     {
       "name": "show_graph",
       "kind": "method",
-      "signature": "(*, optimized=True, show=True, output_path=None, raw_output=False, figsize=(16.0, 12.0), type_coercion=True, _type_check=True, predicate_pushdown=True, projection_pushdown=True, simplify_expression=True, slice_pushdown=True, comm_subplan_elim=True, comm_subexpr_elim=True, cluster_with_columns=True, collapse_joins=True, engine='auto', plan_stage=None, _check_order=True, optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
+      "signature": "(*, optimized=True, show=True, output_path=None, raw_output=False, figsize=(16.0, 12.0), engine='auto', plan_stage='physical', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
       "doc_first_line": "Show a plot of the query plan."
     },
     {
@@ -1385,13 +1367,13 @@
     {
       "name": "sink_delta",
       "kind": "method",
-      "signature": "(target, *, mode='error', storage_options=None, credential_provider='auto', delta_write_options=None, delta_merge_options=None, optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
+      "signature": "(target, *, mode='error', storage_options=None, credential_provider='auto', delta_write_options=None, delta_merge_options=None, engine='auto', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
       "doc_first_line": "Sink DataFrame as delta table."
     },
     {
       "name": "sink_iceberg",
       "kind": "method",
-      "signature": "(target, *, mode, catalog=None, storage_options=None)",
+      "signature": "(target, *, mode, schema_mode=None, overwrite_filter=None, partition_overwrite=None, create_if_not_exists=False, create_namespace_if_not_exists=False, snapshot_properties=None, catalog=None, storage_options=None, compression='zstd', compression_level=None, row_group_size=None, maintain_order=True, engine='auto')",
       "doc_first_line": "Sink a LazyFrame to an Iceberg table."
     },
     {
@@ -1409,7 +1391,7 @@
     {
       "name": "sink_parquet",
       "kind": "method",
-      "signature": "(path, *, compression='zstd', compression_level=None, statistics=True, row_group_size=None, data_page_size=None, maintain_order=True, storage_options=None, credential_provider='auto', retries=None, sync_on_close=None, metadata=None, arrow_schema=None, mkdir=False, lazy=False, engine='auto', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>, _sinked_paths_callback=None)",
+      "signature": "(path, *, compression='zstd', compression_level=None, statistics=True, row_group_size=None, data_page_size=None, maintain_order=True, storage_options=None, credential_provider='auto', sync_on_close=None, metadata=None, arrow_schema=None, encryption=None, mkdir=False, lazy=False, engine='auto', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>, sinked_paths_callback=None)",
       "doc_first_line": "Evaluate the query in streaming mode and write to a Parquet file."
     },
     {
@@ -1537,18 +1519,6 @@
       "kind": "method",
       "signature": "(*exprs, **named_exprs)",
       "doc_first_line": "Add columns to this LazyFrame."
-    },
-    {
-      "name": "with_context",
-      "kind": "method",
-      "signature": "(other)",
-      "doc_first_line": "Add an external context to the computation graph."
-    },
-    {
-      "name": "with_row_count",
-      "kind": "method",
-      "signature": "(name='row_nr', offset=0)",
-      "doc_first_line": "Add a column at index 0 that counts the rows."
     },
     {
       "name": "with_row_index",

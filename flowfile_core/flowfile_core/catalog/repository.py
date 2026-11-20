@@ -330,6 +330,8 @@ class CatalogRepository(Protocol):
 
     def list_all_visualizations(self) -> list[CatalogVisualization]: ...
 
+    def list_dashboard_visualizations(self, dashboard_id: int) -> list[CatalogVisualization]: ...
+
     def get_visualization(self, viz_id: int) -> CatalogVisualization | None: ...
 
     def get_visualization_by_name(self, catalog_table_id: int, name: str) -> CatalogVisualization | None: ...
@@ -1363,6 +1365,10 @@ class SQLAlchemyCatalogRepository:
         return schedule
 
     def delete_schedule(self, schedule_id: int) -> None:
+        # Its runs stay as the flow's history, no longer pointing at the schedule.
+        self._db.query(FlowRun).filter_by(schedule_id=schedule_id).update(
+            {FlowRun.schedule_id: None}, synchronize_session=False
+        )
         self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
         # Rules scoped to this schedule die with it — a stale rule would alert the old
         # owner's webhook about whichever future schedule reuses the SQLite rowid.
@@ -1490,6 +1496,15 @@ class SQLAlchemyCatalogRepository:
     def list_all_visualizations(self) -> list[CatalogVisualization]:
         return self._db.query(CatalogVisualization).order_by(CatalogVisualization.created_at.desc()).all()
 
+    def list_dashboard_visualizations(self, dashboard_id: int) -> list[CatalogVisualization]:
+        """The charts that belong to a dashboard."""
+        return (
+            self._db.query(CatalogVisualization)
+            .filter_by(dashboard_id=dashboard_id)
+            .order_by(CatalogVisualization.id)
+            .all()
+        )
+
     def get_visualization(self, viz_id: int) -> CatalogVisualization | None:
         return self._db.get(CatalogVisualization, viz_id)
 
@@ -1577,6 +1592,10 @@ class SQLAlchemyCatalogRepository:
         dashboard = self._db.get(CatalogDashboard, dashboard_id)
         if dashboard is not None:
             sharing.delete_grants_for_resource(self._db, "dashboard", dashboard_id)
+            # SQLite does not enforce the foreign key, and a reused row id would hand a chart to a new dashboard.
+            self._db.query(CatalogVisualization).filter_by(dashboard_id=dashboard_id).update(
+                {CatalogVisualization.dashboard_id: None}
+            )
             self._db.delete(dashboard)
             self._db.commit()
 

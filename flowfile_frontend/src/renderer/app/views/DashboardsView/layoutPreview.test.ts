@@ -21,6 +21,17 @@ const layout = (tiles: DashboardTile[], grid = EMPTY_DASHBOARD_LAYOUT.grid): Das
 });
 
 describe("buildLayoutPreview", () => {
+  it("marks an image tile that holds a picture, even with its bytes left out", () => {
+    const rects = buildLayoutPreview(
+      layout([
+        tile({ id: "logo", type: "image", viz_id: null, image: { data_url: "" } }),
+        tile({ id: "empty", type: "image", viz_id: null, image: null, x: 12 }),
+        tile({ id: "chart", x: 24 }),
+      ]),
+    );
+    expect(rects.map((r) => r.hasImage)).toEqual([true, false, false]);
+  });
+
   it("returns nothing for an empty dashboard", () => {
     expect(buildLayoutPreview(layout([]))).toEqual([]);
   });
@@ -85,5 +96,18 @@ describe("buildLayoutPreview", () => {
       ]),
     );
     expect(rects.map((r) => r.orientation)).toEqual(["horizontal", "vertical"]);
+  });
+
+  it("previews the first tab of a dashboard with tabs", () => {
+    const tabbed: DashboardLayout = {
+      ...layout([tile({ id: "second", tab_id: "b", h: 20 }), tile({ id: "first", tab_id: "a" })]),
+      tabs: [
+        { id: "a", title: "Overview" },
+        { id: "b", title: "Detail" },
+      ],
+    };
+    const rects = buildLayoutPreview(tabbed);
+    expect(rects.map((r) => r.id)).toEqual(["first"]);
+    expect(rects[0].height).toBe(50);
   });
 });

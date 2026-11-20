@@ -1,7 +1,7 @@
 """A version lists its kinds in ``project.yaml``, and an import applies only the kinds it lists.
 
 Proven on the every-kind install of ``test_kinds.py``, real git and the test database: init and save write
-``project_format: 2`` with the kinds a save exports; a format-1 folder opens and lists its kinds at the next
+``project_format: 3`` with the kinds a save exports; a format-1 folder opens and lists its kinds at the next
 save; a kind a version leaves out is neither imported nor pruned; a listed kind no registry entry knows keeps
 its committed files and is reported; a newer format is refused before anything changes; an entry or file owned
 by another user, or under a reserved ``@<username>/`` level, is reported as not applied. Same-named flows and
@@ -145,7 +145,7 @@ def test_init_lists_every_kind_and_the_toggle_moves_the_data_kinds(tmp_path, eve
     root = tmp_path / "project"
     _init(root, every_kind)
     raw = _raw_manifest(root)
-    assert raw["project_format"] == 2
+    assert raw["project_format"] == 3
     assert raw["kinds"] == TWELVE
     assert "track_data_artifacts" not in raw
 
@@ -182,7 +182,7 @@ def test_a_format_1_folder_opens_and_lists_its_kinds_at_the_next_save(tmp_path, 
 
     project_sync.save_version(every_kind, "next save")
     raw = _raw_manifest(root)
-    assert raw["project_format"] == 2
+    assert raw["project_format"] == 3
     assert raw["kinds"] == expected
     assert "track_data_artifacts" not in raw
     assert raw["project_id"] == "p1"
@@ -247,7 +247,7 @@ def test_a_listed_kind_no_entry_knows_keeps_its_files_and_is_reported(tmp_path, 
 
 def _newer(root: Path) -> None:
     data = _raw_manifest(root)
-    data["project_format"] = 3
+    data["project_format"] = 4
     _write_manifest(root, data)
 
 
@@ -284,7 +284,7 @@ def test_a_manifest_this_flowfile_cannot_read_is_refused_with_nothing_changed(tm
     files = _on_disk(root)
     message = _refused(lambda: project_sync.restore_version(every_kind, bad, force=True))
     if spoil is _newer:
-        assert "newer Flowfile" in message and "3" in message and "2" in message
+        assert "newer Flowfile" in message and "format 4" in message and "up to 3" in message
     assert git_ops.head_sha(root) == good
     assert _on_disk(root) == files
     assert _db_state(every_kind) == state

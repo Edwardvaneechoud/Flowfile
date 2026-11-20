@@ -25,11 +25,13 @@ from tests.conftest import _free_port, closed_url
 
 
 def point_the_worker_backend_at(monkeypatch, url: str) -> None:
-    """The proxy forwards to the worker the registry's worker backend runs on; make that ``url`` for the test."""
-    backend = registry.backend(registry.WORKER_BACKEND_ID)
-    monkeypatch.setattr(backend, "url", url)
-    # The URL-only proxy must not pick up a previous test's owner if the OS reuses a port.
-    monkeypatch.setitem(handshake._by_url, url, backend)
+    """The proxy forwards to the worker the registry's worker backend runs on; make that ``url`` for the test.
+
+    Any owner the URL has is dropped for the test: an earlier test's backend made on the same free port would else
+    name itself on the gate's error.
+    """
+    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
+    monkeypatch.delitem(handshake._by_url, url, raising=False)
 
 
 @pytest.fixture
@@ -137,7 +139,7 @@ def test_worker_down_on_first_contact_surfaces_typed_503(
     detail = response.json()["detail"]
     assert detail["error_code"] == "WORKER_UNAVAILABLE"
     assert detail["message"].startswith(f"Worker not reachable: Could not reach the worker at {dead_url}: ")
-    assert detail["message"].endswith('Is backend "worker" running? Start it, or check the Backends page.')
+    assert detail["message"].endswith("Is the compute backend running? Start it, or check the Backends page.")
 
 
 def test_out_of_range_size_returns_422(admin_client: TestClient, live_worker: str) -> None:

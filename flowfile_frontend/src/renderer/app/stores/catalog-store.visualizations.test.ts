@@ -2,15 +2,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import type { CatalogVisualization } from "../types";
 
-const { updateVisualizationMock, listVisualizationLibraryMock } = vi.hoisted(() => ({
+const {
+  updateVisualizationMock,
+  listVisualizationLibraryMock,
+  detachVisualizationMock,
+  pruneDashboardChartsMock,
+} = vi.hoisted(() => ({
   updateVisualizationMock: vi.fn(),
   listVisualizationLibraryMock: vi.fn(),
+  detachVisualizationMock: vi.fn(),
+  pruneDashboardChartsMock: vi.fn(),
 }));
 
 vi.mock("../api/catalog.api", () => ({
   CatalogApi: {
     updateVisualization: updateVisualizationMock,
     listVisualizationLibrary: listVisualizationLibraryMock,
+    detachVisualization: detachVisualizationMock,
+    pruneDashboardCharts: pruneDashboardChartsMock,
   },
 }));
 
@@ -75,5 +84,60 @@ describe("catalog-store updateVisualization refreshLibrary option", () => {
       { name: "Revenue" },
       { timeout: 15000 },
     );
+  });
+});
+
+describe("catalog-store charts that belong to a dashboard", () => {
+  const owned = (id: number) => viz({ id, dashboard_id: 7, dashboard_name: "Sales" });
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    detachVisualizationMock.mockReset();
+    pruneDashboardChartsMock.mockReset();
+    listVisualizationLibraryMock.mockReset();
+  });
+
+  it("detach clears the owner in the library and the table's list without a refetch", async () => {
+    const store = useCatalogStore();
+    store.visualizationLibrary = [owned(9), owned(10)];
+    store.visualizationsByTable = { 3: [owned(9)] };
+    detachVisualizationMock.mockResolvedValue(
+      viz({ id: 9, dashboard_id: null, dashboard_name: null }),
+    );
+
+    const kept = await store.detachVisualization(9);
+
+    expect(kept.dashboard_id).toBeNull();
+    expect(store.visualizationLibrary.map((v) => v.dashboard_id)).toEqual([null, 7]);
+    expect(store.visualizationsByTable[3]?.[0]?.dashboard_name).toBeNull();
+    expect(listVisualizationLibraryMock).not.toHaveBeenCalled();
+  });
+
+  it("prune drops the deleted charts and releases the ones another dashboard uses", async () => {
+    const store = useCatalogStore();
+    store.visualizationLibrary = [owned(9), owned(10), owned(11)];
+    store.visualizationsByTable = { 3: [owned(9), owned(10), owned(11)] };
+    pruneDashboardChartsMock.mockResolvedValue({ deleted: [9], released: [10] });
+
+    await store.pruneDashboardCharts(7);
+
+    expect(pruneDashboardChartsMock).toHaveBeenCalledWith(7);
+    const library = store.visualizationLibrary.map((v) => [v.id, v.dashboard_id]);
+    expect(library).toEqual([
+      [10, null],
+      [11, 7],
+    ]);
+    expect(store.visualizationsByTable[3]?.map((v) => v.id)).toEqual([10, 11]);
+  });
+
+  it("prune that finds nothing leaves the lists as they are", async () => {
+    const store = useCatalogStore();
+    const library = [owned(9)];
+    store.visualizationLibrary = library;
+    pruneDashboardChartsMock.mockResolvedValue({ deleted: [], released: [] });
+
+    await store.pruneDashboardCharts(7);
+
+    expect(store.visualizationLibrary).toEqual(library);
   });
 });

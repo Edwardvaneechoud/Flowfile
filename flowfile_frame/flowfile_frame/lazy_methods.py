@@ -39,7 +39,7 @@ PURE_TRANSFORMS = frozenset(
         "drop", "select", "with_columns", "sort", "filter", "join", "head", "tail", "limit", "drop_nulls",
         "fill_null", "with_row_index", "group_by", "explode", "unique", "slice", "shift", "reverse", "max", "min",
         "sum", "mean", "median", "std", "var", "drop_nans", "fill_nan", "interpolate", "null_count", "quantile",
-        "unpivot", "melt", "first", "last", "cast", "count", "unnest", "gather_every", "top_k", "bottom_k",
+        "unpivot", "first", "last", "cast", "count", "unnest", "gather_every", "top_k", "bottom_k",
     }
 )  # fmt: skip
 """LazyFrame methods that only describe a lazy transform: each returns a frame and reads, writes and runs nothing."""

@@ -41,7 +41,7 @@ def saved_connection(monkeypatch):
     monkeypatch.setitem(app.dependency_overrides, get_db, database)
     monkeypatch.setitem(app.dependency_overrides, get_current_active_user, lambda: SimpleNamespace(id=1))
     try:
-        migration = import_module("flowfile_core.alembic.versions.043_sharepoint_connections")
+        migration = import_module("flowfile_core.alembic.versions.045_sharepoint_connections")
         with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
             migration.upgrade()
         with Session(engine) as db:

@@ -14,7 +14,7 @@ import uuid
 import zoneinfo
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
@@ -28,6 +28,7 @@ from flowfile_scheduler.models import (
     FlowSchedule,
     SchedulerLock,
     ScheduleTriggerTable,
+    User,
 )
 from shared.database import create_catalog_engine
 from shared.notifications.processor import process_pending_notifications
@@ -38,6 +39,7 @@ from shared.storage_config import get_database_url, require_flow_in_storage
 logger = logging.getLogger("flowfile.scheduler")
 
 DEFAULT_POLL_INTERVAL = 30
+OWNER_NOT_ACTIVE = "Its owner's account is disabled or no longer exists."
 
 STALE_THRESHOLD = 90
 
@@ -74,11 +76,11 @@ class Launch:
 
 
 Launcher = Callable[[Session, FlowSchedule, FlowRegistration, datetime], Launch]
-"""Starts one run of a due schedule's flow, given the session, the schedule, the flow and the fire time."""
+"""Starts one run of a due schedule's flow; answers ``refused`` when the owner may no longer run it."""
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class FlowScheduler:
@@ -208,7 +210,7 @@ class FlowScheduler:
             return True
 
         if lock.heartbeat_at is not None:
-            elapsed = (now - lock.heartbeat_at.replace(tzinfo=timezone.utc)).total_seconds()
+            elapsed = (now - lock.heartbeat_at.replace(tzinfo=UTC)).total_seconds()
             if elapsed > STALE_THRESHOLD:
                 logger.warning("Taking over stale lock from %s (%.0fs old)", lock.holder_id, elapsed)
                 lock.holder_id = self._holder_id
@@ -246,7 +248,7 @@ class FlowScheduler:
                 continue
 
             if sched.last_triggered_at is not None:
-                last = sched.last_triggered_at.replace(tzinfo=timezone.utc)
+                last = sched.last_triggered_at.replace(tzinfo=UTC)
                 elapsed = (now - last).total_seconds()
                 remaining = sched.interval_seconds - elapsed
                 if remaining > 0:
@@ -313,7 +315,7 @@ class FlowScheduler:
                     )
                     continue
                 try:
-                    base_local = base_utc.replace(tzinfo=timezone.utc).astimezone(tz).replace(tzinfo=None)
+                    base_local = base_utc.replace(tzinfo=UTC).astimezone(tz).replace(tzinfo=None)
                 except Exception:
                     logger.warning("Cron schedule %s has an unusable base timestamp, skipping", sched.id)
                     continue
@@ -390,9 +392,9 @@ class FlowScheduler:
                 logger.warning("Schedule %s references missing table %s", sched.id, sched.trigger_table_id)
                 continue
 
-            table_updated = table.updated_at.replace(tzinfo=timezone.utc) if table.updated_at else None
+            table_updated = table.updated_at.replace(tzinfo=UTC) if table.updated_at else None
             last_seen = (
-                sched.last_trigger_table_updated_at.replace(tzinfo=timezone.utc)
+                sched.last_trigger_table_updated_at.replace(tzinfo=UTC)
                 if sched.last_trigger_table_updated_at
                 else None
             )
@@ -457,7 +459,7 @@ class FlowScheduler:
                 continue
 
             last_seen = (
-                sched.last_trigger_table_updated_at.replace(tzinfo=timezone.utc)
+                sched.last_trigger_table_updated_at.replace(tzinfo=UTC)
                 if sched.last_trigger_table_updated_at
                 else None
             )
@@ -470,7 +472,7 @@ class FlowScheduler:
                     break
                 if table.updated_at is None:
                     break
-                stamps.append(table.updated_at.replace(tzinfo=timezone.utc))
+                stamps.append(table.updated_at.replace(tzinfo=UTC))
             if len(stamps) != len(table_ids):
                 continue
 
@@ -520,11 +522,19 @@ class FlowScheduler:
         )
 
     def _maybe_launch(self, db: Session, sched: FlowSchedule, now: datetime) -> LaunchOutcome:
-        """Create a run record and spawn the flow if no run is active."""
+        """Create a run record and start the flow if no run is active; a run spawned here checks the owner first."""
         reg: FlowRegistration | None = db.get(FlowRegistration, sched.registration_id)
         if reg is None:
             logger.warning("Schedule %s references missing flow registration %s", sched.id, sched.registration_id)
             return LaunchOutcome.FAILED
+
+        if self._launcher is None:
+            owner: User | None = db.get(User, sched.owner_id)
+            if owner is None or owner.disabled:
+                logger.warning("Schedule %s disabled — %s", sched.id, OWNER_NOT_ACTIVE)
+                sched.enabled, sched.disabled_reason = False, OWNER_NOT_ACTIVE
+                db.commit()
+                return LaunchOutcome.FAILED
 
         if self._has_active_run(db, reg):
             logger.info("Skipping schedule %s — flow '%s' already has an active run", sched.id, reg.name)

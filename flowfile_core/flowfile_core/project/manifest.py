@@ -9,7 +9,7 @@ import yaml
 
 from flowfile_core.project.normalize import write_yaml
 
-PROJECT_FORMAT = 2
+PROJECT_FORMAT = 3
 MANIFEST_NAME = "project.yaml"
 
 _GITIGNORE = """\
@@ -196,9 +196,19 @@ def kernels_manifest_path(root: Path) -> Path:
     return root / "kernels.yaml"
 
 
+def visualizations_dir(root: Path) -> Path:
+    return root / "visualizations"
+
+
+def dashboards_dir(root: Path) -> Path:
+    return root / "dashboards"
+
+
 def visualizations_manifest_path(root: Path) -> Path:
+    """The one file a folder of format 2 or older lists every chart in."""
     return root / "visualizations.yaml"
 
 
 def dashboards_manifest_path(root: Path) -> Path:
+    """The one file a folder of format 2 or older lists every dashboard in."""
     return root / "dashboards.yaml"

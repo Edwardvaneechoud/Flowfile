@@ -152,8 +152,7 @@ test_built_services:
 		sleep 8; \
 		echo "core: $$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:63578/docs)"; \
 		echo "worker: $$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:63579/docs)"; \
-		curl -s -X POST http://127.0.0.1:63578/shutdown >/dev/null || true; \
-		kill $$WORKER_PID 2>/dev/null || true; \
+		kill $$CORE_PID $$WORKER_PID 2>/dev/null || true; \
 		wait $$CORE_PID $$WORKER_PID 2>/dev/null || true; \
 	'
 
@@ -227,11 +226,11 @@ else
 endif
 	@echo "Running tests..."
 ifeq ($(OS),Windows_NT)
-	$(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts || true
+	$(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/chart-ai.spec.ts || true
 	@$(MAKE) stop_servers
 else
 	@status=0; \
-	($(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts) || status=$$?; \
+	($(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/chart-ai.spec.ts) || status=$$?; \
 	$(STOP_LISTENERS); exit $$status
 endif
 
@@ -255,11 +254,11 @@ else
 endif
 	@echo "Running tests..."
 ifeq ($(OS),Windows_NT)
-	$(CD) "$(FRONTEND_DIR)" && npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts || true
+	$(CD) "$(FRONTEND_DIR)" && npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/chart-ai.spec.ts || true
 	@$(MAKE) stop_servers
 else
 	@status=0; \
-	($(CD) "$(FRONTEND_DIR)" && PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts) || status=$$?; \
+	($(CD) "$(FRONTEND_DIR)" && PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/chart-ai.spec.ts) || status=$$?; \
 	$(STOP_LISTENERS); exit $$status
 endif
 

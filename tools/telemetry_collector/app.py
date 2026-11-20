@@ -18,7 +18,7 @@ import os
 import re
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
@@ -243,7 +243,7 @@ def ingest(body: bytes | None = Depends(_read_capped_body)) -> JSONResponse:
     if len(events) > MAX_BATCH_SIZE:
         return JSONResponse(status_code=422, content={"detail": f"at most {MAX_BATCH_SIZE} events per batch"})
 
-    received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    received_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     accepted: list[str] = []
     rejected = 0
     gaps: set[str] = set()

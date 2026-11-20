@@ -1924,7 +1924,8 @@ class NodeRunFlow(NodeBase):
 
     @property
     def output_names(self) -> list[str]:
-        return list(self.output_slots)
+        # A child without named outputs still emits its run-summary table.
+        return list(self.output_slots) or ["Run summary"]
 
     @model_validator(mode="after")
     def _validate_slots_and_bindings(self) -> "NodeRunFlow":

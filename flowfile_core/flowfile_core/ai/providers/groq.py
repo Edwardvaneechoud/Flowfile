@@ -19,6 +19,7 @@ class GroqProvider(LiteLLMProvider):
         "cmd_k": "qwen/qwen3-32b",
         "ghost_node": "qwen/qwen3-coder-30b-a3b-instruct",
         "explain": "qwen/qwen3-coder-30b-a3b-instruct",
+        "chart": "qwen/qwen3-coder-30b-a3b-instruct",
         "agent_complex": "qwen/qwen3-coder-30b-a3b-instruct",
         # Qwen3 Coder 30B is the canonical small-model target
         # for agent_staged. The function-calling failures seen on

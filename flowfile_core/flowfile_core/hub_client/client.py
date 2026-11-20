@@ -4,12 +4,14 @@ Requests log method, path and status only, never a body, a password or a token.
 """
 
 import threading
+from urllib.parse import urlencode
 
 import httpx
 
 from flowfile_core.configs import logger
 
 _HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
+DESKTOP_CLIENT_ID = "flowfile-desktop"
 
 
 class HubUnreachable(Exception):
@@ -71,6 +73,26 @@ def _detail(resp: httpx.Response) -> str:
     return answered(resp.status_code)
 
 
+def _oauth_error(resp: httpx.Response) -> dict | None:
+    """An OAuth 2.0 error answer (``{"error", "error_description"}``, RFC 6749 §5.2), which carries no ``detail``."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    if isinstance(body, dict) and "detail" not in body and isinstance(body.get("error"), str):
+        return body
+    return None
+
+
+def _access_refused(headers: dict | None) -> None:
+    """Tell the stored sessions that the hub refused the access token a request carried."""
+    authorization = (headers or {}).get("Authorization", "")
+    if authorization.startswith("Bearer "):
+        from flowfile_core.hub_client import session  # imported here: it imports this module
+
+        session.access_refused(authorization[len("Bearer ") :])
+
+
 def _answered(method: str, url: str, path: str, http: httpx.Client | None, **kwargs) -> httpx.Response:
     try:
         resp = http_client(http).request(method, f"{url.rstrip('/')}{path}", **kwargs)
@@ -79,7 +101,14 @@ def _answered(method: str, url: str, path: str, http: httpx.Client | None, **kwa
     logger.info("hub %s %s -> %s", method, path, resp.status_code)
     if resp.status_code == 426:
         raise HubVersionRefused(_detail(resp))
+    if resp.status_code == 401:
+        _access_refused(kwargs.get("headers"))
     if resp.status_code >= 400:
+        oauth = _oauth_error(resp)
+        if oauth is not None:
+            description = oauth.get("error_description")
+            text = description if isinstance(description, str) and description else answered(resp.status_code)
+            raise HubRefused(resp.status_code, text, oauth)
         detail = _raw_detail(resp)
         raise HubRefused(resp.status_code, _detail(resp), detail if isinstance(detail, dict) else None)
     return resp
@@ -134,6 +163,63 @@ def refresh(url: str, refresh_token: str, *, http: httpx.Client | None = None) -
     """A new token pair; the old refresh token is not to be used again."""
     body = _request("POST", url, "/auth/refresh", http, data={"refresh_token": refresh_token})
     return _require(body, ("access_token", "refresh_token"), url, "/auth/refresh")
+
+
+def authorize_url(url: str, *, redirect_uri: str, code_challenge: str, state: str, device_name: str) -> str:
+    """The hub's page the system browser opens for a sign-in through the browser (PKCE with ``S256``)."""
+    query = urlencode(
+        {
+            "response_type": "code",
+            "client_id": DESKTOP_CLIENT_ID,
+            "redirect_uri": redirect_uri,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+            "device_name": device_name,
+        }
+    )
+    return f"{url.rstrip('/')}/hub/authorize?{query}"
+
+
+def _granted(body: dict, url: str) -> dict:
+    """A ``/hub/token`` answer: both tokens, their lifetimes in seconds and the account they are for."""
+    _require(body, ("access_token", "refresh_token"), url, "/hub/token")
+    user = body.get("user")
+    lifetimes = (body.get("expires_in"), body.get("refresh_expires_in"))
+    if (
+        not all(isinstance(t, int | float) and not isinstance(t, bool) and t > 0 for t in lifetimes)
+        or not isinstance(user, dict)
+        or not isinstance(user.get("username"), str)
+        or not user["username"]
+    ):
+        raise HubRefused(200, f"{url} did not answer /hub/token as a Flowfile hub does.")
+    return body
+
+
+def exchange_code(
+    url: str, code: str, code_verifier: str, redirect_uri: str, *, http: httpx.Client | None = None
+) -> dict:
+    """The tokens for the code the browser came back with; a refusal is ``HubRefused`` with the OAuth error as
+    ``payload`` (``invalid_grant`` for a code that is used, expired or does not match the verifier)."""
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "code_verifier": code_verifier,
+        "client_id": DESKTOP_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+    }
+    return _granted(_request("POST", url, "/hub/token", http, data=data), url)
+
+
+def refresh_browser(url: str, refresh_token: str, *, http: httpx.Client | None = None) -> dict:
+    """New tokens for a sign-in through the browser; the hub rotates the refresh token, so the old one is spent."""
+    data = {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": DESKTOP_CLIENT_ID}
+    return _granted(_request("POST", url, "/hub/token", http, data=data), url)
+
+
+def revoke(url: str, refresh_token: str, *, http: httpx.Client | None = None) -> None:
+    """End a sign-in through the browser on the hub."""
+    _answered("POST", url, "/hub/token/revoke", http, data={"token": refresh_token, "client_id": DESKTOP_CLIENT_ID})
 
 
 def register_device(

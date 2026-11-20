@@ -36,13 +36,13 @@ three depth levels.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from flowfile_core.ai.json_payload import parse_json_payload as _parse_json_payload
 from flowfile_core.ai.metrics import record_autocomplete_call
 from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.scheduler import RateLimitScheduler, default_scheduler
@@ -216,39 +216,12 @@ async def _call_provider_for_json(
 
     try:
         content = await asyncio.wait_for(_do_call(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return None, "timeout"
     except Exception as exc:  # noqa: BLE001 — we deliberately collapse to a single reason
         logger.warning("autocomplete provider call failed: %s", exc, exc_info=False)
         return None, "provider_error"
     return content, None
-
-
-def _parse_json_payload(content: str | None) -> tuple[Any, str | None]:
-    """Strict JSON parse with a single non-error fallback (Markdown code-fence).
-
-    Some providers wrap JSON in ```json fences even with ``response_format``
-    set. We strip the fence and try once more. Any other deviation returns
-    ``(None, "parse_error")``.
-    """
-    if content is None or not content.strip():
-        return None, "empty_response"
-    try:
-        return json.loads(content), None
-    except json.JSONDecodeError:
-        pass
-    # Fallback: strip ``` fences (` ```json ... ``` ` or ` ``` ... ``` `).
-    stripped = content.strip()
-    if stripped.startswith("```"):
-        # Drop the opening fence line and trailing fence.
-        without_open = stripped.split("\n", 1)[-1]
-        if without_open.rstrip().endswith("```"):
-            without_open = without_open.rstrip()[: -len("```")].rstrip()
-        try:
-            return json.loads(without_open), None
-        except json.JSONDecodeError:
-            pass
-    return None, "parse_error"
 
 
 # Public API

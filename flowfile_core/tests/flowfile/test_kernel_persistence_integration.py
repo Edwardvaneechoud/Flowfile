@@ -56,7 +56,7 @@ def _execute(manager: KernelManager, kernel_id: str, code: str, node_id: int = 1
 def _get_json(port: int, path: str) -> dict:
     """GET a JSON endpoint on the kernel runtime."""
     with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
-        response = client.get(f"http://localhost:{port}{path}")
+        response = client.get(f"http://127.0.0.1:{port}{path}")
         response.raise_for_status()
         return response.json()
 
@@ -64,7 +64,7 @@ def _get_json(port: int, path: str) -> dict:
 def _post_json(port: int, path: str, json: dict | None = None) -> dict:
     """POST to a JSON endpoint on the kernel runtime."""
     with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
-        response = client.post(f"http://localhost:{port}{path}", json=json or {})
+        response = client.post(f"http://127.0.0.1:{port}{path}", json=json or {})
         response.raise_for_status()
         return response.json()
 

@@ -27,15 +27,28 @@
           placeholder="e.g. Revenue by region"
           size="small"
           class="viz-name-input"
+          :class="{ 'is-error': !!nameError }"
+          data-testid="viz-name-input"
           :disabled="saving"
+          @keydown.enter.prevent
         />
+        <span v-if="nameError" class="viz-name-error" data-testid="viz-name-error">
+          {{ nameError }}
+        </span>
       </div>
       <div class="viz-editor-actions">
         <el-tooltip v-if="disabledReason" :content="disabledReason" placement="top">
           <span class="viz-disabled-hint">{{ disabledReason }}</span>
         </el-tooltip>
         <el-button size="small" :disabled="saving" @click="onCancel">Cancel</el-button>
-        <el-button type="primary" size="small" :loading="saving" :disabled="!canSave" @click="save">
+        <el-button
+          type="primary"
+          size="small"
+          data-testid="viz-save-button"
+          :loading="saving"
+          :disabled="!canSave"
+          @click="save"
+        >
           {{ viz ? "Save changes" : "Save visualization" }}
         </el-button>
       </div>
@@ -51,6 +64,7 @@
       </div>
 
       <template v-else>
+        <ChartPromptBar :table-id="promptTableId" :builder="builderHandle" @applied="onAiApplied" />
         <el-alert
           v-if="computeError"
           :title="computeError"
@@ -79,16 +93,18 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import type { IChart, IDarkMode, IMutField } from "@kanaries/graphic-walker/interfaces";
 import VueGraphicWalker from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicWalker.vue";
+import ChartPromptBar from "./ChartPromptBar.vue";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useAuthStore } from "../../stores/auth-store";
 import { createLocalDraft, type LocalDraft } from "../../composables/localDraft";
 import { classifyAutosaveError } from "../../composables/autosaveEngine";
-import { vizDraftKey } from "./vizAutosave";
+import { chartTypeOf, vizDraftKey } from "./vizAutosave";
 import { captureThumbnail } from "../../composables/useChartThumbnail";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 import { toPlainJson } from "../../utils/structuredClone";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
+import { chartNameError, nameFromAiTitle, suggestChartName } from "./chartNaming";
 import type {
   CatalogVisualization,
   VisualizationCreatePayload,
@@ -102,6 +118,10 @@ const props = defineProps<{
   appearance?: IDarkMode;
   /** Optional override for the table id when saving a viz from an ad-hoc SQL source. */
   saveTargetTableId?: number | null;
+  /** Names a new chart's suggested name must not repeat, e.g. the charts on the dashboard it is made for. */
+  takenNames?: string[];
+  /** Set when the chart is made from inside a dashboard: asked at Save for the dashboard it belongs to. */
+  ownerDashboardId?: () => Promise<number>;
 }>();
 
 const emit = defineEmits<{
@@ -112,11 +132,20 @@ const emit = defineEmits<{
 const store = useCatalogStore();
 const gwRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
-const name = ref(props.viz?.name ?? "Untitled chart");
+const sourceTableName = () =>
+  props.source.source_type === "table" && props.source.table_id != null
+    ? store.findTableInTree(props.source.table_id)?.name
+    : null;
+const name = ref(
+  props.viz?.name ?? suggestChartName(props.source, sourceTableName(), props.takenNames),
+);
+const nameError = computed(() => chartNameError(name.value));
 const saving = ref(false);
 
 const isCreate = computed(() => !isExistingViz(props.viz));
 const initialName = name.value;
+// The last name set for the user (the suggestion, then an AI title); typing makes it theirs.
+let automaticName = initialName;
 
 // CAS token for edit mode: the updated_at of the viz whose spec was loaded.
 let expectedUpdatedAt = props.viz?.updated_at ?? null;
@@ -162,6 +191,28 @@ watch(name, () => {
     draft?.scheduleWrite();
   }
 });
+
+// AI prompts are offered for a catalog table only: a SQL source has no column types on the server.
+const promptTableId = computed(() =>
+  props.source.source_type === "table" ? (props.source.table_id ?? null) : null,
+);
+const builderHandle = () => gwRef.value;
+
+const onAiApplied = ({ title }: { title: string | null }) => {
+  if (isCreate.value && title && name.value === automaticName) {
+    const tableId = promptTableId.value;
+    const taken = [
+      ...(props.takenNames ?? []),
+      ...(tableId != null ? (store.visualizationsByTable[tableId] ?? []).map((v) => v.name) : []),
+    ];
+    const next = nameFromAiTitle(title, taken);
+    if (next) {
+      name.value = next;
+      automaticName = next;
+    }
+  }
+  if (isCreate.value) void onSpecChanged();
+};
 
 const onRestoreDraft = () => {
   if (!pendingDraft) return;
@@ -221,13 +272,9 @@ const { computation: computeOnWorker, lastError: computeError } = useGraphicWalk
   "ad-hoc",
 );
 
-const canSave = computed(() => name.value.trim().length > 0 && !loadingSample.value);
+const canSave = computed(() => !nameError.value && !loadingSample.value);
 
-const disabledReason = computed(() => {
-  if (loadingSample.value) return "Loading data sample...";
-  if (!name.value.trim()) return "Enter a name to save";
-  return null;
-});
+const disabledReason = computed(() => (loadingSample.value ? "Loading data sample..." : null));
 
 onMounted(async () => {
   if (isCreate.value) {
@@ -269,10 +316,7 @@ const isExistingViz = (v: any): v is CatalogVisualization =>
 
 const save = async () => {
   if (!gwRef.value) return;
-  if (!name.value.trim()) {
-    ElMessage.warning("Enter a name to save the visualization.");
-    return;
-  }
+  if (nameError.value) return;
   const charts = await gwRef.value.exportCode();
   if (!charts || !charts.length) {
     ElMessage.error("No chart to save — build one in the editor first.");
@@ -280,7 +324,7 @@ const save = async () => {
   }
   // Save the full IChart[] so multi-tab specs round-trip.
   const spec = charts as Record<string, any>[];
-  const thumbnail_data_url = await captureThumbnail(gwRef);
+  const thumbnail_data_url = await captureThumbnail(gwRef, computeOnWorker);
   saving.value = true;
   try {
     let saved: CatalogVisualization;
@@ -288,6 +332,7 @@ const save = async () => {
       const updatePayload: VisualizationUpdatePayload = {
         name: name.value.trim(),
         spec,
+        chart_type: chartTypeOf(spec),
       };
       if (thumbnail_data_url) updatePayload.thumbnail_data_url = thumbnail_data_url;
       if (expectedUpdatedAt) updatePayload.expected_updated_at = expectedUpdatedAt;
@@ -297,12 +342,14 @@ const save = async () => {
       const createPayload: VisualizationCreatePayload = {
         name: name.value.trim(),
         spec,
+        chart_type: chartTypeOf(spec),
         source_type: props.source.source_type,
         catalog_table_id:
           props.source.source_type === "table" ? (props.source.table_id ?? null) : null,
         sql_query: props.source.source_type === "sql" ? (props.source.sql_query ?? null) : null,
       };
       if (thumbnail_data_url) createPayload.thumbnail_data_url = thumbnail_data_url;
+      if (props.ownerDashboardId) createPayload.dashboard_id = await props.ownerDashboardId();
       saved = await store.createVisualization(createPayload);
       // Created for real now; createCompleted keeps the unmount write from reviving the draft.
       createCompleted.value = true;
@@ -342,6 +389,7 @@ const offerOverwrite = async (
     const updatePayload: VisualizationUpdatePayload = {
       name: name.value.trim(),
       spec,
+      chart_type: chartTypeOf(spec),
       expected_updated_at: fresh.updated_at,
     };
     if (thumbnail_data_url) updatePayload.thumbnail_data_url = thumbnail_data_url;
@@ -402,6 +450,13 @@ const offerOverwrite = async (
 }
 .viz-name-input {
   width: 100%;
+}
+.viz-name-input.is-error :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+.viz-name-error {
+  font-size: 12px;
+  color: var(--el-color-danger);
 }
 .viz-editor-actions {
   display: flex;

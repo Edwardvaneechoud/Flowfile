@@ -404,6 +404,172 @@ def test_connect_accepts_flat_shape(call_kwargs: dict[str, Any]) -> None:
     assert [n.node_id for n in target_inputs] == [1]
 
 
+@pytest.mark.parametrize(
+    "input_class, output_class, from_id, reason",
+    [
+        ("input-1", "output-0", 1, "handle_not_available"),
+        ("input-0", "output-1", 1, "handle_not_available"),
+    ],
+)
+def test_connect_rejects_invalid_live_ports_at_stage_time(
+    call_kwargs: dict[str, Any], input_class: str, output_class: str, from_id: int, reason: str
+) -> None:
+    flow = _flow_with_orders_and_filter()
+    _add_orders_input(flow, node_id=3)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={
+            "flow_id": flow.flow_id,
+            "from_node_id": from_id,
+            "to_node_id": 2,
+            "input_class": input_class,
+            "output_class": output_class,
+        },
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == reason
+    assert result.staged_node_payload is None
+    assert [node.node_id for node in flow.get_node(2).all_inputs] == [1]
+
+
+def test_connect_allows_reroute_after_staged_delete(call_kwargs: dict[str, Any]) -> None:
+    flow = _flow_with_orders_and_filter()
+    _add_orders_input(flow, node_id=3)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    common: dict[str, Any] = dict(insertion_context=InsertionContext(), flow=flow, mode="stage", **call_kwargs)
+    deleted = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.delete_connection",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 1, "to_node_id": 2},
+        **common,
+    )
+    assert deleted.status == "staged"
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 3, "to_node_id": 2},
+        **common,
+    )
+    assert result.status == "staged", result.refusal_detail
+    assert [node.node_id for node in flow.get_node(2).all_inputs] == [1]
+
+    from flowfile_core.ai.diff import GraphDiff, StagedConnection, apply_diff
+
+    graph_diff = GraphDiff(
+        session_id=call_kwargs["session_id"],
+        flow_id=flow.flow_id,
+        connections_removed=[StagedConnection(
+            connection=input_schema.NodeConnection.create_from_simple_input(1, 2).model_dump(), audit_id=1
+        )],
+        connections_added=[StagedConnection(
+            connection=input_schema.NodeConnection.create_from_simple_input(3, 2).model_dump(), audit_id=2
+        )],
+    )
+    apply_diff(flow, graph_diff)
+    assert [node.node_id for node in flow.get_node(2).all_inputs] == [3]
+
+
+def test_connect_allows_staged_output_reroute(call_kwargs: dict[str, Any]) -> None:
+    from flowfile_core.ai.diff import GraphDiff, StagedConnection, apply_diff
+
+    flow = _flow_with_orders_and_filter()
+    source_settings = _filter_args()
+    source_settings["split_mode"] = True
+    flow.add_filter(input_schema.NodeFilter(**source_settings))
+    flow.add_filter(input_schema.NodeFilter(**_filter_args(node_id=3, depending_on_id=2)))
+    old = input_schema.NodeConnection.create_from_simple_input(2, 3)
+    add_connection(flow, old)
+    new = input_schema.NodeConnection.create_from_simple_input(2, 3, output_handle="output-1")
+    common = dict(insertion_context=InsertionContext(), flow=flow, **call_kwargs)
+    args = {"flow_id": flow.flow_id, "from_node_id": 2, "to_node_id": 3, "output_class": "output-1"}
+
+    immediate = execute_tool_call(
+        flow_id=flow.flow_id, tool_name="flowfile.graph.connect", tool_args=args, mode="apply", **common
+    )
+    assert immediate.status == "rejected"
+    assert immediate.refusal_reason == "input_occupied"
+    deleted = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.delete_connection",
+        tool_args={"flow_id": flow.flow_id, "from_node_id": 2, "to_node_id": 3},
+        mode="stage",
+        **common,
+    )
+    assert deleted.status == "staged"
+    staged = execute_tool_call(
+        flow_id=flow.flow_id, tool_name="flowfile.graph.connect", tool_args=args, mode="stage", **common
+    )
+    assert staged.status == "staged", staged.refusal_detail
+    assert flow.get_node(3).input_edge_handle(2, "input-0") == "output-0"
+
+    graph_diff = GraphDiff(
+        session_id=call_kwargs["session_id"],
+        flow_id=flow.flow_id,
+        connections_removed=[StagedConnection(connection=old.model_dump(), audit_id=1)],
+        connections_added=[StagedConnection(connection=new.model_dump(), audit_id=2)],
+    )
+    apply_diff(flow, graph_diff)
+    assert flow.get_node(3).input_edge_handle(2, "input-0") == "output-1"
+    assert [node.node_id for node in flow.get_node(3).all_inputs] == [2]
+
+
+@pytest.mark.parametrize("output_class", ["output-1", "output-2"])
+def test_connect_uses_staged_settings_for_modified_node_ports(
+    call_kwargs: dict[str, Any], output_class: str,
+) -> None:
+    from fastapi import HTTPException
+
+    from flowfile_core.ai.diff import apply_diff, bundle_staged_results
+    from flowfile_core.ai.sessions import StagedToolEntry
+
+    flow = _flow_with_orders_and_filter()
+    flow.add_filter(input_schema.NodeFilter(**_filter_args(node_id=3, depending_on_id=2)))
+    settings = _filter_args()
+    settings["split_mode"] = True
+    common = dict(insertion_context=InsertionContext(), flow=flow, **call_kwargs)
+    modified = execute_tool_call(
+        flow_id=flow.flow_id, tool_name="flowfile.graph.update_node_settings",
+        tool_args=_update_settings_args(node_id=2, settings=settings, flow_id=flow.flow_id),
+        mode="stage", **common,
+    )
+    assert modified.status == "staged", modified.refusal_detail
+    args = {"flow_id": flow.flow_id, "from_node_id": 2, "to_node_id": 3, "output_class": output_class}
+    meta = {"staged_modified_node_ids_at_stage": [2]}
+    immediate = execute_tool_call(
+        flow_id=flow.flow_id, tool_name="flowfile.graph.connect", tool_args=args,
+        mode="apply", audit_meta=meta, **common,
+    )
+    assert immediate.status == "rejected"
+    connected = execute_tool_call(
+        flow_id=flow.flow_id, tool_name="flowfile.graph.connect", tool_args=args,
+        mode="stage", audit_meta=meta, **common,
+    )
+    assert connected.status == "staged", connected.refusal_detail
+    assert flow.get_node(2).setting_input.split_mode is False
+    graph_diff = bundle_staged_results([
+        StagedToolEntry(tool_name=result.tool_name, staged_node_payload=result.staged_node_payload)
+        for result in [modified, connected]
+    ])
+    graph_diff.session_id = call_kwargs["session_id"]
+    graph_diff.flow_id = flow.flow_id
+    if output_class == "output-2":
+        with pytest.raises(HTTPException) as error:
+            apply_diff(flow, graph_diff)
+        assert error.value.status_code == 422
+        assert flow.get_node(2).setting_input.split_mode is False
+        assert not flow.get_node(3).all_inputs
+    else:
+        apply_diff(flow, graph_diff)
+        assert flow.get_node(2).setting_input.split_mode is True
+        assert flow.get_node(3).input_edge_handle(2, "input-0") == "output-1"
+
+
 def test_connect_rejects_wiring_into_live_source_node(call_kwargs: dict[str, Any]) -> None:
     """Wiring INTO a live source node (node 1 = manual_input) must be refused at
     stage time with ``target_is_source`` so the planner can self-correct, instead
@@ -511,7 +677,9 @@ def test_connect_flat_shape_with_explicit_classes(call_kwargs: dict[str, Any]) -
     """``input_class`` / ``output_class`` from the flat shape must round-trip
     into the staged ``NodeConnection`` payload — i.e. they actually reach the
     constructed connection model and are not silently defaulted."""
-    flow = _flow_with_orders_and_filter()
+    # Join has a valid input-1; Filter only has input-0.
+    flow = _flow_with_orders()
+    flow.add_node_promise(input_schema.NodePromise(flow_id=flow.flow_id, node_id=2, node_type="join"))
     result = execute_tool_call(
         flow_id=flow.flow_id,
         tool_name="flowfile.graph.connect",

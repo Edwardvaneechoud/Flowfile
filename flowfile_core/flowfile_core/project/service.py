@@ -12,7 +12,7 @@ import shutil
 import tempfile
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -366,7 +366,7 @@ class ProjectSyncService:
             if action == "restore":
                 recovery_sha = self._commit_export(proj, "Database before restore", "HEAD") or recovery_sha
             else:
-                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
                 recovery_sha = self._commit_export(proj, "Database before reload", f"refs/flowfile/recovery/{stamp}")
         return recovery_sha
 

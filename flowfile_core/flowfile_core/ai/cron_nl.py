@@ -10,13 +10,12 @@ cron the backend would reject. Must not import ``litellm`` at module load.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from flowfile_core.ai.json_payload import parse_json_payload as _parse_json_payload
 from flowfile_core.ai.metrics import record_autocomplete_call
 from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.scheduler import RateLimitScheduler, default_scheduler
@@ -123,32 +122,12 @@ async def _call_provider_for_json(
 
     try:
         content = await asyncio.wait_for(_do_call(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return None, "timeout"
     except Exception as exc:  # noqa: BLE001
         logger.warning("cron generation provider call failed: %s", exc, exc_info=False)
         return None, "provider_error"
     return content, None
-
-
-def _parse_json_payload(content: str | None) -> tuple[Any, str | None]:
-    """Parse JSON, tolerating a ```json code fence."""
-    if content is None or not content.strip():
-        return None, "empty_response"
-    try:
-        return json.loads(content), None
-    except json.JSONDecodeError:
-        pass
-    stripped = content.strip()
-    if stripped.startswith("```"):
-        without_open = stripped.split("\n", 1)[-1]
-        if without_open.rstrip().endswith("```"):
-            without_open = without_open.rstrip()[: -len("```")].rstrip()
-        try:
-            return json.loads(without_open), None
-        except json.JSONDecodeError:
-            pass
-    return None, "parse_error"
 
 
 def _record(provider: Provider, started: float, reason: str | None, *, success: bool = False) -> None:
