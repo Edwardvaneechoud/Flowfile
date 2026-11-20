@@ -40,8 +40,17 @@ def test_prose_around_an_object_needs_extract_object() -> None:
     assert noted == ["x"]
 
 
-def test_an_answer_nested_too_deeply_is_a_parse_error() -> None:
-    assert parse_json_payload("[" * 100_000 + "]" * 100_000) == (None, "parse_error")
+@pytest.mark.parametrize("depth", [201, 100_000])
+def test_an_answer_nested_too_deeply_is_a_parse_error(depth: int) -> None:
+    payload, error = parse_json_payload("[" * depth + "]" * depth)
+    assert payload is None
+    assert error == "parse_error"
+
+
+def test_an_answer_nested_up_to_the_limit_parses() -> None:
+    payload, error = parse_json_payload('{"a": ' * 199 + "[1]" + "}" * 199)
+    assert error is None
+    assert payload is not None
 
 
 def test_what_cannot_be_parsed_is_a_parse_error() -> None:
