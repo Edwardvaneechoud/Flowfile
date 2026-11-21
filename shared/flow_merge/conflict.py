@@ -10,6 +10,7 @@ an extra key would be dropped by the next save without anyone noticing. So a con
     conflicts: [...]        # each part both sides changed, as it is on the base and on each side
     warnings: [...]
     id_map: {...}
+    shown: theirs           # optional: the side an editor's canvas shows for every open conflict
 
 ``FlowfileData`` has no ``nodes`` at its top, so every loader refuses it, older Flowfile releases included.
 :func:`resolve` takes a side per conflict and, once none is left, gives back the plain flow.
@@ -75,12 +76,16 @@ def conflict_from_dict(data: Mapping) -> Conflict:
     )
 
 
-def conflict_document(result: MergeResult, sides: Mapping[str, str] | None = None) -> dict:
-    """``result`` as a file: the plain merged flow when it is clean, else the wrapper."""
+def conflict_document(result: MergeResult, sides: Mapping[str, str] | None = None, shown: Choice | None = None) -> dict:
+    """``result`` as a file: the plain merged flow when it is clean, else the wrapper.
+
+    ``shown`` is the side an editor will show for every open conflict, recorded as the wrapper's ``shown`` so
+    settling on that side can leave the canvas as it is; without it no ``shown`` is written.
+    """
     if result.clean:
         return copy.deepcopy(result.document)
     head = {k: copy.deepcopy(result.document[k]) for k in HEAD_KEYS if k in result.document}
-    return {
+    wrapper = {
         MARKER: FORMAT,
         **head,
         "sides": dict(sides or {"base": "base", "ours": "ours", "theirs": "theirs"}),
@@ -93,6 +98,11 @@ def conflict_document(result: MergeResult, sides: Mapping[str, str] | None = Non
             "comments": dict(result.id_map.comments),
         },
     }
+    if shown is not None:
+        if shown not in ("ours", "theirs"):
+            raise ValueError(f"shown is 'ours' or 'theirs', not {shown!r}.")
+        wrapper["shown"] = shown
+    return wrapper
 
 
 def open_conflicts(document: Mapping) -> list[Conflict]:

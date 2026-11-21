@@ -279,6 +279,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         node_connections=connections,
         groups=[schemas.GroupInformation(**group.model_dump()) for group in flowfile_data.groups],
         comments=[schemas.CommentInformation(**comment.model_dump()) for comment in flowfile_data.comments],
+        merge_conflicts=getattr(flowfile_data.flowfile_settings, "merge_conflicts", None),
     )
 
 
@@ -484,6 +485,8 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     flow_storage_obj.flow_name = resolved_name
 
     new_flow = FlowGraph(name=flow_storage_obj.flow_name, flow_settings=flow_storage_obj.flow_settings)
+    # Only an open takes them from the file; a snapshot restore keeps the live ones, like the flow settings.
+    new_flow.merge_conflicts = getattr(flow_storage_obj, "merge_conflicts", None)
     if user_id is not None:
         new_flow._owner_user_id = user_id
     owner_of = (lambda _node_id: user_id) if user_id is not None else None

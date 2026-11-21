@@ -2,11 +2,45 @@
 // Fully optional: with no active project everything is a cheap no-op and the UI hides.
 import { defineStore } from "pinia";
 import { ProjectApi, ProjectFeatureUnavailable } from "../api/project.api";
-import type { ImportResult, ProjectInfo, ProjectVersion, ProjectVersionChange } from "../types";
+import type {
+  ImportResult,
+  ProjectInfo,
+  ProjectMergeState,
+  ProjectPullResult,
+  ProjectVersion,
+  ProjectVersionChange,
+} from "../types";
 import { useCatalogStore } from "./catalog-store";
 import { useFlowStore } from "./flow-store";
 
 export type ProjectStatus = "none" | "external" | "unsaved" | "clean";
+
+/** Where the editor stands with a pull's merge after it settled a flow's last conflict. */
+export type EditorSettleOutcome =
+  | { state: "merged" }
+  | { state: "conclude" }
+  | { state: "settle_rest"; left: number };
+
+const MERGE_FLOWS_KEY = "flowfile.project.mergeFlows.v1";
+
+const readMergeFlows = (): Record<number, string> => {
+  try {
+    return JSON.parse(sessionStorage.getItem(MERGE_FLOWS_KEY) ?? "{}") ?? {};
+  } catch {
+    return {};
+  }
+};
+
+const writeMergeFlows = (flows: Record<number, string>): void => {
+  try {
+    sessionStorage.setItem(MERGE_FLOWS_KEY, JSON.stringify(flows));
+  } catch {
+    // Without storage a reload just forgets which flows came from the pull.
+  }
+};
+
+/** A pull that brought an import in; `up_to_date`, `ahead` and `conflicted` applied nothing. */
+export const pullApplied = (result: ProjectPullResult | null): boolean => !!result?.result;
 
 interface ProjectState {
   activeProject: ProjectInfo | null;
@@ -24,6 +58,7 @@ interface ProjectState {
   saving: boolean;
   loadingVersions: boolean;
   error: string | null;
+  mergeFlows: Record<number, string>; // flow id -> project path, opened in the editor from a pull's merge
 }
 
 export const useProjectStore = defineStore("project", {
@@ -43,6 +78,7 @@ export const useProjectStore = defineStore("project", {
     saving: false,
     loadingVersions: false,
     error: null,
+    mergeFlows: readMergeFlows(),
   }),
 
   getters: {
@@ -199,30 +235,105 @@ export const useProjectStore = defineStore("project", {
       }
     },
 
-    async restoreVersion(sha: string, label?: string, force = false): Promise<ImportResult> {
-      const res = await ProjectApi.restore(sha, label, force);
-      this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
-      // Import no longer auto-opens flows; clear the active flow so a stale/pruned tab can't
-      // 404-loop and the canvas shows the empty state (matches the "Reopen any flows" prompt).
+    /**
+     * After an import rewrote the catalog's flows (restore, reload, branch switch, applied pull): clear the
+     * active flow so a removed or replaced tab can't 404-loop, keep the secrets it left to fill, and re-read.
+     */
+    async afterImport(res: ImportResult | null): Promise<void> {
+      if (res) this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
       useFlowStore().setFlowId(-1);
       this.onCatalogRewritten();
       await this.refreshActive();
       this.loadVersions().catch(() => undefined);
+    },
+
+    async restoreVersion(sha: string, label?: string, force = false): Promise<ImportResult> {
+      const res = await ProjectApi.restore(sha, label, force);
+      await this.afterImport(res);
       return res;
     },
 
     async reloadFromDisk(force = false): Promise<ImportResult> {
       try {
         const res = await ProjectApi.reload(force);
-        this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
-        useFlowStore().setFlowId(-1);
-        this.onCatalogRewritten();
-        await this.refreshActive();
+        await this.afterImport(res);
         return res;
       } catch (e: any) {
         if (e instanceof ProjectFeatureUnavailable) this.reloadAvailable = false;
         throw e;
       }
+    },
+
+    async switchBranch(name: string, force = false): Promise<ImportResult> {
+      const res = await ProjectApi.switchBranch(name, force);
+      await this.afterImport(res);
+      return res;
+    },
+
+    /** The pull, its merge settled or concluded: whichever answer applied an import runs the post-import path. */
+    async afterPull(result: ProjectPullResult): Promise<ProjectPullResult> {
+      if (result.state !== "conflicted") this.forgetMergeFlows();
+      if (pullApplied(result)) await this.afterImport(result.result);
+      return result;
+    },
+
+    async pull(force = false): Promise<ProjectPullResult> {
+      return this.afterPull(await ProjectApi.pull(force));
+    },
+
+    async settleMerge(
+      path: string,
+      key: string | null,
+      take: "ours" | "theirs",
+      force = false,
+    ): Promise<{ merge: ProjectMergeState | null; pull: ProjectPullResult | null }> {
+      const answer = await ProjectApi.settleMerge(path, key, take, force);
+      if (answer.pull) await this.afterPull(answer.pull);
+      return answer;
+    },
+
+    async concludeMerge(force = false): Promise<ProjectPullResult> {
+      return this.afterPull(await ProjectApi.concludeMerge(force));
+    },
+
+    async abortMerge(): Promise<void> {
+      await ProjectApi.abortMerge();
+      this.forgetMergeFlows();
+    },
+
+    /** Open a conflicted flow of the waiting merge in the editor, remembering it came from the pull. */
+    async openMergeFlow(path: string): Promise<number> {
+      const flowId = await ProjectApi.openMergeFlow(path);
+      this.mergeFlows = { ...this.mergeFlows, [flowId]: path };
+      writeMergeFlows(this.mergeFlows);
+      return flowId;
+    },
+
+    isMergeFlow(flowId: number): boolean {
+      return flowId in this.mergeFlows;
+    },
+
+    forgetMergeFlows(): void {
+      if (!Object.keys(this.mergeFlows).length) return;
+      this.mergeFlows = {};
+      writeMergeFlows(this.mergeFlows);
+    },
+
+    /**
+     * The editor settled the last conflict of a flow opened from the pull; core wrote it into the merge and
+     * concluded it when nothing else was left and its guard allowed. Answers what the person does next.
+     */
+    async afterEditorSettle(): Promise<EditorSettleOutcome> {
+      const merge = await ProjectApi.getMerge();
+      if (merge === null) {
+        this.forgetMergeFlows();
+        this.onCatalogRewritten();
+        await this.refreshActive();
+        this.loadVersions().catch(() => undefined);
+        return { state: "merged" };
+      }
+      if (!merge.conflicts.length) return { state: "conclude" };
+      return { state: "settle_rest", left: merge.conflicts.length };
     },
 
     async fillSecrets(secrets: { name: string; value: string }[]): Promise<void> {
@@ -234,6 +345,7 @@ export const useProjectStore = defineStore("project", {
     async closeProject(): Promise<void> {
       try {
         await ProjectApi.close();
+        this.forgetMergeFlows();
         this.$reset();
       } catch (e: any) {
         if (e instanceof ProjectFeatureUnavailable) this.closeAvailable = false;

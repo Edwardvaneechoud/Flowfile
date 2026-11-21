@@ -93,6 +93,7 @@ class HistoryManager:
         action_type: HistoryActionType,
         description: str,
         node_id: int | None = None,
+        carried: tuple[str, ...] = (),
     ) -> HistoryEntry:
         """Create a history entry holding ``snapshot`` with the configured compression settings.
 
@@ -101,6 +102,7 @@ class HistoryManager:
             action_type: The type of action.
             description: Human-readable description.
             node_id: Optional affected node ID.
+            carried: The flow settings restoring this entry restores too (``HistoryEntry.carried``).
 
         Returns:
             A new HistoryEntry instance.
@@ -112,6 +114,7 @@ class HistoryManager:
             timestamp=time(),
             node_id=node_id,
             compression_level=self._config.compression_level if self._config.use_compression else 1,
+            carried=carried,
         )
 
     @contextmanager
@@ -131,17 +134,19 @@ class HistoryManager:
         action_type: HistoryActionType,
         description: str,
         node_id: int | None = None,
+        carried: tuple[str, ...] = (),
     ) -> HistoryEntry | None:
-        """Push ``pre_snapshot`` as one undo entry iff the in-scope graph changed.
+        """Push ``pre_snapshot`` as one undo entry iff the in-scope graph or a carried setting changed.
 
-        Only a recorded change clears the redo stack. Returns the pushed entry, or None
-        when nothing was recorded (disabled, restoring, or no in-scope change).
+        ``carried`` names the carried settings the mutation changed (``HistoryEntry.carried``). Only a recorded
+        change clears the redo stack. Returns the pushed entry, or None when nothing was recorded (disabled,
+        restoring, or no change in scope).
         """
         if not self._config.enabled or self._is_restoring:
             return None
-        if pre_snapshot.graph_hash == post_snapshot.graph_hash:
+        if pre_snapshot.graph_hash == post_snapshot.graph_hash and not carried:
             return None
-        entry = self._create_entry(pre_snapshot, action_type, description, node_id)
+        entry = self._create_entry(pre_snapshot, action_type, description, node_id, carried)
         self._undo_stack.append(entry)
         self._redo_stack.clear()
         logger.info(
@@ -240,13 +245,14 @@ class HistoryManager:
             return UndoRedoResult(success=False, error_message=str(e))
 
         source.pop()
-        target.append(self._create_entry(replaced, entry.action_type, entry.description, entry.node_id))
+        target.append(self._create_entry(replaced, entry.action_type, entry.description, entry.node_id, entry.carried))
         self.refresh_dirty_from(flow_graph)
         logger.info(f"{verb.capitalize()} successful: {entry.description}")
         return UndoRedoResult(success=True, action_description=entry.description)
 
     def _restore_entry(self, flow_graph: "FlowGraph", entry: HistoryEntry, verb: str) -> HistorySnapshot:
-        """Restore ``entry``'s graph and return the graph it replaced; a failed restore is put back, then re-raised."""
+        """Restore ``entry``'s graph (and its carried settings) and return the state it replaced; a failed restore is
+        put back, then re-raised."""
         snapshot_data = FlowfileData.model_validate(entry.get_snapshot())
         replaced = HistorySnapshot(flow_graph.get_flowfile_data().model_dump())
         try:
@@ -257,6 +263,8 @@ class HistoryManager:
             except Exception as reinstate_error:
                 logger.error(f"History: {verb} could not reinstate the previous graph: {reinstate_error}")
             raise
+        if entry.carried:
+            flow_graph._restore_carried(snapshot_data.flowfile_settings, entry.carried)
         return replaced
 
     def undo(self, flow_graph: "FlowGraph") -> UndoRedoResult:

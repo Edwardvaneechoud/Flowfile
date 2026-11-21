@@ -169,9 +169,7 @@ def _removed(changes: list[kinds.Change]) -> list[kinds.Change]:
 
 
 def _change_rows(changes: list[kinds.Change]) -> list[dict]:
-    return [
-        {"change": c.change, "kind": kinds.get(c.kind).label, "label": c.label, "path": c.path} for c in changes
-    ]
+    return [{"change": c.change, "kind": kinds.get(c.kind).label, "label": c.label, "path": c.path} for c in changes]
 
 
 def _unsaved_rows(proj: ActiveProject) -> list[dict]:
@@ -659,8 +657,12 @@ class ProjectSyncService:
             )
 
     def _merge_remote(self, proj: ActiveProject, branch: str, ours: str, theirs: str, force: bool) -> PullResult:
+        """Merge the remote's copy into this branch: the managed files through ``merging.merge_trees``, every other
+        file by git's three-way rule (``git_ops.unmanaged_changes``, which refuses the pull before anything is written
+        when both sides changed one differently). Clean, it concludes at once; else the state waits to be settled."""
         remote = f"{git_ops.REMOTE_NAME}/{branch}"
         base = git_ops.merge_base(proj.root, ours, theirs)
+        unmanaged = git_ops.unmanaged_changes(proj.root, base, ours, theirs)
         sides = {"base": "base", "ours": f"{branch} (this copy)", "theirs": remote}
         merged = merging.merge_trees(
             git_ops.read_tree_at(proj.root, base) if base else {},
@@ -668,7 +670,7 @@ class ProjectSyncService:
             git_ops.read_tree_at(proj.root, theirs),
             sides,
         )
-        state = merging.new_state(branch, ours, theirs, merged, sides)
+        state = merging.new_state(branch, ours, theirs, merged, sides, unmanaged)
         if merged.clean:
             return self._conclude(proj, state, force)
         merging.save_state(proj.root, state)
@@ -678,10 +680,16 @@ class ProjectSyncService:
         """Commit the settled merge with both parents and apply it; the state goes once the import succeeded."""
         if git_ops.current_branch(proj.root) != state["branch"] or git_ops.head_sha(proj.root) != state["ours"]:
             merging.clear_state(proj.root)
+            self._release_merge_flows(proj.owner_id)
             raise git_ops.GitRemoteError("The branch moved since the pull; pull again.")
         message = f"Merge {git_ops.REMOTE_NAME}/{state['branch']} into {state['branch']}"
         sha = git_ops.commit_tree_changes(
-            proj.root, state["ours"], state["changes"], message, [state["ours"], state["theirs"]]
+            proj.root,
+            state["ours"],
+            state["changes"],
+            message,
+            [state["ours"], state["theirs"]],
+            state.get("unmanaged") or {},
         )
         result = self._apply_commit(
             proj,
@@ -692,7 +700,23 @@ class ProjectSyncService:
             lambda: git_ops.move_branch(proj.root, state["ours"]),
         )
         merging.clear_state(proj.root)
+        self._release_merge_flows(proj.owner_id)
         return PullResult(state="merged", sha=sha, result=result, warnings=list(state.get("warnings") or []))
+
+    @staticmethod
+    def _release_merge_flows(user_id: int) -> None:
+        """The waiting merge is over (concluded or dropped): a flow ``open_merge_flow`` opened from it stops holding
+        its conflicts and its link to the merge, so the editor no longer refuses to run it over a merge that is gone."""
+        from flowfile_core import flow_file_handler
+
+        for flow in flow_file_handler.get_user_flows(user_id):
+            marker = getattr(flow, "project_merge", None)
+            if not marker or marker.get("owner_id") != user_id:
+                continue
+            flow.project_merge = None
+            if flow.merge_conflicts:
+                with flow.transaction("Merge finished", record=False):
+                    flow.merge_conflicts = None
 
     def merge_state(self, user_id: int) -> dict | None:
         """The pull waiting to be settled: its branch, both sides and every item left, ``None`` when there is none."""
@@ -711,12 +735,18 @@ class ProjectSyncService:
         }
 
     def settle_merge(self, user_id: int, path: str, take: str, key: str | None = None, force: bool = False):
-        """Settle one item of the waiting merge; the last one concludes it (``PullResult``), else the state left."""
+        """Settle one item of the waiting merge; the last one concludes it (``PullResult``), else the state left.
+
+        The settled state is saved before the conclusion, which the guard can refuse (409 ``UNSAVED_CHANGES``), so a
+        state with nothing left to settle goes straight to the conclusion: the same request sent again with ``force``
+        after that refusal concludes the merge instead of finding its item gone."""
         proj = self._require_project(user_id)
         with git_ops.project_lock(proj.root):
             state = merging.load_state(proj.root)
             if state is None:
                 raise git_ops.GitRemoteError("No merge is waiting to be settled.")
+            if merging.is_settled(state):
+                return self._conclude(proj, state, force)
             try:
                 state = merging.settle(state, path, take, key)
             except KeyError:
@@ -743,6 +773,7 @@ class ProjectSyncService:
         proj = self._require_project(user_id)
         with git_ops.project_lock(proj.root):
             merging.clear_state(proj.root)
+        self._release_merge_flows(user_id)
 
     def open_merge_flow(self, user_id: int, path: str) -> int:
         """Open a conflicted flow of the waiting merge in the editor: the merged flow, the remote's side of each

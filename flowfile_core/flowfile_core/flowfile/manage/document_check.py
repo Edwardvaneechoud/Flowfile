@@ -72,3 +72,15 @@ def check_document(document: dict, user_id: int | None = None) -> DocumentCheck:
     except Exception as e:
         result.build_error = str(e) or type(e).__name__
     return result
+
+
+def build_check(document: dict) -> list[str]:
+    """``flowfile-merge check --build``: the problems core finds in ``document``, one sentence each, ``[]`` when it
+    holds together.
+
+    Registered under the ``flowfile.flow_merge`` entry point group in the root ``pyproject.toml``, where the command
+    (``shared.flow_merge.cli``, which imports nothing of core) looks it up, so core is loaded only when ``--build`` is
+    asked for. Loading it starts core's catalog database (``FLOWFILE_STORAGE_DIR``), so a pipeline points that at a
+    scratch folder.
+    """
+    return check_document(document).problems()

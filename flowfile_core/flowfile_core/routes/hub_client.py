@@ -512,6 +512,7 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
     document = flow.get_flowfile_data()
     document.flowfile_settings.source_registration_id = None
     document.flowfile_settings.hub_origin = None
+    document.flowfile_settings.merge_conflicts = None
     body = {
         "definition": document.model_dump(mode="json"),
         "base_version": base_version,
@@ -552,6 +553,7 @@ def _for_merge(document: dict) -> dict:
     settings = document.get("flowfile_settings") or {}
     settings["hub_origin"] = None
     settings["source_registration_id"] = None
+    settings.pop("merge_conflicts", None)
     return document
 
 
@@ -562,8 +564,10 @@ def merge_newest(request: HubMergeRequest, current_user=Depends(get_current_acti
     The base is the version ``hub_origin`` names, the other side the hub's newest version. Steps that exist on the hub
     keep their ids; a step the person added under an id the hub's newest also used is renumbered. Where both changed
     the same step the canvas keeps the person's version and the conflict is held on the flow
-    (``flow.merge_conflicts``) until it is settled; publishing and running are refused meanwhile. ``hub_origin`` then
-    names the newest version, so the next publish is on top of it.
+    (``flow.merge_conflicts``, saved with the flow and marked ``shown: theirs``) until it is settled; publishing and
+    running are refused meanwhile. ``hub_origin`` then names the newest version, so the next publish is on top of it.
+    Both are set inside the merge's own transaction, so the step carries them: undoing the merge puts the base version
+    back and drops its conflicts, and a redo brings both back.
     """
     from flowfile_core.flowfile.manage.apply_document import apply_document
 
@@ -591,11 +595,18 @@ def merge_newest(request: HubMergeRequest, current_user=Depends(get_current_acti
     held = None
     shown = result.document
     if not result.clean:
-        held = conflict_document(result, sides)
-        shown = resolve(held, {c.key: "theirs" for c in result.conflicts})
-    history, applied_warnings = apply_document(flow, shown, f"Merge version {newest} from the hub", current_user)
-    flow.merge_conflicts = held
-    flow.flow_settings.hub_origin = schemas.HubOrigin(hub_url=hub_url, flow_uuid=origin.flow_uuid, version=newest)
+        wrapper = conflict_document(result, sides, shown="theirs")
+        shown = resolve(wrapper, {c.key: "theirs" for c in result.conflicts})
+        held = {k: v for k, v in wrapper.items() if k != "merged"}
+    merged_origin = schemas.HubOrigin(hub_url=hub_url, flow_uuid=origin.flow_uuid, version=newest)
+
+    def _hold() -> None:
+        flow.merge_conflicts = held
+        flow.flow_settings.hub_origin = merged_origin
+
+    history, applied_warnings = apply_document(
+        flow, shown, f"Merge version {newest} from the hub", current_user, then=_hold
+    )
     flow_path = flow.flow_settings.path or flow.flow_settings.save_location
     if flow_path:
         flow.save_flow(flow_path=flow_path)
@@ -633,6 +644,7 @@ def _publish_as_new(
     document.flowfile_name = name
     document.flowfile_settings.source_registration_id = None
     document.flowfile_settings.hub_origin = None
+    document.flowfile_settings.merge_conflicts = None
     body = {
         "definition": document.model_dump(mode="json"),
         "base_version": None,

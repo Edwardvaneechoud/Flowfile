@@ -320,6 +320,7 @@ import { useEditorStore } from "../../../stores/editor-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
 import { useProjectStore } from "../../../stores/project-store";
 import { useCatalogStore } from "../../../stores/catalog-store";
+import { useMergeConflictsStore } from "../../../stores/merge-conflicts-store";
 import { useRecentFlows } from "../../../composables/useRecentFlows";
 import {
   createFlow,
@@ -341,6 +342,7 @@ const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
 const projectStore = useProjectStore();
 const catalogStore = useCatalogStore();
+const mergeConflicts = useMergeConflictsStore();
 const hub = useHubConnectionStore();
 const { recordFlow, recordFlowFromSettings, reconcileWithCatalog, removeFlow } = useRecentFlows();
 
@@ -359,6 +361,7 @@ const openHubPublishDialog = () => {
 // A publish as a new flow moved it to a new id, as a Save As does: follow it there.
 const handleHubMerged = async () => {
   emit("refreshFlow");
+  void mergeConflicts.load(nodeStore.flow_id);
   await loadFlowSettings();
 };
 

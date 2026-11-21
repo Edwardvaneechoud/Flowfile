@@ -132,6 +132,8 @@ def normalize_flow_data(
     settings = data.get("flowfile_settings")
     if isinstance(settings, dict):
         settings["source_registration_id"] = None
+        # Held merge conflicts are this install's unfinished work, never part of a version.
+        settings.pop("merge_conflicts", None)
     _name_node_references(data, lookup)
     for key in ("flow_uuid", "catalog_name", "namespace"):
         data.pop(key, None)

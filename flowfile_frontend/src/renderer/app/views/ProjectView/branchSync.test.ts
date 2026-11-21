@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { branchNameError, itemFlowName, pullMessage, syncText, takeLabel } from "./branchSync";
+import {
+  branchNameError,
+  itemFlowName,
+  opensInEditor,
+  pullMessage,
+  syncText,
+  takeLabel,
+} from "./branchSync";
 import type { ProjectBranch, ProjectMergeItem, ProjectPullResult } from "../../types";
 
 const branch = (ahead: number | null, behind: number | null): ProjectBranch => ({
@@ -58,5 +65,16 @@ describe("branchSync", () => {
     expect(takeLabel(item, "ours")).toBe("Keep feature (this copy)");
     expect(takeLabel(item, "theirs")).toBe("Take origin/feature");
     expect(itemFlowName(item)).toBe("nightly_revenue");
+  });
+
+  it("opens only a step conflict of a conflicted flow file in the editor", () => {
+    const flows = ["flows/nightly_revenue.flow.yaml", "schedules/nightly.yaml"];
+    expect(opensInEditor(item, flows)).toBe(true);
+    expect(
+      opensInEditor({ ...item, path: "schedules/nightly.yaml", key: "schedule:3" }, flows),
+    ).toBe(false);
+    expect(opensInEditor({ ...item, key: "parameter:region" }, flows)).toBe(false);
+    expect(opensInEditor({ ...item, key: null, kind: "file" }, flows)).toBe(false);
+    expect(opensInEditor(item, [])).toBe(false);
   });
 });

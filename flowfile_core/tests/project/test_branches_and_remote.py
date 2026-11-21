@@ -16,7 +16,7 @@ import yaml
 from fastapi.testclient import TestClient
 from git import Repo
 
-from flowfile_core import main
+from flowfile_core import flow_file_handler, main
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRegistration, Secret
@@ -209,7 +209,9 @@ def test_a_switch_builds_and_writes_only_the_flows_that_changed(project, tmp_pat
         built, imported = [], []
         real_build, real_import = importer.ephemeral_flow_graph, importer._import_flow
         monkeypatch.setattr(
-            importer, "ephemeral_flow_graph", lambda path, owner: built.append(Path(path).name) or real_build(path, owner)
+            importer,
+            "ephemeral_flow_graph",
+            lambda path, owner: built.append(Path(path).name) or real_build(path, owner),
         )
         monkeypatch.setattr(
             importer, "_import_flow", lambda data, owner: imported.append(data["flow_uuid"]) or real_import(data, owner)
@@ -437,3 +439,347 @@ def test_a_conflicted_flow_is_settled_in_the_editor(project, remote, tmp_path):
     assert client.get("/project/merge").json()["merge"] is None
     assert _step(flow_uuid, 2)["sample_size"] == 25
     assert len(Repo(str(root)).head.commit.parents) == 2
+
+
+def _open_in_editor(conflict: dict) -> int:
+    opened = client.post("/project/merge/open", json={"path": conflict["path"]})
+    assert opened.status_code == 200, opened.text
+    return opened.json()["flow_id"]
+
+
+def _editor_conflicts(flow_id: int) -> list[str]:
+    rows = client.get("/editor/merge/conflicts", params={"flow_id": flow_id}).json()["conflicts"]
+    return [r["key"] for r in rows]
+
+
+def test_keeping_the_side_the_editor_shows_leaves_an_edit_made_since(project, remote, tmp_path):
+    """The canvas of a flow opened from a pull shows the remote's step; taking that side only stops holding the
+    conflict, so what was typed into the step since the pull is what the merge commits."""
+    root, flow_uuid = _diverge(project, remote, tmp_path, 40)
+    conflict = client.post("/project/pull").json()["conflicts"][0]
+    flow_id = _open_in_editor(conflict)
+    flow = flow_file_handler.get_flow(flow_id)
+    assert flow.merge_conflicts["shown"] == "theirs"
+    assert flow.get_node(2).setting_input.sample_size == 40
+
+    edited = flow.get_node(2).setting_input.model_copy(deep=True)
+    edited.sample_size = 55
+    flow.add_sample(edited)
+    steps_before = client.get("/editor/history_status/", params={"flow_id": flow_id}).json()["undo_count"]
+
+    settled = client.post("/editor/merge/resolve/", json={"flow_id": flow_id, "key": "step:2", "take": "theirs"})
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["history"]["undo_count"] == steps_before
+    assert client.get("/project/merge").json()["merge"] is None
+    assert _step(flow_uuid, 2)["sample_size"] == 55
+    assert len(Repo(str(root)).head.commit.parents) == 2
+
+
+@pytest.mark.parametrize("ending", ["abort", "settle"])
+def test_a_merge_that_ends_on_the_project_page_frees_the_flow_open_in_the_editor(project, remote, tmp_path, ending):
+    _diverge(project, remote, tmp_path, 40)
+    conflict = client.post("/project/pull").json()["conflicts"][0]
+    flow_id = _open_in_editor(conflict)
+    assert _editor_conflicts(flow_id) == ["step:2"]
+
+    if ending == "abort":
+        assert client.post("/project/merge/abort").json() == {"ok": True}
+    else:
+        body = {"path": conflict["path"], "key": conflict["key"], "take": "theirs"}
+        assert client.post("/project/merge/settle", json=body).json()["pull"]["state"] == "merged"
+
+    assert _editor_conflicts(flow_id) == []
+    flow = flow_file_handler.get_flow(flow_id)
+    assert flow.merge_conflicts is None
+    assert getattr(flow, "project_merge", None) is None
+
+
+def test_a_saved_version_never_holds_a_flows_merge_conflicts(project):
+    """A flow file saved with open conflicts (a hub merge) is exported without them."""
+    _, flow_uuid = project
+    path = _flow_path(flow_uuid)
+    graph = open_flow(Path(path))
+    try:
+        node = graph.get_node(2).setting_input.model_copy(deep=True)
+        node.sample_size = 30
+        graph.add_sample(node)
+        graph.merge_conflicts = {"conflicts": [{"key": "step:2", "kind": "both_changed"}], "shown": "theirs"}
+        graph.save_flow(path)
+    finally:
+        graph.close_flow()
+    assert "merge_conflicts" in yaml.safe_load(Path(path).read_text())["flowfile_settings"]
+
+    sha = _save("with conflicts held")
+    exported = [text for name, text in git_ops.read_tree_at(project[0], sha).items() if name.endswith(".flow.yaml")]
+    assert exported
+    assert all("merge_conflicts" not in text for text in exported)
+
+
+def _ben(tmp_path: Path, remote: Path, change, message: str = "Changed elsewhere") -> None:
+    """Clone the remote (or bring the clone up to date), ``change(clone folder)``, commit everything, push."""
+    clone = tmp_path / "ben"
+    if not clone.exists():
+        _git(tmp_path, "clone", "-q", str(remote), str(clone))
+    else:
+        _git(clone, "pull", "-q", "--ff-only")
+    change(clone)
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-qm", message)
+    _git(clone, "push", "-q", "origin", "main")
+
+
+def _ben_adds_a_flow_named(name: str, flow_uuid: str):
+    """A flow file Ben made on his own install: another flow (``flow_uuid``) that took the name ``name``."""
+
+    def change(clone: Path) -> None:
+        source = next((clone / "flows").glob("branchy*.flow.yaml"))
+        data = yaml.safe_load(source.read_text())
+        data.update(flow_uuid=flow_uuid, catalog_name=name)
+        (clone / "flows" / f"{name}.flow.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
+
+    return change
+
+
+def _registered(flow_uuid: str) -> bool:
+    with get_db_context() as db:
+        return db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is not None
+
+
+@pytest.mark.parametrize("take", ["ours", "theirs"])
+def test_two_flows_that_took_one_name_are_never_fused(project, remote, tmp_path, take):
+    root, _ = project
+    ben_uuid = "b0b0b0b0-0000-4000-8000-000000000001"
+    _set_remote(str(remote))
+    client.post("/project/push")
+    _ben(tmp_path, remote, _ben_adds_a_flow_named("daily_load", ben_uuid))
+    ana_uuid = _register_flow(tmp_path, "daily_load", 828290)
+    try:
+        ours = _save("ana's daily_load")
+        path = "flows/daily_load.flow.yaml"
+        ana_text = git_ops.read_tree_at(root, ours)[path]
+        assert yaml.safe_load(ana_text)["flow_uuid"] == ana_uuid
+
+        body = client.post("/project/pull").json()
+        assert body["state"] == "conflicted", body
+        ben_text = git_ops.read_tree_at(root, git_ops.branch_sha(root, "refs/remotes/origin/main"))[path]
+        [row] = body["conflicts"]
+        assert (row["path"], row["key"], row["kind"]) == (path, None, "file")
+        assert "different flow" in row["message"]
+        assert row["ours"] == [f"holds daily_load ({ana_uuid[:8]})"]
+        assert row["theirs"] == [f"holds daily_load ({ben_uuid[:8]})"]
+        assert _registered(ana_uuid) and not _registered(ben_uuid)
+
+        settled = client.post("/project/merge/settle", json={"path": path, "take": take})
+        assert settled.status_code == 200, settled.text
+        assert settled.json()["pull"]["state"] == "merged"
+        merged = git_ops.read_tree_at(root, "HEAD")[path]
+        assert merged == (ana_text if take == "ours" else ben_text)
+        assert _registered(ana_uuid) is (take == "ours")
+        assert _registered(ben_uuid) is (take == "theirs")
+    finally:
+        _drop_flow(ana_uuid)
+        _drop_flow(ben_uuid)
+
+
+def test_one_flow_added_on_both_sides_still_merges_by_step():
+    document = {"flow_uuid": "u-1", "catalog_name": "f", "nodes": [{"id": 1, "type": "manual_input"}]}
+    ours, theirs = dict(document), {**document, "flowfile_name": "f"}
+    merged = merging.merge_trees(
+        {}, {"flows/f.flow.yaml": yaml.safe_dump(ours)}, {"flows/f.flow.yaml": yaml.safe_dump(theirs)}, {}
+    )
+    assert not merged.files
+    other = merging.merge_trees(
+        {},
+        {"flows/f.flow.yaml": yaml.safe_dump(ours)},
+        {"flows/f.flow.yaml": yaml.safe_dump({**theirs, "flow_uuid": "u-2"})},
+        {},
+    )
+    assert list(other.files) == ["flows/f.flow.yaml"] and not other.changes
+
+
+def test_a_settle_retried_with_force_after_unsaved_changes_concludes(project, remote, tmp_path):
+    root, flow_uuid = _diverge(project, remote, tmp_path, 40)
+    conflict = client.post("/project/pull").json()["conflicts"][0]
+    unknown = client.post("/project/merge/settle", json={"path": conflict["path"], "key": "step:999", "take": "ours"})
+    assert unknown.status_code == 404
+    _set_sample(flow_uuid, 33)
+    settle = {"path": conflict["path"], "key": conflict["key"], "take": "theirs"}
+
+    refused = client.post("/project/merge/settle", json=settle)
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["code"] == "UNSAVED_CHANGES"
+    assert client.get("/project/merge").json()["merge"]["conflicts"] == []
+
+    forced = client.post("/project/merge/settle", json={**settle, "force": True})
+    assert forced.status_code == 200, forced.text
+    pull = forced.json()["pull"]
+    assert pull["state"] == "merged"
+    assert pull["result"]["recovery_sha"]
+    kept = git_ops.read_tree_at(root, pull["result"]["recovery_sha"])
+    assert _node(yaml.safe_load(kept[conflict["path"]]), 2)["sample_size"] == 33
+    assert _step(flow_uuid, 2)["sample_size"] == 40
+    assert client.get("/project/merge").json()["merge"] is None
+
+
+def _here(root: Path, change, message: str) -> str:
+    """A commit made in the project's own folder with plain git, as someone would outside Flowfile."""
+    change(root)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", message)
+    return git_ops.head_sha(root)
+
+
+def test_a_merging_pull_keeps_what_the_remote_changed_outside_the_managed_files(project, remote, tmp_path):
+    root, flow_uuid = project
+    _here(root, lambda r: (r / "OLD.md").write_text("old\n"), "an old note")
+    _set_remote(str(remote))
+    client.post("/project/push")
+
+    def teammate(clone: Path) -> None:
+        (clone / "README.md").write_text("# Team project\n")
+        (clone / "ci").mkdir()
+        (clone / "ci" / "run.sh").write_text("#!/bin/sh\necho ok\n")
+        (clone / "ci" / "run.sh").chmod(0o755)
+        (clone / "logo.bin").write_bytes(bytes(range(256)))
+        (clone / ".gitignore").write_text((clone / ".gitignore").read_text() + "build/\n")
+        (clone / "OLD.md").unlink()
+        flow_file = next((clone / "flows").glob("*.flow.yaml"))
+        data = yaml.safe_load(flow_file.read_text())
+        _node(data, 2).update(sample_size=40)
+        flow_file.write_text(yaml.safe_dump(data, sort_keys=False))
+
+    _ben(tmp_path, remote, teammate)
+    _here(root, lambda r: (r / "NOTES.md").write_text("mine\n"), "my notes")
+    _set_sample(flow_uuid, 25)
+    _save("here")
+
+    conflict = client.post("/project/pull").json()["conflicts"][0]
+    settled = client.post(
+        "/project/merge/settle", json={"path": conflict["path"], "key": conflict["key"], "take": "theirs"}
+    )
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["pull"]["state"] == "merged"
+
+    tree = Repo(str(root)).head.commit.tree
+    assert (tree / "README.md").data_stream.read() == b"# Team project\n"
+    assert (tree / "ci" / "run.sh").mode == 0o100755
+    assert (tree / "logo.bin").data_stream.read() == bytes(range(256))
+    assert (tree / ".gitignore").data_stream.read().decode().endswith("build/\n")
+    assert (tree / "NOTES.md").data_stream.read() == b"mine\n"
+    assert "OLD.md" not in {b.path for b in tree.traverse()}
+    assert (root / "README.md").read_text() == "# Team project\n"
+    assert _step(flow_uuid, 2)["sample_size"] == 40
+
+    assert client.post("/project/push").status_code == 200
+    pushed = Repo(str(remote)).commit("main").tree
+    assert (pushed / "README.md").data_stream.read() == b"# Team project\n"
+
+
+def test_a_clean_merging_pull_takes_the_remotes_other_files_too(project, remote, tmp_path):
+    root, flow_uuid = project
+    _set_remote(str(remote))
+    client.post("/project/push")
+    _ben(tmp_path, remote, lambda c: (c / "README.md").write_text("from ben\n"))
+    _set_sample(flow_uuid, 25)
+    _save("here")
+
+    body = client.post("/project/pull").json()
+    assert body["state"] == "merged", body
+    assert (Repo(str(root)).head.commit.tree / "README.md").data_stream.read() == b"from ben\n"
+    assert _step(flow_uuid, 2)["sample_size"] == 25
+
+
+def test_a_pull_is_refused_when_both_changed_an_unmanaged_file_differently(project, remote, tmp_path):
+    root, flow_uuid = project
+    _here(root, lambda r: (r / "README.md").write_text("base\n"), "readme")
+    _set_remote(str(remote))
+    client.post("/project/push")
+    _ben(tmp_path, remote, lambda c: (c / "README.md").write_text("ben's\n"))
+    ours = _here(root, lambda r: (r / "README.md").write_text("ana's\n"), "my readme")
+    _set_sample(flow_uuid, 25)
+    ours = _save("here") or ours
+
+    refused = client.post("/project/pull")
+    assert refused.status_code == 409, refused.text
+    detail = refused.json()["detail"]
+    assert detail["code"] == "GIT_REFUSED"
+    assert detail["paths"] == ["README.md"]
+    assert "README.md" in detail["message"]
+    assert git_ops.head_sha(root) == ours
+    assert client.get("/project/merge").json()["merge"] is None
+    assert (root / "README.md").read_text() == "ana's\n"
+    assert _step(flow_uuid, 2)["sample_size"] == 25
+    assert client.get("/project/active").json()["dirty"] is False
+
+
+_LOCAL_REMOTES = [
+    r"C:\Users\me\remote.git",
+    "D:/shared/proj.git",
+    r"\\fileserver\share\proj.git",
+    "/srv/git/proj.git",
+    "file:///srv/git/proj.git",
+    "FILE:///C:/repos/proj.git",
+]
+
+
+@pytest.mark.parametrize("url", _LOCAL_REMOTES)
+def test_a_local_folder_remote_in_any_os_form_is_judged_as_a_folder(url):
+    assert git_ops._check_remote_url(url, local_allowed=True) == url
+    with pytest.raises(git_ops.GitRemoteError, match="folder on the server"):
+        git_ops._check_remote_url(url, local_allowed=False)
+
+
+@pytest.mark.parametrize(
+    "url", ["https://git.example.invalid/team/x.git", "ssh://git@git.example.invalid/x.git", "git@host.invalid:t/x.git"]
+)
+def test_network_remotes_are_still_accepted_without_local_folders(url):
+    assert git_ops._check_remote_url(url, local_allowed=False) == url
+
+
+@pytest.mark.parametrize("url", ["c:relative.git", "relative/x.git", "ftp://host.invalid/x.git"])
+def test_other_addresses_are_still_refused(url):
+    with pytest.raises(git_ops.GitRemoteError):
+        git_ops._check_remote_url(url, local_allowed=True)
+
+
+def _schedules(cron: str) -> str:
+    entry = {"id": "s-1", "name": "nightly", "schedule_type": "cron", "cron_expression": cron, "enabled": True}
+    return yaml.safe_dump({"flow_uuid": "u-1", "schedules": [entry]})
+
+
+def test_a_schedule_conflict_tells_what_each_side_changed():
+    path = "schedules/f.yaml"
+    merged = merging.merge_trees(
+        {path: _schedules("0 1 * * *")}, {path: _schedules("0 3 * * *")}, {path: _schedules("0 5 * * *")}, {}
+    )
+    [row] = merging.open_items(merging.new_state("main", "a" * 40, "b" * 40, merged, {}))
+    assert row["key"] == "schedule:s-1"
+    assert row["ours"] == ["cron_expression: '0 1 * * *' → '0 3 * * *'"]
+    assert row["theirs"] == ["cron_expression: '0 1 * * *' → '0 5 * * *'"]
+
+
+def test_a_parameter_conflict_tells_what_each_side_changed():
+    def flow(value: str) -> str:
+        return yaml.safe_dump(
+            {
+                "flow_uuid": "u-1",
+                "flowfile_settings": {"parameters": [{"name": "region", "default_value": value}]},
+                "nodes": [{"id": 1, "type": "manual_input"}],
+            }
+        )
+
+    path = "flows/f.flow.yaml"
+    merged = merging.merge_trees({path: flow("North")}, {path: flow("South")}, {path: flow("East")}, {})
+    rows = merging.open_items(merging.new_state("main", "a" * 40, "b" * 40, merged, {}))
+    row = next(r for r in rows if r["key"] == "parameter:region")
+    assert row["ours"] == ["default_value: 'North' → 'South'"]
+    assert row["theirs"] == ["default_value: 'North' → 'East'"]
+    assert row["step_id"] is None
+
+
+def test_an_entry_added_differently_on_both_sides_names_its_values():
+    lines = merging._side(
+        "schedule", None, {"id": "s", "cron_expression": "0 3 * * *"}, {"id": "s", "cron_expression": "x"}
+    )
+    assert lines == ["added the schedule", "cron_expression = '0 3 * * *'"]
+    assert merging._side("parameter", {"name": "r"}, None, {"name": "r"}) == ["removed the parameter"]

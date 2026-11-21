@@ -488,7 +488,10 @@ class ConcludeRequest(BaseModel):
 
 
 def _git_error(e: git_ops.GitRemoteError) -> HTTPException:
-    return HTTPException(status.HTTP_409_CONFLICT, {"code": "GIT_REFUSED", "message": str(e)})
+    detail = {"code": "GIT_REFUSED", "message": str(e)}
+    if isinstance(e, git_ops.UnmergedFilesError):
+        detail["paths"] = e.paths
+    return HTTPException(status.HTTP_409_CONFLICT, detail)
 
 
 def _pull_out(result) -> PullOut:

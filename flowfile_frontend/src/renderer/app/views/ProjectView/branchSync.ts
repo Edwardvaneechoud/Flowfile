@@ -46,8 +46,12 @@ export const pullMessage = (result: ProjectPullResult): string => {
   }
 };
 
-/** A step conflict opens in the editor; a whole-file one is settled here. */
-export const opensInEditor = (item: ProjectMergeItem): boolean => item.key !== null;
+/**
+ * Only a step conflict of a conflicted flow file opens in the editor (`flows` is the merge's list); a whole file,
+ * a schedule or a parameter is settled here.
+ */
+export const opensInEditor = (item: ProjectMergeItem, flows: string[]): boolean =>
+  !!item.key?.startsWith("step:") && flows.includes(item.path);
 
 export const takeLabel = (item: ProjectMergeItem, side: "ours" | "theirs"): string =>
   side === "ours" ? `Keep ${item.ours_label}` : `Take ${item.theirs_label}`;

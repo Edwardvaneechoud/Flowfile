@@ -1,9 +1,10 @@
 """Settle the merge conflicts held on an open flow, one at a time, as undoable edits.
 
 A merge that could not settle a step itself holds the conflict on the open flow (``flow.merge_conflicts``, a
-``shared.flow_merge.conflict`` wrapper): the canvas shows the person's own version of the step, and running and
-publishing the flow are refused until every conflict is settled. Settling one makes the canvas take the chosen side
-of that step through the editor's operations, one undo step each.
+``shared.flow_merge.conflict`` wrapper without ``merged``, saved with the flow): the canvas shows one side of the step
+(the wrapper's ``shown``; the person's own version after a hub merge), and running and publishing the flow are
+refused until every conflict is settled. Settling one on the side the canvas shows only stops holding it; on the other
+side the canvas takes that side of the step through the editor's operations, one undo step each.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pydantic import BaseModel
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.flowfile.manage.apply_document import apply_document
-from flowfile_core.routes.routes import get_flow_or_404
+from flowfile_core.routes.routes import edit_flow, get_flow_or_404
 from flowfile_core.schemas.history_schema import HistoryState
 from shared.flow_merge.conflict import is_conflicted, resolve
 from shared.flow_merge.render import side_lines
@@ -79,18 +80,34 @@ def list_conflicts(flow_id: int, current_user=Depends(get_current_active_user)) 
 def resolve_conflict(
     request: ResolveConflictRequest, current_user=Depends(get_current_active_user)
 ) -> MergeConflictsOut:
-    """Take one side of one conflict; the conflicts left come back, none once the flow holds together again."""
+    """Take one side of one conflict; the conflicts left come back, none once the flow holds together again.
+
+    Taking the side the canvas shows (the held set's ``shown``) only stops holding the conflict: the canvas, and any
+    edit made to the step since the merge, stays as it is and no undo step is recorded. Taking the other side applies
+    that side's version of the step as one undo step, which also carries the conflict, so its undo holds it again.
+    """
     flow = get_flow_or_404(request.flow_id, current_user)
     held = getattr(flow, "merge_conflicts", None)
     if not held or request.key not in {c["key"] for c in held.get("conflicts") or []}:
         raise HTTPException(status_code=404, detail=f"No open merge conflict {request.key} in this flow.")
-    current = {**held, "merged": flow.get_flowfile_data().model_dump(mode="json")}
-    settled = resolve(current, {request.key: request.take})
-    target = settled["merged"] if is_conflicted(settled) else settled
     label = next(c.get("label") for c in held["conflicts"] if c["key"] == request.key)
     side = (held.get("sides") or {}).get(request.take, request.take)
-    history, _ = apply_document(flow, target, f"Settle {label}: take {side}", current_user)
-    flow.merge_conflicts = {k: v for k, v in settled.items() if k != "merged"} if is_conflicted(settled) else None
+    description = f"Settle {label}: take {side}"
+    if held.get("shown") == request.take:
+        left = [c for c in held["conflicts"] if c["key"] != request.key]
+        with edit_flow(flow, description, record=False) as txn:
+            flow.merge_conflicts = {**held, "conflicts": left} if left else None
+        history = txn.history
+    else:
+        current = {**held, "merged": flow.get_flowfile_data().model_dump(mode="json")}
+        settled = resolve(current, {request.key: request.take})
+        target = settled["merged"] if is_conflicted(settled) else settled
+        still_held = {k: v for k, v in settled.items() if k != "merged"} if is_conflicted(settled) else None
+
+        def _hold() -> None:
+            flow.merge_conflicts = still_held
+
+        history, _ = apply_document(flow, target, description, current_user, then=_hold)
     if getattr(flow, "project_merge", None):
         from flowfile_core.project import project_sync
 

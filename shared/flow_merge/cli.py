@@ -1,7 +1,9 @@
 """``flowfile-merge``: the step-level diff and merge of flow files from a shell, a git hook or a pipeline.
 
-It imports nothing of core, so git can run it once per file it merges. Exit codes: 0 done, 1 a difference or a
-conflict that the caller asked to be told about, 2 a file that cannot be read.
+It imports nothing of core, so git can run it once per file it merges; ``check --build`` loads the build check
+core registers under the ``flowfile.flow_merge`` entry point group. Exit codes: 0 done, 1 a difference or a conflict
+that the caller asked to be told about, 2 a file that cannot be read or a ``check --build`` with no build check
+installed.
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
+from importlib.metadata import entry_points
 from pathlib import Path
 
 from shared.flow_merge.conflict import conflict_document, is_conflicted, open_conflicts, resolve
@@ -22,9 +26,31 @@ from shared.flow_merge.records import is_records, merge_records
 from shared.flow_merge.render import render_diff, show
 from shared.flow_merge.yaml_io import dump, load
 
+BUILD_CHECK_GROUP = "flowfile.flow_merge"
+BUILD_CHECK_NAME = "build_check"
+NO_BUILD_CHECK = (
+    "check --build needs the build check an installed Flowfile registers (pip install flowfile, or poetry install "
+    "in a checkout); without --build, check reads the files on their own."
+)
+
 
 class Unreadable(Exception):
     pass
+
+
+def build_check() -> Callable[[dict], list[str]] | None:
+    """The build check an installed Flowfile registers, ``None`` when nothing registers one.
+
+    ``shared`` imports nothing above it, so core offers the check as an entry point (``build_check`` in the
+    ``flowfile.flow_merge`` group) instead of this module importing it; loading it imports core, which happens only
+    for ``check --build``. An entry point whose module is not installed counts as none.
+    """
+    for entry_point in entry_points(group=BUILD_CHECK_GROUP, name=BUILD_CHECK_NAME):
+        try:
+            return entry_point.load()
+        except ImportError:
+            return None
+    return None
 
 
 def _read(path: str) -> dict:
@@ -144,6 +170,10 @@ def _resolve(args: argparse.Namespace) -> int:
 
 
 def _check(args: argparse.Namespace) -> int:
+    check_in_core = build_check() if args.build else None
+    if args.build and check_in_core is None:
+        print(f"flowfile-merge: {NO_BUILD_CHECK}", file=sys.stderr)
+        return 2
     failed = False
     for path in args.files:
         data = _read(path)
@@ -155,9 +185,7 @@ def _check(args: argparse.Namespace) -> int:
         for issue in issues:
             print(f"{path}: {issue.message}", file=sys.stderr)
         failed = failed or bool(issues)
-        if args.build and not is_records(data):
-            from shared.flow_merge.core_check import check_in_core
-
+        if check_in_core is not None and not is_records(data):
             for line in check_in_core(data):
                 print(f"{path}: {line}", file=sys.stderr)
                 failed = True

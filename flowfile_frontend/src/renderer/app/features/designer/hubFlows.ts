@@ -60,9 +60,6 @@ export const openInsteadLabel = (current: HubFlowVersion): string =>
 
 export const mergeLabel = (current: HubFlowVersion): string => `Merge v${current.version} in`;
 
-/** The button that settles a conflict on one side: "Keep your copy", "Keep version 5". */
-export const keepLabel = (side: string): string => `Keep ${side}`;
-
 /** After the last conflict is settled. */
 export const SETTLED = "Every conflict is settled. Publish to put your copy on the hub.";
 

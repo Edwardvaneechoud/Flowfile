@@ -2,6 +2,8 @@
 // The project's branch card: where the branch stands against the remote, and a pull's merge settled item by item.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { useFlowStore } from "../../stores/flow-store";
+import { useProjectStore } from "../../stores/project-store";
 import { element, mountIn, settle, text } from "../../__fixtures__/mount";
 import type { ProjectMergeState } from "../../types";
 
@@ -23,6 +25,8 @@ const api = vi.hoisted(() => ({
   getBranches: vi.fn(),
   getMerge: vi.fn(),
   settleMerge: vi.fn(),
+  concludeMerge: vi.fn(),
+  openMergeFlow: vi.fn(),
   pull: vi.fn(),
   push: vi.fn(),
   getActive: vi.fn(),
@@ -114,7 +118,7 @@ describe("ProjectBranches", () => {
     expect(text(panel)).toContain("settings.how: 'left' → 'inner'");
     expect(text(panel)).toContain("settings.how: 'left' → 'outer'");
 
-    const take = [...panel!.querySelectorAll("button")].find(
+    const take = Array.from(panel!.querySelectorAll("button")).find(
       (b) => text(b) === "Take origin/feature",
     );
     take!.click();
@@ -126,5 +130,88 @@ describe("ProjectBranches", () => {
       false,
     );
     expect(text(host.querySelector('[data-testid="project-merge"]'))).toContain("0 to settle");
+  });
+
+  const scheduleItem = {
+    path: "schedules/nightly.yaml",
+    key: "schedule:3",
+    kind: "both_changed",
+    label: "schedule nightly",
+    message: "Both sides changed the schedule.",
+    step_id: null,
+    ours_label: "feature (this copy)",
+    theirs_label: "origin/feature",
+    ours: ["cron: '0 6 * * *' → '0 5 * * *'"],
+    theirs: ["cron: '0 6 * * *' → '0 7 * * *'"],
+  };
+
+  it("offers the editor only for a flow's step, and shows a schedule's two sides", async () => {
+    api.getMerge.mockResolvedValue({
+      ...merge,
+      conflicts: [...merge.conflicts, scheduleItem],
+      flows: [...merge.flows, scheduleItem.path],
+    });
+    const host = await mountCard();
+    const items = host.querySelectorAll(".merge-item");
+    expect(items).toHaveLength(2);
+    expect(items[0].querySelector('[data-testid="project-merge-open"]')).not.toBeNull();
+    expect(items[1].querySelector('[data-testid="project-merge-open"]')).toBeNull();
+    expect(text(items[1])).toContain("cron: '0 6 * * *' → '0 5 * * *'");
+    expect(text(items[1])).toContain("cron: '0 6 * * *' → '0 7 * * *'");
+  });
+
+  it("re-reads the merge after a settle fails, so the panel shows what core holds", async () => {
+    api.getMerge.mockResolvedValueOnce(merge).mockResolvedValueOnce({ ...merge, conflicts: [] });
+    api.settleMerge.mockRejectedValue(new Error("Nothing to settle at flows/nightly_revenue"));
+    const host = await mountCard();
+    const take = Array.from(host.querySelectorAll("button")).find(
+      (b) => text(b) === "Keep feature (this copy)",
+    );
+    take!.click();
+    await settle();
+    expect(api.getMerge).toHaveBeenCalledTimes(2);
+    const panel = host.querySelector('[data-testid="project-merge"]');
+    expect(text(panel)).toContain("0 to settle");
+    expect(text(panel)).toContain("Finish the merge");
+  });
+
+  it("a pull that applied an import leaves the designer on no flow and keeps the secrets to fill", async () => {
+    api.getActive.mockResolvedValue({ project: { id: 1, name: "Demo" }, dirty: false });
+    api.getMerge.mockResolvedValue(null);
+    api.pull.mockResolvedValue({
+      state: "fast_forward",
+      sha: "c".repeat(40),
+      result: { imported: { flows: 1 }, placeholder_secrets: ["warehouse_pw"] },
+      conflicts: [],
+      warnings: [],
+    });
+    const host = await mountCard();
+    useFlowStore().setFlowId(5);
+    Array.from(host.querySelectorAll("button"))
+      .find((b) => text(b) === "Pull")!
+      .click();
+    await settle();
+    expect(api.pull).toHaveBeenCalledWith(false);
+    expect(useFlowStore().flowId).toBe(-1);
+    expect(useProjectStore().placeholderSecrets).toEqual(["warehouse_pw"]);
+  });
+
+  it("a pull stopped on conflicts keeps the designer's flow", async () => {
+    api.getMerge.mockResolvedValueOnce(null).mockResolvedValue(merge);
+    api.pull.mockResolvedValue({
+      state: "conflicted",
+      sha: "a".repeat(40),
+      result: null,
+      conflicts: merge.conflicts,
+      warnings: [],
+    });
+    const host = await mountCard();
+    useFlowStore().setFlowId(5);
+    Array.from(host.querySelectorAll("button"))
+      .find((b) => text(b) === "Pull")!
+      .click();
+    await settle();
+    expect(useFlowStore().flowId).toBe(5);
+    expect(host.querySelector('[data-testid="project-merge"]')).not.toBeNull();
   });
 });

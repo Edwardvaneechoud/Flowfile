@@ -307,6 +307,10 @@ class FlowfileSettings(BaseModel):
     source_registration_id: int | None = None
     parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
     hub_origin: HubOrigin | None = None
+    merge_conflicts: dict[str, Any] | None = Field(
+        default=None,
+        description="The merge conflicts the flow holds (a shared.flow_merge.conflict wrapper without 'merged').",
+    )
 
     @field_validator("execution_mode", mode="before")
     @classmethod
@@ -317,10 +321,12 @@ class FlowfileSettings(BaseModel):
 
     @model_serializer(mode="wrap")
     def _omit_unset_origin(self, handler: SerializerFunctionWrapHandler):
-        """A flow that came from no hub is saved without ``hub_origin``, as before the field existed."""
+        """A flow that came from no hub, or holds no merge conflict, is saved without ``hub_origin`` or
+        ``merge_conflicts``, as before the fields existed."""
         data = handler(self)
-        if data.get("hub_origin") is None:
-            data.pop("hub_origin", None)
+        for key in ("hub_origin", "merge_conflicts"):
+            if data.get(key) is None:
+                data.pop(key, None)
         return data
 
 
@@ -903,6 +909,7 @@ class FlowInformation(BaseModel):
     node_connections: list[tuple[int, int]] = []
     groups: list[GroupInformation] = Field(default_factory=list)
     comments: list[CommentInformation] = Field(default_factory=list)
+    merge_conflicts: dict[str, Any] | None = None
 
     @field_validator("flow_name", mode="before")
     def ensure_string(cls, v):

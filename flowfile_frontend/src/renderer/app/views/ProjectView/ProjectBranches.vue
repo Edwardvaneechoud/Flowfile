@@ -58,38 +58,28 @@
               :key="`${item.path}:${item.key}`"
               class="merge-item"
             >
-              <p class="merge-item__label">
-                <strong>{{ itemFlowName(item) }}</strong> · {{ item.label }}
-              </p>
-              <p class="merge-item__message">{{ item.message }}</p>
-              <div class="merge-sides">
-                <div class="merge-side">
-                  <p class="merge-side__name">{{ item.ours_label }}</p>
-                  <p v-for="line in item.ours" :key="line" class="merge-side__line">{{ line }}</p>
-                </div>
-                <div class="merge-side">
-                  <p class="merge-side__name">{{ item.theirs_label }}</p>
-                  <p v-for="line in item.theirs" :key="line" class="merge-side__line">{{ line }}</p>
-                </div>
-              </div>
-              <div class="merge-item__actions">
-                <el-button size="small" :disabled="busy" @click="onSettle(item, 'ours')">
-                  {{ takeLabel(item, "ours") }}
-                </el-button>
-                <el-button size="small" :disabled="busy" @click="onSettle(item, 'theirs')">
-                  {{ takeLabel(item, "theirs") }}
-                </el-button>
-                <el-button
-                  v-if="opensInEditor(item)"
-                  size="small"
-                  link
-                  type="primary"
-                  :disabled="busy"
-                  @click="onOpenInEditor(item)"
-                >
-                  Open in editor
-                </el-button>
-              </div>
+              <merge-conflict-item
+                :item="item"
+                :disabled="busy"
+                :action-label="(side) => takeLabel(item, side)"
+                @take="onSettle(item, $event)"
+              >
+                <template #title>
+                  <strong>{{ itemFlowName(item) }}</strong> · {{ item.label }}
+                </template>
+                <template v-if="opensInEditor(item, merge.flows)" #actions>
+                  <el-button
+                    size="small"
+                    link
+                    type="primary"
+                    :disabled="busy"
+                    data-testid="project-merge-open"
+                    @click="onOpenInEditor(item)"
+                  >
+                    Open in editor
+                  </el-button>
+                </template>
+              </merge-conflict-item>
             </li>
           </ul>
           <div class="merge-footer">
@@ -151,6 +141,7 @@ import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { ProjectApi } from "../../api/project.api";
 import { ProjectUnsavedChanges } from "../../api/project.errors";
+import MergeConflictItem from "../../components/merge/MergeConflictItem.vue";
 import { confirmRecoveryPoint } from "../../components/project/recoveryPoint";
 import { alertIncomplete } from "../../components/project/importNotice";
 import { useProjectStore } from "../../stores/project-store";
@@ -164,7 +155,6 @@ import {
   takeLabel,
 } from "./branchSync";
 import type {
-  ImportResult,
   ProjectBranchState,
   ProjectMergeItem,
   ProjectMergeState,
@@ -203,11 +193,14 @@ const load = async () => {
 
 onMounted(load);
 
-const afterApply = async (result: ImportResult | null, done: string) => {
-  store.onCatalogRewritten();
-  await Promise.all([store.refreshActive(), store.loadVersions(), load()]);
-  if (result && (await alertIncomplete(result, "Not finished"))) return;
-  ElMessage.success(done);
+/** A settle or conclusion that failed may still have moved the merge: show what core holds now. */
+const reloadOnFailure = async (work: () => Promise<void>) => {
+  try {
+    await work();
+  } catch (e) {
+    await load();
+    throw e;
+  }
 };
 
 /** Run `call(force)`; a refusal for unsaved changes asks once, then runs it again with a recovery point. */
@@ -237,9 +230,10 @@ const run = async (flag: typeof busy, work: () => Promise<void>) => {
 const onSwitch = (name: string) =>
   run(busy, async () => {
     if (!name || name === state.value?.current) return;
-    const result = await withRecovery((force) => ProjectApi.switchBranch(name, force));
-    if (result) await afterApply(result, `Switched to ${name}`);
-    else await load();
+    const result = await withRecovery((force) => store.switchBranch(name, force));
+    await load();
+    if (result && (await alertIncomplete(result, "Not finished"))) return;
+    if (result) ElMessage.success(`Switched to ${name}`);
   });
 
 const onNewBranch = async () => {
@@ -297,36 +291,43 @@ const onPush = () =>
     }
   });
 
+/** The store already ran the post-import path for a pull that applied one. */
 const reportPull = async (result: ProjectPullResult) => {
+  await load();
   if (result.state === "conflicted") {
-    await load();
     ElMessage.warning(pullMessage(result));
     return;
   }
-  await afterApply(result.result, pullMessage(result));
+  if (result.result && (await alertIncomplete(result.result, "Not finished"))) return;
+  ElMessage.success(pullMessage(result));
 };
 
 const onPull = () =>
   run(pulling, async () => {
-    const result = await withRecovery((force) => ProjectApi.pull(force));
+    const result = await withRecovery((force) => store.pull(force));
     if (result) await reportPull(result);
   });
 
 const onSettle = (item: ProjectMergeItem, take: "ours" | "theirs") =>
-  run(busy, async () => {
-    const answer = await withRecovery((force) =>
-      ProjectApi.settleMerge(item.path, item.key, take, force),
-    );
-    if (!answer) return;
-    if (answer.pull) await reportPull(answer.pull);
-    else merge.value = answer.merge;
-  });
+  run(busy, () =>
+    reloadOnFailure(async () => {
+      const answer = await withRecovery((force) =>
+        store.settleMerge(item.path, item.key, take, force),
+      );
+      if (!answer) await load();
+      else if (answer.pull) await reportPull(answer.pull);
+      else merge.value = answer.merge;
+    }),
+  );
 
 const onConclude = () =>
-  run(busy, async () => {
-    const result = await withRecovery((force) => ProjectApi.concludeMerge(force));
-    if (result) await reportPull(result);
-  });
+  run(busy, () =>
+    reloadOnFailure(async () => {
+      const result = await withRecovery((force) => store.concludeMerge(force));
+      if (result) await reportPull(result);
+      else await load();
+    }),
+  );
 
 const onAbort = async () => {
   try {
@@ -339,14 +340,14 @@ const onAbort = async () => {
     return;
   }
   await run(busy, async () => {
-    await ProjectApi.abortMerge();
+    await store.abortMerge();
     await load();
   });
 };
 
 const onOpenInEditor = (item: ProjectMergeItem) =>
   run(busy, async () => {
-    const flowId = await ProjectApi.openMergeFlow(item.path);
+    const flowId = await store.openMergeFlow(item.path);
     flowStore.setFlowId(flowId);
     await router.push({ name: "designer" });
   });
@@ -372,7 +373,6 @@ defineExpose({ load });
 .branch-row,
 .remote-row,
 .sync-actions,
-.merge-item__actions,
 .merge-footer {
   display: flex;
   align-items: center;
@@ -439,8 +439,7 @@ defineExpose({ load });
   color: var(--color-text-primary);
 }
 
-.merge-text,
-.merge-item__message {
+.merge-text {
   margin: var(--spacing-1) 0 var(--spacing-2);
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
@@ -455,38 +454,6 @@ defineExpose({ load });
 .merge-item {
   padding: var(--spacing-2) 0;
   border-bottom: 1px solid var(--color-border-light);
-}
-
-.merge-item__label {
-  margin: 0;
-  font-size: var(--font-size-sm);
-}
-
-.merge-sides {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--spacing-2);
-  margin-bottom: var(--spacing-2);
-}
-
-.merge-side {
-  padding: var(--spacing-2);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-muted);
-}
-
-.merge-side__name {
-  margin: 0 0 2px;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-tertiary);
-}
-
-.merge-side__line {
-  margin: 0;
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  word-break: break-word;
 }
 
 .merge-footer {
