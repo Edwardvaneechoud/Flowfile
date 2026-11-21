@@ -29,7 +29,7 @@ CORE = f"http://localhost:{CORE_TEST_PORT}"
 _HELD = """
 import hashlib, json, os
 def _digest(value):
-    return hashlib.sha256(str(value).encode()).hexdigest()
+    return hashlib.pbkdf2_hmac("sha256", str(value).encode(), b"flowfile-kernel-test", 1000).hex()
 _context = flowfile_ctx._context.get({})
 _values = list(os.environ.values()) + [v for v in _context.values() if isinstance(v, str)]
 print(json.dumps({"names": sorted(os.environ), "digests": sorted({_digest(v) for v in _values})}))
@@ -48,6 +48,11 @@ _answer = httpx.get(flowfile_ctx._CORE_URL + "/catalog/namespaces", headers=head
 _names = [row["name"] for row in _answer.json()] if _answer.status_code == 200 else []
 print(json.dumps({{"status": _answer.status_code, "names": _names}}))
 """
+
+
+def _digest(value: str) -> str:
+    """The digest ``_HELD`` prints for a value, so a value is compared without being printed."""
+    return hashlib.pbkdf2_hmac("sha256", value.encode(), b"flowfile-kernel-test", 1000).hex()
 
 
 def _cell(manager: KernelManager, kernel_id: str, code: str) -> dict:
@@ -154,7 +159,7 @@ def test_a_kernel_holds_a_token_of_its_own_and_not_the_internal_one(kernel_manag
     held = _cell(manager, kernel_id, _HELD)
 
     assert "FLOWFILE_INTERNAL_TOKEN" not in held["names"]
-    assert hashlib.sha256(get_internal_token().encode()).hexdigest() not in held["digests"]
+    assert _digest(get_internal_token()) not in held["digests"]
     assert "FLOWFILE_KERNEL_TOKEN" in held["names"]
 
 
