@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 import re
+import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from filelock import FileLock
 
@@ -124,11 +127,11 @@ def init(root: Path) -> None:
 
 
 def _managed_pathspecs() -> list[str]:
-    """Git pathspecs for the files Flowfile writes: the project manifest, ``.gitignore`` and every path
-    pattern a project kind owns (``project.kinds``). Anything else in the folder (a README,
+    """Git pathspecs for the files Flowfile writes: the project manifest, ``.gitignore``, ``.gitattributes`` and
+    every path pattern a project kind owns (``project.kinds``). Anything else in the folder (a README,
     ``.DS_Store``, ``flows/notes.yaml``) is never counted as unsaved and never staged."""
     patterns = kinds.managed_patterns()
-    roots = [manifest.MANIFEST_NAME, ".gitignore"] + [p for p in patterns if "*" not in p]
+    roots = [manifest.MANIFEST_NAME, ".gitignore", manifest.GITATTRIBUTES_NAME] + [p for p in patterns if "*" not in p]
     return [f":(literal){p}" for p in roots] + [f":(glob){p}" for p in patterns if "*" in p]
 
 
@@ -153,7 +156,8 @@ def _managed_status(repo) -> list[tuple[str, str]]:
 
 
 def _is_managed(path: str) -> bool:
-    return path in (manifest.MANIFEST_NAME, ".gitignore") or kinds.kind_for_path(path) is not None
+    own = (manifest.MANIFEST_NAME, ".gitignore", manifest.GITATTRIBUTES_NAME)
+    return path in own or kinds.kind_for_path(path) is not None
 
 
 def _unstage_unmanaged(repo) -> None:
@@ -248,6 +252,15 @@ def read_tree_at(root: Path, sha: str) -> dict[str, str]:
     if sha == "HEAD" and not repo.head.is_valid():
         return {}
     return _managed_tree(str(Path(root).resolve()), repo.commit(sha).hexsha)
+
+
+def parent_of(root: Path, sha: str) -> str | None:
+    """The first parent of commit ``sha``, ``None`` for the first commit or without a repo."""
+    _require_hex_sha(sha)
+    if not is_repo(root):
+        return None
+    parents = Repo(str(root)).commit(sha).parents
+    return parents[0].hexsha if parents else None
 
 
 def read_blob(root: Path, sha: str, rel_path: str) -> str | None:
@@ -381,3 +394,295 @@ def is_dirty(root: Path) -> bool:
         return bool(_managed_status(Repo(str(root))))
     except Exception:
         return False
+
+
+REMOTE_NAME = "origin"
+_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
+
+
+class GitRemoteError(ValueError):
+    """A branch, remote, fetch or push git refused, worded for the person; never carries a token."""
+
+
+def check_branch_name(name: str) -> str:
+    """``name`` when git takes it as a branch and it cannot be read as an option or a revision expression."""
+    if not _BRANCH_RE.match(name) or ".." in name or "//" in name or name.endswith((".", "/", ".lock")):
+        raise GitRemoteError(f"Not a branch name Flowfile accepts: {name!r}")
+    return name
+
+
+def current_branch(root: Path) -> str | None:
+    """The checked-out branch, ``None`` on a detached HEAD or without a repo."""
+    if not is_repo(root):
+        return None
+    try:
+        return Repo(str(root)).active_branch.name
+    except TypeError:
+        return None
+
+
+def branch_sha(root: Path, ref: str) -> str | None:
+    """The commit ``ref`` names (a branch, ``refs/remotes/origin/<b>``), ``None`` when it does not exist."""
+    if not is_repo(root):
+        return None
+    try:
+        return Repo(str(root)).git.rev_parse("--verify", "--quiet", f"{ref}^{{commit}}").strip() or None
+    except Exception:
+        return None
+
+
+def ahead_behind(root: Path, ours: str, theirs: str) -> tuple[int, int]:
+    """``(commits on ours not on theirs, commits on theirs not on ours)``."""
+    out = Repo(str(root)).git.rev_list("--left-right", "--count", f"{ours}...{theirs}")
+    left, right = out.split()
+    return int(left), int(right)
+
+
+def is_ancestor(root: Path, older: str, newer: str) -> bool:
+    try:
+        Repo(str(root)).git.merge_base("--is-ancestor", older, newer)
+        return True
+    except Exception:
+        return False
+
+
+def branches(root: Path) -> list[dict]:
+    """Each local branch: ``name``, ``sha``, ``current``, and against its copy on the remote ``ahead`` and
+    ``behind`` (``None`` when the remote has no such branch, as last fetched)."""
+    if not is_repo(root):
+        return []
+    repo = Repo(str(root))
+    current = current_branch(root)
+    rows = []
+    for head in repo.heads:
+        remote_sha = branch_sha(root, f"refs/remotes/{REMOTE_NAME}/{head.name}")
+        ahead = behind = None
+        if remote_sha is not None:
+            ahead, behind = ahead_behind(root, head.commit.hexsha, remote_sha)
+        rows.append(
+            {
+                "name": head.name,
+                "sha": head.commit.hexsha,
+                "current": head.name == current,
+                "ahead": ahead,
+                "behind": behind,
+            }
+        )
+    return sorted(rows, key=lambda r: (not r["current"], r["name"]))
+
+
+def create_branch(root: Path, name: str, start: str = "HEAD") -> str:
+    """A new branch ``name`` at ``start``; the checkout is left alone. Answers its sha."""
+    check_branch_name(name)
+    with repo_lock(root):
+        repo = Repo(str(root))
+        if branch_sha(root, f"refs/heads/{name}") is not None:
+            raise GitRemoteError(f"A branch named {name!r} already exists.")
+        start_sha = branch_sha(root, start)
+        if start_sha is None:
+            raise GitRemoteError("Save a version first: a branch starts from a version.")
+        repo.git.branch("--", name, start_sha)
+        return start_sha
+
+
+def checkout(root: Path, name: str) -> None:
+    """Check out branch ``name``, discarding the managed files' working-tree changes, which the caller kept."""
+    check_branch_name(name)
+    with repo_lock(root):
+        Repo(str(root)).git.checkout("-f", name, "--")
+
+
+def move_branch(root: Path, sha: str) -> None:
+    """Point the checked-out branch at ``sha`` and reset the index and working tree to it."""
+    _require_hex_sha(sha)
+    with repo_lock(root):
+        Repo(str(root)).git.reset("--hard", sha)
+
+
+def commit_worktree(root: Path, message: str, ref: str) -> str | None:
+    """Commit the managed files as the working tree holds them on top of HEAD under ``ref``, through an index of
+    its own, so the project's index, working tree and branch stay as they are. ``None`` when they equal HEAD."""
+    repo = Repo(str(root))
+    with tempfile.TemporaryDirectory(prefix="flowfile-index-") as tmp:
+        env = {"GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        repo.git.execute(["git", "read-tree", "HEAD"], env=env)
+        repo.git.execute(["git", "add", "-A", "--", *_managed_pathspecs()], env=env)
+        tree_sha = repo.git.execute(["git", "write-tree"], env=env).strip()
+    if tree_sha == repo.head.commit.tree.hexsha:
+        return None
+    commit = Commit.create_from_tree(repo, repo.tree(tree_sha), message, parent_commits=[repo.head.commit], head=False)
+    repo.git.update_ref(ref, commit.hexsha)
+    return commit.hexsha
+
+
+def merge_base(root: Path, a: str, b: str) -> str | None:
+    try:
+        return Repo(str(root)).git.merge_base(_require_hex_sha(a), _require_hex_sha(b)).strip() or None
+    except Exception:
+        return None
+
+
+def commit_tree_changes(
+    root: Path, start: str, changes: dict[str, str | None], message: str, parents: list[str]
+) -> str:
+    """A commit of ``start``'s tree with ``changes`` made (``None`` removes the file) and ``parents``, built in a
+    temporary folder; no branch, index or working tree of the project moves."""
+    repo = Repo(str(root))
+    with tempfile.TemporaryDirectory(prefix="flowfile-merge-") as tmp:
+        folder = Path(tmp) / "tree"
+        seed_folder(root, folder, _require_hex_sha(start))
+        for rel, text in changes.items():
+            if rel.startswith("/") or ".." in Path(rel).parts:
+                raise ValueError(f"Not a project path: {rel!r}")
+            target = folder / rel
+            if text is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
+        _folder_git(repo, folder, "add", "-A", "--", ".")
+        tree_sha = _folder_git(repo, folder, "write-tree").strip()
+    commit = Commit.create_from_tree(
+        repo,
+        repo.tree(tree_sha),
+        message,
+        parent_commits=[repo.commit(_require_hex_sha(p)) for p in parents],
+        head=False,
+    )
+    return commit.hexsha
+
+
+def get_config(root: Path, key: str) -> str | None:
+    out = Repo(str(root)).git.config("--get", key, with_exceptions=False).strip()
+    return out or None
+
+
+def set_config(root: Path, key: str, value: str | None) -> None:
+    repo = Repo(str(root))
+    if value is None:
+        repo.git.config("--unset-all", key, with_exceptions=False)
+    else:
+        repo.git.config(key, value)
+
+
+def attach_head(root: Path, branch: str) -> None:
+    """Make ``branch`` the checked-out branch without touching the index or working tree (same commit)."""
+    check_branch_name(branch)
+    Repo(str(root)).git.symbolic_ref("HEAD", f"refs/heads/{branch}")
+
+
+def _check_remote_url(url: str, local_allowed: bool) -> str:
+    """``url`` when it is an ``https``, ``http`` or ``ssh`` address with no password in it, or, where
+    ``local_allowed``, a folder on this machine; never a transport that runs a command (``ext::``)."""
+    url = url.strip()
+    if not url or url.startswith("-") or "::" in url or any(c in url for c in "\r\n\0"):
+        raise GitRemoteError("Not a remote address Flowfile accepts.")
+    parsed = urlsplit(url)
+    if parsed.scheme in ("https", "http", "ssh"):
+        if parsed.password is not None:
+            raise GitRemoteError("Leave the token out of the address: give it as the remote's token instead.")
+        if not parsed.hostname:
+            raise GitRemoteError("The remote address names no host.")
+        return url
+    if parsed.scheme == "file" or (not parsed.scheme and Path(url).is_absolute()):
+        if not local_allowed:
+            raise GitRemoteError("A folder on the server cannot be a remote here; use an https or ssh address.")
+        return url
+    if re.match(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^:]", url):
+        return url
+    raise GitRemoteError("Use an https or ssh address for the remote.")
+
+
+def remote_url(root: Path) -> str | None:
+    if not is_repo(root):
+        return None
+    try:
+        return Repo(str(root)).remote(REMOTE_NAME).url
+    except ValueError:
+        return None
+
+
+def set_remote(root: Path, url: str, *, local_allowed: bool) -> str:
+    """Point ``origin`` at ``url`` (added when missing). The address holds no secret; the token goes per call."""
+    url = _check_remote_url(url, local_allowed)
+    with repo_lock(root):
+        repo = Repo(str(root))
+        if remote_url(root) is None:
+            repo.git.remote("add", REMOTE_NAME, url)
+        else:
+            repo.git.remote("set-url", REMOTE_NAME, url)
+    return url
+
+
+_ASKPASS = (
+    "#!/bin/sh\n"
+    'case "$1" in\n'
+    "  Username*) printf '%s\\n' \"$FLOWFILE_GIT_USERNAME\" ;;\n"
+    "  *) printf '%s\\n' \"$FLOWFILE_GIT_TOKEN\" ;;\n"
+    "esac\n"
+)
+
+
+@contextmanager
+def _remote_env(token: str | None, username: str | None):
+    """The environment of one fetch or push: git asks ``GIT_ASKPASS``, a script outside the project that prints
+    the token from this process's environment, so the token is in no file, address or argument, and with no
+    credential helper and no terminal prompt nothing stores it or waits for a person."""
+    env = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": ""}
+    if not token:
+        yield env
+        return
+    with tempfile.TemporaryDirectory(prefix="flowfile-askpass-") as tmp:
+        script = Path(tmp) / "askpass.sh"
+        script.write_text(_ASKPASS, encoding="utf-8")
+        script.chmod(0o700)
+        env.update(
+            GIT_ASKPASS=str(script),
+            FLOWFILE_GIT_TOKEN=token,
+            FLOWFILE_GIT_USERNAME=username or "x-access-token",
+        )
+        yield env
+
+
+_SAFE_CONFIG = ("-c", "credential.helper=", "-c", "protocol.ext.allow=never", "-c", "core.askPass=")
+
+
+def _remote_git(root: Path, token: str | None, username: str | None, *args: str) -> None:
+    """Run ``git <args>`` against the remote, its failure as a ``GitRemoteError`` without git's own text, which
+    can repeat the address it reached."""
+    repo = Repo(str(root))
+    with _remote_env(token, username) as env:
+        try:
+            repo.git.execute(["git", *_SAFE_CONFIG, *args], env={**os.environ, **env})
+        except Exception as exc:
+            stderr = getattr(exc, "stderr", "") or ""
+            raise GitRemoteError(_remote_failure(stderr)) from None
+
+
+def _remote_failure(stderr: str) -> str:
+    text = stderr.lower()
+    if "authentication failed" in text or "could not read username" in text or "403" in text or "401" in text:
+        return "The remote refused the sign-in: check the remote's token."
+    if "non-fast-forward" in text or "fetch first" in text or "rejected" in text:
+        return "The remote has versions this branch does not: pull first."
+    if "could not resolve host" in text or "connection refused" in text or "timed out" in text:
+        return "The remote could not be reached."
+    if "does not appear to be a git repository" in text or "not found" in text:
+        return "No repository at the remote's address."
+    return "The remote refused the request."
+
+
+def fetch(root: Path, token: str | None = None, username: str | None = None) -> None:
+    if remote_url(root) is None:
+        raise GitRemoteError("Set a remote first.")
+    _remote_git(root, token, username, "fetch", "--prune", REMOTE_NAME)
+
+
+def push(root: Path, branch: str, token: str | None = None, username: str | None = None) -> None:
+    """Push ``branch`` to the same name on the remote and track it; never forced."""
+    check_branch_name(branch)
+    if remote_url(root) is None:
+        raise GitRemoteError("Set a remote first.")
+    _remote_git(
+        root, token, username, "push", "--set-upstream", REMOTE_NAME, f"refs/heads/{branch}:refs/heads/{branch}"
+    )

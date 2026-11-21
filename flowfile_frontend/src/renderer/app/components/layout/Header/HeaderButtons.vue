@@ -182,6 +182,7 @@
     :flow-name="flowSettings?.display_name?.trim() || flowSettings?.name || ''"
     @published="handleHubPublished"
     @open-flow="handleOpenFromDialog"
+    @merged="handleHubMerged"
   />
 
   <el-dialog
@@ -356,6 +357,11 @@ const openHubPublishDialog = () => {
 
 // A publish saves the flow with its new hub version; refresh what the header caches about it.
 // A publish as a new flow moved it to a new id, as a Save As does: follow it there.
+const handleHubMerged = async () => {
+  emit("refreshFlow");
+  await loadFlowSettings();
+};
+
 const handleHubPublished = async (result: HubPublishResult) => {
   if (result.flow_id && result.flow_id !== nodeStore.flow_id) {
     const previousPath = flowSettings.value?.path ?? null;

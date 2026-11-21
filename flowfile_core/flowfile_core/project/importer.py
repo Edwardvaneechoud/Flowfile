@@ -74,6 +74,7 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
     store_secret,
 )
+from shared.flow_merge.conflict import is_conflicted
 from shared.storage_config import flow_path_spellings, registered_flow_path, storage
 
 logger = logging.getLogger(__name__)
@@ -1659,11 +1660,21 @@ def _validate_project_file(rel: str, kind: str, text: str) -> None:
     elif kind in _ENTRY_NAME_KEYS:
         _validate_manifest_entries(rel, kind, data)
     elif kind == "flow":
+        _check_file(
+            rel,
+            not is_conflicted(data),
+            "still holds merge conflicts; settle them in the editor or with `flowfile-merge resolve`",
+        )
         _check_file(rel, _is_text(data.get("flow_uuid")), "has no string 'flow_uuid'")
         _check_file(rel, _optional(data.get("namespace"), dict), "has a 'namespace' that is not a mapping")
         for field_name in ("flowfile_name", "catalog_name"):
             _check_file(rel, _optional(data.get(field_name), str), f"has a {field_name!r} that is not text")
     elif kind == "schedule":
+        _check_file(
+            rel,
+            not is_conflicted(data),
+            "still holds merge conflicts; settle them with `flowfile-merge resolve`",
+        )
         _check_file(rel, _is_text(data.get("flow_uuid")), "has no string 'flow_uuid'")
         _check_file(rel, _is_mapping_list(data.get("schedules")), "must list its 'schedules' as mappings")
         for i, entry in enumerate(data.get("schedules") or []):

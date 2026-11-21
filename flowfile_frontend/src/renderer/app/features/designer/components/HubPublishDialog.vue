@@ -26,6 +26,57 @@
         </p>
       </template>
 
+      <template v-else-if="merged">
+        <el-alert
+          :type="merged.conflicts.length ? 'warning' : 'success'"
+          :closable="false"
+          show-icon
+          :title="settledSome && !merged.conflicts.length ? SETTLED : mergedLabel(merged)"
+          data-testid="hub-merged"
+        />
+        <ul v-if="merged.changes.length" class="hub-merge-list" data-testid="hub-merged-changes">
+          <li v-for="(change, i) in merged.changes" :key="i">
+            {{ change.kind }} {{ change.label }}
+          </li>
+        </ul>
+        <div v-if="openConflicts.length" class="hub-settle" data-testid="hub-merged-conflicts">
+          <div
+            v-for="item in openConflicts"
+            :key="item.key"
+            class="hub-settle-row"
+            :data-testid="`hub-settle-${item.key}`"
+          >
+            <p class="hub-settle-message">{{ item.message }}</p>
+            <div class="hub-version-compare">
+              <div class="hub-version-card">
+                <h4>{{ item.theirs_label }}</h4>
+                <p v-for="(line, i) in item.theirs" :key="i" class="hub-settle-line">{{ line }}</p>
+                <el-button
+                  size="small"
+                  :loading="busy"
+                  :data-testid="`hub-settle-theirs-${item.key}`"
+                  @click="settle(item.key, 'theirs')"
+                >
+                  {{ keepLabel(item.theirs_label) }}
+                </el-button>
+              </div>
+              <div class="hub-version-card">
+                <h4>{{ item.ours_label }}</h4>
+                <p v-for="(line, i) in item.ours" :key="i" class="hub-settle-line">{{ line }}</p>
+                <el-button
+                  size="small"
+                  :loading="busy"
+                  :data-testid="`hub-settle-ours-${item.key}`"
+                  @click="settle(item.key, 'ours')"
+                >
+                  {{ keepLabel(item.ours_label) }}
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
       <template v-else-if="conflict">
         <el-alert
           type="warning"
@@ -55,6 +106,7 @@
           </div>
         </div>
         <p class="hub-dialog-hint">
+          Merging brings their changes into your copy, step by step, as one step you can undo.
           Publishing over keeps the other version in the hub's history. Opening it instead replaces
           your local copy of this flow.
         </p>
@@ -161,6 +213,26 @@
         <template v-if="result">
           <el-button type="primary" size="small" @click="isVisible = false">Done</el-button>
         </template>
+        <template v-else-if="merged">
+          <el-button
+            v-if="openConflicts.length || !merged.applied"
+            size="small"
+            data-testid="hub-merged-done"
+            @click="isVisible = false"
+          >
+            Done
+          </el-button>
+          <el-button
+            v-else
+            type="primary"
+            size="small"
+            :loading="busy"
+            data-testid="hub-publish"
+            @click="publish()"
+          >
+            Publish
+          </el-button>
+        </template>
         <template v-else-if="conflict">
           <el-button size="small" :disabled="busy" @click="isVisible = false">Cancel</el-button>
           <el-button
@@ -174,13 +246,22 @@
           </el-button>
           <el-button
             v-if="conflict.current"
-            type="primary"
             size="small"
             :loading="busy"
             data-testid="hub-publish-over"
             @click="publish(conflict.current.version)"
           >
             {{ publishOverLabel(conflict.current) }}
+          </el-button>
+          <el-button
+            v-if="conflict.current"
+            type="primary"
+            size="small"
+            :loading="busy"
+            data-testid="hub-merge"
+            @click="mergeNewest"
+          >
+            {{ mergeLabel(conflict.current) }}
           </el-button>
         </template>
         <template v-else>
@@ -205,10 +286,15 @@
 import { ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
+  listMergeConflicts,
+  mergeFromHub,
   openFromHub,
   publishCheck,
   publishToHub,
   refusalOf,
+  resolveMergeConflict,
+  type HubMergeResult,
+  type MergeConflictRow,
   type HubPublishResult,
   type HubRefusal,
 } from "../../../api/hubFlows.api";
@@ -217,7 +303,11 @@ import { detailOf } from "../../../utils/apiDetail";
 import {
   OPENED_FROM_HUB,
   PUBLISH_AS_NEW_NOTE,
+  SETTLED,
   conflictLabel,
+  keepLabel,
+  mergeLabel,
+  mergedLabel,
   newFlowName,
   openInsteadLabel,
   publishOverLabel,
@@ -241,6 +331,7 @@ const emit = defineEmits<{
   (e: "update:visible", value: boolean): void;
   (e: "published", result: HubPublishResult): void;
   (e: "open-flow", payload: { message: string; flowPath: string }): void;
+  (e: "merged", result: HubMergeResult): void;
 }>();
 
 const isVisible = ref(props.visible);
@@ -253,6 +344,9 @@ const message = ref("");
 const warnings = ref<string[]>([]);
 const result = ref<HubPublishResult | null>(null);
 const conflict = ref<Extract<HubRefusal, { kind: "stale_base" }> | null>(null);
+const merged = ref<HubMergeResult | null>(null);
+const openConflicts = ref<MergeConflictRow[]>([]);
+const settledSome = ref(false);
 const asNew = ref(false);
 const newName = ref("");
 const publishedAsNew = ref(false);
@@ -274,6 +368,9 @@ async function prepare() {
   error.value = "";
   result.value = null;
   conflict.value = null;
+  merged.value = null;
+  openConflicts.value = [];
+  settledSome.value = false;
   message.value = "";
   namespaceId.value = null;
   warnings.value = [];
@@ -309,6 +406,7 @@ async function publish(overwriteVersion?: number) {
       ...(asNewFlow ? { as_new: true, name: newName.value.trim() } : {}),
     });
     conflict.value = null;
+    merged.value = null;
     publishedAsNew.value = asNewFlow;
     result.value = published;
     emit("published", published);
@@ -316,9 +414,60 @@ async function publish(overwriteVersion?: number) {
     const refusal = refusalOf(err);
     if (refusal?.kind === "stale_base") {
       conflict.value = refusal;
+    } else if (refusal?.kind === "unresolved_conflicts") {
+      await showOpenConflicts();
     } else {
       error.value = refusal ? refusalMessage(refusal) : detailOf(err, "Couldn't publish the flow.");
     }
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function mergeNewest() {
+  busy.value = true;
+  error.value = "";
+  try {
+    const outcome = await mergeFromHub(props.flowId);
+    conflict.value = null;
+    merged.value = outcome;
+    openConflicts.value = outcome.conflicts.length ? await listMergeConflicts(props.flowId) : [];
+    emit("merged", outcome);
+  } catch (err) {
+    const refusal = refusalOf(err);
+    error.value = refusal
+      ? refusalMessage(refusal)
+      : detailOf(err, "Couldn't merge the hub's version.");
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function showOpenConflicts() {
+  const rows = await listMergeConflicts(props.flowId);
+  openConflicts.value = rows;
+  merged.value = {
+    version: props.hubOrigin?.version ?? 0,
+    applied: true,
+    changes: [],
+    conflicts: rows.map(({ key, kind, label, message }) => ({ key, kind, label, message })),
+    warnings: [],
+  };
+}
+
+async function settle(key: string, take: "ours" | "theirs") {
+  const current = merged.value;
+  if (!current) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    openConflicts.value = await resolveMergeConflict(props.flowId, key, take);
+    settledSome.value = true;
+    const left = new Set(openConflicts.value.map((row) => row.key));
+    merged.value = { ...current, conflicts: current.conflicts.filter((c) => left.has(c.key)) };
+    emit("merged", merged.value);
+  } catch (err) {
+    error.value = detailOf(err, "Couldn't settle the conflict.");
   } finally {
     busy.value = false;
   }
@@ -357,6 +506,32 @@ async function openInstead() {
 </script>
 
 <style scoped>
+.hub-settle {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.hub-settle-message {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.hub-settle-line {
+  margin: 0 0 6px;
+  font-family: var(--font-family-mono, monospace);
+  font-size: 12px;
+  color: var(--color-text-secondary, #475569);
+}
+
+.hub-merge-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--color-text-secondary, #475569);
+}
+
 .hub-dialog-body {
   display: flex;
   flex-direction: column;

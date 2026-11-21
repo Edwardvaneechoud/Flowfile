@@ -45,10 +45,16 @@ from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.hub_client import browser_sign_in, client, node_addresses, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.routes import compute_backends
+from flowfile_core.routes.flow_merge import refuse_open_conflicts
 from flowfile_core.routes.routes import flow_file_handler, get_flow_or_404
 from flowfile_core.schemas import schemas
+from flowfile_core.schemas.history_schema import HistoryState
 from shared import server_extension
 from shared._version import get_version
+from shared.flow_merge.conflict import conflict_document, resolve
+from shared.flow_merge.diff import diff as flow_diff
+from shared.flow_merge.merge import merge as merge_flows
+from shared.flow_merge.render import review_items
 from shared.storage_config import registered_flow_path, storage
 
 router = APIRouter()
@@ -347,6 +353,22 @@ class HubPublishOut(BaseModel):
     flow_id: int | None = None
 
 
+class HubMergeRequest(BaseModel):
+    flow_id: int
+
+
+class HubMergeOut(BaseModel):
+    """``version`` is the hub's version merged in; ``changes`` what the merge changed on the open canvas, step by step;
+    ``conflicts`` what both changed, the canvas keeping the person's own version of each until it is settled."""
+
+    version: int
+    applied: bool
+    changes: list[dict] = []
+    conflicts: list[dict] = []
+    warnings: list[str] = []
+    history: HistoryState | None = None
+
+
 class HubOpenRequest(BaseModel):
     flow_uuid: str
     version: int | None = None
@@ -470,6 +492,7 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
     origin = getattr(flow.flow_settings, "hub_origin", None)
     if origin is not None and request.as_new and request.overwrite_version is not None:
         raise HTTPException(status_code=422, detail="A new flow has no version to publish over.")
+    refuse_open_conflicts(flow)
     hub_url, token = _hub(current_user)
     flow_path = flow.flow_settings.path or flow.flow_settings.save_location
     if not flow_path:
@@ -523,6 +546,67 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
     flow.save_flow(flow_path=flow_path)
     flow.save_note = None
     return HubPublishOut(version=published["version"], name=published["name"])
+
+
+def _for_merge(document: dict) -> dict:
+    settings = document.get("flowfile_settings") or {}
+    settings["hub_origin"] = None
+    settings["source_registration_id"] = None
+    return document
+
+
+@router.post("/merge", summary="Merge the hub's newest version into the open flow")
+def merge_newest(request: HubMergeRequest, current_user=Depends(get_current_active_user)) -> HubMergeOut:
+    """Bring what others published since the open flow's base into it, step by step, as one undo step.
+
+    The base is the version ``hub_origin`` names, the other side the hub's newest version. Steps that exist on the hub
+    keep their ids; a step the person added under an id the hub's newest also used is renumbered. Where both changed
+    the same step the canvas keeps the person's version and the conflict is held on the flow
+    (``flow.merge_conflicts``) until it is settled; publishing and running are refused meanwhile. ``hub_origin`` then
+    names the newest version, so the next publish is on top of it.
+    """
+    from flowfile_core.flowfile.manage.apply_document import apply_document
+
+    flow = get_flow_or_404(request.flow_id, current_user)
+    origin = getattr(flow.flow_settings, "hub_origin", None)
+    if origin is None:
+        raise HTTPException(status_code=409, detail={"kind": "not_on_hub", "message": "This flow is on no hub."})
+    refuse_open_conflicts(flow)
+    hub_url, token = _hub(current_user)
+    if origin.hub_url.rstrip("/") != hub_url.rstrip("/"):
+        raise HTTPException(status_code=409, detail={"kind": "other_hub", "hub_url": origin.hub_url})
+    try:
+        versions = client.list_versions(hub_url, token, origin.flow_uuid)
+        newest = max((v["version"] for v in versions), default=origin.version)
+        if newest == origin.version:
+            return HubMergeOut(version=newest, applied=False)
+        base = client.checkout(hub_url, token, origin.flow_uuid, origin.version)["definition"]
+        latest = client.checkout(hub_url, token, origin.flow_uuid, newest)["definition"]
+    except (HubUnreachable, HubRefused, HubVersionRefused) as e:
+        raise _hub_error(e) from e
+
+    live = flow.get_flowfile_data().model_dump(mode="json")
+    result = merge_flows(_for_merge(base), _for_merge(latest), _for_merge(yaml.safe_load(yaml.safe_dump(live))))
+    sides = {"base": f"version {origin.version}", "ours": f"version {newest}", "theirs": "your copy"}
+    held = None
+    shown = result.document
+    if not result.clean:
+        held = conflict_document(result, sides)
+        shown = resolve(held, {c.key: "theirs" for c in result.conflicts})
+    history, applied_warnings = apply_document(flow, shown, f"Merge version {newest} from the hub", current_user)
+    flow.merge_conflicts = held
+    flow.flow_settings.hub_origin = schemas.HubOrigin(hub_url=hub_url, flow_uuid=origin.flow_uuid, version=newest)
+    flow_path = flow.flow_settings.path or flow.flow_settings.save_location
+    if flow_path:
+        flow.save_flow(flow_path=flow_path)
+    return HubMergeOut(
+        version=newest,
+        applied=True,
+        changes=review_items(flow_diff(live, shown)),
+        conflicts=[{"key": c.key, "kind": c.kind, "label": c.label, "message": c.message} for c in result.conflicts],
+        warnings=[w.message for w in result.warnings] + applied_warnings,
+        history=history,
+    )
 
 
 def _publish_as_new(

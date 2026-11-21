@@ -23,6 +23,8 @@ GOOGLE_OAUTH_CLIENT_ID_KEY = "ga_oauth_client_id"
 GOOGLE_OAUTH_CLIENT_SECRET_KEY = "ga_oauth_client_secret"
 GOOGLE_OAUTH_REDIRECT_URI_KEY = "ga_oauth_redirect_uri"
 
+PROJECT_REMOTE_TOKEN_KEY = "project_remote_token"
+
 _OAUTH_KEYS = (
     GOOGLE_OAUTH_CLIENT_ID_KEY,
     GOOGLE_OAUTH_CLIENT_SECRET_KEY,

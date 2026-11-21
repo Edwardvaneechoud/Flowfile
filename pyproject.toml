@@ -127,6 +127,7 @@ stop_gcs = "test_utils.gcs.commands:stop_gcs"
 start_redpanda = "test_utils.kafka.commands:start_redpanda"
 stop_redpanda = "test_utils.kafka.commands:stop_redpanda"
 flowfile-migrate = "tools.migrate.__main__:main"
+flowfile-merge = "shared.flow_merge.cli:main"
 
 [tool.poetry.group.build]
 optional = true
