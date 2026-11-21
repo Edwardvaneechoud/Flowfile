@@ -53,6 +53,30 @@ export function offersBrowseRoots(locationKind: string, rootPath: string | undef
   return locationKind === "local" && !rootPath;
 }
 
+/** Whether a file's name ends in one of `types`; every file matches an empty list. */
+export function matchesFileTypes(name: string, types: string[]): boolean {
+  const lower = name.toLowerCase();
+  return types.length === 0 || types.some((type) => lower.endsWith(`.${type.toLowerCase()}`));
+}
+
+/**
+ * Whether the browser lists a file. A server's folders hold files of any type, so there every file is listed
+ * and one the dialog cannot pick is shown but not chosen; a desktop lists the dialog's types only.
+ */
+export function listsFile(name: string, types: string[], onServer: boolean): boolean {
+  return onServer || matchesFileTypes(name, types);
+}
+
+/** The sentence a browser shows beside a listed file its dialog cannot pick. */
+export function pickableTypesNote(types: string[]): string {
+  const dotted = types.map((type) => `.${type}`);
+  const named =
+    dotted.length > 1
+      ? `${dotted.slice(0, -1).join(", ")} and ${dotted[dotted.length - 1]}`
+      : dotted[0];
+  return `Only ${named} files can be chosen here.`;
+}
+
 /** The query that opens the editor's Open dialog on the person's workspace: `?open=workspace`. */
 export const OPEN_WORKSPACE_QUERY = { key: "open", value: "workspace" } as const;
 

@@ -633,6 +633,38 @@ class TestUploadAndDownload:
         assert pl.read_csv(downloaded.content)["amount"].to_list() == [10, 20]
         assert 'filename="result.csv"' in downloaded.headers["content-disposition"]
 
+    def test_a_file_of_any_type_is_uploaded_into_a_folder(self, bob):
+        mine = _workspace(bob)
+        uploaded = self._upload(bob, mine, name="chart.png", body=b"\x89PNG\r\n")
+        assert uploaded.status_code == 200, uploaded.text
+        assert (mine / "chart.png").read_bytes() == b"\x89PNG\r\n"
+
+    def test_a_yaml_file_is_uploaded_into_a_folder(self, bob):
+        mine = _workspace(bob)
+        uploaded = self._upload(bob, mine, name="Regional Sales Summary performance.yaml", body=b"a: 1\n")
+        assert uploaded.status_code == 200, uploaded.text
+        assert (mine / "Regional Sales Summary performance.yaml").read_bytes() == b"a: 1\n"
+
+    def test_a_file_without_an_extension_is_uploaded_into_a_folder(self, bob):
+        mine = _workspace(bob)
+        uploaded = self._upload(bob, mine, name="README", body=b"notes\n")
+        assert uploaded.status_code == 200, uploaded.text
+        assert (mine / "README").read_bytes() == b"notes\n"
+
+    def test_an_uploaded_file_of_any_type_is_listed_in_its_folder(self, bob):
+        mine = _workspace(bob)
+        names = ["chart.png", "summary.yaml", "customers.csv", "README"]
+        for name in names:
+            assert self._upload(bob, mine, name=name, body=b"x\n").status_code == 200, name
+        listed = bob.get("/files/directory_contents/", params={"directory": str(mine), "include_hidden": False})
+        assert listed.status_code == 200, listed.text
+        assert sorted(f["name"] for f in listed.json()) == sorted(names)
+
+    def test_the_uploads_folder_takes_data_files_only(self, bob):
+        refused = bob.post("/file_manager/upload", files={"file": ("chart.png", b"\x89PNG\r\n", "image/png")})
+        assert refused.status_code == 400
+        assert "not allowed" in refused.json()["detail"]
+
     def test_nothing_is_uploaded_into_another_persons_folder(self, alice, bob):
         theirs = _workspace(alice)
         refused = self._upload(bob, theirs, name="planted.csv")

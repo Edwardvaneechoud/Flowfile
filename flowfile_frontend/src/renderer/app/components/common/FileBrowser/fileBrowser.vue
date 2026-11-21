@@ -147,7 +147,10 @@
             :class="{
               selected: selectedFile?.path === file.path,
               'is-directory': file.is_directory,
+              unpickable: !canPick(file),
             }"
+            :title="canPick(file) ? undefined : unpickableNote"
+            :data-testid="canPick(file) ? undefined : 'file-browser-unpickable'"
             @click.stop="handleSingleClick(file)"
             @dblclick.stop="handleDoubleClick(file)"
           >
@@ -238,9 +241,21 @@
             Download
           </el-button>
         </template>
+        <span
+          v-if="selectedFile && !canPick(selectedFile)"
+          class="unpickable-note"
+          data-testid="file-browser-unpickable-note"
+        >
+          {{ unpickableNote }}
+        </span>
         <template v-if="mode === 'create' && provider.capabilities.createFile">
           <el-button
-            v-if="selectedFile && !selectedFile.is_directory && showWarningOnOverwrite"
+            v-if="
+              selectedFile &&
+              !selectedFile.is_directory &&
+              canPick(selectedFile) &&
+              showWarningOnOverwrite
+            "
             type="warning"
             :disabled="loading"
             size="small"
@@ -280,7 +295,7 @@
         <el-button
           v-if="mode === 'open' && selectedFile && !selectedFile.is_directory"
           type="primary"
-          :disabled="loading"
+          :disabled="loading || !canPick(selectedFile)"
           size="small"
           class="browser-action-btn"
           @click="handleOpenFile"
@@ -343,7 +358,15 @@ import { basename, dirname, normalizePath } from "../../../utils/storagePath";
 import { FLOWFILE_EXTENSIONS, DATA_FILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "./constants";
 import { FileApi } from "./fileSystemApi";
 import { FileManagerApi } from "../../../api/fileManager.api";
-import { isBrowseRoot, offersBrowseRoots, rootContaining, type BrowseRoot } from "./workspaceRoots";
+import {
+  isBrowseRoot,
+  listsFile,
+  matchesFileTypes,
+  offersBrowseRoots,
+  pickableTypesNote,
+  rootContaining,
+  type BrowseRoot,
+} from "./workspaceRoots";
 
 const fileBrowserStore = useFileBrowserStore();
 
@@ -459,6 +482,11 @@ const rootIcon = (name: string): string =>
 const canTransferFiles = computed(
   () => props.location.kind === "local" && browseRoots.value.length > 0,
 );
+/** On a server every file of a folder is listed; one the dialog's types leave out is shown but not chosen. */
+const listsEveryFile = computed(() => browseRoots.value.length > 0);
+const canPick = (file: FileInfo): boolean =>
+  file.is_directory || matchesFileTypes(file.name, props.allowedFileTypes);
+const unpickableNote = computed(() => pickableTypesNote(props.allowedFileTypes));
 const loadBrowseRoots = async () => {
   if (!offersBrowseRoots(props.location.kind, props.rootPath)) return;
   try {
@@ -727,13 +755,13 @@ const handleBackgroundClick = () => {
 };
 
 const handleOpenFile = () => {
-  if (selectedFile.value && !selectedFile.value.is_directory) {
+  if (selectedFile.value && !selectedFile.value.is_directory && canPick(selectedFile.value)) {
     emit("fileSelected", selectedFile.value);
   }
 };
 
 const handleSingleClick = (file: FileInfo) => {
-  emit("update:modelValue", file);
+  emit("update:modelValue", canPick(file) ? file : null);
   selectedFile.value = file;
 };
 
@@ -773,7 +801,7 @@ const handleDoubleClick = async (file: FileInfo) => {
   if (file.is_directory) {
     selectedFile.value = null;
     await navigateIntoDirectory(file.name);
-  } else {
+  } else if (canPick(file)) {
     emit("fileSelected", file);
   }
 };
@@ -828,7 +856,7 @@ const handleCreateFile = () => {
 };
 
 const confirmOverwrite = () => {
-  if (selectedFile.value && !selectedFile.value.is_directory) {
+  if (selectedFile.value && !selectedFile.value.is_directory && canPick(selectedFile.value)) {
     ElMessageBox.confirm(
       `Are you sure you want to overwrite "${selectedFile.value.name}"?`,
       "Warning",
@@ -885,11 +913,7 @@ const calculateSortedFiles = () => {
 
       const matchesSearch = file.name.toLowerCase().includes(searchTerm.value.toLowerCase());
       const matchesHidden = showHidden.value || !file.is_hidden;
-      const matchesType =
-        props.allowedFileTypes.length === 0 ||
-        props.allowedFileTypes.some((type) =>
-          file.name.toLowerCase().endsWith(`.${type.toLowerCase()}`),
-        );
+      const matchesType = listsFile(file.name, props.allowedFileTypes, listsEveryFile.value);
       return matchesSearch && matchesHidden && matchesType;
     })
     .sort((a, b) => {
@@ -1291,6 +1315,16 @@ onMounted(async () => {
 
 .hidden-file {
   opacity: 0.5;
+}
+
+.file-item.unpickable {
+  opacity: 0.6;
+}
+
+.unpickable-note {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 .file-browser {

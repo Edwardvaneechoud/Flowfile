@@ -4,7 +4,10 @@ import {
   fileTabLabel,
   fileTabRegisters,
   isBrowseRoot,
+  listsFile,
+  matchesFileTypes,
   offersBrowseRoots,
+  pickableTypesNote,
   requestWorkspaceOpen,
   rootContaining,
   takeWorkspaceRequest,
@@ -94,5 +97,38 @@ describe("the request to open the Open dialog on the workspace", () => {
     requestWorkspaceOpen();
     expect(takeWorkspaceRequest()).toBe(true);
     expect(takeWorkspaceRequest()).toBe(false);
+  });
+});
+
+describe("the files a browser lists", () => {
+  const flows = ["flowfile", "yml", "yaml"];
+
+  it("lists every file in a server's folders, whatever the dialog can pick", () => {
+    for (const name of ["chart.png", "customers.csv", "README", "flow.yaml"]) {
+      expect(listsFile(name, flows, true)).toBe(true);
+    }
+  });
+
+  it("lists only the dialog's types on a desktop, as before", () => {
+    expect(listsFile("flow.yaml", flows, false)).toBe(true);
+    expect(listsFile("chart.png", flows, false)).toBe(false);
+    expect(listsFile("README", flows, false)).toBe(false);
+  });
+
+  it("lists every file where the dialog names no types", () => {
+    expect(listsFile("chart.png", [], false)).toBe(true);
+    expect(matchesFileTypes("README", [])).toBe(true);
+  });
+
+  it("matches a type by the end of the name, in any letter case", () => {
+    expect(matchesFileTypes("Flow.YAML", flows)).toBe(true);
+    expect(matchesFileTypes("flow.yaml.png", flows)).toBe(false);
+  });
+
+  it("says in one sentence which files a dialog can pick", () => {
+    expect(pickableTypesNote(["flowfile", "yml", "yaml"])).toBe(
+      "Only .flowfile, .yml and .yaml files can be chosen here.",
+    );
+    expect(pickableTypesNote(["parquet"])).toBe("Only .parquet files can be chosen here.");
   });
 });

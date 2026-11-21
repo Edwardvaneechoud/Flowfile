@@ -130,11 +130,13 @@ async def upload_file(
     """Upload a file to the user data uploads directory, or into ``directory``.
 
     Available in every mode because the canvas file-drop uploads from package and
-    electron modes too. Only permitted extensions are accepted and the size limit is
-    enforced while streaming. With ``unique`` the destination is a non-colliding name
-    instead of an overwrite; the response ``filename`` is always the final on-disk name.
+    electron modes too. The size limit is enforced while streaming. With ``unique`` the
+    destination is a non-colliding name instead of an overwrite; the response ``filename``
+    is always the final on-disk name.
     ``directory`` is a folder the file browser shows the person (on a server their workspace or the shared
-    folder): a 403 elsewhere, a 404 when it is no folder.
+    folder): a 403 elsewhere, a 404 when it is no folder. A folder holds files of any type, so an upload into
+    one takes any file; an upload into the uploads folder (the canvas drop) takes the data files of
+    ``ALLOWED_EXTENSIONS`` only.
     """
     if not file.filename:
         raise HTTPException(400, "No filename provided")
@@ -144,14 +146,13 @@ async def upload_file(
     if not safe_name or ".." in safe_name:
         raise HTTPException(400, "Invalid filename")
 
-    suffix = _split_suffix(safe_name)[1].lstrip(".").lower()
-    if suffix not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            400,
-            f"File type '.{suffix}' not allowed. " f"Allowed types: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
-        )
-
     if directory is None:
+        suffix = _split_suffix(safe_name)[1].lstrip(".").lower()
+        if suffix not in ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                400,
+                f"File type '.{suffix}' not allowed. " f"Allowed types: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
+            )
         uploads_dir = storage.uploads_directory
         uploads_dir.mkdir(parents=True, exist_ok=True)
     else:
