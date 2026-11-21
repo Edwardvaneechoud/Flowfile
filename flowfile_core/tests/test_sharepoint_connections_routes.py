@@ -1570,6 +1570,17 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
                 content = b"sku;quantity\nC;7\n"
                 graph.run_graph(commit_sources=False)
                 assert node.get_resulting_data().data_frame.collect().to_dicts() == [{"sku": "C", "quantity": 7}]
+                execute_stages = graph._execute_stages
+
+                def cancel_before_checkpoint(*args, **kwargs):
+                    failed = execute_stages(*args, **kwargs)
+                    assert not failed
+                    graph.flow_settings.is_canceled = True
+                    return failed
+
+                with monkeypatch.context() as patch:
+                    patch.setattr(graph, "_execute_stages", cancel_before_checkpoint)
+                    graph.run_graph()
                 from flowfile_core.flowfile.flow_graph.connections import add_connection
                 from flowfile_core.schemas.input_schema import NodeConnection
 
@@ -1583,11 +1594,12 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
                 graph.run_graph()
                 assert node.get_resulting_data().data_frame.collect().to_dicts() == [{"sku": "C", "quantity": 7}]
                 assert delta_sink_statuses == [403, 201]
-                assert delta_tokens == ["latest", "next-1", "next-2", "next-2", "next-2"] and len(downloads) == 4
+                assert delta_tokens == ["latest", "next-1"] + ["next-2"] * 4
+                assert len(downloads) == 5
                 delta_changes[:] = [{"id": "sales-item", "deleted": {}}]
                 delta_file_exists = False
                 graph.run_graph()
-                assert delta_tokens[-1] == "next-5" and len(downloads) == 4
+                assert delta_tokens[-1] == "next-6" and len(downloads) == 5
                 assert node.get_resulting_data().data_frame.collect().schema == empty.schema
                 assert node.get_resulting_data().data_frame.collect().is_empty()
                 delta_file_exists = True

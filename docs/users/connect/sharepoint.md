@@ -4,6 +4,8 @@ Use the **Read from SharePoint** node to read CSV (`.csv`), Excel (`.xls` and `.
 
 ## Before you connect
 
+SharePoint reads and writes require the versioned worker compute protocol. Keep `FLOWFILE_COMPUTE_PROTOCOL` enabled and update Core and worker together to compatible versions. The legacy worker API does not support these nodes.
+
 Flowfile uses a saved app-only connection with a tenant ID, application (client) ID, and either a client secret or certificate. This connection is separate from your Flowfile login. For setup on the Microsoft side, follow Microsoft Learn:
 
 - [Register an application in Microsoft Entra ID](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app)
@@ -50,7 +52,7 @@ Click **Find OneDrive for Business** instead of **Find libraries** in the file r
 
 For an exact CSV, JSON, or Parquet path, enable **Incremental read**, click **Apply**, and save/register the flow. Full reads remain the default. The first incremental run downloads the entire file. After that, an update downloads the whole changed file, not just changed rows. An unchanged or deleted file returns zero rows with the last known schema; it does not skip downstream nodes. Use a connection that can query Microsoft Graph delta for the selected drive.
 
-Flowfile stores the checkpoint separately from the flow and advances it only after a successful run. If Graph expires the checkpoint, the run fails instead of silently downloading the file again. Use **Reset checkpoint on save** and **Apply** to make the next run read the full file. Treat downstream writes as repeatable: a failed run may have already performed some writes before a retry.
+Flowfile stores the checkpoint separately from the flow. It advances after the reader and its downstream nodes complete without failure or error-driven skips. A canceled run does not advance it. Deliberately gated-off outputs count as complete, and failures in unrelated branches do not block this reader's checkpoint. If Graph expires the checkpoint, the run fails instead of silently downloading the file again. Use **Reset checkpoint on save** and **Apply** to make the next run read the full file. Design downstream writes to tolerate retries: a failed or canceled run may already have made some writes.
 
 ## Write a file to a SharePoint document library
 
