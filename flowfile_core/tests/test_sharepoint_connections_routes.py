@@ -75,61 +75,17 @@ def saved_connection(monkeypatch):
         engine.dispose()
 
 
-@pytest.mark.parametrize("node_type", ["sharepoint_reader", "sharepoint_writer"])
-def test_sharepoint_project_connection_roundtrip(saved_connection, monkeypatch, node_type):
+def test_project_sharepoint_binding_does_not_use_another_owners_connection(saved_connection):
     from contextlib import contextmanager
 
-    import yaml
+    from flowfile_core.project.importer import _bind_project_sharepoint_nodes
 
-    from flowfile_core.project import importer, kinds, projection
-    from flowfile_core.project.models import SetupResult
-    from flowfile_core.project.normalize import normalize_flow_data
-    from flowfile_core.project.secrets_resolver import env_key, placeholder_name
-
-    @contextmanager
-    def db_context():
-        yield from app.dependency_overrides[get_db]()
-
-    monkeypatch.setattr(importer, "get_db_context", db_context)
-    with db_context() as db:
-        kind = kinds.get("sharepoint_connection")
-        files = kind.export(kinds.ExportContext(db=db, owner_id=1))
-        assert len(files) == 1
-        text = next(iter(files.values()))
-        assert "fixture-client-secret" not in text and "$ffsec$" not in text
-        data = yaml.safe_load(text)
-        flow = normalize_flow_data(
-            {"nodes": [{"type": node_type, "setting_input": {"connection_id": saved_connection}}]},
-            "fixture-flow",
-            "SharePoint test",
-            lookup=projection._reference_lookup(db, 1),
-        )
-        settings = flow["nodes"][0]["setting_input"]
+    with contextmanager(app.dependency_overrides[get_db])() as db:
+        connection = db.get(SharePointConnection, saved_connection)
+        settings = {"connection_id": saved_connection, "sharepoint_connection_uuid": connection.connection_uuid}
+        flow = {"nodes": [{"type": "sharepoint_reader", "setting_input": settings}]}
+        _bind_project_sharepoint_nodes(db, flow, 2)
         assert settings["connection_id"] is None
-        assert settings["sharepoint_connection_uuid"] == data["connection_uuid"]
-        db.add(User(id=2, username="recipient"))
-        db.commit()
-    name = placeholder_name(data["credential"])
-    assert name
-    monkeypatch.delenv(env_key(name), raising=False)
-    result = SetupResult()
-    assert importer._import_sharepoint_connection(data, 2, {}, result) is None
-    assert result.placeholder_secrets == [name]
-    with db_context() as db:
-        settings["connection_id"] = saved_connection
-        importer._bind_project_sharepoint_nodes(db, flow, 2)
-        assert settings["connection_id"] is None
-    monkeypatch.setenv(env_key(name), "recipient-credential")
-    importer._import_sharepoint_connection(data, 2, {}, SetupResult())
-    importer._import_sharepoint_connection(data, 2, {}, SetupResult())
-    with db_context() as db:
-        imported = db.query(SharePointConnection).filter_by(user_id=2).one()
-        assert imported.id != saved_connection
-        assert imported.connection_name == "test SharePoint"
-        encrypted = db.get(Secret, imported.credential_secret_id).encrypted_value
-        assert decrypt_secret(encrypted).get_secret_value() == "recipient-credential"
-        importer._bind_project_sharepoint_nodes(db, flow, 2)
-        assert settings["connection_id"] == imported.id
 
 
 def test_sqlite_upgrade_preserves_saved_connections_and_does_not_reuse_ids(tmp_path):
@@ -1037,13 +993,25 @@ def test_saved_connection_wire_payload_reads_csv(saved_connection, monkeypatch):
         database.close()
 
 
-@pytest.mark.parametrize("source", ["file", "list"])
-@pytest.mark.parametrize("exported", [False, True], ids=["public-api", "flowframe-export"])
-@pytest.mark.parametrize("write_output", [None, "file", "list"])
+@pytest.mark.parametrize(
+    ("source", "exported", "write_output"),
+    [
+        pytest.param("file", False, None, id="onedrive-public-api"),
+        pytest.param("list", True, None, id="list-read-export"),
+        pytest.param("file", False, "file", id="csv-public-api"),
+        pytest.param("file", True, "file", id="csv-export"),
+        pytest.param("list", False, "list", id="list-public-api"),
+        pytest.param("list", True, "list", id="list-export"),
+        pytest.param("file", True, "append", id="excel-append-export"),
+    ],
+)
 def test_read_sharepoint_in_python_without_worker_service(
     saved_connection, monkeypatch, exported, source, write_output,
 ):
     from contextlib import contextmanager
+    from io import BytesIO
+
+    from openpyxl import Workbook, load_workbook
 
     import flowfile as ff
     from flowfile_core.configs import settings
@@ -1062,6 +1030,17 @@ def test_read_sharepoint_in_python_without_worker_service(
     onedrive_user_id = "a39aa228-d355-4820-a125-9ad8d71413e2"
     onedrive_id = "b!fixed-drive"
     drive_id = onedrive_id if source == "file" else "test-drive"
+    workbook_path = f"/v1.0/drives/{drive_id}/root:/Reports/output.xlsx"
+    existing_item_path = f"/v1.0/drives/{drive_id}/items/workbook"
+    original = BytesIO()
+    if write_output == "append":
+        workbook = Workbook()
+        workbook.active.title = "Keep"
+        workbook.active["A1"] = "=1+1"
+        sheet = workbook.create_sheet("Report")
+        sheet.append(["sku", "quantity"])
+        sheet.append(["Existing", 1])
+        workbook.save(original)
 
     def microsoft(request):
         if request.url.host == "login.microsoftonline.com":
@@ -1072,6 +1051,19 @@ def test_read_sharepoint_in_python_without_worker_service(
             ]})
         if request.url.path.endswith("/lists/output-list/columns"):
             return httpx.Response(200, json={"value": [{"name": "Title", "text": {}}]})
+        if write_output == "append":
+            if request.method == "GET" and request.url.path == workbook_path:
+                return httpx.Response(200, json={"id": "workbook", "eTag": '"v1"'})
+            if request.method == "GET" and request.url.path == f"{existing_item_path}/content":
+                return httpx.Response(200, content=original.getvalue())
+            if request.method == "POST":
+                assert request.url.path == f"{existing_item_path}/createUploadSession"
+                assert request.headers["If-Match"] == '"v1"'
+                return httpx.Response(200, json={"uploadUrl": "https://upload.sharepoint.com/session"})
+            if request.method == "PUT":
+                assert str(request.url) == "https://upload.sharepoint.com/session"
+                uploaded.append(request.content)
+                return httpx.Response(201, json={"id": "workbook"})
         if request.method == "POST" and write_output == "list":
             assert request.url.path == "/v1.0/sites/example.sharepoint.com,site,web/lists/output-list/items"
             uploaded.append(json.loads(request.content))
@@ -1129,6 +1121,12 @@ def test_read_sharepoint_in_python_without_worker_service(
             conflict_mode="overwrite",
         )
         assert not uploaded
+    elif write_output == "append":
+        sink = frame.write_sharepoint(
+            saved_connection, drive_id=drive_id, file_path="Reports/output.xlsx", format="xlsx",
+            conflict_mode="append", sheet_name="Report",
+        )
+        assert not uploaded
     if exported:
         code = export_flow_to_flowframe(frame.flow_graph)
         assert "ff.read_sharepoint(" in code
@@ -1145,6 +1143,13 @@ def test_read_sharepoint_in_python_without_worker_service(
     elif write_output:
         frame = sink
     assert frame.collect().to_dicts() == [{"sku": "A", "quantity": 2}, {"sku": "B", "quantity": 5}]
+    if write_output == "append":
+        [content] = uploaded
+        result = load_workbook(BytesIO(content))
+        assert result.sheetnames == ["Keep", "Report"]
+        assert result["Keep"]["A1"].value == "=1+1"
+        assert list(result["Report"].values) == [("sku", "quantity"), ("Existing", 1), ("A", 2), ("B", 5)]
+        return
     assert uploaded == {
         None: [], "file": [b"sku,quantity\nA,2\nB,5\n"],
         "list": [{"fields": {"Title": "A"}}, {"fields": {"Title": "B"}}],

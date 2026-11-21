@@ -1,5 +1,5 @@
 {
-  "protocol_version": 6,
+  "protocol_version": 7,
   "entries": {
     "catalog cloud_storage_connections": "d07b34d88d5d98f4dcefc5379e59f4654fa069a22f353e0d23453d3c802192e9",
     "operation cloud_write": "95757474fb2916fc076f766f5da5484db9bd508e75605e677917040a091b1079",
@@ -17,7 +17,7 @@
     "operation random_split": "a6e9d1c4a279140190607114431e49ff6a1c8014f105e1c4b3af0a96c12ff4dd",
     "operation rest_api_read": "b6fdf0716e1418e0d22180286932fd5d8cdb7dd1d4e1ea6e0d99dbaa651a90c6",
     "operation sharepoint_read": "aa1eab588c6458501af18f5ec73819ee1772edba305144f98d8297d09c0db09d",
-    "operation sharepoint_write": "e89eff17db64b3b2a52c72b142e7d39a716bab179457e0fde132682b60fdba25",
+    "operation sharepoint_write": "c749bcc948a28de18f99ea3f860293d3dc101eec3af922b32f41fa408f1758a0",
     "operation sql_query": "3e956aac0b1d12764524183f882fa771395a4996b8d056e72afa116e51ee35f7",
     "operation task:calculate_number_of_records": "6101690c9787c615a286039fa6fdcb94265c136e32c8bc2662efb1eb7c71f589",
     "operation task:calculate_schema": "6101690c9787c615a286039fa6fdcb94265c136e32c8bc2662efb1eb7c71f589",

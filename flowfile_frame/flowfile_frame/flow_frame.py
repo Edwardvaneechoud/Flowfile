@@ -2884,7 +2884,9 @@ class FlowFrame:
         drive_id: str | None = None,
         file_path: str | None = None,
         format: Literal["csv", "xlsx", "parquet"] | None = None,
-        conflict_mode: Literal["overwrite", "error", "append_suffix"] = "error",
+        conflict_mode: Literal["overwrite", "error", "append_suffix", "update", "append"] = "error",
+        sheet_name: str | None = None,
+        write_when_empty: bool = False,
         list_target: dict | None = None,
     ) -> FlowFrame:
         """Write a file or append list items on flow run, using a saved SharePoint app connection."""
@@ -2902,6 +2904,8 @@ class FlowFrame:
                 file_path=file_path,
                 format=format,
                 conflict_mode=conflict_mode,
+                sheet_name=sheet_name,
+                write_when_empty=write_when_empty,
                 list_target=list_target,
             )
         )

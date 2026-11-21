@@ -458,6 +458,7 @@ def build_write_settings(db: Session, settings: NodeSharePointWriter) -> SharePo
         tenant_id=UUID(connection.tenant_id), client_id=UUID(connection.client_id), auth_method=connection.auth_method,
         client_secret_encrypted=ciphertext, drive_id=settings.drive_id, file_path=settings.file_path,
         format=settings.format, conflict_mode=settings.conflict_mode, list_target=settings.list_target,
+        sheet_name=settings.sheet_name, write_when_empty=settings.write_when_empty,
         flowfile_flow_id=settings.flow_id, flowfile_node_id=settings.node_id,
     )
 

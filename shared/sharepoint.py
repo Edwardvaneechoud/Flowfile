@@ -99,15 +99,20 @@ class SharePointWriteTarget(WireModel):
     drive_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_!.-]{1,512}$")
     file_path: str | None = Field(default=None, min_length=1, max_length=2048)
     format: Literal["csv", "xlsx", "parquet"] | None = None
-    conflict_mode: Literal["overwrite", "error", "append_suffix"] = "error"
+    conflict_mode: Literal["overwrite", "error", "append_suffix", "update", "append"] = "error"
+    sheet_name: str | None = Field(default=None, min_length=1, max_length=31, pattern=r"^[^\[\]:*?/\\\x00-\x1f]+$")
+    write_when_empty: bool = False
     list_target: SharePointListTarget | None = None
 
     @model_validator(mode="after")
     def validate_target(self):
         if self.list_target is None and self.drive_id and self.file_path and self.format:
-            return self
+            if self.format == "xlsx" or (self.conflict_mode not in {"update", "append"} and self.sheet_name is None):
+                return self
+            raise ValueError("Sheet name, Update sheet and Append rows are only available for Excel output.")
         if (self.list_target is not None and self.drive_id is None and self.file_path is None
-                and self.format is None and self.conflict_mode == "error"):
+                and self.format is None and self.conflict_mode == "error" and self.sheet_name is None
+                and not self.write_when_empty):
             return self
         raise ValueError("Select either a SharePoint output file or an append-only list target.")
 
@@ -348,8 +353,11 @@ def download_file(
     trim_partial_line: bool = True,
     item_id: str | None = None,
 ) -> bytes:
-    path = "/".join(quote(part, safe="") for part in parts)
-    target = f"items/{quote(item_id, safe='')}" if item_id is not None else f"root:/{path}:"
+    if item_id is None:
+        path = "/".join(quote(part, safe="") for part in parts)
+        target = f"root:/{path}:"
+    else:
+        target = f"items/{quote(item_id, safe='')}"
     url = f"https://graph.microsoft.com/v1.0/drives/{quote(drive_id, safe='')}/{target}/content"
     label = "SharePoint file download"
     headers = {"Authorization": f"Bearer {token}"}

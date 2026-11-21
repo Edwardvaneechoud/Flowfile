@@ -123,18 +123,38 @@
         >
       </el-form-item>
       <el-form-item label="Format">
-        <el-select v-model="settings.format">
+        <el-select v-model="settings.format" @change="resetExcelOptions">
           <el-option label="CSV" value="csv" />
           <el-option label="Excel (.xlsx)" value="xlsx" />
           <el-option label="Parquet" value="parquet" />
         </el-select>
       </el-form-item>
+      <el-form-item v-if="settings.format === 'xlsx'" label="Sheet name">
+        <el-input v-model="settings.sheet_name" placeholder="Sheet1" maxlength="31" />
+      </el-form-item>
       <el-form-item label="If the file already exists">
         <el-select v-model="settings.conflict_mode">
-          <el-option label="Error" value="error" />
+          <el-option label="Create (error if the file exists)" value="error" />
           <el-option label="Overwrite" value="overwrite" />
+          <el-option v-if="settings.format === 'xlsx'" label="Update sheet" value="update" />
+          <el-option v-if="settings.format === 'xlsx'" label="Append rows" value="append" />
           <el-option label="Create a new file with a suffix" value="append_suffix" />
         </el-select>
+        <small v-if="settings.conflict_mode === 'update'">
+          Replaces or adds the named sheet, or creates a missing workbook. Other sheets are kept,
+          but embedded images may be lost. This does not append rows.
+        </small>
+        <small v-else-if="settings.conflict_mode === 'append'">
+          Adds rows below the existing data without repeating headers. Headers must match in the same
+          order. Creates a missing workbook or sheet. Embedded images may be lost when saving.
+        </small>
+      </el-form-item>
+      <el-form-item v-if="settings.conflict_mode === 'append'">
+        <small>Append rows leaves the destination unchanged when there are no rows.</small>
+      </el-form-item>
+      <el-form-item v-else label="Write output when there are no rows">
+        <el-switch v-model="settings.write_when_empty" />
+        <small>{{ emptyOutputHelp }}</small>
       </el-form-item>
     </template>
     <p v-if="error" role="alert">{{ error }}</p>
@@ -142,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
@@ -155,7 +175,9 @@ interface Destination extends NodeBase {
   drive_id: string;
   file_path: string;
   format: "csv" | "xlsx" | "parquet";
-  conflict_mode: "error" | "overwrite" | "append_suffix";
+  conflict_mode: "error" | "overwrite" | "append_suffix" | "update" | "append";
+  sheet_name?: string | null;
+  write_when_empty?: boolean;
   list_target?: { site_id: string; list_id: string; column_mapping: Record<string, string> } | null;
 }
 interface Entry {
@@ -301,6 +323,30 @@ function loadFolder(path: Entry[]) {
   );
 }
 
+const emptyOutputHelp = computed(() => {
+  const draft = settings.value;
+  if (!draft?.write_when_empty) return "Skips the file write and leaves existing files unchanged.";
+  switch (draft.conflict_mode) {
+    case "update":
+      return "Replaces the named sheet with headers only, or creates it if missing.";
+    case "overwrite":
+      return "Replaces the entire file with a zero-row output.";
+    case "append_suffix":
+      return "Writes a zero-row file under a new name if the destination already exists.";
+    default:
+      return "Creates a zero-row file. If the destination exists, the write fails.";
+  }
+});
+
+function resetExcelOptions() {
+  const draft = settings.value;
+  if (!draft || draft.format === "xlsx") return;
+  delete draft.sheet_name;
+  if (draft.conflict_mode === "update" || draft.conflict_mode === "append") {
+    draft.conflict_mode = "error";
+  }
+}
+
 function useFolder() {
   const draft = settings.value;
   if (!draft) return;
@@ -342,6 +388,8 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
         delete listDraft.drive_id;
         delete listDraft.file_path;
         delete listDraft.format;
+        delete draft.sheet_name;
+        delete draft.write_when_empty;
         draft.conflict_mode = "error";
         return true;
       } catch {
@@ -369,6 +417,7 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
     }
     draft.drive_id = drive;
     draft.file_path = path;
+    draft.sheet_name = draft.format === "xlsx" ? draft.sheet_name?.trim() || null : null;
     draft.list_target = null;
     return true;
   },
@@ -393,6 +442,7 @@ async function loadNodeData(nodeId: number) {
         file_path: "",
         format: "csv",
         conflict_mode: "error",
+        write_when_empty: false,
       };
   listMode.value = !!draft.list_target;
   listTarget.value = {

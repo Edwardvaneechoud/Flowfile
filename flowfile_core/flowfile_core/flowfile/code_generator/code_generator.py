@@ -2759,6 +2759,10 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
             self._add_code(f"    file_path={settings.file_path!r},")
             self._add_code(f"    format={settings.format!r},")
             self._add_code(f"    conflict_mode={settings.conflict_mode!r},")
+            if settings.sheet_name is not None:
+                self._add_code(f"    sheet_name={settings.sheet_name!r},")
+            if settings.write_when_empty:
+                self._add_code("    write_when_empty=True,")
         if self.placeholders:
             self._add_code(")")
         else:

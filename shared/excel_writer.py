@@ -250,6 +250,56 @@ def _update_sheet(df: pl.DataFrame, path: str, sheet_name: str) -> None:
     _save_atomically(wb, path)
 
 
+class ExcelAppendError(ValueError):
+    """The destination worksheet cannot safely accept the incoming rows."""
+
+
+def append_excel_rows(df: pl.DataFrame, path: str, sheet_name: str | None = None) -> None:
+    """Append to a private workbook copy, or create a missing workbook or sheet."""
+    from openpyxl import load_workbook
+    from openpyxl.utils.cell import get_column_letter, range_boundaries
+    from openpyxl.worksheet.worksheet import Worksheet
+
+    sheet = sheet_name or "Sheet1"
+    if not os.path.exists(path):
+        _write_fresh_atomically(df, path, sheet)
+        return
+
+    frame = _excel_safe_frame(df)
+    wb = load_workbook(path)
+    existing = next((name for name in wb.sheetnames if name.lower() == sheet.lower()), None)
+    ws = wb[existing] if existing is not None else wb.create_sheet(sheet)
+    if not isinstance(ws, Worksheet):
+        raise ExcelAppendError("Append rows requires a worksheet, not a chart sheet.")
+    if ws.max_row + frame.height > 1_048_576:
+        raise ExcelAppendError("Appending these rows would exceed Excel's worksheet row limit.")
+
+    table = None
+    header = [cell.value for cell in ws[1]]
+    if ws.max_row == 1 and header == [None] and not ws.tables:
+        # Assign row 1 directly: reading ws[1] can instantiate a blank cell.
+        for col, name in enumerate(frame.columns, start=1):
+            ws.cell(row=1, column=col, value=name)
+    else:
+        if header != frame.columns:
+            raise ExcelAppendError("Append rows requires matching column headers in the same order.")
+        if ws.tables:
+            tables = list(ws.tables.values())
+            if (len(tables) != 1 or tables[0].totalsRowCount or tables[0].totalsRowShown
+                    or tables[0].headerRowCount != 1
+                    or range_boundaries(tables[0].ref) != (1, 1, frame.width, ws.max_row)):
+                raise ExcelAppendError("Append rows requires a single Excel table covering the data, with no totals row.")
+            table = tables[0]
+
+    for row in frame.iter_rows():
+        ws.append(row)
+    if table is not None:
+        table.ref = f"A1:{get_column_letter(frame.width)}{ws.max_row}"
+        if table.autoFilter is not None:
+            table.autoFilter.ref = table.ref
+    _save_atomically(wb, path)
+
+
 def write_excel_output(
     df: pl.DataFrame,
     path: str,

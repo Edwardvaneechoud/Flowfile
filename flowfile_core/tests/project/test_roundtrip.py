@@ -183,6 +183,10 @@ def test_sharepoint_project_rebinds_after_credential_provisioning(tmp_path, monk
             flow_id=424242, node_id=1, user_id=OWNER, connection_id=original_id,
             drive_id="fixture-drive", file_path="sales.xlsx", sheet_name="Sales",
         ))
+        graph.add_sharepoint_writer(input_schema.NodeSharePointWriter(
+            flow_id=424242, node_id=2, depending_on_id=1, user_id=OWNER, connection_id=original_id,
+            drive_id="fixture-drive", file_path="report.csv", format="csv",
+        ))
         graph.save_flow(str(path))
         with get_db_context() as db:
             db.add(FlowRegistration(flow_uuid=flow_uuid, owner_id=OWNER, name=name, flow_path=str(path)))
@@ -205,23 +209,32 @@ def test_sharepoint_project_rebinds_after_credential_provisioning(tmp_path, monk
             db.commit()
 
         def runtime_settings():
-            return yaml.safe_load(path.read_text(encoding="utf-8"))["nodes"][0]["setting_input"]
+            return {
+                node["type"]: node["setting_input"] for node in yaml.safe_load(path.read_text(encoding="utf-8"))["nodes"]
+            }
 
         monkeypatch.delenv(env_key(placeholder), raising=False)
         result = import_project(root, OWNER)
         assert not result.incomplete
         assert placeholder in result.placeholder_secrets
-        assert runtime_settings()["connection_id"] is None
-        assert runtime_settings()["sharepoint_connection_uuid"] == identity
+        settings = runtime_settings()
+        assert settings.keys() == {"sharepoint_reader", "sharepoint_writer"}
+        for node_settings in settings.values():
+            assert node_settings["connection_id"] is None
+            assert node_settings["sharepoint_connection_uuid"] == identity
 
         monkeypatch.setenv(env_key(placeholder), "replacement-fixture-credential")
         result = import_project(root, OWNER)
         assert not result.incomplete
+        assert not import_project(root, OWNER).incomplete
         with get_db_context() as db:
             restored = db.query(SharePointConnection).filter_by(user_id=OWNER, connection_uuid=identity).one()
             assert restored.id != original_id
-            assert runtime_settings()["connection_id"] == restored.id
-            assert runtime_settings()["sheet_name"] == "Sales"
+            settings = runtime_settings()
+            assert settings["sharepoint_reader"]["connection_id"] == restored.id
+            assert settings["sharepoint_reader"]["sheet_name"] == "Sales"
+            assert settings["sharepoint_writer"]["connection_id"] == restored.id
+            assert settings["sharepoint_writer"]["file_path"] == "report.csv"
             encrypted = db.get(Secret, restored.credential_secret_id).encrypted_value
             assert decrypt_secret(encrypted, OWNER).get_secret_value() == "replacement-fixture-credential"
         write_export(root, OWNER)
