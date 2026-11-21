@@ -115,7 +115,11 @@ def _set_context(
     interactive: bool = False,
     available_artifacts: dict[str, int] | None = None,
     dry_run: bool = False,
+    kernel_token: str | None = None,
 ) -> None:
+    if kernel_token:
+        # The token of the kernel's current run, also for a caller outside this context.
+        os.environ["FLOWFILE_KERNEL_TOKEN"] = kernel_token
     _context.set(
         {
             "node_id": node_id,
@@ -126,6 +130,7 @@ def _set_context(
             "source_registration_id": source_registration_id,
             "log_callback_url": log_callback_url,
             "internal_token": internal_token,
+            "kernel_token": kernel_token,
             "interactive": interactive,
             "available_artifacts": available_artifacts,
             "dry_run": dry_run,
@@ -334,25 +339,20 @@ _SHARED_PATH = os.environ.get("FLOWFILE_SHARED_PATH", "/shared")
 def _get_internal_auth_headers() -> dict[str, str]:
     """Get authentication headers for Core API calls.
 
-    Prefers the token passed via ExecuteRequest context (always fresh),
-    falls back to FLOWFILE_INTERNAL_TOKEN env var for backwards compatibility.
-    X-Kernel-Id is included so Core can attribute ownership to the kernel's
-    actual owner rather than the synthetic internal-service user.
+    X-Internal-Token carries the kernel's own token: the one Core stamped on this execution (always fresh), else
+    the one the container started with (FLOWFILE_KERNEL_TOKEN). A Core from before a token per kernel hands out
+    neither, and its internal token is sent there as before. X-Kernel-Id names this kernel to such a Core.
     """
     headers: dict[str, str] = {}
-    # Prefer token from execution context (set per-request by Core)
-    try:
-        ctx = _context.get({})
-        token = ctx.get("internal_token")
-        if token:
-            headers["X-Internal-Token"] = token
-    except LookupError:
-        pass
-    # Fall back to env var (set at container creation time)
-    if "X-Internal-Token" not in headers:
-        token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
-        if token:
-            headers["X-Internal-Token"] = token
+    ctx = _context.get({})
+    token = (
+        ctx.get("kernel_token")
+        or os.environ.get("FLOWFILE_KERNEL_TOKEN")
+        or ctx.get("internal_token")
+        or os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+    )
+    if token:
+        headers["X-Internal-Token"] = token
     if not headers:
         return headers
     kernel_id = os.environ.get("FLOWFILE_KERNEL_ID")

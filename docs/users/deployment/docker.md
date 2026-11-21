@@ -142,7 +142,7 @@ A flow you run in the designer computes on the worker container. A scheduled run
 | `FLOWFILE_ADMIN_USER` | Admin username | `admin` |
 | `FLOWFILE_ADMIN_PASSWORD` | Admin password | `changeme` |
 | `JWT_SECRET_KEY` | Token signing secret. Required in Docker mode. | Insecure dev fallback in compose |
-| `FLOWFILE_INTERNAL_TOKEN` | Shared secret that core, the worker and the kernels sign their calls to each other with; set the same value on core and the worker. Required in Docker mode. | Insecure dev fallback in compose |
+| `FLOWFILE_INTERNAL_TOKEN` | Shared secret that core and the worker sign their calls to each other with; set the same value on core and the worker. Required in Docker mode. A kernel signs with a token of its own, which core mints when it starts the kernel. | Insecure dev fallback in compose |
 | `FLOWFILE_MASTER_KEY` | Encryption key for secrets | Empty (setup wizard prompts) |
 | `FLOWFILE_SCHEDULER_ENABLED` | Auto-start the flow scheduler | `true` in the bundled compose (the code default when the var is entirely unset is off) |
 | `FLOWFILE_ENABLE_PROJECTS` | Enable git project tracking (admin-only in Docker; the `/project` router 404s when off). Accepts `true`/`1`/`yes`/`on`. | `true` in the bundled compose |

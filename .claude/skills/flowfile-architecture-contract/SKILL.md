@@ -310,12 +310,20 @@ core discovers the named volume covering the shared path and mounts the
 *same* volume at the *same* path in the kernel container, so paths line up
 identically across core/worker/kernel without translation.
 
-**Kernel → core auth:** every kernel gets `FLOWFILE_INTERNAL_TOKEN` injected
-(via `auth.jwt.get_internal_token()`) plus `FLOWFILE_CORE_URL`; the kernel
-sends the token per-request, core verifies with `secrets.compare_digest`.
-**Electron auto-generates** the token if unset; **docker mode hard-errors**
-on a missing token — deliberate, electron is single-user and docker is
-multi-tenant. A valid token with no kernel id becomes a synthetic
+**Kernel → core auth:** every kernel gets a token of its own,
+`FLOWFILE_KERNEL_TOKEN` (`auth.jwt.create_kernel_token`: its owner, its id
+and the id of its run, signed with core's JWT key), plus `FLOWFILE_CORE_URL`;
+the kernel sends it in `X-Internal-Token`, core checks it in `auth.jwt.kernel_caller`
+and answers as the kernel's owner without the admin flag. The internal token
+(`FLOWFILE_INTERNAL_TOKEN`, core ↔ worker) is not given to a kernel. Core signs
+its own calls to a kernel with the token the container was started with
+(`KernelManager._call_headers`), and the runtime takes no other call
+(`_only_core`; `/health` open).
+**Electron auto-generates** the internal token if unset; **docker mode
+hard-errors** on a missing one — deliberate, electron is single-user and
+docker is multi-tenant. A call signed with the internal token (a kernel image
+under a core from before the kernel token) is taken on a desktop only; there a valid internal token with no kernel id
+becomes a synthetic
 `_internal_service` principal that bypasses catalog access restriction (§10)
 but must never be treated as a real user for ownership — sharing code keys
 the synthetic check on `username == "_internal_service"`, never on id,

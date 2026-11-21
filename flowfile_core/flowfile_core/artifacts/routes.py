@@ -29,7 +29,7 @@ from flowfile_core.artifacts.exceptions import (
     NamespaceNotFoundError,
 )
 from flowfile_core.artifacts.service import ArtifactService
-from flowfile_core.auth.jwt import get_user_or_internal_service, internal_token_valid
+from flowfile_core.auth.jwt import KernelCaller, calling_kernel, get_user_or_internal_service, shared_token_valid
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.exceptions import FlowNotFoundError, NotAuthorizedError
 from flowfile_core.database.connection import get_db
@@ -76,13 +76,14 @@ def get_artifact_service(
 
 def is_internal_service_call(
     x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
+    kernel: KernelCaller | None = Depends(calling_kernel),
 ) -> bool:
     """True for kernel calls, which bypass the version-safety delete guards.
 
     Released kernel images call ``delete_global_artifact(name, version=latest)``
     and must keep working unchanged.
     """
-    return internal_token_valid(x_internal_token)
+    return kernel is not None or shared_token_valid(x_internal_token)
 
 
 def _conflict(exc: ArtifactError) -> HTTPException:
@@ -101,7 +102,7 @@ def _conflict(exc: ArtifactError) -> HTTPException:
     description=(
         "Step 1 of upload: Create pending artifact record and return upload target. "
         "Kernel writes blob directly to storage, then calls /finalize. "
-        "Accepts either JWT auth or X-Internal-Token header for kernel calls."
+        "Accepts either JWT auth or a kernel's own token."
     ),
 )
 async def prepare_upload(
@@ -352,7 +353,7 @@ def prune_artifact_versions(
         "Delete a specific artifact version (soft delete in DB, hard delete blob). "
         "Refuses the current latest version (409 CANNOT_DELETE_LATEST) unless force=true, "
         "and the last remaining version (delete the whole artifact by name instead). "
-        "Accepts either JWT auth or X-Internal-Token header for kernel calls."
+        "Accepts either JWT auth or a kernel's own token."
     ),
 )
 async def delete_artifact(
@@ -381,10 +382,7 @@ async def delete_artifact(
     "/by-name/{name}",
     response_model=ArtifactDeleteResponse,
     summary="Delete all versions of artifact",
-    description=(
-        "Delete all versions of an artifact by name. "
-        "Accepts either JWT auth or X-Internal-Token header for kernel calls."
-    ),
+    description="Delete all versions of an artifact by name. Accepts either JWT auth or a kernel's own token.",
 )
 async def delete_artifact_by_name(
     name: str,

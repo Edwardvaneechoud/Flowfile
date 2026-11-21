@@ -77,7 +77,7 @@ class FlowfileHandler:
             return flow_id in self._flows
         return flow_id in self._user_sessions.get(user_id, set())
 
-    def _held_by_another_user(self, flow_id: int, user_id: int | None) -> bool:
+    def held_by_another_user(self, flow_id: int, user_id: int | None) -> bool:
         return any(flow_id in flow_ids for uid, flow_ids in self._user_sessions.items() if uid != user_id)
 
     def __add__(self, other: FlowGraph) -> int:
@@ -113,7 +113,7 @@ class FlowfileHandler:
             flow_path = Path(flow_path)
         imported_flow = open_flow(flow_path, user_id=user_id)
         imported_flow.save_note = self._notes_at_open.pop(str(flow_path.resolve()), None)
-        if self._held_by_another_user(imported_flow.flow_id, user_id):
+        if self.held_by_another_user(imported_flow.flow_id, user_id):
             imported_flow.flow_id = create_unique_id()
             # The setter keeps the per-id logger, which would share the other user's log file.
             imported_flow.flow_logger = FlowLogger(imported_flow.flow_id)

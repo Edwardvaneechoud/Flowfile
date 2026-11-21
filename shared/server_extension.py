@@ -16,6 +16,9 @@ The module defines the hooks it needs and no others (``HOOKS``):
 - ``identity()``: this server as a controller knows it, an ``Identity``, or ``None``.
 - ``sign_in_method()``: how people sign in here, as ``GET /auth/sign_in_method`` answers it.
 - ``password_refusal()``: the sentence that refuses a password sign-in, or ``None``.
+- ``access_refusal(user, claims)``: the exception that refuses a person whose access token core has just taken,
+  with that token's claims, or ``None``. Asked wherever core takes a person's token, so an extension adds a rule
+  of its own without replacing core's auth dependencies; never asked for a caller that is no person.
 - ``refresh_session(db, user, sid)``: the token pair of an account that signs in elsewhere, ``None`` for a local one.
 - ``sign_out(user_id)`` and ``account_removed(db, user_id)``.
 - ``refresh_delegation(hub_url, refresh_token)``: a new delegation for a session of that kind.
@@ -50,6 +53,7 @@ HOOKS = frozenset(
         "identity",
         "sign_in_method",
         "password_refusal",
+        "access_refusal",
         "refresh_session",
         "sign_out",
         "account_removed",
