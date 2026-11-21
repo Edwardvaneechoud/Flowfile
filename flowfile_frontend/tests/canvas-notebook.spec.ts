@@ -215,6 +215,45 @@ test.describe("Canvas notebook", () => {
       })
     ).text();
 
+  test("switches from Notebook to FlowFrame and back with a SharePoint writer", async ({ page, request }) => {
+    const post = async (path: string, data?: unknown) => {
+      const response = await request.post(`${API_URL}${path}`, { headers: authHeaders(token), data });
+      expect(response.ok(), `${path}: ${await response.text()}`).toBe(true);
+      return response;
+    };
+    const connection = await (await post("/sharepoint_connections", {
+      connection_name: `notebook_sharepoint_${flowId}`,
+      tenant_id: "00000000-0000-4000-8000-000000000001",
+      client_id: "00000000-0000-4000-8000-000000000002",
+      client_secret: "not-a-real-secret",
+    })).json();
+    try {
+      await post(`/editor/add_node/?flow_id=${flowId}&node_id=4&node_type=sharepoint_writer&pos_x=1000&pos_y=200`);
+      await post(`/editor/connect_node/?flow_id=${flowId}`, {
+        input_connection: { node_id: 4, connection_class: "input-0" },
+        output_connection: { node_id: 1, connection_class: "output-0" },
+      });
+      await post("/update_settings/?node_type=sharepoint_writer", {
+        flow_id: flowId, node_id: 4, depending_on_id: 1, connection_id: connection.id,
+        drive_id: "fixture-drive", file_path: "out.xlsx", format: "xlsx",
+        conflict_mode: "update", sheet_name: "Report", write_when_empty: true,
+      });
+      await page.reload();
+      await expect(page.locator('.vue-flow__node[data-id="4"]')).toBeVisible();
+      await openNotebook(page);
+      const writer = page.locator(`${NOTEBOOK} .cm-content`).filter({ hasText: "write_sharepoint" });
+      for (const text of ["update", "Report", "write_when_empty=True"]) await expect(writer).toContainText(text);
+      await page.getByTestId("code-mode-flowframe").click();
+      await expect(page.locator(".code-dock .cm-content").filter({ hasText: "write_sharepoint" })).toContainText("Report");
+      await page.getByTestId("code-mode-notebook").click();
+      for (const text of ["update", "Report", "write_when_empty=True"]) await expect(writer).toContainText(text);
+      expect(await flowEdges(request, token, flowId)).toContain("1->4");
+      expect(called("/editor/notebook/run_lineage/")).toBe(false);
+    } finally {
+      await request.delete(`${API_URL}/sharepoint_connections/${connection.id}`, { headers: authHeaders(token) });
+    }
+  });
+
   test("renders synced cells with no kernel and runs an unedited node cell", async ({
     page,
     request,

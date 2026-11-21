@@ -185,7 +185,8 @@ def test_sharepoint_project_rebinds_after_credential_provisioning(tmp_path, monk
         ))
         graph.add_sharepoint_writer(input_schema.NodeSharePointWriter(
             flow_id=424242, node_id=2, depending_on_id=1, user_id=OWNER, connection_id=original_id,
-            drive_id="fixture-drive", file_path="report.csv", format="csv",
+            drive_id="fixture-drive", file_path="report.xlsx", format="xlsx",
+            conflict_mode="update", sheet_name="Report", write_when_empty=True,
         ))
         graph.save_flow(str(path))
         with get_db_context() as db:
@@ -234,7 +235,10 @@ def test_sharepoint_project_rebinds_after_credential_provisioning(tmp_path, monk
             assert settings["sharepoint_reader"]["connection_id"] == restored.id
             assert settings["sharepoint_reader"]["sheet_name"] == "Sales"
             assert settings["sharepoint_writer"]["connection_id"] == restored.id
-            assert settings["sharepoint_writer"]["file_path"] == "report.csv"
+            assert settings["sharepoint_writer"]["file_path"] == "report.xlsx"
+            assert settings["sharepoint_writer"]["conflict_mode"] == "update"
+            assert settings["sharepoint_writer"]["sheet_name"] == "Report"
+            assert settings["sharepoint_writer"]["write_when_empty"] is True
             encrypted = db.get(Secret, restored.credential_secret_id).encrypted_value
             assert decrypt_secret(encrypted, OWNER).get_secret_value() == "replacement-fixture-credential"
         write_export(root, OWNER)

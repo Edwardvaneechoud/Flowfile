@@ -36,6 +36,8 @@ Select a saved connection and choose **Edit** to rename it. To use a different s
 
 FlowFrame Python export references the saved connection by ID and does not include credentials. Run the exported script in a Flowfile environment that has access to that connection.
 
+Switching between the visual flow and Notebook preserves the SharePoint connection reference and node settings. Editing the Notebook cells does not upload files or append list items. Run the flow to write to SharePoint.
+
 When creating a connection, you can set a **Default site URL**. Selecting that connection prefills the picker with its site instead of the deployment default. You can still browse another site by editing the URL; this does not change the saved connection or any previously selected file.
 
 Core also exposes site search through `GET /sharepoint_connections/{connection_id}/sites?search=...`. Microsoft Graph does not support site search with the `Sites.Selected` application permission. For a least-privilege connection, continue to browse by the known Site URL rather than broadening permissions just to search.

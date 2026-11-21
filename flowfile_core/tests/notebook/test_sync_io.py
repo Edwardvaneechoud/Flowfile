@@ -772,10 +772,15 @@ def notebook_sharepoint_connection():
     [
         ("drive_id='drive', file_path='rows.csv', csv_delimiter=';', delta_generation=2",
          "drive_id='drive', file_path='out.xlsx', format='xlsx', conflict_mode='overwrite'"),
+        ("drive_id='drive', file_path='rows.csv'",
+         "drive_id='drive', file_path='out.xlsx', format='xlsx', conflict_mode='update', "
+         "sheet_name='Report', write_when_empty=True"),
+        ("drive_id='drive', file_path='rows.csv'",
+         "drive_id='drive', file_path='out.xlsx', format='xlsx', conflict_mode='append', sheet_name='Report'"),
         ("list_source={'site_id': 'example.com,site,web', 'list_id': 'list', 'columns': ['Title']}",
          "list_target={'site_id': 'example.com,site,web', 'list_id': 'list', 'column_mapping': {'Title': 'Title'}}"),
     ],
-    ids=["files", "lists"],
+    ids=["files", "excel-update", "excel-append", "lists"],
 )
 def test_sharepoint_cells_round_trip_without_worker_io(source, target, monkeypatch, notebook_sharepoint_connection):
     connection_id = notebook_sharepoint_connection

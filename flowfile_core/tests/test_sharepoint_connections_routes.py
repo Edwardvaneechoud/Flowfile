@@ -1126,6 +1126,9 @@ def test_read_sharepoint_in_python_without_worker_service(
             saved_connection, drive_id=drive_id, file_path="Reports/output.xlsx", format="xlsx",
             conflict_mode="append", sheet_name="Report",
         )
+        preview = frame.flow_graph.get_node_data(sink.node_id, include_example=False)
+        assert preview.setting_input.conflict_mode == "append"
+        assert preview.setting_input.sheet_name == "Report"
         assert not uploaded
     if exported:
         code = export_flow_to_flowframe(frame.flow_graph)
