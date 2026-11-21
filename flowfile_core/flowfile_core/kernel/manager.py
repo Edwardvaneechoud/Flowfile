@@ -87,6 +87,11 @@ def _signed(kernel_token: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {kernel_token}"} if kernel_token else {}
 
 
+class _NoKernelToken(RuntimeError):
+    """Core could not mint or record a kernel's token. Such a kernel does not start: it would take every call on
+    its port, and core would refuse each of its own."""
+
+
 def _resolve_image(
     flavour: ImageFlavour,
     custom_image: str | None,
@@ -674,6 +679,10 @@ class KernelManager:
         on the shared volume and translates them for the kernel container.
         If ``input_paths`` is already populated (e.g. from the ``flow_graph`` package),
         this is a no-op.
+
+        Core makes both folders itself before the kernel runs. A kernel container runs as root, and on a Linux
+        bind mount a folder it makes stays root-owned, so a later flow run, which runs as core's user, could not
+        write the node's inputs there.
         """
         if request.input_paths or not request.flow_id or not request.node_id:
             return
@@ -690,6 +699,8 @@ class KernelManager:
             str(request.node_id),
             "outputs",
         )
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
 
         # Inputs are {name}_{index}.parquet (e.g. orders_0.parquet), grouped by name.
         if os.path.isdir(input_dir):
@@ -1083,11 +1094,14 @@ class KernelManager:
     def _reclaim_running_containers(self, prune_orphans: bool = True) -> None:
         """Adopt pre-existing flowfile-kernel containers on startup: running ones
         become IDLE, stopped leftovers are recorded so the next start replaces them.
+        A run whose kernel has no running container is over, so its token ends.
 
         ``prune_orphans=False`` keeps the adoption half and skips destroying
         containers the registry doesn't know about — correct when the registry
         itself is untrustworthy.
         """
+        # Read before the listing: a run begins once its container exists, so every run read here has one listed.
+        runs = self._kernel_run_ids()
         try:
             containers = self._docker.containers.list(all=True, filters={"name": "flowfile-kernel-"})
         except (docker.errors.APIError, docker.errors.DockerException) as exc:
@@ -1099,6 +1113,8 @@ class KernelManager:
             if not name.startswith("flowfile-kernel-"):
                 continue
             kernel_id = name[len("flowfile-kernel-") :]
+            if container.status == "running":
+                runs.pop(kernel_id, None)
 
             if kernel_id in self._kernels:
                 kernel = self._kernels[kernel_id]
@@ -1111,8 +1127,7 @@ class KernelManager:
                         kernel.port = port
                     kernel.state = KernelState.IDLE
                     # A kernel found running without a token gets one; its next cell hands it over.
-                    if self._kernel_token(kernel_id) is None:
-                        self._kernel_token(kernel_id, new_run=True)
+                    self._begin_kernel_run(kernel_id, uuid.uuid4().hex, keep_current=True)
                     # Inherit shutdown duty from a dead owner, or the container outlives every restart.
                     if self._claims_ownership(container):
                         self._started_here.add(kernel_id)
@@ -1157,6 +1172,10 @@ class KernelManager:
                     container.remove(force=True)
                 except Exception as exc:
                     logger.warning("Error stopping orphan container '%s': %s", kernel_id, exc)
+
+        # Each run left was read as the kernel's and has no running container: it died or was removed.
+        for kernel_id, token_id in runs.items():
+            self._end_kernel_token(kernel_id, token_id)
 
     @staticmethod
     def _host_port_of(container) -> int | None:
@@ -1510,11 +1529,12 @@ class KernelManager:
             except (docker.errors.APIError, docker.errors.DockerException) as exc:
                 logger.warning("Could not remove orphan build container '%s': %s", container.name, exc)
 
-    def _kernel_token(self, kernel_id: str, *, new_run: bool = False) -> str | None:
-        """The token of the kernel's current run, minted from its row so every core process answers the same one.
+    def _kernel_run(self, kernel_id: str, token_id: str | None = None) -> tuple[str | None, str | None]:
+        """The kernel's current run as ``(token id, token)``, the token minted from its row so every core process
+        answers the same one.
 
-        ``new_run`` starts a run first, which ends the token of the one before it. ``None`` for a kernel with no
-        row or no run, and when core has no key to sign with.
+        Given ``token_id`` it is a run the kernel has not begun, which ``_begin_kernel_run`` begins. ``(None, None)``
+        for a kernel with no row or no run, and when core has no key to sign with.
         """
         try:
             from flowfile_core.auth.jwt import create_kernel_token
@@ -1522,15 +1542,47 @@ class KernelManager:
             from flowfile_core.kernel.persistence import kernel_token_identity
 
             with get_db_context() as db:
-                identity = kernel_token_identity(db, kernel_id, new_run=new_run)
-            return create_kernel_token(*identity) if identity is not None else None
+                identity = kernel_token_identity(db, kernel_id, token_id)
+            if identity is None:
+                return None, None
+            return identity[2], create_kernel_token(*identity)
         except Exception as exc:
             logger.warning("Could not mint a token for kernel '%s': %s", kernel_id, exc)
-            return None
+            return None, None
 
     def kernel_token(self, kernel_id: str) -> str | None:
         """The token the kernel signs its calls to core with, for its current run; ``None`` while it has none."""
-        return self._kernel_token(kernel_id)
+        return self._kernel_run(kernel_id)[1]
+
+    def _begin_kernel_run(self, kernel_id: str, token_id: str, *, keep_current: bool = False) -> bool:
+        """Make ``token_id`` the token of the kernel's run, which ends the one before it; ``False`` when the row
+        could not be written.
+
+        A run begins with a container, so it is recorded once the container exists. With ``keep_current`` a kernel
+        that is in a run keeps it: a container found running may be mid-cell for another core process.
+        """
+        try:
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.kernel.persistence import begin_kernel_run
+
+            with get_db_context() as db:
+                begin_kernel_run(db, kernel_id, token_id, keep_current=keep_current)
+            return True
+        except Exception as exc:
+            logger.warning("Could not record the token of kernel '%s': %s", kernel_id, exc)
+            return False
+
+    def _kernel_run_ids(self) -> dict[str, str]:
+        """Kernel id to the token id of its run, for every kernel in one; empty when the rows cannot be read."""
+        try:
+            from flowfile_core.database.connection import get_db_context
+            from flowfile_core.kernel.persistence import kernel_run_ids
+
+            with get_db_context() as db:
+                return kernel_run_ids(db)
+        except Exception as exc:
+            logger.warning("Could not read the kernels' runs: %s", exc)
+            return {}
 
     def _call_headers(self, kernel: KernelInfo) -> dict[str, str]:
         """Headers that sign a call to the kernel: the token its container was started with, which is the one it
@@ -1570,14 +1622,18 @@ class KernelManager:
             logger.debug("Could not read a container's kernel token: %s", exc)
         return None
 
-    def _end_kernel_token(self, kernel_id: str) -> None:
-        """End the token of the kernel's run, so core refuses it from here on."""
+    def _end_kernel_token(self, kernel_id: str, token_id: str | None = None) -> None:
+        """End the token of the kernel's run, so core refuses it from here on.
+
+        Given ``token_id``, the run whose container was found dead, only while that run is still the kernel's: one
+        another core process began since is not this one's to end.
+        """
         try:
             from flowfile_core.database.connection import get_db_context
             from flowfile_core.kernel.persistence import clear_kernel_token
 
             with get_db_context() as db:
-                clear_kernel_token(db, kernel_id)
+                clear_kernel_token(db, kernel_id, token_id)
         except Exception as exc:
             logger.warning("Could not end the token of kernel '%s': %s", kernel_id, exc)
 
@@ -1785,11 +1841,17 @@ class KernelManager:
         # The failure path may only remove a container this flight obtained.
         created_id: str | None = None
         try:
-            env = self._build_kernel_env(kernel_id, kernel, self._kernel_token(kernel_id, new_run=True))
+            token_id, token = self._kernel_run(kernel_id, uuid.uuid4().hex)
+            if token is None:
+                raise _NoKernelToken(f"Could not mint a token for kernel '{kernel_id}'; see core's log")
+            env = self._build_kernel_env(kernel_id, kernel, token)
             run_kwargs = self._build_run_kwargs(kernel_id, kernel, env)
-            container = self._create_or_adopt_container(kernel_id, kernel, image, run_kwargs)
+            container, found_running = self._create_or_adopt_container(kernel_id, kernel, image, run_kwargs)
             created_id = container.id
             kernel.container_id = container.id
+            # A container found running keeps the token it has: it may be mid-cell for another core process.
+            if not self._begin_kernel_run(kernel_id, token_id, keep_current=found_running):
+                raise _NoKernelToken(f"Could not record the token of kernel '{kernel_id}'; see core's log")
             self._remember_token(container)
             # An adopted container belongs to whoever started it; shutdown must leave it running.
             if self._container_label(container, _CONTAINER_LABEL_CORE_RUNTIME) == self._runtime_id:
@@ -1801,13 +1863,14 @@ class KernelManager:
             if flow_logger:
                 flow_logger.info(f"Kernel {kernel_id} is idle (container {container.short_id}, image {image})")
             logger.info("Kernel '%s' is idle (container %s, image %s)", kernel_id, container.short_id, image)
-        except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError) as exc:
+        except (docker.errors.DockerException, httpx.HTTPError, TimeoutError, OSError, _NoKernelToken) as exc:
             kernel.state = KernelState.ERROR
             kernel.error_message = str(exc)
             flow_logger.error(f"Failed to start kernel {kernel_id}: {exc}") if flow_logger else None
             logger.error("Failed to start kernel '%s': %s", kernel_id, exc)
-            self._end_kernel_token(kernel_id)
             if created_id is not None:
+                # The run ends with its container; with none obtained, the row was never touched.
+                self._end_kernel_token(kernel_id)
                 self._remove_container_by_id(created_id)
                 if kernel.container_id == created_id:
                     kernel.container_id = None
@@ -1821,7 +1884,10 @@ class KernelManager:
         untracked leftover, a removal still in progress, or a create window.
         Resolve it by adopting the holder when it runs the desired image (start
         it if stopped), removing it otherwise, and retrying a bounded number of
-        times so transient Docker states converge instead of erroring."""
+        times so transient Docker states converge instead of erroring.
+
+        Answers the container and whether it was found running, which is the one
+        case where the kernel may be in a run already."""
         name = f"flowfile-kernel-{kernel_id}"
         desired_image_id = self._docker.images.get(image).id
         last_exc: Exception | None = None
@@ -1829,7 +1895,7 @@ class KernelManager:
             if attempt:
                 time.sleep(_CONVERGE_DELAY_S)
             try:
-                return self._docker.containers.run(image, **run_kwargs)
+                return self._docker.containers.run(image, **run_kwargs), False
             except docker.errors.APIError as exc:
                 if exc.status_code != 409:
                     raise
@@ -1848,7 +1914,8 @@ class KernelManager:
                 self._remove_container_by_id(holder.id)
                 continue
 
-            if holder.status != "running":
+            found_running = holder.status == "running"
+            if not found_running:
                 try:
                     holder.start()
                 except (docker.errors.APIError, docker.errors.DockerException) as exc:
@@ -1866,7 +1933,7 @@ class KernelManager:
                     continue
                 kernel.port = port
             logger.info("Adopted container '%s' for kernel '%s'", name, kernel_id)
-            return holder
+            return holder, found_running
         raise docker.errors.DockerException(
             f"Could not start or adopt container '{name}' after {_CONVERGE_ATTEMPTS} attempts"
         ) from last_exc
@@ -2053,9 +2120,6 @@ class KernelManager:
         if request.source_registration_id is None:
             request.source_registration_id = self.get_scratch_flow_id(kernel_id)
 
-        # Stamped server-side: the kernel's own token, also where an image from before a token per kernel reads it.
-        request.kernel_token = request.internal_token = self._kernel_token(kernel_id)
-
         # One token per execution, so a cancel names a cell; a flow run mints its own up front.
         if not request.exec_token:
             request.exec_token = uuid.uuid4().hex
@@ -2084,8 +2148,11 @@ class KernelManager:
         # The kernel may have died while we were queued behind another cell.
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
-            # A start begins a new token, so the one stamped before the wait is over.
-            request.kernel_token = request.internal_token = self._kernel_token(kernel_id)
+
+        # Stamped server-side, under the lock: the token of the run this cell executes in, read after any wait.
+        run_id, request.kernel_token = self._kernel_run(kernel_id)
+        # Where a kernel image from before a token per kernel reads it.
+        request.internal_token = request.kernel_token
 
         kernel.state = KernelState.EXECUTING
         try:
@@ -2132,6 +2199,8 @@ class KernelManager:
             if self._check_oom_killed(kernel_id):
                 kernel.state = KernelState.ERROR
                 kernel.error_message = "Kernel ran out of memory"
+                if run_id:
+                    self._end_kernel_token(kernel_id, run_id)
                 oom_msg = (
                     f"Kernel ran out of memory. The container exceeded its {kernel.memory_gb} GB "
                     "memory limit and was terminated. Consider increasing the kernel's memory "
@@ -2143,6 +2212,8 @@ class KernelManager:
             if not self._is_container_running(kernel_id):
                 # Keep container_id: the stopped container holds the name until the next start's cleanup.
                 kernel.state = KernelState.STOPPED
+                if run_id:
+                    self._end_kernel_token(kernel_id, run_id)
                 if flow_logger:
                     flow_logger.error(_KERNEL_DOWN_MSG)
                 return ExecuteResult(success=False, error=_KERNEL_DOWN_MSG)

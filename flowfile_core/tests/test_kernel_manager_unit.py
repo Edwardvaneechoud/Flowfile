@@ -36,7 +36,6 @@ from flowfile_core.kernel.manager import (
 )
 from flowfile_core.kernel.models import (
     ExecuteRequest,
-    ExecuteResult,
     ImageFlavour,
     KernelConfig,
     KernelInfo,
@@ -1279,18 +1278,40 @@ class TestExecuteSyncKernelTokenStamp:
             db.commit()
 
     @staticmethod
-    def _manager_capturing_request(monkeypatch, kernel_id: str = "k1"):
+    def _manager_capturing_request(monkeypatch, kernel_id: str = "k1", fail_with: Exception | None = None):
+        """A manager with one idle kernel; ``captured["request"]`` is what the kernel was sent.
+
+        ``fail_with`` is raised once the request was captured, as a kernel that died under the call would."""
         mgr = _bare_manager()
-        kernel = KernelInfo(id=kernel_id, name="k1", state=KernelState.IDLE)
+        kernel = KernelInfo(id=kernel_id, name="k1", state=KernelState.IDLE, port=19001)
         mgr._kernels[kernel_id] = kernel
 
         captured = {}
 
-        def fake_execute_locked(kernel_id, kernel_info, request, flow_logger, cancel_event):
-            captured["request"] = request
-            return ExecuteResult(success=True)
+        class _Answer:
+            def raise_for_status(self):
+                return None
 
-        monkeypatch.setattr(mgr, "_execute_locked", fake_execute_locked)
+            def json(self):
+                return {"success": True}
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def post(self, url, json=None):
+                captured["request"] = ExecuteRequest(**json)
+                if fail_with is not None:
+                    raise fail_with
+                return _Answer()
+
+        monkeypatch.setattr(httpx, "Client", _Client)
         return mgr, captured
 
     def test_execute_sync_stamps_the_kernels_token(self, monkeypatch, kernel_row):
@@ -1329,8 +1350,13 @@ class TestExecuteSyncKernelTokenStamp:
         before = create_kernel_token(1, kernel_row, "run-1")
         assert mgr.kernel_token(kernel_row) == before
 
-        started = mgr._kernel_token(kernel_row, new_run=True)
-        assert started and started != before and mgr.kernel_token(kernel_row) == started
+        run_id, started = mgr._kernel_run(kernel_row, "run-2")
+        assert run_id == "run-2" and started and started != before
+        assert mgr.kernel_token(kernel_row) == before, "a run that has not begun changes nothing"
+        with get_db_context() as db, pytest.raises(HTTPException):
+            kernel_caller(started, db)
+
+        assert mgr._begin_kernel_run(kernel_row, "run-2") and mgr.kernel_token(kernel_row) == started
         with get_db_context() as db:
             assert kernel_caller(started, db).kernel_id == kernel_row
             with pytest.raises(HTTPException):
@@ -1340,6 +1366,84 @@ class TestExecuteSyncKernelTokenStamp:
         assert mgr.kernel_token(kernel_row) is None
         with get_db_context() as db, pytest.raises(HTTPException):
             kernel_caller(started, db)
+
+    def test_a_kernel_in_a_run_keeps_it_when_asked_and_only_its_own_run_is_ended(self, kernel_row):
+        from flowfile_core.auth.jwt import create_kernel_token
+
+        mgr = _bare_manager()
+        current = create_kernel_token(1, kernel_row, "run-1")
+
+        assert mgr._begin_kernel_run(kernel_row, "run-2", keep_current=True)
+        assert mgr.kernel_token(kernel_row) == current, "it is in a run, so it keeps it"
+        mgr._end_kernel_token(kernel_row, "run-0")
+        assert mgr.kernel_token(kernel_row) == current, "run-0 is not its run any more, so nothing ends"
+        assert mgr._kernel_run_ids()[kernel_row] == "run-1"
+
+        mgr._end_kernel_token(kernel_row, "run-1")
+        assert mgr.kernel_token(kernel_row) is None and kernel_row not in mgr._kernel_run_ids()
+        assert mgr._begin_kernel_run(kernel_row, "run-2", keep_current=True)
+        assert mgr.kernel_token(kernel_row) == create_kernel_token(1, kernel_row, "run-2"), "in none, so it begins"
+
+    def test_a_cell_that_waited_is_sent_with_the_token_of_the_run_it_executes_in(self, monkeypatch, kernel_row):
+        """The kernel can start again, here or in another core process, while a cell waits for the one before it."""
+        from flowfile_core.auth.jwt import create_kernel_token
+
+        mgr, captured = self._manager_capturing_request(monkeypatch, kernel_row)
+        request = ExecuteRequest(node_id=1, code="", source_registration_id=1)
+        lock = mgr._exec_lock_for(kernel_row)
+        lock.acquire()
+        waiting = threading.Thread(target=mgr.execute_sync, args=(kernel_row, request))
+        waiting.start()
+        try:
+            deadline = time.monotonic() + 5
+            while not request.exec_token and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert request.exec_token, "the cell reached the wait for the kernel"
+            assert mgr._begin_kernel_run(kernel_row, "run-2")
+        finally:
+            lock.release()
+            waiting.join(timeout=5)
+
+        assert captured["request"].kernel_token == create_kernel_token(1, kernel_row, "run-2")
+
+    @pytest.mark.parametrize("oom_killed", [False, True], ids=["its container is gone", "it ran out of memory"])
+    def test_a_kernel_found_dead_under_a_cell_has_its_token_ended(self, monkeypatch, kernel_row, oom_killed):
+        """The token has no expiry of its own, so a dead kernel's would stay good until its next start or stop."""
+        mgr, _ = self._manager_capturing_request(monkeypatch, kernel_row, fail_with=httpx.ConnectError("down"))
+        mgr._check_oom_killed = MagicMock(return_value=oom_killed)
+        mgr._is_container_running = MagicMock(return_value=False)
+
+        result = mgr.execute_sync(kernel_row, ExecuteRequest(node_id=1, code="", source_registration_id=1))
+
+        assert result.success is False
+        assert mgr._kernels[kernel_row].state == (KernelState.ERROR if oom_killed else KernelState.STOPPED)
+        assert mgr.kernel_token(kernel_row) is None
+
+    def test_a_dead_container_does_not_end_a_run_begun_since(self, monkeypatch, kernel_row):
+        """This process's container was replaced by another core process's start, whose run is not over."""
+        from flowfile_core.auth.jwt import create_kernel_token
+
+        mgr, _ = self._manager_capturing_request(monkeypatch, kernel_row, fail_with=httpx.ConnectError("down"))
+        mgr._check_oom_killed = MagicMock(return_value=False)
+        mgr._is_container_running = MagicMock(side_effect=lambda _: not mgr._begin_kernel_run(kernel_row, "run-2"))
+
+        result = mgr.execute_sync(kernel_row, ExecuteRequest(node_id=1, code="", source_registration_id=1))
+
+        assert result.success is False and mgr._kernels[kernel_row].state == KernelState.STOPPED
+        assert mgr.kernel_token(kernel_row) == create_kernel_token(1, kernel_row, "run-2")
+
+    def test_a_cell_that_only_failed_keeps_the_kernels_token(self, monkeypatch, kernel_row):
+        from flowfile_core.auth.jwt import create_kernel_token
+
+        mgr, _ = self._manager_capturing_request(monkeypatch, kernel_row, fail_with=httpx.ReadTimeout("slow"))
+        mgr._check_oom_killed = MagicMock(return_value=False)
+        mgr._is_container_running = MagicMock(return_value=True)
+        mgr.interrupt_execution_sync = MagicMock(return_value=True)
+
+        result = mgr.execute_sync(kernel_row, ExecuteRequest(node_id=1, code="", source_registration_id=1))
+
+        assert result.success is False
+        assert mgr.kernel_token(kernel_row) == create_kernel_token(1, kernel_row, "run-1")
 
     @pytest.mark.parametrize("mode", ["electron", "package", "docker", "server"])
     def test_a_kernels_environment_holds_its_token_and_never_the_internal_one(self, monkeypatch, mode):
