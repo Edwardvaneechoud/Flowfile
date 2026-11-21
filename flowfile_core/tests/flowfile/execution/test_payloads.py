@@ -154,10 +154,28 @@ def file_payload(path, file_type: str = "csv", **received) -> FileReadPayload:
     )
 
 
+def sharepoint_payload():
+    from flowfile_core.flowfile.execution.payloads import SharePointReadPayload
+    from shared.sharepoint import SharePointReadSettings
+
+    return SharePointReadPayload(
+        flow_id=FLOW_ID,
+        node_id=NODE_ID,
+        settings=SharePointReadSettings(
+            tenant_id="a01b7819-6a0a-47c9-a6ff-e1563529ac33",
+            client_id="45d666c4-a4d2-4aad-905a-15443f348233",
+            client_secret_encrypted="fixture-ciphertext",
+            drive_id="test-drive",
+            file_path="sales.csv",
+        ),
+    )
+
+
 READ_PAYLOADS = {
     OperationKind.database_read: database_payload,
     OperationKind.kafka_read: kafka_payload,
     OperationKind.google_analytics_read: google_analytics_payload,
+    OperationKind.sharepoint_read: sharepoint_payload,
     OperationKind.rest_api_read: rest_payload,
     OperationKind.file_read: lambda: file_payload("people.csv"),
 }
@@ -492,6 +510,18 @@ def test_a_malformed_payload_is_refused_naming_what_it_expected(started, monkeyp
     right = ALL_PAYLOADS[kind]()
     expected = type(right).__name__
     wrong = rest_payload() if kind is not OperationKind.rest_api_read else database_payload()
+
+    if (
+        kind in {OperationKind.sharepoint_read, OperationKind.sharepoint_write}
+        and backend_class is WorkerBackend
+        and not protocol
+    ):
+        from flowfile_core.flowfile.execution.errors import OperationUnsupported
+
+        with pytest.raises(OperationUnsupported):
+            backend.run_op(kind, op_payload(right))
+        assert started == []
+        return
 
     for keyless in ({}, {"input": ROWS.lazy()}):
         with pytest.raises(ValueError, match=rf"has no 'payload' key; it carries a {expected}"):

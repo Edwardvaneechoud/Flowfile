@@ -54,7 +54,12 @@ def get_secrets(current_user=Depends(get_current_active_user), db: Session = Dep
     """
     user_id = current_user.id
 
-    db_secrets = db.query(db_models.Secret).filter(db_models.Secret.user_id == user_id).all()
+    db_secrets = (
+        db.query(db_models.Secret)
+        .filter(sharing.public_secret_filter())
+        .filter(db_models.Secret.user_id == user_id)
+        .all()
+    )
 
     secrets = []
     for db_secret in db_secrets:
@@ -98,6 +103,7 @@ def create_secret(
 
     existing_secret = (
         db.query(db_models.Secret)
+        .filter(sharing.public_secret_filter())
         .filter(db_models.Secret.user_id == user_id, db_models.Secret.name == secret.name)
         .first()
     )
@@ -139,6 +145,7 @@ def get_secret(
 
     db_secret = (
         db.query(db_models.Secret)
+        .filter(sharing.public_secret_filter())
         .filter(db_models.Secret.user_id == user_id, db_models.Secret.name == secret_name)
         .order_by(db_models.Secret.id.asc())
         .first()

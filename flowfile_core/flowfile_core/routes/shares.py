@@ -117,6 +117,10 @@ def create_share(
             detail="Secrets can only be shared at 'use' level",
         )
     _require_manageable(db, current_user, share.resource_type, share.resource_id)
+    if share.resource_type == "secret" and not db.query(db_models.Secret.id).filter(
+        db_models.Secret.id == share.resource_id, sharing.public_secret_filter()
+    ).first():
+        raise HTTPException(404, "Secret not found")
     if sharing.is_personal_connection(db, share.resource_type, share.resource_id):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=sharing.PERSONAL_CONNECTION_MESSAGE

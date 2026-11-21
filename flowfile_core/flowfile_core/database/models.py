@@ -823,6 +823,32 @@ class GoogleAnalyticsConnection(Base):
     credential_secret = relationship("Secret", foreign_keys=[credential_secret_id], lazy="joined")
 
 
+class SharePointConnection(Base):
+    __tablename__ = "sharepoint_connections"
+    __table_args__ = (
+        UniqueConstraint("user_id", "connection_uuid", name="uq_sharepoint_owner_uuid"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id = Column(Integer, primary_key=True)
+    connection_uuid = Column(String(36), nullable=False, default=lambda: str(uuid.uuid4()))
+    connection_name = Column(String, nullable=False)
+    tenant_id = Column(String, nullable=False)
+    client_id = Column(String, nullable=False)
+    default_site_url = Column(String, nullable=True)
+    auth_method = Column(String, nullable=False)
+    excel_column_preview = Column(Boolean, nullable=False, default=False)
+    credential_secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+
+class SharePointDeltaCursor(Base):
+    __tablename__ = "sharepoint_delta_cursors"
+
+    scope = Column(String(64), primary_key=True)
+    state = Column(Text, nullable=False)
+
+
 class KafkaConnection(Base):
     __tablename__ = "kafka_connections"
 

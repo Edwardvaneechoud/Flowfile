@@ -111,6 +111,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalRestApiFetcher,
 )
 from flowfile_core.flowfile.flow_graph import GraphTransaction, add_connection, delete_connection, insert_node_on_edge
+from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
 from flowfile_core.flowfile.flow_node.models import recover_error_class
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.settings_validation import FlowSettingsValidation, validate_flow_settings
@@ -1457,7 +1458,11 @@ def push_notebook(
             if live_fingerprint != request.code_fingerprint:
                 detail = {"message": "The canvas changed during the push.", "code_fingerprint": live_fingerprint}
                 raise HTTPException(409, detail)
-            _run_operations(flow, request.flow_id, plan.operations, current_user)
+            token = schema_prefetch_blocked.set(True)
+            try:
+                _run_operations(flow, request.flow_id, plan.operations, current_user)
+            finally:
+                schema_prefetch_blocked.reset(token)
             fingerprint = code_fingerprint(flow)
         history = txn.history
     else:

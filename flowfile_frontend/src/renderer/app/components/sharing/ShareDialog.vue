@@ -126,6 +126,7 @@ const RESOURCE_LABELS: Record<ResourceType, string> = {
   cloud_connection: "cloud connection",
   ga_connection: "Google Analytics connection",
   kafka_connection: "Kafka connection",
+  sharepoint_connection: "SharePoint connection",
   catalog_namespace: "namespace",
   catalog_table: "table",
   flow: "flow",

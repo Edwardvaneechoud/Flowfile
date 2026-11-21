@@ -43,6 +43,15 @@ describe("nodeDocsUrl", () => {
     );
   });
 
+  it.each([
+    ["sharepoint_reader", "input", "connect-and-pick-a-file-in-flowfile"],
+    ["sharepoint_writer", "output", "write-a-file-to-a-sharepoint-document-library"],
+  ] as const)("sends %s to its section in the SharePoint guide", (item, node_group, anchor) => {
+    expect(nodeDocsUrl(makeNode({ item, node_group }))).toBe(
+      `https://edwardvaneechoud.github.io/Flowfile/users/connect/sharepoint.html#${anchor}`,
+    );
+  });
+
   it("sends custom nodes to the custom-node guide", () => {
     expect(nodeDocsUrl(makeNode({ item: "my_thing", custom_node: true }))).toBe(CUSTOM);
   });
@@ -73,7 +82,7 @@ describe("NODE_DOC_PAGES", () => {
   it("points every entry at a real reference page with a slug anchor", () => {
     for (const [item, target] of entries) {
       expect(target, `${item} -> ${target}`).toMatch(
-        /^(input|transform|combine|aggregate|ml|output)\.html#[a-z0-9]+(-[a-z0-9]+)*$/,
+        /^(input|transform|combine|aggregate|ml|output|users\/connect\/sharepoint)\.html#[a-z0-9]+(-[a-z0-9]+)*$/,
       );
     }
   });
@@ -83,11 +92,11 @@ describe("NODE_DOC_PAGES", () => {
     expect(new Set(targets).size).toBe(targets.length);
   });
 
-  // 51 node templates ship in flowfile_core/configs/node_store/nodes.py; two are not in
+  // 53 node templates ship in flowfile_core/configs/node_store/nodes.py; two are not in
   // the palette and have no docs section - external_source (prod_ready: false) and
   // polars_lazy_frame (dict-only). Every other node type is documented.
   it("covers every palette node type", () => {
-    expect(entries).toHaveLength(49);
+    expect(entries).toHaveLength(51);
   });
 });
 

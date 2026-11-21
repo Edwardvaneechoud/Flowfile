@@ -27,6 +27,7 @@ from cryptography.fernet import Fernet
 from flowfile_core.auth import jwt as jwt_module
 from flowfile_core.configs.flow_logger import FlowLogger, get_flow_log_file
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import Secret, SharePointConnection
 from flowfile_core.flowfile import flow_graph as flow_graph_module
 from flowfile_core.flowfile import subflow
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -38,7 +39,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCodeParser
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import streaming, subprocess_operations
 from flowfile_core.flowfile.flow_graph import FlowGraph, list_files_schema
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode, schema_prefetch_blocked
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
 from flowfile_core.flowfile.manage import io_flowfile
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
@@ -47,7 +48,7 @@ from flowfile_core.notebook.interpret import CellInterpreter
 from flowfile_core.notebook.push import seed_snapshot
 from flowfile_core.notebook.render import render
 from flowfile_core.notebook.runner import NotebookRunner
-from flowfile_core.schemas import input_schema
+from flowfile_core.schemas import input_schema, schemas
 from flowfile_frame import native, notebook
 from flowfile_frame.notebook_cells import clean_run, enter_snapshot_session, execute_cell, new_namespace
 from tests.notebook.conftest import NOTEBOOK_OWNER_ID, no_kernel_manager
@@ -681,6 +682,15 @@ def test_a_sql_table_function_fails_the_canvas_check_on_its_line_and_reads_nothi
 
 
 MULTI_USER_REFUSALS = {
+    "an unknown SharePoint reader connection": (
+        "rows = ff.read_sharepoint(2147483647, drive_id='drive', file_path='rows.csv')",
+        "SharePoint connection not found.",
+    ),
+    "an unknown SharePoint writer connection": (
+        "ff.read_api('http://127.0.0.1:1/rows').write_sharepoint(2147483647, "
+        "drive_id='drive', file_path='rows.csv', format='csv')",
+        "SharePoint connection not found.",
+    ),
     "a local path for a cloud read": (
         "rows = ff.read_from_cloud_storage('/etc/hosts', file_format='csv')",
         "is a local path, which this server does not allow",
@@ -723,8 +733,94 @@ def test_a_placement_the_canvas_refuses_fails_on_its_line_before_the_node_exists
     assert (result["cell_id"], result["line"], result["kind"]) == ("placing", 2, "refused")
     assert message in result["message"]
     assert [refusal for refusal in result["refusals"] if message in refusal] == [result["refusals"][-1]]
-    assert not {"cloud_storage_reader", "database_reader", "kafka_source"} & set(placed)
+    refused_types = {
+        "cloud_storage_reader", "database_reader", "kafka_source", "sharepoint_reader", "sharepoint_writer"
+    }
+    assert refused_types.isdisjoint(placed)
     assert calls.labels() <= {"collect"} and calls.named("collect") == []
+
+
+@pytest.fixture
+def notebook_sharepoint_connection():
+    with get_db_context() as db:
+        secret = Secret(name="notebook_sharepoint", user_id=NOTEBOOK_OWNER_ID, encrypted_value="not-a-real-secret")
+        db.add(secret)
+        db.flush()
+        connection = SharePointConnection(
+            user_id=NOTEBOOK_OWNER_ID, connection_name="notebook_sharepoint",
+            tenant_id="00000000-0000-0000-0000-000000000001", client_id="00000000-0000-0000-0000-000000000002",
+            auth_method="client_secret", credential_secret_id=secret.id,
+        )
+        db.add(connection)
+        db.flush()
+        connection_id = connection.id
+        secret_id = secret.id
+        db.commit()
+
+    try:
+        yield connection_id
+    finally:
+        with get_db_context() as db:
+            db.delete(db.get(SharePointConnection, connection_id))
+            db.flush()
+            db.delete(db.get(Secret, secret_id))
+            db.commit()
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("drive_id='drive', file_path='rows.csv', csv_delimiter=';', delta_generation=2",
+         "drive_id='drive', file_path='out.xlsx', format='xlsx', conflict_mode='overwrite'"),
+        ("drive_id='drive', file_path='rows.csv'",
+         "drive_id='drive', file_path='out.xlsx', format='xlsx', conflict_mode='update', "
+         "sheet_name='Report', write_when_empty=True"),
+        ("drive_id='drive', file_path='rows.csv'",
+         "drive_id='drive', file_path='out.xlsx', format='xlsx', conflict_mode='append', sheet_name='Report'"),
+        ("list_source={'site_id': 'example.com,site,web', 'list_id': 'list', 'columns': ['Title']}",
+         "list_target={'site_id': 'example.com,site,web', 'list_id': 'list', 'column_mapping': {'Title': 'Title'}}"),
+    ],
+    ids=["files", "excel-update", "excel-append", "lists"],
+)
+def test_sharepoint_cells_round_trip_without_worker_io(source, target, monkeypatch, notebook_sharepoint_connection):
+    connection_id = notebook_sharepoint_connection
+
+    def no_operation(*args, **kwargs):
+        pytest.fail("Notebook editing must not dispatch SharePoint operations")
+
+    monkeypatch.setattr(FlowNode, "run_op", no_operation)
+    result = _sync([
+        ("imports", IMPORTS),
+        ("reader", f"rows = ff.read_sharepoint({connection_id}, {source})"),
+        ("writer", f"written = rows.write_sharepoint({connection_id}, {target})"),
+    ])
+    assert result["ok"], result.get("message")
+    data = result["flowfile_data"]
+    assert [node["type"] for node in data["nodes"]] == ["sharepoint_reader", "sharepoint_writer"]
+    graph = FlowGraph()
+    graph._owner_user_id = NOTEBOOK_OWNER_ID
+    token = schema_prefetch_blocked.set(True)
+    try:
+        graph.restore_from_snapshot(schemas.FlowfileData.model_validate(data))
+    finally:
+        schema_prefetch_blocked.reset(token)
+    cells, provenance, ceiling, snapshot = _rendered(graph)
+    code = "\n".join(code for _, code in cells)
+    assert "ff.read_sharepoint(" in code and ".write_sharepoint(" in code
+    assert ".collect()" not in code and "not-a-real-secret" not in code
+    rebuilt = _sync(cells, snapshot, provenance, ceiling)
+    assert rebuilt["ok"], rebuilt.get("message")
+    rebuilt_nodes = rebuilt["flowfile_data"]["nodes"]
+    assert rebuilt_nodes[1]["input_ids"] == data["nodes"][1]["input_ids"] == [data["nodes"][0]["id"]]
+    models = (input_schema.NodeSharePointReader, input_schema.NodeSharePointWriter)
+    for old, new, model in zip(data["nodes"], rebuilt_nodes, models, strict=True):
+        assert old["type"] == new["type"]
+        # Graph metadata can differ between snapshots; wiring is asserted above.
+        fields = model.model_fields.keys() - input_schema.NodeSingleInput.model_fields.keys()
+        original = {key: value for key, value in old["setting_input"].items() if key in fields}
+        round_tripped = {key: value for key, value in new["setting_input"].items() if key in fields}
+        assert original["connection_id"] == connection_id
+        assert round_tripped == original
 
 
 def test_a_single_user_install_places_a_local_cloud_path_and_reads_nothing(monkeypatch):

@@ -152,6 +152,109 @@ def test_projection_is_deterministic_and_secret_free(tmp_path, monkeypatch):
         _cleanup([conn], [flow_uuid])
 
 
+def test_sharepoint_project_rebinds_after_credential_provisioning(tmp_path, monkeypatch):
+    from flowfile_core.database.models import Secret, SharePointConnection
+    from flowfile_core.project.importer import import_project
+    from flowfile_core.project.secrets_resolver import env_key, placeholder_name
+    from flowfile_core.secret_manager.secret_manager import decrypt_secret, stage_encrypted_secret
+
+    identity = str(uuid4())
+    name = f"sharepoint_{identity[:8]}"
+    root = tmp_path / "project"
+    with get_db_context() as db:
+        secret = stage_encrypted_secret(db, name=name, value="original-fixture-credential", user_id=OWNER)
+        db.flush()
+        connection = SharePointConnection(
+            user_id=OWNER, connection_uuid=identity, connection_name=name,
+            tenant_id=str(uuid4()), client_id=str(uuid4()), auth_method="client_secret",
+            credential_secret_id=secret.id,
+        )
+        db.add(connection)
+        db.flush()
+        original_id, secret_id = connection.id, secret.id
+        db.commit()
+
+    flow_uuid = str(uuid4())
+    try:
+        path = tmp_path / f"{name}.yaml"
+        handler = FlowfileHandler()
+        graph = handler.register_flow(schemas.FlowSettings(flow_id=424242, name=name, path="."), user_id=OWNER)
+        graph.add_sharepoint_reader(input_schema.NodeSharePointReader(
+            flow_id=424242, node_id=1, user_id=OWNER, connection_id=original_id,
+            drive_id="fixture-drive", file_path="sales.xlsx", sheet_name="Sales",
+        ))
+        graph.add_sharepoint_writer(input_schema.NodeSharePointWriter(
+            flow_id=424242, node_id=2, depending_on_id=1, user_id=OWNER, connection_id=original_id,
+            drive_id="fixture-drive", file_path="report.xlsx", format="xlsx",
+            conflict_mode="update", sheet_name="Report", write_when_empty=True,
+        ))
+        graph.save_flow(str(path))
+        with get_db_context() as db:
+            db.add(FlowRegistration(flow_uuid=flow_uuid, owner_id=OWNER, name=name, flow_path=str(path)))
+            db.commit()
+
+        root.mkdir()
+        (root / "project.yaml").write_text(
+            "name: SharePoint portability\nkinds: [flow, sharepoint_connection]\n", encoding="utf-8"
+        )
+        write_export(root, OWNER)
+        exported = (root / "connections" / "sharepoint" / f"{identity}.yaml").read_text(encoding="utf-8")
+        assert "original-fixture-credential" not in exported and "$ffsec$" not in exported
+        placeholder = placeholder_name(yaml.safe_load(exported)["credential"])
+        assert placeholder is not None
+        before = _snapshot(root)
+        with get_db_context() as db:
+            db.delete(db.get(SharePointConnection, original_id))
+            db.flush()
+            db.delete(db.get(Secret, secret_id))
+            db.commit()
+
+        def runtime_settings():
+            return {
+                node["type"]: node["setting_input"] for node in yaml.safe_load(path.read_text(encoding="utf-8"))["nodes"]
+            }
+
+        monkeypatch.delenv(env_key(placeholder), raising=False)
+        result = import_project(root, OWNER)
+        assert not result.incomplete
+        assert placeholder in result.placeholder_secrets
+        settings = runtime_settings()
+        assert settings.keys() == {"sharepoint_reader", "sharepoint_writer"}
+        for node_settings in settings.values():
+            assert node_settings["connection_id"] is None
+            assert node_settings["sharepoint_connection_uuid"] == identity
+
+        monkeypatch.setenv(env_key(placeholder), "replacement-fixture-credential")
+        result = import_project(root, OWNER)
+        assert not result.incomplete
+        assert not import_project(root, OWNER).incomplete
+        with get_db_context() as db:
+            restored = db.query(SharePointConnection).filter_by(user_id=OWNER, connection_uuid=identity).one()
+            assert restored.id != original_id
+            settings = runtime_settings()
+            assert settings["sharepoint_reader"]["connection_id"] == restored.id
+            assert settings["sharepoint_reader"]["sheet_name"] == "Sales"
+            assert settings["sharepoint_writer"]["connection_id"] == restored.id
+            assert settings["sharepoint_writer"]["file_path"] == "report.xlsx"
+            assert settings["sharepoint_writer"]["conflict_mode"] == "update"
+            assert settings["sharepoint_writer"]["sheet_name"] == "Report"
+            assert settings["sharepoint_writer"]["write_when_empty"] is True
+            encrypted = db.get(Secret, restored.credential_secret_id).encrypted_value
+            assert decrypt_secret(encrypted, OWNER).get_secret_value() == "replacement-fixture-credential"
+        write_export(root, OWNER)
+        assert _snapshot(root) == before
+    finally:
+        _cleanup([], [flow_uuid])
+        with get_db_context() as db:
+            restored = db.query(SharePointConnection).filter_by(user_id=OWNER, connection_uuid=identity).one_or_none()
+            if restored is not None:
+                secret_id = restored.credential_secret_id
+                db.delete(restored)
+                db.flush()
+                db.delete(db.get(Secret, secret_id))
+            db.commit()
+
+
 def test_import_rebuilds_missing_connection_from_env(tmp_path, monkeypatch):
     project_sync.close_project(OWNER)
     conn = "proj_db_rebuild"

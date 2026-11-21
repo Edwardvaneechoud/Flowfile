@@ -22,6 +22,8 @@ from flowfile_core.flowfile.execution.payloads import (
     GoogleAnalyticsReadPayload,
     KafkaReadPayload,
     RestApiReadPayload,
+    SharePointReadPayload,
+    SharePointWritePayload,
     op_payload,
 )
 from flowfile_core.flowfile.execution.protocol import ComputeBackend, OperationKind, ResultRef
@@ -62,6 +64,7 @@ from flowfile_core.secret_manager.secret_manager import (
 from shared.db_dialects import get_dialect_or_generic
 from shared.kafka.consumer import make_kafka_commit_callback
 from shared.kafka.models import KafkaReadSettings
+from shared.sharepoint import SharePointDeltaState, is_file_glob
 
 
 def engine_from_read(backend: ComputeBackend, ref: ResultRef) -> FlowDataEngine:
@@ -170,7 +173,43 @@ def _kafka_consumer_config(kafka_settings, user_id: int) -> dict:
         return build_consumer_config(db, renamed, user_id)
 
 
+def require_sharepoint_access(settings: input_schema.NodeSharePointReader) -> None:
+    from flowfile_core.routes.sharepoint_connections import _resolve_connection
+
+    if settings.user_id is None:
+        raise HTTPException(404, "SharePoint connection not found.")
+    with get_db_context() as db:
+        _resolve_connection(db, settings.user_id, settings.connection_id)
+
+
 class ConnectorBuildersMixin(GraphMixinBase):
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_sharepoint_writer(self, settings: input_schema.NodeSharePointWriter) -> None:
+        from flowfile_core.routes.sharepoint_connections import build_write_settings
+
+        def upload(df: FlowDataEngine) -> FlowDataEngine:
+            df.lazy = True
+            with get_db_context() as db:
+                wire = build_write_settings(db, settings)
+            job = SharePointWritePayload(flow_id=settings.flow_id, node_id=settings.node_id,
+                                         settings=wire, plan=df.data_frame)
+            node.run_op(
+                current_context(self).backend, OperationKind.sharepoint_write, op_payload(job), job_id=job.job_id,
+            )
+            return df
+
+        def schema_callback():
+            return node.node_inputs.main_inputs[0].schema
+
+        node = self.add_node_step(
+            node_id=settings.node_id,
+            function=upload,
+            node_type="sharepoint_writer",
+            setting_input=settings,
+            schema_callback=schema_callback,
+            input_node_ids=[settings.depending_on_id],
+        )
+
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):
         """Adds a node to write data to a database.
@@ -563,6 +602,105 @@ class ConnectorBuildersMixin(GraphMixinBase):
             self._node_db[node_ga_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_ga_reader.node_id)
+        self._notify_node_observers(node, is_new=is_new)
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_sharepoint_reader(self, settings: input_schema.NodeSharePointReader) -> None:
+        """Read document library files on the worker using a saved connection."""
+        from flowfile_core.flowfile.sharepoint_delta import commit_cursor, cursor_scope, load_cursor
+        from flowfile_core.routes.sharepoint_connections import build_read_settings
+
+        node_type = "sharepoint_reader"
+
+        def fetch(*, schema_only: bool = False):
+            scope = previous = None
+            if settings.user_id is None:
+                raise ValueError("A SharePoint reader requires a connection owner.")
+            with get_db_context() as db:
+                wire = build_read_settings(
+                    db, settings.user_id, settings.connection_id, settings.drive_id, settings.file_path,
+                    sheet_name=settings.sheet_name, list_source=settings.list_source, schema_only=schema_only,
+                )
+            if schema_only and settings.file_path and settings.file_path.lower().endswith(".xlsx"):
+                if not wire.excel_column_preview:
+                    return None
+            wire.csv_delimiter = settings.csv_delimiter
+            if not schema_only and settings.delta_generation is not None:
+                scope = cursor_scope(self, settings, wire)
+                previous = load_cursor(scope)
+                wire.incremental = True
+                wire.delta_state = SharePointDeltaState.model_validate_json(previous) if previous is not None else None
+            backend = current_context(self).backend
+            read = SharePointReadPayload(flow_id=settings.flow_id, node_id=settings.node_id, settings=wire)
+            result = node.run_op(backend, OperationKind.sharepoint_read, op_payload(read), job_id=read.job_id)
+            return backend, result, scope, previous
+
+        def schema_callback() -> list[FlowfileColumn]:
+            path = settings.file_path
+            if not path or not settings.drive_id or is_file_glob(path):
+                return []
+            # Legacy Excel workbooks do not support Graph's workbook preview API.
+            if not path.lower().endswith((".csv", ".parquet", ".json", ".xlsx")):
+                return []
+            if path.lower().endswith(".xlsx") and (settings.connection_id is None or settings.user_id is None):
+                return []
+            fetched = fetch(schema_only=True)
+            if fetched is None:
+                return []
+            backend, result, _, _ = fetched
+            ref = result.refs["result"]
+            try:
+                return ref.schema
+            finally:
+                backend.release(ref)
+
+        def read_file() -> FlowDataEngine:
+            node._on_flow_complete = None
+            if node.setting_input is settings:
+                node.sharepoint_worksheet_names = None
+            fetched = fetch()
+            assert fetched is not None  # Full reads are never skipped.
+            backend, result, scope, previous = fetched
+            if scope is not None:
+                raw_state = result.metadata.get("delta_state")
+                if raw_state is None:
+                    raise ValueError("Incremental SharePoint reads require a worker with Graph delta support.")
+                state = SharePointDeltaState.model_validate(raw_state).model_dump_json()
+
+                def on_complete(success: bool) -> None:
+                    if success:
+                        commit_cursor(scope, previous, state)
+
+                node._on_flow_complete = on_complete
+            if node.setting_input is settings:
+                node.sharepoint_worksheet_names = result.metadata.get("worksheet_names")
+            return engine_from_read(backend, result.refs["result"])
+
+        node = self.get_node(settings.node_id)
+        is_new = node is None
+        if node is None:
+            node = FlowNode(
+                settings.node_id,
+                function=read_file,
+                setting_input=settings,
+                name=node_type,
+                node_type=node_type,
+                parent_uuid=self.uuid,
+                schema_callback=schema_callback,
+            )
+            self._node_db[settings.node_id] = node
+            self._node_ids.append(settings.node_id)
+        else:
+            node.function = read_file
+            node.user_provided_schema_callback = schema_callback
+            node.schema_callback = schema_callback
+            node.sharepoint_worksheet_names = None
+            node._on_flow_complete = None
+            node.setting_input = settings
+            node.node_type = node.name = node_type
+            node.node_settings.cache_results = settings.cache_results
+        node.placed_deferred = node.deferred_until_run = True
+        self.add_node_to_starting_list(node)
         self._notify_node_observers(node, is_new=is_new)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)

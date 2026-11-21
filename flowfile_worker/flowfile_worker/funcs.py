@@ -797,6 +797,15 @@ def write_to_cloud_storage(
             raise
 
 
+def write_to_sharepoint(polars_serializable_object, progress, error_message, queue, file_path, settings,
+                        flowfile_flow_id=-1, flowfile_node_id=-1):
+    from flowfile_worker.external_sources.sharepoint_writer import write_saved_file
+
+    write_saved_file(_load_plan(polars_serializable_object), settings)
+    with progress.get_lock():
+        progress.value = 100
+
+
 def write_output(
     polars_serializable_object: bytes,
     progress: Value,

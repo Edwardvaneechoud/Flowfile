@@ -2877,6 +2877,40 @@ class FlowFrame:
         )
         return self._create_child_frame(new_node_id)
 
+    def write_sharepoint(
+        self,
+        connection_id: int,
+        *,
+        drive_id: str | None = None,
+        file_path: str | None = None,
+        format: Literal["csv", "xlsx", "parquet"] | None = None,
+        conflict_mode: Literal["overwrite", "error", "append_suffix", "update", "append"] = "error",
+        sheet_name: str | None = None,
+        write_when_empty: bool = False,
+        list_target: dict | None = None,
+    ) -> FlowFrame:
+        """Write a file or append list items on flow run, using a saved SharePoint app connection."""
+        from flowfile_frame._identity import current_user_id
+
+        node_id = generate_node_id()
+        self.flow_graph.add_sharepoint_writer(
+            input_schema.NodeSharePointWriter(
+                flow_id=self.flow_graph.flow_id,
+                node_id=node_id,
+                user_id=current_user_id(),
+                depending_on_id=self.node_id,
+                connection_id=connection_id,
+                drive_id=drive_id,
+                file_path=file_path,
+                format=format,
+                conflict_mode=conflict_mode,
+                sheet_name=sheet_name,
+                write_when_empty=write_when_empty,
+                list_target=list_target,
+            )
+        )
+        return self._create_child_frame(node_id)
+
     def write_database(
         self,
         connection_name: str,

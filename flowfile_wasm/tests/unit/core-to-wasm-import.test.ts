@@ -86,13 +86,38 @@ describe('a core-authored flow file imports into the browser editor', () => {
     expect(store.edges.length).toBe(data.nodes.length - 1)
   })
 
-  it('the same flow with one core-only node degrades to exactly one placeholder + blocked descendants', () => {
+  it.each(['sharepoint_writer', 'sharepoint_writer__unsupported'])('%s preserves its input edge as a placeholder', (type) => {
     const store = useFlowStore()
     const data = loadSalesPipeline()
-    // Swap the reader for a database reader — a full-app-only source.
+    const writer = data.nodes.at(-1)!
+    writer.type = type
+    writer.setting_input = type.endsWith('__unsupported')
+      ? { is_placeholder: true, original_type: 'sharepoint_writer', inputs: 1, outputs: 0 }
+      : { node_id: writer.id, is_setup: true }
+    expect(store.importFromFlowfile(data)).toBe(true)
+    expect(store.isPlaceholderNode(writer.id)).toBe(true)
+    expect(store.edges.length).toBe(data.nodes.length - 1)
+    expect(store.blockedNodes.size).toBe(1)
+  })
+
+  const unsupportedSources = ['database_reader', 'sharepoint_reader', 'sharepoint_reader__unsupported']
+
+  it.each(unsupportedSources)('%s imports as one placeholder with blocked descendants', (type) => {
+    const store = useFlowStore()
+    const data = loadSalesPipeline()
     const reader = data.nodes.find(n => n.type === 'read')!
-    reader.type = 'database_reader'
-    reader.setting_input = { node_id: reader.id, is_setup: true }
+    expect(isSupportedNodeType(type)).toBe(false)
+    reader.type = type
+    reader.setting_input = type === 'sharepoint_reader__unsupported'
+      ? {
+          is_placeholder: true,
+          original_type: 'sharepoint_reader',
+          reason: 'SharePoint connections are not available in shared flows.',
+          label: 'SharePoint File',
+          inputs: 0,
+          outputs: 1
+        }
+      : { node_id: reader.id, is_setup: true }
 
     expect(store.importFromFlowfile(data)).toBe(true)
 

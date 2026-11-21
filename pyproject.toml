@@ -181,6 +181,7 @@ markers = [
     "slow: Tests with a heavy workload or long runtime (deselect with -m 'not slow')",
     "cloud_e2e: Real core + worker processes driven over HTTP against MinIO (Docker)",
     "snowflake: Tests against a live Snowflake account (opt-in via FLOWFILE_TEST_SNOWFLAKE_* env vars)",
+    "sharepoint: Tests against a dedicated live SharePoint site (opt-in via FLOWFILE_TEST_SHAREPOINT_* env vars)",
 ]
 
 [tool.coverage.run]

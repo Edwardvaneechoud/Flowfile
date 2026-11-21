@@ -96,10 +96,24 @@ def known_schemas(node: FlowNode) -> dict[str, list[dict[str, str]]] | None:
 
 def seed_snapshot(flow: FlowGraph) -> dict:
     """What a session seeds from: the save-format payload, parameters, names and schemas."""
+    # Predicting a downstream node can also trigger a SharePoint schema request.
+    sharepoint_lineage: set[int] = set()
+    pending = [node for node in flow.nodes if node.node_type == "sharepoint_reader"]
+    while pending:
+        node = pending.pop()
+        if node.node_id not in sharepoint_lineage:
+            sharepoint_lineage.add(node.node_id)
+            pending.extend(node.leads_to_nodes)
+
     schemas: dict[int, dict[str, list[dict[str, str]]]] = {}
     for node in flow.nodes:
         try:
-            schemas[node.node_id] = node_schemas(node)
+            if node.node_id in sharepoint_lineage:
+                schemas[node.node_id] = known_schemas(node) or {
+                    DEFAULT_OUTPUT_HANDLE: _columns(node.node_schema.predicted_schema or [])
+                }
+            else:
+                schemas[node.node_id] = node_schemas(node)
         except Exception:
             logger.debug(f"notebook seed: no schema for node {node.node_id}", exc_info=True)
     return {

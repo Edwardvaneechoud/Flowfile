@@ -56,7 +56,7 @@ class NativeNodeError(ValueError):
 
 
 DEFERRED_NODE_TYPES: frozenset[str] = frozenset(
-    {"run_flow", "python_script", "google_analytics_reader", "external_source"}
+    {"run_flow", "python_script", "google_analytics_reader", "external_source", "sharepoint_writer"}
 )
 
 SIDE_EFFECT_NODE_TYPES: frozenset[str] = frozenset({"train_model", "apply_model", "evaluate_model"})
@@ -310,6 +310,10 @@ def seed_from_predicted_schema(node: FlowNode, declared: Mapping[str, list[Flowf
     if _in_sync():
         seed_deferred_node(node, sync_seed_schemas(node, _handles(node), declared))
         return
+    if node.node_type == "sharepoint_reader" and current() is not None:
+        # Even a schema probe can contact SharePoint. Only use a canvas snapshot here.
+        seed_deferred_node(node, resolved_seed(node, {DEFAULT_OUTPUT_HANDLE: []}))
+        return
     if node.node_type == "polars_code" and (node.all_inputs or _in_kernel_session(current())):
         seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: _placeholder_schema(node)})
         return
@@ -322,15 +326,15 @@ def seed_from_predicted_schema(node: FlowNode, declared: Mapping[str, list[Flowf
 def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
     """The frame of a source node just added to ``flow_graph``.
 
-    In notebook mode a source that :func:`notebook_defers` names is seeded from its
-    schema callback and wrapped as a deferred frame, so building it never runs the read. So is a local
+    A source already deferred by its builder, or one that :func:`notebook_defers` names in notebook
+    mode, is seeded from its schema callback and wrapped as a deferred frame. So is a local
     file source in a kernel session (:func:`_kernel_hidden_path`: the kernel opens no host file), seeded
     from its canvas twin; otherwise the node's build-time result is wrapped.
     """
     from flowfile_frame.flow_frame import FlowFrame
 
     node = flow_graph.get_node(node_id)
-    if notebook_defers(node.node_type, node.setting_input):
+    if node.deferred_until_run or notebook_defers(node.node_type, node.setting_input):
         seed_from_predicted_schema(node)
     elif _kernel_hidden_path(node) is not None:
         seed_deferred_node(node, resolved_seed(node, _kernel_hidden_seed(node)))

@@ -32,11 +32,7 @@ from flowfile_core.flowfile.execution.errors import (
     TaskFailed,
     VersionMismatch,
 )
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
 from flowfile_core.flowfile.execution.payloads import (
-    op_payload,
-    PAYLOAD_KEY,
     CatalogTableIdentity,
     CloudWritePayload,
     DatabaseWritePayload,
@@ -44,7 +40,11 @@ from flowfile_core.flowfile.execution.payloads import (
     DeltaScd2Payload,
     DeltaWritePayload,
     FileWritePayload,
+    SharePointWritePayload,
+    op_payload,
 )
+from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalWriteSettings
 from flowfile_core.schemas import input_schema
@@ -55,6 +55,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared.compute_protocol import local_capabilities
+from shared.sharepoint import SharePointWriteSettings
 from shared.storage_config import storage
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
@@ -265,10 +266,27 @@ def cloud_write() -> CloudWritePayload:
     )
 
 
+def sharepoint_write() -> SharePointWritePayload:
+    return SharePointWritePayload(
+        flow_id=1,
+        node_id=2,
+        plan=ROWS.lazy(),
+        settings=SharePointWriteSettings(
+            tenant_id="a01b7819-6a0a-47c9-a6ff-e1563529ac33",
+            client_id="45d666c4-a4d2-4aad-905a-15443f348233",
+            client_secret_encrypted="fixture-ciphertext",
+            drive_id="test-drive",
+            file_path="people.csv",
+            format="csv",
+        ),
+    )
+
+
 WRITE_PAYLOADS = {
     OperationKind.file_write: file_write,
     OperationKind.database_write: referenced_database_write,
     OperationKind.cloud_write: cloud_write,
+    OperationKind.sharepoint_write: sharepoint_write,
     OperationKind.delta_write: lambda: delta_write("/tables/t"),
     OperationKind.delta_merge: lambda: delta_merge("/tables/t", ROWS.lazy()),
     OperationKind.delta_scd2: lambda: delta_scd2("/tables/dim"),

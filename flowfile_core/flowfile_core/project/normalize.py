@@ -96,6 +96,8 @@ _ID_NAME_FIELDS = (
     ("train_model", "train_input", {"namespace_id": None}, "namespace_full_name", "namespace"),
     ("apply_model", "apply_input", {"namespace_id": None}, "namespace_full_name", "namespace"),
     ("run_flow", "flow_reference", {"registration_id": 0}, "flow_uuid", "flow"),
+    ("sharepoint_reader", None, {"connection_id": None}, "sharepoint_connection_uuid", "sharepoint"),
+    ("sharepoint_writer", None, {"connection_id": None}, "sharepoint_connection_uuid", "sharepoint"),
 )
 
 Lookup = Callable[[str, dict], dict | None]
@@ -124,6 +126,8 @@ def _name_node_references(data: dict, lookup: Lookup) -> None:
             if all(settings.get(f) in (None, dropped) for f, dropped in id_fields.items()):
                 continue
             names = lookup(kind, settings)
+            if kind == "sharepoint":
+                settings.pop("sharepoint_connection_uuid", None)
             if names:
                 settings.update(names)
             settings.update(id_fields)

@@ -2,9 +2,8 @@
 // "Read more" entry in the palette and canvas right-click menus.
 //
 // Keyed by `NodeTemplate.item`; the key set's source of truth is
-// `flowfile_core/flowfile_core/configs/node_store/nodes.py`. Anchors are the
-// heading slugs in `docs/users/visual-editor/nodes/*.md` — renaming a heading
-// degrades to "right page, wrong scroll position", it does not 404.
+// `flowfile_core/flowfile_core/configs/node_store/nodes.py`. Bare filenames
+// are relative to the node reference; `users/` paths are relative to the docs site.
 //
 // Do NOT derive the page from `node_group`: the docs pages are hand-maintained
 // and a node can move between them without its palette group changing.
@@ -80,6 +79,10 @@ export const NODE_DOC_PAGES: Readonly<Record<string, string>> = {
   catalog_writer: "output.html#catalog-writer",
   cloud_storage_writer: "output.html#cloud-storage-writer",
   flow_output: "output.html#flow-output",
+
+  // Connector guide
+  sharepoint_reader: "users/connect/sharepoint.html#connect-and-pick-a-file-in-flowfile",
+  sharepoint_writer: "users/connect/sharepoint.html#write-a-file-to-a-sharepoint-document-library",
 };
 
 /**
@@ -97,7 +100,8 @@ export function nodeDocsUrl(node: NodeTemplate | undefined | null): string {
   if (node.custom_node) return docsUrl(CUSTOM_NODES_PAGE);
   const page = NODE_DOC_PAGES[node.item];
   // typeof, not truthiness — neutralises prototype reads like item "constructor".
-  return docsUrl(typeof page === "string" ? NODES_DIR + page : NODES_INDEX);
+  if (typeof page !== "string") return docsUrl(NODES_INDEX);
+  return docsUrl(page.startsWith("users/") ? page : NODES_DIR + page);
 }
 
 export function nodeDocsMenuOptions(): ContextMenuOption[] {

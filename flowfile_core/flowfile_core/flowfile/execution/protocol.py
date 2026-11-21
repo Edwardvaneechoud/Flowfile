@@ -192,6 +192,8 @@ class OperationKind(enum.Enum):
     database_read = "database_read"
     kafka_read = "kafka_read"
     google_analytics_read = "google_analytics_read"
+    sharepoint_read = "sharepoint_read"
+    sharepoint_write = "sharepoint_write"
     rest_api_read = "rest_api_read"
     database_write = "database_write"
     cloud_write = "cloud_write"

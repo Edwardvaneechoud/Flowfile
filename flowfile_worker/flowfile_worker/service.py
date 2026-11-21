@@ -71,6 +71,7 @@ from shared.compute_protocol import (
     schema_to_wire,
 )
 from shared.kafka.models import KafkaReadSettings
+from shared.sharepoint import SharePointReadSettings, SharePointWriteRequest, SharePointWriteSettings
 from shared.wire_model import WireModel
 
 SAMPLE_ROWS_CAP = 10_000
@@ -87,6 +88,8 @@ OPERATIONS = frozenset(
         "database_read",
         "kafka_read",
         "google_analytics_read",
+        "sharepoint_read",
+        "sharepoint_write",
         "rest_api_read",
         "file_read",
         "fuzzy_join",
@@ -839,6 +842,29 @@ def google_analytics_read(settings: GoogleAnalyticsReadSettings, job_id: str) ->
 
 
 @_claimed
+def sharepoint_read(settings: SharePointReadSettings, job_id: str) -> OpOutputs:
+    """Read a SharePoint CSV or Excel file in a child and hold its rows as the result."""
+    from flowfile_worker.external_sources.sharepoint_source import read_saved_file
+
+    flow_id, node_id = settings.flowfile_flow_id, settings.flowfile_node_id
+    if not settings.incremental and (
+        settings.schema_only or not settings.file_path or not settings.file_path.lower().endswith((".xls", ".xlsx"))
+    ):
+        return _read(job_id, read_saved_file, {"settings": settings}, flow_id, node_id)
+    (result_id,) = _op_outputs(job_id, 1)
+    path = _output_file(flow_id, result_id)
+    sidecar = Path(f"{path}.sharepoint.json")
+    try:
+        kwargs = {"settings": settings, "sidecar_path": str(sidecar)}
+        ref = _read_into(
+            job_id, result_id, path, read_saved_file, kwargs, flow_id, node_id, also_written=(str(sidecar),)
+        )
+        return OpOutputs(outputs={"result": ref}, metadata=json.loads(sidecar.read_text(encoding="utf-8")))
+    finally:
+        sidecar.unlink(missing_ok=True)
+
+
+@_claimed
 def rest_api_read(settings: RestApiReadSettings, job_id: str) -> OpOutputs:
     """Fetch from a REST API in a child as job *job_id* and hold the rows as ``result``.
 
@@ -1058,6 +1084,14 @@ def _write(
         [],
     )
     return OpOutputs(outputs={})
+
+
+@_claimed
+def sharepoint_write(body: SharePointWriteRequest, job_id: str) -> OpOutputs:
+    """Upload a document-library file in the worker child without holding output rows."""
+    settings = SharePointWriteSettings.model_validate(body.model_dump(exclude={"operation"}))
+    return _write(job_id, body.operation, "write_to_sharepoint", "", settings.flowfile_flow_id,
+                  settings.flowfile_node_id, {"settings": settings})
 
 
 @_claimed

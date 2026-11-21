@@ -406,10 +406,16 @@ def test_a_database_read_returns_a_reference_to_the_rows_it_read(backend, kept, 
 
 
 @pytest.mark.parametrize("kind", list(OperationKind), ids=lambda kind: kind.value)
-def test_the_worker_backend_runs_every_operation_kind(kind):
-    """Each kind reaches its method, which asks for its payload before it calls the worker."""
+def test_the_worker_backend_runs_every_operation_kind(kind, protocol_on, monkeypatch):
+    """Each kind reaches its method, which asks for its payload before submitting a job."""
+    monkeypatch.setattr(WorkerBackend, "capabilities", lambda self: local_capabilities())
     with pytest.raises(ValueError, match="has no 'payload' key"):
         WorkerBackend(url=WORKER_URL).run_op(kind, {})
+
+
+def test_sharepoint_read_requires_v1(protocol_off):
+    with pytest.raises(OperationUnsupported, match="SharePoint reads require the v1 worker compute protocol"):
+        WorkerBackend(url=WORKER_URL).run_op(OperationKind.sharepoint_read, {})
 
 
 DEFERRED = SubmitHints(must_materialise=False, wide=False, fanout=1, preview_rows=None)

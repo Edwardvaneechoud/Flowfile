@@ -32,8 +32,8 @@ PID_GRACE_SECONDS = 300
 DEFAULT_RUN_MAX_AGE_SECONDS = 86400
 
 
-def get_run_user_id(run_id: int) -> int | None:
-    """Return the FlowRun's ``user_id``, or ``None`` if the run row is missing.
+def get_run_user_id(run_id: int) -> int:
+    """Return the run owner, or raise if a managed run has no recorded owner.
 
     Used by subprocess CLI entrypoints to resolve the owning user for a
     pre-created run record, so the flow is loaded against the right
@@ -43,7 +43,9 @@ def get_run_user_id(run_id: int) -> int | None:
 
     with Session(engine) as session:
         run = session.get(FlowRun, run_id)
-        return run.user_id if run else None
+        if run is None or run.user_id is None:
+            raise ValueError(f"Cannot resolve the owner of run {run_id}")
+        return run.user_id
 
 
 def get_run_schedule_id(run_id: int) -> int | None:

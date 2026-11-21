@@ -130,6 +130,7 @@ from flowfile_frame.selectors import (
     temporal,
     time,
 )
+from flowfile_frame.sharepoint import read_sharepoint
 from flowfile_frame.sql_query import sql
 from flowfile_frame.utils import create_flow_graph
 
@@ -149,6 +150,7 @@ __all__ = [
     "read_parquet",
     "read_kafka",
     "read_api",
+    "read_sharepoint",
     "from_dict",
     "from_raw_data",
     "list_files",

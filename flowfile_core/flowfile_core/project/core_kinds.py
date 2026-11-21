@@ -197,6 +197,18 @@ register(
 )
 register(
     Kind(
+        "sharepoint_connection",
+        "SharePoint connection",
+        ("connections/sharepoint/*.yaml",),
+        lambda ctx: projection.export_connections(ctx.db, ctx.owner_id, "sharepoint"),
+        after=("secrets",),
+        cap=200,
+        entries=_per_file_entries("connection_name"),
+        same=_same_yaml,
+    )
+)
+register(
+    Kind(
         "namespaces",
         "namespaces",
         ("namespaces.yaml",),
@@ -214,7 +226,7 @@ register(
         "flow",
         ("flows/*.flow.yaml",),
         _export_flows,
-        after=("namespaces", "database_connection", "cloud_connection"),
+        after=("namespaces", "database_connection", "cloud_connection", "sharepoint_connection"),
         cap=500,
         entries=_flow_entries,
         delete_label="its flow file is removed",

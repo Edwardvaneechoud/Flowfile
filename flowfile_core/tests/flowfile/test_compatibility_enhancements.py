@@ -339,14 +339,12 @@ class TestEnsureFlowSettings:
     """Test ensure_flow_settings function."""
 
     def test_creates_flow_settings_when_missing(self):
-        flow_obj = MagicMock(spec=schemas.FlowInformation)
-        flow_obj.flow_id = 1
-        flow_obj.flow_name = "test_flow"
-        flow_obj.flow_settings = None
-        schemas.FlowInformation.model_validate = MagicMock(return_value=flow_obj)
+        flow_obj = schemas.FlowInformation.model_construct(flow_id=1, flow_name="test_flow", node_starts=[])
 
         result = ensure_flow_settings(flow_obj, "/path/to/flow")
-        assert result is not None
+        assert result.flow_settings.flow_id == 1
+        assert result.flow_settings.name == "test_flow"
+        assert result.flow_settings.path == "/path/to/flow"
 
     def test_updates_auto_execution_location(self):
         class FakeFlowSettings:

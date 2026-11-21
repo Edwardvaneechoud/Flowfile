@@ -489,6 +489,8 @@ class _Session:
         twin = self.mode.snapshot.get(self._twin(node, created, {}))
         if twin is not None and any(twin.schemas.values()):
             return _per_handle(twin.schemas, _handles(node))
+        if node.node_type == "sharepoint_reader":
+            return None  # Even schema-only reads wait for a canvas run.
         try:
             inputs = [
                 {"node_id": source.node_id, "handle": handle, "columns": _entries(source, handle)}

@@ -319,6 +319,26 @@ def test_a_database_read_holds_the_rows_it_read(jobs):
     assert _rows(ref).height == min(ref.row_count, 1000)
 
 
+def test_sharepoint_read_rejects_unusable_encrypted_credentials(jobs):
+    response = _post_op(
+        "sharepoint_read",
+        jobs(),
+        {
+            "tenant_id": "a01b7819-6a0a-47c9-a6ff-e1563529ac33",
+            "client_id": "45d666c4-a4d2-4aad-905a-15443f348233",
+            "client_secret_encrypted": "unusable-fixture-ciphertext",
+            "drive_id": "test-drive",
+            "file_path": "sales.csv",
+            "flowfile_flow_id": FLOW_ID,
+            "flowfile_node_id": NODE_ID,
+        },
+    )
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"]["error_kind"] == "task"
+    assert "SharePoint connection credentials are unavailable." in response.text
+    assert "unusable-fixture-ciphertext" not in response.text
+
+
 def test_a_read_that_fails_holds_nothing_and_names_the_error(jobs):
     job_id = jobs()
     body = {

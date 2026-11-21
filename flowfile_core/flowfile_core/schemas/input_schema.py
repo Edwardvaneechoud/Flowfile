@@ -39,6 +39,7 @@ from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
 from shared.db_dialects.identifiers import IDENTIFIER, QUOTED_NAME_HINT, is_identifier_path
 from shared.path_utils import default_scan_extension, ensure_glob_pattern, file_name, is_cloud_path, is_url
+from shared.sharepoint import SharePointListSource, SharePointWriteTarget, is_incremental_file, validate_read_target
 
 keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", default=False)
 """While set in a context, ``set_absolute_filepath`` keeps a path as written: no ``~``, working directory or links.
@@ -1435,6 +1436,29 @@ class NodeGoogleAnalyticsReader(NodeBase):
         if s.start_date and s.end_date:
             pieces.append(f"{s.start_date} .. {s.end_date}")
         return " | ".join(pieces)
+
+
+class NodeSharePointWriter(NodeSingleInput, SharePointWriteTarget):
+    connection_id: int | None = Field(default=None, gt=0)
+    sharepoint_connection_uuid: str | None = None
+
+
+class NodeSharePointReader(NodeBase):
+    connection_id: int | None = Field(default=None, gt=0)
+    sharepoint_connection_uuid: str | None = None
+    delta_generation: int | None = Field(default=None, ge=0, le=9_007_199_254_740_991)
+    drive_id: str | None = Field(default=None, min_length=1, max_length=512, pattern=r"^[A-Za-z0-9_!.-]+$")
+    file_path: str | None = Field(default=None, min_length=1)
+    list_source: SharePointListSource | None = None
+    sheet_name: str | None = Field(default=None, min_length=1)
+    csv_delimiter: str = Field(default=",", pattern=r"^[\x20-\x7e\t]$")
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        validate_read_target(self.drive_id, self.file_path, self.list_source)
+        if self.delta_generation is not None and (not is_incremental_file(self.file_path) or self.cache_results):
+            raise ValueError("Incremental SharePoint reads require an exact CSV, JSON or Parquet file and no caching.")
+        return self
 
 
 class RestApiAuthSettings(BaseModel):
