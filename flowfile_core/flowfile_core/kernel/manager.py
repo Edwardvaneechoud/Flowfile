@@ -679,6 +679,10 @@ class KernelManager:
         on the shared volume and translates them for the kernel container.
         If ``input_paths`` is already populated (e.g. from the ``flow_graph`` package),
         this is a no-op.
+
+        Core makes both folders itself before the kernel runs. A kernel container runs as root, and on a Linux
+        bind mount a folder it makes stays root-owned, so a later flow run, which runs as core's user, could not
+        write the node's inputs there.
         """
         if request.input_paths or not request.flow_id or not request.node_id:
             return
@@ -695,6 +699,8 @@ class KernelManager:
             str(request.node_id),
             "outputs",
         )
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
 
         # Inputs are {name}_{index}.parquet (e.g. orders_0.parquet), grouped by name.
         if os.path.isdir(input_dir):

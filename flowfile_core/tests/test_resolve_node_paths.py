@@ -140,6 +140,16 @@ class TestResolveNodePaths:
 
         assert req.input_paths == {}
 
+    def test_core_makes_the_node_folders_before_the_kernel_runs(self, tmp_path: Path):
+        """Core, not the root-run kernel, makes inputs and outputs, so a later flow run can write them."""
+        mgr = _make_manager(str(tmp_path))
+
+        req = ExecuteRequest(node_id=2, code="", flow_id=1)
+        mgr.resolve_node_paths(req)
+
+        assert (tmp_path / "1" / "2" / "inputs").is_dir()
+        assert (tmp_path / "1" / "2" / "outputs").is_dir()
+
     def test_output_dir_always_set(self, tmp_path: Path):
         """output_dir is set regardless of whether input files exist, as a pure-POSIX path."""
         _create_inputs(tmp_path, 1, 2, [])
