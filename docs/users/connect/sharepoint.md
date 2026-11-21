@@ -1,6 +1,6 @@
 # SharePoint Online files and lists
 
-Use the **Read from SharePoint** node to read CSV (`.csv`), Excel (`.xlsx`), Parquet (`.parquet`), or JSON (`.json`) files into a flow. For JSON, use a single document containing an array of row objects, not newline-delimited JSON. The same reader also supports SharePoint Lists.
+Use the **Read from SharePoint** node to read CSV (`.csv`), Excel (`.xls` and `.xlsx`), Parquet (`.parquet`), or JSON (`.json`) files into a flow. For JSON, use a single document containing an array of row objects, not newline-delimited JSON. The same reader also supports SharePoint Lists.
 
 ## Before you connect
 
@@ -26,7 +26,7 @@ For JSON arrays of records, Flowfile infers provisional columns and types from c
 
 For Parquet, Flowfile previews the stored column names and types from a suffix range of up to 256 KiB. If SharePoint ignores the range or the footer cannot be read within that limit, schema is unavailable until execution.
 
-Excel files need the optional personal [Excel column preview](#microsoft-sign-in-desktop-only) to show columns before a run. Wildcard patterns do not preview a schema. Each reader run can download up to 64 MiB total, including all matches for a pattern. This download limit does not cap the memory needed to parse the data.
+The optional personal [Excel column preview](#microsoft-sign-in-desktop-only) only works for `.xlsx` files. For `.xls`, columns are available after a run. Wildcard patterns do not preview a schema. Each reader run can download up to 64 MiB total, including all matches for a pattern. This download limit does not cap the memory needed to parse the data.
 
 You can reuse a saved connection across multiple nodes. Flowfile encrypts the credential and does not include it in the saved flow. In a multi-user deployment, an owner can use **Share** to grant a group access to use the connection without giving members the credential. Choose **Manage** to also allow the group to edit or delete the connection.
 

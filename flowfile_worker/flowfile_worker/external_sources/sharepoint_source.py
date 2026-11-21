@@ -167,12 +167,12 @@ def read_file(
         raise SharePointReadError("A valid SharePoint drive ID and file path are required.")
 
     _, separator, extension = parts[-1].lower().rpartition(".")
-    is_excel = extension == "xlsx"
+    is_excel = extension in {"xls", "xlsx"}
     readers = {"csv", "parquet", "json"}
     if not separator or (not is_excel and extension not in readers):
-        raise SharePointReadError("SharePoint reads support only .csv, .xlsx, .parquet, and .json files.")
+        raise SharePointReadError("SharePoint reads support only .csv, .xls, .xlsx, .parquet, and .json files.")
     if sheet_name is not None and not is_excel:
-        raise SharePointReadError("Worksheet selection is only supported for .xlsx files.")
+        raise SharePointReadError("Worksheet selection is only supported for .xls and .xlsx files.")
 
     glob = is_file_glob(file_path)
     if glob and (any(is_file_glob(part) for part in parts[:-1]) or "**" in parts[-1]):
@@ -180,7 +180,7 @@ def read_file(
     if schema_only and glob:
         return pl.DataFrame()
     if schema_only and is_excel:
-        if auth_method != "delegated" or not excel_column_preview:
+        if extension != "xlsx" or auth_method != "delegated" or not excel_column_preview:
             return pl.DataFrame()
         try:
             token = acquire_token(client, tenant_id, client_id, client_secret,
@@ -280,7 +280,7 @@ def _glob_paths(client: httpx.Client, token: str, drive_id: str, parts: list[str
 def _parse_file(
     source: BytesIO, extension: str, sheet_name: str | None, csv_delimiter: str, include_names: bool
 ) -> tuple[pl.DataFrame, list[str] | None]:
-    if extension == "xlsx":
+    if extension in {"xls", "xlsx"}:
         try:
             names = fastexcel.read_excel(source.getvalue()).sheet_names if include_names or sheet_name else None
             if sheet_name is not None and names is not None and sheet_name not in names:
@@ -288,7 +288,11 @@ def _parse_file(
                     "The selected SharePoint worksheet is missing. "
                     "Enter an existing sheet name or clear Sheet name to use the first sheet, then run again."
                 )
-            frame = _read_with_file_reader(source, extension, "excel", InputExcelTable(sheet_name=sheet_name))
+            if extension == "xls":
+                # The shared reader's openpyxl header handling cannot open binary .xls workbooks.
+                frame = pl.read_excel(source, engine="calamine", sheet_name=sheet_name, raise_if_empty=False)
+            else:
+                frame = _read_with_file_reader(source, extension, "excel", InputExcelTable(sheet_name=sheet_name))
         except SharePointReadError:
             raise
         except Exception:

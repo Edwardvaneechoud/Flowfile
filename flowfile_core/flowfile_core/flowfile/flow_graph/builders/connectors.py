@@ -639,6 +639,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
             path = settings.file_path
             if not path or not settings.drive_id or is_file_glob(path):
                 return []
+            # Legacy Excel workbooks do not support Graph's workbook preview API.
             if not path.lower().endswith((".csv", ".parquet", ".json", ".xlsx")):
                 return []
             if path.lower().endswith(".xlsx") and (settings.connection_id is None or settings.user_id is None):

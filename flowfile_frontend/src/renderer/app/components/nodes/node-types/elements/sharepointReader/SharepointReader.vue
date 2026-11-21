@@ -508,7 +508,7 @@ const validDrive = computed(() => {
   const drive = settings.value?.drive_id?.trim() ?? "";
   return /^[A-Za-z0-9_!.-]{1,512}$/.test(drive) && drive !== "." && drive !== "..";
 });
-const isExcel = computed(() => /\.xlsx$/i.test(settings.value?.file_path?.trim() ?? ""));
+const isExcel = computed(() => /\.xlsx?$/i.test(settings.value?.file_path?.trim() ?? ""));
 const isGlob = computed(() => /[*?]/.test(settings.value?.file_path ?? ""));
 const supportsDelta = computed(
   () => !isGlob.value && /\.(csv|json|parquet)$/i.test(settings.value?.file_path?.trim() ?? ""),
@@ -589,7 +589,7 @@ async function loadSheets() {
   }
 }
 
-const supportedFile = /\.(csv|xlsx|parquet|json)$/i;
+const supportedFile = /\.(csv|xlsx?|parquet|json)$/i;
 
 interface Library {
   id: string;

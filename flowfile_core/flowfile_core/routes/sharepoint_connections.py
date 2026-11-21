@@ -753,7 +753,7 @@ def list_sharepoint_worksheets(
         drive_id in {".", ".."}
         or is_file_glob(file_path)
         or any(part in {"", ".", ".."} for part in parts)
-        or not parts[-1].lower().endswith(".xlsx")
+        or not parts[-1].lower().endswith((".xls", ".xlsx"))
     ):
         raise HTTPException(422, "A valid SharePoint drive and Excel file path are required.")
     connection, ciphertext = _resolve_connection(db, current_user.id, connection_id)

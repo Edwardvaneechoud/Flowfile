@@ -848,7 +848,7 @@ def sharepoint_read(settings: SharePointReadSettings, job_id: str) -> OpOutputs:
 
     flow_id, node_id = settings.flowfile_flow_id, settings.flowfile_node_id
     if not settings.incremental and (
-        settings.schema_only or not settings.file_path or not settings.file_path.lower().endswith(".xlsx")
+        settings.schema_only or not settings.file_path or not settings.file_path.lower().endswith((".xls", ".xlsx"))
     ):
         return _read(job_id, read_saved_file, {"settings": settings}, flow_id, node_id)
     (result_id,) = _op_outputs(job_id, 1)

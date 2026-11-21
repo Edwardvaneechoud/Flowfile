@@ -1154,7 +1154,7 @@ def test_read_sharepoint_in_python_without_worker_service(
 @pytest.mark.parametrize(
     "extension",
     ["csv", "csv-no-range", "csv-glob", "xlsx", "xlsx-preview", "parquet", "parquet-no-range", "json", "json-no-range",
-     "list", "list-write", "csv-delta"],
+     "list", "list-write", "csv-delta", "xls"],
 )
 def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypatch, caplog, extension):
     import base64
@@ -1221,7 +1221,7 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
             db.commit()
         extension = "xlsx"
     filename = "Reports 2026/sales-*.csv" if glob_read else f"sales.{extension}"
-    sheet_name = "Sales" if extension == "xlsx" else None
+    sheet_name = "Sales" if extension in {"xls", "xlsx"} else None
     expected = [{"sku": "A", "quantity": 2}, {"sku": "B", "quantity": 5}]
     content = b"sku;quantity\nA;2\nB;5\n"
     if extension == "parquet":
@@ -1232,6 +1232,9 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
         content = output.getvalue()
     elif extension == "json":
         content = b'[{"sku":"A","quantity":2},{"sku":"B","quantity":5}]'
+    elif extension == "xls":
+        content = (Path(__file__).parent / "fixtures/sharepoint/sales.xls").read_bytes()
+        expected = [{"sku": "B", "quantity": 5}]
     elif extension == "xlsx":
         from openpyxl import Workbook
 
@@ -1452,7 +1455,7 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
                 assert not node_data["prediction_warning"]
                 assert downloads == ["preview-token", "worksheets", "header-range"]
                 downloads.clear()
-            elif glob_read or extension in {"xlsx", "list"}:
+            elif glob_read or extension in {"xls", "xlsx", "list"}:
                 assert preview["columns"] == []
                 assert node_data["prediction_warning"] == "SharePoint schema unavailable until run."
                 assert not downloads
@@ -1613,6 +1616,8 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
                 assert refreshed.setting_input.sheet_name == "Sales"
                 assert refreshed.sharepoint_worksheet_names is None
 
+            elif extension == "xls":
+                assert details.sharepoint_worksheet_names == ["Sheet", "Sales"]
             else:
                 assert details.sharepoint_worksheet_names is None
         finally:
@@ -1648,7 +1653,8 @@ def test_checks_saved_credentials_and_drive(saved_connection, monkeypatch, upstr
         assert response.json() == {"success": True}
 
 
-def test_sharepoint_worksheet_refresh_only_requests_file_metadata(saved_connection, monkeypatch):
+@pytest.mark.parametrize("filename", ["Sales.xlsx", "Sales.XLS"])
+def test_sharepoint_worksheet_refresh_only_requests_file_metadata(saved_connection, monkeypatch, filename):
     from flowfile_core.routes import sharepoint_connections
 
     def upstream(request):
@@ -1656,18 +1662,18 @@ def test_sharepoint_worksheet_refresh_only_requests_file_metadata(saved_connecti
             return httpx.Response(200, json={"access_token": "test-token"})
         assert request.url.host == "graph.microsoft.com"
         assert request.headers["Authorization"] == "Bearer test-token"
-        assert request.url.path == "/v1.0/drives/test-drive/root:/Reports/Sales.xlsx"
+        assert request.url.path == f"/v1.0/drives/test-drive/root:/Reports/{filename}"
         assert request.url.params["$select"] == "name"
-        return httpx.Response(200, json={"name": "Sales.xlsx"})
+        return httpx.Response(200, json={"name": filename})
 
     monkeypatch.setattr(
         sharepoint_connections, "_http_client", lambda: httpx.Client(transport=httpx.MockTransport(upstream))
     )
     client = TestClient(app)
     url = f"/sharepoint_connections/{saved_connection}/drives/test-drive/worksheets"
-    params = {"file_path": "Reports/Sales.xlsx"}
+    params = {"file_path": f"Reports/{filename}"}
     response = client.get(url, params=params)
     assert response.status_code == 200, response.text
-    assert response.json() == {"file_name": "Sales.xlsx", "file_path": "Reports/Sales.xlsx"}
+    assert response.json() == {"file_name": filename, "file_path": f"Reports/{filename}"}
     monkeypatch.setitem(app.dependency_overrides, get_current_active_user, lambda: SimpleNamespace(id=2))
     assert client.get(url, params=params).status_code == 404
