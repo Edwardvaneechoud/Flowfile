@@ -357,6 +357,7 @@ def test_derived_values_are_what_they_were():
     assert git_ops._managed_pathspecs() == [
         ":(literal)project.yaml",
         ":(literal).gitignore",
+        ":(literal).gitattributes",
         ":(literal)secrets.yaml",
         ":(literal)namespaces.yaml",
         ":(literal)tables.yaml",

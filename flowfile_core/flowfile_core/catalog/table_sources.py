@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import polars as pl
 from pydantic import BaseModel, ValidationError
 
-from flowfile_core.catalog.exceptions import CdcCursorNotFoundError, TableNotFoundError
+from flowfile_core.catalog.exceptions import CdcCursorNotFoundError, TableNotFoundError, VisualizationNotFoundError
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, resolve_for_table
 from flowfile_core.catalog.text_utils import plain_reference, reads_other
 from flowfile_core.configs.settings import is_server_mode
@@ -24,10 +24,11 @@ from shared import server_extension
 
 if TYPE_CHECKING:
     from flowfile_core.database.models import CatalogTable
-    from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceTree
+    from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceTree, VisualizationOut
 
 LOCAL = "local"
 _REMOTE_ID = re.compile(r"-\d+")
+_ROW_ID = re.compile(r"-?\d+")
 
 
 @dataclass(frozen=True)
@@ -149,17 +150,31 @@ def run_ends(run_id: str) -> None:
         _remote.run_ends(run_id)
 
 
+MIXED_ROWS = (
+    "This names a row of this Flowfile's own catalog together with a row of another catalog. What is saved in one "
+    "catalog stays there; save it anew in the other."
+)
+
+
 def relayed(user_id: int | None, method: str, path: str, params: dict | None, body) -> tuple[int, object] | None:
     """The remote catalog's answer to a request naming one of its rows (a negative id in the path, query or body),
-    ``None`` for one that names none."""
+    ``None`` for one that names none.
+
+    A request on a row of this install (the first id in its path is positive) that also names a remote row is a 422
+    here: sent on, the remote catalog would read this install's id as one of its own.
+    """
     if _remote is None:
         return None
-    named = [*path.split("/")]
+    segments = path.split("/")
+    named = [*segments]
     for sent in (params, body):
         if isinstance(sent, Mapping):
             named += [value for key, value in sent.items() if key == "id" or key.endswith("_id")]
     if not any(_REMOTE_ID.fullmatch(str(value)) for value in named):
         return None
+    addressed = next((segment for segment in segments if _ROW_ID.fullmatch(segment)), None)
+    if addressed is not None and not addressed.startswith("-"):
+        return 422, {"detail": MIXED_ROWS}
     return _remote.request(user_id, method, path, params, body)
 
 
@@ -232,6 +247,31 @@ def table_row(repo, table_id: int, user_id: int | None = None) -> CatalogTable |
         return catalog.table(user_id, table_id)
     except LookupError as e:
         raise ValueError(str(e)) from e
+
+
+def chart_row(viz_id: int, user_id: int | None) -> VisualizationOut | None:
+    """The row of the chart ``viz_id`` from the remote catalog that keeps it, as ``user_id`` may read it there;
+    ``None`` for a chart of this install. Its table is named by the id that table has here (negative).
+
+    The remote catalog's refusal of the person is ``Refused``, a chart it does not show them not found.
+    """
+    from flowfile_core.schemas.catalog_schema import VisualizationOut
+
+    catalog = remote_of(viz_id)
+    if catalog is None:
+        return None
+    status, answer = catalog.request(user_id, "GET", f"/catalog/visualizations/{viz_id}", None, None)
+    detail = answer.get("detail") if isinstance(answer, Mapping) else answer
+    if status == 403:
+        raise Refused(str(detail))
+    if status == 404:
+        raise VisualizationNotFoundError(viz_id=viz_id)
+    if status >= 400:
+        raise ValueError(f"The chart's catalog did not answer for it: {detail}")
+    try:
+        return VisualizationOut.model_validate(answer)
+    except ValidationError as e:
+        raise ValueError("The chart's catalog did not answer for it as a Flowfile catalog does") from e
 
 
 def row_targets(

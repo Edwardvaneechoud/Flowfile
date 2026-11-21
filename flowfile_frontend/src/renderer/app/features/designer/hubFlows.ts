@@ -1,5 +1,10 @@
 // The words of the hub's publish and open dialogs, outside the .vue files so they are unit-tested.
-import type { HubFlowVersion, HubRefusal, LocalPathUse } from "../../api/hubFlows.api";
+import type {
+  HubFlowVersion,
+  HubMergeResult,
+  HubRefusal,
+  LocalPathUse,
+} from "../../api/hubFlows.api";
 
 export const publishedLabel = (version: number): string => `Published as version ${version}`;
 
@@ -53,6 +58,28 @@ export const publishOverLabel = (current: HubFlowVersion): string =>
 export const openInsteadLabel = (current: HubFlowVersion): string =>
   `Open v${current.version} instead`;
 
+export const mergeLabel = (current: HubFlowVersion): string => `Merge v${current.version} in`;
+
+/** The button that settles a conflict on one side: "Keep your copy", "Keep version 5". */
+export const keepLabel = (side: string): string => `Keep ${side}`;
+
+/** After the last conflict is settled. */
+export const SETTLED = "Every conflict is settled. Publish to put your copy on the hub.";
+
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** What a merge did, in one sentence: what changed on the canvas, and what is left to settle. */
+export function mergedLabel(result: HubMergeResult): string {
+  if (!result.applied)
+    return `Your copy already builds on v${result.version}; there was nothing to merge.`;
+  const changed = result.changes.length
+    ? `${plural(result.changes.length, "step")} changed on your canvas`
+    : "nothing on your canvas changed";
+  if (!result.conflicts.length)
+    return `Merged v${result.version}: ${changed}. Publish to put both on the hub.`;
+  return `Merged v${result.version}: ${changed}. ${plural(result.conflicts.length, "step")} both of you changed, so your version stays until you settle ${result.conflicts.length === 1 ? "it" : "them"}.`;
+}
+
 /** When a version was published, in the viewer's own zone and naming it; a time without a zone is UTC. */
 export function publishedTime(iso: string): string {
   const utc = iso.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
@@ -93,5 +120,7 @@ export function refusalMessage(refusal: HubRefusal): string {
       return `This flow came from another hub (${refusal.hub_url}); connect to that hub to publish it.`;
     case "local_copy_exists":
       return `A local copy of this flow exists at ${refusal.flow_path}.`;
+    case "unresolved_conflicts":
+      return refusal.message;
   }
 }

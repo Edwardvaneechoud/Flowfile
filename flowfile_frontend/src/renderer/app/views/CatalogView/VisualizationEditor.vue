@@ -36,6 +36,25 @@
           {{ nameError }}
         </span>
       </div>
+      <div v-if="saveTargets.asks" class="viz-target-field">
+        <label class="viz-name-label">Save in</label>
+        <el-select
+          v-model="targetId"
+          size="small"
+          data-testid="viz-save-target"
+          :clearable="ownOffered"
+          :placeholder="ownOffered ? 'This Flowfile, no schema' : 'Pick a schema'"
+          :disabled="saving"
+        >
+          <el-option-group
+            v-for="group in targetGroups"
+            :key="group.label ?? ''"
+            :label="group.label ?? ''"
+          >
+            <el-option v-for="ns in group.options" :key="ns.id" :label="ns.label" :value="ns.id" />
+          </el-option-group>
+        </el-select>
+      </div>
       <div class="viz-editor-actions">
         <el-tooltip v-if="disabledReason" :content="disabledReason" placement="top">
           <span class="viz-disabled-hint">{{ disabledReason }}</span>
@@ -53,6 +72,10 @@
         </el-button>
       </div>
     </div>
+
+    <p v-if="saveTargets.note" class="viz-target-note" data-testid="viz-target-note">
+      {{ saveTargets.note }}
+    </p>
 
     <div class="viz-scroll-area">
       <div v-if="loadingSample" class="viz-editor-state">
@@ -105,6 +128,9 @@ import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompu
 import { toPlainJson } from "../../utils/structuredClone";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { chartNameError, nameFromAiTitle, suggestChartName } from "./chartNaming";
+import { chartSourceForSave, chartTargets, type ChartTargets } from "./chartSaveTarget";
+import { hubPresence, offersOwnCatalog } from "./hubRows";
+import { groupSaveTargets, useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import type {
   CatalogVisualization,
   VisualizationCreatePayload,
@@ -122,6 +148,8 @@ const props = defineProps<{
   takenNames?: string[];
   /** Set when the chart is made from inside a dashboard: asked at Save for the dashboard it belongs to. */
   ownerDashboardId?: () => Promise<number>;
+  /** The schema of that dashboard: a chart made inside a dashboard of a hub's catalog is saved there with it. */
+  dashboardNamespaceId?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -143,6 +171,52 @@ const nameError = computed(() => chartNameError(name.value));
 const saving = ref(false);
 
 const isCreate = computed(() => !isExistingViz(props.viz));
+
+// Where a new chart goes. A chart made inside a dashboard follows the dashboard, so nothing is asked there.
+const { saveTargetNamespaces } = useWritableNamespaces();
+const chartedTable = computed(() =>
+  props.source.source_type === "table" && props.source.table_id != null
+    ? store.findTableInTree(props.source.table_id)
+    : null,
+);
+const ownOffered = computed(() => offersOwnCatalog(store.tree));
+const NOTHING_ASKED: ChartTargets = {
+  asks: false,
+  options: [],
+  defaultId: null,
+  note: null,
+  blocked: null,
+};
+const saveTargets = computed<ChartTargets>(() =>
+  !isCreate.value || props.ownerDashboardId
+    ? NOTHING_ASKED
+    : chartTargets(
+        props.source,
+        saveTargetNamespaces.value,
+        { ownOffered: ownOffered.value, hubShown: hubPresence(store.tree) !== "none" },
+        chartedTable.value?.namespace_id ?? null,
+      ),
+);
+const targetGroups = computed(() => groupSaveTargets(saveTargets.value.options));
+const targetId = ref<number | null>(null);
+let targetPicked = false;
+watch(
+  () => saveTargets.value.defaultId,
+  (id) => {
+    if (!targetPicked) targetId.value = id;
+  },
+  { immediate: true },
+);
+watch(targetId, (id) => {
+  if (id !== saveTargets.value.defaultId) targetPicked = true;
+});
+const savedNamespaceId = computed<number | null>(() =>
+  props.ownerDashboardId ? (props.dashboardNamespaceId ?? null) : targetId.value,
+);
+const savedOnHub = computed(() => (savedNamespaceId.value ?? 0) < 0);
+const needsTarget = computed(
+  () => saveTargets.value.asks && !ownOffered.value && targetId.value == null,
+);
 const initialName = name.value;
 // The last name set for the user (the suggestion, then an AI title); typing makes it theirs.
 let automaticName = initialName;
@@ -192,9 +266,11 @@ watch(name, () => {
   }
 });
 
-// AI prompts are offered for a catalog table only: a SQL source has no column types on the server.
+// AI prompts need column types on this server, which a SQL source and a hub's table do not have.
 const promptTableId = computed(() =>
-  props.source.source_type === "table" ? (props.source.table_id ?? null) : null,
+  props.source.source_type === "table" && (props.source.table_id ?? 0) > 0
+    ? (props.source.table_id ?? null)
+    : null,
 );
 const builderHandle = () => gwRef.value;
 
@@ -272,9 +348,16 @@ const { computation: computeOnWorker, lastError: computeError } = useGraphicWalk
   "ad-hoc",
 );
 
-const canSave = computed(() => !nameError.value && !loadingSample.value);
+const canSave = computed(
+  () =>
+    !nameError.value && !loadingSample.value && !saveTargets.value.blocked && !needsTarget.value,
+);
 
-const disabledReason = computed(() => (loadingSample.value ? "Loading data sample..." : null));
+const disabledReason = computed(() => {
+  if (loadingSample.value) return "Loading data sample...";
+  if (saveTargets.value.blocked) return saveTargets.value.blocked;
+  return needsTarget.value ? "Pick a schema to save in" : null;
+});
 
 onMounted(async () => {
   if (isCreate.value) {
@@ -311,8 +394,10 @@ onBeforeUnmount(() => {
   draft?.dispose();
 });
 
-const isExistingViz = (v: any): v is CatalogVisualization =>
-  v && typeof v === "object" && typeof v.id === "number";
+// A declaration, so it is there for `isCreate`, which the save-target watcher reads during setup.
+function isExistingViz(v: any): v is CatalogVisualization {
+  return v && typeof v === "object" && typeof v.id === "number";
+}
 
 const save = async () => {
   if (!gwRef.value) return;
@@ -339,15 +424,19 @@ const save = async () => {
       saved = await store.updateVisualization(props.viz.id, updatePayload);
       expectedUpdatedAt = saved.updated_at;
     } else {
+      const kept = chartSourceForSave(props.source, chartedTable.value, savedOnHub.value);
       const createPayload: VisualizationCreatePayload = {
         name: name.value.trim(),
         spec,
         chart_type: chartTypeOf(spec),
-        source_type: props.source.source_type,
-        catalog_table_id:
-          props.source.source_type === "table" ? (props.source.table_id ?? null) : null,
-        sql_query: props.source.source_type === "sql" ? (props.source.sql_query ?? null) : null,
+        source_type: kept.source_type,
+        catalog_table_id: kept.source_type === "table" ? (kept.table_id ?? null) : null,
+        sql_query: kept.source_type === "sql" ? (kept.sql_query ?? null) : null,
       };
+      // Sent only where a schema was asked for or the dashboard is a hub's: otherwise core picks the table's.
+      if (savedNamespaceId.value != null && (saveTargets.value.asks || savedOnHub.value)) {
+        createPayload.namespace_id = savedNamespaceId.value;
+      }
       if (thumbnail_data_url) createPayload.thumbnail_data_url = thumbnail_data_url;
       if (props.ownerDashboardId) createPayload.dashboard_id = await props.ownerDashboardId();
       saved = await store.createVisualization(createPayload);
@@ -439,6 +528,17 @@ const offerOverwrite = async (
   gap: 4px;
   flex: 1;
   max-width: 360px;
+}
+.viz-target-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 260px;
+}
+.viz-target-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 .viz-name-label {
   font-size: 12px;

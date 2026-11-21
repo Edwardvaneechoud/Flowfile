@@ -41,7 +41,7 @@ from flowfile_core.catalog.services.sql import SqlService
 from flowfile_core.catalog.services.tables import TableService
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService, scan_object_storage_table
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
-from flowfile_core.catalog.table_sources import row_targets, table_row
+from flowfile_core.catalog.table_sources import chart_row, row_targets, table_row
 from flowfile_core.catalog.text_utils import (
     friendly_relation_error,
     is_table_reference,
@@ -712,7 +712,9 @@ class VisualizationService:
                 if not table.file_path:
                     raise ValueError(f"Table {table.id} has no file_path")
                 if _is_cloud_uri(table.file_path):
-                    return _kept_plan_source(user_id, f"table:{table.id}", lambda: self._table_plan(table, user_id))
+                    # The path is in the key: an id can come back for another table (SQLite, a remote catalog).
+                    key = f"table:{table.id}:{table.file_path}"
+                    return _kept_plan_source(user_id, key, lambda: self._table_plan(table, user_id))
                 return {
                     "kind": "physical",
                     "session_key": self._session_key_for_table(table.id),
@@ -858,16 +860,13 @@ class VisualizationService:
         payload: dict | None = None,
     ) -> VisualizationComputeResponse:
         """Compute rows for a saved viz against its embedded source."""
-        viz = self.repo.get_visualization(viz_id)
-        if viz is None:
-            raise VisualizationNotFoundError(viz_id=viz_id)
-        source = self._viz_source_descriptor(viz)
+        source = self._saved_source(viz_id, user_id)
         worker_source = self._resolve_source_for_worker(source, user_id=user_id)
         effective_payload = payload or _GW_RAW_SELECT_ALL_PAYLOAD
         viz_logger.info(
             "dispatch saved compute viz_id=%s source_type=%s kind=%s session_key=%s max_rows=%s gw_workflow=%s",
             viz_id,
-            viz.source_type,
+            source.source_type,
             worker_source["kind"],
             worker_source["session_key"],
             max_rows,
@@ -876,14 +875,18 @@ class VisualizationService:
         return self._dispatch_visualize_query(worker_source, effective_payload, self._clamp_max_rows(max_rows))
 
     def get_visualization_fields_for_viz(self, viz_id: int, user_id: int) -> VisualizationFieldsResponse:
-        viz = self.repo.get_visualization(viz_id)
+        return self.get_visualization_fields(self._saved_source(viz_id, user_id), user_id=user_id)
+
+    def _saved_source(self, viz_id: int, user_id: int | None) -> VizSourceDescriptor:
+        """What the saved chart ``viz_id`` reads. A chart a remote catalog keeps is read from its row there as
+        ``user_id`` (``table_sources.chart_row``) and drawn here like any chart: that catalog computes nothing."""
+        viz = chart_row(viz_id, user_id) or self.repo.get_visualization(viz_id)
         if viz is None:
             raise VisualizationNotFoundError(viz_id=viz_id)
-        source = self._viz_source_descriptor(viz)
-        return self.get_visualization_fields(source, user_id=user_id)
+        return self._viz_source_descriptor(viz)
 
     @staticmethod
-    def _viz_source_descriptor(viz: CatalogVisualization) -> VizSourceDescriptor:
+    def _viz_source_descriptor(viz: CatalogVisualization | VisualizationOut) -> VizSourceDescriptor:
         if viz.source_type == "sql":
             if not viz.sql_query:
                 raise VisualizationComputeError(f"sql visualization {viz.id} has no sql_query")

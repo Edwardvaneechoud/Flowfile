@@ -46,16 +46,27 @@
             clearable
             style="width: 100%"
           >
-            <el-option
-              v-for="ns in schemaNamespaces"
-              :key="ns.id"
-              :label="ns.label"
-              :value="ns.id"
-            />
+            <template v-for="group in saveTargetGroups" :key="group.label ?? ''">
+              <el-option-group v-if="group.label" :label="group.label">
+                <el-option
+                  v-for="ns in group.options"
+                  :key="ns.id"
+                  :label="ns.label"
+                  :value="ns.id"
+                />
+              </el-option-group>
+              <template v-else>
+                <el-option
+                  v-for="ns in group.options"
+                  :key="ns.id"
+                  :label="ns.label"
+                  :value="ns.id"
+                />
+              </template>
+            </template>
           </el-select>
-          <div class="save-form-hint">
-            Charts without a namespace are accessible from the Visualizations tab but won't appear
-            in the namespace tree.
+          <div class="save-form-hint" data-testid="sql-chart-save-hint">
+            {{ saveHint }}
           </div>
         </el-form-item>
         <el-form-item label="Description">
@@ -95,7 +106,8 @@ import type {
 import type { SqlQueryResult } from "../../types";
 import { CatalogApi } from "../../api/catalog.api";
 import { useCatalogStore } from "../../stores/catalog-store";
-import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { groupSaveTargets, useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { NO_HUB_SCHEMA_TO_SAVE_IN, offersOwnCatalog } from "./hubRows";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { useGraphicWalkerCompute } from "../../composables/useGraphicWalkerCompute";
 
@@ -231,7 +243,18 @@ const saveForm = reactive({
 });
 const exportedCharts = ref<Record<string, any>[]>([]);
 
-const { writableSchemaNamespaces: schemaNamespaces } = useWritableNamespaces();
+// This machine's schemas first, then the hub's the person may write.
+const { saveTargetNamespaces: schemaNamespaces } = useWritableNamespaces();
+const saveTargetGroups = computed(() => groupSaveTargets(schemaNamespaces.value));
+const ownCatalogOffered = computed(() => offersOwnCatalog(catalogStore.tree));
+const saveHint = computed(() => {
+  if (ownCatalogOffered.value) {
+    return "Charts without a namespace are accessible from the Visualizations tab but won't appear in the namespace tree.";
+  }
+  return schemaNamespaces.value.length
+    ? "Charts on this server are kept in your organisation's catalog on the hub: pick a schema."
+    : NO_HUB_SCHEMA_TO_SAVE_IN;
+});
 
 async function openSaveDialog() {
   if (!props.sourceQuery || !vueGraphicWalkerRef.value) return;
@@ -243,8 +266,10 @@ async function openSaveDialog() {
   exportedCharts.value = charts as Record<string, any>[];
   saveForm.name = defaultSavedChartName();
   saveForm.description = "";
-  // Default to the namespace the SQL editor is configured against, if any.
-  saveForm.namespaceId = props.saveNamespaceId ?? null;
+  // Default to the namespace the SQL editor is configured against, if any; on a joined server a hub schema.
+  saveForm.namespaceId =
+    props.saveNamespaceId ??
+    (ownCatalogOffered.value ? null : (schemaNamespaces.value[0]?.id ?? null));
   // Make sure the picker has data to render.
   if (catalogStore.tree.length === 0) {
     catalogStore.loadTree().catch((err) => console.warn("[catalog] tree refresh failed", err));
@@ -257,6 +282,10 @@ async function onConfirmSave() {
   const name = saveForm.name.trim();
   if (!name) {
     ElMessage.warning("Enter a name to save the visualization.");
+    return;
+  }
+  if (saveForm.namespaceId == null && !ownCatalogOffered.value) {
+    ElMessage.warning(saveHint.value);
     return;
   }
   saving.value = true;

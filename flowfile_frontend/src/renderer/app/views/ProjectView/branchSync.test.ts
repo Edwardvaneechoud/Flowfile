@@ -1,0 +1,62 @@
+import { describe, expect, it } from "vitest";
+import { branchNameError, itemFlowName, pullMessage, syncText, takeLabel } from "./branchSync";
+import type { ProjectBranch, ProjectMergeItem, ProjectPullResult } from "../../types";
+
+const branch = (ahead: number | null, behind: number | null): ProjectBranch => ({
+  name: "feature",
+  sha: "a".repeat(40),
+  current: true,
+  ahead,
+  behind,
+});
+
+const item: ProjectMergeItem = {
+  path: "flows/nightly_revenue.flow.yaml",
+  key: "step:6",
+  kind: "both_changed",
+  label: "step 6 join",
+  message: "",
+  step_id: 6,
+  ours_label: "feature (this copy)",
+  theirs_label: "origin/feature",
+  ours: [],
+  theirs: [],
+};
+
+const pull = (state: ProjectPullResult["state"], conflicts: ProjectMergeItem[] = []) => ({
+  state,
+  sha: null,
+  result: null,
+  conflicts,
+  warnings: [],
+});
+
+describe("branchSync", () => {
+  it("names how a branch stands against the remote", () => {
+    expect(syncText(branch(0, 0), true)).toBe("Up to date with the remote");
+    expect(syncText(branch(2, 1), true)).toBe("2 versions to push · 1 version to pull");
+    expect(syncText(branch(null, null), true)).toBe("Not on the remote yet");
+    expect(syncText(branch(1, 0), false)).toBe("");
+  });
+
+  it("refuses the branch names core refuses", () => {
+    expect(branchNameError("feature/fx-rates")).toBeNull();
+    for (const bad of ["", "-x", "a..b", "a//b", "x.lock", "x/", "a b"]) {
+      expect(branchNameError(bad)).not.toBeNull();
+    }
+  });
+
+  it("reports each pull outcome in one line", () => {
+    expect(pullMessage(pull("up_to_date"))).toMatch(/up to date/);
+    expect(pullMessage(pull("conflicted", [item, item]))).toBe(
+      "2 conflicts to settle before the pull is applied.",
+    );
+    expect(pullMessage(pull("merged"))).toMatch(/Merged/);
+  });
+
+  it("labels both sides and the flow of a conflict", () => {
+    expect(takeLabel(item, "ours")).toBe("Keep feature (this copy)");
+    expect(takeLabel(item, "theirs")).toBe("Take origin/feature");
+    expect(itemFlowName(item)).toBe("nightly_revenue");
+  });
+});

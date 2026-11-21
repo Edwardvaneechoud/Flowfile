@@ -34,7 +34,6 @@ ids already agree (the session's were relabelled onto provenance ids). :func:`re
 
 from __future__ import annotations
 
-import heapq
 import itertools
 from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Mapping, Set
@@ -48,9 +47,9 @@ from flowfile_core.flowfile.util.layout.placement import placer_from_payload
 from flowfile_core.notebook.compare import parameters_equal, settings_equal
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
-
-MAIN, RIGHT, LEFT = "input-0", "input-1", "input-2"
-DEFAULT_HANDLE = "output-0"
+from shared.flow_merge.edges import DEFAULT_HANDLE, LEFT, MAIN, RIGHT, incoming_edges  # noqa: F401
+from shared.flow_merge.edges import source_handles as _source_handles  # noqa: F401
+from shared.flow_merge.edges import topological as _topological
 
 
 class GroupPayload(TypedDict):
@@ -126,70 +125,6 @@ def _reference(names: dict[int, str] | None, node: dict) -> str | None:
 def _is_user_defined(node: dict) -> bool:
     settings = node.get("setting_input")
     return isinstance(settings, dict) and bool(settings.get("is_user_defined"))
-
-
-def _source_handles(nodes: dict[int, dict]) -> dict[tuple[int, int], list[str]]:
-    """``(source, target) -> [handles]`` in the source's ``outputs`` order."""
-    handles: dict[tuple[int, int], list[str]] = defaultdict(list)
-    for node in nodes.values():
-        outputs = node.get("outputs") or []
-        names = node.get("output_handles") or []
-        for index, target in enumerate(outputs):
-            handles[(node["id"], target)].append(names[index] if index < len(names) else DEFAULT_HANDLE)
-    return handles
-
-
-def incoming_edges(node: dict, nodes: dict[int, dict]) -> dict[str, list[tuple[int, str]]]:
-    """``target handle -> [(source, source handle)]`` for one node: main in order, right, left, keyed.
-
-    Static source handles come from the source's ``outputs``/``output_handles`` (consumed in order, so a
-    source feeding two slots through two handles keeps both); keyed edges carry their own.
-    """
-    handles = _source_handles(nodes)
-    used: Counter = Counter()
-
-    def handle(source: int) -> str:
-        options = handles.get((source, node["id"])) or [DEFAULT_HANDLE]
-        index = used[source]
-        used[source] += 1
-        return options[index] if index < len(options) else options[0]
-
-    edges: dict[str, list[tuple[int, str]]] = {}
-    main = [(source, handle(source)) for source in node.get("input_ids") or []]
-    if main:
-        edges[MAIN] = main
-    for slot, field in ((LEFT, "left_input_id"), (RIGHT, "right_input_id")):
-        if node.get(field) is not None:
-            edges[slot] = [(node[field], handle(node[field]))]
-    for conn in node.get("input_connections") or []:
-        edges.setdefault(conn["input_handle"], []).append(
-            (conn["from_id"], conn.get("source_handle") or DEFAULT_HANDLE)
-        )
-    return edges
-
-
-def _topological(nodes: dict[int, dict]) -> list[int]:
-    """Kahn order over the payload's edges with a min-heap on id; ids left in a cycle follow in id order."""
-    parents = {
-        nid: {s for edges in incoming_edges(n, nodes).values() for s, _ in edges if s in nodes}
-        for nid, n in nodes.items()
-    }
-    children: dict[int, set[int]] = defaultdict(set)
-    for nid, sources in parents.items():
-        for source in sources:
-            children[source].add(nid)
-    degree = {nid: len(sources) for nid, sources in parents.items()}
-    heap = [nid for nid, d in degree.items() if d == 0]
-    heapq.heapify(heap)
-    order: list[int] = []
-    while heap:
-        nid = heapq.heappop(heap)
-        order.append(nid)
-        for child in sorted(children[nid]):
-            degree[child] -= 1
-            if degree[child] == 0:
-                heapq.heappush(heap, child)
-    return order + sorted(set(nodes) - set(order))
 
 
 def user_description(node: dict) -> str:

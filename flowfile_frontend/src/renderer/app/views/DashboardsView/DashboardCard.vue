@@ -12,6 +12,14 @@
       <div class="dash-card-title">
         <span class="dash-name">{{ dashboard.name }}</span>
         <SharedBadge :access="dashboard.access" />
+        <span
+          v-if="isHubRow(dashboard)"
+          class="dash-hub-tag"
+          data-testid="dashboard-on-hub"
+          title="Saved in your organisation's catalog on the hub"
+        >
+          Hub
+        </span>
         <span class="dash-tile-count">{{ tileCount }} tile{{ tileCount === 1 ? "" : "s" }}</span>
       </div>
       <el-dropdown trigger="click" @click.stop>
@@ -88,6 +96,7 @@ import { formatDate } from "../CatalogView/catalog-formatters";
 import type { Dashboard } from "../../types";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { isHubRow } from "../CatalogView/hubRows";
 import { buildLayoutPreview, type PreviewRect } from "./layoutPreview";
 
 const props = defineProps<{
@@ -162,6 +171,13 @@ const thumbnailFor = (rect: PreviewRect): string | undefined =>
   font-size: 11px;
   color: var(--el-text-color-secondary);
   text-transform: uppercase;
+}
+.dash-hub-tag {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
 }
 .dash-card-menu {
   cursor: pointer;

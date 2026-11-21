@@ -814,6 +814,8 @@ class VisualizationOut(BaseModel):
     dashboard_id: int | None = None
     dashboard_name: str | None = None
     access: AccessInfo | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negatives of its ids there.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1335,6 +1337,8 @@ class DashboardOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negatives of its ids there.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1548,6 +1552,8 @@ class NotebookOut(BaseModel):
     updated_at: datetime
     namespace_name: str | None = None
     access: AccessInfo | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negatives of its ids there.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1565,6 +1571,8 @@ class NotebookSummaryOut(BaseModel):
     updated_at: datetime
     namespace_name: str | None = None
     access: AccessInfo | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negatives of its ids there.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 

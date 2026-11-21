@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // The table panel for a hub table: no Hub badge, and no "Read by" card, whose flow ids are the hub's and would open a
-// local flow of the same id; a local table keeps both as before.
+// local flow of the same id; a local table keeps both as before. Its saved charts are listed as a local table's.
 import { defineComponent, h, reactive, type FunctionalComponent } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { table } from "../../__fixtures__/catalogTree";
@@ -20,7 +20,12 @@ vi.mock("../../composables/useResourceSharing", () => ({
     sharedTitle: () => "",
   }),
 }));
-vi.mock("./VisualizationsTab.vue", () => ({ default: { render: () => null } }));
+vi.mock("./VisualizationsTab.vue", async () => {
+  const { h } = await import("vue");
+  const render = (props: { tableId: number }) =>
+    h("span", { "data-testid": "table-charts", "data-table-id": props.tableId });
+  return { default: Object.assign(render, { props: ["tableId"] }) };
+});
 vi.mock("./TableMaintenance.vue", async () => {
   const { h } = await import("vue");
   const render = () => h("span", { "data-testid": "maintenance" });
@@ -119,7 +124,16 @@ describe("TableDetailPanel", () => {
     expect(host.querySelector('[data-testid="hub-create-viz"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="maintenance"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="edit-data"]')).not.toBeNull();
-    expect(host.querySelector(".viz-section")).toBeNull();
+  });
+
+  it("lists a hub table's saved charts as a local table's, asked by the id the table has here", async () => {
+    await mount(localTable);
+    const local = host.querySelector('.viz-section [data-testid="table-charts"]');
+    expect(local?.getAttribute("data-table-id")).toBe(String(localTable.id));
+
+    await mount(hubTable);
+    const hub = host.querySelector('.viz-section [data-testid="table-charts"]');
+    expect(hub?.getAttribute("data-table-id")).toBe("-3");
   });
 
   describe("layout while data is pending", () => {

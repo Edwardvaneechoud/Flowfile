@@ -69,6 +69,7 @@ import {
   cellNodeId,
   flowCellKind,
   flowSessionId,
+  notebookSessionId,
   flowCellSyncState,
   flowNeedsSync,
   flowPushBody,
@@ -118,6 +119,14 @@ describe("flowSessionId", () => {
     expect(flowSessionId(7)).toBe(-(2 ** 40) - 7);
     expect(flowSessionId(0xffffffff)).toBeLessThan(-1_600_000_000);
     expect(Number.isSafeInteger(flowSessionId(0xffffffff))).toBe(true);
+  });
+});
+
+describe("notebookSessionId", () => {
+  it("is -id for this machine's notebook and a negative range of its own for a hub's", () => {
+    expect(notebookSessionId(99)).toBe(-99);
+    expect(notebookSessionId(-501)).toBe(-1_000_000_501);
+    expect(notebookSessionId(-501)).toBeGreaterThan(-1_500_000_000);
   });
 });
 
@@ -818,6 +827,38 @@ describe("persistence mapping + legacy coercion", () => {
     expect(store.active!.persistedId).toBe(99);
     expect(store.active!.sessionFlowId).toBe(-99);
     expect(store.active!.dirty).toBe(false);
+  });
+
+  it("a notebook saved in a hub schema keeps no kernel and runs in a namespace of its own", async () => {
+    const saved = {
+      id: -501,
+      name: "on the hub",
+      description: null,
+      namespace_id: -11,
+      default_kernel_id: null,
+      owner_id: 1,
+      created_at: "",
+      updated_at: "",
+      namespace_name: "curated",
+      access: null,
+      cells: [],
+    };
+    mocks.nbCreate.mockResolvedValue(saved);
+    mocks.nbUpdate.mockResolvedValue(saved);
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kernel-on-this-server");
+    await store.saveAs("on the hub", -11);
+    expect(mocks.nbCreate.mock.calls[0][0]).toMatchObject({
+      namespace_id: -11,
+      default_kernel_id: null,
+    });
+    expect(store.active!.persistedId).toBe(-501);
+    expect(store.active!.sessionFlowId).toBe(-1_000_000_501);
+    expect(store.active!.kernelId).toBe("kernel-on-this-server");
+    await store.save();
+    expect(mocks.nbUpdate.mock.calls[0][0]).toBe(-501);
+    expect(mocks.nbUpdate.mock.calls[0][1]).toMatchObject({ default_kernel_id: null });
   });
 
   it("save (update path) sends wire cells to NotebookApi.update and clears dirty", async () => {

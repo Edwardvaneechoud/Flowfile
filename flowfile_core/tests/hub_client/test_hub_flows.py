@@ -864,3 +864,144 @@ def test_publish_check_names_a_read_node_with_a_csv_path_and_nothing_for_a_flow_
 
     publish = connected.post("/hub_client/publish", json={"flow_id": flow.flow_id})
     assert publish.status_code == 201, publish.text
+
+
+def _sample(flow, node_id: int, after: int, size: int) -> None:
+    flow.add_node_promise(
+        input_schema.NodePromise(flow_id=flow.flow_id, node_id=node_id, node_type="sample", pos_x=300, pos_y=node_id * 100)
+    )
+    from flowfile_core.flowfile.flow_graph import add_connection
+
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(after, node_id))
+    flow.add_sample(
+        input_schema.NodeSample(
+            flow_id=flow.flow_id, node_id=node_id, depending_on_id=after, sample_size=size, pos_x=300, pos_y=node_id * 100
+        )
+    )
+
+
+def _hub_definition(flow, change) -> dict:
+    """What another person publishes: the open flow's document with ``change(graph)`` applied to a copy of it."""
+    copy_path = Path(flow.flow_settings.path).with_name("other_person.yaml")
+    flow.save_flow(str(copy_path))
+    flow.save_flow(flow.flow_settings.path)
+    other = open_flow(copy_path)
+    try:
+        change(other)
+        document = other.get_flowfile_data().model_dump(mode="json")
+    finally:
+        other.close_flow()
+    document["flowfile_settings"]["hub_origin"] = None
+    document["flowfile_settings"]["source_registration_id"] = None
+    return document
+
+
+def test_merge_after_stale_base_is_one_undo_step(connected, hub, user_id, tmp_path):
+    """Both added a step 2 after the same version: the hub's keeps 2, the person's becomes 3, and one undo reverts."""
+    path = tmp_path / "merging.yaml"
+    flow = _new_flow(user_id, path)
+    assert connected.post("/hub_client/publish", json={"flow_id": flow.flow_id, "message": "v1"}).status_code == 201
+    flow_uuid = flow.flow_settings.hub_origin.flow_uuid
+    hub.add_version(flow_uuid, _hub_definition(flow, lambda g: _sample(g, 2, 1, 5)), message="theirs")
+    _sample(flow, 2, 1, 9)
+
+    stale = connected.post("/hub_client/publish", json={"flow_id": flow.flow_id, "message": "mine"})
+    assert stale.status_code == 409 and stale.json()["detail"]["kind"] == "stale_base"
+
+    merged = connected.post("/hub_client/merge", json={"flow_id": flow.flow_id})
+    assert merged.status_code == 200, merged.text
+    body = merged.json()
+    assert (body["version"], body["applied"], body["conflicts"]) == (2, True, [])
+    assert flow.get_node(2).setting_input.sample_size == 5, "the hub's step keeps its id"
+    assert flow.get_node(3).setting_input.sample_size == 9, "the person's step moved to the next free id"
+    assert flow.flow_settings.hub_origin.version == 2
+    assert flow.get_history_state().undo_description == "Merge version 2 from the hub"
+
+    assert connected.post("/hub_client/publish", json={"flow_id": flow.flow_id, "message": "both"}).status_code == 201
+    assert hub.publishes[-1][1]["base_version"] == 2
+
+    assert connected.post(f"/editor/undo/?flow_id={flow.flow_id}").status_code == 200
+    assert flow.get_node(2).setting_input.sample_size == 9
+    assert flow.get_node(3) is None
+
+
+def test_publish_refused_while_conflicted(connected, hub, user_id, tmp_path):
+    path = tmp_path / "conflicting.yaml"
+    flow = _new_flow(user_id, path)
+    _sample(flow, 2, 1, 3)
+    flow.save_flow(str(path))
+    assert connected.post("/hub_client/publish", json={"flow_id": flow.flow_id}).status_code == 201
+    flow_uuid = flow.flow_settings.hub_origin.flow_uuid
+
+    def theirs(graph):
+        node = graph.get_node(2).setting_input.model_copy(deep=True)
+        node.sample_size = 50
+        graph.add_sample(node)
+
+    hub.add_version(flow_uuid, _hub_definition(flow, theirs))
+    mine = flow.get_node(2).setting_input.model_copy(deep=True)
+    mine.sample_size = 70
+    flow.add_sample(mine)
+
+    body = connected.post("/hub_client/merge", json={"flow_id": flow.flow_id}).json()
+    assert [(c["key"], c["kind"]) for c in body["conflicts"]] == [("step:2", "both_changed")]
+    assert flow.get_node(2).setting_input.sample_size == 70, "the canvas keeps the person's version while it is open"
+
+    refused = connected.post("/hub_client/publish", json={"flow_id": flow.flow_id})
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["kind"] == "unresolved_conflicts"
+    assert refused.json()["detail"]["count"] == 1
+
+
+def test_merge_with_nothing_new_changes_nothing(connected, hub, user_id, tmp_path):
+    flow = _new_flow(user_id, tmp_path / "current.yaml")
+    assert connected.post("/hub_client/publish", json={"flow_id": flow.flow_id}).status_code == 201
+    body = connected.post("/hub_client/merge", json={"flow_id": flow.flow_id}).json()
+    assert (body["version"], body["applied"], body["changes"]) == (1, False, [])
+
+
+def test_a_conflict_is_settled_from_the_editor_and_then_the_flow_runs_and_publishes(connected, hub, user_id, tmp_path):
+    path = tmp_path / "settling.yaml"
+    flow = _new_flow(user_id, path)
+    _sample(flow, 2, 1, 3)
+    flow.save_flow(str(path))
+    assert connected.post("/hub_client/publish", json={"flow_id": flow.flow_id}).status_code == 201
+    flow_uuid = flow.flow_settings.hub_origin.flow_uuid
+
+    def theirs(graph):
+        node = graph.get_node(2).setting_input.model_copy(deep=True)
+        node.sample_size = 50
+        graph.add_sample(node)
+
+    hub.add_version(flow_uuid, _hub_definition(flow, theirs))
+    mine = flow.get_node(2).setting_input.model_copy(deep=True)
+    mine.sample_size = 70
+    flow.add_sample(mine)
+    assert connected.post("/hub_client/merge", json={"flow_id": flow.flow_id}).status_code == 200
+
+    listed = connected.get("/editor/merge/conflicts", params={"flow_id": flow.flow_id}).json()["conflicts"]
+    assert [(c["key"], c["step_id"], c["ours_label"], c["theirs_label"]) for c in listed] == [
+        ("step:2", 2, "version 2", "your copy")
+    ]
+    assert listed[0]["ours"] == ["settings.sample_size: 3 → 50"]
+    assert listed[0]["theirs"] == ["settings.sample_size: 3 → 70"]
+    run = connected.post(f"/flow/run/?flow_id={flow.flow_id}")
+    assert run.status_code == 409 and run.json()["detail"]["code"] == "UNRESOLVED_CONFLICTS"
+
+    settled = connected.post("/editor/merge/resolve/", json={"flow_id": flow.flow_id, "key": "step:2", "take": "ours"})
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["conflicts"] == []
+    undo = settled.json()["history"]["undo_description"]
+    assert undo.startswith("Settle step 2 sample") and undo.endswith(": take version 2")
+    assert flow.get_node(2).setting_input.sample_size == 50
+    assert getattr(flow, "merge_conflicts", None) is None
+
+    published = connected.post("/hub_client/publish", json={"flow_id": flow.flow_id})
+    assert published.status_code == 201, published.text
+    assert hub.publishes[-1][1]["base_version"] == 2
+
+
+def test_settling_a_conflict_that_is_not_there_is_404(connected, user_id, tmp_path):
+    flow = _new_flow(user_id, tmp_path / "plain.yaml")
+    missing = connected.post("/editor/merge/resolve/", json={"flow_id": flow.flow_id, "key": "step:2", "take": "ours"})
+    assert missing.status_code == 404
