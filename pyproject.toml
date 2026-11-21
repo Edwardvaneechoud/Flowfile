@@ -182,6 +182,7 @@ markers = [
     "slow: Tests with a heavy workload or long runtime (deselect with -m 'not slow')",
     "cloud_e2e: Real core + worker processes driven over HTTP against MinIO (Docker)",
     "snowflake: Tests against a live Snowflake account (opt-in via FLOWFILE_TEST_SNOWFLAKE_* env vars)",
+    "iceberg_rest: Tests against a running Iceberg REST catalog on MinIO (python -m test_utils.iceberg_rest start); skip without it",
 ]
 
 [tool.coverage.run]

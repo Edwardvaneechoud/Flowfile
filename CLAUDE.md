@@ -223,6 +223,7 @@ poetry run pytest tests/remote_worker -m docker_integration
 | `slow` | Heavy-workload / long-runtime tests (deselect with `-m 'not slow'`) |
 | `cloud_e2e` | Real core + worker processes driven over HTTP against MinIO (Docker; skips locally without it, fails when `CI` is set) |
 | `snowflake` | A live Snowflake account (`shared/tests/db_dialects/test_snowflake_live.py`); skips unless `FLOWFILE_TEST_SNOWFLAKE_ACCOUNT`, `_USER` and a `_TOKEN` or `_PRIVATE_KEY_FILE` are set |
+| `iceberg_rest` | A running Iceberg REST catalog (Lakekeeper) on its own MinIO (`python -m test_utils.iceberg_rest start`, `stop`, `demo`; ports 19900 and 18181); skips without it |
 
 **Coverage source:** `flowfile_core/flowfile_core` + `flowfile_worker/flowfile_worker` only (frame/scheduler excluded).
 
