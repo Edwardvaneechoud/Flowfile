@@ -26,7 +26,7 @@ from flowfile_core.routes.notebook import require_notebook_sync
 from flowfile_core.schemas import input_schema, schemas
 
 EXEMPT_ROUTES = {
-    ("POST", "/raw_logs"): "worker/kernel log sink; the request carries no user to scope to",
+    ("POST", "/raw_logs"): "worker/kernel log sink; the worker carries no user, a kernel is scoped in test_logs_route",
     ("POST", "/flow/register/"): "creates a flow; see test_register_does_not_evict_another_users_flow",
     ("POST", "/artifacts/prepare-upload"): "source_flow_id is provenance metadata, never looked up",
     ("POST", "/notebook/session/node_result"): "kernel callback; a user is refused first, the flow is the kernel's",

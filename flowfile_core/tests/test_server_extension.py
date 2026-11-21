@@ -136,7 +136,8 @@ def test_the_extension_refuses_a_person_wherever_core_takes_their_token_and_is_n
     assert answers(ended, "/auth/users/me") == (200, None), "with no extension core takes the token as it always has"
 
     toy.use(monkeypatch, SimpleNamespace(access_refusal=access_refusal))
-    for route in ("/auth/users/me", "/catalog/namespaces", "/kernels/"):
+    # /kernels/flavours sits behind the kernel router's sign-in and, unlike /kernels/, answers without Docker.
+    for route in ("/auth/users/me", "/catalog/namespaces", "/kernels/flavours"):
         assert answers(kept, route) == (200, None), route
         assert answers(ended, route) == (401, "This sign-in ended"), route
     with get_db_context() as db:

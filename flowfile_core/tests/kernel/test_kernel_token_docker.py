@@ -19,7 +19,7 @@ from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.kernel.manager import KernelManager
-from flowfile_core.kernel.models import ExecuteRequest, KernelConfig
+from flowfile_core.kernel.models import ExecuteRequest, KernelConfig, KernelState
 from tests.kernel_fixtures import CORE_TEST_PORT
 
 pytestmark = pytest.mark.kernel
@@ -29,7 +29,7 @@ CORE = f"http://localhost:{CORE_TEST_PORT}"
 _HELD = """
 import hashlib, json, os
 def _digest(value):
-    return hashlib.sha256(str(value).encode()).hexdigest()
+    return hashlib.pbkdf2_hmac("sha256", str(value).encode(), b"flowfile-kernel-test", 1000).hex()
 _context = flowfile_ctx._context.get({})
 _values = list(os.environ.values()) + [v for v in _context.values() if isinstance(v, str)]
 print(json.dumps({"names": sorted(os.environ), "digests": sorted({_digest(v) for v in _values})}))
@@ -48,6 +48,11 @@ _answer = httpx.get(flowfile_ctx._CORE_URL + "/catalog/namespaces", headers=head
 _names = [row["name"] for row in _answer.json()] if _answer.status_code == 200 else []
 print(json.dumps({{"status": _answer.status_code, "names": _names}}))
 """
+
+
+def _digest(value: str) -> str:
+    """The digest ``_HELD`` prints for a value, so a value is compared without being printed."""
+    return hashlib.pbkdf2_hmac("sha256", value.encode(), b"flowfile-kernel-test", 1000).hex()
 
 
 def _cell(manager: KernelManager, kernel_id: str, code: str) -> dict:
@@ -154,7 +159,7 @@ def test_a_kernel_holds_a_token_of_its_own_and_not_the_internal_one(kernel_manag
     held = _cell(manager, kernel_id, _HELD)
 
     assert "FLOWFILE_INTERNAL_TOKEN" not in held["names"]
-    assert hashlib.sha256(get_internal_token().encode()).hexdigest() not in held["digests"]
+    assert _digest(get_internal_token()) not in held["digests"]
     assert "FLOWFILE_KERNEL_TOKEN" in held["names"]
 
 
@@ -181,6 +186,80 @@ def test_a_kernel_on_an_older_image_still_works_on_a_desktop(kernel_manager_with
 
     assert _call(manager, kernel_id, _as_an_older_image(kernel_id))["status"] == 200
     assert _call(manager, kernel_id, _as_an_older_image(None))["status"] == 200
+
+
+def _status(headers: dict[str, str]) -> int:
+    """What core answers a call that carries ``headers``, as a kernel's cell signs one."""
+    return httpx.get(f"{CORE}/catalog/namespaces", headers=headers, timeout=30).status_code
+
+
+def _remove_container(manager: KernelManager, kernel_id: str) -> None:
+    """Take the kernel's container away behind core's back, as an out-of-memory kill or a host restart does."""
+    manager._docker.containers.get(f"flowfile-kernel-{kernel_id}").remove(force=True)
+
+
+@pytest.fixture
+def spare_kernel(kernel_manager_with_core):
+    """A second running kernel of user 1, for a test that takes its container away; yields its id."""
+    manager, _ = kernel_manager_with_core
+    kernel_id = f"spare-{uuid.uuid4().hex[:8]}"
+    asyncio.run(manager.create_kernel(KernelConfig(id=kernel_id, name="spare"), user_id=1))
+    try:
+        manager.start_kernel_sync(kernel_id)
+        yield kernel_id
+    finally:
+        for step in (manager.stop_kernel, manager.delete_kernel):
+            try:
+                asyncio.run(step(kernel_id))
+            except Exception:
+                pass
+
+
+def test_another_core_process_leaves_a_running_kernels_token_alone(kernel_manager_with_core):
+    """A scheduled run has a manager of its own beside the designer's and starts the kernel its flow names, which
+    runs already: a cell the designer has running keeps signing with the token it was handed."""
+    manager, kernel_id = kernel_manager_with_core
+    headers = _cell(manager, kernel_id, _HEADERS)
+    assert _status(headers) == 200
+
+    other = KernelManager(shared_volume_path=manager.shared_volume_path)
+    assert _status(headers) == 200, "found running when the other process started"
+
+    # As a process sees a kernel that was started after it built its manager.
+    seen = other.get_kernel_sync(kernel_id)
+    seen.state, seen.container_id = KernelState.STOPPED, None
+    other.start_kernel_sync(kernel_id)
+
+    assert seen.container_id == manager.get_kernel_sync(kernel_id).container_id, "it took the running container"
+    assert _status(headers) == 200
+    assert _call(other, kernel_id)["status"] == 200
+    assert _call(manager, kernel_id)["status"] == 200
+
+
+def test_a_kernel_found_dead_under_a_cell_has_its_token_ended(kernel_manager_with_core, spare_kernel):
+    manager, _ = kernel_manager_with_core
+    headers = _cell(manager, spare_kernel, _HEADERS)
+    assert _status(headers) == 200
+
+    _remove_container(manager, spare_kernel)
+    cell = manager.execute_sync(spare_kernel, ExecuteRequest(node_id=1, code="print(1)", flow_id=9001))
+
+    assert not cell.success
+    assert _status(headers) == 401
+
+
+def test_startup_ends_the_token_of_a_kernel_with_no_running_container(kernel_manager_with_core, spare_kernel):
+    """As after a core that was killed: nothing stopped the kernel, and its token has no expiry of its own."""
+    manager, kernel_id = kernel_manager_with_core
+    gone = _cell(manager, spare_kernel, _HEADERS)
+    running = _cell(manager, kernel_id, _HEADERS)
+    _remove_container(manager, spare_kernel)
+    assert _status(gone) == 200, "nothing has ended it yet"
+
+    KernelManager(shared_volume_path=manager.shared_volume_path)
+
+    assert _status(gone) == 401
+    assert _status(running) == 200
 
 
 def test_a_kernel_is_answered_as_its_owner(server):
