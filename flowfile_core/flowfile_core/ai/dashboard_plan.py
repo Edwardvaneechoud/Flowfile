@@ -142,7 +142,10 @@ class DashboardPlan(BaseModel):
 
 
 class DashboardPlanResponse(BaseModel):
-    """``plan`` is set on success; a degraded result carries ``reason`` and a ``message``."""
+    """``plan`` is set on success; a degraded result carries ``reason`` and a ``message``.
+
+    ``provider`` and ``model`` are the ones the route resolved for the call.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -153,6 +156,8 @@ class DashboardPlanResponse(BaseModel):
     reason: str | None = None
     message: str | None = None
     attempts: int = 0
+    provider: str | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -422,6 +427,17 @@ Rules that matter most:
 - "chart" is a full instruction for a chart builder that sees only that source and your sentence.
   Name the chart type, the columns, the aggregate (sum, mean, median, min, max, count, distinct
   count) and, for a date, the time unit (year, quarter, month, week, day). One chart per check.
+- The chart builder draws exactly these chart types: bar chart, line chart, area chart, scatter
+  plot, pie chart, heatmap, box plot, histogram, table, and a map of points. Plan only charts from
+  this list. It cannot draw anything else: no layered or combined charts, no two kinds of mark in
+  one chart, no lines between points, no second set of points on a map.
+- A map draws one point per row at a latitude column and a longitude column, optionally coloured
+  by a column and sized by a number column. When a source has latitude and longitude columns
+  (often named lat, latitude, lon, lng, longitude) and the question asks where things are, plan a
+  map: "Map of points at latitude <lat column> and longitude <lon column>, coloured by <column>,
+  sized by <number column>." A map shows ONE pair of coordinates. When a source has two pairs (for
+  example a customer's location and a depot's), map the pair the question is about and compare the
+  other through a number column, such as a distance, in another check.
 - "tests" says what the chart is there to find out, as a question or a thing to compare.
 - Order the checks as a story: first the overall picture, then the breakdowns that explain it,
   then how it moves over time, then the relations between numbers, then the detail.
@@ -508,6 +524,26 @@ which I can filter per month and pick a region."
    "tests": "Whether the categories rank the same by units as by revenue."}],
  "filters": [{"source": "orders", "field": "order_date", "label": "Order date"},
              {"source": "orders", "field": "region", "label": "Region"}]}
+
+Example 5. Sources: "stores" (store_id number, city text, lat number, lon number, revenue
+number, warehouse_lat number, warehouse_lon number, km_to_warehouse number). Question: "Where are
+our stores and does the distance to the warehouse matter?"
+
+{"title": "Store locations and warehouse distance",
+ "kpis": [{"source": "stores", "label": "Stores", "agg": "count"},
+          {"source": "stores", "label": "Median km to warehouse", "field": "km_to_warehouse",
+           "agg": "median"}],
+ "checks": [
+  {"source": "stores", "title": "Store locations",
+   "chart": "Map of points at latitude lat and longitude lon, coloured by city, sized by revenue.",
+   "tests": "Where the stores are and where the large ones cluster."},
+  {"source": "stores", "title": "Revenue by city",
+   "chart": "Bar chart of the sum of revenue by city, sorted descending.",
+   "tests": "Which cities carry the revenue."},
+  {"source": "stores", "title": "Revenue against warehouse distance",
+   "chart": "Scatter plot of km_to_warehouse on x against revenue on y, one point per row.",
+   "tests": "Whether stores further from the warehouse earn less.",
+   "relation": ["km_to_warehouse", "revenue"]}]}
 """
 
 

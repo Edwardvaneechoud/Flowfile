@@ -357,6 +357,60 @@ def test_sort_is_checked_on_the_axis_the_browser_sorts() -> None:
     assert problems == ["A time or number axis is always in order; remove sort and limit, or use dateRange."]
 
 
+_GEO_COLUMNS = [*COLUMNS, ColumnInfo("lat", "float"), ColumnInfo("lon", "float")]
+_COORDINATES = {"latitude": {"field": "lat"}, "longitude": {"field": "lon"}}
+
+
+def test_a_map_plots_raw_rows_and_drops_aggregates() -> None:
+    repairs: list[str] = []
+    raw = {
+        "mark": "map",
+        **_COORDINATES,
+        "size": {"field": "revenue", "aggregate": "sum"},
+        "color": {"field": "region"},
+    }
+    chart, problems = review_chart(raw, _GEO_COLUMNS, repairs)
+    assert problems == [] and chart is not None
+    assert chart.aggregate is False
+    assert chart.size == cr.FieldRef(field="revenue")
+    assert repairs == ["map_raw"]
+
+
+def test_coordinates_alone_on_another_mark_make_a_map() -> None:
+    repairs: list[str] = []
+    chart, problems = review_chart({"mark": "point", **_COORDINATES, "aggregate": False}, _GEO_COLUMNS, repairs)
+    assert problems == [] and chart is not None
+    assert chart.mark == "map"
+    assert repairs == ["map_mark"]
+
+
+def test_coordinates_beside_axes_are_dropped() -> None:
+    repairs: list[str] = []
+    chart, problems = review_chart({**BAR, **_COORDINATES}, _GEO_COLUMNS, repairs)
+    assert problems == [] and chart is not None
+    assert (chart.mark, chart.latitude, chart.longitude) == ("bar", None, None)
+    assert repairs == ["geo_dropped"]
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ({"longitude": None}, "A map takes latitude and longitude"),
+        ({"latitude": {"field": "region"}}, "A map takes latitude and longitude"),
+        ({"latitude": {"field": "lat", "bin": 10}}, "A map takes latitude and longitude"),
+        ({"x": {"field": "lon"}}, "A map takes latitude and longitude"),
+        ({"size": {"field": "region"}}, "On a map, size takes one plain number column."),
+        ({"sort": "descending"}, "A map shows every row"),
+        ({"limit": 5}, "A map shows every row"),
+    ],
+)
+def test_a_map_that_cannot_be_drawn_says_why(change: dict[str, Any], problem: str) -> None:
+    raw = {k: v for k, v in {"mark": "map", **_COORDINATES, "aggregate": False, **change}.items() if v is not None}
+    chart, problems = review_chart(raw, _GEO_COLUMNS)
+    assert chart is None
+    assert any(p.startswith(problem) for p in problems), problems
+
+
 def test_reason_vocabulary_is_stable() -> None:
     assert cr.REASONS == (
         "empty_prompt",
@@ -383,6 +437,7 @@ def test_system_prompt_carries_the_worked_examples() -> None:
         "revenue by category in the West during 2024",
         "make it a line",
         "only 2025",
+        "where are the orders, on a map sized by revenue",
     ):
         assert f"Request: {request}\n" in prompt
     examples = [json.loads(block) for block in _example_answers(prompt)]
@@ -404,6 +459,8 @@ _SALES_COLUMNS = [
     ColumnInfo("quantity", "integer"),
     ColumnInfo("price", "float"),
     ColumnInfo("is_return", "boolean"),
+    ColumnInfo("store_lat", "float"),
+    ColumnInfo("store_lon", "float"),
 ]
 
 
@@ -543,6 +600,8 @@ def test_route_generates_a_chart_from_the_profile(
         "message": None,
         "attempts": 1,
         "repairs": ["shorthand"],
+        "provider": "fake",
+        "model": "fake-model",
     }
     user = provider.calls[0]["messages"][1].content
     assert 'Table "ai_sales": 2 rows, 3 columns.' in user
@@ -735,6 +794,7 @@ def test_route_degrades_on_a_provider_error(
     assert resp.status_code == 200
     assert (resp.json()["degraded"], resp.json()["reason"]) == (True, "provider_error")
     assert (resp.json()["attempts"], resp.json()["repairs"]) == (1, [])
+    assert (resp.json()["provider"], resp.json()["model"]) == ("fake", "fake-model")
 
 
 # The prompt log and the lazy-litellm contract.

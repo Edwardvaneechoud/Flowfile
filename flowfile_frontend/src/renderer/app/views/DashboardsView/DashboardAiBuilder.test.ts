@@ -256,6 +256,49 @@ describe("a build", () => {
     expect(find("dashboard-ai-filters")).toBeNull();
   });
 
+  it("shows the build log with every step, a failed chart's reason and the placing", async () => {
+    mocks.generateChart.mockResolvedValueOnce(chart()).mockResolvedValueOnce({
+      ...chart(),
+      chart: null,
+      degraded: true,
+      reason: "no_chart",
+      explanation: "The chart options do not support geographic maps.",
+    });
+    const { host, find, ask, click } = await mountBuilder();
+    await ask("How are sales?");
+    await click("dashboard-ai-build");
+    const log = find("dashboard-ai-log");
+    expect(log).not.toBeNull();
+    const entries = Array.from(
+      host.querySelectorAll<HTMLElement>('[data-testid="dashboard-ai-log-entry"]'),
+    );
+    expect(entries.map((e) => e.dataset.status)).toEqual(["ok", "ok", "failed", "ok", "ok"]);
+    expect(text(entries[2])).toContain("By month");
+    expect(text(entries[2])).toContain("Askedb2");
+    expect(text(entries[2])).toContain("The chart options do not support geographic maps.");
+    expect(text(entries[2])).toContain("no_chart");
+    expect(text(entries[4])).toContain("Add to dashboard");
+    expect(text(log)).toContain("FLOWFILE_AI_LOG_PROMPTS=true");
+  });
+
+  it("keeps the build log in view when the plan fails", async () => {
+    mocks.planDashboard.mockResolvedValue({
+      ...plan(),
+      plan: null,
+      degraded: true,
+      reason: "timeout",
+    });
+    const { host, find, ask, click } = await mountBuilder();
+    await ask("How are sales?");
+    await click("dashboard-ai-build");
+    expect(find("dashboard-ai-result")).toBeNull();
+    const entries = Array.from(
+      host.querySelectorAll<HTMLElement>('[data-testid="dashboard-ai-log-entry"]'),
+    );
+    expect(entries.map((e) => e.dataset.status)).toEqual(["failed"]);
+    expect(text(entries[0])).toContain("timeout");
+  });
+
   it("says when the text was written without the data", async () => {
     mocks.writeDashboardStory.mockResolvedValue({ ...story(), grounded: false, evidence: [] });
     const { find, ask, click } = await mountBuilder();

@@ -1386,6 +1386,8 @@ const onConflictOverwrite = async () => {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .editor-state {
   display: flex;

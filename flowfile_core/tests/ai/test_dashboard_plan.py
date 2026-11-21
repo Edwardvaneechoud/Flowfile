@@ -346,9 +346,24 @@ def test_every_example_in_the_prompt_passes_the_checks() -> None:
         ),
         profile_text="",
     )
+    stores = PlanSource(
+        key="stores",
+        table_id=4,
+        columns=(
+            ColumnInfo("store_id", "integer"),
+            ColumnInfo("city", "string"),
+            ColumnInfo("lat", "float"),
+            ColumnInfo("lon", "float"),
+            ColumnInfo("revenue", "float"),
+            ColumnInfo("warehouse_lat", "float"),
+            ColumnInfo("warehouse_lon", "float"),
+            ColumnInfo("km_to_warehouse", "float"),
+        ),
+        profile_text="",
+    )
     decoder = json.JSONDecoder()
     answers = []
-    for marker in ("Example 1.", "Example 2.", "Example 3.", "Example 4."):
+    for marker in ("Example 1.", "Example 2.", "Example 3.", "Example 4.", "Example 5."):
         start = prompt.index('{"title"', prompt.index(marker))
         answers.append(decoder.raw_decode(prompt[start:])[0])
     for answer, sources in zip(answers[:2], ([orders], [customers, tickets]), strict=True):
@@ -362,6 +377,9 @@ def test_every_example_in_the_prompt_passes_the_checks() -> None:
         ("order_date", "date_range", "Order date"),
         ("region", "categorical", "Region"),
     ]
+    plan, problems, warnings = check_plan(answers[4], [stores])
+    assert (problems, warnings) == ([], [])
+    assert len(plan.checks) == 3
 
 
 # The model loop, with a scripted provider.
@@ -588,6 +606,7 @@ def test_route_plans_over_every_selected_table(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert (body["degraded"], body["warnings"], body["attempts"]) == (False, [], 1)
+    assert (body["provider"], body["model"]) == ("fake", "fake-model")
     assert [(c["id"], c["table_id"]) for c in body["plan"]["checks"]] == [("c1", orders), ("c2", customers)]
     assert body["plan"]["kpis"] == [
         {"id": "k1", "table_id": orders, "label": "Revenue", "field": "revenue", "agg": "sum"}

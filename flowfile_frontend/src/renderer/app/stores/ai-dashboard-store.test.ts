@@ -323,6 +323,106 @@ describe("partial failures", () => {
   });
 });
 
+describe("the build log", () => {
+  it("records each step with the model that answered and why a chart was not made", async () => {
+    mocks.planDashboard.mockResolvedValue({
+      ...planResponse(2),
+      provider: "anthropic",
+      model: "planner-1",
+    });
+    mocks.generateChart
+      .mockResolvedValueOnce({ ...chartResponse(), attempts: 2, repairs: ["shorthand"] })
+      .mockResolvedValueOnce({
+        ...chartResponse(),
+        chart: null,
+        degraded: true,
+        reason: "no_chart",
+        explanation: "The chart options do not support maps.",
+        provider: "openai",
+        model: "charter-2",
+      });
+    const store = useAiDashboardStore();
+    await store.build(args());
+
+    expect(store.log.map((e) => [e.key, e.status])).toEqual([
+      ["plan", "ok"],
+      ["chart:c1", "warning"],
+      ["chart:c2", "failed"],
+      ["story", "warning"],
+    ]);
+    const [plan, built, declined, story] = store.log;
+    expect(plan).toMatchObject({
+      provider: "anthropic",
+      model: "planner-1",
+      asked: "How are sales?",
+      detail: "Planned 2 charts, 1 KPI, 1 filter.",
+    });
+    expect(built).toMatchObject({ asked: "Brief 1", attempts: 2, repairs: ["shorthand"] });
+    expect(built.endedAt).not.toBeNull();
+    expect(declined).toMatchObject({
+      provider: "openai",
+      model: "charter-2",
+      reason: "no_chart",
+      answer: "The chart options do not support maps.",
+    });
+    expect(story).toMatchObject({
+      warnings: ["story warning"],
+      detail: "Written from 2 of 2 measured items.",
+    });
+  });
+
+  it("keeps the target model for a core that does not report one, and logs a failed plan", async () => {
+    mocks.planDashboard.mockResolvedValue({
+      plan: null,
+      explanation: "The tables hold sales, not weather.",
+      warnings: [],
+      degraded: true,
+      reason: "no_plan",
+      message: null,
+      attempts: 1,
+    });
+    const store = useAiDashboardStore();
+    await store.build(args());
+    expect(store.log).toHaveLength(1);
+    expect(store.log[0]).toMatchObject({
+      status: "failed",
+      reason: "no_plan",
+      provider: "anthropic",
+      model: "planner",
+      answer: "The tables hold sales, not weather.",
+    });
+  });
+
+  it("logs the placing the dialog does after the build", async () => {
+    const store = useAiDashboardStore();
+    await store.build(args());
+    store.beginPlacing("Sales, told");
+    store.endPlacing({ status: "ok", detail: "Added 2 charts." });
+    expect(store.log.at(-1)).toMatchObject({
+      key: "place",
+      step: "place",
+      status: "ok",
+      detail: "Added 2 charts.",
+    });
+  });
+
+  it("marks the steps a cancel stopped", async () => {
+    mocks.generateChart.mockImplementation(
+      (_body, signal: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("canceled")));
+        }),
+    );
+    const store = useAiDashboardStore();
+    const pending = store.build(args());
+    await vi.waitFor(() => expect(mocks.generateChart).toHaveBeenCalled());
+    store.cancel();
+    await pending;
+    expect(store.log[0].status).toBe("ok");
+    expect(store.log.slice(1).every((e) => e.status === "cancelled")).toBe(true);
+  });
+});
+
 describe("a build that does not finish", () => {
   it("fails with the plan's own message and builds nothing", async () => {
     mocks.planDashboard.mockResolvedValue({
@@ -390,6 +490,24 @@ describe("a build that does not finish", () => {
     expect(await first).toEqual({ status: "cancelled" });
     expect((await second).status).toBe("ok");
     expect(store.stage).toBe("idle");
+  });
+
+  it("a replaced build writes nothing into the new build's log", async () => {
+    let release: (value: unknown) => void = () => undefined;
+    mocks.planDashboard.mockImplementationOnce(
+      (_body, signal: AbortSignal) =>
+        new Promise((resolve, reject) => {
+          release = resolve;
+          signal.addEventListener("abort", () => reject(new Error("canceled")));
+        }),
+    );
+    const store = useAiDashboardStore();
+    const first = store.build(args());
+    const second = store.build(args());
+    release(planResponse());
+    await first;
+    await second;
+    expect(store.log.map((e) => e.status)).toEqual(["ok", "ok", "ok", "ok", "warning"]);
   });
 
   it("is available only with AI on and a provider set up", () => {

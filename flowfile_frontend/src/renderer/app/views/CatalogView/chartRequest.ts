@@ -18,7 +18,17 @@ import type {
   terseComputedFid,
 } from "@kanaries/graphic-walker/models/terse";
 
-const CHART_MARKS = ["bar", "line", "area", "point", "arc", "rect", "boxplot", "table"] as const;
+const CHART_MARKS = [
+  "bar",
+  "line",
+  "area",
+  "point",
+  "arc",
+  "rect",
+  "boxplot",
+  "table",
+  "map",
+] as const;
 const CHART_AGGREGATES = ["sum", "mean", "median", "min", "max", "count", "distinctCount"] as const;
 const CHART_TIME_UNITS = ["year", "quarter", "month", "week", "day", "hour"] as const;
 const CHART_STACKS = ["stack", "none", "normalize"] as const;
@@ -52,10 +62,14 @@ export interface ChartRequest {
   x?: FieldRef | FieldRef[];
   y?: FieldRef | FieldRef[];
   color?: FieldRef;
-  /** Scatter only. */
+  /** Scatter and map only. */
   size?: FieldRef;
   /** Pie only, required there. */
   theta?: FieldRef;
+  /** Map only, required there: a plain number column. */
+  latitude?: FieldRef;
+  /** Map only, required there: a plain number column. */
+  longitude?: FieldRef;
   filters?: ChartFilter[];
   /** Default true; false plots raw rows. */
   aggregate?: boolean;
@@ -101,24 +115,30 @@ const DAY_END_MS = 86_399_999;
 const MIN_BINS = 2;
 const MAX_BINS = 50;
 
-type RefChannel = "x" | "y" | "color" | "size" | "theta";
-const REF_CHANNELS: RefChannel[] = ["x", "y", "color", "size", "theta"];
-const ENCODING_OF: Record<RefChannel, "columns" | "rows" | "color" | "size" | "theta"> = {
+type RefChannel = "x" | "y" | "color" | "size" | "theta" | "latitude" | "longitude";
+const REF_CHANNELS: RefChannel[] = ["x", "y", "color", "size", "theta", "latitude", "longitude"];
+const GEO_CHANNELS = ["latitude", "longitude"] as const;
+const ENCODING_OF: Record<
+  RefChannel,
+  "columns" | "rows" | "color" | "size" | "theta" | "latitude" | "longitude"
+> = {
   x: "columns",
   y: "rows",
   color: "color",
   size: "size",
   theta: "theta",
+  latitude: "latitude",
+  longitude: "longitude",
 };
+/** Graphic Walker's mark for a request's map: points at coordinates. */
+const MAP_GEOM = "poi";
 const OTHER_CHANNELS: Record<string, string> = {
   opacity: "a field on opacity",
   shape: "a field on shape",
   text: "a text label",
   details: "a detail field",
   radius: "a field on radius",
-  longitude: "a map",
-  latitude: "a map",
-  geoId: "a map",
+  geoId: "a filled map",
 };
 
 class ChartRequestError extends Error {}
@@ -172,6 +192,17 @@ function buildChart(request: ChartRequest, ctx: ChartContext): IChart {
   const aggregated = request.aggregate !== false;
   if (mark === "table" && !aggregated) {
     fail("A table shows aggregated values; give each number an aggregate.");
+  }
+  if (mark === "map") {
+    if (aggregated) fail('A map shows one point per row; set "aggregate": false.');
+    if (!request.latitude || !request.longitude || request.x || request.y || request.theta) {
+      fail("A map takes latitude and longitude, and no x, y or theta.");
+    }
+    if (request.sort != null || request.limit != null) {
+      fail("A map shows every row: it cannot be sorted or limited.");
+    }
+  } else if (request.latitude || request.longitude) {
+    fail('Latitude and longitude belong on a map: use "mark": "map".');
   }
   const columns = new Map(ctx.fields.map((f) => [f.fid, f]));
   const roles = new Map<string, IAnalyticType>();
@@ -260,13 +291,17 @@ function buildChart(request: ChartRequest, ctx: ChartContext): IChart {
     last.terse = { ...base, sort: request.sort };
   }
 
-  const terse: TerseSpec = { $schema: TERSE_SCHEMA_URL, mark, aggregate: aggregated };
+  const terse: TerseSpec = {
+    $schema: TERSE_SCHEMA_URL,
+    mark: mark === "map" ? MAP_GEOM : mark,
+    aggregate: aggregated,
+  };
   if (current?.name) terse.name = current.name;
   const single = (refs: PlannedRef[]) =>
     refs.length === 1 ? refs[0].terse : refs.map((p) => p.terse);
   if (xRefs.length) terse.x = single(xRefs);
   if (yRefs.length) terse.y = single(yRefs);
-  for (const channel of ["color", "size", "theta"] as const) {
+  for (const channel of ["color", "size", "theta", ...GEO_CHANNELS] as const) {
     const ref = planned.find((p) => p.channel === channel);
     if (ref) terse[channel] = ref.terse;
   }
@@ -281,7 +316,7 @@ function buildChart(request: ChartRequest, ctx: ChartContext): IChart {
 
   terse.config = {
     ...without(current?.config, ["geoms", "defaultAggregated", "limit"]),
-    coordSystem: "generic",
+    coordSystem: mark === "map" ? "geographic" : "generic",
   };
   terse.layout = without(current?.layout, ["stack"]);
   if (request.stack != null && (mark === "bar" || mark === "area")) {
@@ -424,13 +459,15 @@ export function describeChart(
   warnings.forEach((w) => unsupported.add(warningPhrase(w)));
 
   const stored = chart.config.geoms[0];
-  const mark = drawnMark(chart);
+  const drawn = drawnMark(chart);
+  const geographic = chart.config.coordSystem === "geographic";
+  const mark = drawn === MAP_GEOM && geographic ? "map" : drawn;
   if (!includes(CHART_MARKS, mark)) {
     unsupported.add(
       stored === "auto" || !stored ? "the automatic chart type" : `the "${stored}" chart type`,
     );
   }
-  if (chart.config.coordSystem === "geographic") unsupported.add("a map");
+  if (geographic !== (mark === "map")) unsupported.add("a map");
   for (const [channel, phrase] of Object.entries(OTHER_CHANNELS)) {
     const fields = chart.encodings[channel as keyof DraggableFieldState];
     if (fields && fields.length > 0) unsupported.add(phrase);
@@ -505,7 +542,7 @@ export function describeChart(
 
   const request: ChartRequest = { mark: mark as ChartMark };
   for (const channel of REF_CHANNELS) {
-    const shelf = chart.encodings[ENCODING_OF[channel]];
+    const shelf = chart.encodings[ENCODING_OF[channel]] ?? [];
     const refs = asList(spec[channel]);
     if (refs.length !== shelf.length) {
       unsupported.add("a part of this chart");
@@ -630,9 +667,13 @@ export function coreRefusals(request: ChartRequest, kinds: Map<string, ColumnKin
   const x = asList(request.x);
   const y = asList(request.y);
   const axes = { x, y } as const;
-  const others = [request.color, request.size, request.theta].filter(
-    (r): r is FieldRef => r !== undefined,
-  );
+  const others = [
+    request.color,
+    request.size,
+    request.theta,
+    request.latitude,
+    request.longitude,
+  ].filter((r): r is FieldRef => r !== undefined);
   const all = [...x, ...y, ...others];
   const kindOf = (ref: FieldRef) => (ref.field === "*" ? undefined : kinds.get(ref.field));
   const isMeasure = (key: string, ref: FieldRef) =>
@@ -665,7 +706,10 @@ export function coreRefusals(request: ChartRequest, kinds: Map<string, ColumnKin
       );
     }
   }
-  if (request.size && mark !== "point") found.add("a field on size");
+  if (request.size && mark !== "point" && mark !== "map") found.add("a field on size");
+  if ((request.latitude || request.longitude) && mark !== "map") {
+    found.add("coordinates on a chart that is not a map");
+  }
   if (request.theta && mark !== "arc") found.add("a field on angle");
 
   if (mark === "bar" || mark === "line" || mark === "area") {
@@ -716,11 +760,28 @@ export function coreRefusals(request: ChartRequest, kinds: Map<string, ColumnKin
     if (aggregated) found.add("a box plot of aggregated values");
     else if (!shaped || !colorOk) found.add("a box plot that is not categories against one number");
   }
+  if (mark === "map") {
+    const coordinate = (ref: FieldRef | undefined) =>
+      ref !== undefined && ref.field !== "*" && isPlain(ref) && kindOf(ref) === "number";
+    if (aggregated) found.add("a map of aggregated values");
+    if (
+      !coordinate(request.latitude) ||
+      !coordinate(request.longitude) ||
+      x.length ||
+      y.length ||
+      request.theta
+    ) {
+      found.add("a map that is not one latitude and one longitude column");
+    }
+    if (request.size && !coordinate(request.size))
+      found.add("a size on a map that is not a number");
+    if (request.sort || request.limit) found.add("a sorted or limited map");
+  }
   if (mark === "table" && !aggregated) found.add("a table of raw rows");
   if (!aggregated && mark !== "boxplot" && mark !== "table" && all.some((r) => r.aggregate)) {
     found.add("a row count in a chart of raw rows");
   }
-  if (mark !== "arc") {
+  if (mark !== "arc" && mark !== "map") {
     if (request.sort) {
       const key = (["y", "x"] as const).find(
         (k) => axes[k].length > 0 && !axes[k].some((r) => isMeasure(k, r)),

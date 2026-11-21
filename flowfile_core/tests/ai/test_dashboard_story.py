@@ -450,6 +450,7 @@ def test_route_reads_the_evidence_and_writes_the_story(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert (body["degraded"], body["grounded"], body["attempts"]) == (False, True, 1)
+    assert (body["provider"], body["model"]) == ("fake", "fake-model")
     assert [c["id"] for c in body["story"]["charts"]] == ["c1", "c2"]
     assert body["evidence"] == [
         {"id": "k1", "kind": "kpi", "status": "measured", "detail": None},

@@ -80,6 +80,9 @@ REPAIRS: tuple[str, ...] = (
     "filter_value_coerced",
     "filter_value_case",
     "date_range_normalized",
+    "map_raw",
+    "map_mark",
+    "geo_dropped",
 )
 """Every code ``ChartGenerationResponse.repairs`` can carry, one per kind of silent repair."""
 
@@ -89,12 +92,12 @@ def _note(repairs: list[str] | None, code: str) -> None:
         repairs.append(code)
 
 
-Mark = Literal["bar", "line", "area", "point", "arc", "rect", "boxplot", "table"]
+Mark = Literal["bar", "line", "area", "point", "arc", "rect", "boxplot", "table", "map"]
 Aggregate = Literal["sum", "mean", "median", "min", "max", "count", "distinctCount"]
 TimeUnit = Literal["year", "quarter", "month", "week", "day", "hour"]
 TypeClass = Literal["string", "boolean", "integer", "float", "date", "datetime", "other"]
 
-MARKS: tuple[str, ...] = ("bar", "line", "area", "point", "arc", "rect", "boxplot", "table")
+MARKS: tuple[str, ...] = ("bar", "line", "area", "point", "arc", "rect", "boxplot", "table", "map")
 AGGREGATES: tuple[str, ...] = ("sum", "mean", "median", "min", "max", "count", "distinctCount")
 TIME_UNITS: tuple[str, ...] = ("year", "quarter", "month", "week", "day", "hour")
 
@@ -168,6 +171,8 @@ class ChartRequest(_Compact):
     color: FieldRef | None = None
     size: FieldRef | None = None
     theta: FieldRef | None = None
+    latitude: FieldRef | None = None
+    longitude: FieldRef | None = None
     filters: list[ChartFilter] | None = None
     aggregate: bool | None = None
     stack: Literal["stack", "none", "normalize"] | None = None
@@ -179,7 +184,8 @@ class ChartGenerationResponse(BaseModel):
     """``chart`` is set on success; a degraded result carries ``reason`` and a ``message``.
 
     ``attempts`` is how many model calls this answer took (0, 1, or 2 when the correction
-    round ran); ``repairs`` the ``REPAIRS`` codes silently applied to the accepted answer.
+    round ran); ``repairs`` the ``REPAIRS`` codes silently applied to the accepted answer;
+    ``provider`` and ``model`` the ones the route resolved for the call.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -193,6 +199,8 @@ class ChartGenerationResponse(BaseModel):
     message: str | None = None
     attempts: int = 0
     repairs: list[str] = Field(default_factory=list)
+    provider: str | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -207,7 +215,8 @@ class ColumnInfo:
 
 CHART_KEYS: tuple[str, ...] = tuple(ChartRequest.model_fields)
 FIELD_REF_KEYS: tuple[str, ...] = tuple(FieldRef.model_fields)
-_CHANNELS: tuple[str, ...] = ("x", "y", "color", "size", "theta")
+_CHANNELS: tuple[str, ...] = ("x", "y", "color", "size", "theta", "latitude", "longitude")
+_GEO_CHANNELS: tuple[str, ...] = ("latitude", "longitude")
 _NUMERIC = frozenset({"integer", "float"})
 _TEMPORAL = frozenset({"date", "datetime"})
 _NUMBER_AGGS = frozenset({"sum", "mean", "median", "min", "max"})
@@ -315,7 +324,7 @@ def normalize_chart_shape(raw: Any, column_names: Sequence[str], repairs: list[s
         if isinstance(value, list):
             items = [_normalize_ref(v, column_names, repairs) for v in value]
             new: Any = items if any(a is not b for a, b in zip(items, value, strict=True)) else value
-            if key in ("color", "size", "theta") and len(new) == 1:
+            if key not in ("x", "y") and len(new) == 1:
                 new = new[0]
                 _note(repairs, "list_unwrapped")
         else:
@@ -543,6 +552,8 @@ class _Work:
             color=self.channels["color"][0] if self.channels["color"] else None,
             size=self.channels["size"][0] if self.channels["size"] else None,
             theta=self.channels["theta"][0] if self.channels["theta"] else None,
+            latitude=self.channels["latitude"][0] if self.channels["latitude"] else None,
+            longitude=self.channels["longitude"][0] if self.channels["longitude"] else None,
             filters=self.filters or None,
             aggregate=self.aggregate,
             stack=self.stack,
@@ -626,10 +637,20 @@ class _Checker:
         return ok
 
     def drop_misplaced(self) -> None:
+        ch = self.w.channels
+        if self.w.mark != "map" and any(ch[k] for k in _GEO_CHANNELS):
+            # Only a map reads coordinates: with nothing else on the chart they mean a map.
+            if not (ch["x"] or ch["y"] or ch["theta"]):
+                self.w.mark = "map"
+                self.note("map_mark")
+            else:
+                for key in _GEO_CHANNELS:
+                    ch[key] = []
+                self.note("geo_dropped")
         if self.w.mark != "arc" and self.w.channels["theta"]:
             self.w.channels["theta"] = []
             self.note("theta_dropped")
-        if self.w.mark != "point" and self.w.channels["size"]:
+        if self.w.mark not in ("point", "map") and self.w.channels["size"]:
             self.w.channels["size"] = []
             self.note("size_dropped")
         if self.w.mark not in ("bar", "area") and self.w.stack is not None:
@@ -642,14 +663,15 @@ class _Checker:
             if all(_plain(r) and self.numeric(r) for _, _, r in self.refs("x", "y")):
                 w.aggregate = False
                 self.note("scatter_raw")
-        if w.mark == "boxplot":
+        if w.mark in ("boxplot", "map"):
+            code = f"{w.mark}_raw"
             if w.aggregate is not False:
                 w.aggregate = False
-                self.note("boxplot_raw")
+                self.note(code)
             for key, i, ref in self.refs(*_CHANNELS):
                 if ref.aggregate is not None and ref.field != "*":
                     self.replace_ref(key, i, aggregate=None)
-                    self.note("boxplot_raw")
+                    self.note(code)
 
     def check_refs(self) -> None:
         for _key, _i, ref in self.refs(*_CHANNELS):
@@ -702,6 +724,8 @@ class _Checker:
             self.scatter()
         elif w.mark == "boxplot" and self.typed:
             self.boxplot()
+        elif w.mark == "map":
+            self.geo_map()
         elif w.mark == "table" and w.aggregate is False:
             self.problems.append("A table shows aggregated values; give each number an aggregate.")
         if w.aggregate is False and w.mark not in ("boxplot", "table"):
@@ -710,7 +734,7 @@ class _Checker:
                     self.problems.append(
                         f'"aggregate": false plots raw rows, but {w.path(key, i)} has "{ref.aggregate}". Remove one.'
                     )
-        if w.mark != "arc":
+        if w.mark not in ("arc", "map"):
             self.sort_and_limit()
 
     def decimals(self) -> None:
@@ -823,6 +847,30 @@ class _Checker:
         shaped = (value_axis("y") and category_axis("x")) or (value_axis("x") and category_axis("y"))
         if not (shaped and color_ok):
             self.problems.append("A box plot takes categories on one axis and one plain numeric column on the other.")
+
+    def geo_map(self) -> None:
+        w = self.w
+        ch = w.channels
+
+        def coordinate(key: str) -> bool:
+            refs = ch[key]
+            return (
+                len(refs) == 1
+                and refs[0].field != "*"
+                and _plain(refs[0])
+                and (not self.typed or self.numeric(refs[0]))
+            )
+
+        if not all(coordinate(k) for k in _GEO_CHANNELS) or ch["x"] or ch["y"] or ch["theta"]:
+            self.problems.append(
+                "A map takes latitude and longitude, each one plain number column (no aggregate, bin or "
+                "timeUnit), and no x, y or theta."
+            )
+        size = ch["size"]
+        if size and self.typed and not (size[0].field != "*" and _plain(size[0]) and self.numeric(size[0])):
+            self.problems.append("On a map, size takes one plain number column.")
+        if w.sort is not None or w.limit is not None:
+            self.problems.append("A map shows every row: it cannot be sorted or limited; filter with oneOf or range.")
 
     def sort_and_limit(self) -> None:
         w = self.w
@@ -1103,12 +1151,14 @@ Output a single JSON object, no prose and no markdown fences:
 The chart request:
 
   {
-    "mark": "bar" | "line" | "area" | "point" | "arc" | "rect" | "boxplot" | "table",
+    "mark": "bar" | "line" | "area" | "point" | "arc" | "rect" | "boxplot" | "table" | "map",
     "x": FieldRef or [FieldRef, ...],
     "y": FieldRef or [FieldRef, ...],
     "color": FieldRef,
-    "size": FieldRef,            (scatter only)
+    "size": FieldRef,            (scatter and map only)
     "theta": FieldRef,           (pie only, required there)
+    "latitude": FieldRef,        (map only, required there)
+    "longitude": FieldRef,       (map only, required there)
     "filters": [ {"field": ..., "oneOf": [...]} | {"field": ..., "notIn": [...]}
                | {"field": ..., "range": [min or null, max or null]}
                | {"field": ..., "dateRange": ["YYYY-MM-DD" or null, "YYYY-MM-DD" or null]} ],
@@ -1156,6 +1206,13 @@ Rules that matter most:
 * Box plots: "mark": "boxplot", a category on one axis, one plain numeric column on the other,
   "aggregate": false.
 * Tables: "mark": "table", categories on y, aggregated numbers on x (several are fine here).
+* Maps: "mark": "map" draws one point per row at its coordinates. "latitude" and "longitude" are
+  the plain number columns that hold them (no aggregate), with "aggregate": false. "color" (a
+  category or a number) and "size" (a number) are optional. No x, no y, no theta, no sort, no limit.
+  Use a map whenever the request asks for locations, places, a map or where things are, and the
+  table has latitude and longitude columns (often named lat, latitude, lon, lng, longitude).
+  A map shows ONE set of points: when the table holds two pairs of coordinates (for example a
+  customer's and a depot's), map the pair the request is about; the other pair cannot be added.
 * When a current chart is given, the request is a CHANGE to it: change only what the request
   asks for, keep every other part of the current chart, and return the whole changed chart.
 * If the request cannot be drawn from this table, answer {"chart": null, "title": null,
@@ -1163,7 +1220,7 @@ Rules that matter most:
 
 Worked examples, for a table "sales" with columns order_date (date), region (string, values
 "East", "North", "South", "West"), category (string), product (string), revenue (float),
-quantity (integer), price (float), is_return (boolean):
+quantity (integer), price (float), is_return (boolean), store_lat (float), store_lon (float):
 
 Request: revenue by region
 {"chart": {"mark": "bar", "x": {"field": "region"}, "y": {"field": "revenue", "aggregate": "sum"}},
@@ -1219,6 +1276,11 @@ Request: table of revenue and quantity per region
 {"chart": {"mark": "table", "y": {"field": "region"},
  "x": [{"field": "revenue", "aggregate": "sum"}, {"field": "quantity", "aggregate": "sum"}]},
  "title": "Revenue and quantity by region", "explanation": "Totals per region."}
+
+Request: where are the orders, on a map sized by revenue
+{"chart": {"mark": "map", "latitude": {"field": "store_lat"}, "longitude": {"field": "store_lon"},
+ "size": {"field": "revenue"}, "color": {"field": "region"}, "aggregate": false},
+ "title": "Orders by store location", "explanation": "One point per order at its store, sized by revenue."}
 
 Request: how many returns are there per month
 {"chart": {"mark": "bar", "x": {"field": "order_date", "timeUnit": "month"}, "y": {"field": "*", "aggregate": "count"},
