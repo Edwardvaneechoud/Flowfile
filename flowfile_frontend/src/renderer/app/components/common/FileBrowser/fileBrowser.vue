@@ -10,6 +10,20 @@
     <div class="browser-content">
       <!-- Navigation and Search Section -->
       <div class="browser-toolbar">
+        <div v-if="browseRoots.length" class="browse-roots">
+          <button
+            v-for="root in browseRoots"
+            :key="root.path"
+            class="nav-button root-button"
+            :class="{ active: activeRoot?.path === root.path }"
+            :disabled="loading"
+            :data-testid="`file-browser-root-${root.name.toLowerCase()}`"
+            @click="navigateToPath(root.path)"
+          >
+            <span class="material-icons">{{ rootIcon(root.name) }}</span>
+            <span>{{ root.name }}</span>
+          </button>
+        </div>
         <div class="path-navigation">
           <button class="nav-button" :disabled="loading || isAtRoot" @click="navigateUpDirectory">
             <span class="material-icons">arrow_upward</span>
@@ -78,7 +92,15 @@
         </div>
       </div>
       <!-- Main Content Area -->
-      <div class="browser-main" @click="handleBackgroundClick">
+      <div
+        class="browser-main"
+        :class="{ 'drop-active': dropActive }"
+        data-testid="file-browser-main"
+        @click="handleBackgroundClick"
+        @dragover="onFilesDragOver"
+        @dragleave="dropActive = false"
+        @drop="onFilesDrop"
+      >
         <!-- Loading State -->
         <div v-if="loading" class="loading-state"></div>
 
@@ -186,6 +208,36 @@
       </div>
       <!-- Bottom Action Bar -->
       <div class="browser-actions">
+        <template v-if="canTransferFiles">
+          <input
+            ref="uploadInput"
+            type="file"
+            multiple
+            class="upload-input"
+            data-testid="file-browser-upload-input"
+            @change="onUploadPicked"
+          />
+          <el-button
+            size="small"
+            class="browser-action-btn"
+            :disabled="loading || !!error"
+            data-testid="file-browser-upload"
+            @click="uploadInput?.click()"
+          >
+            <span class="material-icons">upload</span>
+            Upload
+          </el-button>
+          <el-button
+            v-if="selectedFile && !selectedFile.is_directory"
+            size="small"
+            class="browser-action-btn"
+            data-testid="file-browser-download"
+            @click="downloadSelected"
+          >
+            <span class="material-icons">download</span>
+            Download
+          </el-button>
+        </template>
         <template v-if="mode === 'create' && provider.capabilities.createFile">
           <el-button
             v-if="selectedFile && !selectedFile.is_directory && showWarningOnOverwrite"
@@ -289,6 +341,9 @@ import { resolveStorageProvider, storageScopeKey } from "./storage";
 import { basename, dirname, normalizePath } from "../../../utils/storagePath";
 
 import { FLOWFILE_EXTENSIONS, DATA_FILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "./constants";
+import { FileApi } from "./fileSystemApi";
+import { FileManagerApi } from "../../../api/fileManager.api";
+import { isBrowseRoot, offersBrowseRoots, rootContaining, type BrowseRoot } from "./workspaceRoots";
 
 const fileBrowserStore = useFileBrowserStore();
 
@@ -396,12 +451,82 @@ const isWithinRoot = (p: string): boolean => {
   return target === root || target.startsWith(root + "/");
 };
 
+// A server's Workspace and Shared folders (and flow folders kept apart); empty on a desktop.
+const browseRoots = ref<BrowseRoot[]>([]);
+const activeRoot = computed(() => rootContaining(currentPath.value, browseRoots.value));
+const rootIcon = (name: string): string =>
+  name === "Workspace" ? "person" : name === "Shared" ? "groups" : "folder";
+const canTransferFiles = computed(
+  () => props.location.kind === "local" && browseRoots.value.length > 0,
+);
+const loadBrowseRoots = async () => {
+  if (!offersBrowseRoots(props.location.kind, props.rootPath)) return;
+  try {
+    browseRoots.value = await FileApi.getBrowseRoots();
+  } catch {
+    browseRoots.value = [];
+  }
+};
+
 const isAtRoot = computed(
   () =>
     (!!props.rootPath &&
       normalizeForCompare(currentPath.value) === normalizeForCompare(props.rootPath)) ||
-    provider.value.isRoot(currentPath.value),
+    provider.value.isRoot(currentPath.value) ||
+    isBrowseRoot(currentPath.value, browseRoots.value),
 );
+
+const uploadInput = ref<HTMLInputElement | null>(null);
+const dropActive = ref(false);
+
+const uploadFiles = async (picked: File[]) => {
+  if (!picked.length) return;
+  const folder = currentPath.value;
+  let uploaded = 0;
+  for (const file of picked) {
+    try {
+      await FileManagerApi.uploadFile(file, undefined, { directory: folder });
+      uploaded += 1;
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      ElMessage.error(
+        `${file.name}: ${typeof detail === "string" ? detail : "could not be uploaded"}`,
+      );
+    }
+  }
+  if (uploaded) ElMessage.success(`Uploaded ${uploaded} file${uploaded === 1 ? "" : "s"}`);
+  if (currentPath.value === folder) await loadDirectoryContents(folder);
+};
+
+const onUploadPicked = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const picked = Array.from(input.files ?? []);
+  input.value = "";
+  await uploadFiles(picked);
+};
+
+const onFilesDragOver = (event: DragEvent) => {
+  if (!canTransferFiles.value || !event.dataTransfer?.types.includes("Files")) return;
+  event.preventDefault();
+  dropActive.value = true;
+};
+
+const onFilesDrop = async (event: DragEvent) => {
+  if (!canTransferFiles.value || !event.dataTransfer?.files.length) return;
+  event.preventDefault();
+  dropActive.value = false;
+  await uploadFiles(Array.from(event.dataTransfer.files));
+};
+
+const downloadSelected = async () => {
+  const file = selectedFile.value;
+  if (!file || file.is_directory) return;
+  try {
+    await FileApi.downloadFile(file.path, file.name);
+  } catch (err: any) {
+    ElMessage.error(err?.message || "Could not download the file");
+  }
+};
 
 const loadDirectoryContents = async (directoryPath: string) => {
   loading.value = true;
@@ -834,6 +959,7 @@ onActivated(async () => {
 });
 
 onMounted(async () => {
+  void loadBrowseRoots();
   if (props.initialFilePath) {
     await handleInitialFileSelection();
   } else {
@@ -843,6 +969,26 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.browse-roots {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.root-button.active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.upload-input {
+  display: none;
+}
+
+.browser-main.drop-active {
+  outline: 2px dashed var(--color-primary);
+  outline-offset: -4px;
+}
+
 .browser-title {
   display: flex;
   align-items: center;

@@ -25,6 +25,7 @@ from packaging.version import Version
 from flowfile_core.auth import sharing
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.events import publish
+from flowfile_core.fileExplorer import workspace
 from flowfile_core.flowfile.execution import registry as compute_registry
 
 # Re-exported for existing callers; the tags live in docker-free images.py so matching.py can read them.
@@ -710,6 +711,30 @@ class KernelManager:
 
         request.output_dir = self.to_kernel_path(output_dir)
 
+    def _user_data_mounts(self, kernel_id: str) -> list["docker.types.Mount"]:
+        """The user data folders a kernel mounts, at the paths core sees them.
+
+        Of a bind: the catalog's tables folder, the uploads and outputs folders and the workspace of the kernel's
+        owner, each the matching folder of the bind's source. Of a named volume: the volume where core mounts it.
+        """
+        target = self._catalog_mount_target or "/app/user_data"
+        mount_type = self._catalog_volume_type or "volume"
+        if mount_type != "bind":
+            return [docker.types.Mount(target=target, source=self._catalog_volume, type=mount_type, read_only=False)]
+        folders = [Path(self._catalog_tables_dir), storage.uploads_directory, storage.outputs_directory]
+        owner = getattr(self, "_kernel_owners", {}).get(kernel_id)
+        if owner is not None:
+            folders.append(workspace.workspace_of(owner))
+        mounts = []
+        for folder in folders:
+            inner = os.path.relpath(folder, target)
+            if inner.startswith(".."):
+                continue
+            folder.mkdir(parents=True, exist_ok=True)
+            source = self._catalog_volume if inner == "." else os.path.join(self._catalog_volume, inner)
+            mounts.append(docker.types.Mount(target=str(folder), source=source, type="bind", read_only=False))
+        return mounts
+
     def _build_run_kwargs(self, kernel_id: str, kernel: KernelInfo, env: dict) -> dict:
         """Build Docker ``containers.run()`` keyword arguments.
 
@@ -747,14 +772,7 @@ class KernelManager:
             ]
             # Catalog tables sit under the user data directory, usually a volume of its own.
             if self._catalog_volume:
-                mounts.append(
-                    docker.types.Mount(
-                        target=self._catalog_mount_target or "/app/user_data",
-                        source=self._catalog_volume,
-                        type=self._catalog_volume_type or "volume",
-                        read_only=False,
-                    )
-                )
+                mounts.extend(self._user_data_mounts(kernel_id))
             run_kwargs["mounts"] = mounts
             if self._docker_network:
                 run_kwargs["network"] = self._docker_network

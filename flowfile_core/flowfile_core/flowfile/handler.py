@@ -53,11 +53,14 @@ class FlowfileHandler:
         return list(self._flows.values())
 
     def _register_user_session(self, user_id: int | None, flow_id: int):
-        """Register a flow as belonging to a user's session."""
+        """Register a flow as belonging to a user's session; the flow then knows whose session holds it."""
         if user_id is not None:
             if user_id not in self._user_sessions:
                 self._user_sessions[user_id] = set()
             self._user_sessions[user_id].add(flow_id)
+            flow = self._flows.get(flow_id)
+            if flow is not None:
+                flow._session_user_id = user_id
 
     def _unregister_user_session(self, user_id: int | None, flow_id: int):
         """Remove a flow from a user's session."""

@@ -272,6 +272,7 @@ def _handle_update_node_settings(
             new_settings,
             upstream_schemas,
             right_input_node_id=right_input_id,
+            flow=flow,
         )
 
     # --- Audit annotation: flag database_reader query changes as high-risk ---

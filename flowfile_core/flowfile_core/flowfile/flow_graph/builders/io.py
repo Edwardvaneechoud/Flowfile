@@ -9,8 +9,8 @@ import polars as pl
 from fastapi.exceptions import HTTPException
 
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import is_electron_mode
-from flowfile_core.fileExplorer.funcs import SecureFileExplorer
+from flowfile_core.configs.settings import is_electron_mode, is_server_mode
+from flowfile_core.fileExplorer import workspace
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.payloads import FileReadPayload, FileWritePayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
@@ -104,8 +104,9 @@ def get_xlsx_schema_callback(
     end_row: int,
     end_column: int,
     has_headers: bool,
+    user_id: int | None = None,
 ):
-    """Creates a partially applied function for lazy calculation of an XLSX schema.
+    """Creates a function for lazy calculation of an XLSX schema, which reads only a file the person may use.
 
     Args:
         engine: The engine to use for reading.
@@ -116,11 +117,17 @@ def get_xlsx_schema_callback(
         end_row: The ending row.
         end_column: The ending column.
         has_headers: A boolean indicating if the file has headers.
+        user_id: The user the node's settings carry (``workspace.running_person``).
 
     Returns:
         A callable function that, when called, will execute `get_xlsx_schema`.
     """
-    return partial(
+
+    def schema_callback():
+        workspace.require_data_paths(workspace.running_person(user_id), file_path)
+        return read()
+
+    read = partial(
         get_xlsx_schema,
         engine=engine,
         file_path=file_path,
@@ -131,9 +138,10 @@ def get_xlsx_schema_callback(
         end_column=end_column,
         has_headers=has_headers,
     )
+    return schema_callback
 
 
-def get_directory_schema_callback(received_file: input_schema.ReceivedTable):
+def get_directory_schema_callback(received_file: input_schema.ReceivedTable, user_id: int | None = None):
     """Directory-mode schema callback: probe only the first matched file.
 
     Under strict-native semantics the run errors on column-set divergence anyway, so the first
@@ -144,6 +152,9 @@ def get_directory_schema_callback(received_file: input_schema.ReceivedTable):
     """
 
     def schema_callback():
+        workspace.require_data_paths(
+            workspace.running_person(user_id), received_file.abs_file_path, expand_glob=True, shown=received_file.path
+        )
         matches = expand_glob_pattern(received_file.abs_file_path)
         if not matches:
             return []
@@ -212,11 +223,16 @@ def scan_directory_to_frame(
 
     sandbox_root = _list_files_sandbox_root()
     try:
-        explorer = SecureFileExplorer(settings.path, sandbox_root)
+        explorer = workspace.explorer_for(
+            settings.path, workspace.running_person(settings.user_id), sandbox_root, use="read"
+        )
     except PermissionError:
-        raise HTTPException(
-            status_code=403, detail=f"Access denied: '{settings.path}' is outside the allowed directory"
-        ) from None
+        detail = (
+            workspace.refusal(settings.path)
+            if is_server_mode()
+            else f"Access denied: '{settings.path}' is outside the allowed directory"
+        )
+        raise HTTPException(status_code=403, detail=detail) from None
     except (OSError, ValueError) as e:
         raise HTTPException(status_code=400, detail=f"Could not open folder '{settings.path}': {e}") from e
 
@@ -261,6 +277,33 @@ def scan_directory_to_frame(
     return pl.DataFrame(rows, schema=dict(LIST_FILES_SCHEMA))
 
 
+def _datasource_engine(input_file: input_schema.NodeDatasource):
+    """The data source node's data, or, where the person may not read its file, a function that fails with why."""
+    try:
+        workspace.require_data_paths(workspace.running_person(input_file.user_id), input_file.file_ref)
+    except workspace.NotYours as refused:
+        sentence = refused.shown
+
+        def _refused():
+            raise workspace.NotYours(sentence)
+
+        return _refused
+    return FlowDataEngine(path_ref=input_file.file_ref)
+
+
+def _output_path_refusal(output_file: input_schema.NodeOutput) -> str | None:
+    """The sentence for an output path the person may not write, shown before a run; none while a parameter in
+    the path is unresolved."""
+    path = output_file.output_settings.abs_file_path
+    if not path or "${" in path:
+        return None
+    try:
+        workspace.require_data_paths(workspace.running_person(output_file.user_id), path, write=True)
+    except workspace.NotYours as refused:
+        return refused.shown
+    return None
+
+
 class FileIoBuildersMixin(GraphMixinBase):
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_output(self, output_file: input_schema.NodeOutput):
@@ -271,6 +314,9 @@ class FileIoBuildersMixin(GraphMixinBase):
         """
 
         def _func(df: FlowDataEngine):
+            workspace.require_data_paths(
+                workspace.running_person(output_file.user_id), output_file.output_settings.abs_file_path, write=True
+            )
             write = FileWritePayload(
                 plan=df.data_frame.lazy(),
                 settings=output_file.output_settings,
@@ -288,7 +334,7 @@ class FileIoBuildersMixin(GraphMixinBase):
             return input_node.schema
 
         input_node_id = output_file.depending_on_id if hasattr(output_file, "depending_on_id") else None
-        self.add_node_step(
+        node = self.add_node_step(
             node_id=output_file.node_id,
             function=_func,
             input_columns=[],
@@ -297,6 +343,8 @@ class FileIoBuildersMixin(GraphMixinBase):
             schema_callback=schema_callback,
             input_node_ids=[input_node_id],
         )
+        if is_server_mode():
+            node._prediction_refused = _output_path_refusal(output_file)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_api_response(self, api_response: input_schema.NodeApiResponse):
@@ -432,6 +480,12 @@ class FileIoBuildersMixin(GraphMixinBase):
 
         def _func():
             input_file.received_file.set_absolute_filepath()
+            workspace.require_data_paths(
+                workspace.running_person(input_file.user_id),
+                input_file.received_file.abs_file_path,
+                expand_glob=True,
+                shown=input_file.received_file.path,
+            )
             if input_file.received_file.file_type in ("parquet", "ipc", "ndjson") or (
                 input_file.received_file.file_type == "csv"
                 and is_utf8_encoding(input_file.received_file.table_settings.encoding)
@@ -469,7 +523,7 @@ class FileIoBuildersMixin(GraphMixinBase):
             if len(received_file.fields) > 0:
                 directory_schema_callback = schema_from_fields
             else:
-                directory_schema_callback = get_directory_schema_callback(received_file)
+                directory_schema_callback = get_directory_schema_callback(received_file, input_file.user_id)
 
         node = self.get_node(input_file.node_id)
         is_new = node is None
@@ -499,12 +553,24 @@ class FileIoBuildersMixin(GraphMixinBase):
                 elif input_file.received_file.file_type in ("csv", "json", "parquet", "ipc", "ndjson"):
 
                     def schema_callback():
+                        workspace.require_data_paths(
+                            workspace.running_person(input_file.user_id),
+                            input_file.received_file.abs_file_path,
+                            expand_glob=True,
+                            shown=input_file.received_file.path,
+                        )
                         input_data = FlowDataEngine.create_from_path(input_file.received_file)
                         return input_data.schema
 
                 elif input_file.received_file.file_type in ("avro", "ipc_stream"):
 
                     def schema_callback():
+                        workspace.require_data_paths(
+                            workspace.running_person(input_file.user_id),
+                            input_file.received_file.abs_file_path,
+                            expand_glob=True,
+                            shown=input_file.received_file.path,
+                        )
                         return pl_schema_to_flowfile_columns(create_funcs.probe_eager_schema(input_file.received_file))
 
                 elif input_file.received_file.file_type in ("xlsx", "excel"):
@@ -517,6 +583,7 @@ class FileIoBuildersMixin(GraphMixinBase):
                         start_column=received_file.table_settings.start_column,
                         end_column=received_file.table_settings.end_column,
                         has_headers=received_file.table_settings.has_headers,
+                        user_id=input_file.user_id,
                     )
                 else:
                     schema_callback = None
@@ -558,7 +625,7 @@ class FileIoBuildersMixin(GraphMixinBase):
             input_data = FlowDataEngine(input_file.raw_data_format)
             ref = "manual_input"
         else:
-            input_data = FlowDataEngine(path_ref=input_file.file_ref)
+            input_data = _datasource_engine(input_file)
             ref = "datasource"
         node = self.get_node(input_file.node_id)
         is_new = node is None
@@ -570,7 +637,8 @@ class FileIoBuildersMixin(GraphMixinBase):
             self.add_node_to_starting_list(node)
 
         else:
-            input_data.collect()
+            if isinstance(input_data, FlowDataEngine):
+                input_data.collect()
             node = FlowNode(
                 input_file.node_id,
                 function=input_data,

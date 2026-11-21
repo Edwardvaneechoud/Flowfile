@@ -154,6 +154,7 @@ def predict_schema_via_mirror(
     upstream_schemas: dict[int, list[FlowfileColumn]],
     *,
     right_input_node_id: int | None = None,
+    flow=None,
 ) -> list[FlowfileColumn] | None:
     """Predict the output schema by dispatching ``add_<node_type>`` on a throwaway
     :class:`FlowGraph` and reading the bound ``schema_callback``.
@@ -167,12 +168,15 @@ def predict_schema_via_mirror(
     The caller's ``settings`` is deep-copied before the mirror dispatch so the
     ``flow_id`` override does not leak back to the caller's flow. The settings
     ``node_id`` is kept verbatim — mirror nodes don't conflict with real ids
-    because they live on a separate :class:`FlowGraph` instance.
+    because they live on a separate :class:`FlowGraph` instance. ``flow`` is the
+    flow the node is staged for: the mirror stands in for it, so it is held by
+    the same person's session.
     """
     if not is_predictable_via_mirror(node_type):
         return None
 
     mirror = _build_mirror_graph(upstream_schemas)
+    mirror._session_user_id = getattr(flow, "_session_user_id", None)
     settings_clone = settings.model_copy(update={"flow_id": mirror.flow_id})
 
     add_method = getattr(mirror, f"add_{node_type}", None)

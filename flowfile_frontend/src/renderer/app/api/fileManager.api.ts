@@ -69,13 +69,13 @@ export class FileManagerApi {
   static async uploadFile(
     file: File,
     onProgress?: (percent: number) => void,
-    opts?: { unique?: boolean; signal?: AbortSignal },
+    opts?: { unique?: boolean; signal?: AbortSignal; directory?: string },
   ): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append("file", file);
     const response = await axios.post<UploadResponse>(`${API_BASE}/upload`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
-      params: { unique: opts?.unique ? true : undefined },
+      params: { unique: opts?.unique ? true : undefined, directory: opts?.directory },
       signal: opts?.signal,
       onUploadProgress: (e) => {
         if (onProgress && e.total) {

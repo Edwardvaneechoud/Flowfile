@@ -18,7 +18,7 @@
           @click="saveMode = 'file'"
         >
           <i class="fa-solid fa-folder"></i>
-          <span>File System</span>
+          <span>{{ fileTabLabel(isMultiUser) }}</span>
         </button>
         <button
           v-if="ownCatalogOffered"
@@ -56,12 +56,15 @@
             @overwrite-file="handleSaveFlow"
           />
           <catalog-register-row
-            v-if="ownCatalogOffered"
+            v-if="registersFromFileTab"
             v-model="registerInCatalog"
             v-model:namespace-id="selectedNamespaceId"
           />
-          <span v-else class="form-hint" data-testid="own-catalog-note">
+          <span v-else-if="!ownCatalogOffered" class="form-hint" data-testid="own-catalog-note">
             {{ OWN_CATALOG_NOT_OFFERED }}
+          </span>
+          <span v-else class="form-hint" data-testid="workspace-file-note">
+            {{ WORKSPACE_FILE_NOTE }}
           </span>
         </div>
 
@@ -152,6 +155,14 @@ import type { FlowRegistration } from "../../../types";
 import { catalogSaveErrorMessage } from "../../../composables/saveError";
 import { useOwnCatalog } from "../../../composables/useOwnCatalog";
 import { OWN_CATALOG_NOT_OFFERED } from "../../../views/CatalogView/hubRows";
+import {
+  fileTabLabel,
+  fileTabRegisters,
+  WORKSPACE_FILE_NOTE,
+} from "../../../components/common/FileBrowser/workspaceRoots";
+import { useMultiUser } from "../../../composables/useMultiUser";
+
+const { isMultiUser } = useMultiUser();
 
 const props = defineProps({
   visible: {
@@ -191,6 +202,9 @@ watch(saveMode, (m) => localStorage.setItem(DIALOG_MODE_STORAGE_KEY, m));
 // Where this Flowfile's own catalog takes no flows the dialog saves a file only, and the catalog is the hub's.
 const { ownCatalogOffered, refreshOwnCatalog } = useOwnCatalog();
 const shownMode = computed(() => (ownCatalogOffered.value ? saveMode.value : "file"));
+const registersFromFileTab = computed(() =>
+  fileTabRegisters(isMultiUser.value, ownCatalogOffered.value),
+);
 
 const publishInstead = () => {
   isVisible.value = false;
@@ -345,7 +359,7 @@ const handleSaveFlow = async (flowPath: string) => {
   try {
     // Unchecking must actually opt out: an undefined namespace_id alone still
     // routes into auto-registration on the backend.
-    const registers = registerInCatalog.value && ownCatalogOffered.value;
+    const registers = registerInCatalog.value && registersFromFileTab.value;
     const namespaceId = registers ? selectedNamespaceId.value : undefined;
     const newFlowId = await saveFlow(props.flowId, flowPath, namespaceId ?? undefined, registers);
     ElMessage.success(

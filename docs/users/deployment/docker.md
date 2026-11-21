@@ -260,6 +260,8 @@ For the full model — creating groups, the `use`/`manage` levels, how shared se
 
 Python-script nodes run inside short-lived kernel containers spawned by `flowfile-core` via the host Docker socket. To enable them, mount the Docker socket into `flowfile-core` (the bundled compose already does). Creating or starting a kernel pulls its image when it is missing, so this step is optional; pull ahead of time on an air-gapped or slow host.
 
+Of the user data folder, a kernel sees the catalog's tables, the `uploads` and `outputs` folders and its owner's own workspace (`workspaces/<user id>`), at the same paths as `flowfile-core`. A file elsewhere in user data is read with a Read node.
+
 ### 1. Pull the kernel image (optional)
 
 Kernel images are versioned independently of the app; the default tag lives in `flowfile_core/flowfile_core/kernel/images.py`. Pull the matching tag:

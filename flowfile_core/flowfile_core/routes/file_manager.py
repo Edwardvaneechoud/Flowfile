@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.fileExplorer import workspace
 from flowfile_core.fileExplorer.funcs import FileInfo, SecureFileExplorer
 from shared.storage_config import storage
 
@@ -120,13 +121,20 @@ async def get_upload_limits() -> UploadLimits:
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...), unique: bool = False) -> JSONResponse:
-    """Upload a file to the user data uploads directory.
+async def upload_file(
+    file: UploadFile = File(...),
+    unique: bool = False,
+    directory: str | None = None,
+    current_user=Depends(get_current_active_user),
+) -> JSONResponse:
+    """Upload a file to the user data uploads directory, or into ``directory``.
 
     Available in every mode because the canvas file-drop uploads from package and
     electron modes too. Only permitted extensions are accepted and the size limit is
     enforced while streaming. With ``unique`` the destination is a non-colliding name
     instead of an overwrite; the response ``filename`` is always the final on-disk name.
+    ``directory`` is a folder the file browser shows the person (on a server their workspace or the shared
+    folder): a 403 elsewhere, a 404 when it is no folder.
     """
     if not file.filename:
         raise HTTPException(400, "No filename provided")
@@ -143,8 +151,16 @@ async def upload_file(file: UploadFile = File(...), unique: bool = False) -> JSO
             f"File type '.{suffix}' not allowed. " f"Allowed types: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
         )
 
-    uploads_dir = storage.uploads_directory
-    uploads_dir.mkdir(parents=True, exist_ok=True)
+    if directory is None:
+        uploads_dir = storage.uploads_directory
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        place = workspace.file_folder(directory, current_user.id if current_user else None)
+        if place is None:
+            raise HTTPException(403, workspace.browse_refusal(directory))
+        uploads_dir = Path(place)
+        if not uploads_dir.is_dir():
+            raise HTTPException(404, "The folder does not exist")
 
     if unique:
         file_location, fd = _open_unique(uploads_dir, safe_name)

@@ -39,6 +39,7 @@ RELIED_ON = {
     "flowfile_core.configs.settings": ("SERVER_HOST", "SERVER_PORT", "WORKER_PORT"),
     "flowfile_core.database.connection": ("engine", "get_db", "get_db_context"),
     "flowfile_core.database.models": ("Base", "FlowRun", "User"),
+    "flowfile_core.fileExplorer.workspace": ("workspaces_root", "workspace_of"),
     "flowfile_core.flowfile.manage.ephemeral_graph": ("ephemeral_flow_graph",),
     "flowfile_core.hub_client.client": (
         "HubRefused",

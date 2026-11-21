@@ -114,7 +114,7 @@ describe("ProjectBranches", () => {
     expect(text(panel)).toContain("settings.how: 'left' → 'inner'");
     expect(text(panel)).toContain("settings.how: 'left' → 'outer'");
 
-    const take = [...panel!.querySelectorAll("button")].find(
+    const take = Array.from(panel!.querySelectorAll("button")).find(
       (b) => text(b) === "Take origin/feature",
     );
     take!.click();

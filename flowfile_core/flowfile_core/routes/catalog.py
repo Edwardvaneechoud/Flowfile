@@ -73,7 +73,7 @@ from flowfile_core.catalog.validators import validate_cron_expression, validate_
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
-from flowfile_core.fileExplorer import validate_path_under_cwd
+from flowfile_core.fileExplorer import validate_path_under_cwd, workspace
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
@@ -155,6 +155,7 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationUpdate,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
+from shared.path_utils import contained_path
 from shared.storage_config import require_flow_in_storage, storage
 
 _READ_HERE = (
@@ -928,7 +929,10 @@ def register_table(
     Accepts the kernel's internal token so ``flowfile_ctx.write_catalog_table``
     can register tables it produced.
     """
-    validated_path = validate_path_under_cwd(body.file_path)
+    if contained_path(storage.shared_directory, body.file_path) is not None:
+        validated_path = validate_path_under_cwd(body.file_path)
+    else:
+        validated_path = workspace.checked_data_path(body.file_path, current_user.id)
     return service.register_table(
         name=body.name,
         file_path=validated_path,

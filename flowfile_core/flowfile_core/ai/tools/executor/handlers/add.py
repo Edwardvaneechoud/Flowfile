@@ -477,6 +477,7 @@ def _handle_add_node(
             settings,
             upstream_schemas,
             right_input_node_id=insertion_context.right_input_node_id,
+            flow=flow,
         )
 
     # --- Apply or stage ---
