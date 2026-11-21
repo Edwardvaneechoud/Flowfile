@@ -3,6 +3,7 @@
 import { defineStore } from "pinia";
 import { ProjectApi, ProjectFeatureUnavailable } from "../api/project.api";
 import type { ImportResult, ProjectInfo, ProjectVersion, ProjectVersionChange } from "../types";
+import { useCatalogStore } from "./catalog-store";
 import { useFlowStore } from "./flow-store";
 
 export type ProjectStatus = "none" | "external" | "unsaved" | "clean";
@@ -115,6 +116,7 @@ export const useProjectStore = defineStore("project", {
         this.externalEdits = false;
         this.dirty = false;
         this.hasUnsavedChanges = false;
+        this.onCatalogRewritten();
         return res;
       } finally {
         this.loading = false;
@@ -140,6 +142,13 @@ export const useProjectStore = defineStore("project", {
       if (this.activeProject) this.activeProject.track_data_artifacts = value;
       // Re-projection may have added/removed artifact files on disk — reconcile status.
       await this.refreshActive();
+    },
+
+    /** An open, restore, reload, branch switch or pull rewrote the catalog's flows: drop its cached overview. */
+    onCatalogRewritten(): void {
+      useCatalogStore()
+        .invalidateOverview()
+        .catch(() => undefined);
     },
 
     /** Optimistic dirty signal from a local flow save or delete; reconciled by refreshActive. */
@@ -196,6 +205,7 @@ export const useProjectStore = defineStore("project", {
       // Import no longer auto-opens flows; clear the active flow so a stale/pruned tab can't
       // 404-loop and the canvas shows the empty state (matches the "Reopen any flows" prompt).
       useFlowStore().setFlowId(-1);
+      this.onCatalogRewritten();
       await this.refreshActive();
       this.loadVersions().catch(() => undefined);
       return res;
@@ -206,6 +216,7 @@ export const useProjectStore = defineStore("project", {
         const res = await ProjectApi.reload(force);
         this.placeholderSecrets = res.placeholder_secrets ?? this.placeholderSecrets;
         useFlowStore().setFlowId(-1);
+        this.onCatalogRewritten();
         await this.refreshActive();
         return res;
       } catch (e: any) {

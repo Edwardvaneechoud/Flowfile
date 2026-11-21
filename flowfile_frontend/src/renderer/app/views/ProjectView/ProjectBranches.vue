@@ -204,6 +204,7 @@ const load = async () => {
 onMounted(load);
 
 const afterApply = async (result: ImportResult | null, done: string) => {
+  store.onCatalogRewritten();
   await Promise.all([store.refreshActive(), store.loadVersions(), load()]);
   if (result && (await alertIncomplete(result, "Not finished"))) return;
   ElMessage.success(done);

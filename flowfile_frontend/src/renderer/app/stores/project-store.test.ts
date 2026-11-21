@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
     setSecrets: vi.fn(),
     close: vi.fn(),
     setFlowId: vi.fn(),
+    invalidateOverview: vi.fn(() => Promise.resolve()),
   };
 });
 
@@ -31,6 +32,10 @@ const mocks = vi.hoisted(() => {
 // which reaches DOM globals at import time and would crash under the node env.
 vi.mock("./flow-store", () => ({
   useFlowStore: () => ({ setFlowId: mocks.setFlowId }),
+}));
+
+vi.mock("./catalog-store", () => ({
+  useCatalogStore: () => ({ invalidateOverview: mocks.invalidateOverview }),
 }));
 
 vi.mock("../api/project.api", () => ({
@@ -208,6 +213,7 @@ describe("restoreVersion", () => {
     expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback", false);
     expect(mocks.getActive).toHaveBeenCalled();
     expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
+    expect(mocks.invalidateOverview).toHaveBeenCalled();
   });
 
   it("sends force when the caller keeps a recovery point", async () => {
@@ -246,6 +252,7 @@ describe("reloadFromDisk", () => {
     expect(store.placeholderSecrets).toEqual(["s"]);
     expect(mocks.getActive).toHaveBeenCalled();
     expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
+    expect(mocks.invalidateOverview).toHaveBeenCalled();
   });
 
   it("hides the reload action when the route is unavailable", async () => {
