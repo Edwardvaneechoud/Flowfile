@@ -511,7 +511,11 @@ def test_a_malformed_payload_is_refused_naming_what_it_expected(started, monkeyp
     expected = type(right).__name__
     wrong = rest_payload() if kind is not OperationKind.rest_api_read else database_payload()
 
-    if kind is OperationKind.sharepoint_read and backend_class is WorkerBackend and not protocol:
+    if (
+        kind in {OperationKind.sharepoint_read, OperationKind.sharepoint_write}
+        and backend_class is WorkerBackend
+        and not protocol
+    ):
         from flowfile_core.flowfile.execution.errors import OperationUnsupported
 
         with pytest.raises(OperationUnsupported):

@@ -38,6 +38,7 @@ def test_the_operation_set_is_exactly_the_supported_kinds():
         "kafka_read",
         "google_analytics_read",
         "sharepoint_read",
+        "sharepoint_write",
         "rest_api_read",
         "database_write",
         "cloud_write",

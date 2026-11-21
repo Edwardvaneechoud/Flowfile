@@ -740,17 +740,8 @@ def test_a_placement_the_canvas_refuses_fails_on_its_line_before_the_node_exists
     assert calls.labels() <= {"collect"} and calls.named("collect") == []
 
 
-@pytest.mark.parametrize(
-    ("source", "target"),
-    [
-        ("drive_id='drive', file_path='rows.csv', csv_delimiter=';', delta_generation=2",
-         "drive_id='drive', file_path='out.xlsx', format='xlsx', conflict_mode='overwrite'"),
-        ("list_source={'site_id': 'example.com,site,web', 'list_id': 'list', 'columns': ['Title']}",
-         "list_target={'site_id': 'example.com,site,web', 'list_id': 'list', 'column_mapping': {'Title': 'Title'}}"),
-    ],
-    ids=["files", "lists"],
-)
-def test_sharepoint_cells_round_trip_without_worker_io(source, target, monkeypatch):
+@pytest.fixture
+def notebook_sharepoint_connection():
     with get_db_context() as db:
         secret = Secret(name="notebook_sharepoint", user_id=NOTEBOOK_OWNER_ID, encrypted_value="not-a-real-secret")
         db.add(secret)
@@ -763,7 +754,31 @@ def test_sharepoint_cells_round_trip_without_worker_io(source, target, monkeypat
         db.add(connection)
         db.flush()
         connection_id = connection.id
+        secret_id = secret.id
         db.commit()
+
+    try:
+        yield connection_id
+    finally:
+        with get_db_context() as db:
+            db.delete(db.get(SharePointConnection, connection_id))
+            db.flush()
+            db.delete(db.get(Secret, secret_id))
+            db.commit()
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("drive_id='drive', file_path='rows.csv', csv_delimiter=';', delta_generation=2",
+         "drive_id='drive', file_path='out.xlsx', format='xlsx', conflict_mode='overwrite'"),
+        ("list_source={'site_id': 'example.com,site,web', 'list_id': 'list', 'columns': ['Title']}",
+         "list_target={'site_id': 'example.com,site,web', 'list_id': 'list', 'column_mapping': {'Title': 'Title'}}"),
+    ],
+    ids=["files", "lists"],
+)
+def test_sharepoint_cells_round_trip_without_worker_io(source, target, monkeypatch, notebook_sharepoint_connection):
+    connection_id = notebook_sharepoint_connection
 
     def no_operation(*args, **kwargs):
         pytest.fail("Notebook editing must not dispatch SharePoint operations")

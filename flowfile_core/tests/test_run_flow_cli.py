@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -56,7 +56,7 @@ def test_run_flow_child_leaves_cache_and_temp_alone(tmp_path, monkeypatch, comma
     scratch = _plant_stale(storage_dir / "temp" / "stale.txt", age_hours=48)
     env = {
         **os.environ,
-        "FLOWFILE_DB_PATH": str(tmp_path / "catalog.db"),
+        "FLOWFILE_DATABASE_URL": f"sqlite:///{tmp_path / 'catalog.db'}",
         "FLOWFILE_STORAGE_DIR": str(storage_dir),
         "FLOWFILE_USER_DATA_DIR": str(tmp_path / "user_data"),
         "FLOWFILE_TELEMETRY": "0",
@@ -159,6 +159,34 @@ def run_catalog(tmp_path, monkeypatch):
         engine.dispose()
 
 
+def _seed_managed_run(session):
+    from shared.models import FlowRun
+
+    session.add(FlowRun(id=int(RUN_ID), flow_name="Headless test", user_id=1, started_at=datetime.now(UTC)))
+    session.commit()
+
+
+@pytest.fixture
+def subprocess_run_catalog(tmp_path, monkeypatch):
+    """The CLI child opens a real, already migrated catalog containing its run."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from flowfile_core.database.migration import run_alembic_upgrade
+
+    url = f"sqlite:///{tmp_path / 'catalog.db'}"
+    with monkeypatch.context() as patch:
+        patch.setenv("FLOWFILE_DATABASE_URL", url)
+        run_alembic_upgrade()
+    engine = create_engine(url)
+    try:
+        with Session(engine) as session:
+            _seed_managed_run(session)
+    finally:
+        engine.dispose()
+    return url
+
+
 @pytest.fixture
 def in_process_run(monkeypatch, run_catalog):
     """A runner called in this process installs no telemetry, and the default override it sets and the pool size its
@@ -166,13 +194,8 @@ def in_process_run(monkeypatch, run_catalog):
     from flowfile_core import telemetry
     from flowfile_core.flowfile.execution import registry
     from flowfile_worker import pool
-    from shared.models import FlowRun
 
-    run_catalog.add(
-        FlowRun(id=int(RUN_ID), flow_name="Headless test", user_id=1, started_at=datetime.now(timezone.utc))
-    )
-    run_catalog.commit()
-
+    _seed_managed_run(run_catalog)
     monkeypatch.setattr(telemetry, "install_headless", lambda: None)
     monkeypatch.setattr(pool.task_pool, "_size", pool.task_pool._size)
     previous = registry.default_override()
@@ -543,10 +566,13 @@ def test_a_spawned_run_passes_backend_only_when_its_request_names_one(tmp_path, 
 
 @pytest.mark.parametrize("flag", ["0", "1"], ids=["flag-off", "flag-on"])
 @pytest.mark.parametrize("command", [_frozen_verb, _dev_verb], ids=["frozen-verb", "dev-cli"])
-def test_a_headless_run_on_backend_worker_runs_on_the_worker(tmp_path, session_worker, command, flag):
+def test_a_headless_run_on_backend_worker_runs_on_the_worker(
+    tmp_path, session_worker, command, flag, subprocess_run_catalog
+):
     flow_path = str(_save_group_by_flow(tmp_path / "flow.yaml"))
     env = {
         **os.environ,
+        "FLOWFILE_DATABASE_URL": subprocess_run_catalog,
         "FLOWFILE_COMPUTE_PROTOCOL": flag,
         "FLOWFILE_TELEMETRY": "0",
         "FLOWFILE_WORKER_URL": session_worker,

@@ -590,6 +590,10 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "Read CSV, XLSX, Parquet, or JSON from a SharePoint document library using a saved connection. "
         "This source node has no upstream input and does not read SharePoint Lists."
     ),
+    "sharepoint_writer": (
+        "Write upstream rows to a file in a SharePoint document library or append them to a SharePoint list "
+        "using a saved connection. The writer preserves the upstream schema."
+    ),
     "rest_api_reader": (
         "Read JSON from a REST API (optionally paginated) into the flow. Not for "
         "streaming (use 'kafka_source') or a source with a typed node (database / "
@@ -1199,6 +1203,11 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
     "sharepoint_reader": (
         "Select a saved SharePoint connection and file. For CSV, set the delimiter if needed; "
         "for XLSX, optionally enter a sheet name (defaults to the first sheet)."
+    ),
+    "sharepoint_writer": (
+        "Select a saved SharePoint connection. For a document library, choose an output path, format "
+        "(CSV, XLSX, or Parquet), and what to do if the file exists. For a list, map input columns to list "
+        "columns; running the flow appends rows, so rerunning it can create duplicates."
     ),
     "rest_api_reader": (
         "Settings: a Request ('Method', 'URL', optional 'Record path' to the records "
