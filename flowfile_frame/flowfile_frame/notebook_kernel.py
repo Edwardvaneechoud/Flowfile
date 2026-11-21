@@ -116,7 +116,7 @@ def _post_core(route: str, body: dict[str, Any], what: str) -> dict[str, Any]:
     headers = {
         name: value
         for name, value in (
-            ("X-Internal-Token", os.environ.get("FLOWFILE_INTERNAL_TOKEN")),
+            ("X-Internal-Token", os.environ.get("FLOWFILE_KERNEL_TOKEN")),
             ("X-Kernel-Id", os.environ.get("FLOWFILE_KERNEL_ID")),
         )
         if value

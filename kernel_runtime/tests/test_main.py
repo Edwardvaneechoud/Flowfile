@@ -1799,7 +1799,8 @@ def raw_logs_sink():
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            received.append({"token": self.headers.get("X-Internal-Token"), "body": body})
+            token = self.headers.get("X-Internal-Token")
+            received.append({"token": token, "kernel_id": self.headers.get("X-Kernel-Id"), "body": body})
             self.send_response(state.status)
             self.end_headers()
 
@@ -1817,9 +1818,17 @@ def raw_logs_sink():
 
 
 class TestLogCallback:
-    """flowfile_ctx.log() posts to core's /raw_logs, which only accepts internal-token-signed posts."""
+    """flowfile_ctx.log() posts to core's /raw_logs, which only accepts signed posts."""
 
-    def _log(self, client: TestClient, sink) -> dict:
+    _BODY = {"flowfile_flow_id": 42, "node_id": 7, "log_message": "fitting model", "log_type": "WARNING"}
+
+    @pytest.fixture(autouse=True)
+    def _kernel_identity(self, monkeypatch):
+        """A kernel with an id and no token from its start; an execution's token is dropped again afterwards."""
+        monkeypatch.setenv("FLOWFILE_KERNEL_ID", "test-kernel")
+        monkeypatch.setenv("FLOWFILE_KERNEL_TOKEN", "")
+
+    def _log(self, client: TestClient, sink, **tokens: str) -> dict:
         resp = client.post(
             "/execute",
             json={
@@ -1829,21 +1838,33 @@ class TestLogCallback:
                 "input_paths": {},
                 "output_dir": "",
                 "log_callback_url": sink.url,
-                "internal_token": "core-issued-token",
+                **(tokens or {"internal_token": "core-issued-token"}),
             },
         )
         data = resp.json()
         assert data["success"] is True, f"Execution failed: {data['error']}"
         return data
 
-    def test_log_post_carries_the_internal_token(self, client: TestClient, raw_logs_sink):
+    def test_log_post_carries_the_kernels_own_token(self, client: TestClient, raw_logs_sink):
+        data = self._log(client, raw_logs_sink, kernel_token="kernel-own-token", internal_token="kernel-own-token")
+
+        assert raw_logs_sink.received == [
+            {"token": "kernel-own-token", "kernel_id": "test-kernel", "body": self._BODY}
+        ]
+        assert "fitting model" not in data["stdout"]
+        assert os.environ["FLOWFILE_KERNEL_TOKEN"] == "kernel-own-token", "kept for a caller outside the execution"
+
+    def test_log_post_carries_the_token_the_container_started_with(self, client, raw_logs_sink, monkeypatch):
+        monkeypatch.setenv("FLOWFILE_KERNEL_TOKEN", "token-from-start")
+        self._log(client, raw_logs_sink, internal_token="")
+
+        assert [post["token"] for post in raw_logs_sink.received] == ["token-from-start"]
+
+    def test_log_post_to_an_older_core_carries_its_internal_token(self, client: TestClient, raw_logs_sink):
         data = self._log(client, raw_logs_sink)
 
         assert raw_logs_sink.received == [
-            {
-                "token": "core-issued-token",
-                "body": {"flowfile_flow_id": 42, "node_id": 7, "log_message": "fitting model", "log_type": "WARNING"},
-            }
+            {"token": "core-issued-token", "kernel_id": "test-kernel", "body": self._BODY}
         ]
         assert "fitting model" not in data["stdout"]
 
@@ -2016,3 +2037,51 @@ class TestArtifactLineage:
         assert data["success"] is True, f"Execution failed: {data['error']}"
         assert "read back: 7" in data["stdout"]
         assert "not an upstream input" not in data["stdout"]
+
+
+class TestOnlyCoreCalls:
+    """A kernel started with a token takes a call only when it carries that token; one started without takes all."""
+
+    _CELL = {"node_id": 1, "code": "print(6 * 7)", "flow_id": 77, "input_paths": {}, "output_dir": ""}
+    _SIGNED = {"Authorization": "Bearer token-from-start"}
+
+    @pytest.fixture
+    def started_with_a_token(self, monkeypatch):
+        import kernel_runtime.main as runtime
+
+        monkeypatch.setattr(runtime, "_START_TOKEN", "token-from-start")
+        monkeypatch.setenv("FLOWFILE_KERNEL_TOKEN", "token-from-start")
+
+    @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer another"}, {"Authorization": "token-from-start"}])
+    def test_a_call_without_the_kernels_token_is_refused(self, client: TestClient, started_with_a_token, headers):
+        assert client.post("/execute", json=self._CELL, headers=headers).status_code == 401
+        assert client.get("/artifacts", headers=headers).status_code == 401
+        assert client.post("/interrupt", json={}, headers=headers).status_code == 401
+        assert client.post("/lsp/complete", json={"code": "", "line": 1, "column": 0}, headers=headers).status_code == 401
+
+    def test_a_call_with_the_kernels_token_is_taken(self, client: TestClient, started_with_a_token):
+        answer = client.post("/execute", json=self._CELL, headers=self._SIGNED)
+
+        assert answer.status_code == 200 and answer.json()["stdout"].strip() == "42"
+        assert client.get("/artifacts", headers=self._SIGNED).status_code == 200
+
+    def test_health_stays_open(self, client: TestClient, started_with_a_token):
+        assert client.get("/health").status_code == 200
+
+    def test_the_token_of_an_execution_does_not_replace_the_one_calls_are_checked_against(
+        self, client: TestClient, started_with_a_token
+    ):
+        cell = {**self._CELL, "kernel_token": "token-of-a-later-run"}
+        assert client.post("/execute", json=cell, headers=self._SIGNED).status_code == 200
+
+        later = {"Authorization": "Bearer token-of-a-later-run"}
+        assert client.post("/execute", json=self._CELL, headers=later).status_code == 401
+        assert client.post("/execute", json=self._CELL, headers=self._SIGNED).status_code == 200
+
+    def test_a_kernel_started_without_a_token_takes_every_call(self, client: TestClient, monkeypatch):
+        import kernel_runtime.main as runtime
+
+        monkeypatch.setattr(runtime, "_START_TOKEN", None)
+
+        assert client.post("/execute", json=self._CELL).status_code == 200
+        assert client.post("/execute", json=self._CELL, headers={"Authorization": "Bearer x"}).status_code == 200

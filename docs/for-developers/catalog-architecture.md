@@ -33,7 +33,7 @@ Data access goes exclusively through `CatalogRepository` (protocol) / `SQLAlchem
 
 Authorization is the facade's job, implemented by `AccessResolver` (`catalog/access.py`) over `auth/sharing.py`:
 
-- The router always injects a resolver, but it only *restricts* when `sharing_enabled() and not user.is_admin and not is_synthetic_principal(user)`. Electron/single-user mode, admins, the kernel's `_internal_service` principal, and internal callers that construct `CatalogService` without an `access` argument (scheduler, flow execution, tests) are unrestricted.
+- The router always injects a resolver, but it only *restricts* when `sharing_enabled() and not user.is_admin and not is_synthetic_principal(user)`. Electron/single-user mode, admins, the `_internal_service` principal (a caller on a desktop that signs with the internal token and names no kernel), and internal callers that construct `CatalogService` without an `access` argument (scheduler, flow execution, tests) are unrestricted.
 - Resolution is **own-first, then group-granted**: accessible ids = rows the user owns ∪ ids granted to any of their groups, at `use` or `manage` level. A use-level grant is read-only — `writable_namespace_ids` requires ownership or a *manage* grant.
 - **Namespace grants cascade**: a grant on a catalog or schema reaches the tables, flows, visualizations, dashboards, notebooks, and artifacts inside it (one-level child expansion, memoized per request). Tree listing prunes invisible items but keeps "context-only" ancestor namespaces as breadcrumbs with redacted descriptions, and stamps every DTO with its effective access level.
 

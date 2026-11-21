@@ -35,7 +35,7 @@ from flowfile_core import telemetry as core_telemetry
 from flowfile_core.ai import router as ai_router
 from flowfile_core.ai.admin_routes import router as ai_admin_router
 from flowfile_core.artifacts import router as artifacts_router
-from flowfile_core.auth.jwt import internal_token_valid
+from flowfile_core.auth.jwt import shared_token_valid
 from flowfile_core.configs.access_log import install_access_log_redaction
 from flowfile_core.configs.settings import (
     SERVER_HOST,
@@ -323,7 +323,7 @@ async def shutdown(request: Request, background_tasks: BackgroundTasks):
     store. Uvicorn is told to exit from a background task, once the answer has been sent.
     """
     token = request.headers.get("X-Internal-Token")
-    if not (_supervising_shell(request) or await run_in_threadpool(internal_token_valid, token)):
+    if not (_supervising_shell(request) or await run_in_threadpool(shared_token_valid, token)):
         raise HTTPException(status_code=403, detail="Shutdown needs the internal token")
     background_tasks.add_task(trigger_shutdown)
     return {"message": "Server is shutting down"}

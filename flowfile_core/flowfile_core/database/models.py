@@ -136,6 +136,8 @@ class Kernel(Base):
         ForeignKey("flow_registrations.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Names the token of the kernel's current run; null while the kernel is stopped.
+    token_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
 

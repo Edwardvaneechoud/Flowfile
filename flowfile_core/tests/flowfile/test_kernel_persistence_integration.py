@@ -53,9 +53,20 @@ def _execute(manager: KernelManager, kernel_id: str, code: str, node_id: int = 1
     )
 
 
+_SIGNED: dict[str, str] = {}
+
+
+@pytest.fixture(autouse=True)
+def _signed_as_core(kernel_manager: tuple[KernelManager, str]):
+    """A kernel takes a call only with the token it was started with; these tests call it as core does."""
+    manager, kernel_id = kernel_manager
+    _SIGNED.clear()
+    _SIGNED.update(manager._call_headers(manager.get_kernel_sync(kernel_id)))
+
+
 def _get_json(port: int, path: str) -> dict:
     """GET a JSON endpoint on the kernel runtime."""
-    with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
+    with httpx.Client(timeout=httpx.Timeout(30.0), headers=_SIGNED) as client:
         response = client.get(f"http://127.0.0.1:{port}{path}")
         response.raise_for_status()
         return response.json()
@@ -63,7 +74,7 @@ def _get_json(port: int, path: str) -> dict:
 
 def _post_json(port: int, path: str, json: dict | None = None) -> dict:
     """POST to a JSON endpoint on the kernel runtime."""
-    with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
+    with httpx.Client(timeout=httpx.Timeout(30.0), headers=_SIGNED) as client:
         response = client.post(f"http://127.0.0.1:{port}{path}", json=json or {})
         response.raise_for_status()
         return response.json()

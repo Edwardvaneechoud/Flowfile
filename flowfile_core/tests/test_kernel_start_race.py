@@ -101,11 +101,17 @@ def _fake_container(
     return container
 
 
-def _start_ready_manager(kernel: KernelInfo) -> KernelManager:
-    """Manager wired so _start_kernel_inner runs without touching env/health."""
+def _start_ready_manager(kernel: KernelInfo, *, real_tokens: bool = False) -> KernelManager:
+    """Manager wired so _start_kernel_inner runs without touching env/health.
+
+    Its kernel has no row, and a kernel does not start without a token, so the token calls are stubbed;
+    ``real_tokens`` keeps them, for a test that gave the kernel a row."""
     mgr = _bare_manager()
     mgr._kernels[kernel.id] = kernel
     mgr._kernel_owners[kernel.id] = 1
+    if not real_tokens:
+        mgr._kernel_run = MagicMock(return_value=("run-id", "run-token"))
+        mgr._begin_kernel_run = MagicMock(return_value=True)
     mgr._build_kernel_env = MagicMock(return_value={})
     mgr._build_run_kwargs = MagicMock(return_value={"name": f"flowfile-kernel-{kernel.id}"})
     mgr._wait_for_healthy_sync = MagicMock()
@@ -829,3 +835,217 @@ class TestStartupReconcile:
         resolver.remove.assert_called_once_with(force=True)
         bake_leftover.remove.assert_called_once_with(force=True)
         kernel_container.remove.assert_not_called()
+
+
+class TestAdoptedContainersToken:
+    """A container found under the kernel's name takes calls with the token it was started with, so core signs its
+    calls with that one, whatever token the kernel's row names by now."""
+
+    @pytest.fixture
+    def kernel_row(self):
+        """A kernel row of user 1 in the test database, in run ``run-0``; yields its id."""
+        import uuid
+
+        from flowfile_core.database import models as db_models
+        from flowfile_core.database.connection import get_db_context
+
+        kernel_id = f"adopt-{uuid.uuid4().hex[:8]}"
+        with get_db_context() as db:
+            db.add(db_models.Kernel(id=kernel_id, name="k", user_id=1, token_id="run-0"))
+            db.commit()
+        yield kernel_id
+        with get_db_context() as db:
+            db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id).delete()
+            db.commit()
+
+    @staticmethod
+    def _started_with(container, token: str):
+        container.attrs["Config"] = {"Env": ["KERNEL_PACKAGES=", f"FLOWFILE_KERNEL_TOKEN={token}"]}
+        return container
+
+    @staticmethod
+    def _token_of(kernel_id: str, token_id: str) -> str:
+        from flowfile_core.auth.jwt import create_kernel_token
+
+        return create_kernel_token(1, kernel_id, token_id)
+
+    def test_409_adopted_container_is_called_with_the_token_it_was_started_with(self, kernel_row):
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        existing = self._started_with(_fake_container("adopted-t", host_port="19005"), "token-of-its-start")
+        mgr._docker.containers.run.side_effect = _api_error(409)
+        mgr._docker.containers.get.return_value = existing
+
+        mgr.start_kernel_sync(kernel_row)
+
+        assert kernel.container_id == "adopted-t"
+        assert mgr._call_headers(kernel) == {"Authorization": "Bearer token-of-its-start"}
+
+    def test_a_container_found_running_keeps_its_run(self, kernel_row):
+        """Another core process may have a cell running in it, which signs its calls to core with that run's token."""
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        mgr._docker.containers.run.side_effect = _api_error(409)
+        mgr._docker.containers.get.return_value = _fake_container("adopted-r", host_port="19005")
+
+        mgr.start_kernel_sync(kernel_row)
+
+        assert mgr.kernel_token(kernel_row) == self._token_of(kernel_row, "run-0")
+
+    def test_a_container_found_running_without_a_run_gets_one(self, kernel_row):
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        mgr._end_kernel_token(kernel_row)
+        mgr._docker.containers.run.side_effect = _api_error(409)
+        mgr._docker.containers.get.return_value = _fake_container("adopted-n", host_port="19005")
+
+        mgr.start_kernel_sync(kernel_row)
+
+        assert mgr.kernel_token(kernel_row) is not None
+
+    @pytest.mark.parametrize("found_stopped", [False, True], ids=["a new container", "a stopped one started again"])
+    def test_a_container_that_was_not_running_begins_a_run(self, kernel_row, found_stopped):
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        if found_stopped:
+            mgr._docker.containers.run.side_effect = _api_error(409)
+            mgr._docker.containers.get.return_value = _fake_container("stopped-1", status="exited", host_port="19005")
+        else:
+            mgr._docker.containers.run.return_value = _fake_container("new-1", host_port="19005")
+
+        mgr.start_kernel_sync(kernel_row)
+
+        started = mgr.kernel_token(kernel_row)
+        assert started not in (None, self._token_of(kernel_row, "run-0")), "the run before it is over"
+        assert mgr._build_kernel_env.call_args.args[2] == started, "the container is started with the run's token"
+
+    def test_a_run_begins_only_once_its_container_exists(self, kernel_row):
+        """Until then the run before it stays the kernel's, so a start that obtains no container ends nothing."""
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        seen: list[str | None] = []
+
+        def _run(*args, **kwargs):
+            seen.append(mgr.kernel_token(kernel_row))
+            raise _api_error(500, "no room")
+
+        mgr._docker.containers.run.side_effect = _run
+
+        with pytest.raises(docker.errors.APIError):
+            mgr.start_kernel_sync(kernel_row)
+
+        assert seen == [self._token_of(kernel_row, "run-0")]
+        assert mgr.kernel_token(kernel_row) == self._token_of(kernel_row, "run-0")
+
+    def test_a_failed_start_ends_the_run_of_the_container_it_removes(self, kernel_row):
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        created = _fake_container("unhealthy-1", host_port="19005")
+        mgr._docker.containers.run.return_value = created
+        mgr._docker.containers.get.return_value = created
+        mgr._wait_for_healthy_sync.side_effect = TimeoutError("never healthy")
+
+        with pytest.raises(TimeoutError):
+            mgr.start_kernel_sync(kernel_row)
+
+        created.remove.assert_called_once_with(force=True)
+        assert mgr.kernel_token(kernel_row) is None
+
+    def test_a_kernel_core_can_mint_no_token_for_does_not_start(self):
+        """Started without one it would take every call on its port, and core would refuse each of its own."""
+        kernel = _kernel("no-row")
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+
+        with pytest.raises(RuntimeError, match="Could not mint a token"):
+            mgr.start_kernel_sync("no-row")
+
+        assert kernel.state == KernelState.ERROR
+        mgr._docker.containers.run.assert_not_called()
+
+    def test_a_kernel_whose_token_cannot_be_recorded_does_not_start(self, kernel_row):
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        created = _fake_container("unrecorded-1", host_port="19005")
+        mgr._docker.containers.run.return_value = created
+        mgr._docker.containers.get.return_value = created
+        mgr._begin_kernel_run = MagicMock(return_value=False)
+
+        with pytest.raises(RuntimeError, match="Could not record the token"):
+            mgr.start_kernel_sync(kernel_row)
+
+        assert kernel.state == KernelState.ERROR and kernel.container_id is None
+        created.remove.assert_called_once_with(force=True)
+
+    def test_a_kernel_found_running_at_startup_is_called_with_the_token_it_was_started_with(self, kernel_row):
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        mgr._end_kernel_token(kernel_row)
+        running = self._started_with(_fake_container("running-t", host_port="19005"), "token-of-its-start")
+        running.name = f"flowfile-kernel-{kernel_row}"
+        mgr._docker.containers.list.return_value = [running]
+
+        mgr._reclaim_running_containers(prune_orphans=False)
+
+        assert kernel.state == KernelState.IDLE
+        assert mgr._call_headers(kernel) == {"Authorization": "Bearer token-of-its-start"}
+        assert mgr.kernel_token(kernel_row) is not None, "a kernel found running has a run"
+
+    def test_a_kernel_found_running_at_startup_keeps_its_run(self, kernel_row, monkeypatch):
+        """Also in a process that cannot mint a token just then: what decides is the row, never a minted token."""
+        from flowfile_core.auth import jwt as auth_jwt
+
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        running = _fake_container("running-k", host_port="19005")
+        running.name = f"flowfile-kernel-{kernel_row}"
+        mgr._docker.containers.list.return_value = [running]
+
+        with monkeypatch.context() as patched:
+            patched.setattr(auth_jwt, "create_kernel_token", MagicMock(side_effect=RuntimeError("no key")))
+            mgr._reclaim_running_containers(prune_orphans=False)
+
+        assert mgr.kernel_token(kernel_row) == self._token_of(kernel_row, "run-0")
+
+    @pytest.mark.parametrize("leftover", [False, True], ids=["no container", "a stopped container"])
+    def test_startup_ends_the_run_of_a_kernel_with_no_running_container(self, kernel_row, leftover):
+        """A core that was killed never ended it, and the kernel's token has no expiry of its own."""
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        stopped = _fake_container("stale-t", status="exited")
+        stopped.name = f"flowfile-kernel-{kernel_row}"
+        mgr._docker.containers.list.return_value = [stopped] if leftover else []
+
+        mgr._reclaim_running_containers(prune_orphans=False)
+
+        assert mgr.kernel_token(kernel_row) is None
+
+    def test_startup_leaves_a_run_begun_while_it_looked(self, kernel_row):
+        """Another core process starts the kernel after this one listed the containers: that run is not over."""
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+
+        def _list(**kwargs):
+            mgr._begin_kernel_run(kernel_row, "run-1")
+            return []
+
+        mgr._docker.containers.list.side_effect = _list
+
+        mgr._reclaim_running_containers(prune_orphans=False)
+
+        assert mgr.kernel_token(kernel_row) == self._token_of(kernel_row, "run-1")
+
+    def test_a_removed_containers_token_is_forgotten(self, kernel_row):
+        kernel = _kernel(kernel_row)
+        mgr = _start_ready_manager(kernel, real_tokens=True)
+        mgr._docker.containers.run.side_effect = [
+            self._started_with(_fake_container("first"), "first-token"),
+            self._started_with(_fake_container("second"), "second-token"),
+        ]
+
+        mgr.start_kernel_sync(kernel_row)
+        assert mgr._call_headers(kernel) == {"Authorization": "Bearer first-token"}
+        asyncio.run(mgr.stop_kernel(kernel_row))
+        assert "first" not in mgr._held_tokens() and mgr._call_headers(kernel) == {}
+
+        mgr.start_kernel_sync(kernel_row)
+        assert mgr._call_headers(kernel) == {"Authorization": "Bearer second-token"}

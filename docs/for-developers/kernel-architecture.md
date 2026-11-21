@@ -57,7 +57,7 @@ This is configured automatically — no manual setup required beyond mounting th
 ```
 KERNEL_PACKAGES="{space-separated packages}"
 FLOWFILE_CORE_URL="{core service URL}"
-FLOWFILE_INTERNAL_TOKEN="{auth token}"
+FLOWFILE_KERNEL_TOKEN="{this kernel's own token}"
 FLOWFILE_KERNEL_ID="{kernel_id}"
 FLOWFILE_HOST_SHARED_DIR="{host path}"          # local mode only
 FLOWFILE_KERNEL_SHARED_DIR="{container path}"
@@ -298,10 +298,22 @@ Key models:
 | Boundary | Mechanism |
 |----------|-----------|
 | Frontend → Core | JWT tokens (user login) |
-| Core → Kernel | Internal token (`X-Internal-Token` header) |
-| Kernel → Core (callbacks) | Same internal token |
+| Core → Kernel | The token the kernel was started with (`Authorization: Bearer`); the kernel takes no other call |
+| Kernel → Core (callbacks) | The kernel's token for its current run (`X-Internal-Token`) |
 
-The internal token is passed per-request in the `ExecuteRequest` and also set as an environment variable in the container for fallback.
+**A token per kernel.** Core mints a token when it starts a kernel (`auth/jwt.py::create_kernel_token`): the kernel's owner, its id and the id of this run, with scope `kernel`, signed with core's JWT key. The kernel gets it in its environment (`FLOWFILE_KERNEL_TOKEN`) and on every `ExecuteRequest`, and signs its calls to core with it. Core checks it in one function, `auth/jwt.py::kernel_caller`, and answers the call as the kernel's owner, without the admin flag. The token is refused when the owner is disabled or gone. It is no sign-in: routes that take only a person's JWT refuse it. A kernel acts for its owner only: a log line it posts (`POST /raw_logs`) to a flow another user has open is answered 404. When core cannot mint a token for a kernel, the kernel does not start.
+
+**When a token begins and ends.** The token belongs to a run, and a run begins with a container: core mints the token, starts the container with it, and records the run (`kernels.token_id`) once the container exists. A start that creates a container, or starts a stopped one again, begins a run, which ends the token of the run before it. A start that finds the container already running keeps the run the kernel is in. That is what a second core process does with a kernel another one started (a scheduled run beside the designer), and a cell of the other process may be running in it. Core puts the token on a request once the cell holds the kernel, so a cell that waited behind another carries the token of the run it executes in.
+
+The token ends when the kernel is stopped, when core shuts down a kernel it started, when a start fails and removes its container, when a cell finds the container dead (out of memory, stopped or removed), and when core starts and the kernel has no running container. The last two end only the run they saw, never one another core process began since.
+
+**Calls to a kernel.** A kernel started with a token takes a call only when it carries that token (`kernel_runtime/main.py::_only_core`, 401 otherwise); `/health` stays open for the container's own health check. Core signs every call it makes (`KernelManager._call_headers`) with the token the container was started with, read from the container once, so a container another core process started is called the same way. A kernel started without a token, by a core from before a token per kernel, takes every call as before; so does a kernel image before 0.7.1, which checks nothing.
+
+The internal token (`FLOWFILE_INTERNAL_TOKEN`) stays between core and the worker; a kernel is not given it.
+
+The kernel sends its token in `X-Internal-Token`, the header a kernel has always signed with, so a server that replaces core's auth dependencies and passes `X-Internal-Token` callers on to core (`auth/jwt.py::internal_token_valid` answers true for the internal token and for a kernel's token; `shared_token_valid` only for the internal token) needs no change.
+
+**Older kernel images.** A kernel image before 0.7.1 reads its token from `ExecuteRequest.internal_token` and sends it the same way; core fills that field with the kernel's token, so such an image keeps working. A call signed with the internal token itself is taken on a desktop (`FLOWFILE_MODE` `electron` or `package`) and refused on a multi-user server (`docker`, `server`): `auth/jwt.py::legacy_kernel_auth_allowed`.
 
 ### Sandboxing
 

@@ -5,6 +5,7 @@ import os
 import secrets
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from flowfile_core.auth.secrets import get_password, set_password
 from flowfile_core.configs.settings import ACCESS_TOKEN_EXPIRE_MINUTES
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from shared import server_extension
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +29,12 @@ router = APIRouter()
 # Constants for JWT
 ALGORITHM = "HS256"
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+KERNEL_TOKEN_TYPE = "kernel"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
 
 # Internal service authentication
-# This token is shared between Core and Kernel for service-to-service auth
+# This token is shared between Core and the worker for service-to-service auth
 _internal_token: str | None = None
 
 
@@ -113,7 +116,7 @@ def _load_or_create_persisted_token() -> str:
 
 
 def get_internal_token() -> str:
-    """Get the internal service token used for kernel → Core auth.
+    """Get the internal service token used for core ↔ worker auth.
 
     In Docker mode the token MUST be set via the
     ``FLOWFILE_INTERNAL_TOKEN`` environment variable (configured in
@@ -145,20 +148,32 @@ def verify_internal_token(token: str) -> bool:
     return secrets.compare_digest(token, get_internal_token())
 
 
-def internal_token_valid(token: str | None) -> bool:
-    """True only when ``token`` is present and matches; False when core has no token configured."""
+def shared_token_valid(token: str | None) -> bool:
+    """True only when ``token`` is the internal token itself; False when core has no token configured."""
     try:
         return bool(token) and verify_internal_token(token)
     except ValueError:
         return False
 
 
-def require_internal_token(x_internal_token: str | None = Header(None, alias="X-Internal-Token")) -> None:
-    """Admit only the worker and kernels, which sign their core callbacks with the internal token.
+def internal_token_valid(token: str | None) -> bool:
+    """True when ``token`` is what core's own callers sign with in ``X-Internal-Token``: the internal token, or a
+    token core signed for a kernel.
 
-    Fails closed (401) when the header is missing or wrong, and when core has no token configured.
+    It says the caller is no person's sign-in, not who the caller is or what it may do: a server that replaces
+    core's auth dependencies hands such a request to ``get_user_or_internal_service``, which decides. What only the
+    internal token opens asks ``shared_token_valid``.
     """
-    if not internal_token_valid(x_internal_token):
+    return shared_token_valid(token) or _kernel_token_claims(token) is not None
+
+
+def require_internal_token(x_internal_token: str | None = Header(None, alias="X-Internal-Token")) -> None:
+    """Admit only a caller that signs with the internal token, as the worker does.
+
+    Fails closed (401) when the header is missing or wrong, and when core has no token configured. A route a kernel
+    calls too takes ``require_internal_or_kernel_token``.
+    """
+    if not shared_token_valid(x_internal_token):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing internal token")
 
 
@@ -189,8 +204,8 @@ def get_current_user_sync(token: str, db: Session):
 
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
-        # Reject refresh tokens used as access tokens
-        if payload.get("type") == "refresh":
+        # Neither a refresh token nor a kernel's token is a sign-in
+        if payload.get("type") in ("refresh", KERNEL_TOKEN_TYPE):
             raise credentials_exception
         username: str = payload.get("sub")
         if username is None:
@@ -199,7 +214,17 @@ def get_current_user_sync(token: str, db: Session):
     except JWTError:
         raise credentials_exception from None
 
-    return _resolve_token_user(db, token_data.username, credentials_exception)
+    return _taken_here(_resolve_token_user(db, token_data.username, credentials_exception), payload)
+
+
+def _taken_here(user: User, claims: dict) -> User:
+    """``user``, unless this server's extension refuses the person whose access token core has just taken
+    (``access_refusal``). The one place such a rule joins core's check, so both ways core takes a person's token,
+    and ``get_user_or_internal_service`` after them, obey it without any of them being replaced."""
+    refusal = server_extension.call("access_refusal", user, claims)
+    if refusal is not None:
+        raise refusal
+    return user
 
 
 USER_CACHE_TTL_SECONDS = 60
@@ -269,8 +294,8 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
-        # Reject refresh tokens used as access tokens
-        if payload.get("type") == "refresh":
+        # Neither a refresh token nor a kernel's token is a sign-in
+        if payload.get("type") in ("refresh", KERNEL_TOKEN_TYPE):
             raise credentials_exception
         username: str = payload.get("sub")
         if username is None:
@@ -279,7 +304,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError:
         raise credentials_exception from None
 
-    return _resolve_token_user(db, token_data.username, credentials_exception)
+    return _taken_here(_resolve_token_user(db, token_data.username, credentials_exception), payload)
 
 
 def get_current_active_user(current_user=Depends(get_current_user)):
@@ -343,17 +368,153 @@ def active_db_user(db: Session, user_id: int) -> db_models.User | None:
     return user if user is not None and not user.disabled else None
 
 
+@dataclass(frozen=True)
+class KernelCaller:
+    """A kernel a request comes from, as its token names it: the kernel's id and its owner, never an admin."""
+
+    kernel_id: str
+    user: User
+
+
+def legacy_kernel_auth_allowed() -> bool:
+    """Whether a kernel may still sign its calls with the internal token, as a kernel image from before a token per
+    kernel does: on a desktop (``electron``, ``package``), not on a multi-user server (``docker``, ``server``). Read
+    live, like the sharing gates."""
+    return os.environ.get("FLOWFILE_MODE", "electron") not in ("docker", "server")
+
+
+def create_kernel_token(owner_id: int, kernel_id: str, token_id: str) -> str:
+    """The token a kernel signs its calls to core with: its owner, its id and ``token_id``, the id of its current run.
+
+    Signed with core's JWT key. It has no expiry: it ends when the kernel stops or starts again, which is when
+    ``token_id`` stops being the kernel's. It names no ``sub`` and its type is not an access token's, so it is no
+    sign-in.
+    """
+    claims = {"type": KERNEL_TOKEN_TYPE, "scope": "kernel", "uid": owner_id, "kernel_id": kernel_id, "jti": token_id}
+    return jwt.encode(claims, get_jwt_secret(), algorithm=ALGORITHM)
+
+
+def _kernel_token_claims(token: str | None) -> dict | None:
+    """The claims of ``token`` when core signed it as a kernel's token, else ``None``.
+
+    Anything that is not shaped like a JWT, the internal token among them, is answered before the key is read.
+    """
+    if not token or not isinstance(token, str) or token.count(".") != 2:
+        return None
+    try:
+        claims = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+    return claims if claims.get("type") == KERNEL_TOKEN_TYPE and claims.get("scope") == "kernel" else None
+
+
+def kernel_caller(token: str | None, db: Session) -> KernelCaller | None:
+    """The kernel ``token`` is the token of, with its owner; ``None`` when ``token`` is no kernel token at all.
+
+    The one check of a kernel's token, for every route and for a server that replaces core's auth dependencies.
+    A kernel token that is no longer good is refused here (401) and never answered as anyone else: its kernel is
+    gone or stopped, it started again since, it changed owner, or its owner is disabled or gone. The owner is
+    answered without the admin flag.
+    """
+    claims = _kernel_token_claims(token)
+    if claims is None:
+        return None
+    refused = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="This kernel's token is no longer valid",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    kernel = db.query(db_models.Kernel).filter(db_models.Kernel.id == claims.get("kernel_id")).first()
+    if kernel is None or not kernel.token_id or kernel.user_id != claims.get("uid"):
+        raise refused
+    if not secrets.compare_digest(str(kernel.token_id), str(claims.get("jti"))):
+        raise refused
+    owner = active_db_user(db, kernel.user_id)
+    if owner is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="The kernel's owner is disabled or no longer exists",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = User(
+        username=owner.username,
+        id=owner.id,
+        email=owner.email,
+        full_name=owner.full_name,
+        disabled=False,
+        is_admin=False,
+        must_change_password=False,
+    )
+    return KernelCaller(kernel_id=kernel.id, user=user)
+
+
+def calling_kernel(
+    token: str = Depends(oauth2_scheme),
+    x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
+    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
+    db: Session = Depends(get_db),
+) -> KernelCaller | None:
+    """The kernel a request comes from, by the kernel token it carries; ``None`` for every other caller.
+
+    The token sits in ``X-Internal-Token``, where a kernel has always put what core hands it, so a server that
+    replaces core's auth dependencies passes it on as it passes the internal token; as the bearer it is taken too.
+    ``X-Kernel-Id`` decides nothing: a request that names another kernel than its token's
+    is refused (401), like a token that is no longer good (``kernel_caller``).
+    """
+    for candidate in (token, x_internal_token):
+        caller = kernel_caller(candidate, db)
+        if caller is None:
+            continue
+        if isinstance(x_kernel_id, str) and x_kernel_id and x_kernel_id != caller.kernel_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This kernel's token is for another kernel",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return caller
+    return None
+
+
+def calling_kernel_id(
+    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
+    kernel: KernelCaller | None = Depends(calling_kernel),
+) -> str | None:
+    """The id of the kernel a request is made for: its kernel token's, else the one ``X-Kernel-Id`` names, which
+    proves nothing by itself. For a route that has authenticated its caller and checks them against that kernel."""
+    return kernel.kernel_id if kernel is not None else x_kernel_id
+
+
+def require_internal_or_kernel_token(
+    x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
+    kernel: KernelCaller | None = Depends(calling_kernel),
+) -> None:
+    """Admit the worker, which signs with the internal token, and a kernel, which signs with its own.
+
+    Fails closed (401) for anything else, and when core has no internal token configured.
+    """
+    if kernel is None and not shared_token_valid(x_internal_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing internal token")
+
+
 def kernel_owner_id(
     x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
     x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
     db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme),
 ) -> int | None:
     """The id of the person whose kernel a request comes from, for what only a person may read through one.
 
-    ``None`` for every other caller: no kernel id, an internal token that does not verify, a kernel core does not
-    know, or one whose owner is disabled. It refuses nothing itself; the route decides.
+    ``None`` for every other caller: no kernel token, one that is no longer good, or, where a kernel may still sign
+    with the internal token (``legacy_kernel_auth_allowed``), no kernel id, a token that does not verify, a kernel
+    core does not know, or one whose owner is disabled. It refuses nothing itself; the route decides.
     """
-    if not x_kernel_id or not internal_token_valid(x_internal_token):
+    try:
+        caller = calling_kernel(token, x_internal_token, x_kernel_id, db)
+    except HTTPException:
+        return None
+    if caller is not None:
+        return caller.user.id
+    if not x_kernel_id or not legacy_kernel_auth_allowed() or not shared_token_valid(x_internal_token):
         return None
     kernel = db.query(db_models.Kernel).filter(db_models.Kernel.id == x_kernel_id).first()
     owner = active_db_user(db, kernel.user_id) if kernel is not None else None
@@ -366,62 +527,60 @@ def get_user_or_internal_service(
     x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
     db: Session = Depends(get_db),
 ) -> User:
-    """Auth dependency that accepts either JWT or internal service token.
+    """Auth dependency that accepts a person's JWT or a kernel's call.
 
     Used for endpoints that need to be accessible from both:
     - External clients (using JWT authentication)
-    - Internal services like kernel (using X-Internal-Token + X-Kernel-Id)
+    - Kernels, which sign with their own token (``calling_kernel``)
 
-    When the internal token authenticates and X-Kernel-Id is provided, returns
-    the kernel's actual owner so artifact / catalog ownership lands on the
-    right user in multi-user deployments, and refuses (401) a kernel whose
-    owner is disabled or no longer exists. Falls back to a synthetic
-    ``_internal_service`` user when no kernel id is supplied (legacy callers).
+    A kernel is answered as its owner, without the admin flag, and a kernel token that is no longer good is refused
+    (401) whatever else the request carries. The internal token, which a kernel image from before a token per
+    kernel signs with, is taken only where ``legacy_kernel_auth_allowed``: with ``X-Kernel-Id`` as the kernel's
+    owner (401 when the owner is disabled or gone), without it as the synthetic ``_internal_service`` user. On a
+    multi-user server it is refused (401).
     """
-    if x_internal_token:
-        try:
-            if verify_internal_token(x_internal_token):
-                # When the kernel identifies itself, route ownership to the
-                # kernel's actual owner. The X-Kernel-Id header is not a secret:
-                # the internal token gates access, and the kernel container is
-                # started by Core with this id baked in as an env var.
-                if x_kernel_id:
-                    kernel_row = (
-                        db.query(db_models.Kernel)
-                        .filter(db_models.Kernel.id == x_kernel_id)
-                        .first()
-                    )
-                    if kernel_row is not None:
-                        owner = active_db_user(db, kernel_row.user_id)
-                        if owner is not None:
-                            return User(
-                                username=owner.username,
-                                id=owner.id,
-                                email=owner.email,
-                                full_name=owner.full_name,
-                                disabled=owner.disabled,
-                                is_admin=owner.is_admin,
-                                must_change_password=owner.must_change_password,
-                            )
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="The kernel's owner is disabled or no longer exists",
-                            headers={"WWW-Authenticate": "Bearer"},
-                        )
+    caller = calling_kernel(token, x_internal_token, x_kernel_id, db)
+    if caller is not None:
+        return caller.user
 
-                # Fall through to synthetic service user. ID is configurable
-                # via FLOWFILE_INTERNAL_SERVICE_USER_ID; default 1 (typically
-                # the first/admin user).
-                service_user_id = int(os.environ.get("FLOWFILE_INTERNAL_SERVICE_USER_ID", "1"))
-                return User(
-                    username="_internal_service",
-                    id=service_user_id,
-                    disabled=False,
-                    is_admin=False,
-                    must_change_password=False,
+    if shared_token_valid(x_internal_token):
+        if not legacy_kernel_auth_allowed():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This server takes a kernel's own token: update the kernel image",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if x_kernel_id:
+            kernel_row = db.query(db_models.Kernel).filter(db_models.Kernel.id == x_kernel_id).first()
+            if kernel_row is not None:
+                owner = active_db_user(db, kernel_row.user_id)
+                if owner is not None:
+                    return User(
+                        username=owner.username,
+                        id=owner.id,
+                        email=owner.email,
+                        full_name=owner.full_name,
+                        disabled=owner.disabled,
+                        is_admin=owner.is_admin,
+                        must_change_password=owner.must_change_password,
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="The kernel's owner is disabled or no longer exists",
+                    headers={"WWW-Authenticate": "Bearer"},
                 )
+        try:
+            # FLOWFILE_INTERNAL_SERVICE_USER_ID names the synthetic user's id; 1 unless set.
+            service_user_id = int(os.environ.get("FLOWFILE_INTERNAL_SERVICE_USER_ID", "1"))
         except ValueError:
-            # Token not configured or invalid user ID - fall through to JWT auth
-            pass
+            service_user_id = None
+        if service_user_id is not None:
+            return User(
+                username="_internal_service",
+                id=service_user_id,
+                disabled=False,
+                is_admin=False,
+                must_change_password=False,
+            )
 
     return get_current_user(token=token, db=db)

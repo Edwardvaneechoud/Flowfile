@@ -62,6 +62,51 @@ def delete_kernel(db: Session, kernel_id: str) -> None:
     db.commit()
 
 
+def kernel_token_identity(db: Session, kernel_id: str, token_id: str | None = None) -> tuple[int, str, str] | None:
+    """What a token of a kernel names: ``(owner id, kernel id, token id)``.
+
+    Without ``token_id`` it is the token of the kernel's current run, ``None`` when it is in none. With one it is the
+    token of a run the kernel has not begun; ``begin_kernel_run`` begins it. ``None`` when the kernel has no row.
+    Nothing is written.
+    """
+    row = db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id).first()
+    if row is None:
+        return None
+    token_id = token_id or row.token_id
+    return (row.user_id, row.id, token_id) if token_id else None
+
+
+def begin_kernel_run(db: Session, kernel_id: str, token_id: str, *, keep_current: bool = False) -> None:
+    """Make ``token_id`` the kernel's, which ends the token of the run before it.
+
+    With ``keep_current`` a kernel that is in a run keeps it, decided in the one statement that writes, so a run
+    another core process began meanwhile is never replaced.
+    """
+    rows = db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id)
+    if keep_current:
+        rows = rows.filter(db_models.Kernel.token_id.is_(None))
+    rows.update({"token_id": token_id})
+    db.commit()
+
+
+def kernel_run_ids(db: Session) -> dict[str, str]:
+    """Kernel id to the token id of its run, for every kernel that is in one."""
+    rows = db.query(db_models.Kernel.id, db_models.Kernel.token_id).filter(db_models.Kernel.token_id.isnot(None))
+    return {kernel_id: token_id for kernel_id, token_id in rows}
+
+
+def clear_kernel_token(db: Session, kernel_id: str, token_id: str | None = None) -> None:
+    """End the token of a kernel's run; a kernel with no row has none.
+
+    Given ``token_id``, only while that run is still the kernel's: a run begun since is left alone.
+    """
+    rows = db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id)
+    if token_id is not None:
+        rows = rows.filter(db_models.Kernel.token_id == token_id)
+    rows.update({"token_id": None})
+    db.commit()
+
+
 def set_kernel_scratch_flow_id(db: Session, kernel_id: str, scratch_flow_id: int | None) -> None:
     """Attach a scratch FlowRegistration id to a kernel row.
 
