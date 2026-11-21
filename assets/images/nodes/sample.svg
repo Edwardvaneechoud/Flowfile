@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3D9BF2"/><stop offset="1" stop-color="#2376D8"/></linearGradient></defs>
+  <circle cx="50" cy="50" r="48" fill="url(#bg)"/>
+  <g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
+    <!-- bracket marking the sampled subset -->
+    <path d="M33 30 H27 V52 H33" stroke-width="3.5"/>
+    <!-- sampled rows (solid) -->
+    <line x1="39" y1="35" x2="73" y2="35" stroke-width="5"/>
+    <line x1="39" y1="47" x2="73" y2="47" stroke-width="5"/>
+    <!-- remaining rows (faint) -->
+    <line x1="39" y1="60" x2="73" y2="60" stroke-width="5" stroke-opacity="0.38"/>
+    <line x1="39" y1="71" x2="73" y2="71" stroke-width="5" stroke-opacity="0.38"/>
+  </g>
+</svg>

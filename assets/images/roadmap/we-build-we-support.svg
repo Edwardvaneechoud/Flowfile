@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 516" role="img" aria-label="Flowfile builds the flow graph and its three renderings, the node palette, catalog metadata, the execution-backend interface and its worker, and importers from other tools, and it plugs into, supports and never replaces compute clusters, Iceberg catalogs, identity providers, orchestrators, object storage, LLM providers, and warehouses and BI tools.">
+  <style>
+    .box  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .chip { fill:#eef0f2; }
+    .ic   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .t    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .s    { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .kick { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:11px; letter-spacing:1.4px; fill:#6b7280; }
+    .albl { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .arwc { fill:none; stroke:#2DD5D3; stroke-width:2.6; stroke-linecap:round; stroke-linejoin:round; }
+    @media (prefers-color-scheme: dark) {
+      .kick, .albl { fill:#aeb6c0; }
+    }
+    [data-md-color-scheme="slate"] .kick, [data-md-color-scheme="slate"] .albl { fill:#aeb6c0; }
+  </style>
+
+  <!-- ============ COLUMN HEADERS ============ -->
+  <text class="kick" x="40" y="48">WE BUILD</text>
+  <text class="kick" x="550" y="48">WE SUPPORT, NEVER REPLACE</text>
+
+  <!-- ============ PLUGS IN: the one cyan element (facing brackets + bridge) ============ -->
+  <path class="arwc" d="M400,66 H410 V486 H400"/>
+  <path class="arwc" d="M540,66 H530 V486 H540"/>
+  <path class="arwc" d="M410,276 H530"/>
+  <text class="albl" x="470" y="267" text-anchor="middle">plugs in</text>
+
+  <!-- ============ WE BUILD ============ -->
+  <g>
+    <rect class="box" x="40" y="66" width="350" height="76" rx="11"/>
+    <rect class="chip" x="54" y="83" width="42" height="42" rx="8"/>
+    <g class="ic" transform="translate(63,92)"><path d="M5,6 H12 V18 H19"/><circle cx="5" cy="6" r="2" fill="#eef0f2"/><circle cx="12" cy="6" r="2" fill="#eef0f2"/><circle cx="12" cy="18" r="2" fill="#eef0f2"/><circle cx="19" cy="18" r="2" fill="#eef0f2"/></g>
+    <text class="t" x="108" y="101.5">The flow graph</text>
+    <text class="s" x="108" y="117.5">its three renderings</text>
+  </g>
+  <g>
+    <rect class="box" x="40" y="152" width="350" height="76" rx="11"/>
+    <rect class="chip" x="54" y="169" width="42" height="42" rx="8"/>
+    <g class="ic" transform="translate(63,178)"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><path d="M16.5,13.5 V19.5 M13.5,16.5 H19.5"/></g>
+    <text class="t" x="108" y="187.5">The node palette</text>
+    <text class="s" x="108" y="203.5">custom nodes, community registry</text>
+  </g>
+  <g>
+    <rect class="box" x="40" y="238" width="350" height="76" rx="11"/>
+    <rect class="chip" x="54" y="255" width="42" height="42" rx="8"/>
+    <g class="ic" transform="translate(63,264)"><path d="M4,5 V11.6 L12.4,20 L20,12.4 L11.6,4 H5 A1,1 0 0 0 4,5 Z"/><circle cx="8.6" cy="8.6" r="1.6"/></g>
+    <text class="t" x="108" y="273.5">Catalog metadata</text>
+    <text class="s" x="108" y="289.5">lineage, sharing, change tracking</text>
+  </g>
+  <g>
+    <rect class="box" x="40" y="324" width="350" height="76" rx="11"/>
+    <rect class="chip" x="54" y="341" width="42" height="42" rx="8"/>
+    <g class="ic" transform="translate(63,350)"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9.5,3 V6 M14.5,3 V6 M9.5,18 V21 M14.5,18 V21 M3,9.5 H6 M3,14.5 H6 M18,9.5 H21 M18,14.5 H21"/></g>
+    <text class="t" x="108" y="359.5">Execution backends</text>
+    <text class="s" x="108" y="375.5">the interface and the worker</text>
+  </g>
+  <g>
+    <rect class="box" x="40" y="410" width="350" height="76" rx="11"/>
+    <rect class="chip" x="54" y="427" width="42" height="42" rx="8"/>
+    <g class="ic" transform="translate(63,436)"><path d="M13,4 H18.5 A1.5,1.5 0 0 1 20,5.5 V18.5 A1.5,1.5 0 0 1 18.5,20 H13"/><line x1="3.5" y1="12" x2="14" y2="12"/><polyline points="10,8 14,12 10,16"/></g>
+    <text class="t" x="108" y="445.5">Importers</text>
+    <text class="s" x="108" y="461.5">from other tools</text>
+  </g>
+
+  <!-- ============ WE SUPPORT, NEVER REPLACE ============ -->
+  <g>
+    <rect class="box" x="550" y="66" width="350" height="51" rx="11"/>
+    <rect class="chip" x="564" y="74.5" width="34" height="34" rx="8"/>
+    <g class="ic" transform="translate(569,79.5)"><rect x="4" y="3.5" width="16" height="5" rx="1.4"/><rect x="4" y="9.5" width="16" height="5" rx="1.4"/><rect x="4" y="15.5" width="16" height="5" rx="1.4"/><line x1="7.5" y1="6" x2="8.5" y2="6"/><line x1="7.5" y1="12" x2="8.5" y2="12"/><line x1="7.5" y1="18" x2="8.5" y2="18"/></g>
+    <text class="t" x="610" y="89">Compute clusters</text>
+    <text class="s" x="610" y="105">Polars Cloud &#183; your Kubernetes</text>
+  </g>
+  <g>
+    <rect class="box" x="550" y="127.5" width="350" height="51" rx="11"/>
+    <rect class="chip" x="564" y="136" width="34" height="34" rx="8"/>
+    <g class="ic" transform="translate(569,141)"><path d="M2.5,12 Q4.3,10.9 6,12 M18,12 Q19.7,10.9 21.5,12"/><path d="M6,12 L10.5,4 L13,7.6 L14.6,5.8 L18,12 Z"/><polyline points="5.5,14.5 8.5,20.5 15.8,20.5 18.5,14.5" stroke-dasharray="2.2 2.2"/></g>
+    <text class="t" x="610" y="150.5">Iceberg catalogs</text>
+    <text class="s" x="610" y="166.5">Lakekeeper &#183; Polaris &#183; Unity &#183; Glue</text>
+  </g>
+  <g>
+    <rect class="box" x="550" y="189" width="350" height="51" rx="11"/>
+    <rect class="chip" x="564" y="197.5" width="34" height="34" rx="8"/>
+    <g class="ic" transform="translate(569,202.5)"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10.6" r="2.2"/><path d="M5.7,16.2 C6.4,13.9 11.6,13.9 12.3,16.2"/><path d="M14.8,10 H18 M14.8,13.4 H17"/></g>
+    <text class="t" x="610" y="212">Identity providers</text>
+    <text class="s" x="610" y="228">any OIDC</text>
+  </g>
+  <g>
+    <rect class="box" x="550" y="250.5" width="350" height="51" rx="11"/>
+    <rect class="chip" x="564" y="259" width="34" height="34" rx="8"/>
+    <g class="ic" transform="translate(569,264)"><rect x="4" y="5" width="16" height="15" rx="2"/><line x1="4" y1="9.5" x2="20" y2="9.5"/><line x1="8" y1="3.5" x2="8" y2="6.5"/><line x1="16" y1="3.5" x2="16" y2="6.5"/><circle cx="15.5" cy="15.5" r="3.4" fill="#eef0f2"/><path d="M15.5,13.7 V15.5 L17,16.4"/></g>
+    <text class="t" x="610" y="273.5">Orchestrators</text>
+    <text class="s" x="610" y="289.5">Airflow &#183; Dagster &#183; Prefect</text>
+  </g>
+  <g>
+    <rect class="box" x="550" y="312" width="350" height="51" rx="11"/>
+    <rect class="chip" x="564" y="320.5" width="34" height="34" rx="8"/>
+    <g class="ic" transform="translate(569,325.5)"><ellipse cx="12" cy="6.5" rx="8" ry="2.6"/><path d="M4,6.5 L6,18.4 C6.3,19.9 9,20.7 12,20.7 C15,20.7 17.7,19.9 18,18.4 L20,6.5"/></g>
+    <text class="t" x="610" y="335">Object storage</text>
+    <text class="s" x="610" y="351">any S3-compatible &#183; ADLS &#183; GCS</text>
+  </g>
+  <g>
+    <rect class="box" x="550" y="373.5" width="350" height="51" rx="11"/>
+    <rect class="chip" x="564" y="382" width="34" height="34" rx="8"/>
+    <g class="ic" transform="translate(569,387)"><path d="M10.5,3.5 L12.4,9.1 L18,11 L12.4,12.9 L10.5,18.5 L8.6,12.9 L3,11 L8.6,9.1 Z"/><path d="M18.5,15.5 V20.5 M16,18 H21"/></g>
+    <text class="t" x="610" y="396.5">LLM providers</text>
+    <text class="s" x="610" y="412.5">cloud or local</text>
+  </g>
+  <g>
+    <rect class="box" x="550" y="435" width="350" height="51" rx="11"/>
+    <rect class="chip" x="564" y="443.5" width="34" height="34" rx="8"/>
+    <g class="ic" transform="translate(569,448.5)"><line x1="4" y1="20" x2="20" y2="20"/><rect x="5.5" y="12" width="3.4" height="8" rx="0.8"/><rect x="10.3" y="6.5" width="3.4" height="13.5" rx="0.8"/><rect x="15.1" y="10" width="3.4" height="10" rx="0.8"/></g>
+    <text class="t" x="610" y="458">Warehouses and BI tools</text>
+    <text class="s" x="610" y="474">via open tables and database nodes</text>
+  </g>
+</svg>

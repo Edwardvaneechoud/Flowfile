@@ -1,0 +1,111 @@
+flowfile_version: 0.8.2
+flowfile_id: 12
+flowfile_name: Sales Pipeline
+flowfile_settings:
+  description: null
+  execution_mode: Development
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: true
+  max_parallel_workers: 4
+  source_registration_id: null
+  parameters: []
+nodes:
+- id: 1
+  type: read
+  is_start_node: true
+  description: ''
+  node_reference: null
+  x_position: 0
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: []
+  outputs: [2]
+  setting_input:
+    cache_results: false
+    received_file:
+      path: https://raw.githubusercontent.com/edwardvaneechoud/flowfile/main/data/templates/supermarket_sales.csv
+      file_type: csv
+      table_settings:
+        file_type: csv
+- id: 2
+  type: unique
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 250
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [3]
+  setting_input:
+    cache_results: false
+    unique_input:
+      columns: null
+      strategy: any
+- id: 3
+  type: filter
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 500
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: [4]
+  setting_input:
+    cache_results: false
+    filter_input:
+      mode: advanced
+      advanced_filter: '[quantity] > 7'
+- id: 4
+  type: group_by
+  is_start_node: false
+  description: ''
+  node_reference: null
+  x_position: 750
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: [5]
+  setting_input:
+    cache_results: false
+    groupby_input:
+      agg_cols:
+      - old_name: city
+        agg: groupby
+        new_name: city
+      - old_name: gross_income
+        agg: sum
+        new_name: total_income
+      - old_name: gross_income
+        agg: median
+        new_name: median_income
+- id: 5
+  type: explore_data
+  is_start_node: false
+  description: 'Explore the output!'
+  node_reference: null
+  x_position: 1000
+  y_position: 200
+  left_input_id: null
+  right_input_id: null
+  input_ids: [4]
+  outputs: []
+  setting_input:
+    cache_results: false
+    graphic_walker_input: null
+_template_meta:
+  template_id: sales_pipeline
+  name: 'Sales pipeline: clean, filter, aggregate'
+  description: Drop duplicate sales rows, keep high-quantity orders, then total and
+    median gross income per city.
+  category: Beginner
+  tags: [unique, filter, group_by]
+  node_count: 5
+  icon: insights
+_required_csv_files: [supermarket_sales.csv]

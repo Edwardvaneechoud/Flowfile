@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1110 650" role="img" aria-label="The modules of the compute path. In flowfile_core, flow_graph/execution.py (run_graph, _place_run, BoundaryEdge) calls execution/placement.py (place and its policies), which reads flow_node/requirements.py (requirements_for); it calls the handshake in flow_data_engine/subprocess_operations/handshake.py (verify, Verdict); and it runs flow_node/flow_node.py (_do_execute, run_op, release_result), which reads execution/context.py (ExecutionContext), which resolves its backend through execution/registry.py (backend by id). The registry hands out EmbeddedWorkerBackend (id local, execution/backends/embedded.py), which calls the worker's service.py directly, and WorkerBackend (ids worker and worker:name, execution/backends/worker.py), which reaches flowfile_worker's protocol_routes.py and streaming.py, the /v1 routes and submit socket, over HTTP and WebSocket. service.py holds one body per route and runs jobs through funcs.py, pool.py and spawner.py, the children and the warm pool. The handshake and service.py both import shared/compute_protocol.py: Capabilities, PROTOCOL_VERSION and the wire models.">
+  <defs>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+    <marker id="ahn" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#233588"/></marker>
+  </defs>
+  <style>
+    .cluster { fill:#eef5fd; stroke:#1D76D6; stroke-width:1.7; }
+    .clusn   { fill:#eef2ff; stroke:#233588; stroke-width:1.7; }
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .boxn  { fill:#ffffff; stroke:#233588; stroke-width:1.5; }
+    .ctitle{ font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:14px; fill:#233588; letter-spacing:0.3px; }
+    .cpath { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10px; fill:#4a5578; }
+    .dir   { font-family:Roboto,Arial,sans-serif; font-size:10px; fill:#8a93a3; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13px; fill:#233588; }
+    .mono  { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:9.5px; fill:#5b6470; }
+    .lgd   { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .arw   { fill:none; stroke:#9aa8b6; stroke-width:1.7; stroke-linejoin:round; }
+    .dash  { fill:none; stroke:#7e88c4; stroke-width:1.6; stroke-dasharray:5 5; stroke-linecap:round; }
+    .flt   { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+    @media (prefers-color-scheme: dark) { .flt { fill:#aeb6c0; } }
+    [data-md-color-scheme="slate"] .flt { fill:#aeb6c0; }
+  </style>
+
+  <!-- ============ CLUSTERS ============ -->
+  <rect class="cluster" x="20" y="34" width="1072" height="368" rx="16"/>
+  <text class="ctitle" x="40" y="62">flowfile_core</text>
+  <text class="cpath" x="150" y="62">paths under flowfile_core/flowfile_core/flowfile/</text>
+  <rect class="clusn" x="20" y="430" width="286" height="122" rx="16"/>
+  <text class="ctitle" x="40" y="458">shared</text>
+  <rect class="cluster" x="548" y="430" width="544" height="200" rx="16"/>
+  <text class="ctitle" x="568" y="458">flowfile_worker</text>
+
+  <!-- ============ LEGEND ============ -->
+  <line class="arw" x1="842" y1="57" x2="874" y2="57"/>
+  <text class="lgd" x="882" y="61">calls</text>
+  <line class="dash" x1="934" y1="57" x2="966" y2="57"/>
+  <text class="lgd" x="974" y="61">imports</text>
+
+  <!-- ============ EDGES ============ -->
+  <!-- run -> place -> requirements -->
+  <path class="arw" d="M280,128 H302" marker-end="url(#ah)"/>
+  <path class="arw" d="M546,128 H568" marker-end="url(#ah)"/>
+  <!-- run -> handshake -->
+  <path class="arw" d="M110,164 V198" marker-end="url(#ah)"/>
+  <!-- run -> flow_node -->
+  <path class="arw" d="M230,164 V183 H426 V198" marker-end="url(#ah)"/>
+  <!-- flow_node -> context -> registry -->
+  <path class="arw" d="M546,238 H568" marker-end="url(#ah)"/>
+  <path class="arw" d="M812,238 H834" marker-end="url(#ah)"/>
+  <!-- registry -> both adapters -->
+  <path class="arw" d="M988,274 V308" marker-end="url(#ah)"/>
+  <path class="arw" d="M898,274 V293 H722 V308" marker-end="url(#ah)"/>
+  <!-- embedded -> service : direct call -->
+  <path class="arw" d="M722,384 V462" marker-end="url(#ah)"/>
+  <text class="flt" x="714" y="424" text-anchor="end">direct call</text>
+  <!-- worker backend -> routes : HTTP + WebSocket -->
+  <path class="arw" d="M988,384 V462" marker-end="url(#ah)"/>
+  <text class="flt" x="980" y="424" text-anchor="end">HTTP + WebSocket</text>
+  <!-- routes -> service -> children -->
+  <path class="arw" d="M838,495 H816" marker-end="url(#ah)"/>
+  <path class="arw" d="M632,524 V548" marker-end="url(#ah)"/>
+  <!-- imports of the shared contract -->
+  <path class="dash" d="M110,274 V462" marker-end="url(#ahn)"/>
+  <path class="dash" d="M572,495 H284" marker-end="url(#ahn)"/>
+
+  <!-- ============ CORE MODULES ============ -->
+  <g>
+    <rect class="box" x="40" y="92" width="240" height="72" rx="10"/>
+    <text class="dir" x="54" y="112">flow_graph/</text>
+    <text class="t" x="54" y="130">execution.py</text>
+    <text class="mono" x="54" y="147">run_graph &#183; _place_run &#183; BoundaryEdge</text>
+  </g>
+  <g>
+    <rect class="box" x="306" y="92" width="240" height="72" rx="10"/>
+    <text class="dir" x="320" y="112">execution/</text>
+    <text class="t" x="320" y="130">placement.py</text>
+    <text class="mono" x="320" y="147">place &#183; policies</text>
+  </g>
+  <g>
+    <rect class="box" x="572" y="92" width="240" height="72" rx="10"/>
+    <text class="dir" x="586" y="112">flow_node/</text>
+    <text class="t" x="586" y="130">requirements.py</text>
+    <text class="mono" x="586" y="147">requirements_for</text>
+  </g>
+  <g>
+    <rect class="box" x="40" y="202" width="240" height="72" rx="10"/>
+    <text class="dir" x="54" y="222">flow_data_engine/subprocess_operations/</text>
+    <text class="t" x="54" y="240">handshake.py</text>
+    <text class="mono" x="54" y="257">verify &#183; Verdict</text>
+  </g>
+  <g>
+    <rect class="box" x="306" y="202" width="240" height="72" rx="10"/>
+    <text class="dir" x="320" y="222">flow_node/</text>
+    <text class="t" x="320" y="240">flow_node.py</text>
+    <text class="mono" x="320" y="257">_do_execute &#183; run_op &#183; release_result</text>
+  </g>
+  <g>
+    <rect class="box" x="572" y="202" width="240" height="72" rx="10"/>
+    <text class="dir" x="586" y="222">execution/</text>
+    <text class="t" x="586" y="240">context.py</text>
+    <text class="mono" x="586" y="257">ExecutionContext</text>
+  </g>
+  <g>
+    <rect class="box" x="838" y="202" width="240" height="72" rx="10"/>
+    <text class="dir" x="852" y="222">execution/</text>
+    <text class="t" x="852" y="240">registry.py</text>
+    <text class="mono" x="852" y="257">backend(id)</text>
+  </g>
+  <g>
+    <rect class="box" x="572" y="312" width="240" height="72" rx="10"/>
+    <text class="dir" x="586" y="332">execution/backends/</text>
+    <text class="t" x="586" y="350">embedded.py</text>
+    <text class="mono" x="586" y="367">EmbeddedWorkerBackend &#183; id local</text>
+  </g>
+  <g>
+    <rect class="box" x="838" y="312" width="240" height="78" rx="10"/>
+    <text class="dir" x="852" y="332">execution/backends/</text>
+    <text class="t" x="852" y="350">worker.py</text>
+    <text class="mono" x="852" y="367">WorkerBackend</text>
+    <text class="mono" x="852" y="380">id worker, worker:&lt;name&gt;</text>
+  </g>
+
+  <!-- ============ SHARED ============ -->
+  <g>
+    <rect class="boxn" x="40" y="466" width="240" height="66" rx="10"/>
+    <text class="t" x="54" y="486">compute_protocol.py</text>
+    <text class="mono" x="54" y="503">Capabilities &#183; PROTOCOL_VERSION</text>
+    <text class="mono" x="54" y="516">wire models</text>
+  </g>
+
+  <!-- ============ WORKER MODULES ============ -->
+  <g>
+    <rect class="box" x="838" y="466" width="240" height="58" rx="10"/>
+    <text class="t" x="852" y="486">protocol_routes.py, streaming.py</text>
+    <text class="mono" x="852" y="503">/v1 routes and submit socket</text>
+  </g>
+  <g>
+    <rect class="box" x="572" y="466" width="240" height="58" rx="10"/>
+    <text class="t" x="586" y="486">service.py</text>
+    <text class="mono" x="586" y="503">one body per route</text>
+  </g>
+  <g>
+    <rect class="box" x="572" y="552" width="240" height="58" rx="10"/>
+    <text class="t" x="586" y="572">funcs.py &#183; pool.py &#183; spawner.py</text>
+    <text class="mono" x="586" y="589">children and the warm pool</text>
+  </g>
+</svg>
