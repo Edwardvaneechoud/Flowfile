@@ -238,7 +238,15 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
+def _utf8_output() -> None:
+    """Write UTF-8 whatever the console's code page: a diff names changes with ``→``, which Windows' cp1252 lacks."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure") and (stream.encoding or "").lower().replace("-", "") != "utf8":
+            stream.reconfigure(encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_output()
     args = parser().parse_args(argv)
     try:
         return args.run(args)

@@ -17,7 +17,7 @@ def _node(node_id, node_type="filter", **fields):
 
 
 def test_there_are_fixtures():
-    assert len(FLOW_FILES) >= 30
+    assert len(FLOW_FILES) >= 25
 
 
 @pytest.mark.parametrize("path", FLOW_FILES, ids=fixture_id)

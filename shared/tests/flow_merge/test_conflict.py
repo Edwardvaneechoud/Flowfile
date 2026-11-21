@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -120,8 +121,10 @@ def repo(tmp_path):
     _git(path, "init", "-q", "-b", "main")
     _git(path, "config", "user.email", "test@example.invalid")
     _git(path, "config", "user.name", "Test")
+    # Git runs the driver through sh, which eats a Windows path's backslashes: give it forward slashes, quoted.
+    python = Path(sys.executable).as_posix()
     driver = (
-        f"{sys.executable} -m shared.flow_merge merge-file %O %A %B -P %P --base-label %S --ours-label %X --theirs-label %Y"
+        f'"{python}" -m shared.flow_merge merge-file %O %A %B -P %P --base-label %S --ours-label %X --theirs-label %Y'
     )
     _git(path, "config", "merge.flowfile.driver", driver)
     (path / ".gitattributes").write_text("flows/*.flow.yaml merge=flowfile diff=flowfile\n")

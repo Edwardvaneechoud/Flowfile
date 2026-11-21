@@ -128,18 +128,23 @@ def remote(tmp_path):
 
 
 def _elsewhere(tmp_path: Path, remote: Path, edit) -> None:
-    """Clone the remote, ``edit(flow document)`` in its only flow file, commit and push with git alone."""
+    """Clone the remote, ``edit(flow document)`` in the fixture's flow file, commit and push with git alone."""
     clone = tmp_path / "ben"
     if not clone.exists():
         _git(tmp_path, "clone", "-q", str(remote), str(clone))
     else:
         _git(clone, "pull", "-q", "--ff-only")
-    flow_file = next((clone / "flows").glob("*.flow.yaml"))
+    flow_file = _branchy_file(clone)
     data = yaml.safe_load(flow_file.read_text())
     edit(data)
     flow_file.write_text(yaml.safe_dump(data, sort_keys=False))
     _git(clone, "commit", "-qam", "Changed elsewhere")
     _git(clone, "push", "-q", "origin", "main")
+
+
+def _branchy_file(folder: Path) -> Path:
+    """The fixture's flow file in a project folder; the owner's other flows (a demo seed) are exported beside it."""
+    return next((folder / "flows").glob("branchy*.flow.yaml"))
 
 
 def _node(data: dict, node_id: int) -> dict:
@@ -268,7 +273,7 @@ def test_switch_refused_with_unsaved_changes(project):
     recovery = forced.json()["recovery_sha"]
     assert recovery
     kept = git_ops.read_tree_at(root, recovery)
-    flow_text = next(text for path, text in kept.items() if path.startswith("flows/"))
+    flow_text = next(text for path, text in kept.items() if path.startswith("flows/branchy"))
     assert _node(yaml.safe_load(flow_text), 2)["sample_size"] == 33
     assert _step(flow_uuid, 2)["sample_size"] == 10
 
@@ -532,7 +537,7 @@ def _ben_adds_a_flow_named(name: str, flow_uuid: str):
     """A flow file Ben made on his own install: another flow (``flow_uuid``) that took the name ``name``."""
 
     def change(clone: Path) -> None:
-        source = next((clone / "flows").glob("branchy*.flow.yaml"))
+        source = _branchy_file(clone)
         data = yaml.safe_load(source.read_text())
         data.update(flow_uuid=flow_uuid, catalog_name=name)
         (clone / "flows" / f"{name}.flow.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
@@ -640,10 +645,13 @@ def test_a_merging_pull_keeps_what_the_remote_changed_outside_the_managed_files(
         (clone / "ci").mkdir()
         (clone / "ci" / "run.sh").write_text("#!/bin/sh\necho ok\n")
         (clone / "ci" / "run.sh").chmod(0o755)
+        # Windows has no executable bit on disk; set git's, which the merge must carry.
+        _git(clone, "add", "ci/run.sh")
+        _git(clone, "update-index", "--chmod=+x", "ci/run.sh")
         (clone / "logo.bin").write_bytes(bytes(range(256)))
         (clone / ".gitignore").write_text((clone / ".gitignore").read_text() + "build/\n")
         (clone / "OLD.md").unlink()
-        flow_file = next((clone / "flows").glob("*.flow.yaml"))
+        flow_file = _branchy_file(clone)
         data = yaml.safe_load(flow_file.read_text())
         _node(data, 2).update(sample_size=40)
         flow_file.write_text(yaml.safe_dump(data, sort_keys=False))

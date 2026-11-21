@@ -1,4 +1,4 @@
-"""The real flow files in the repository that the flow-merge tests read: templates, docs, core's saved fixtures."""
+"""The real flow files the repository tracks that the flow-merge tests read: templates, docs, the frontend and WASM."""
 
 from pathlib import Path
 
@@ -8,7 +8,6 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 _PATTERNS = (
     "data/templates/flows/*.yaml",
     "docs/assets/flows/*.yaml",
-    "flowfile_core/tests/support_files/flows/tmp/*.yaml",
     "flowfile_frontend/tests/fixtures/complex-flow.yaml",
     "flowfile_wasm/public/**/*.yaml",
 )
