@@ -680,3 +680,88 @@ class TestUploadAndDownload:
 
     def test_a_folder_is_not_downloaded(self, bob):
         assert bob.get("/files/download", params={"path": str(_workspace(bob))}).status_code == 400
+
+
+class TestDelete:
+    def _delete(self, client, path: Path, **params):
+        return client.delete("/files/delete", params={"path": str(path), **params})
+
+    def test_a_person_deletes_a_file_in_their_workspace(self, bob):
+        target = _workspace(bob) / "old.csv"
+        target.write_text("a\n1\n")
+        deleted = self._delete(bob, target)
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json() == {"path": str(target), "items": 0}
+        assert not target.exists()
+
+    def test_a_person_deletes_a_folder_with_what_is_in_it(self, bob):
+        folder = _workspace(bob) / "churn"
+        (folder / "inner").mkdir(parents=True)
+        (folder / "a.csv").write_text("a\n1\n")
+        (folder / "inner" / "b.csv").write_text("a\n1\n")
+        counted = self._delete(bob, folder, dry_run=True)
+        assert counted.status_code == 200, counted.text
+        assert counted.json()["items"] == 3
+        assert folder.is_dir(), "a dry run deletes nothing"
+        deleted = self._delete(bob, folder)
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["items"] == 3
+        assert not folder.exists()
+
+    def test_a_file_in_the_shared_folder_and_the_uploads_folder_is_deleted(self, bob, tmp_path):
+        (tmp_path / "team.csv").write_text("a\n1\n")
+        storage.uploads_directory.mkdir(parents=True, exist_ok=True)
+        (storage.uploads_directory / "dropped.csv").write_text("a\n1\n")
+        for target in (tmp_path / "team.csv", storage.uploads_directory / "dropped.csv"):
+            assert self._delete(bob, target).status_code == 200, target
+            assert not target.exists()
+
+    def test_a_file_in_another_persons_workspace_is_refused(self, alice, bob):
+        private = _alice_file(alice)
+        mine = _workspace(bob)
+        for spelling in (private, mine / ".." / private.parent.name / private.name):
+            refused = self._delete(bob, spelling)
+            assert refused.status_code == 403, (spelling, refused.text)
+            assert refused.json()["detail"].endswith(REFUSED + "."), refused.text
+        assert private.exists()
+
+    def test_a_link_to_another_persons_file_is_removed_and_their_file_kept(self, alice, bob):
+        private = _alice_file(alice)
+        link = _workspace(bob) / "peek.csv"
+        link.symlink_to(private)
+        assert self._delete(bob, link).status_code == 200
+        assert not os.path.lexists(link)
+        assert private.read_text() == "a,b\n1,2\n"
+
+    def test_a_root_itself_is_refused(self, bob, tmp_path):
+        storage.uploads_directory.mkdir(parents=True, exist_ok=True)
+        (_workspace(bob) / "keep.csv").write_text("a\n1\n")
+        for root in (_workspace(bob), tmp_path, storage.uploads_directory, storage.outputs_directory):
+            root.mkdir(parents=True, exist_ok=True)
+            refused = self._delete(bob, root)
+            assert refused.status_code == 403, (root, refused.text)
+            assert "cannot be deleted" in refused.json()["detail"]
+            assert root.is_dir()
+        assert (_workspace(bob) / "keep.csv").exists()
+
+    def test_the_flows_folder_is_not_deleted_from(self, bob):
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        flow = storage.flows_directory / "catalog_flow.yaml"
+        flow.write_text("x")
+        refused = self._delete(bob, flow)
+        assert refused.status_code == 403, refused.text
+        assert flow.exists()
+
+    def test_a_path_that_is_not_there_is_a_404(self, bob):
+        missing = self._delete(bob, _workspace(bob) / "gone.csv")
+        assert missing.status_code == 404, missing.text
+
+    def test_an_install_that_is_no_server_deletes_nothing_here(self, bob, monkeypatch):
+        from flowfile_core.configs import settings
+
+        target = _workspace(bob) / "kept.csv"
+        target.write_text("a\n1\n")
+        monkeypatch.setenv("FLOWFILE_MODE", "package")
+        monkeypatch.setattr(settings, "FLOWFILE_MODE", "package")
+        assert self._delete(bob, target).status_code == 403
+        assert target.exists()

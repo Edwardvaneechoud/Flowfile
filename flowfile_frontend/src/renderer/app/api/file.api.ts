@@ -91,6 +91,24 @@ export class FileApi {
     }
   }
 
+  /**
+   * Deletes a file, or a folder with what is in it, on a server; `items` is how many files and folders went
+   * with it. With `dryRun` they are only counted and nothing is deleted.
+   */
+  static async deletePath(
+    path: string,
+    opts: { dryRun?: boolean } = {},
+  ): Promise<{ path: string; items: number }> {
+    try {
+      const response = await axios.delete<{ path: string; items: number }>("files/delete", {
+        params: { path, dry_run: opts.dryRun ? true : undefined },
+      });
+      return response.data;
+    } catch (error) {
+      return handleApiError(error);
+    }
+  }
+
   static async getLocalFiles(directory: string): Promise<FileInfo[]> {
     try {
       const response = await axios.get<FileInfo[]>("files/files_in_local_directory/", {

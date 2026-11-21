@@ -13,7 +13,7 @@ The **Settings** gear icon in the left sidebar opens the Settings menu, grouped 
 | **Execution** | Python Kernels; Performance; Backends | Python Kernels manages the containers described in [Kernel Execution](kernels.md). **Backends** lists the workers flows run on and adds workers on other hosts, see [Remote workers](../deployment/remote-worker.md#add-the-worker-to-core). **Performance** and **Backends** are admin-only in Docker. |
 | **Preferences** | Privacy; Backups | Privacy holds the telemetry consent described in [Privacy & Telemetry](../telemetry.md). **Backups** is admin-only in Docker — see [Database backups](../deployment/backups.md). |
 | **Extensions** | Node Designer, Custom Nodes, Community Nodes | [Node Designer](node-designer.md) authors and publishes nodes; [Community Nodes](community-nodes.md) browses and installs shared ones. |
-| **Workspace** | Project; File Manager, User Groups, User Management | Project is [project tracking](../projects.md). File Manager, User Groups and User Management are Docker only; User Management is also admin-only. [Sharing](../deployment/sharing.md) covers groups and grants. |
+| **Workspace** | Project; Workspace, User Groups, User Management | Project is [project tracking](../projects.md). Workspace (your own files on the server and the shared folder), User Groups and User Management are on a server only; User Management is also admin-only. [Sharing](../deployment/sharing.md) covers groups and grants. |
 
 ## Theme
 

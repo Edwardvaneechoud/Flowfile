@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   asksForWorkspace,
+  deleteQuestion,
   fileTabLabel,
   fileTabRegisters,
   isBrowseRoot,
@@ -130,5 +131,26 @@ describe("the files a browser lists", () => {
       "Only .flowfile, .yml and .yaml files can be chosen here.",
     );
     expect(pickableTypesNote(["parquet"])).toBe("Only .parquet files can be chosen here.");
+  });
+});
+
+describe("the question before a delete", () => {
+  it("names a file", () => {
+    expect(deleteQuestion("a.csv", false, 0)).toBe('Delete "a.csv"? This cannot be undone.');
+  });
+
+  it("says how many items go with a folder", () => {
+    expect(deleteQuestion("churn", true, 1)).toBe(
+      'Delete the folder "churn" and the 1 item in it? This cannot be undone.',
+    );
+    expect(deleteQuestion("churn", true, 12)).toBe(
+      'Delete the folder "churn" and the 12 items in it? This cannot be undone.',
+    );
+  });
+
+  it("says when a folder is empty", () => {
+    expect(deleteQuestion("old", true, 0)).toBe(
+      'Delete the empty folder "old"? This cannot be undone.',
+    );
   });
 });

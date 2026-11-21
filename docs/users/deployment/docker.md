@@ -295,34 +295,17 @@ When you create a kernel from the UI, packages listed in the **Extra Python pack
 
 ---
 
-## File Manager
+## Workspace
 
-*Docker mode only.*
+*Docker and server mode only.*
 
-The File Manager provides a web-based interface for uploading and downloading data files when running Flowfile in Docker (where users cannot browse the host filesystem).
+Each person on the server has a folder of their own, beside a **Shared** folder everyone uses. Open **Settings** (the gear icon in the left sidebar) and choose **Workspace → Workspace** to browse both.
 
-![File Manager](../../assets/images/guides/docker-deployment/file-manager.png)
+- Open folders, make a **New folder**, **Upload** files of any type (or drop them on the page) and **Download** a file.
+- **Delete** a file, or a folder with what is in it. The top folders themselves cannot be deleted.
+- Double-click a flow file, or select it and click **Open in designer**, to open it in the designer.
 
-*The File Manager showing uploaded files*
-
-### Supported formats
-
-CSV, Parquet, Excel (`.xlsx` and `.xls`), JSON, TSV, TXT
-
-### File size limit
-
-Maximum **500 MB** per file.
-
-### Usage
-
-1. Open **Settings** (the gear icon in the left sidebar) and choose **Workspace → File Manager**
-2. Click **Upload** to add a file
-3. Uploaded files appear in the file list and can be used in **Read Data** input nodes
-4. Click the delete icon to remove a file
-
-### Access
-
-The File Manager is only available when `FLOWFILE_MODE=docker` is set.
+Files uploaded before this page existed are in the `uploads` folder inside **Shared**. A single upload is at most **500 MB**.
 
 ## Troubleshooting
 

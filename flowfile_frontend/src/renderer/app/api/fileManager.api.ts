@@ -2,18 +2,6 @@ import axios from "../services/axios.config";
 
 const API_BASE = "/file_manager";
 
-export interface ManagedFile {
-  name: string;
-  path: string;
-  is_directory: boolean;
-  size: number;
-  file_type: string;
-  last_modified: string;
-  created_date: string;
-  is_hidden: boolean;
-  exists: boolean;
-}
-
 export interface UploadResponse {
   filename: string;
   filepath: string;
@@ -53,11 +41,6 @@ export const FALLBACK_UPLOAD_LIMITS: UploadLimits = {
 let limitsPromise: Promise<UploadLimits> | null = null;
 
 export class FileManagerApi {
-  static async listFiles(): Promise<ManagedFile[]> {
-    const response = await axios.get<ManagedFile[]>(`${API_BASE}/files`);
-    return response.data;
-  }
-
   static getLimits(): Promise<UploadLimits> {
     limitsPromise ??= axios
       .get<UploadLimits>(`${API_BASE}/limits`)
@@ -84,9 +67,5 @@ export class FileManagerApi {
       },
     });
     return response.data;
-  }
-
-  static async deleteFile(filename: string): Promise<void> {
-    await axios.delete(`${API_BASE}/files/${encodeURIComponent(filename)}`);
   }
 }

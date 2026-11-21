@@ -77,6 +77,18 @@ export function pickableTypesNote(types: string[]): string {
   return `Only ${named} files can be chosen here.`;
 }
 
+/** The question asked before a delete: the file's name, or for a folder how many items go with it. */
+export function deleteQuestion(name: string, isDirectory: boolean, items: number): string {
+  if (!isDirectory) return `Delete "${name}"? This cannot be undone.`;
+  if (items === 0) return `Delete the empty folder "${name}"? This cannot be undone.`;
+  const counted = `${items} item${items === 1 ? "" : "s"}`;
+  return `Delete the folder "${name}" and the ${counted} in it? This cannot be undone.`;
+}
+
+/** The line under the Workspace page's title. */
+export const WORKSPACE_PAGE_DESCRIPTION =
+  "Your own files on this server, and the folder everyone shares.";
+
 /** The query that opens the editor's Open dialog on the person's workspace: `?open=workspace`. */
 export const OPEN_WORKSPACE_QUERY = { key: "open", value: "workspace" } as const;
 

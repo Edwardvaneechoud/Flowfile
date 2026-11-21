@@ -254,6 +254,30 @@ def download_file(path: str, current_user=Depends(get_current_active_user)) -> F
     return FileResponse(place, filename=os.path.basename(place))
 
 
+class DeletedPath(BaseModel):
+    path: str
+    items: int
+
+
+@router.delete("/files/delete", response_model=DeletedPath, tags=["file manager"])
+def delete_path(path: str, dry_run: bool = False, current_user=Depends(get_current_active_user)) -> DeletedPath:
+    """Delete a file, or a folder with everything in it, from the person's workspace, the shared folder or the
+    uploads and outputs folders on a server (``workspace.delete_place``). ``items`` is how many files and folders
+    went with it; with ``dry_run`` that is only counted. A 403 for a top folder, a path outside those places or
+    any path off a server, a 404 when nothing is there."""
+    if not is_server_mode():
+        raise HTTPException(403, "Files are deleted here on a server only.")
+    try:
+        real, items = workspace.delete_place(path, current_user.id if current_user else None, dry_run=dry_run)
+    except workspace.NotYours as err:
+        raise HTTPException(403, err.shown) from None
+    except FileNotFoundError:
+        raise HTTPException(404, "File not found") from None
+    except PermissionError:
+        raise HTTPException(403, "No permission to delete this here") from None
+    return DeletedPath(path=real, items=items)
+
+
 class BrowseRoot(BaseModel):
     name: str
     path: str

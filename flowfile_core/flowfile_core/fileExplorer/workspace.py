@@ -332,6 +332,86 @@ def browse_refusal(path: str) -> str:
     return f'"{path}" is not in {_places_named()}.'
 
 
+def _top_folders(user_id: int | None, places: Places) -> tuple[set[str], set[tuple[int, int]]]:
+    """The folders no delete removes, by text and by file identity: the browser's roots, the places' own folders,
+    the flows, uploads and outputs folders and the folder of workspaces."""
+    folders = [root.path for root in browse_roots(user_id)]
+    folders += [
+        *places.roots,
+        storage.flows_directory,
+        storage.uploads_directory,
+        storage.outputs_directory,
+        workspaces_root(),
+    ]
+    named: set[str] = set()
+    identities: set[tuple[int, int]] = set()
+    for folder in folders:
+        named.update({os.path.realpath(folder), os.path.abspath(folder)})
+        try:
+            found = os.stat(folder)
+        except OSError:
+            continue
+        identities.add((found.st_dev, found.st_ino))
+    return named, identities
+
+
+def deletable(path: str, user_id: int | None) -> tuple[str, bool]:
+    """Where a delete of ``path`` for ``user_id`` acts, and whether that is a link to remove rather than follow.
+
+    A file or a folder in the person's workspace, the shared folder or the uploads and outputs folders, as a file
+    node writes them; never one of those folders itself, nor a folder that holds anything outside them. A link is
+    removed where it is, so it never leads the delete to what it points at.
+
+    Raises:
+        NotYours: with :func:`browse_refusal`, or a sentence naming a top folder.
+        FileNotFoundError: when nothing is at ``path``.
+    """
+    asked = os.path.abspath(os.path.expanduser(path))
+    name = os.path.basename(asked)
+    if not name:
+        raise NotYours(f'"{path}" is a top folder and cannot be deleted.')
+    places = Places(user_id, "write")
+    target = os.path.join(os.path.realpath(os.path.dirname(asked)), name)
+    link = os.path.islink(target)
+    real = target if link else os.path.realpath(target)
+    if not places.holds(os.path.dirname(target) if link else real):
+        if Places(user_id, "browse").holds(real):
+            raise NotYours(f'"{path}" is kept by Flowfile and cannot be deleted here.')
+        raise NotYours(browse_refusal(path))
+    named, identities = _top_folders(user_id, places)
+    if not os.path.lexists(target):
+        raise FileNotFoundError(path)
+    if not link:
+        found = os.stat(real)
+        if real in named or target in named or (found.st_dev, found.st_ino) in identities:
+            raise NotYours(f'"{path}" is a top folder and cannot be deleted.')
+        if os.path.isdir(real) and not places.holds_all_of(real):
+            raise NotYours(f'"{path}" holds files outside {_places_named()}, so it cannot be deleted.')
+    return real, link
+
+
+def items_in(folder: str) -> int:
+    """How many files and folders lie in ``folder``, at any depth; links are counted, not followed."""
+    count = 0
+    for _, folders, files in os.walk(folder):
+        count += len(folders) + len(files)
+    return count
+
+
+def delete_place(path: str, user_id: int | None, dry_run: bool = False) -> tuple[str, int]:
+    """Delete a file or a folder with what is in it at ``path`` (:func:`deletable`); where it was and how many
+    items went with it. With ``dry_run`` nothing is deleted."""
+    real, link = deletable(path, user_id)
+    is_folder = not link and os.path.isdir(real)
+    items = items_in(real) if is_folder else 0
+    if not dry_run:
+        if is_folder:
+            shutil.rmtree(real)
+        else:
+            os.unlink(real)
+    return real, items
+
+
 def refusal_in(error: BaseException) -> str | None:
     """The sentence of the ``NotYours`` somewhere in ``error``'s chain; else ``None``."""
     seen: set[int] = set()

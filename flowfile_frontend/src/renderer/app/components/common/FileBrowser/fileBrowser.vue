@@ -1,7 +1,7 @@
 <template>
-  <div class="file-browser" :class="{ dense }">
+  <div class="file-browser" :class="{ dense, page }">
     <!-- Title Section -->
-    <div class="browser-header">
+    <div v-if="!page" class="browser-header">
       <div class="browser-title">
         <span class="material-icons">folder</span>
         <span>File Browser</span>
@@ -240,6 +240,17 @@
             <span class="material-icons">download</span>
             Download
           </el-button>
+          <el-button
+            v-if="selectedFile"
+            size="small"
+            class="browser-action-btn"
+            :disabled="loading"
+            data-testid="file-browser-delete"
+            @click="deleteSelected"
+          >
+            <span class="material-icons">delete</span>
+            Delete
+          </el-button>
         </template>
         <span
           v-if="selectedFile && !canPick(selectedFile)"
@@ -293,15 +304,16 @@
         </el-button>
 
         <el-button
-          v-if="mode === 'open' && selectedFile && !selectedFile.is_directory"
+          v-if="mode === 'open' && selectedFile && opensFile(selectedFile)"
           type="primary"
           :disabled="loading || !canPick(selectedFile)"
           size="small"
           class="browser-action-btn"
+          data-testid="file-browser-open"
           @click="handleOpenFile"
         >
           <span class="material-icons">open_in_new</span>
-          Open File
+          {{ page ? "Open in designer" : "Open File" }}
         </el-button>
       </div>
     </div>
@@ -359,6 +371,7 @@ import { FLOWFILE_EXTENSIONS, DATA_FILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } fr
 import { FileApi } from "./fileSystemApi";
 import { FileManagerApi } from "../../../api/fileManager.api";
 import {
+  deleteQuestion,
   isBrowseRoot,
   listsFile,
   matchesFileTypes,
@@ -399,6 +412,8 @@ interface Props {
   dense?: boolean;
   /** Which storage to browse. Omit for the local filesystem. */
   location?: StorageLocation;
+  /** A page of its own (the Workspace page): fills its host, makes folders and opens flow files only. */
+  page?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -414,6 +429,7 @@ const props = withDefaults(defineProps<Props>(), {
   defaultNewFileName: "",
   dense: false,
   location: () => ({ kind: "local" }) as StorageLocation,
+  page: false,
 });
 
 const provider = computed(() => resolveStorageProvider(props.location));
@@ -554,6 +570,34 @@ const downloadSelected = async () => {
   } catch (err: any) {
     ElMessage.error(err?.message || "Could not download the file");
   }
+};
+
+const deleteSelected = async () => {
+  const file = selectedFile.value;
+  if (!file) return;
+  try {
+    const items = file.is_directory
+      ? (await FileApi.deletePath(file.path, { dryRun: true })).items
+      : 0;
+    await ElMessageBox.confirm(deleteQuestion(file.name, file.is_directory, items), "Delete", {
+      confirmButtonText: "Delete",
+      cancelButtonText: "Cancel",
+      type: "warning",
+    });
+  } catch (err: any) {
+    if (typeof err?.message === "string") ElMessage.error(err.message);
+    return;
+  }
+  try {
+    await FileApi.deletePath(file.path);
+  } catch (err: any) {
+    ElMessage.error(typeof err?.message === "string" ? err.message : "Could not delete it");
+    return;
+  }
+  ElMessage.success(`Deleted "${file.name}"`);
+  selectedFile.value = null;
+  emit("update:modelValue", null);
+  await loadDirectoryContents(currentPath.value);
 };
 
 const loadDirectoryContents = async (directoryPath: string) => {
@@ -754,8 +798,12 @@ const handleBackgroundClick = () => {
   emit("update:modelValue", null);
 };
 
+/** Whether a file is opened from here: any file a dialog may pick, and on the page a flow file only. */
+const opensFile = (file: FileInfo): boolean =>
+  !file.is_directory && canPick(file) && (!props.page || isFlowfile(file));
+
 const handleOpenFile = () => {
-  if (selectedFile.value && !selectedFile.value.is_directory && canPick(selectedFile.value)) {
+  if (selectedFile.value && opensFile(selectedFile.value)) {
     emit("fileSelected", selectedFile.value);
   }
 };
@@ -772,7 +820,8 @@ const handleSelectDirectory = () => {
 /** Offered where a location is being picked: a save target or a directory. */
 const canCreateFolder = computed(
   () =>
-    !!provider.value.createDirectory && (props.mode === "create" || props.allowDirectorySelection),
+    !!provider.value.createDirectory &&
+    (props.mode === "create" || props.allowDirectorySelection || props.page),
 );
 
 const createFolder = async () => {
@@ -801,7 +850,7 @@ const handleDoubleClick = async (file: FileInfo) => {
   if (file.is_directory) {
     selectedFile.value = null;
     await navigateIntoDirectory(file.name);
-  } else if (canPick(file)) {
+  } else if (opensFile(file)) {
     emit("fileSelected", file);
   }
 };
@@ -1325,6 +1374,10 @@ onMounted(async () => {
   margin-right: auto;
   font-size: 12px;
   color: var(--color-text-secondary);
+}
+
+.file-browser.page {
+  height: 100%;
 }
 
 .file-browser {
