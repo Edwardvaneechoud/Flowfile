@@ -1,9 +1,11 @@
-"""Flow-log routes: the GET stream takes a Bearer header for the caller's own flows; writes need the internal token."""
+"""Flow-log routes: the GET stream takes a Bearer header for the caller's own flows; writes need the internal token
+or a kernel's own."""
 
 import json
 import socket
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -11,7 +13,9 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
-from flowfile_core.auth.jwt import get_internal_token
+from flowfile_core.auth.jwt import create_kernel_token, get_internal_token
+from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.routes import logs
 from flowfile_core.routes.routes import flow_file_handler
 from flowfile_core.schemas import input_schema
@@ -126,6 +130,51 @@ def test_raw_log_signed_with_the_internal_token_lands(own_flow):
     )
     assert response.status_code == 200
     assert "Node ID: 3 - signed line" in _flow_log_text(own_flow)
+
+
+@pytest.fixture()
+def kernel_headers():
+    """A started kernel of the caller's; yields what its runtime signs a call to core with, for a token id."""
+    owner_id = client.get("/auth/users/me", headers=headers).json()["id"]
+    kernel_id = f"logs-{uuid.uuid4().hex[:8]}"
+    with get_db_context() as db:
+        db.add(db_models.Kernel(id=kernel_id, name="k", user_id=owner_id, token_id="run-1"))
+        db.commit()
+
+    def _headers(token_id: str = "run-1") -> dict[str, str]:
+        return {"X-Internal-Token": create_kernel_token(owner_id, kernel_id, token_id), "X-Kernel-Id": kernel_id}
+
+    yield _headers
+    with get_db_context() as db:
+        db.query(db_models.Kernel).filter(db_models.Kernel.id == kernel_id).delete()
+        db.commit()
+
+
+def test_a_kernel_writes_to_its_owners_flow_and_to_no_other_users(own_flow, someone_elses_flow, kernel_headers):
+    """A kernel acts for its owner, and a flow id is no secret: another user's flow is not its to write to."""
+    own = client.post("/raw_logs", json=_raw_log(own_flow, "kernel line"), headers=kernel_headers())
+    assert own.status_code == 200
+    assert "Node ID: 3 - kernel line" in _flow_log_text(own_flow)
+
+    other = client.post("/raw_logs", json=_raw_log(someone_elses_flow, "planted line"), headers=kernel_headers())
+    assert other.status_code == 404
+    assert "planted line" not in _flow_log_text(someone_elses_flow)
+
+    worker = {"X-Internal-Token": get_internal_token()}
+    assert client.post("/raw_logs", json=_raw_log(someone_elses_flow, "worker line"), headers=worker).status_code == 200
+
+
+def test_a_kernel_token_that_is_no_longer_good_is_refused_with_the_warning(
+    own_flow, kernel_headers, fresh_unsigned_warning, monkeypatch
+):
+    warnings: list[str] = []
+    monkeypatch.setattr(logs.logger, "warning", lambda message, *args, **kwargs: warnings.append(message))
+
+    response = client.post("/raw_logs", json=_raw_log(own_flow, "late line"), headers=kernel_headers("run-0"))
+
+    assert response.status_code == 401
+    assert "late line" not in _flow_log_text(own_flow)
+    assert len(warnings) == 1 and "no longer good" in warnings[0]
 
 
 def test_post_to_flow_log_route_is_not_allowed(own_flow):
