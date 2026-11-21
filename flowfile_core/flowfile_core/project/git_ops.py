@@ -263,6 +263,17 @@ def parent_of(root: Path, sha: str) -> str | None:
     return parents[0].hexsha if parents else None
 
 
+def read_blobs(root: Path, sha: str, rel_paths) -> dict[str, bytes]:
+    """The bytes of the blobs at ``rel_paths`` in ``sha``'s tree, read in one walk of it; an absent one is left
+    out. One ``read_blob`` per file resolves the commit again each time, which is most of a restore's preflight."""
+    _require_hex_sha(sha)
+    if not is_repo(root):
+        return {}
+    wanted = set(rel_paths)
+    tree = Repo(str(root)).commit(sha).tree
+    return {b.path: b.data_stream.read() for b in tree.traverse() if b.type == "blob" and b.path in wanted}
+
+
 def read_blob(root: Path, sha: str, rel_path: str) -> str | None:
     """The UTF-8 text of one blob in ``sha``'s tree, or ``None`` if it is absent."""
     _require_hex_sha(sha)

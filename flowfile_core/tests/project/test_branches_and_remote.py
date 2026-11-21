@@ -23,7 +23,7 @@ from flowfile_core.database.models import FlowRegistration, Secret
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
-from flowfile_core.project import git_ops, merging, project_sync
+from flowfile_core.project import git_ops, importer, kinds, merging, project_sync
 from flowfile_core.schemas import input_schema, schemas
 
 OWNER = 1
@@ -167,6 +167,87 @@ def test_switch_branch_rebuilds_the_database(project):
     state = client.get("/project/branches").json()
     assert state["current"] == "feature"
     assert {b["name"] for b in state["branches"]} == {"main", "feature"}
+
+
+def _register_flow(folder: Path, name: str, flow_id: int) -> str:
+    """A second flow, ``manual input (1)``, registered for the owner; its uuid."""
+    handler = FlowfileHandler()
+    handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name=name, path="."))
+    graph = handler.get_flow(flow_id)
+    graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=flow_id, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"b": 2}])
+        )
+    )
+    path = str(folder / f"{name}.yaml")
+    graph.save_flow(path)
+    graph.close_flow()
+    auto_register_flow(path, name, OWNER)
+    with get_db_context() as db:
+        return db.query(FlowRegistration).filter_by(flow_path=path).one().flow_uuid
+
+
+def _drop_flow(flow_uuid: str) -> None:
+    with get_db_context() as db:
+        reg = db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+        if reg is not None:
+            CatalogService(SQLAlchemyCatalogRepository(db)).delete_flow(reg.id, delete_file=True)
+
+
+def test_a_switch_builds_and_writes_only_the_flows_that_changed(project, tmp_path, monkeypatch):
+    root, flow_uuid = project
+    other = _register_flow(tmp_path, "untouched", 828283)
+    try:
+        _save("a second flow")
+        client.post("/project/branches", json={"name": "feature"})
+        _set_sample(flow_uuid, 25)
+        _save("bigger sample")
+        other_file = Path(_flow_path(other))
+        written_at = other_file.stat().st_mtime_ns
+
+        built, imported = [], []
+        real_build, real_import = importer.ephemeral_flow_graph, importer._import_flow
+        monkeypatch.setattr(
+            importer, "ephemeral_flow_graph", lambda path, owner: built.append(Path(path).name) or real_build(path, owner)
+        )
+        monkeypatch.setattr(
+            importer, "_import_flow", lambda data, owner: imported.append(data["flow_uuid"]) or real_import(data, owner)
+        )
+
+        response = client.post("/project/branches/switch", json={"name": "main"})
+        assert response.status_code == 200, response.text
+        assert imported == [flow_uuid]
+        assert len(built) == 1
+        assert _step(flow_uuid, 2)["sample_size"] == 10
+        assert other_file.stat().st_mtime_ns == written_at
+        assert client.get("/project/active").json()["dirty"] is False
+    finally:
+        _drop_flow(other)
+
+
+def _flow_file(root: Path, name: str, node_type: str) -> str:
+    rel = f"flows/{name}.flow.yaml"
+    (root / "flows").mkdir(exist_ok=True)
+    (root / rel).write_text(yaml.safe_dump({"flow_uuid": name, "nodes": [{"id": 1, "type": node_type}]}))
+    return rel
+
+
+def test_a_plan_that_moves_tables_also_applies_the_flows_that_read_the_catalog(tmp_path):
+    reader = _flow_file(tmp_path, "reads", "catalog_reader")
+    plain = _flow_file(tmp_path, "plain", "manual_input")
+    edited = _flow_file(tmp_path, "edited", "manual_input")
+    flow_change = kinds.Change("flow", "edited", "modified", "edited", edited)
+
+    assert importer.flows_to_apply(tmp_path, None) is None
+    assert importer.flows_to_apply(tmp_path, [flow_change]) == {edited}
+    table_changed = kinds.Change("tables", ("a", "b", "t"), "modified", "t", "tables.yaml")
+    assert importer.flows_to_apply(tmp_path, [flow_change, table_changed]) == {edited}
+    for change in ("added", "removed"):
+        moved = kinds.Change("tables", ("a", "b", "t"), change, "t", "tables.yaml")
+        assert importer.flows_to_apply(tmp_path, [flow_change, moved]) == {edited, reader}
+    schema_gone = kinds.Change("namespaces", ("a", "b"), "removed", "b", "namespaces.yaml")
+    assert plain not in importer.flows_to_apply(tmp_path, [schema_gone])
 
 
 def test_switch_refused_with_unsaved_changes(project):

@@ -164,6 +164,10 @@ def _plan_changes(root: Path, owner_id: int, sha: str | None) -> list[kinds.Chan
     return kinds.compare(_snapshot(root, owner_id, listed), target, kinds=listed, strict=True)
 
 
+def _removed(changes: list[kinds.Change]) -> list[kinds.Change]:
+    return [c for c in changes if c.change == "removed"]
+
+
 def _change_rows(changes: list[kinds.Change]) -> list[dict]:
     return [
         {"change": c.change, "kind": kinds.get(c.kind).label, "label": c.label, "path": c.path} for c in changes
@@ -463,13 +467,13 @@ class ProjectSyncService:
             self._refuse_during_merge(proj)
             preflight_import_caps(proj.root, sha)
             preflight_import_files(proj.root, sha)
-            removed = [c for c in _plan_changes(proj.root, proj.owner_id, sha) if c.change == "removed"]
+            changes = _plan_changes(proj.root, proj.owner_id, sha)
             recovery_sha = self._guard_before_apply(proj, force, "restore")
             head = git_ops.head_sha(proj.root)
             git_ops.restore(proj.root, sha)
             try:
                 self._snapshot_database()
-                result = import_project(proj.root, proj.owner_id, removed)
+                result = import_project(proj.root, proj.owner_id, _removed(changes), changes)
             except BaseException:
                 if head:  # the database rolled back, so the folder goes back to the last version too
                     git_ops.restore(proj.root, head)
@@ -497,10 +501,10 @@ class ProjectSyncService:
             # Check the working tree before the recovery point or the DB rebuild, so a bad file aborts cleanly.
             preflight_import_caps_worktree(proj.root)
             preflight_import_files_worktree(proj.root)
-            removed = [c for c in _plan_changes(proj.root, proj.owner_id, None) if c.change == "removed"]
+            changes = _plan_changes(proj.root, proj.owner_id, None)
             recovery_sha = self._guard_before_apply(proj, force, "reload")
             self._snapshot_database()
-            result = import_project(proj.root, proj.owner_id, removed)
+            result = import_project(proj.root, proj.owner_id, _removed(changes), changes)
             self._sync_track_setting_from_manifest(proj)
         result.recovery_sha = recovery_sha
         return result
@@ -517,12 +521,12 @@ class ProjectSyncService:
         folder goes back with the database. Holds the caller's lock."""
         preflight_import_caps(proj.root, sha)
         preflight_import_files(proj.root, sha)
-        removed = [c for c in _plan_changes(proj.root, proj.owner_id, sha) if c.change == "removed"]
+        changes = _plan_changes(proj.root, proj.owner_id, sha)
         recovery_sha = self._guard_before_apply(proj, force, action)
         move()
         try:
             self._snapshot_database()
-            result = import_project(proj.root, proj.owner_id, removed)
+            result = import_project(proj.root, proj.owner_id, _removed(changes), changes)
         except BaseException:
             undo()
             raise
