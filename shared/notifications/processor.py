@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -56,7 +56,7 @@ EVENT_RULE_FLAGS = {
 
 def _utcnow() -> datetime:
     """Naive UTC — the catalog DB stores naive datetimes and compares them naively."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _make_session() -> Session:

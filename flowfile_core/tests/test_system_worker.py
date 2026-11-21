@@ -25,8 +25,13 @@ from tests.conftest import _free_port, closed_url
 
 
 def point_the_worker_backend_at(monkeypatch, url: str) -> None:
-    """The proxy forwards to the worker the registry's worker backend runs on; make that ``url`` for the test."""
+    """The proxy forwards to the worker the registry's worker backend runs on; make that ``url`` for the test.
+
+    Any owner the URL has is dropped for the test: an earlier test's backend made on the same free port would else
+    name itself on the gate's error.
+    """
     monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
+    monkeypatch.delitem(handshake._by_url, url, raising=False)
 
 
 @pytest.fixture

@@ -12,7 +12,7 @@ import re
 import socket
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -127,7 +127,7 @@ def _connection(
         connected=stored is not None,
         hub_url=stored["hub_url"] if stored else None,
         device_name=stored.get("device_name") if stored else socket.gethostname(),
-        expires_at=datetime.fromtimestamp(expires, timezone.utc) if expires is not None else None,
+        expires_at=datetime.fromtimestamp(expires, UTC) if expires is not None else None,
         org_name=info["org_name"] if info else None,
         hub_version=info["hub_version"] if info else None,
         reachable=info is not None,

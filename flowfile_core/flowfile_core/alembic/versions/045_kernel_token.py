@@ -4,8 +4,8 @@ A kernel signs its calls to core with a token minted when it starts. ``token_id`
 current run; a stopped kernel keeps it null, which is what every existing kernel gets, so a kernel that was running
 across the upgrade gets its token at its next cell or start.
 
-Revision ID: 044
-Revises: 043
+Revision ID: 045
+Revises: 044
 Create Date: 2026-11-20
 """
 
@@ -15,8 +15,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision: str = "044"
-down_revision: str | None = "043"
+revision: str = "045"
+down_revision: str | None = "044"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

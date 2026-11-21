@@ -309,7 +309,7 @@ The internal token (`FLOWFILE_INTERNAL_TOKEN`) stays between core and the worker
 
 The kernel sends its token in `X-Internal-Token`, the header a kernel has always signed with, so a server that replaces core's auth dependencies and passes `X-Internal-Token` callers on to core (`auth/jwt.py::internal_token_valid` answers true for the internal token and for a kernel's token; `shared_token_valid` only for the internal token) needs no change.
 
-**Older kernel images.** A kernel image before 0.6.6 reads its token from `ExecuteRequest.internal_token` and sends it the same way; core fills that field with the kernel's token, so such an image keeps working. A call signed with the internal token itself is taken on a desktop (`FLOWFILE_MODE` `electron` or `package`) and refused on a multi-user server (`docker`, `server`): `auth/jwt.py::legacy_kernel_auth_allowed`.
+**Older kernel images.** A kernel image before 0.7.1 reads its token from `ExecuteRequest.internal_token` and sends it the same way; core fills that field with the kernel's token, so such an image keeps working. A call signed with the internal token itself is taken on a desktop (`FLOWFILE_MODE` `electron` or `package`) and refused on a multi-user server (`docker`, `server`): `auth/jwt.py::legacy_kernel_auth_allowed`.
 
 ### Sandboxing
 

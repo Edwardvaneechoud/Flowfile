@@ -9,7 +9,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -344,7 +344,7 @@ class VisualizationService:
         if payload.expected_updated_at is not None and viz.updated_at != payload.expected_updated_at:
             raise StaleWriteError("visualization", viz_id, expected=payload.expected_updated_at, current=viz.updated_at)
         # Atomic guard (see repo docstring); must precede attribute edits (autoflush would fire onupdate).
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not self.repo.stamp_visualization_updated_at(viz_id, payload.expected_updated_at, now):
             if payload.expected_updated_at is None:
                 raise VisualizationNotFoundError(viz_id=viz_id)
@@ -603,7 +603,7 @@ class VisualizationService:
                 kept = None
             self._validate_filter_datasources(payload.layout, kept)
             dashboard.layout_json = payload.layout.model_dump_json()
-        dashboard.updated_at = datetime.now(timezone.utc)
+        dashboard.updated_at = datetime.now(UTC)
         updated = self.repo.update_dashboard(dashboard)
         return self._dashboard_to_out(updated)
 

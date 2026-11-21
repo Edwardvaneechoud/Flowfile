@@ -80,7 +80,7 @@ class _Subscriber:
             else:
                 try:
                     item = await asyncio.wait_for(self.queue.get(), keepalive)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield None
                     continue
             if item is _SHUTDOWN:

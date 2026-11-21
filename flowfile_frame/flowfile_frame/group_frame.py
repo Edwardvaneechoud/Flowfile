@@ -81,7 +81,7 @@ class GroupByFrame:
 
     def count(self) -> "FlowFrame":
         """Count number of rows per group. Output column is named 'count'."""
-        return self._generate_direct_polars_code("count")
+        return self._generate_direct_polars_code("len", name='"count"')
 
     def agg(self, *agg_exprs, **named_agg_exprs) -> FlowFrame:
         """Apply explicit aggregations to grouped data using expressions.
