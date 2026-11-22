@@ -6,6 +6,8 @@ import, read back from the flow's registered file.
 """
 
 import base64
+import os
+import socket
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -14,7 +16,7 @@ from pathlib import Path
 import pytest
 import yaml
 from fastapi.testclient import TestClient
-from git import Repo
+from git import GitCommandError, Repo
 
 from flowfile_core import flow_file_handler, main
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
@@ -791,3 +793,180 @@ def test_an_entry_added_differently_on_both_sides_names_its_values():
     )
     assert lines == ["added the schedule", "cron_expression = '0 3 * * *'"]
     assert merging._side("parameter", {"name": "r"}, None, {"name": "r"}) == ["removed the parameter"]
+
+
+@pytest.mark.parametrize(
+    ("stderr", "message"),
+    [
+        (
+            "fatal: unable to access 'http://127.0.0.1:4013/x.git/': Failed to connect to 127.0.0.1 port 4013 "
+            "after 2034 ms: Connection refused",
+            "could not be reached",
+        ),
+        ("fatal: repository 'https://git.example.invalid/team403/x.git/' not found", "No repository"),
+        (" ! [rejected]        main -> main (fetch first)\nhint: the tip 4a14030f is behind", "pull first"),
+        (
+            "fatal: unable to access 'https://git.example.invalid/x.git/': The requested URL returned error: 403",
+            "refused the sign-in",
+        ),
+        ("fatal: Authentication failed for 'https://git.example.invalid/x.git/'", "refused the sign-in"),
+        (
+            "remote: Repository not found.\nfatal: repository 'https://git.example.invalid/private.git/' not found",
+            "none the remote's token can read",
+        ),
+    ],
+)
+def test_a_remote_failure_is_read_from_gits_words_not_from_digits_in_an_address(stderr, message):
+    assert message in git_ops._remote_failure(stderr)
+
+
+def _closed_port_holding(digits: str) -> int:
+    for port in range(20000, 60000):
+        if digits not in str(port):
+            continue
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+        return port
+    raise AssertionError("no free port")
+
+
+def test_a_remote_nothing_listens_on_is_unreachable_whatever_digits_its_port_holds(project):
+    _set_remote(f"http://127.0.0.1:{_closed_port_holding('401')}/team/project.git")
+    refused = client.post("/project/pull")
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == {"code": "GIT_REFUSED", "message": "The remote could not be reached."}
+
+
+@pytest.mark.parametrize(
+    "rel",
+    ["/etc/x", "../x", "a/../b", "a\\..\\b", "C:\\x", "C:/x", "\\x", "\\\\host\\share\\x", "flows/a:b.flow.yaml"],
+)
+def test_a_path_that_leaves_the_folder_on_some_os_is_no_project_path(rel):
+    with pytest.raises(ValueError, match="Not a project path"):
+        git_ops._check_project_path(rel)
+
+
+def test_a_merge_commit_writes_no_file_outside_its_folder(project, tmp_path):
+    root, _ = project
+    head = git_ops.head_sha(root)
+    outside = tmp_path / "outside.txt"
+    with pytest.raises(ValueError, match="Not a project path"):
+        git_ops.commit_tree_changes(root, head, {str(outside): "x"}, "merge", [head])
+    assert not outside.exists()
+    git_ops._check_project_path("flows/sales report.flow.yaml")
+
+
+def test_branches_count_what_each_copy_holds_that_the_other_does_not(project, remote, tmp_path):
+    root, _ = _diverge(project, remote, tmp_path, 40)
+    git_ops.fetch(root)
+    assert client.post("/project/branches", json={"name": "local-only", "switch": False}).status_code == 201
+    rows = {b["name"]: b for b in client.get("/project/branches").json()["branches"]}
+    assert (rows["main"]["ahead"], rows["main"]["behind"], rows["main"]["current"]) == (1, 1, True)
+    assert rows["main"]["sha"] == git_ops.head_sha(root)
+    assert (rows["local-only"]["ahead"], rows["local-only"]["behind"]) == (None, None)
+    assert rows["local-only"]["current"] is False
+
+
+def _on_feature_with_a_bigger_sample(project) -> tuple[Path, str]:
+    root, flow_uuid = project
+    assert client.post("/project/branches", json={"name": "feature"}).status_code == 201
+    _set_sample(flow_uuid, 25)
+    _save("bigger sample")
+    return root, flow_uuid
+
+
+def test_a_switch_git_could_not_finish_goes_back_and_is_refused(project, monkeypatch):
+    root, flow_uuid = _on_feature_with_a_bigger_sample(project)
+    real_checkout = git_ops.checkout
+
+    def stopped_halfway(repo_root, name):
+        real_checkout(repo_root, name)
+        if name == "main":
+            raise GitCommandError("git checkout", 1, b"error: unable to unlink old 'flows/branchy.flow.yaml'")
+
+    monkeypatch.setattr(git_ops, "checkout", stopped_halfway)
+    refused = client.post("/project/branches/switch", json={"name": "main"})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "GIT_REFUSED"
+    assert "changed nothing" in refused.json()["detail"]["message"]
+    assert git_ops.current_branch(root) == "feature"
+    assert not git_ops.is_dirty(root)
+    assert _step(flow_uuid, 2)["sample_size"] == 25
+
+
+@pytest.mark.skipif(os.name != "nt", reason="only Windows refuses to replace a file another handle holds open")
+@pytest.mark.parametrize("action", ["switch", "pull"])
+def test_a_project_file_held_open_refuses_the_apply_and_changes_nothing(project, remote, tmp_path, action):
+    if action == "switch":
+        root, flow_uuid = _on_feature_with_a_bigger_sample(project)
+        before, after, branch = 25, 10, "feature"
+
+        def apply():
+            return client.post("/project/branches/switch", json={"name": "main"})
+    else:
+        root, flow_uuid = project
+        _set_remote(str(remote))
+        client.post("/project/push")
+        _elsewhere(tmp_path, remote, lambda d: _node(d, 2).update(sample_size=40))
+        before, after, branch = 10, 40, "main"
+
+        def apply():
+            return client.post("/project/pull")
+
+    head = git_ops.head_sha(root)
+    with open(_branchy_file(root), "rb"):
+        refused = apply()
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "GIT_REFUSED"
+    assert (git_ops.current_branch(root), git_ops.head_sha(root)) == (branch, head)
+    assert not git_ops.is_dirty(root)
+    assert _step(flow_uuid, 2)["sample_size"] == before
+
+    assert apply().status_code == 200
+    assert _step(flow_uuid, 2)["sample_size"] == after
+
+
+def _edit_on_the_canvas(flow_uuid: str, size: int) -> int:
+    """Open the flow as the editor has it and change step 2 without saving; the open flow's id."""
+    flow_id = flow_file_handler.import_flow(Path(_flow_path(flow_uuid)), user_id=OWNER)
+    flow = flow_file_handler.get_flow(flow_id)
+    node = flow.get_node(2).setting_input.model_copy(deep=True)
+    node.sample_size = size
+    flow.add_sample(node)
+    return flow_id
+
+
+def test_a_switch_names_unsaved_canvas_edits_of_a_flow_it_rewrites_and_keeps_them_when_forced(project):
+    root, flow_uuid = _on_feature_with_a_bigger_sample(project)
+    flow_id = _edit_on_the_canvas(flow_uuid, 77)
+    try:
+        refused = client.post("/project/branches/switch", json={"name": "main"})
+        assert refused.status_code == 409, refused.text
+        detail = refused.json()["detail"]
+        assert detail["code"] == "UNSAVED_CHANGES"
+        assert [c["path"].startswith("flows/branchy") for c in detail["changes"]] == [True]
+        assert git_ops.current_branch(root) == "feature"
+        assert _step(flow_uuid, 2)["sample_size"] == 25
+
+        forced = client.post("/project/branches/switch", json={"name": "main", "force": True})
+        assert forced.status_code == 200, forced.text
+        kept = git_ops.read_tree_at(root, forced.json()["recovery_sha"])
+        flow_text = next(text for path, text in kept.items() if path.startswith("flows/branchy"))
+        assert _node(yaml.safe_load(flow_text), 2)["sample_size"] == 77
+        assert _step(flow_uuid, 2)["sample_size"] == 10
+    finally:
+        flow_file_handler.delete_flow(flow_id, OWNER)
+
+
+def test_unsaved_canvas_edits_of_a_flow_a_switch_leaves_alone_do_not_stop_it(project):
+    root, flow_uuid = project
+    assert client.post("/project/branches", json={"name": "same", "switch": False}).status_code == 201
+    flow_id = _edit_on_the_canvas(flow_uuid, 77)
+    try:
+        assert client.post("/project/branches/switch", json={"name": "same"}).status_code == 200
+        assert flow_file_handler.get_flow(flow_id).get_node(2).setting_input.sample_size == 77
+    finally:
+        flow_file_handler.delete_flow(flow_id, OWNER)

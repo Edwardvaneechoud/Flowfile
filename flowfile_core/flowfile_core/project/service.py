@@ -178,6 +178,26 @@ def _unsaved_rows(proj: ActiveProject) -> list[dict]:
     return _change_rows(kinds.compare(head, _snapshot(proj.root, proj.owner_id)))
 
 
+def _edited_open_flows(owner_id: int, plan: list[kinds.Change]) -> list[tuple]:
+    """The owner's open flows whose canvas holds edits no file has yet and whose file ``plan`` rewrites or removes,
+    each with its plan change: an apply would leave such a canvas on a file from another version."""
+    from flowfile_core import flow_file_handler
+    from flowfile_core.database.models import FlowRegistration
+
+    by_uuid = {c.key: c for c in plan if c.kind == "flow"}
+    edited = [f for f in flow_file_handler.get_user_flows(owner_id) if f.flow_settings.path and f.has_unsaved_changes()]
+    if not by_uuid or not edited:
+        return []
+    with get_db_context() as db:
+        registered = (
+            db.query(FlowRegistration.flow_path, FlowRegistration.flow_uuid)
+            .filter(FlowRegistration.owner_id == owner_id, FlowRegistration.flow_uuid.in_(list(by_uuid)))
+            .all()
+        )
+    change_of = {path: by_uuid[flow_uuid] for path, flow_uuid in registered}
+    return [(f, change_of[f.flow_settings.path]) for f in edited if f.flow_settings.path in change_of]
+
+
 def _assert_not_foreign_owned(root: Path, owner_id: int) -> None:
     """In multi-tenant mode, reject opening/initing a folder whose existing WorkspaceProject is owned
     by another user (closes cross-tenant project takeover / metadata import). Electron is unconfined."""
@@ -393,19 +413,30 @@ class ProjectSyncService:
             repository.set_track_data_artifacts(db, proj.id, m.track_data_artifacts)
         proj.track_data_artifacts = m.track_data_artifacts
 
-    def _guard_before_apply(self, proj: ActiveProject, force: bool, action: str) -> str | None:
+    def _guard_before_apply(
+        self, proj: ActiveProject, force: bool, action: str, plan: list[kinds.Change]
+    ) -> str | None:
         """Name what a restore, reload, switch or pull would lose, and keep it first when ``force`` is set.
 
-        Database changes are what status reports (``_unsaved_rows``); a repository with no commit yet has none. All
+        Database changes are what status reports (``_unsaved_rows``); a repository with no commit yet has none. An
+        open flow whose canvas holds unsaved edits and whose file ``plan`` rewrites or removes counts too: with
+        ``force`` it is saved first, so it is a database change the recovery point keeps. All
         but a reload also refuse a dirty folder, since they reset it and discard hand edits; a reload applies them,
         so it refuses only unsaved database changes. With ``force`` a restore autosaves the folder and commits the
         export on the branch; the others keep the folder and the export under ``refs/flowfile/recovery/`` with the
         branch left alone. Returns the sha of the last recovery commit, if any. Holds the caller's lock."""
+        edited = _edited_open_flows(proj.owner_id, plan)
+        if force:
+            for flow, _ in edited:
+                flow.save_flow(flow.flow_settings.path)
         dirty = action != "reload" and git_ops.is_dirty(proj.root)
         changes = _unsaved_rows(proj) if git_ops.head_sha(proj.root) else []
-        if not changes and not dirty:
+        if not changes and not dirty and not edited:
             return None
         if not force:
+            listed = {c["path"] for c in changes}
+            canvas = [{**row, "change": "modified"} for row in _change_rows([c for _, c in edited])]
+            changes += [row for row in canvas if row["path"] not in listed]
             if dirty:
                 listed = {c["path"] for c in changes}
                 folder_rows = [r for r in git_ops.uncommitted_changes(proj.root) if r["path"] not in listed]
@@ -466,7 +497,7 @@ class ProjectSyncService:
             preflight_import_caps(proj.root, sha)
             preflight_import_files(proj.root, sha)
             changes = _plan_changes(proj.root, proj.owner_id, sha)
-            recovery_sha = self._guard_before_apply(proj, force, "restore")
+            recovery_sha = self._guard_before_apply(proj, force, "restore", changes)
             head = git_ops.head_sha(proj.root)
             git_ops.restore(proj.root, sha)
             try:
@@ -500,7 +531,7 @@ class ProjectSyncService:
             preflight_import_caps_worktree(proj.root)
             preflight_import_files_worktree(proj.root)
             changes = _plan_changes(proj.root, proj.owner_id, None)
-            recovery_sha = self._guard_before_apply(proj, force, "reload")
+            recovery_sha = self._guard_before_apply(proj, force, "reload", changes)
             self._snapshot_database()
             result = import_project(proj.root, proj.owner_id, _removed(changes), changes)
             self._sync_track_setting_from_manifest(proj)
@@ -516,12 +547,28 @@ class ProjectSyncService:
     def _apply_commit(self, proj: ActiveProject, sha: str, force: bool, action: str, move, undo) -> SetupResult:
         """Make the database what commit ``sha`` holds: the restore's preflight and plan, the guard, ``move()`` to
         put the folder on ``sha``, then the import with the plan's removals; a failed import runs ``undo()`` so the
-        folder goes back with the database. Holds the caller's lock."""
+        folder goes back with the database, and so does a ``move()`` git could not finish (on Windows a file another
+        program holds open stops it halfway), refused as a ``GitRemoteError``. Holds the caller's lock."""
         preflight_import_caps(proj.root, sha)
         preflight_import_files(proj.root, sha)
         changes = _plan_changes(proj.root, proj.owner_id, sha)
-        recovery_sha = self._guard_before_apply(proj, force, action)
-        move()
+        recovery_sha = self._guard_before_apply(proj, force, action, changes)
+        try:
+            move()
+        except Exception as exc:
+            logger.warning("git could not move the project folder for a %s: %s", action, exc)
+            try:
+                undo()
+            except Exception:
+                logger.exception("The project folder could not be put back after a failed %s", action)
+                raise git_ops.GitRemoteError(
+                    f"Git could not update the project folder for the {action}, nor put it back. A file in it may be "
+                    "open in another program: close it, then reload the project from its folder."
+                ) from None
+            raise git_ops.GitRemoteError(
+                f"Git could not update the project folder, so the {action} changed nothing. A file in it may be open "
+                "in another program: close it and try again."
+            ) from None
         try:
             self._snapshot_database()
             result = import_project(proj.root, proj.owner_id, _removed(changes), changes)

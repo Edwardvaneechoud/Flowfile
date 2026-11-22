@@ -467,23 +467,22 @@ def branches(root: Path) -> list[dict]:
     ``behind`` (``None`` when the remote has no such branch, as last fetched)."""
     if not is_repo(root):
         return []
-    repo = Repo(str(root))
+    local, remote = "refs/heads/", f"refs/remotes/{REMOTE_NAME}/"
+    listed = Repo(str(root)).git.for_each_ref("--format=%(objectname) %(refname)", local, remote)
+    shas = dict(reversed(line.split(" ", 1)) for line in listed.splitlines())
     current = current_branch(root)
     rows = []
-    for head in repo.heads:
-        remote_sha = branch_sha(root, f"refs/remotes/{REMOTE_NAME}/{head.name}")
+    for ref, sha in shas.items():
+        if not ref.startswith(local):
+            continue
+        name = ref[len(local) :]
+        remote_sha = shas.get(remote + name)
         ahead = behind = None
-        if remote_sha is not None:
-            ahead, behind = ahead_behind(root, head.commit.hexsha, remote_sha)
-        rows.append(
-            {
-                "name": head.name,
-                "sha": head.commit.hexsha,
-                "current": head.name == current,
-                "ahead": ahead,
-                "behind": behind,
-            }
-        )
+        if remote_sha == sha:
+            ahead = behind = 0
+        elif remote_sha is not None:
+            ahead, behind = ahead_behind(root, sha, remote_sha)
+        rows.append({"name": name, "sha": sha, "current": name == current, "ahead": ahead, "behind": behind})
     return sorted(rows, key=lambda r: (not r["current"], r["name"]))
 
 
@@ -590,7 +589,9 @@ def unmanaged_changes(root: Path, base: str | None, ours: str, theirs: str) -> d
 
 
 def _check_project_path(rel: str) -> None:
-    if rel.startswith("/") or ".." in Path(rel).parts:
+    """Refuse a path that leaves the folder on any OS: a backslash separates and a colon names a drive or a
+    stream on Windows, whoever wrote the path."""
+    if rel.startswith("/") or "\\" in rel or ":" in rel or ".." in PurePosixPath(rel).parts:
         raise ValueError(f"Not a project path: {rel!r}")
 
 
@@ -753,16 +754,19 @@ def _remote_git(root: Path, token: str | None, username: str | None, *args: str)
             raise GitRemoteError(_remote_failure(stderr)) from None
 
 
+_SIGN_IN_REFUSED = re.compile(r"authentication failed|could not read username|returned error: 40[13]\b")
+
+
 def _remote_failure(stderr: str) -> str:
     text = stderr.lower()
-    if "authentication failed" in text or "could not read username" in text or "403" in text or "401" in text:
+    if _SIGN_IN_REFUSED.search(text):
         return "The remote refused the sign-in: check the remote's token."
     if "non-fast-forward" in text or "fetch first" in text or "rejected" in text:
         return "The remote has versions this branch does not: pull first."
     if "could not resolve host" in text or "connection refused" in text or "timed out" in text:
         return "The remote could not be reached."
     if "does not appear to be a git repository" in text or "not found" in text:
-        return "No repository at the remote's address."
+        return "No repository at the remote's address, or none the remote's token can read."
     return "The remote refused the request."
 
 

@@ -87,27 +87,29 @@ def resolve_conflict(
     that side's version of the step as one undo step, which also carries the conflict, so its undo holds it again.
     """
     flow = get_flow_or_404(request.flow_id, current_user)
-    held = getattr(flow, "merge_conflicts", None)
-    if not held or request.key not in {c["key"] for c in held.get("conflicts") or []}:
-        raise HTTPException(status_code=404, detail=f"No open merge conflict {request.key} in this flow.")
-    label = next(c.get("label") for c in held["conflicts"] if c["key"] == request.key)
-    side = (held.get("sides") or {}).get(request.take, request.take)
-    description = f"Settle {label}: take {side}"
-    if held.get("shown") == request.take:
-        left = [c for c in held["conflicts"] if c["key"] != request.key]
-        with edit_flow(flow, description, record=False) as txn:
-            flow.merge_conflicts = {**held, "conflicts": left} if left else None
-        history = txn.history
-    else:
-        current = {**held, "merged": flow.get_flowfile_data().model_dump(mode="json")}
-        settled = resolve(current, {request.key: request.take})
-        target = settled["merged"] if is_conflicted(settled) else settled
-        still_held = {k: v for k, v in settled.items() if k != "merged"} if is_conflicted(settled) else None
+    # Read and replace the held set under one lock, or two settles put back each other's conflict.
+    with flow.edit_lock():
+        held = getattr(flow, "merge_conflicts", None)
+        if not held or request.key not in {c["key"] for c in held.get("conflicts") or []}:
+            raise HTTPException(status_code=404, detail=f"No open merge conflict {request.key} in this flow.")
+        label = next(c.get("label") or c["key"] for c in held["conflicts"] if c["key"] == request.key)
+        side = (held.get("sides") or {}).get(request.take, request.take)
+        description = f"Settle {label}: take {side}"
+        if held.get("shown") == request.take:
+            left = [c for c in held["conflicts"] if c["key"] != request.key]
+            with edit_flow(flow, description, record=False) as txn:
+                flow.merge_conflicts = {**held, "conflicts": left} if left else None
+            history = txn.history
+        else:
+            current = {**held, "merged": flow.get_flowfile_data().model_dump(mode="json")}
+            settled = resolve(current, {request.key: request.take})
+            target = settled["merged"] if is_conflicted(settled) else settled
+            still_held = {k: v for k, v in settled.items() if k != "merged"} if is_conflicted(settled) else None
 
-        def _hold() -> None:
-            flow.merge_conflicts = still_held
+            def _hold() -> None:
+                flow.merge_conflicts = still_held
 
-        history, _ = apply_document(flow, target, description, current_user, then=_hold)
+            history, _ = apply_document(flow, target, description, current_user, then=_hold)
     if getattr(flow, "project_merge", None):
         from flowfile_core.project import project_sync
 
