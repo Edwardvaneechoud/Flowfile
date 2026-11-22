@@ -9,6 +9,8 @@ import type { FlowHotkeyActions } from "./useFlowHotkeys";
 
 const makeActions = (flowId = 1): { actions: FlowHotkeyActions; spies: Record<string, ReturnType<typeof vi.fn>> } => {
   const spies = {
+    undo: vi.fn(),
+    redo: vi.fn(),
     selectAll: vi.fn(),
     newFlow: vi.fn(),
     save: vi.fn(),
@@ -55,6 +57,34 @@ describe("isEditableKeydownTarget", () => {
 describe("createFlowHotkeysHandler guard policy", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
+  });
+
+  it.each([
+    [true, "z", false, "undo"],
+    [true, "Z", true, "redo"],
+    [true, "y", false, "redo"],
+    [false, "z", false, "undo"],
+    [false, "z", true, "redo"],
+    [false, "y", false, "redo"],
+  ] as const)(
+    "dispatches history shortcuts (Mac=%s, key=%s, shift=%s)",
+    (mac, key, shift, action) => {
+      const { actions, spies } = makeActions();
+      const { event, preventDefault } = makeEvent(key);
+      Object.assign(event, { metaKey: mac, ctrlKey: !mac, shiftKey: shift });
+      createFlowHotkeysHandler(actions, mac)(event);
+      expect(spies[action]).toHaveBeenCalledTimes(1);
+      expect(spies[action === "undo" ? "redo" : "undo"]).not.toHaveBeenCalled();
+      expect(preventDefault).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not consume history shortcuts without an open flow", () => {
+    const { actions, spies } = makeActions(-1);
+    const { event, preventDefault } = makeEvent("z");
+    createFlowHotkeysHandler(actions, true)(event);
+    expect(spies.undo).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 
   it("ignores keys without a modifier", () => {
