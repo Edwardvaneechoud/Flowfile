@@ -21,6 +21,28 @@
           class="editor-description"
           maxlength="300"
         />
+        <el-select
+          v-if="store.current && saveTargets.asks && creationPhase !== 'created'"
+          v-model="targetId"
+          size="small"
+          class="editor-target"
+          data-testid="dashboard-save-target"
+          title="Where this dashboard is saved; it stays there once it is saved"
+          :clearable="ownOffered"
+          :placeholder="ownOffered ? 'Saved on this Flowfile' : 'Pick a schema'"
+          :disabled="creationPhase === 'creating'"
+        >
+          <el-option-group
+            v-for="group in targetGroups"
+            :key="group.label ?? ''"
+            :label="group.label ?? ''"
+          >
+            <el-option v-for="ns in group.options" :key="ns.id" :label="ns.label" :value="ns.id" />
+          </el-option-group>
+        </el-select>
+        <span v-else-if="savedInLabel" class="editor-saved-in" data-testid="dashboard-saved-in">
+          {{ savedInLabel }}
+        </span>
         <SaveStatusIndicator :state="autosaveState" />
       </div>
       <div class="editor-toolbar-right">
@@ -93,6 +115,16 @@
       :busy="conflictBusy"
       @reload="onConflictReload"
       @overwrite="onConflictOverwrite"
+    />
+
+    <el-alert
+      v-if="saveTargets.blocked"
+      :title="saveTargets.blocked"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="draft-banner"
+      data-testid="dashboard-no-target"
     />
 
     <el-alert v-if="restoreAvailable" type="info" :closable="false" show-icon class="draft-banner">
@@ -202,7 +234,11 @@
       />
     </el-dialog>
 
-    <VisualizationSourcePicker v-model="sourcePickerOpen" @picked="onSourcePicked" />
+    <VisualizationSourcePicker
+      v-model="sourcePickerOpen"
+      :saved-in="onHub ? 'hub' : 'local'"
+      @picked="onSourcePicked"
+    />
 
     <DashboardAiBuilder v-if="canBuildWithAi" v-model="aiBuilderOpen" :place="placeAiPage" />
 
@@ -221,6 +257,7 @@
         :source="pendingSource"
         :taken-names="pendingTakenNames"
         :owner-dashboard-id="ensureDashboardCreated"
+        :dashboard-namespace-id="store.current?.namespace_id ?? null"
         :appearance="appearance"
         @saved="onVizCreated"
         @cancel="vizCreatorOpen = false"
@@ -256,6 +293,10 @@ import DashboardSidebarPicker from "./DashboardSidebarPicker.vue";
 import DashboardTabBar from "./DashboardTabBar.vue";
 import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
 import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
+import { hubPresence, isHubRow, offersOwnCatalog } from "../CatalogView/hubRows";
+import { groupSaveTargets, useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { findNamespacePath } from "../../types/catalog.types";
+import { dashboardOnHub, dashboardTargets, type DashboardTargets } from "./dashboardCatalog";
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
 import { dashboardChartNames, distinctName, nameFromAiTitle } from "../CatalogView/chartNaming";
 import { chartTypeOf } from "../CatalogView/vizAutosave";
@@ -340,6 +381,56 @@ const creation = createDashboardCreation<DashboardCreatePayload, Dashboard>({
   },
 });
 const dashboardId = (): number => (props.id !== undefined ? Number(props.id) : creation.id()!);
+
+// Where a new dashboard is saved: asked before its first save, where a hub's catalogs are shown, and fixed after.
+const { saveTargetNamespaces } = useWritableNamespaces();
+const ownOffered = computed(() => offersOwnCatalog(catalogStore.tree));
+const hubShown = computed(() => hubPresence(catalogStore.tree) !== "none");
+const saveTargets = computed<DashboardTargets>(() =>
+  openedNew
+    ? dashboardTargets(saveTargetNamespaces.value, {
+        ownOffered: ownOffered.value,
+        hubShown: hubShown.value,
+      })
+    : { asks: false, options: [], defaultId: null, blocked: null },
+);
+const targetGroups = computed(() => groupSaveTargets(saveTargets.value.options));
+const targetId = ref<number | null>(null);
+let targetPicked = false;
+watch(
+  () => saveTargets.value.defaultId,
+  (id) => {
+    if (!targetPicked && creationPhase.value === "pending") targetId.value = id;
+  },
+  { immediate: true },
+);
+watch(targetId, (id) => {
+  if (id !== saveTargets.value.defaultId) targetPicked = true;
+});
+// The pickers read the dashboard's catalog from the store, so the choice lives on the unsaved dashboard too.
+watch(
+  [targetId, () => store.current?.id, () => saveTargets.value.asks],
+  () => {
+    const current = store.current;
+    if (!current || !saveTargets.value.asks || creationPhase.value === "created") return;
+    if (current.namespace_id !== targetId.value) {
+      store.current = { ...current, namespace_id: targetId.value };
+    }
+  },
+  { immediate: true },
+);
+const onHub = computed(() => dashboardOnHub(store.current));
+const savedInLabel = computed(() => {
+  if (!store.current || !hubShown.value) return null;
+  if (!onHub.value) return catalogStore.tree.find((n) => !isHubRow(n))?.place ?? null;
+  const path = findNamespacePath(catalogStore.tree, store.current.namespace_id ?? 0);
+  return `Hub · ${path.length ? path.join(" / ") : (store.current.namespace_name ?? "catalog")}`;
+});
+/** A new dashboard that has nowhere to go is refused here, as a 403 so autosave stops and does not retry. */
+const refuseWithoutTarget = () => {
+  const blocked = saveTargets.value.blocked;
+  if (blocked) throw Object.assign(new Error(blocked), { response: { status: 403 } });
+};
 // Set while a navigation away waits in the leave guard, so a create landing then keeps the URL.
 let leaving = false;
 const nameDraft = ref("");
@@ -376,6 +467,7 @@ const { engine, state: autosaveState } = useAutosave<DashboardUpdatePayload>({
   },
   save: async (payload) => {
     if (!creation.isCreated()) {
+      refuseWithoutTarget();
       const created = await creation.create({
         name: payload.name ?? "",
         description: payload.description ?? null,
@@ -422,6 +514,7 @@ const ensureDashboardCreated = async (): Promise<number> => {
   if (creation.isCreated()) return dashboardId();
   const name = nameDraft.value.trim();
   if (!store.current || !name) throw new Error("Give the dashboard a name first.");
+  refuseWithoutTarget();
   const payload = {
     name,
     description: descriptionValue(),
@@ -877,8 +970,13 @@ const aiDashboardStore = useAiDashboardStore();
 const aiBuilderOpen = ref(false);
 // The name a new dashboard opened with; null for one opened from the library.
 let untitledName: string | null = null;
+// The AI builds over this machine's tables, which a dashboard in a hub's catalog cannot use.
 const canBuildWithAi = computed(
-  () => Boolean(store.current) && aiDashboardStore.available && mayEdit(store.current?.access),
+  () =>
+    Boolean(store.current) &&
+    aiDashboardStore.available &&
+    mayEdit(store.current?.access) &&
+    !onHub.value,
 );
 
 // Saves the charts the AI's page kept as this dashboard's own, then puts the whole page on the
@@ -1041,6 +1139,8 @@ const onAddSeparatorAt = ({
 
 const initialise = async () => {
   if (openedNew) {
+    // Where the dashboard may be saved comes from the tree: a server that joined a hub keeps nothing of its own.
+    if (!catalogStore.treeLoaded) await catalogStore.loadTree().catch(() => undefined);
     const blank = store.newBlankDashboard(newDashboardName(store.library.map((d) => d.name)));
     nameDraft.value = blank.name;
     untitledName = blank.name;
@@ -1083,7 +1183,7 @@ watch(descriptionDraft, () => {
 const consumeEditVizQuery = async () => {
   const raw = route.query.editViz;
   const id = typeof raw === "string" ? Number(raw) : NaN;
-  if (!Number.isFinite(id) || id <= 0) return;
+  if (!Number.isFinite(id) || id === 0) return;
   // Snapshot route identity before any awaits — initialise() above may finish
   // after the user has navigated, in which case route.* now points elsewhere.
   // Also avoids the unsafe `as string` cast on route.name (which can be a
@@ -1343,6 +1443,14 @@ const onConflictOverwrite = async () => {
 .editor-description {
   max-width: 360px;
 }
+.editor-target {
+  width: 220px;
+}
+.editor-saved-in {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
 .draft-banner {
   margin: 0 0 var(--spacing-3);
   width: auto;
@@ -1386,6 +1494,8 @@ const onConflictOverwrite = async () => {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .editor-state {
   display: flex;

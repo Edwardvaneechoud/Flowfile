@@ -6,6 +6,15 @@
         <strong>{{ c.kind }}</strong> “{{ c.label }}”
         <span class="change__verb">{{ verbFor(c.change) }}</span>
         <span v-if="c.consequence" class="change__verb">: {{ c.consequence }}</span>
+        <ul v-if="c.steps?.length" class="change__steps" data-testid="change-steps">
+          <li v-for="(s, j) in c.steps" :key="j" class="change__step">
+            {{ s.kind }} {{ s.label }}
+            <span v-for="(d, k) in s.details" :key="k" class="change__detail">{{ d }}</span>
+          </li>
+        </ul>
+        <span v-else-if="c.change === 'modified' && c.steps" class="change__verb">
+          (layout only)
+        </span>
       </span>
     </li>
   </ul>
@@ -74,6 +83,24 @@ const verbFor = (change: Change): string =>
 }
 
 .change__verb {
+  color: var(--color-text-tertiary, #94a3b8);
+}
+
+.change__steps {
+  list-style: none;
+  margin: 4px 0 0;
+  padding-left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--color-text-secondary, #475569);
+}
+
+.change__detail {
+  display: block;
+  padding-left: 12px;
+  font-family: var(--font-family-mono, monospace);
+  font-size: 12px;
   color: var(--color-text-tertiary, #94a3b8);
 }
 </style>

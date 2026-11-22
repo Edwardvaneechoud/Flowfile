@@ -81,6 +81,7 @@ from flowfile_core.secret_manager.secret_manager import (
     stage_encrypted_secret,
     store_secret,
 )
+from shared.flow_merge.conflict import is_conflicted
 from shared.storage_config import flow_path_spellings, registered_flow_path, storage
 
 logger = logging.getLogger(__name__)
@@ -284,7 +285,7 @@ def _read_yaml(path: Path) -> dict:
             f"Project import: manifest file {path.name!r} is {size} bytes, "
             f"which exceeds the {_MAX_YAML_BYTES}-byte cap. Import aborted."
         )
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return yaml.load(path.read_text(encoding="utf-8"), Loader=projection.YAML_LOADER) or {}
 
 
 def _resolve_secret_value(name: str, owner_id: int, dotenv: dict, result: SetupResult) -> str:
@@ -1020,17 +1021,44 @@ def _import_notebooks(root: Path, owner_id: int, kernel_ids: dict[str, str] | No
     return kept
 
 
-def _check_flows_load(root: Path, owner_id: int) -> None:
+_ID_KINDS = ("tables", "namespaces")
+
+
+def _reads_catalog(data: dict) -> bool:
+    return any(node.get("type") == "catalog_reader" for node in data.get("nodes") or [])
+
+
+def flows_to_apply(root: Path, changes) -> set[str] | None:
+    """The flow files an apply of the plan ``changes`` builds and writes, by repo-relative path; ``None`` (an open,
+    which has no plan) is every flow.
+
+    A flow the plan leaves unchanged already has this file's content in its registered file and row, so it is
+    neither built nor written. When the plan adds or removes a table or a schema, a flow with a catalog reader is
+    applied too: its registered file may name a table by an id the apply deletes or creates anew, and only a
+    rewrite from the project file, which names the table, resolves it again."""
+    if changes is None:
+        return None
+    paths = {c.path for c in changes if c.kind == "flow" and c.change in ("added", "modified")}
+    if any(c.kind in _ID_KINDS and c.change != "modified" for c in changes):
+        for rel in kinds.kind_files(root, kinds.get("flow")):
+            if rel not in paths and _reads_catalog(_read_yaml(root / rel)):
+                paths.add(rel)
+    return paths
+
+
+def _check_flows_load(root: Path, owner_id: int, only: set[str] | None = None) -> None:
     """Build each flow file the import would apply from a temp copy, before its transaction opens, so a flow
     that does not load fails the import with nothing written and the database's write lock is not held while
-    flows are built. A flow the project's ``kinds`` leaves out, or whose ``owner`` names another user, is
-    not built, as the import does not apply it."""
+    flows are built. A flow the project's ``kinds`` leaves out, whose ``owner`` names another user, or that is
+    not in ``only`` when given, is not built, as the import does not apply it."""
     m = manifest.read_manifest(root)
     if m is not None and "flow" not in m.kinds:
         return
     owner = _owner_username(owner_id)
     with tempfile.TemporaryDirectory(prefix="flowfile-import-") as tmp:
         for rel in kinds.kind_files(root, kinds.get("flow")):
+            if only is not None and rel not in only:
+                continue
             data = _read_yaml(root / rel)
             if not data.get("flow_uuid") or data.get("owner") not in (None, owner):
                 continue
@@ -1471,23 +1499,25 @@ def _reconcile_kernel_manager(owner_id: int) -> None:
         logger.debug("Kernel manager reconcile after import skipped", exc_info=True)
 
 
-def import_project(root: Path, owner_id: int, removed=()) -> SetupResult:
+def import_project(root: Path, owner_id: int, removed=(), changes=None) -> SetupResult:
     """Rebuild this install's environment from the project folder, or raise with nothing changed.
 
     ``removed`` is the ``removed`` rows of ``kinds.compare(snapshot, target)`` (restore / reload): those
-    objects are deleted after every kind's import; open passes none.
+    objects are deleted after every kind's import; open passes none. ``changes`` is that whole plan: only the
+    flows ``flows_to_apply`` names are built and written; open passes none, so every flow is.
 
-    Every flow is built from a temp copy first (``_check_flows_load``). The database changes are then one
+    Every flow applied is built from a temp copy first (``_check_flows_load``). The database changes are then one
     transaction (``apply_transaction``): a failure anywhere rolls all of them back. Flow and notebook files
     are staged inside it; a step that fails after the commit is listed in ``incomplete``.
     """
-    _check_flows_load(root, owner_id)
+    flows = flows_to_apply(root, changes)
+    _check_flows_load(root, owner_id, flows)
     deferred = _Deferred()
     try:
         token = _after_commit_queue.set(deferred)
         try:
             with apply_transaction():
-                result = _do_import_project(root, owner_id, removed)
+                result = _do_import_project(root, owner_id, removed, flows)
         finally:
             _after_commit_queue.reset(token)
         result.incomplete = _run_after_commit(deferred)
@@ -1554,7 +1584,7 @@ def preflight_import_caps(root: Path, sha: str) -> None:
 
     def _blob_yaml(path: str) -> dict:
         text = git_ops.read_blob(root, sha, path)
-        return (yaml.safe_load(text) or {}) if text else {}
+        return (yaml.load(text, Loader=projection.YAML_LOADER) or {}) if text else {}
 
     files = _by_kind(sizes)
     _assert_kind_caps(files, _blob_yaml)
@@ -1629,7 +1659,7 @@ def _check_file(rel: str, ok: bool, problem: str) -> None:
 
 def _parse_project_file(rel: str, text: str) -> dict:
     try:
-        data = yaml.safe_load(text)
+        data = yaml.load(text, Loader=projection.YAML_LOADER)
     except yaml.YAMLError as e:
         raise ProjectFileError(
             f"Project file {rel!r} is not valid YAML: {_yaml_problem(e)}. Nothing was changed."
@@ -1719,11 +1749,21 @@ def _validate_project_file(rel: str, kind: str, text: str) -> None:
     elif kind in _ENTRY_NAME_KEYS:
         _validate_manifest_entries(rel, kind, data)
     elif kind == "flow":
+        _check_file(
+            rel,
+            not is_conflicted(data),
+            "still holds merge conflicts; settle them in the editor or with `flowfile-merge resolve`",
+        )
         _check_file(rel, _is_text(data.get("flow_uuid")), "has no string 'flow_uuid'")
         _check_file(rel, _optional(data.get("namespace"), dict), "has a 'namespace' that is not a mapping")
         for field_name in ("flowfile_name", "catalog_name"):
             _check_file(rel, _optional(data.get(field_name), str), f"has a {field_name!r} that is not text")
     elif kind == "schedule":
+        _check_file(
+            rel,
+            not is_conflicted(data),
+            "still holds merge conflicts; settle them with `flowfile-merge resolve`",
+        )
         _check_file(rel, _is_text(data.get("flow_uuid")), "has no string 'flow_uuid'")
         _check_file(rel, _is_mapping_list(data.get("schedules")), "must list its 'schedules' as mappings")
         for i, entry in enumerate(data.get("schedules") or []):
@@ -1786,8 +1826,9 @@ def preflight_import_files(root: Path, sha: str) -> None:
     so an unreadable or malformed file aborts it with the folder and the database untouched."""
     from flowfile_core.project import git_ops
 
-    rels = list(git_ops.tree_blob_sizes(root, sha))
-    _validate_project_files(lambda rel: git_ops.read_blob(root, sha, rel) or "", rels)
+    rels = [rel for rel in git_ops.tree_blob_sizes(root, sha) if _file_kind(rel) is not None]
+    blobs = git_ops.read_blobs(root, sha, rels)
+    _validate_project_files(lambda rel: blobs.get(rel, b"").decode("utf-8"), rels)
 
 
 def preflight_import_files_worktree(root: Path) -> None:
@@ -1803,12 +1844,12 @@ def _owner_username(owner_id: int) -> str | None:
         return user.username if user is not None else None
 
 
-def _do_import_project(root: Path, owner_id: int, removed=()) -> SetupResult:
+def _do_import_project(root: Path, owner_id: int, removed=(), flows: set[str] | None = None) -> SetupResult:
     result = SetupResult()
     token = _ns_resolve_cache.set({})
     owner_token = _import_owner.set((_owner_username(owner_id), result.not_applied))
     try:
-        return _do_import_project_inner(root, owner_id, removed, result)
+        return _do_import_project_inner(root, owner_id, removed, result, flows)
     finally:
         _import_owner.reset(owner_token)
         _ns_resolve_cache.reset(token)
@@ -1854,6 +1895,7 @@ class _ImportRun:
     result: SetupResult
     scheduled_flows: set = field(default_factory=set)
     kernel_ids: dict[str, str] = field(default_factory=dict)
+    flows: set[str] | None = None
 
 
 def _secrets_step(run: _ImportRun, paths: list[str]) -> int:
@@ -1871,6 +1913,8 @@ def _connections_step(import_connection, run: _ImportRun, paths: list[str]) -> i
 
 def _flows_step(run: _ImportRun, paths: list[str]) -> int:
     for rel in paths:
+        if run.flows is not None and rel not in run.flows:
+            continue
         data = _read_yaml(run.root / rel)
         if _applies(rel, data) and _import_flow(data, run.owner_id) is not None:
             run.result.imported_flows += 1
@@ -1915,9 +1959,11 @@ _IMPORT_STEPS = {
 }
 
 
-def _do_import_project_inner(root: Path, owner_id: int, removed=(), result: SetupResult | None = None) -> SetupResult:
+def _do_import_project_inner(
+    root: Path, owner_id: int, removed=(), result: SetupResult | None = None, flows: set[str] | None = None
+) -> SetupResult:
     result = result if result is not None else SetupResult()
-    run = _ImportRun(root, owner_id, load_dotenv(root), result)
+    run = _ImportRun(root, owner_id, load_dotenv(root), result, flows=flows)
     m = manifest.read_manifest(root)
     listed = [k.name for k in kinds.ordered()] if m is None else list(m.kinds)
     if m is not None:

@@ -3,6 +3,7 @@
 import codecs
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -395,6 +396,11 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
         folder = _validated_folder("Usage: flowfile project init <folder>")
         project = project_sync.init_project(folder, Path(folder).name, owner_id)
         print(f"Initialized project '{project.name}' at {project.root}")
+        from flowfile_core.project.manifest import GIT_CONFIG_COMMANDS
+
+        print("To merge and diff its flows step by step, run these once in each clone:")
+        for command in GIT_CONFIG_COMMANDS:
+            print(f"  {command}")
     elif action == "open":
         folder = _validated_folder("Usage: flowfile project open <folder>")
         project, result = _or_exit(project_sync.open_project, folder, owner_id)
@@ -424,8 +430,45 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
         result = _or_exit(project_sync.reload_from_disk, owner_id)
         print(f"Imported: {', '.join(f'{k}={n}' for k, n in result.by_kind.items()) or 'nothing'}")
         _exit_if_incomplete(result)
+    elif action == "branch":
+        if arg:
+            _or_exit(project_sync.create_branch, owner_id, arg, True)
+            print(f"On new branch {arg}")
+        else:
+            for row in _or_exit(project_sync.branch_state, owner_id)["branches"]:
+                print(f"{'*' if row['current'] else ' '} {row['name']} {row['sha'][:8]}")
+    elif action == "switch":
+        if not arg:
+            print("Usage: flowfile project switch <branch>", file=sys.stderr)
+            sys.exit(1)
+        result = _or_exit(project_sync.switch_branch, owner_id, arg)
+        print(f"On branch {arg}; imported: {', '.join(f'{k}={n}' for k, n in result.by_kind.items()) or 'nothing'}")
+        _exit_if_incomplete(result)
+    elif action == "remote":
+        if not arg:
+            print("Usage: flowfile project remote <url>  (token from FLOWFILE_PROJECT_TOKEN)", file=sys.stderr)
+            sys.exit(1)
+        token = os.environ.get("FLOWFILE_PROJECT_TOKEN")
+        state = _or_exit(project_sync.set_remote, owner_id, arg, token)
+        print(f"Remote {state['remote']}{' with a token' if state['has_token'] else ''}")
+    elif action == "push":
+        answer = _or_exit(project_sync.push, owner_id)
+        print(f"Pushed {answer['branch']} at {(answer['sha'] or '')[:8]}")
+        if answer["unsaved"]:
+            print("Changes not saved as a version were not pushed.", file=sys.stderr)
+    elif action == "pull":
+        answer = _or_exit(project_sync.pull, owner_id)
+        print(f"Pull: {answer.state.replace('_', ' ')}")
+        for row in answer.conflicts:
+            print(f"  {row['path']}: {row['label']}: {row['message']}", file=sys.stderr)
+        if answer.conflicts:
+            print("Settle them in the app's project view, then the merge is applied.", file=sys.stderr)
+            sys.exit(1)
     else:
-        print("Usage: flowfile project {init|open|save|plan|apply} <folder-message-or-sha>", file=sys.stderr)
+        print(
+            "Usage: flowfile project {init|open|save|plan|apply|branch|switch|remote|push|pull} <argument>",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -459,9 +502,12 @@ def main():
     parser.add_argument(
         "component",
         nargs="?",
-        choices=["ui", "core", "worker", "flow", "init", "open", "save", "plan", "apply", "yxdb", "alteryx"],
-        help="Component to run, project sub-command (init/open/save/plan/apply), convert format (yxdb) or import "
-        "format (alteryx)",
+        choices=[
+            *("ui", "core", "worker", "flow", "init", "open", "save", "plan", "apply"),
+            *("branch", "switch", "remote", "push", "pull", "yxdb", "alteryx"),
+        ],
+        help="Component to run, project sub-command (init/open/save/plan/apply/branch/switch/remote/push/pull), "
+        "convert format (yxdb) or import format (alteryx)",
     )
     parser.add_argument(
         "file_path", nargs="?", help="Flow file path, project folder, version message, or file/dir to convert"

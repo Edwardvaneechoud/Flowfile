@@ -143,6 +143,7 @@ class DashboardStoryResponse(BaseModel):
     """``story`` is set on success; a degraded result carries ``reason`` and a ``message``.
 
     ``grounded`` is True when at least one item was measured, so the text rests on numbers.
+    ``provider`` and ``model`` are the ones the route resolved for the call.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -155,6 +156,8 @@ class DashboardStoryResponse(BaseModel):
     reason: str | None = None
     message: str | None = None
     attempts: int = 0
+    provider: str | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True)

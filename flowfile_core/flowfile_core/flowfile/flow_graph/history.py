@@ -16,6 +16,7 @@ from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph._root import root
 from flowfile_core.schemas import schemas
 from flowfile_core.schemas.history_schema import (
+    CARRIED_SETTINGS,
     HistoryActionType,
     HistorySnapshot,
     HistoryState,
@@ -193,6 +194,10 @@ class GraphHistoryMixin(GraphMixinBase):
         discards any entry it already recorded and re-raises, so a failed request changes
         nothing (except that a failure after recording cannot bring back the redo that the
         recording cleared). Nested transactions and calls during a restore run the block as-is.
+
+        A block that changes any of ``CARRIED_SETTINGS`` (a merge moving ``hub_origin`` and holding its conflicts)
+        records a step even when the graph is unchanged, and the step carries them: its undo and redo restore them with
+        the graph. With ``record`` off such a change is made without a step. A failure puts them back too.
         """
         txn = GraphTransaction(description)
         with self.edit_lock():
@@ -211,6 +216,7 @@ class GraphHistoryMixin(GraphMixinBase):
                 # An unserializable graph must stay editable; this edit just can't be undone or rolled back.
                 logger.exception(f"Flow {self.flow_id}: could not snapshot the graph before '{description}'")
                 pre = None
+            carried_before = self._carried_settings()
             self._transaction_depth = 1
             try:
                 yield txn
@@ -221,7 +227,11 @@ class GraphHistoryMixin(GraphMixinBase):
                     self._history_manager.refresh_dirty_from(self)
                 else:
                     if record and self.flow_settings.track_history:
-                        txn.entry = self._history_manager.record(pre, post, action_type, txn.description, node_id)
+                        now = self._carried_settings()
+                        carried = tuple(k for k in CARRIED_SETTINGS if now[k] != carried_before[k])
+                        txn.entry = self._history_manager.record(
+                            pre, post, action_type, txn.description, node_id, carried
+                        )
                     self._history_manager.refresh_dirty(post)
                 txn.history = self.get_history_state()
                 # Last, so a failure anywhere above leaves the revision where it was; so does a no-op block.
@@ -231,11 +241,32 @@ class GraphHistoryMixin(GraphMixinBase):
                 if txn.entry is not None:
                     self._history_manager.discard_if_top(txn.entry)
                     txn.entry = None
+                self._set_carried(carried_before)
                 if pre is not None:
                     self._rollback_to(pre)
                 raise
             finally:
                 self._transaction_depth = 0
+
+    def _carried_settings(self) -> dict[str, Any]:
+        return {
+            "hub_origin": getattr(self.flow_settings, "hub_origin", None),
+            "merge_conflicts": getattr(self, "merge_conflicts", None),
+        }
+
+    def _set_carried(self, values: dict[str, Any]) -> None:
+        current = self._carried_settings()
+        for key, value in values.items():
+            if current[key] == value:
+                continue
+            if key == "hub_origin":
+                self.flow_settings.hub_origin = value
+            else:
+                setattr(self, key, value)
+
+    def _restore_carried(self, settings: schemas.FlowfileSettings, keys: tuple[str, ...]) -> None:
+        """Take ``keys`` of ``CARRIED_SETTINGS`` from a snapshot's settings (a step's undo or redo)."""
+        self._set_carried({key: getattr(settings, key, None) for key in keys if key in CARRIED_SETTINGS})
 
     def _rollback_to(self, snapshot: HistorySnapshot) -> None:
         """Restore ``snapshot`` without touching the history stacks, if the graph changed."""

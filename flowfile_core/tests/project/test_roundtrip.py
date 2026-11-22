@@ -343,6 +343,7 @@ def test_commit_only_stages_managed_paths(tmp_path):
         managed_root_files = {
             "project.yaml",
             ".gitignore",
+            ".gitattributes",
             "secrets.yaml",
             "namespaces.yaml",
             "tables.yaml",

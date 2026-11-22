@@ -96,6 +96,16 @@ function newEphemeralSessionId(): number {
   return -(1_500_000_000 + Math.floor(Math.random() * 100_000_000));
 }
 
+/** The kernel namespace of a saved notebook: -id for this machine's; a hub's notebook, whose id is negative here,
+ * gets a range of its own between those and the ephemeral ones, so it is never a real flow id either. */
+export function notebookSessionId(persistedId: number): number {
+  return persistedId > 0 ? -persistedId : -(1_000_000_000 - persistedId);
+}
+
+/** A hub's notebook keeps no kernel: a kernel belongs to the machine the notebook is opened on. */
+const savedKernelId = (targetId: number | null, kernelId: string | null): string | null =>
+  targetId != null && targetId < 0 ? null : kernelId;
+
 /** The kernel namespace a flow's session runs in (core's kernel_runner.kernel_flow_id), below both ranges above. */
 export function flowSessionId(flowId: number): number {
   return -(2 ** 40) - flowId;
@@ -639,7 +649,8 @@ function hydrateTab(p: PersistedNotebook): OpenNotebook {
   return {
     tabId: p.tabId,
     persistedId: p.persistedId,
-    sessionFlowId: p.persistedId != null ? -p.persistedId : newEphemeralSessionId(),
+    sessionFlowId:
+      p.persistedId != null ? notebookSessionId(p.persistedId) : newEphemeralSessionId(),
     name: p.name,
     description: p.description,
     namespaceId: p.namespaceId,
@@ -806,7 +817,7 @@ export const useNotebookStore = defineStore("notebook", {
         const tab: OpenNotebook = {
           tabId: uid("tab"),
           persistedId: nb.id,
-          sessionFlowId: -nb.id,
+          sessionFlowId: notebookSessionId(nb.id),
           name: nb.name,
           description: nb.description,
           namespaceId: nb.namespace_id,
@@ -919,7 +930,7 @@ export const useNotebookStore = defineStore("notebook", {
           description: nb.description,
           namespace_id: nb.namespaceId,
           cells: toWire(nb.cells),
-          default_kernel_id: nb.kernelId,
+          default_kernel_id: savedKernelId(nb.persistedId, nb.kernelId),
         });
         nb.dirty = false;
         this._schedulePersist();
@@ -940,10 +951,10 @@ export const useNotebookStore = defineStore("notebook", {
           namespace_id: namespaceId,
           description: nb.description,
           cells: toWire(nb.cells),
-          default_kernel_id: nb.kernelId,
+          default_kernel_id: savedKernelId(namespaceId, nb.kernelId),
         });
         nb.persistedId = created.id;
-        nb.sessionFlowId = -created.id;
+        nb.sessionFlowId = notebookSessionId(created.id);
         nb.name = created.name;
         nb.namespaceId = created.namespace_id;
         nb.dirty = false;

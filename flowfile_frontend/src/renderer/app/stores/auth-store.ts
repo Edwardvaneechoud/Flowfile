@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import authService from "../services/auth.service";
 import { useGlobalSearchStore } from "./global-search-store";
+import { endSession } from "./sessionScoped";
 import { useTelemetryStore } from "./telemetry-store";
 
 export interface User {
@@ -102,11 +103,13 @@ export const useAuthStore = defineStore("auth", {
      * status is load-once and carries `can_manage`, which is per-user in docker
      * mode — keeping it would let the next user be judged by the previous
      * user's authority. The search palette's query and recent searches are the
-     * previous user's too.
+     * previous user's too. Stores that register through `onSessionEnd` (the AI
+     * dashboard builder's last build log) are reset here as well.
      */
     clearSessionScopedStores() {
       useTelemetryStore().$reset();
       useGlobalSearchStore().reset();
+      endSession();
     },
 
     clearError() {

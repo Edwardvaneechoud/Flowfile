@@ -239,6 +239,12 @@ export const generateNodeCode = async (
 
 // Chart generation: POST /ai/generate_chart, a prompt for a catalog table → a chart request.
 
+/** The provider and model a route reports it answered with, when it reports them. */
+const answeredBy = (data: { provider?: string | null; model?: string | null }) => ({
+  ...(typeof data.provider === "string" ? { provider: data.provider } : {}),
+  ...(typeof data.model === "string" ? { model: data.model } : {}),
+});
+
 /** Every `reason` a degraded chart answer can carry (core's `chart_request.REASONS`). */
 export type ChartGenerationReason =
   | "empty_prompt"
@@ -274,6 +280,9 @@ export interface ChartGenerationResponse {
   attempts?: number;
   /** Codes of the silent repairs core applied (`chart_request.REPAIRS`); absent from an older core. */
   repairs?: string[];
+  /** The provider and model that answered; absent from an older core. */
+  provider?: string | null;
+  model?: string | null;
 }
 
 /**
@@ -309,6 +318,7 @@ export const generateChart = async (
       message: data.message ?? null,
       ...(typeof data.attempts === "number" ? { attempts: data.attempts } : {}),
       ...(Array.isArray(data.repairs) ? { repairs: data.repairs } : {}),
+      ...answeredBy(data),
     };
   } catch (error) {
     if (isAiDisabledError(error)) throw new AiDisabledError();
@@ -381,6 +391,9 @@ export interface DashboardPlanResponse {
   reason: DashboardPlanReason | null;
   message: string | null;
   attempts: number;
+  /** The provider and model that answered; absent from an older core. */
+  provider?: string | null;
+  model?: string | null;
 }
 
 export interface PlanDashboardRequest {
@@ -450,6 +463,9 @@ export interface DashboardStoryResponse {
   reason: DashboardStoryReason | null;
   message: string | null;
   attempts: number;
+  /** The provider and model that answered; absent from an older core. */
+  provider?: string | null;
+  model?: string | null;
 }
 
 export interface DashboardStoryRequest {
@@ -500,6 +516,7 @@ export const planDashboard = async (
       reason: data.reason ?? null,
       message: data.message ?? null,
       attempts: data.attempts ?? 0,
+      ...answeredBy(data),
     };
   } catch (error) {
     if (isAiDisabledError(error)) throw new AiDisabledError();
@@ -534,6 +551,7 @@ export const writeDashboardStory = async (
       reason: data.reason ?? null,
       message: data.message ?? null,
       attempts: data.attempts ?? 0,
+      ...answeredBy(data),
     };
   } catch (error) {
     if (isAiDisabledError(error)) throw new AiDisabledError();

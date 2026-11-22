@@ -105,6 +105,8 @@
           <span v-if="message.detail" class="dash-ai__detail">{{ message.detail }}</span>
         </div>
 
+        <DashboardAiBuildLog v-if="store.log.length" :entries="store.log" />
+
         <div class="dash-ai__actions">
           <el-button v-if="running" data-testid="dashboard-ai-cancel" @click="onCancel">
             Cancel
@@ -166,6 +168,7 @@
               <li v-for="(warning, i) in result.page.warnings" :key="i">{{ warning }}</li>
             </ul>
           </section>
+          <DashboardAiBuildLog :entries="store.log" />
           <p class="dash-ai__hint">
             Undo takes the whole page back. The charts stay in the chart library either way.
           </p>
@@ -195,6 +198,7 @@ import {
 import { isHubRow } from "../CatalogView/hubRows";
 import { BUILD_CANCELLED_MESSAGE, type BuiltPage, type PageNote } from "./aiDashboard";
 import { createChartConverter } from "./aiDashboardCharts";
+import DashboardAiBuildLog from "./DashboardAiBuildLog.vue";
 
 /** What the editor did with a built page. */
 export interface PlacedPage {
@@ -313,6 +317,16 @@ const notBuilt = computed<PageNote[]>(() =>
   result.value ? [...result.value.page.failed, ...result.value.placed.failed] : [],
 );
 
+/** What placing did, as the log's note on it. */
+const placedDetail = (placed: PlacedPage): string => {
+  const parts = [plural(placed.charts, "chart"), plural(placed.kpis, "KPI")];
+  if (placed.filters.length) parts.push(plural(placed.filters.length, "filter"));
+  const saved = `Added ${listPhrases(parts)}.`;
+  return placed.failed.length
+    ? `${saved} ${plural(placed.failed.length, "chart")} could not be saved.`
+    : saved;
+};
+
 const close = () => emit("update:modelValue", false);
 
 const onCancel = () => store.cancel();
@@ -344,14 +358,21 @@ const onBuild = async () => {
     return;
   }
   placing.value = true;
+  store.beginPlacing(outcome.page.title);
   try {
     const placed = await props.place(outcome.page);
+    store.endPlacing({
+      status: placed.failed.length ? "warning" : "ok",
+      detail: placedDetail(placed),
+    });
     result.value = { page: outcome.page, placed };
   } catch (error) {
+    const detail = error instanceof Error && error.message ? error.message : undefined;
+    store.endPlacing({ status: "failed", detail: detail ?? "The page could not be added." });
     message.value = {
       tone: "error",
       text: "The page was built, but it could not be added to the dashboard.",
-      ...(error instanceof Error && error.message ? { detail: error.message } : {}),
+      ...(detail ? { detail } : {}),
     };
   } finally {
     placing.value = false;
@@ -371,6 +392,7 @@ watch(
     if (!open) return;
     result.value = null;
     message.value = null;
+    store.clearLog();
     aiStore.loadProviders().catch(() => undefined);
     if (!catalogStore.allTables.length) void catalogStore.loadAllTables();
   },

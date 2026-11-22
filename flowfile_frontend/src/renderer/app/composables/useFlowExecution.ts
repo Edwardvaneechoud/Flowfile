@@ -19,6 +19,8 @@ import { useEditorStore } from "../stores/editor-store";
 import { useResultsStore } from "../stores/results-store";
 import { useFlowSyncStore } from "../stores/flow-sync-store";
 import { useTutorialStore } from "../stores/tutorial-store";
+import { useMergeConflictsStore } from "../stores/merge-conflicts-store";
+import { runRefusedMessage, unresolvedConflictsOf } from "../features/designer/mergeConflicts";
 import { VueFlowStore } from "@vue-flow/core";
 import type { RunInformation, FlowSettings } from "../types";
 import { FlowApi } from "../api";
@@ -665,7 +667,11 @@ export function useFlowExecution(
       // 404 means the in-memory flow_id doesn't match the backend — typically
       // a stale id after Save As or a backend restart. Tell the user
       // specifically so they reopen instead of retrying blindly.
-      if (error?.response?.status === 404) {
+      const conflicts = unresolvedConflictsOf(error);
+      if (conflicts) {
+        showNotification("Flow not started", runRefusedMessage(conflicts), "error");
+        void useMergeConflictsStore().reveal(target.id);
+      } else if (error?.response?.status === 404) {
         const detail =
           error?.response?.data?.detail ??
           "The flow id this tab is using no longer exists on the server.";
@@ -782,8 +788,14 @@ export function useFlowExecution(
       unFreezeFlow();
       isExecuting.value = false;
 
-      const errorMessage = error.response?.data?.detail || "Failed to fetch node data";
-      showNotification("Error", errorMessage, "error");
+      const conflicts = unresolvedConflictsOf(error);
+      if (conflicts) {
+        showNotification("Node not run", runRefusedMessage(conflicts), "error");
+        void useMergeConflictsStore().reveal(target.id);
+      } else {
+        const errorMessage = error.response?.data?.detail || "Failed to fetch node data";
+        showNotification("Error", errorMessage, "error");
+      }
       throw error;
     }
   };

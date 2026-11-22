@@ -160,6 +160,36 @@ def write_gitignore(root: Path) -> None:
         gi.write_text(existing_text.rstrip("\n") + "\n" + addition, encoding="utf-8")
 
 
+GITATTRIBUTES_NAME = ".gitattributes"
+MERGE_DRIVER = "flowfile-merge merge-file %O %A %B -P %P --base-label %S --ours-label %X --theirs-label %Y"
+GIT_CONFIG_COMMANDS = (
+    f'git config merge.flowfile.driver "{MERGE_DRIVER}"',
+    'git config diff.flowfile.textconv "flowfile-merge show"',
+)
+_ATTRIBUTE_LINES = ("flows/*.flow.yaml merge=flowfile diff=flowfile", "schedules/*.yaml merge=flowfile")
+_GITATTRIBUTES = (
+    "# Flowfile merges and diffs flow files step by step. Git uses it once each clone has run:\n"
+    + "".join(f"#   {command}\n" for command in GIT_CONFIG_COMMANDS)
+    + "# Without them git merges these files as text.\n"
+    + "".join(f"{line}\n" for line in _ATTRIBUTE_LINES)
+)
+
+
+def write_gitattributes(root: Path) -> None:
+    """Write ``.gitattributes`` so git merges and diffs flow files through ``flowfile-merge``, or add its lines to
+    one that lacks them. Git needs the two ``GIT_CONFIG_COMMANDS`` in each clone; without them it merges as text."""
+    ga = root / GITATTRIBUTES_NAME
+    if not ga.exists():
+        ga.write_text(_GITATTRIBUTES, encoding="utf-8")
+        return
+    existing_text = ga.read_text(encoding="utf-8")
+    existing_lines = {ln.strip() for ln in existing_text.splitlines()}
+    missing = [ln for ln in _ATTRIBUTE_LINES if ln not in existing_lines]
+    if missing:
+        addition = "\n# Added by Flowfile: merge and diff flow files step by step\n" + "\n".join(missing) + "\n"
+        ga.write_text(existing_text.rstrip("\n") + "\n" + addition, encoding="utf-8")
+
+
 def flows_dir(root: Path) -> Path:
     return root / "flows"
 
