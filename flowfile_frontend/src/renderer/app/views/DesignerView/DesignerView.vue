@@ -59,6 +59,7 @@
         @import-flow="headerButtons?.openAlteryxDialog()"
         @open-recent="handleOpenRecent"
       />
+      <merge-conflicts-bar v-if="hasOpenFlow" />
       <div v-if="showSwitchIndicator" class="switch-indicator" aria-live="polite">
         <span class="switch-spinner" />
         <span>Loading flow…</span>
@@ -105,6 +106,7 @@ import CanvasFlow from "./Canvas.vue";
 import FlowSelector from "../FlowSelectorView/FlowSelectorView.vue";
 import UndoRedoControls from "./UndoRedoControls.vue";
 import DesignerEmptyState from "./DesignerEmptyState.vue";
+import MergeConflictsBar from "../../features/designer/components/MergeConflictsBar.vue";
 import { FlowApi } from "../../api";
 import { fetchNodes } from "../../features/designer/utils";
 import type { NodeTemplate, FlowSettings } from "../../types";

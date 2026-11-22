@@ -168,9 +168,13 @@ _READ_HERE = (
     "/cdc/cursors/reset",
     "/edits",
     "/key-column",
+    "/stats",
+    "/compute",
+    "/fields",
 )
-"""The table routes that read, maintain or edit data: this install reaches a remote table through its storage target,
-and its row's new facts go back on the catalog's refresh route."""
+"""The routes that read, maintain or edit data: this install reaches a remote table through its storage target, and
+its row's new facts go back on the catalog's refresh route. A chart saved in a remote catalog is drawn here too, from
+its row there (``table_sources.chart_row``): a catalog of record computes nothing."""
 
 
 class _RemoteAnswer(Exception):
@@ -1348,8 +1352,10 @@ def list_visualization_library(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return every saved visualization across the catalog."""
-    return service.list_visualization_library(user_id=current_user.id)
+    """Return every saved visualization across the catalog, a remote catalog's after this install's
+    (``table_sources.merged_rows``)."""
+    local = service.list_visualization_library(user_id=current_user.id)
+    return table_sources.merged_rows(current_user.id, "/catalog/visualizations", local, VisualizationOut)
 
 
 @router.post("/visualizations", response_model=VisualizationOut, status_code=201)
@@ -1488,8 +1494,9 @@ def list_notebooks(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """List saved notebooks (lightweight — cells omitted)."""
-    return service.list_notebooks(user_id=current_user.id)
+    """List saved notebooks (lightweight — cells omitted), a remote catalog's after this install's."""
+    local = service.list_notebooks(user_id=current_user.id)
+    return table_sources.merged_rows(current_user.id, "/catalog/notebooks", local, NotebookSummaryOut)
 
 
 @router.post("/notebooks", response_model=NotebookOut, status_code=201)
@@ -1544,8 +1551,10 @@ def list_dashboards(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return every saved dashboard; an image tile's ``data_url`` is empty here, ``GET /dashboards/{id}`` carries it."""
-    return service.list_dashboards(user_id=current_user.id)
+    """Return every saved dashboard, a remote catalog's after this install's; an image tile's ``data_url`` is empty
+    here, ``GET /dashboards/{id}`` carries it."""
+    local = service.list_dashboards(user_id=current_user.id)
+    return table_sources.merged_rows(current_user.id, "/catalog/dashboards", local, DashboardOut)
 
 
 @router.post("/dashboards", response_model=DashboardOut, status_code=201)

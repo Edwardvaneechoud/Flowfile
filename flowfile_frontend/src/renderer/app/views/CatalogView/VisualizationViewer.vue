@@ -156,6 +156,7 @@ import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { targetsInSameCatalog } from "./chartSaveTarget";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
 
 const showShareDialog = ref(false);
@@ -272,14 +273,21 @@ const { computation: computeOnWorker, lastError: computeError } = useGraphicWalk
   "saved",
 );
 
-// Flat schema-level list for the namespace picker; read-only grants excluded.
-const { writableSchemaNamespaces } = useWritableNamespaces();
+// The schemas the chart can move to: writable ones of the catalog that keeps it, this machine's or the hub's.
+const { saveTargetNamespaces } = useWritableNamespaces();
+const writableSchemaNamespaces = computed(() =>
+  targetsInSameCatalog(saveTargetNamespaces.value, { id: props.vizId, source: viz.value?.source }),
+);
 
 // The viz's current namespace may be read-only or system-managed and thus absent
 // from the writable list — keep it rendered with its label (disabled) instead of
 // showing a raw numeric id.
 const namespaceOptions = computed(() => {
-  const options = writableSchemaNamespaces.value.map((o) => ({ ...o, disabled: false }));
+  const options = writableSchemaNamespaces.value.map((o) => ({
+    id: o.id,
+    label: o.label,
+    disabled: false,
+  }));
   const current = namespaceDraft.value;
   if (current != null && !options.some((o) => o.id === current)) {
     const path = findNamespacePath(store.tree, current);

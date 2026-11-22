@@ -672,6 +672,9 @@ async def _start_run(flow, flow_id: int, user_id, background_tasks: BackgroundTa
     for, with the log file already rewritten for it. The queued task releases the slot on every exit,
     and the route answers with a ``RunStartedResponse`` so the task runs even when the answer is lost.
     """
+    from flowfile_core.routes.flow_merge import refuse_open_conflicts
+
+    refuse_open_conflicts(flow)
     async with get_flow_run_lock(flow_id):
         if not await asyncio.to_thread(flow.try_claim_run):
             raise HTTPException(422, "Flow is already running")

@@ -283,8 +283,9 @@ class CatalogService:
             raise NotAuthorizedError(self.access.user_id or -1, "advance this flow's change cursor")
 
     def _require_use_visualization(self, viz_id: int) -> None:
-        """Viz read: creator, a use/manage grant, or read on its parent table."""
-        if not self._restricted:
+        """Viz read: creator, a use/manage grant, or read on its parent table. A chart of a remote catalog
+        (``table_sources.remote_of``) is that catalog's to refuse when its row is read."""
+        if not self._restricted or remote_of(viz_id) is not None:
             return
         viz = self.repo.get_visualization(viz_id)
         if viz is None:

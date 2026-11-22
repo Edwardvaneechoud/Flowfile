@@ -5,7 +5,7 @@ export const HUB_MANAGED_NOTE = "This catalog is managed on the hub.";
 
 export const isHubRow = (row: { source?: string | null }): boolean => row.source === "hub";
 
-interface ChartedTable {
+export interface ChartedTable {
   id: number;
   name: string;
   source?: string | null;
@@ -13,15 +13,19 @@ interface ChartedTable {
   full_table_name?: string | null;
 }
 
-/** What a chart of `table` reads: the table, or for a hub table a query over it, since a saved visual keeps a
- * query and never a hub table's id. */
+/** What a chart of `table` reads: the table by its id, a hub table by the negative id it has here. Core draws
+ * either; what a saved chart keeps depends on the catalog it is saved in (`chartSaveTarget.ts`). */
 export function chartSource(table: ChartedTable): VizSourceDescriptor {
-  if (!isHubRow(table)) return { source_type: "table", table_id: table.id };
+  return { source_type: "table", table_id: table.id };
+}
+
+/** A query that reads all of `table`, by the name SQL finds it under. */
+export function queryOver(table: ChartedTable): string {
   const reference = table.qualified_name ?? table.full_table_name ?? table.name;
   const quoted = reference
     .split(".")
     .map((part) => (/^[a-zA-Z_]\w*$/.test(part) ? part : `"${part}"`));
-  return { source_type: "sql", sql_query: `SELECT * FROM ${quoted.join(".")}` };
+  return `SELECT * FROM ${quoted.join(".")}`;
 }
 
 interface PlacedRow {
@@ -79,6 +83,14 @@ export const offersOwnCatalog = (rows: { source?: string | null; offered?: boole
 export const OWN_CATALOG_NOT_OFFERED =
   "Flows on this server are kept in your organisation's catalog on the hub. This saves a file on the server; " +
   "Publish to hub puts the flow in the catalog.";
+
+export const NO_HUB_SCHEMA_TO_SAVE_IN =
+  "Your work here is kept in your organisation's catalog on the hub, and it has no schema you may write to. " +
+  "Ask an admin or your team's manager for write access to one.";
+
+export const QUERY_VIEW_NOT_ON_HUB =
+  "A query is not saved as a table in your organisation's catalog on the hub: the hub runs no SQL, so it cannot " +
+  "work out the table's columns. Keep the query in a notebook, or build it as a flow and publish that.";
 
 /** The rows that live in this Flowfile; a hub catalog drops out with everything under it. */
 export function withoutHubRows<T extends { source?: string | null }>(rows: T[]): T[] {

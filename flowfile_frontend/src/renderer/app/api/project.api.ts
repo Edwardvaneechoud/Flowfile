@@ -4,18 +4,36 @@ import type {
   ImportResult,
   OpenProjectResult,
   PlaceholderSecretInput,
+  ProjectBranchState,
+  ProjectGithubSignIn,
+  ProjectGithubSignInPoll,
   ProjectInfo,
+  ProjectMergeState,
+  ProjectPullResult,
+  ProjectPushResult,
   ProjectVersion,
   ProjectVersionChange,
   SaveVersionResult,
 } from "../types";
-import { folderEditedFrom, unsavedChangesFrom } from "./project.errors";
+import { folderEditedFrom, gitRefusalFrom, unsavedChangesFrom } from "./project.errors";
 
 /** Raised when a Phase-2 route isn't deployed yet, so the store can hide its UI. */
 export class ProjectFeatureUnavailable extends Error {}
 
 const detail = (error: any, fallback: string): string =>
   error?.response?.data?.detail || error?.message || fallback;
+
+/** A GitHub sign-in failure in words; core answers `{error_code, message}`, never a 401. */
+const githubSignInError = (error: any, fallback: string): Error => {
+  const body = error?.response?.data?.detail;
+  if (body?.error_code === "GITHUB_NOT_CONFIGURED") {
+    return new Error(
+      "GitHub sign-in isn't available in this build. Paste a personal access token instead.",
+    );
+  }
+  if (typeof body === "string") return new Error(body);
+  return new Error(body?.message || fallback);
+};
 
 export class ProjectApi {
   /** Create a new git-backed project in a folder and activate it. */
@@ -180,6 +198,154 @@ export class ProjectApi {
     } catch (error: any) {
       if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
       throw new Error(detail(error, "Failed to set secret values"));
+    }
+  }
+
+  /** The project's branches, the one checked out and its remote. */
+  static async getBranches(): Promise<ProjectBranchState> {
+    try {
+      return (await axios.get<ProjectBranchState>("/project/branches")).data;
+    } catch (error: any) {
+      if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
+      throw new Error(detail(error, "Failed to load branches"));
+    }
+  }
+
+  /** A new branch at the current version, checked out unless `switchTo` is false. */
+  static async createBranch(name: string, switchTo = true): Promise<void> {
+    try {
+      await axios.post("/project/branches", { name, switch: switchTo });
+    } catch (error: any) {
+      throw gitRefusalFrom(error) ?? new Error(detail(error, "Failed to create the branch"));
+    }
+  }
+
+  /** Check out a branch and rebuild the database from it; unsaved changes raise ProjectUnsavedChanges. */
+  static async switchBranch(name: string, force = false): Promise<ImportResult> {
+    try {
+      return (await axios.post<ImportResult>("/project/branches/switch", { name, force })).data;
+    } catch (error: any) {
+      throw (
+        unsavedChangesFrom(error) ??
+        gitRefusalFrom(error) ??
+        new Error(detail(error, "Failed to switch branch"))
+      );
+    }
+  }
+
+  /** Set the remote. `token` undefined keeps the one kept, "" forgets it; it is never sent back. */
+  static async setRemote(
+    url: string,
+    token?: string,
+    username?: string,
+  ): Promise<ProjectBranchState> {
+    try {
+      const body: Record<string, string> = { url };
+      if (token !== undefined) body.token = token;
+      if (username !== undefined) body.username = username;
+      return (await axios.put<ProjectBranchState>("/project/remote", body)).data;
+    } catch (error: any) {
+      throw gitRefusalFrom(error) ?? new Error(detail(error, "Failed to set the remote"));
+    }
+  }
+
+  /** Begin a GitHub sign-in whose token becomes this person's remote token. */
+  static async startGithubSignIn(): Promise<ProjectGithubSignIn> {
+    try {
+      return (await axios.post<ProjectGithubSignIn>("/project/remote/github/device/start")).data;
+    } catch (error: any) {
+      throw githubSignInError(error, "Could not start the GitHub sign-in");
+    }
+  }
+
+  /** Poll the sign-in once; the token itself is never sent back. */
+  static async pollGithubSignIn(deviceCode: string): Promise<ProjectGithubSignInPoll> {
+    try {
+      return (
+        await axios.post<ProjectGithubSignInPoll>("/project/remote/github/device/poll", {
+          device_code: deviceCode,
+        })
+      ).data;
+    } catch (error: any) {
+      throw githubSignInError(error, "The GitHub sign-in failed");
+    }
+  }
+
+  static async push(): Promise<ProjectPushResult> {
+    try {
+      return (await axios.post<ProjectPushResult>("/project/push", {})).data;
+    } catch (error: any) {
+      throw gitRefusalFrom(error) ?? new Error(detail(error, "Failed to push"));
+    }
+  }
+
+  static async pull(force = false): Promise<ProjectPullResult> {
+    try {
+      return (await axios.post<ProjectPullResult>("/project/pull", { force })).data;
+    } catch (error: any) {
+      throw (
+        unsavedChangesFrom(error) ??
+        gitRefusalFrom(error) ??
+        new Error(detail(error, "Failed to pull"))
+      );
+    }
+  }
+
+  /** The pull waiting for its conflicts to be settled, or null. */
+  static async getMerge(): Promise<ProjectMergeState | null> {
+    try {
+      return (await axios.get<{ merge: ProjectMergeState | null }>("/project/merge")).data.merge;
+    } catch (error: any) {
+      if (error?.response?.status === 404) throw new ProjectFeatureUnavailable();
+      throw new Error(detail(error, "Failed to load the merge"));
+    }
+  }
+
+  /** Settle one item; the last one concludes the merge and answers the pull it finishes. */
+  static async settleMerge(
+    path: string,
+    key: string | null,
+    take: "ours" | "theirs",
+    force = false,
+  ): Promise<{ merge: ProjectMergeState | null; pull: ProjectPullResult | null }> {
+    try {
+      const res = await axios.post("/project/merge/settle", { path, key, take, force });
+      return { merge: res.data.merge ?? null, pull: res.data.pull ?? null };
+    } catch (error: any) {
+      throw (
+        unsavedChangesFrom(error) ??
+        gitRefusalFrom(error) ??
+        new Error(detail(error, "Failed to settle the conflict"))
+      );
+    }
+  }
+
+  static async concludeMerge(force = false): Promise<ProjectPullResult> {
+    try {
+      return (await axios.post<ProjectPullResult>("/project/merge/conclude", { force })).data;
+    } catch (error: any) {
+      throw (
+        unsavedChangesFrom(error) ??
+        gitRefusalFrom(error) ??
+        new Error(detail(error, "Failed to finish the merge"))
+      );
+    }
+  }
+
+  static async abortMerge(): Promise<void> {
+    try {
+      await axios.post("/project/merge/abort", {});
+    } catch (error: any) {
+      throw new Error(detail(error, "Failed to abort the merge"));
+    }
+  }
+
+  /** Open a conflicted flow of the waiting merge in the editor; answers its flow id. */
+  static async openMergeFlow(path: string): Promise<number> {
+    try {
+      return (await axios.post<{ flow_id: number }>("/project/merge/open", { path })).data.flow_id;
+    } catch (error: any) {
+      throw new Error(detail(error, "Failed to open the flow"));
     }
   }
 }

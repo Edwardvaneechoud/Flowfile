@@ -457,6 +457,81 @@ class TestTransactionContract:
         assert graph.get_node(3) is not None
 
 
+def _origin(version: int) -> schemas.HubOrigin:
+    return schemas.HubOrigin(hub_url="https://hub.example.test", flow_uuid="u-1", version=version)
+
+
+class TestCarriedSettings:
+    """``hub_origin`` and ``merge_conflicts`` go back and forward with the step whose own transaction changed them."""
+
+    HELD = {"flowfile_conflict": 1, "sides": {}, "conflicts": [{"key": "step:2", "kind": "both_changed"}]}
+
+    def test_a_step_that_changed_them_restores_them_on_undo_and_redo(self):
+        graph = make_graph(8180)
+        manual_input(graph, 1, [{"a": 1}])
+        graph.flow_settings.hub_origin = _origin(4)
+        with graph.transaction("Merge") as txn:
+            promise(graph, "filter", 2)
+            graph.merge_conflicts = self.HELD
+            graph.flow_settings.hub_origin = _origin(5)
+        assert txn.entry.carried == ("hub_origin", "merge_conflicts")
+
+        assert graph.undo().success is True
+        assert (graph.flow_settings.hub_origin, graph.merge_conflicts, graph.get_node(2)) == (_origin(4), None, None)
+        assert graph.redo().success is True
+        assert (graph.flow_settings.hub_origin, graph.merge_conflicts) == (_origin(5), self.HELD)
+        assert graph.get_node(2) is not None
+
+    def test_any_other_step_keeps_the_live_values(self):
+        graph = make_graph(8181)
+        manual_input(graph, 1, [{"a": 1}])
+        graph.flow_settings.hub_origin = _origin(4)
+        promise(graph, "filter", 2)
+        graph.flow_settings.hub_origin = _origin(5)
+
+        assert graph.undo().success is True
+        assert graph.flow_settings.hub_origin == _origin(5)
+        assert graph.redo().success is True
+        assert graph.flow_settings.hub_origin == _origin(5)
+
+    def test_a_change_of_them_alone_is_a_step_unless_record_is_off(self):
+        graph = make_graph(8182)
+        manual_input(graph, 1, [{"a": 1}])
+        before = graph.get_history_state().undo_count
+        with graph.transaction("Settle", record=False):
+            graph.merge_conflicts = self.HELD
+        assert graph.get_history_state().undo_count == before
+        with graph.transaction("Merge"):
+            graph.flow_settings.hub_origin = _origin(5)
+        assert graph.get_history_state().undo_count == before + 1
+
+        assert graph.undo().success is True
+        assert (graph.flow_settings.hub_origin, graph.merge_conflicts) == (None, self.HELD)
+
+    def test_a_failed_transaction_puts_them_back(self):
+        graph = make_graph(8183)
+        manual_input(graph, 1, [{"a": 1}])
+        graph.flow_settings.hub_origin = _origin(4)
+        with pytest.raises(ValueError, match="boom"):
+            with graph.transaction("Merge"):
+                graph.merge_conflicts = self.HELD
+                graph.flow_settings.hub_origin = _origin(5)
+                raise ValueError("boom")
+        assert (graph.flow_settings.hub_origin, graph.merge_conflicts) == (_origin(4), None)
+
+    def test_held_conflicts_are_saved_with_the_flow_and_open_with_it(self, tmp_path):
+        path = tmp_path / "held.yaml"
+        graph = make_graph(8184, path=str(path))
+        manual_input(graph, 1, [{"a": 1}])
+        graph.merge_conflicts = self.HELD
+        graph.save_flow(str(path))
+
+        reopened = open_flow(path)
+        assert reopened.merge_conflicts == self.HELD
+        assert reopened.has_unsaved_changes() is False
+        assert in_scope(reopened) == in_scope(graph)
+
+
 def _join(graph, node_id: int, left_id: int, right_id: int):
     graph.add_join(
         input_schema.NodeJoin(

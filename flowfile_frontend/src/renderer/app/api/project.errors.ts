@@ -46,3 +46,9 @@ export const unsavedChangesFrom = (error: any): ProjectUnsavedChanges | null => 
       )
     : null;
 };
+
+/** A branch, remote, push or pull git refused (409 `GIT_REFUSED`), or a merge waiting (409 `MERGE_IN_PROGRESS`). */
+export const gitRefusalFrom = (error: any): Error | null => {
+  const detail = conflict(error, "GIT_REFUSED") ?? conflict(error, "MERGE_IN_PROGRESS");
+  return detail ? new Error(String(detail.message ?? "")) : null;
+};

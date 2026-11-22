@@ -158,6 +158,8 @@
           </div>
         </section>
 
+        <ProjectBranches v-if="gitAvailable" />
+
         <!-- Stop using this project -->
         <section class="card danger-card mb-3">
           <div class="card-content close-row">
@@ -202,6 +204,7 @@ import { confirmRecoveryPoint } from "../../components/project/recoveryPoint";
 import { alertIncomplete } from "../../components/project/importNotice";
 import ProjectVersionHistory from "./ProjectVersionHistory.vue";
 import ProjectSettingsDialog from "./ProjectSettingsDialog.vue";
+import ProjectBranches from "./ProjectBranches.vue";
 import { useProjectStore } from "../../stores/project-store";
 import { useMultiUser } from "../../composables/useMultiUser";
 import { timeAgoShort } from "../../utils/time";

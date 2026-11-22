@@ -8,6 +8,7 @@ from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
+from shared.flow_merge.conflict import refuse_conflicted
 from shared.storage_config import flow_storage_directories, is_server_mode, storage
 
 try:
@@ -131,6 +132,7 @@ def _load_flowfile_yaml(flow_path: Path) -> schemas.FlowInformation:
     flow_path = _validate_flow_path(flow_path)
     with open(flow_path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
+    refuse_conflicted(data, f"The flow file {flow_path.name}")
     # Load as FlowfileData first (handles setting_input validation via node type)
     flowfile_data = schemas.FlowfileData.model_validate(data)
     return _flowfile_data_to_flow_information(flowfile_data)
@@ -149,6 +151,7 @@ def _load_flowfile_json(flow_path: Path) -> schemas.FlowInformation:
     flow_path = _validate_flow_path(flow_path)
     with open(flow_path, encoding="utf-8") as f:
         data = json.load(f)
+    refuse_conflicted(data, f"The flow file {flow_path.name}")
 
     # Load as FlowfileData first (handles setting_input validation via node type)
     flowfile_data = schemas.FlowfileData.model_validate(data)
@@ -276,6 +279,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         node_connections=connections,
         groups=[schemas.GroupInformation(**group.model_dump()) for group in flowfile_data.groups],
         comments=[schemas.CommentInformation(**comment.model_dump()) for comment in flowfile_data.comments],
+        merge_conflicts=getattr(flowfile_data.flowfile_settings, "merge_conflicts", None),
     )
 
 
@@ -481,6 +485,8 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     flow_storage_obj.flow_name = resolved_name
 
     new_flow = FlowGraph(name=flow_storage_obj.flow_name, flow_settings=flow_storage_obj.flow_settings)
+    # Only an open takes them from the file; a snapshot restore keeps the live ones, like the flow settings.
+    new_flow.merge_conflicts = getattr(flow_storage_obj, "merge_conflicts", None)
     if user_id is not None:
         new_flow._owner_user_id = user_id
     owner_of = (lambda _node_id: user_id) if user_id is not None else None

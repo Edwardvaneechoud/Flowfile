@@ -355,8 +355,9 @@ def secret_manifest_data(db: Session, owner_id: int) -> dict:
     """secrets.yaml lists the owner's standalone secrets: those no row refers to through a foreign key
     to ``secrets.id`` and that no feature keeps under a name of its own. A connection's secrets are
     implied by its file (and recreated by its store function on import); a Kafka, Google Analytics or
-    AI-provider key, OAuth settings and the GitHub publish token belong to features with no file."""
-    from flowfile_core.configs.app_settings import _OAUTH_KEYS
+    AI-provider key, OAuth settings, the GitHub publish token and a project remote's token belong to features
+    with no file."""
+    from flowfile_core.configs.app_settings import _OAUTH_KEYS, PROJECT_REMOTE_TOKEN_KEY
     from flowfile_core.database.models import Base
     from flowfile_core.routes.community_github import GITHUB_PUBLISH_LOGIN_KEY, GITHUB_PUBLISH_TOKEN_KEY
 
@@ -365,7 +366,7 @@ def secret_manifest_data(db: Session, owner_id: int) -> dict:
         for column in table.columns:
             if any(fk.column.table.name == Secret.__tablename__ for fk in column.foreign_keys):
                 linked.update(sid for (sid,) in db.execute(select(column).where(column.isnot(None))))
-    feature_names = {*_OAUTH_KEYS, GITHUB_PUBLISH_TOKEN_KEY, GITHUB_PUBLISH_LOGIN_KEY}
+    feature_names = {*_OAUTH_KEYS, GITHUB_PUBLISH_TOKEN_KEY, GITHUB_PUBLISH_LOGIN_KEY, PROJECT_REMOTE_TOKEN_KEY}
     q = db.query(Secret.name).filter(Secret.user_id == owner_id)
     if linked:
         q = q.filter(~Secret.id.in_(linked))
