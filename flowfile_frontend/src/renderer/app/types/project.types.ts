@@ -80,6 +80,22 @@ export interface ProjectBranchState {
   has_token: boolean;
 }
 
+/** A GitHub sign-in waiting for its code to be entered at `verification_uri`. */
+export interface ProjectGithubSignIn {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  interval: number;
+  expires_in: number;
+}
+
+/** One poll of that sign-in; `connected` means the token is kept as the remote's token. */
+export interface ProjectGithubSignInPoll {
+  status: "pending" | "slow_down" | "connected";
+  interval?: number | null;
+  login?: string;
+}
+
 /** One item a pull's merge waits on: a step both sides changed (`key`), or a whole file (`key` null). */
 export interface ProjectMergeItem {
   path: string;

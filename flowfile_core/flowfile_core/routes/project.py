@@ -18,11 +18,18 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
+from flowfile_core.flowfile.community_nodes import github_client
+from flowfile_core.flowfile.community_nodes.github_client import (
+    GithubApiError,
+    GithubAuthError,
+    GithubNotConfiguredError,
+)
 from flowfile_core.project import git_ops, project_sync
 from flowfile_core.project.git_ops import _SHA_RE
 from flowfile_core.project.importer import ImportTooLargeError
 from flowfile_core.project.models import ActiveProject, NoActiveProjectError
 from flowfile_core.project.service import project_root_base
+from flowfile_core.routes.community_github import _api_http, _auth_http, _not_configured
 from flowfile_core.secret_manager.secret_manager import SecretInput, upsert_secret
 from shared.storage_config import storage
 
@@ -537,6 +544,54 @@ def set_remote(req: RemoteRequest, current_user=Depends(get_current_active_user)
     token = req.token.get_secret_value() if req.token is not None else None
     state = _project_call(project_sync.set_remote, current_user.id, req.url, token, req.username)
     return BranchStateOut(**state)
+
+
+# A project repository may be private, which an OAuth app reaches only with the ``repo`` scope.
+GITHUB_REMOTE_SCOPE = "repo"
+
+
+class GithubDevicePollRequest(BaseModel):
+    device_code: str = Field(max_length=200)
+
+
+class GithubDevicePollOut(BaseModel):
+    status: Literal["pending", "slow_down", "connected"]
+    interval: int | None = None
+    login: str = ""
+
+
+def _github_error(e: Exception) -> HTTPException:
+    """The community publishing routes' typed answers (never 401, which the client reads as a lapsed session)."""
+    if isinstance(e, GithubNotConfiguredError):
+        return _not_configured(e)
+    if isinstance(e, GithubAuthError):
+        return _auth_http(e)
+    return _api_http(e)
+
+
+@router.post("/remote/github/device/start", response_model=github_client.DeviceStart)
+def remote_github_device_start(current_user=Depends(get_current_active_user)) -> github_client.DeviceStart:
+    """Begin a GitHub sign-in whose token becomes this person's remote token, as the node designer's publishing does."""
+    try:
+        return github_client.device_start(scope=GITHUB_REMOTE_SCOPE)
+    except (GithubNotConfiguredError, GithubApiError) as e:
+        raise _github_error(e) from e
+
+
+@router.post("/remote/github/device/poll", response_model=GithubDevicePollOut)
+def remote_github_device_poll(
+    req: GithubDevicePollRequest, current_user=Depends(get_current_active_user)
+) -> GithubDevicePollOut:
+    """Poll the sign-in once; once GitHub grants it, the token is kept as the remote token and never answered."""
+    try:
+        result = github_client.device_poll(req.device_code)
+        if result.status != "success":
+            return GithubDevicePollOut(status=result.status, interval=result.interval)
+        login = github_client.fetch_login(result.access_token)
+    except (GithubNotConfiguredError, GithubAuthError, GithubApiError) as e:
+        raise _github_error(e) from e
+    _project_call(project_sync.keep_remote_token, current_user.id, result.access_token)
+    return GithubDevicePollOut(status="connected", login=login)
 
 
 @router.post("/push", response_model=PushOut)

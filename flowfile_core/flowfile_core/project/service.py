@@ -642,6 +642,13 @@ class ProjectSyncService:
                     delete_user_secret(db, PROJECT_REMOTE_TOKEN_KEY, user_id)
         return self.branch_state(user_id)
 
+    def keep_remote_token(self, user_id: int, token: str) -> dict:
+        """Keep ``token`` as this person's remote token, as ``set_remote`` does for a pasted one."""
+        self._require_project(user_id)
+        with get_db_context() as db:
+            set_user_secret(db, PROJECT_REMOTE_TOKEN_KEY, token, user_id)
+        return self.branch_state(user_id)
+
     @staticmethod
     def _credentials(proj: ActiveProject) -> tuple[str | None, str | None]:
         with get_db_context() as db:

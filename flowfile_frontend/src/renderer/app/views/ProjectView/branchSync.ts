@@ -56,6 +56,10 @@ export const opensInEditor = (item: ProjectMergeItem, flows: string[]): boolean 
 export const takeLabel = (item: ProjectMergeItem, side: "ours" | "theirs"): string =>
   side === "ours" ? `Keep ${item.ours_label}` : `Take ${item.theirs_label}`;
 
+/** An https address of a repository on github.com, where the remote can be signed in to with GitHub. */
+export const isGithubAddress = (url: string): boolean =>
+  /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+/i.test(url.trim());
+
 /** The flow a conflict sits in, by its file name: `flows/nightly_revenue.flow.yaml` -> `nightly_revenue`. */
 export const itemFlowName = (item: ProjectMergeItem): string =>
   (item.path.split("/").pop() ?? item.path).replace(/\.flow\.yaml$|\.yaml$/, "");

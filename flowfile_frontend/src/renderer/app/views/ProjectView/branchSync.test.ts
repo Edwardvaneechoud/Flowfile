@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   branchNameError,
+  isGithubAddress,
   itemFlowName,
   opensInEditor,
   pullMessage,
@@ -76,5 +77,16 @@ describe("branchSync", () => {
     expect(opensInEditor({ ...item, key: "parameter:region" }, flows)).toBe(false);
     expect(opensInEditor({ ...item, key: null, kind: "file" }, flows)).toBe(false);
     expect(opensInEditor(item, [])).toBe(false);
+  });
+});
+
+describe("isGithubAddress", () => {
+  it("is a repository on github.com over https, and nothing else", () => {
+    expect(isGithubAddress("https://github.com/acme/project.git")).toBe(true);
+    expect(isGithubAddress("  https://GitHub.com/acme/project  ")).toBe(true);
+    expect(isGithubAddress("https://github.com/acme")).toBe(false);
+    expect(isGithubAddress("git@github.com:acme/project.git")).toBe(false);
+    expect(isGithubAddress("https://github.example.com/acme/project.git")).toBe(false);
+    expect(isGithubAddress("https://git.example.com/github.com/acme/project.git")).toBe(false);
   });
 });

@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 // The project's branch card: where the branch stands against the remote, and a pull's merge settled item by item.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useFlowStore } from "../../stores/flow-store";
 import { useProjectStore } from "../../stores/project-store";
 import { element, mountIn, settle, text } from "../../__fixtures__/mount";
+import type { FunctionalComponent } from "vue";
+import { h } from "vue";
 import type { ProjectMergeState } from "../../types";
 
 vi.hoisted(() => {
@@ -29,6 +31,10 @@ const api = vi.hoisted(() => ({
   openMergeFlow: vi.fn(),
   pull: vi.fn(),
   push: vi.fn(),
+  setRemote: vi.fn(),
+  switchBranch: vi.fn(),
+  startGithubSignIn: vi.fn(),
+  pollGithubSignIn: vi.fn(),
   getActive: vi.fn(),
   getVersions: vi.fn(),
 }));
@@ -213,5 +219,123 @@ describe("ProjectBranches", () => {
     await settle();
     expect(useFlowStore().flowId).toBe(5);
     expect(host.querySelector('[data-testid="project-merge"]')).not.toBeNull();
+  });
+
+  describe("signing in to a GitHub remote", () => {
+    const github = { ...branches, remote: "https://github.com/acme/project.git", has_token: false };
+    const button = (host: HTMLElement, label: string) =>
+      Array.from(host.querySelectorAll("button")).find((b) => text(b) === label)!;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      api.getMerge.mockResolvedValue(null);
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it("shows the code, waits for GitHub, then keeps the address with the token core stored", async () => {
+      api.getBranches.mockResolvedValue(github);
+      api.startGithubSignIn.mockResolvedValue({
+        device_code: "dev-1",
+        user_code: "ABCD-1234",
+        verification_uri: "https://github.com/login/device",
+        interval: 5,
+        expires_in: 900,
+      });
+      api.pollGithubSignIn
+        .mockResolvedValueOnce({ status: "pending", interval: 5 })
+        .mockResolvedValueOnce({ status: "connected", login: "ben" });
+      api.setRemote.mockResolvedValue({ ...github, has_token: true });
+      const host = await mountCard();
+      expect(host.querySelector(".no-token")).not.toBeNull();
+      button(host, "Change").click();
+      await settle();
+      (host.querySelector('[data-testid="remote-github-start"]') as HTMLElement).click();
+      await settle();
+      expect(text(host.querySelector('[data-testid="remote-github-code"]'))).toBe("ABCD-1234");
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await settle();
+      expect(api.pollGithubSignIn).toHaveBeenCalledTimes(1);
+      expect(api.setRemote).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await settle();
+      expect(api.pollGithubSignIn).toHaveBeenLastCalledWith("dev-1");
+      expect(api.setRemote).toHaveBeenCalledWith(
+        "https://github.com/acme/project.git",
+        undefined,
+        undefined,
+      );
+      expect(host.querySelector(".no-token")).toBeNull();
+    });
+
+    it("says why a sign-in failed and offers it again", async () => {
+      api.getBranches.mockResolvedValue(github);
+      api.startGithubSignIn.mockResolvedValue({
+        device_code: "dev-2",
+        user_code: "WXYZ-0000",
+        verification_uri: "https://github.com/login/device",
+        interval: 5,
+        expires_in: 900,
+      });
+      api.pollGithubSignIn.mockRejectedValue(new Error("The sign-in code expired. Start again."));
+      const host = await mountCard();
+      button(host, "Change").click();
+      await settle();
+      (host.querySelector('[data-testid="remote-github-start"]') as HTMLElement).click();
+      await settle();
+      await vi.advanceTimersByTimeAsync(5000);
+      await settle();
+      expect(text(host.querySelector('[data-testid="remote-github-error"]'))).toBe(
+        "The sign-in code expired. Start again.",
+      );
+      expect(host.querySelector('[data-testid="remote-github-start"]')).not.toBeNull();
+      expect(api.setRemote).not.toHaveBeenCalled();
+    });
+
+    it("offers no GitHub sign-in for another host", async () => {
+      const host = await mountCard();
+      button(host, "Change").click();
+      await settle();
+      expect(host.querySelector('[data-testid="remote-github-signin"]')).toBeNull();
+    });
+  });
+
+  it("shows the switch under way until core has rebuilt the catalog", async () => {
+    api.getMerge.mockResolvedValue(null);
+    let finish: (value: unknown) => void = () => undefined;
+    api.switchBranch.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const pickMain: FunctionalComponent = (_, { attrs }) =>
+      h("button", {
+        "data-testid": "pick-main",
+        onClick: () => (attrs.onChange as (name: string) => void)("main"),
+      });
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const host = await mountIn(ProjectBranches, {
+      pinia,
+      stubs: { ...stubs, "el-select": pickMain },
+    });
+    expect(host.querySelector('[data-testid="project-branch-switching"]')).toBeNull();
+
+    (host.querySelector('[data-testid="pick-main"]') as HTMLElement).click();
+    await settle();
+    expect(api.switchBranch).toHaveBeenCalledWith("main", false);
+    expect(text(host.querySelector('[data-testid="project-branch-switching"]'))).toBe(
+      "Switching to main and updating the catalog…",
+    );
+    expect(host.querySelector('[data-testid="project-branch-sync"]')).toBeNull();
+
+    finish({
+      imported: { flows: 1, connections: 0, schedules: 0, by_kind: {} },
+      placeholder_secrets: [],
+      unknown_kinds: [],
+      not_applied: [],
+      incomplete: [],
+      recovery_sha: null,
+    });
+    await settle();
+    expect(host.querySelector('[data-testid="project-branch-switching"]')).toBeNull();
+    expect(host.querySelector('[data-testid="project-branch-sync"]')).not.toBeNull();
   });
 });

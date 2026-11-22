@@ -5,6 +5,8 @@ import type {
   OpenProjectResult,
   PlaceholderSecretInput,
   ProjectBranchState,
+  ProjectGithubSignIn,
+  ProjectGithubSignInPoll,
   ProjectInfo,
   ProjectMergeState,
   ProjectPullResult,
@@ -20,6 +22,18 @@ export class ProjectFeatureUnavailable extends Error {}
 
 const detail = (error: any, fallback: string): string =>
   error?.response?.data?.detail || error?.message || fallback;
+
+/** A GitHub sign-in failure in words; core answers `{error_code, message}`, never a 401. */
+const githubSignInError = (error: any, fallback: string): Error => {
+  const body = error?.response?.data?.detail;
+  if (body?.error_code === "GITHUB_NOT_CONFIGURED") {
+    return new Error(
+      "GitHub sign-in isn't available in this build. Paste a personal access token instead.",
+    );
+  }
+  if (typeof body === "string") return new Error(body);
+  return new Error(body?.message || fallback);
+};
 
 export class ProjectApi {
   /** Create a new git-backed project in a folder and activate it. */
@@ -232,6 +246,28 @@ export class ProjectApi {
       return (await axios.put<ProjectBranchState>("/project/remote", body)).data;
     } catch (error: any) {
       throw gitRefusalFrom(error) ?? new Error(detail(error, "Failed to set the remote"));
+    }
+  }
+
+  /** Begin a GitHub sign-in whose token becomes this person's remote token. */
+  static async startGithubSignIn(): Promise<ProjectGithubSignIn> {
+    try {
+      return (await axios.post<ProjectGithubSignIn>("/project/remote/github/device/start")).data;
+    } catch (error: any) {
+      throw githubSignInError(error, "Could not start the GitHub sign-in");
+    }
+  }
+
+  /** Poll the sign-in once; the token itself is never sent back. */
+  static async pollGithubSignIn(deviceCode: string): Promise<ProjectGithubSignInPoll> {
+    try {
+      return (
+        await axios.post<ProjectGithubSignInPoll>("/project/remote/github/device/poll", {
+          device_code: deviceCode,
+        })
+      ).data;
+    } catch (error: any) {
+      throw githubSignInError(error, "The GitHub sign-in failed");
     }
   }
 

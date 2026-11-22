@@ -23,7 +23,13 @@
           </el-select>
           <el-button :disabled="busy || !!merge" @click="onNewBranch">New branch</el-button>
         </div>
-        <p v-if="syncLine" class="sync-line" data-testid="project-branch-sync">{{ syncLine }}</p>
+        <p v-if="switchingTo" class="sync-line switching" data-testid="project-branch-switching">
+          <i class="fa-solid fa-spinner fa-spin"></i>
+          Switching to {{ switchingTo }} and updating the catalog…
+        </p>
+        <p v-else-if="syncLine" class="sync-line" data-testid="project-branch-sync">
+          {{ syncLine }}
+        </p>
 
         <div class="remote-row">
           <span class="remote-address" :title="state.remote ?? ''">
@@ -106,6 +112,37 @@
         v-model="remoteUrl"
         placeholder="https://git.example.com/team/project.git"
       />
+      <div v-if="githubAddress" class="github-signin" data-testid="remote-github-signin">
+        <template v-if="githubSignIn">
+          <p class="field-hint">Enter this code on GitHub to let Flowfile push and pull:</p>
+          <div class="device-code-row">
+            <code class="device-code" data-testid="remote-github-code">
+              {{ githubSignIn.user_code }}
+            </code>
+            <el-button size="small" @click="copyGithubCode">Copy</el-button>
+          </div>
+          <div class="device-actions">
+            <el-button type="primary" size="small" @click="openGithubPage">
+              Open github.com/login/device
+            </el-button>
+            <span class="device-waiting">Waiting for GitHub…</span>
+            <el-button link size="small" @click="stopGithubSignIn">Cancel</el-button>
+          </div>
+        </template>
+        <template v-else>
+          <el-button
+            :loading="githubStarting"
+            data-testid="remote-github-start"
+            @click="startGithubSignIn"
+          >
+            <i class="fa-brands fa-github"></i>&nbsp;Sign in with GitHub
+          </el-button>
+          <p class="field-hint">Or paste a personal access token below.</p>
+        </template>
+        <p v-if="githubError" class="field-error" data-testid="remote-github-error">
+          {{ githubError }}
+        </p>
+      </div>
       <label class="field-label" for="project-remote-user">User name (optional)</label>
       <el-input id="project-remote-user" v-model="remoteUser" placeholder="x-access-token" />
       <label class="field-label" for="project-remote-token">Token</label>
@@ -136,10 +173,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { desktop } from "../../../lib/desktop";
 import { ProjectApi } from "../../api/project.api";
+import { nextPollDelayMs } from "../../pages/nodeDesigner/publishGithub";
+import { copyTextEverywhere } from "../../utils/clipboardUtils";
 import { ProjectUnsavedChanges } from "../../api/project.errors";
 import MergeConflictItem from "../../components/merge/MergeConflictItem.vue";
 import { confirmRecoveryPoint } from "../../components/project/recoveryPoint";
@@ -148,6 +188,7 @@ import { useProjectStore } from "../../stores/project-store";
 import { useFlowStore } from "../../stores/flow-store";
 import {
   branchNameError,
+  isGithubAddress,
   itemFlowName,
   opensInEditor,
   pullMessage,
@@ -156,6 +197,7 @@ import {
 } from "./branchSync";
 import type {
   ProjectBranchState,
+  ProjectGithubSignIn,
   ProjectMergeItem,
   ProjectMergeState,
   ProjectPullResult,
@@ -227,10 +269,22 @@ const run = async (flag: typeof busy, work: () => Promise<void>) => {
   }
 };
 
+const switchingTo = ref<string | null>(null);
+
+/** One switch request, shown as under way only while core works on it, not while a confirm waits on the user. */
+const switchTo = async (name: string, force: boolean) => {
+  switchingTo.value = name;
+  try {
+    return await store.switchBranch(name, force);
+  } finally {
+    switchingTo.value = null;
+  }
+};
+
 const onSwitch = (name: string) =>
   run(busy, async () => {
     if (!name || name === state.value?.current) return;
-    const result = await withRecovery((force) => store.switchBranch(name, force));
+    const result = await withRecovery((force) => switchTo(name, force));
     await load();
     if (result && (await alertIncomplete(result, "Not finished"))) return;
     if (result) ElMessage.success(`Switched to ${name}`);
@@ -277,6 +331,84 @@ const saveRemote = (forget: boolean) =>
     remoteDialog.value = false;
     ElMessage.success(forget ? "Token forgotten" : "Remote saved");
   });
+
+const githubAddress = computed(() => isGithubAddress(remoteUrl.value));
+const githubSignIn = ref<ProjectGithubSignIn | null>(null);
+const githubStarting = ref(false);
+const githubError = ref("");
+let githubTimer: ReturnType<typeof setTimeout> | null = null;
+let githubInterval = 5;
+
+const stopGithubSignIn = () => {
+  if (githubTimer) clearTimeout(githubTimer);
+  githubTimer = null;
+  githubSignIn.value = null;
+};
+
+/** GitHub granted the sign-in and core kept the token: save the address typed, so one sign-in is the whole setup. */
+const finishGithubSignIn = (login: string) =>
+  run(busy, async () => {
+    state.value = await ProjectApi.setRemote(
+      remoteUrl.value.trim(),
+      undefined,
+      remoteUser.value.trim() || undefined,
+    );
+    remoteDialog.value = false;
+    ElMessage.success(login ? `Signed in to GitHub as @${login}` : "Signed in to GitHub");
+  });
+
+const pollGithubSignIn = async () => {
+  githubTimer = null;
+  const signIn = githubSignIn.value;
+  if (!signIn) return;
+  try {
+    const answer = await ProjectApi.pollGithubSignIn(signIn.device_code);
+    if (githubSignIn.value !== signIn) return;
+    if (answer.status === "connected") {
+      stopGithubSignIn();
+      await finishGithubSignIn(answer.login ?? "");
+      return;
+    }
+    githubInterval = answer.interval ?? githubInterval;
+    githubTimer = setTimeout(pollGithubSignIn, nextPollDelayMs(githubInterval, answer.status));
+  } catch (e: any) {
+    if (githubSignIn.value !== signIn) return;
+    stopGithubSignIn();
+    githubError.value = e?.message || "The GitHub sign-in failed";
+  }
+};
+
+const startGithubSignIn = async () => {
+  githubError.value = "";
+  githubStarting.value = true;
+  try {
+    const signIn = await ProjectApi.startGithubSignIn();
+    githubSignIn.value = signIn;
+    githubInterval = signIn.interval || 5;
+    githubTimer = setTimeout(pollGithubSignIn, nextPollDelayMs(githubInterval, "pending"));
+  } catch (e: any) {
+    githubError.value = e?.message || "Could not start the GitHub sign-in";
+  } finally {
+    githubStarting.value = false;
+  }
+};
+
+const copyGithubCode = async () => {
+  if (githubSignIn.value && (await copyTextEverywhere(githubSignIn.value.user_code))) {
+    ElMessage.success("Code copied");
+  }
+};
+
+const openGithubPage = () => {
+  if (githubSignIn.value) desktop.openExternal(githubSignIn.value.verification_uri);
+};
+
+watch(remoteDialog, (open) => {
+  if (open) return;
+  stopGithubSignIn();
+  githubError.value = "";
+});
+onBeforeUnmount(stopGithubSignIn);
 
 const onPush = () =>
   run(pushing, async () => {
@@ -370,6 +502,36 @@ defineExpose({ load });
   color: var(--color-text-tertiary);
 }
 
+.field-error {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+}
+
+.github-signin {
+  margin-top: var(--spacing-3);
+}
+
+.device-code-row,
+.device-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-2);
+}
+
+.device-code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.1em;
+}
+
+.device-waiting {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
 .branch-row,
 .remote-row,
 .sync-actions,
@@ -388,6 +550,13 @@ defineExpose({ load });
   margin: var(--spacing-1) 0 0;
   font-size: var(--font-size-sm);
   color: var(--color-text-tertiary);
+}
+
+.sync-line.switching {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  color: var(--color-text-secondary);
 }
 
 .branch-error {

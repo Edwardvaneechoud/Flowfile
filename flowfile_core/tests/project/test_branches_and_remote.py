@@ -23,6 +23,8 @@ from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRegistration, Secret
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
+from flowfile_core.flowfile.community_nodes import github_client
+from flowfile_core.flowfile.community_nodes.github_client import GithubAuthError
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.project import git_ops, importer, kinds, merging, project_sync
@@ -980,3 +982,78 @@ def test_unsaved_canvas_edits_of_a_flow_a_switch_leaves_alone_do_not_stop_it(pro
         assert flow_file_handler.get_flow(flow_id).get_node(2).setting_input.sample_size == 77
     finally:
         flow_file_handler.delete_flow(flow_id, OWNER)
+
+
+def _github_sign_in(monkeypatch, polls: list, login: str = "ben") -> list:
+    """GitHub's side of the device flow, answering ``polls`` in turn; the scopes each start asked for."""
+    starts = []
+
+    def device_start(**kwargs):
+        starts.append(kwargs)
+        return github_client.DeviceStart(
+            device_code="dev-1", user_code="ABCD-1234", verification_uri="https://github.com/login/device"
+        )
+
+    answers = iter(polls)
+
+    def device_poll(device_code, **kwargs):
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(github_client, "device_start", device_start)
+    monkeypatch.setattr(github_client, "device_poll", device_poll)
+    monkeypatch.setattr(github_client, "fetch_login", lambda token, **kwargs: login)
+    return starts
+
+
+def test_a_github_sign_in_becomes_the_remote_token_and_a_push_sends_it(project, monkeypatch):
+    token = "gho_SIGNED-IN-7319"
+    starts = _github_sign_in(
+        monkeypatch,
+        [github_client.DevicePoll(status="pending"), github_client.DevicePoll(status="success", access_token=token)],
+    )
+    server = HTTPServer(("127.0.0.1", 0), _AuthRecorder)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        _set_remote(f"http://127.0.0.1:{server.server_port}/team/project.git")
+        started = client.post("/project/remote/github/device/start")
+        assert started.status_code == 200, started.text
+        assert started.json()["user_code"] == "ABCD-1234"
+        assert starts == [{"scope": "repo"}]
+
+        pending = client.post("/project/remote/github/device/poll", json={"device_code": "dev-1"})
+        assert pending.json()["status"] == "pending"
+        assert client.get("/project/branches").json()["has_token"] is False
+
+        connected = client.post("/project/remote/github/device/poll", json={"device_code": "dev-1"})
+        assert connected.status_code == 200, connected.text
+        assert connected.json() == {"status": "connected", "interval": None, "login": "ben"}
+        assert token not in connected.text
+        assert client.get("/project/branches").json()["has_token"] is True
+
+        _AuthRecorder.seen.clear()
+        refused = client.post("/project/push")
+    finally:
+        server.shutdown()
+    assert refused.status_code == 409
+    assert base64.b64decode(_AuthRecorder.seen[-1].split()[1]).decode() == f"x-access-token:{token}"
+
+
+def test_an_expired_github_sign_in_keeps_no_token_and_is_never_a_401(project, monkeypatch):
+    _github_sign_in(monkeypatch, [GithubAuthError("device_expired", "The sign-in code expired. Start again.")])
+    expired = client.post("/project/remote/github/device/poll", json={"device_code": "dev-1"})
+    assert expired.status_code == 410
+    assert expired.json()["detail"] == {
+        "error_code": "DEVICE_EXPIRED",
+        "message": "The sign-in code expired. Start again.",
+    }
+    assert client.get("/project/branches").json()["has_token"] is False
+
+
+def test_github_sign_in_without_a_client_id_says_so(project, monkeypatch):
+    monkeypatch.setenv("FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID", "")
+    refused = client.post("/project/remote/github/device/start")
+    assert refused.status_code == 503
+    assert refused.json()["detail"]["error_code"] == "GITHUB_NOT_CONFIGURED"
