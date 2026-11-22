@@ -4,6 +4,8 @@ import ast
 import base64
 import datetime as _datetime
 import decimal
+import json
+import os
 import re
 import textwrap
 import time
@@ -319,6 +321,135 @@ def _stale_plan_guard(function: Callable) -> Callable:
     return _guarded
 
 
+PLAN_LOAD_REFUSED_MESSAGE = (
+    "This Polars Code step loads a serialized Polars plan, which can run arbitrary code, so this server does not "
+    "allow it: rebuild the step from code."
+)
+
+
+def plan_loads_refused() -> bool:
+    """Whether the sandbox refuses ``deserialize``: on a multi-user server (``FLOWFILE_MODE`` docker or server).
+
+    Read per call, like ``flowfile_core.auth.sharing``. A desktop or pip user already runs their own Python, and
+    flowfile_frame writes a pickled plan for a function it cannot spell as code.
+    """
+    return os.environ.get("FLOWFILE_MODE", "electron") in ("docker", "server")
+
+
+_PLAN_BYTE_KEYS = frozenset({"List", "Series", "Binary"})
+_CALLABLE_PLAN_KEYS = frozenset({"AnonymousFunction", "callback", "Map"})
+_CALLABLE_KEY_FRAGMENTS = ("python", "opaque", "udf", "pickle", "plugin")
+_PLAN_NAMES = frozenset({"pl", "BytesIO"})
+
+
+def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError("duplicate key in plan")
+    return dict(pairs)
+
+
+def _is_byte_list(value: list) -> bool:
+    return bool(value) and all(type(item) is int and 0 <= item <= 255 for item in value)
+
+
+def _plan_part_is_inert(value: Any, key: str | None = None) -> bool:
+    if isinstance(value, dict):
+        return all(
+            name not in _CALLABLE_PLAN_KEYS
+            and not any(fragment in name.lower() for fragment in _CALLABLE_KEY_FRAGMENTS)
+            and _plan_part_is_inert(part, name)
+            for name, part in value.items()
+        )
+    if isinstance(value, list):
+        if _is_byte_list(value) and key not in _PLAN_BYTE_KEYS:
+            return False
+        return all(_plan_part_is_inert(part) for part in value)
+    return True
+
+
+def expression_plan_is_inert(plan: str | bytes) -> bool:
+    """Whether a JSON expression plan holds nothing Polars would unpickle or load as a plugin.
+
+    Polars unpickles a Python function wherever its plan carries one (``map_elements``, ``fold``, ``name.map``),
+    as bytes. Bytes are accepted only as the value of a literal (``List``, ``Series``, ``Binary``, which Polars reads
+    as Arrow IPC or raw bytes), and no key may name a callable. The plan is parsed, not searched, so whitespace or
+    ``\\u`` escapes cannot hide a key, and a duplicated key refuses it.
+    """
+    try:
+        return _plan_part_is_inert(json.loads(plan, object_pairs_hook=_unique_keys))
+    except (ValueError, TypeError, RecursionError):
+        return False
+
+
+def _bound_names(tree: ast.AST) -> set[str]:
+    """Every name ``tree`` binds anywhere: assignment targets, parameters, definitions, ``global``, handlers."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            names.add(node.id)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            names.add(node.name)
+        elif isinstance(node, ast.Global | ast.Nonlocal):
+            names.update(node.names)
+        elif isinstance(node, ast.ExceptHandler | ast.MatchAs | ast.MatchStar) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            names.add(node.rest)
+        elif type(node).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple"):
+            names.add(node.name)
+    return names
+
+
+def _is_inert_expression_load(call: ast.Call) -> bool:
+    """Whether ``call`` is ``pl.Expr.deserialize(BytesIO(<literal>), format='json')`` over an inert plan.
+
+    This is the form flowfile_frame writes for an expression it cannot spell as code; every other
+    ``deserialize`` can unpickle, so the validator refuses it.
+    """
+    func = call.func
+    if not (
+        isinstance(func, ast.Attribute)
+        and func.attr == "deserialize"
+        and isinstance(func.value, ast.Attribute)
+        and func.value.attr == "Expr"
+        and isinstance(func.value.value, ast.Name)
+        and func.value.value.id == "pl"
+    ):
+        return False
+    if len(call.args) != 1 or len(call.keywords) != 1:
+        return False
+    keyword = call.keywords[0]
+    if keyword.arg != "format" or not (isinstance(keyword.value, ast.Constant) and keyword.value.value == "json"):
+        return False
+    source = call.args[0]
+    if not (
+        isinstance(source, ast.Call)
+        and isinstance(source.func, ast.Name)
+        and source.func.id == "BytesIO"
+        and len(source.args) == 1
+        and not source.keywords
+        and isinstance(source.args[0], ast.Constant)
+        and isinstance(source.args[0].value, bytes | str)
+    ):
+        return False
+    return expression_plan_is_inert(source.args[0].value)
+
+
+def _refuse_plan_loads(tree: ast.AST) -> None:
+    """Raise ``PLAN_LOAD_REFUSED_MESSAGE`` for any ``deserialize`` in ``tree`` but an inert expression load."""
+    inert_loads = {
+        id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call) and _is_inert_expression_load(node)
+    }
+    if inert_loads and _PLAN_NAMES & _bound_names(tree):
+        raise ValueError(PLAN_LOAD_REFUSED_MESSAGE)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "deserialize" and id(node) not in inert_loads:
+            raise ValueError(PLAN_LOAD_REFUSED_MESSAGE)
+
+
 class PolarsCodeParser:
     """
     Securely executes Polars code with restricted access to Python functionality.
@@ -419,6 +550,8 @@ class PolarsCodeParser:
         }
         try:
             tree = ast.parse(code)
+            if plan_loads_refused():
+                _refuse_plan_loads(tree)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import | ast.ImportFrom):
                     raise ValueError("Import statements are not allowed")
