@@ -1,5 +1,4 @@
 import uuid
-from typing import Literal
 
 import sqlalchemy as sa
 from sqlalchemy import (
@@ -10,7 +9,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -19,7 +17,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
-RunType = Literal["in_designer_run", "scheduled", "manual", "on_demand"]
+from shared.models import RunType
 
 Base = declarative_base()
 
@@ -60,6 +58,10 @@ class DatabaseConnection(Base):
     ssl_enabled = Column(Boolean, default=False)
     password_id = Column(Integer, ForeignKey("secrets.id"))
     user_id = Column(Integer, ForeignKey("users.id"))
+    # Snowflake only (NULL for every other dialect): what the secret is, and the session's role and warehouse.
+    auth_method = Column(String, nullable=True)
+    role = Column(String, nullable=True)
+    warehouse = Column(String, nullable=True)
 
 
 class CloudStorageConnection(Base):
@@ -134,6 +136,8 @@ class Kernel(Base):
         ForeignKey("flow_registrations.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Names the token of the kernel's current run; null while the kernel is stopped.
+    token_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
 
@@ -142,9 +146,15 @@ class ConfiguredBackend(Base):
 
     - ``id``: the backend id a flow saves, ``worker:<name>``.
     - ``url``: the worker's base URL, without a trailing slash.
-    - ``token``: the bearer token as ``encrypt_secret`` ciphertext, never the token itself.
+    - ``token``: the bearer token as ``encrypt_secret`` ciphertext, never the token itself; ``None`` on a hub-filled
+      row.
     - ``ca_cert``: the PEM of the CA core trusts for a non-public worker certificate, else ``None``.
     - ``shares_core_disk``: the worker sees core's files, so core offers it ``file`` whatever it declares.
+    - ``remote_id``: the backend's id at the controller that filled the row (a hub's compute node id); ``None`` on a
+      row added by hand. A filled row stores no token and no CA: the registry asks the controller for a short-lived
+      token when the backend is used.
+    - ``account_user_id``: on a filled row, the local user whose account the row is for, whose session at the
+      controller mints those tokens.
 
     The built-in ``local`` and ``worker`` are never rows. The registry reads a row on the first lookup of its id.
     """
@@ -153,9 +163,11 @@ class ConfiguredBackend(Base):
 
     id = Column(String, primary_key=True)
     url = Column(String, nullable=False)
-    token = Column(Text, nullable=False)
+    token = Column(Text, nullable=True)
     ca_cert = Column(Text, nullable=True)
     shares_core_disk = Column(Boolean, nullable=False, default=False, server_default=sa.false())
+    remote_id = Column(Integer, nullable=True)
+    account_user_id = Column(Integer, nullable=True)
 
 
 # ==================== Catalog Models ====================
@@ -254,6 +266,8 @@ class FlowRun(Base):
     started_at = Column(DateTime, nullable=False)
     ended_at = Column(DateTime, nullable=True)
     success = Column(Boolean, nullable=True)
+    # Stopped on purpose before it finished; only read with success False, which a cancelled run keeps.
+    cancelled = Column(Boolean, nullable=False, default=False, server_default=sa.false())
     nodes_completed = Column(Integer, default=0)
     number_of_nodes = Column(Integer, default=0)
     duration_seconds = Column(Float, nullable=True)
@@ -262,6 +276,11 @@ class FlowRun(Base):
     schedule_id = Column(Integer, ForeignKey("flow_schedules.id"), nullable=True)
     # YAML snapshot of the flow definition at run time
     flow_snapshot = Column(Text, nullable=True)
+    # Where a run executed elsewhere ran, its id there, its log and its version (catalog/run_records.py).
+    executed_on = Column(String, nullable=True)
+    remote_run_id = Column(String(64), nullable=True)
+    log_ref = Column(String, nullable=True)
+    flow_version = Column(Integer, nullable=True)
     # JSON-serialised node step results
     node_results_json = Column(Text, nullable=True)
     # Set once the run is evaluated for notifications, whether or not one was sent; NULL means pending.
@@ -390,6 +409,7 @@ class FlowSchedule(Base):
     __tablename__ = "flow_schedules"
 
     id = Column(Integer, primary_key=True, index=True)
+    schedule_uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     enabled = Column(Boolean, default=True, nullable=False)
@@ -400,6 +420,8 @@ class FlowSchedule(Base):
     cron_expression = Column(String, nullable=True)  # 5-field cron string, used when schedule_type == "cron"
     cron_timezone = Column(String, nullable=True)  # IANA tz name (e.g. "Europe/Amsterdam") the cron runs in
     trigger_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True)
+    backend = Column(String, nullable=True)  # compute backend id passed as --backend; NULL leaves it to the flow
+    disabled_reason = Column(Text, nullable=True)  # why the scheduler disabled it; NULL when a person did
     last_triggered_at = Column(DateTime, nullable=True)
     last_cron_slot = Column(DateTime, nullable=True)  # naive LOCAL wall-clock cron cursor (NOT UTC); DST-safe
     last_trigger_table_updated_at = Column(DateTime, nullable=True)
@@ -607,11 +629,9 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     # Virtual Table fields (NULL for physical tables)
     table_type = Column(String, nullable=False, default="physical", server_default="physical")
     producer_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
-    # Cached plan of an optimized virtual table; never a cloud scan, which would embed its credentials.
-    serialized_lazy_frame = Column(LargeBinary, nullable=True)
     is_optimized = Column(Boolean, nullable=True, default=False)
     sql_query = Column(Text, nullable=True)  # SQL definition for query-based virtual tables
-    polars_plan = Column(Text, nullable=True)  # Polars explain() plan for optimized virtual tables
+    polars_plan = Column(Text, nullable=True)  # print_tree drawing of a flow virtual table's producer branch
     source_table_versions = Column(Text, nullable=True)  # JSON list of SourceTableVersion for staleness detection
 
     # Timestamps
@@ -690,6 +710,14 @@ class CatalogVisualization(Base):
     thumbnail_data_url = Column(Text, nullable=True)
 
     namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
+
+    # The dashboard this chart was made on and belongs to; null for a chart of its own.
+    dashboard_id = Column(
+        Integer,
+        ForeignKey("catalog_dashboards.id", name="fk_catalog_visualizations_dashboard_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)

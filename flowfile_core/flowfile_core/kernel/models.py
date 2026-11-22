@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal
 
@@ -78,7 +78,7 @@ class KernelInfo(BaseModel):
     image_flavour: ImageFlavour = ImageFlavour.BASE
     custom_image: str | None = None
     image: str | None = None  # Resolved image tag, populated when the kernel starts
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     error_message: str | None = None
     kernel_version: str | None = None
     # Persistence configuration
@@ -190,7 +190,10 @@ class ExecuteRequest(BaseModel):
     source_registration_id: int | None = None
     log_callback_url: str = ""
     interactive: bool = False  # When True, auto-display last expression
-    internal_token: str | None = None  # Core→kernel auth token for artifact API calls
+    # The kernel's own token for its calls to core, stamped by KernelManager.execute_sync.
+    kernel_token: str | None = None
+    # Carries the same token for a kernel image from before a token per kernel, which reads it here.
+    internal_token: str | None = None
     # Artifact name → source node id lineage allowlist. None ⇒ no lineage context
     # (no enforcement); {} ⇒ lineage known, nothing available.
     available_artifacts: dict[str, int] | None = None

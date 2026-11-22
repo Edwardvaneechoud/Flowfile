@@ -136,6 +136,8 @@ class ConnectorHandlersMixin(ConverterMixinBase):
             for line in query.split("\n"):
                 self._add_code(f"        {line}")
             self._add_code('    """,')
+            if db_settings.database_name:
+                self._add_code(f"    database_name={self._py_str(db_settings.database_name)},")
             self._add_code(f"){suffix}")
         else:
             self._add_code(f"{var_name} = {self.flowfile_alias}.read_database(")
@@ -144,6 +146,8 @@ class ConnectorHandlersMixin(ConverterMixinBase):
                 self._add_code(f"    table_name={self._py_str(db_settings.table_name)},")
             if db_settings.schema_name:
                 self._add_code(f"    schema_name={self._py_str(db_settings.schema_name)},")
+            if db_settings.database_name:
+                self._add_code(f"    database_name={self._py_str(db_settings.database_name)},")
             self._add_code(f"){suffix}")
 
         self._add_code("")
@@ -180,6 +184,8 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code(f"    {self._py_str(db_settings.table_name)},")
         if db_settings.schema_name:
             self._add_code(f"    schema_name={self._py_str(db_settings.schema_name)},")
+        if db_settings.database_name:
+            self._add_code(f"    database_name={self._py_str(db_settings.database_name)},")
         if db_settings.if_exists:
             self._add_code(f"    if_exists={self._py_str(db_settings.if_exists)},")
         self._add_code(")")
@@ -294,6 +300,8 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         elif pagination.pagination_type == "cursor":
             if pagination.cursor_param != "cursor":
                 p["cursor_param"] = pagination.cursor_param
+            if pagination.cursor_request_location != "query":
+                p["cursor_request_location"] = pagination.cursor_request_location
             if pagination.cursor_location != "body":
                 p["cursor_location"] = pagination.cursor_location
             if pagination.cursor_response_path:

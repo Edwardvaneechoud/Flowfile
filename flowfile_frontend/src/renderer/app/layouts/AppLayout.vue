@@ -1,7 +1,11 @@
 <template>
   <div class="app-layout">
     <div class="app-layout__content">
-      <div class="app-layout__sidebar-wrapper" :class="{ minimized: isCollapse }">
+      <div
+        v-if="!presentation.presenting"
+        class="app-layout__sidebar-wrapper"
+        :class="{ minimized: isCollapse }"
+      >
         <Sidebar :is-collapse="isCollapse" @toggle-collapse="toggleCollapse" />
       </div>
       <div class="app-layout__page">
@@ -21,38 +25,59 @@
     <TutorialOverlay />
 
     <!-- Floating Tutorial Start Button -->
-    <TutorialStartButton />
+    <TutorialStartButton v-if="!presentation.presenting" />
 
     <!-- One-time anonymous telemetry opt-in (shows itself only when undecided) -->
     <TelemetryConsentModal />
 
     <!-- Desktop-only new-release prompt (shows itself only when the feed offers one) -->
     <UpdateAvailableModal />
+
+    <!-- Global search (Shift+Cmd/Ctrl+F or the sidebar's search button) -->
+    <GlobalSearchPalette />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import Sidebar from "../components/layout/Sidebar/Sidebar.vue";
 import ChangePasswordModal from "../components/common/ChangePasswordModal/ChangePasswordModal.vue";
 import TutorialOverlay from "../components/tutorial/TutorialOverlay.vue";
 import TutorialStartButton from "../components/tutorial/TutorialStartButton.vue";
 import TelemetryConsentModal from "../components/settings/TelemetryConsentModal.vue";
 import UpdateAvailableModal from "../components/settings/UpdateAvailableModal.vue";
+import GlobalSearchPalette from "../features/search/GlobalSearchPalette.vue";
+import { anotherDialogIsOpen, isGlobalSearchShortcut } from "../features/search/globalSearchHotkey";
 import { installPopoutListeners } from "../composables/usePopout";
 import { useAuthStore } from "../stores/auth-store";
 import { useFlowSyncStore } from "../stores/flow-sync-store";
 import { useProjectStore } from "../stores/project-store";
 import { useTelemetryStore } from "../stores/telemetry-store";
 import { useUpdateStore } from "../stores/update-store";
+import { useGlobalSearchStore } from "../stores/global-search-store";
+import { usePresentationStore } from "../stores/presentation-store";
+import { IS_MAC } from "../utils/shortcuts";
 import authService from "../services/auth.service";
 
 const authStore = useAuthStore();
 const projectStore = useProjectStore();
 const telemetryStore = useTelemetryStore();
 const updateStore = useUpdateStore();
+const globalSearch = useGlobalSearchStore();
+const presentation = usePresentationStore();
+
+const onGlobalSearchKey = (event: KeyboardEvent) => {
+  if (!isGlobalSearchShortcut(event, IS_MAC)) return;
+  const palette = document.querySelector('[data-testid="global-search"]');
+  if (!globalSearch.isOpen && anotherDialogIsOpen(document, palette)) return;
+  event.preventDefault();
+  globalSearch.toggle();
+};
+
+onUnmounted(() => window.removeEventListener("keydown", onGlobalSearchKey));
 
 onMounted(() => {
+  window.addEventListener("keydown", onGlobalSearchKey);
   // Follows the active flow's change feed for the whole session (its own flowId watcher).
   useFlowSyncStore();
   // Follow pop-out windows closing or returning, and adopt the ones already open (desktop).

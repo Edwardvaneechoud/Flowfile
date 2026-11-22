@@ -59,8 +59,13 @@
 import { computed, ref, watch } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import type { NamespaceTree, VizSourceDescriptor } from "../../types";
+import { pickableCatalogs, pickedSource, type SavedIn } from "./chartSaveTarget";
 
-const props = defineProps<{ modelValue: boolean }>();
+const props = defineProps<{
+  modelValue: boolean;
+  /** Set for a chart made inside a dashboard: the catalog that dashboard, and so the chart, is saved in. */
+  savedIn?: SavedIn;
+}>();
 const emit = defineEmits<{
   (e: "update:modelValue", value: boolean): void;
   (e: "picked", source: VizSourceDescriptor): void;
@@ -107,7 +112,9 @@ const toCascade = (node: NamespaceTree): CascadeOption => {
   };
 };
 
-const tableOptions = computed<CascadeOption[]>(() => store.tree.map(toCascade));
+const tableOptions = computed<CascadeOption[]>(() =>
+  pickableCatalogs(store.tree, props.savedIn).map(toCascade),
+);
 
 // Tracks the in-flight loadTree() triggered when the dialog opens; goes back
 // to false on success or failure so the empty-state hint can render.
@@ -153,7 +160,11 @@ const onContinue = () => {
   if (mode.value === "table") {
     const tableId = parseTableLeaf(selectedTablePath.value);
     if (tableId === null) return;
-    emit("picked", { source_type: "table", table_id: tableId });
+    const table = store.findTableInTree(tableId);
+    emit(
+      "picked",
+      table ? pickedSource(table, props.savedIn) : { source_type: "table", table_id: tableId },
+    );
   } else {
     const trimmed = sql.value.trim();
     if (!trimmed) return;

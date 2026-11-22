@@ -12,6 +12,14 @@
       <div class="dash-card-title">
         <span class="dash-name">{{ dashboard.name }}</span>
         <SharedBadge :access="dashboard.access" />
+        <span
+          v-if="isHubRow(dashboard)"
+          class="dash-hub-tag"
+          data-testid="dashboard-on-hub"
+          title="Saved in your organisation's catalog on the hub"
+        >
+          Hub
+        </span>
         <span class="dash-tile-count">{{ tileCount }} tile{{ tileCount === 1 ? "" : "s" }}</span>
       </div>
       <el-dropdown trigger="click" @click.stop>
@@ -56,6 +64,7 @@
             alt=""
             loading="lazy"
           />
+          <i v-else-if="rect.hasImage" class="fa-solid fa-image dash-preview-glyph"></i>
           <i
             v-else-if="rect.type === 'viz'"
             class="fa-solid fa-chart-column dash-preview-glyph"
@@ -87,6 +96,7 @@ import { formatDate } from "../CatalogView/catalog-formatters";
 import type { Dashboard } from "../../types";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import { isHubRow } from "../CatalogView/hubRows";
 import { buildLayoutPreview, type PreviewRect } from "./layoutPreview";
 
 const props = defineProps<{
@@ -162,6 +172,13 @@ const thumbnailFor = (rect: PreviewRect): string | undefined =>
   color: var(--el-text-color-secondary);
   text-transform: uppercase;
 }
+.dash-hub-tag {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
 .dash-card-menu {
   cursor: pointer;
   color: var(--el-text-color-secondary);
@@ -209,6 +226,9 @@ const thumbnailFor = (rect: PreviewRect): string | undefined =>
 }
 .dash-preview-viz {
   background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+.dash-preview-image {
+  background: transparent;
 }
 .dash-preview-kpi {
   background: color-mix(in srgb, var(--color-success) 30%, transparent);

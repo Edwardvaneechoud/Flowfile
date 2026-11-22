@@ -14,7 +14,7 @@ import os
 import re
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -44,7 +44,7 @@ def _safe_revision(revision: str | None) -> str:
 
 
 def _snapshot_target(backup_dir: Path, db_path: Path, tag: str) -> Path:
-    stamp = datetime.now(timezone.utc).strftime(_STAMP_FORMAT)
+    stamp = datetime.now(UTC).strftime(_STAMP_FORMAT)
     base = f"{db_path.stem}.{tag}.{stamp}"
     target = backup_dir / f"{base}{db_path.suffix}"
     counter = 1
@@ -130,10 +130,12 @@ def snapshot_database(db_path: Path, from_revision: str | None, to_revision: str
     return _write_snapshot(db_path, f"{_safe_revision(from_revision)}-to-{_safe_revision(to_revision)}")
 
 
-def create_snapshot(db_path: Path, reason: Literal["manual", "pre_update"]) -> Path | None:
-    """Snapshot *db_path* on demand. Same retention and best-effort contract as a migration snapshot."""
+def create_snapshot(db_path: Path, reason: Literal["manual", "pre_update", "pre_apply"]) -> Path | None:
+    """Snapshot *db_path* on demand. Same retention and best-effort contract as a migration snapshot.
+
+    ``pre_apply`` is taken before a project restore or reload rebuilds and prunes the catalog."""
     # literal tags, not a transform of the request value: the file name never derives from user input
-    tag = "pre-update" if reason == "pre_update" else "manual"
+    tag = {"pre_update": "pre-update", "pre_apply": "pre-apply"}.get(reason, "manual")
     return _write_snapshot(db_path, tag)
 
 
@@ -146,6 +148,8 @@ def _name_pattern(stem: str, suffix: str) -> re.Pattern[str]:
 def _parse_tag(tag: str) -> tuple[str, str | None, str | None] | None:
     if tag == "pre-update":
         return "pre_update", None, None
+    if tag == "pre-apply":
+        return "pre_apply", None, None
     if tag == "manual":
         return "manual", None, None
     revisions = re.fullmatch(r"(.+)-to-(.+)", tag)
@@ -156,9 +160,9 @@ def _parse_tag(tag: str) -> tuple[str, str | None, str | None] | None:
 
 def _created_at(stamp: str, mtime: float) -> str:
     try:
-        return datetime.strptime(stamp, _STAMP_FORMAT).replace(tzinfo=timezone.utc).isoformat()
+        return datetime.strptime(stamp, _STAMP_FORMAT).replace(tzinfo=UTC).isoformat()
     except ValueError:
-        return datetime.fromtimestamp(mtime, timezone.utc).isoformat()
+        return datetime.fromtimestamp(mtime, UTC).isoformat()
 
 
 def _app_version(path: Path) -> str | None:

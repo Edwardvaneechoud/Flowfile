@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   notify: vi.fn(),
   tutorial: vi.fn(),
   getFlowSettings: vi.fn(),
+  revealConflicts: vi.fn(),
   nodeState: {
     flow_id: 1,
     nodeId: -1,
@@ -39,6 +40,9 @@ vi.mock("../services/flowEventsClient", () => ({
 vi.mock("../stores/column-store", () => ({ useNodeStore: () => mocks.nodeState }));
 vi.mock("../stores/node-store", () => ({ useNodeStore: () => mocks.nodeState }));
 vi.mock("../stores/results-store", () => ({ useResultsStore: () => ({}) }));
+vi.mock("../stores/merge-conflicts-store", () => ({
+  useMergeConflictsStore: () => ({ reveal: mocks.revealConflicts }),
+}));
 vi.mock("../stores/tutorial-store", () => ({
   useTutorialStore: () => ({ notify: mocks.tutorial }),
 }));
@@ -48,6 +52,7 @@ import { useEditorStore } from "../stores/editor-store";
 import { useFlowSyncStore } from "../stores/flow-sync-store";
 import { useFlowExecution, resetFlowExecutionState } from "./useFlowExecution";
 import { useNodeSettings } from "./useNodeSettings";
+import { noteAtOpen } from "../components/layout/Header/catalogNote";
 
 const openDrawerWithSave = (save: () => Promise<unknown>) => {
   const editor = useEditorStore();
@@ -77,6 +82,8 @@ const createHeaderSettingsLoader = (
     "runButton",
     "getFlowSettings",
     "getRunStatus",
+    "noteAtOpen",
+    "ElMessage",
     `let settingsLoad = null; ${body}; return loadFlowSettings;`,
   )(
     mocks.nodeState,
@@ -86,6 +93,8 @@ const createHeaderSettingsLoader = (
     ref(button),
     mocks.getFlowSettings,
     mocks.get,
+    noteAtOpen,
+    { info: vi.fn() },
   );
 };
 
@@ -133,6 +142,34 @@ describe("useFlowExecution.runFlow", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("points a run refused for merge conflicts at the conflict bar", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.post.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: {
+          detail: {
+            kind: "unresolved_conflicts",
+            code: "UNRESOLVED_CONFLICTS",
+            count: 1,
+            message: "Settle the 1 merge conflict in this flow first.",
+          },
+        },
+      },
+    });
+    await useFlowExecution(1).runFlow();
+
+    expect(mocks.notify).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        title: "Flow not started",
+        message:
+          "Settle the 1 merge conflict in this flow first. Pick a side for each in the merge conflicts bar above the canvas.",
+      }),
+    );
+    expect(mocks.revealConflicts).toHaveBeenCalledWith(1);
+    expect(useEditorStore().isRunning).toBe(false);
   });
 
   it.each([true, false])(

@@ -121,7 +121,7 @@ A worker cannot be edited: to change its URL, token, CA certificate or **Sees th
 !!! warning "The token is code execution on the worker"
     A plan can carry Python code that the worker runs when it loads the plan, and an operation runs node code there, so whoever holds the token and reaches the worker's port can run code on the worker, with its access to the catalog database, the master key and every stored connection. Keep the worker's port off untrusted networks, and beyond a trusted network serve it over [TLS](#tls). The single-host `docker-compose.yml` stays plain HTTP inside its own Docker network.
 
-    The worker accepts one token, and core signs some calls to every worker with its own internal token (the Delta operations, the visualisation sessions, the catalog services and the custom-node dry run), which is why the worker is started with core's. The version check signs with the worker's **Bearer token**.
+    Core signs every call to a worker added here with its **Bearer token**: the version check, the `/v1` calls and the task routes it still uses (the Delta operations and the visualisation sessions). The catalog services and the custom-node dry run call the default worker, which takes core's internal token.
 
 ## TLS
 

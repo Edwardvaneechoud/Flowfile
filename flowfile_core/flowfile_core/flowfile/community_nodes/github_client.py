@@ -17,7 +17,7 @@ bodies, tokens, or device codes.
 
 import base64
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 from pydantic import BaseModel
@@ -120,7 +120,7 @@ def _auth_headers(token: str) -> dict[str, str]:
 def _reset_hint(resp: httpx.Response) -> str:
     reset = resp.headers.get("X-RateLimit-Reset", "")
     try:
-        when = datetime.fromtimestamp(int(reset), timezone.utc).strftime("%H:%M UTC")
+        when = datetime.fromtimestamp(int(reset), UTC).strftime("%H:%M UTC")
     except (TypeError, ValueError):
         return ""
     return f" Try again after {when}."
@@ -135,15 +135,15 @@ def _raise_if_rate_limited(resp: httpx.Response) -> None:
         )
 
 
-def device_start(*, http: httpx.Client | None = None) -> DeviceStart:
-    """Begin the device flow. Raises ``GithubNotConfiguredError`` when no client id is set."""
+def device_start(*, scope: str = DEVICE_SCOPE, http: httpx.Client | None = None) -> DeviceStart:
+    """Begin the device flow for ``scope``. Raises ``GithubNotConfiguredError`` when no client id is set."""
     client_id = get_community_github_client_id()
     if not client_id:
         raise GithubNotConfiguredError()
     try:
         resp = _http(http).post(
             DEVICE_CODE_URL,
-            data={"client_id": client_id, "scope": DEVICE_SCOPE},
+            data={"client_id": client_id, "scope": scope},
             headers={"Accept": "application/json"},
         )
     except httpx.TransportError as e:

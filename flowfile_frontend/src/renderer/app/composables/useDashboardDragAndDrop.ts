@@ -5,12 +5,23 @@ export const VIZ_MIME = "application/flowfile-viz";
 export const TEXT_MIME = "application/flowfile-text";
 export const SEPARATOR_MIME = "application/flowfile-separator";
 export const KPI_MIME = "application/flowfile-kpi";
+export const TABLE_MIME = "application/flowfile-table";
+/** The Insert list's Image: an empty image tile (a file from the computer is a plain file drop). */
+export const IMAGE_MIME = "application/flowfile-image";
+/** A strip filter chip dragged onto the canvas; the payload is the filter's id. */
+export const FILTER_MIME = "application/flowfile-dashboard-filter";
+/** The Insert list's Filter: a filter still to be made, so the payload carries no id. */
+export const NEW_FILTER_MIME = "application/flowfile-new-filter";
 
 const draggedVizId = ref<number | null>(null);
 const isDraggingViz = ref(false);
 const isDraggingText = ref(false);
 const isDraggingSeparator = ref(false);
 const isDraggingKpi = ref(false);
+const isDraggingTable = ref(false);
+const isDraggingImage = ref(false);
+const isDraggingFilter = ref(false);
+const isDraggingNewFilter = ref(false);
 
 export function useDashboardDragAndDrop() {
   const onDragEnd = () => {
@@ -18,6 +29,10 @@ export function useDashboardDragAndDrop() {
     isDraggingText.value = false;
     isDraggingSeparator.value = false;
     isDraggingKpi.value = false;
+    isDraggingTable.value = false;
+    isDraggingImage.value = false;
+    isDraggingFilter.value = false;
+    isDraggingNewFilter.value = false;
     draggedVizId.value = null;
   };
 
@@ -56,16 +71,50 @@ export function useDashboardDragAndDrop() {
     armDragEnd(event);
   };
 
+  const onTableDragStart = (event: DragEvent) => {
+    event.dataTransfer?.setData(TABLE_MIME, "1");
+    isDraggingTable.value = true;
+    armDragEnd(event);
+  };
+
+  const onImageDragStart = (event: DragEvent) => {
+    event.dataTransfer?.setData(IMAGE_MIME, "1");
+    isDraggingImage.value = true;
+    armDragEnd(event);
+  };
+
+  const onNewFilterDragStart = (event: DragEvent) => {
+    event.dataTransfer?.setData(NEW_FILTER_MIME, "1");
+    isDraggingNewFilter.value = true;
+    armDragEnd(event);
+  };
+
+  // The same drag also reorders inside the strip, hence copyMove.
+  const onFilterDragStart = (event: DragEvent, filterId: string) => {
+    event.dataTransfer?.setData(FILTER_MIME, filterId);
+    isDraggingFilter.value = true;
+    armDragEnd(event);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "copyMove";
+  };
+
   return {
     draggedVizId,
     isDraggingViz,
     isDraggingText,
     isDraggingSeparator,
     isDraggingKpi,
+    isDraggingTable,
+    isDraggingImage,
+    isDraggingFilter,
+    isDraggingNewFilter,
     onVizDragStart,
     onTextDragStart,
     onSeparatorDragStart,
     onKpiDragStart,
+    onTableDragStart,
+    onImageDragStart,
+    onFilterDragStart,
+    onNewFilterDragStart,
     onDragEnd,
   };
 }

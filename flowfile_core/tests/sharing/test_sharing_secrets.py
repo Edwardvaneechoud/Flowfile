@@ -125,3 +125,38 @@ def test_shared_secret_not_deletable_by_grantee(users, client_for, team):
 
     assert bob.delete("/secrets/secrets/keep_me").status_code == 404
     assert alice.get("/secrets/secrets/keep_me").status_code == 200
+
+
+def test_lowest_granted_id_wins_whoever_owns_the_group(users, client_for, team, grant_factory):
+    """Own first, else the lowest-id granted secret: the group owner's newer secret does not outrank an older one."""
+    alice = client_for("alice")
+    carol = client_for("carol")
+    bob = client_for("bob")
+    older = _create_secret(carol, "team_db", "shared-in-value")
+    newer = _create_secret(alice, "team_db", "group-owner-value")
+    assert older["id"] < newer["id"]
+    _share_secret(alice, newer["id"], team)
+    grant_factory("secret", older["id"], team, granted_by=users["carol"].id)
+
+    ciphertext = get_encrypted_secret(current_user_id=users["bob"].id, secret_name="team_db")
+    assert decrypt_secret(ciphertext).get_secret_value() == "shared-in-value"
+    assert bob.get("/secrets/secrets/team_db").json()["id"] == older["id"]
+
+    mine = _create_secret(bob, "team_db", "bob-value")
+    ciphertext = get_encrypted_secret(current_user_id=users["bob"].id, secret_name="team_db")
+    assert decrypt_secret(ciphertext).get_secret_value() == "bob-value"
+    assert bob.get("/secrets/secrets/team_db").json()["id"] == mine["id"]
+
+
+def test_sharing_off_resolves_own_only(users, client_for, team, monkeypatch):
+    """A desktop (electron) ignores grants: own secrets resolve lowest id first, granted ones not at all."""
+    alice = client_for("alice")
+    shared = _create_secret(alice, "desk_only", "alice-value")
+    _share_secret(alice, shared["id"], team)
+    alices = get_encrypted_secret(current_user_id=users["alice"].id, secret_name="desk_only")
+    assert get_encrypted_secret(current_user_id=users["bob"].id, secret_name="desk_only") == alices
+    # Electron reads its master key elsewhere, so compare ciphertext rather than decrypt.
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+
+    assert get_encrypted_secret(current_user_id=users["bob"].id, secret_name="desk_only") is None
+    assert get_encrypted_secret(current_user_id=users["alice"].id, secret_name="desk_only") == alices

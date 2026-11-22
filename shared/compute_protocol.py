@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict
 from shared._version import get_version
 from shared.wire_model import WireModel
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 3
 """The worker contract: the shape of every core-worker request and answer, and the catalog columns a worker reads.
 
 ``shared/tests/test_worker_contract.py`` pins it and says when to bump it. A new operation kind needs no bump: a worker

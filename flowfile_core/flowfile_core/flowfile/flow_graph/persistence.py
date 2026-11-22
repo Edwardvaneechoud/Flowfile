@@ -88,6 +88,8 @@ class PersistenceMixin(GraphMixinBase):
             max_parallel_workers=self.flow_settings.max_parallel_workers,
             source_registration_id=self.flow_settings.source_registration_id,
             parameters=self.flow_settings.parameters,
+            hub_origin=getattr(self.flow_settings, "hub_origin", None),
+            merge_conflicts=getattr(self, "merge_conflicts", None),
         )
         # Persist only groups that still have members (prune orphans).
         groups = [

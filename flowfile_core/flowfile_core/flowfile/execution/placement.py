@@ -24,7 +24,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, locate_for_namespace
 from flowfile_core.configs import logger
@@ -114,6 +114,8 @@ class Placement:
     refusals: list[Refusal]
     unreachable: dict[str, Exception] = field(default_factory=dict)
     fallbacks: list[Fallback] = field(default_factory=list)
+    # Preview-only: backends needing a live check, including cached negative verdicts.
+    unchecked_backend_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -141,16 +143,23 @@ class MixedPlacementPolicy:
     A node type its builder pins to a backend (``_PINNED_BACKENDS``) is placed there whatever its setting says. A saved
     id is taken as it is, ``local`` included; one the registry does not know is refused when the run is placed. A node
     the backend it is placed on cannot run goes to ``fallback_id`` when that backend can run it, a pinned type never.
+
+    ``moved`` maps a node id to the hub server's backend a step that uses a hub connection or secret runs on instead,
+    when the backend its settings name is no server of the hub: only a hub server opens what the hub seals, so the run
+    moves the step there and its output crosses back like any other (``ExecutionMixin._moved``).
     """
 
     backend_id: str
     fallback_id: str | None = None
+    moved: Mapping[int | str, str] = field(default_factory=dict, compare=False)
 
     def backend_for(self, node: FlowNode) -> str:
         """The id of the backend ``node`` runs on."""
         pinned = _PINNED_BACKENDS.get(node.node_type)
         if pinned is not None:
             return pinned
+        if node.node_id in self.moved:
+            return self.moved[node.node_id]
         location = node.setting_input.execution_location
         return self.backend_id if location == "auto" else location
 
@@ -163,6 +172,69 @@ PlacementPolicy = SingleBackendPolicy | MixedPlacementPolicy
 
 _FLOW_SETTING = "the flow's Execution location under Flow Settings"
 _NODE_SETTING = "its Compute backend under General Settings"
+
+
+def step_label(node: FlowNode) -> str:
+    """A step as the canvas names it: the first line of the description typed for it, else its type's name and its
+    number (``Sort data 2``)."""
+    lines = (getattr(node.setting_input, "description", None) or "").strip().splitlines()
+    if lines:
+        return lines[0].strip()
+    name = getattr(getattr(node, "node_template", None), "name", None) or node.node_type.replace("_", " ").capitalize()
+    return f"{name} {node.node_id}"
+
+
+def steps_in_words(nodes: list[FlowNode]) -> str:
+    """``nodes`` named by ``step_label`` inside a sentence: ``the step "A"``, ``the steps "A", "B" and "C"``."""
+    labels = [f'"{step_label(node)}"' for node in nodes]
+    if len(labels) == 1:
+        return f"the step {labels[0]}"
+    return f"the steps {', '.join(labels[:-1])} and {labels[-1]}"
+
+
+def run_here(steps: str, count: int = 1, where: str = "this server") -> str:
+    """What a person can do now about ``count`` steps refused on another server: run ``steps`` on ``where``."""
+    setting = _NODE_SETTING if count == 1 else "their Compute backend under General Settings"
+    return f"run {steps} on {where} (set {setting})"
+
+
+def unmoved_without_store(nodes: list[FlowNode], policy: SingleBackendPolicy) -> list[Refusal]:
+    """The nodes whose own Compute backend names one other than the run's, as refusals: no store carries their data.
+
+    Without an exchange store a node's own setting is not read and the node runs on the run's backend. The caller
+    decides which of these to refuse before the run, with one sentence that says what to change (``remedy``
+    ``None``): the graph refuses those set to one of the hub's servers, where running on the run's backend would put
+    the node on another server than the one it was set to; the run route reads the list to know whether a store
+    could matter at all. A node type pinned to a backend is never listed.
+    """
+    refusals = []
+    for node in nodes:
+        location = getattr(node.setting_input, "execution_location", "auto")
+        if node.node_type in _PINNED_BACKENDS or location in ("auto", policy.backend_id):
+            continue
+        reason = (
+            f"{steps_in_words([node])} is set to it, but no exchange store can carry its data between backends on "
+            f'this server, so set {_FLOW_SETTING} to "{location}" to run the whole flow there, or {_NODE_SETTING} '
+            "to Auto"
+        )
+        refusals.append(Refusal(node.node_id, location, reason))
+    return refusals
+
+
+def unsealed_for(backend_id: str, capabilities: Capabilities, targets: tuple[str, ...]) -> str | None:
+    """Why ``backend_id`` cannot open what the hub sealed to the run's ``targets``; ``None`` when it can.
+
+    A backend opens a sealed credential only when it declares ``credential_resolution: vended`` and its server is among
+    the targets the vend was sealed to; core never opens one for another server.
+    """
+    if capabilities.credential_resolution != "vended":
+        return (
+            "the hub seals that credential to the server that runs it, and this backend cannot open one: update "
+            "Flowfile on it and join it to the hub with keys of its own"
+        )
+    if registry.server_name(backend_id) not in targets:
+        return f"the hub sealed this run's credentials to {', '.join(targets)}, not to this backend's server"
+    return None
 
 
 def remedy_for(node: FlowNode, policy: PlacementPolicy, *, fallback_id: str | None = None) -> str | None:
@@ -286,7 +358,7 @@ def place(
             continue
         artifact_scheme = _artifact_scheme(node)
         try:
-            target, namespace, namespace_id = _catalog_target(settings)
+            target, namespace, namespace_id = _catalog_target(settings, flow)
             requirements = requirements_for(
                 node.node_template, settings, catalog_target=target, artifact_scheme=artifact_scheme
             )
@@ -411,8 +483,22 @@ def _own_reasons(
     capabilities = backends[backend_id]
     absent_here = (absent or {}).get(backend_id, {})
     reasons = _unmet(needs.requirements, capabilities, needs.namespace, needs.artifact_scheme, absent_here)
+    hub = remote_table_schema(node.setting_input)
     if capabilities.credential_resolution == "ambient":
         reasons += _unresolvable_connections(node, needs.requirements.credentials, needs.namespace_id)
+        if hub is not None and flow.run_grant is not None:
+            reasons.append(
+                f"it {'writes' if hub[1] else 'reads'} a table on the hub with a credential the hub vends to this run, "
+                "which this backend cannot take"
+            )
+    elif hub is not None and flow.run_grant is not None and flow.run_grant.sealed_for(backend_id):
+        unsealed = unsealed_for(backend_id, capabilities, flow.run_grant.targets)
+        if unsealed is not None:
+            reasons.append(f"it {'writes' if hub[1] else 'reads'} a table on the hub, but {unsealed}")
+    if node.node_id in (getattr(flow, "sealed_secret_steps", None) or {}) and flow.run_grant is not None:
+        unsealed = unsealed_for(backend_id, capabilities, flow.run_grant.targets)
+        if unsealed is not None:
+            reasons.append(f"it uses secrets the hub sealed to the server that runs it, but {unsealed}")
     if isinstance(node.setting_input, input_schema.NodeRunFlow):
         reasons += _child_refusals(flow, node, backend_id, backends, policy, absent, log)
     return reasons
@@ -534,6 +620,8 @@ def _child_refusals(
         with ephemeral_flow_graph(resolved.path, bound.user_id) as child:
             child._subflow_depth = depth
             child_policy = dataclasses.replace(policy, backend_id=backend_id)
+            if isinstance(child_policy, MixedPlacementPolicy):
+                child_policy = dataclasses.replace(child_policy, moved={})
             nodes = _child_run_nodes(child, bound, forwarded)
             placement = place(child, backends, child_policy, nodes=nodes, absent=absent, log=log)
     except Exception as e:
@@ -610,14 +698,37 @@ def _artifact_scheme(node: FlowNode) -> str | None:
     return "https" if isinstance(store, S3Storage) else "file"
 
 
-def _catalog_target(settings: object) -> tuple[CatalogStorageTarget | None, str | None, int | None]:
+def remote_table_schema(settings: object) -> tuple[str, bool] | None:
+    """The hub namespace (``catalog.schema``) a catalog node's ``settings`` read or write and whether they write;
+    ``None`` off the hub, and for a node on the hub that names no table or schema yet (its run fails at the node)."""
+    if isinstance(settings, input_schema.NodeCatalogReader) and table_sources.is_remote(settings.source):
+        namespace = settings.hub_namespace_name
+        return (namespace, False) if namespace else None
+    if isinstance(settings, input_schema.NodeCatalogWriter):
+        write_settings = settings.catalog_write_settings
+        if table_sources.is_remote(write_settings.source) and write_settings.namespace_full_name:
+            return write_settings.namespace_full_name, True
+    return None
+
+
+def _catalog_target(settings: object, flow: FlowGraph) -> tuple[CatalogStorageTarget | None, str | None, int | None]:
     """Where the namespace of a catalog writer's or reader's ``settings`` keeps its tables, its name and its id.
 
     ``(None, None, None)`` for any other node's settings. A writer's namespace is its ``namespace_full_name``, else its
     ``namespace_id``; with neither, the default namespace's local catalog tables directory. A reader's is its
     ``catalog_namespace_id``; a reader without one claims no storage. A namespace whose storage cannot be located
-    answers ``(None, None, None)`` too, so the node fails when it runs.
+    answers ``(None, None, None)`` too, so the node fails when it runs. A node on a table on the hub is placed by the
+    base of the credential the hub vended to ``flow``'s run, naming no stored connection; outside a run it claims
+    nothing.
     """
+    hub = remote_table_schema(settings)
+    if hub is not None:
+        source = getattr(settings, "source", None) or settings.catalog_write_settings.source
+        try:
+            target = table_sources.remote(source).schema_target(flow.catalog_run_id, None, hub[0])
+        except (LookupError, ValueError):
+            return None, None, None
+        return CatalogStorageTarget(is_cloud=True, base=target.base), hub[0], None
     if isinstance(settings, input_schema.NodeCatalogWriter):
         write_settings = settings.catalog_write_settings
         with get_db_context() as db:

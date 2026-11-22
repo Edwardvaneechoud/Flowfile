@@ -9,6 +9,11 @@ import time
 from multiprocessing.context import SpawnContext
 from typing import TYPE_CHECKING
 
+# A server's extension has its say before `shared.storage_config` reads a storage dir.
+from shared import server_extension as _server_extension
+
+_server_extension.before_import("worker")
+
 from shared._version import get_version
 from shared.storage_config import storage
 

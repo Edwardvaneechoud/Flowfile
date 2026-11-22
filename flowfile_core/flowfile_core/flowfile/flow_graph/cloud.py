@@ -11,6 +11,7 @@ from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
 )
+from flowfile_core.flowfile.execution import run_secrets
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.payloads import DeltaMergePayload, DeltaWritePayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
@@ -28,6 +29,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     CloudStorageSettings,
     CloudStorageWriteSettings,
     FullCloudStorageConnection,
+    FullCloudStorageConnectionWorkerInterface,
 )
 from flowfile_core.schemas.delta_write import MERGE_MODES
 from shared.cloud_storage.uri import storage_type_for_uri
@@ -89,6 +91,18 @@ def _resolve_cloud_node_connection(
     )
 
 
+def _worker_connection(
+    connection: FullCloudStorageConnection, user_id: int
+) -> FullCloudStorageConnectionWorkerInterface:
+    """The connection a cloud write carries, its secrets encrypted for ``user_id``; one a provider elsewhere keeps
+    (``granted``) carries each secret field the grant names in the form the server that runs the step opens
+    (``run_secrets.granted_fields``, which refuses where the grant does not reach)."""
+    interface = connection.get_worker_interface(user_id)
+    if not connection.granted:
+        return interface
+    return interface.model_copy(update=run_secrets.granted_fields("cloud", connection.connection_name))
+
+
 def _cloud_write_uses_delta_ops(settings: CloudStorageWriteSettings) -> bool:
     """Whether a cloud writer needs the catalog's Delta operations rather than the streaming sink."""
     return settings.file_format == "delta" and (settings.write_mode in MERGE_MODES or settings.track_changes)
@@ -114,7 +128,7 @@ def _write_cloud_delta(
         "path": normalize_delta_path(settings.resource_path),
         "partition_by": settings.partition_by,
         "enable_cdf": settings.track_changes,
-        "connection": connection.get_worker_interface(user_id),
+        "connection": _worker_connection(connection, user_id),
         "flow_id": graph.flow_id,
         "node_id": node.node_id,
     }

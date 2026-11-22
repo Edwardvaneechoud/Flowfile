@@ -15,12 +15,14 @@ from flowfile_core.configs.flow_logger import FlowLogger, get_flow_log_file
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
 from flowfile_core.flowfile.manage.io_flowfile import (
+    _flowfile_data_to_flow_information,
     _load_flow_storage,
     _resolve_flow_name,
     _validate_flow_path,
     populate_graph_from_flow_information,
 )
 from flowfile_core.flowfile.utils import create_unique_id
+from flowfile_core.schemas import schemas
 
 
 def free_flow_id() -> int:
@@ -51,17 +53,35 @@ def ephemeral_flow_graph(flow_path: Path, user_id: int) -> Iterator[FlowGraph]:
     info = _load_flow_storage(path)
     info.flow_settings.path = str(path)
     name = _resolve_flow_name(path, info.flow_name)
+    with _ephemeral_graph(info, name, user_id) as graph:
+        yield graph
+
+
+@contextlib.contextmanager
+def ephemeral_document_graph(document: dict) -> Iterator[FlowGraph]:
+    """A saved flow given as data (no file, no owner) built the way :func:`ephemeral_flow_graph` builds one from a
+    path. The caller refuses a conflicted document first (``check_document`` reports it as an integrity issue)."""
+    info = _flowfile_data_to_flow_information(schemas.FlowfileData.model_validate(document))
+    info.flow_settings.execution_location = schemas.loaded_execution_location(info.flow_settings.execution_location)
+    with _ephemeral_graph(info, info.flow_name or "flow", None) as graph:
+        yield graph
+
+
+@contextlib.contextmanager
+def _ephemeral_graph(info: schemas.FlowInformation, name: str, user_id: int | None) -> Iterator[FlowGraph]:
     info.flow_settings.name = name
     info.flow_name = name
     info.flow_id = info.flow_settings.flow_id = free_flow_id()
     info.flow_settings.track_history = False
     graph = FlowGraph(name=name, flow_settings=info.flow_settings)
-    graph._owner_user_id = user_id
+    if user_id is not None:
+        graph._owner_user_id = user_id
+    owner_of = (lambda _node_id: user_id) if user_id is not None else None
     try:
         token = schema_prefetch_blocked.set(True)
         try:
             with graph.rebuilding():
-                populate_graph_from_flow_information(graph, info, owner_of=lambda _node_id: user_id)
+                populate_graph_from_flow_information(graph, info, owner_of=owner_of)
         finally:
             schema_prefetch_blocked.reset(token)
         yield graph

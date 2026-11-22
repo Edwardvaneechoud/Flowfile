@@ -10,7 +10,7 @@ from collections.abc import Collection
 from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
@@ -37,6 +37,7 @@ from flowfile_core.database.models import (
     ScheduleTriggerTable,
     TableFavorite,
 )
+from shared.storage_config import flow_file_key, flow_path_spellings
 
 # ---------------------------------------------------------------------------
 # Repository Protocol
@@ -130,6 +131,11 @@ class CatalogRepository(Protocol):
         run_type: RunType | None = None,
         limit: int = 50,
         offset: int = 0,
+        search: str | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> list[FlowRun]: ...
 
     def create_run(self, run: FlowRun) -> FlowRun: ...
@@ -141,6 +147,10 @@ class CatalogRepository(Protocol):
         registration_id: int | None = None,
         schedule_id: int | None = None,
         run_type: RunType | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> int: ...
 
     def count_runs_by_status(
@@ -148,6 +158,11 @@ class CatalogRepository(Protocol):
         registration_id: int | None = None,
         schedule_id: int | None = None,
         run_type: RunType | None = None,
+        search: str | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> dict[str, int]: ...
 
     # -- Favorites -----------------------------------------------------------
@@ -295,7 +310,15 @@ class CatalogRepository(Protocol):
 
     # -- Active run operations -----------------------------------------------
 
-    def list_active_runs(self) -> list[FlowRun]: ...
+    def list_active_runs(
+        self,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
+    ) -> list[FlowRun]: ...
+
+    def cancel_active_run(self, run_id: int, now: datetime) -> bool: ...
 
     def has_active_run(self, registration_id: int) -> bool: ...
 
@@ -306,6 +329,8 @@ class CatalogRepository(Protocol):
     def list_visualizations(self, catalog_table_id: int) -> list[CatalogVisualization]: ...
 
     def list_all_visualizations(self) -> list[CatalogVisualization]: ...
+
+    def list_dashboard_visualizations(self, dashboard_id: int) -> list[CatalogVisualization]: ...
 
     def get_visualization(self, viz_id: int) -> CatalogVisualization | None: ...
 
@@ -476,10 +501,20 @@ class SQLAlchemyCatalogRepository:
         return q.order_by(FlowRegistration.id).all()
 
     def get_flow_by_path(self, flow_path: str) -> FlowRegistration | None:
-        return self._db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
+        """The lowest-id registration at ``flow_path``, under any spelling a server may have stored it."""
+        return (
+            self._db.query(FlowRegistration)
+            .filter(FlowRegistration.flow_path.in_(flow_path_spellings(flow_path)))
+            .order_by(FlowRegistration.id)
+            .first()
+        )
 
     def count_flows_by_path(self, flow_path: str) -> int:
-        return self._db.query(FlowRegistration).filter_by(flow_path=flow_path).count()
+        """Registrations whose file is ``flow_path``. On a server two spellings of one file (``flows/./a.yaml``,
+        a link) are one file; a desktop compares as given, as it always did."""
+        target = flow_file_key(flow_path)
+        rows = self._db.query(FlowRegistration.flow_path).filter(FlowRegistration.flow_path.isnot(None)).all()
+        return sum(1 for (stored,) in rows if flow_file_key(stored) == target)
 
     def list_flows(
         self,
@@ -623,8 +658,18 @@ class SQLAlchemyCatalogRepository:
         schedule_id: int | None = None,
         run_type: RunType | None = None,
         search: str | None = None,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ):
-        """Apply the standard run filters to a FlowRun query."""
+        """Apply the standard run filters to a FlowRun query.
+
+        ``visible_user_id`` limits the query to the runs that user may see: runs
+        they started, runs of a flow in ``visible_flow_ids``, and runs of a flow
+        registered in a namespace in ``visible_namespace_ids``. ``None`` leaves
+        the query unrestricted. The filter is part of the SQL, so pagination and
+        counts are computed over the visible set.
+        """
         if registration_id is not None:
             q = q.filter(self._runs_of_registration(registration_id))
         if schedule_id is not None:
@@ -633,6 +678,17 @@ class SQLAlchemyCatalogRepository:
             q = q.filter(FlowRun.run_type == run_type)
         if search:
             q = q.filter(FlowRun.flow_name.ilike(f"%{search}%"))
+        if visible_user_id is not None:
+            flows_in_visible_namespaces = select(FlowRegistration.id).where(
+                FlowRegistration.namespace_id.in_(list(visible_namespace_ids))
+            )
+            q = q.filter(
+                or_(
+                    FlowRun.user_id == visible_user_id,
+                    FlowRun.registration_id.in_(list(visible_flow_ids)),
+                    FlowRun.registration_id.in_(flows_in_visible_namespaces),
+                )
+            )
         return q
 
     def count_flows_in_namespace(self, namespace_id: int) -> int:
@@ -731,6 +787,10 @@ class SQLAlchemyCatalogRepository:
         limit: int = 50,
         offset: int = 0,
         search: str | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> list[FlowRun]:
         q = self._apply_run_filters(
             self._db.query(FlowRun),
@@ -738,6 +798,9 @@ class SQLAlchemyCatalogRepository:
             schedule_id=schedule_id,
             run_type=run_type,
             search=search,
+            visible_user_id=visible_user_id,
+            visible_flow_ids=visible_flow_ids,
+            visible_namespace_ids=visible_namespace_ids,
         )
         return q.order_by(FlowRun.started_at.desc()).offset(offset).limit(limit).all()
 
@@ -757,12 +820,19 @@ class SQLAlchemyCatalogRepository:
         registration_id: int | None = None,
         schedule_id: int | None = None,
         run_type: RunType | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> int:
         return self._apply_run_filters(
             self._db.query(FlowRun),
             registration_id=registration_id,
             schedule_id=schedule_id,
             run_type=run_type,
+            visible_user_id=visible_user_id,
+            visible_flow_ids=visible_flow_ids,
+            visible_namespace_ids=visible_namespace_ids,
         ).count()
 
     def count_runs_by_status(
@@ -771,23 +841,37 @@ class SQLAlchemyCatalogRepository:
         schedule_id: int | None = None,
         run_type: RunType | None = None,
         search: str | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> dict[str, int]:
-        from sqlalchemy import case, func
+        from sqlalchemy import and_, case, func
 
         q = self._apply_run_filters(
             self._db.query(
                 func.count().label("total"),
                 func.count(case((FlowRun.success.is_(True), 1))).label("success"),
-                func.count(case((FlowRun.success.is_(False), 1))).label("failed"),
+                func.count(case((and_(FlowRun.success.is_(False), FlowRun.cancelled.is_(False)), 1))).label("failed"),
+                func.count(case((and_(FlowRun.success.is_(False), FlowRun.cancelled.is_(True)), 1))).label("cancelled"),
                 func.count(case((FlowRun.success.is_(None), 1))).label("running"),
             ),
             registration_id=registration_id,
             schedule_id=schedule_id,
             run_type=run_type,
             search=search,
+            visible_user_id=visible_user_id,
+            visible_flow_ids=visible_flow_ids,
+            visible_namespace_ids=visible_namespace_ids,
         )
         row = q.one()
-        return {"total": row.total, "success": row.success, "failed": row.failed, "running": row.running}
+        return {
+            "total": row.total,
+            "success": row.success,
+            "failed": row.failed,
+            "running": row.running,
+            "cancelled": row.cancelled,
+        }
 
     # -- Favorites -----------------------------------------------------------
 
@@ -1281,6 +1365,10 @@ class SQLAlchemyCatalogRepository:
         return schedule
 
     def delete_schedule(self, schedule_id: int) -> None:
+        # Its runs stay as the flow's history, no longer pointing at the schedule.
+        self._db.query(FlowRun).filter_by(schedule_id=schedule_id).update(
+            {FlowRun.schedule_id: None}, synchronize_session=False
+        )
         self._db.query(ScheduleTriggerTable).filter_by(schedule_id=schedule_id).delete()
         # Rules scoped to this schedule die with it — a stale rule would alert the old
         # owner's webhook about whichever future schedule reuses the SQLite rowid.
@@ -1295,9 +1383,49 @@ class SQLAlchemyCatalogRepository:
 
     # -- Active run operations -----------------------------------------------
 
-    def list_active_runs(self) -> list[FlowRun]:
+    def list_active_runs(
+        self,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
+    ) -> list[FlowRun]:
         """Return runs that have not yet ended (ended_at IS NULL)."""
-        return self._db.query(FlowRun).filter(FlowRun.ended_at.is_(None)).order_by(FlowRun.started_at.desc()).all()
+        q = self._apply_run_filters(
+            self._db.query(FlowRun).filter(FlowRun.ended_at.is_(None)),
+            visible_user_id=visible_user_id,
+            visible_flow_ids=visible_flow_ids,
+            visible_namespace_ids=visible_namespace_ids,
+        )
+        return q.order_by(FlowRun.started_at.desc()).all()
+
+    def cancel_active_run(self, run_id: int, now: datetime) -> bool:
+        """Close run *run_id* as cancelled at *now* if it has not ended; False when it already had.
+
+        A keyed conditional UPDATE, so a completion that landed first keeps its outcome. The run is stamped as
+        evaluated for notifications in the same statement: a cancel is deliberate and alerts nobody.
+        """
+        run = self._db.get(FlowRun, run_id)
+        if run is None:
+            return False
+        values = {
+            FlowRun.ended_at: now,
+            FlowRun.success: False,
+            FlowRun.cancelled: True,
+            FlowRun.notification_processed_at: now,
+        }
+        if run.started_at:
+            # SQLite stores naive datetimes, so compare both sides without tzinfo.
+            started = run.started_at.replace(tzinfo=None)
+            values[FlowRun.duration_seconds] = (now.replace(tzinfo=None) - started).total_seconds()
+        matched = (
+            self._db.query(FlowRun)
+            .filter(FlowRun.id == run_id, FlowRun.ended_at.is_(None))
+            .update(values, synchronize_session=False)
+        )
+        self._db.commit()
+        self._db.refresh(run)
+        return bool(matched)
 
     def has_active_run(self, registration_id: int) -> bool:
         """Check if a flow already has an active (unfinished) run."""
@@ -1367,6 +1495,15 @@ class SQLAlchemyCatalogRepository:
 
     def list_all_visualizations(self) -> list[CatalogVisualization]:
         return self._db.query(CatalogVisualization).order_by(CatalogVisualization.created_at.desc()).all()
+
+    def list_dashboard_visualizations(self, dashboard_id: int) -> list[CatalogVisualization]:
+        """The charts that belong to a dashboard."""
+        return (
+            self._db.query(CatalogVisualization)
+            .filter_by(dashboard_id=dashboard_id)
+            .order_by(CatalogVisualization.id)
+            .all()
+        )
 
     def get_visualization(self, viz_id: int) -> CatalogVisualization | None:
         return self._db.get(CatalogVisualization, viz_id)
@@ -1455,6 +1592,10 @@ class SQLAlchemyCatalogRepository:
         dashboard = self._db.get(CatalogDashboard, dashboard_id)
         if dashboard is not None:
             sharing.delete_grants_for_resource(self._db, "dashboard", dashboard_id)
+            # SQLite does not enforce the foreign key, and a reused row id would hand a chart to a new dashboard.
+            self._db.query(CatalogVisualization).filter_by(dashboard_id=dashboard_id).update(
+                {CatalogVisualization.dashboard_id: None}
+            )
             self._db.delete(dashboard)
             self._db.commit()
 

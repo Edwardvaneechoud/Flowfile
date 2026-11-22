@@ -4,14 +4,32 @@ Covers namespaces (Unity Catalog-style hierarchy), flow registrations,
 run history, favorites and follows.
 """
 
-from datetime import datetime, timezone
+import base64
+import binascii
+import math
+import re
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
+from shared.models import RunType
 
 # ==================== Namespace Schemas ====================
 
@@ -47,6 +65,8 @@ class NamespaceOut(BaseModel):
     # How the requesting user accesses this resource (multi-user mode); None when
     # unrestricted (admin / electron / internal) — the frontend shows no badge then.
     access: AccessInfo | None = None
+    # Where the namespace lives; a hub's row carries the negative of the hub's id as ``id``.
+    source: Literal["local", "hub"] = "local"
 
     model_config = {"from_attributes": True}
 
@@ -59,8 +79,18 @@ class ScratchCleanupOut(BaseModel):
 
 
 class NamespaceTree(NamespaceOut):
-    """Recursive tree node – children are nested schemas of the same hierarchy."""
+    """Recursive tree node – children are nested schemas of the same hierarchy.
 
+    ``place`` says in words where the catalog lives (``On this computer`` or ``On this server`` for this machine's,
+    the hub's name for a hub's), set once a hub's catalogs are listed beside this machine's. ``offered`` is false for
+    this machine's catalogs on a server joined to a hub with keys of its own: the Catalog panel and the catalog
+    reader's and writer's pickers leave them out, while the flow pickers still find them. ``unavailable_reason`` says
+    why this Flowfile cannot use a hub catalog's tables (on the hub's own disk, or on storage it does not write).
+    """
+
+    place: str | None = None
+    offered: bool = True
+    unavailable_reason: str | None = None
     children: list["NamespaceTree"] = Field(default_factory=list)
     flows: list["FlowRegistrationOut"] = Field(default_factory=list)
     artifacts: list["GlobalArtifactOut"] = Field(default_factory=list)
@@ -99,12 +129,18 @@ class FlowRegistrationOut(BaseModel):
     run_count: int = 0
     last_run_at: datetime | None = None
     last_run_success: bool | None = None
+    last_run_cancelled: bool = False
     file_exists: bool = True
     is_api_compatible: bool = False
     artifact_count: int = 0
     tables_produced: list["CatalogTableSummary"] = Field(default_factory=list)
     tables_read: list["CatalogTableSummary"] = Field(default_factory=list)
     access: AccessInfo | None = None
+    # Where the flow lives; a hub's row has the hub's registration id negated, its uuid and newest version.
+    source: Literal["local", "hub"] = "local"
+    flow_uuid: str | None = None
+    latest_version: int | None = None
+    author_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -167,13 +203,24 @@ class FlowRunOut(BaseModel):
     started_at: datetime
     ended_at: datetime | None = None
     success: bool | None = None
+    cancelled: bool = Field(
+        default=False,
+        description="The run was stopped on purpose before it finished; success is False and it did not fail.",
+    )
     nodes_completed: int = 0
     number_of_nodes: int = 0
     duration_seconds: float | None = None
-    run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand"] = "in_designer_run"
+    run_type: RunType = "in_designer_run"
     schedule_id: int | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
+    source: Literal["local", "hub"] = "local"
     has_snapshot: bool = False
     has_log: bool = False
+    # A run executed elsewhere: where, under which run id, where its log is, and the published version that ran.
+    executed_on: str | None = None
+    remote_run_id: str | None = None
+    log_ref: str | None = None
+    flow_version: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -186,13 +233,21 @@ class PaginatedFlowRuns(BaseModel):
     total_success: int = 0
     total_failed: int = 0
     total_running: int = 0
+    total_cancelled: int = 0
 
 
 class FlowRunDetail(FlowRunOut):
-    """Extended run detail that includes the YAML flow snapshot and node results."""
+    """Extended run detail that includes the YAML flow snapshot and node results.
+
+    ``flow_snapshot`` is the run's own snapshot, else the document of the published version it names; ``log_url``
+    is the executor's log route for a run whose log is kept elsewhere, when this core can name it, and
+    ``log_page_url`` the run's page in the executor's editor, which is what a person opens.
+    """
 
     flow_snapshot: str | None = None
     node_results_json: str | None = None
+    log_url: str | None = None
+    log_page_url: str | None = None
 
 
 # ==================== Favorite / Follow Schemas ====================
@@ -295,7 +350,11 @@ class CatalogTableRefreshRequest(BaseModel):
 
     Used by the kernel runtime after append / upsert / update / delete writes
     that mutate an existing Delta directory: the kernel sends back the new
-    row_count / size_bytes / schema so Core's record stays consistent.
+    row_count / size_bytes / schema so Core's record stays consistent. A core that
+    turned on the table's change feed sends ``cdc_enabled_version``, the version it
+    was turned on at, which marks the table tracked. A core that optimized or vacuumed
+    the table sends ``data_changed`` false: its data did not change, so the table's
+    ``updated_at`` is kept and no table trigger fires, as for a local optimize.
     """
 
     table_path: str | None = None
@@ -305,6 +364,8 @@ class CatalogTableRefreshRequest(BaseModel):
     column_count: int | None = None
     size_bytes: int | None = None
     description: str | None = None
+    cdc_enabled_version: int | None = None
+    data_changed: bool = True
 
 
 class VirtualFlowTableCreate(BaseModel):
@@ -428,6 +489,15 @@ class CdcCursorResetRequest(BaseModel):
     to: int | Literal["now", "beginning"] = "now"
 
 
+class CdcCursorCommitRequest(BaseModel):
+    """Record ``last_version`` as fully read by one consumer, creating its cursor on the first read."""
+
+    consumer_key: str
+    last_version: int
+    consumer_label: str | None = None
+    table_path: str | None = None
+
+
 class CatalogTableOut(BaseModel):
     id: int
     name: str
@@ -476,6 +546,8 @@ class CatalogTableOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None
+    # Where the table lives; a hub's row carries the negatives of the hub's own ids.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -620,6 +692,19 @@ class CatalogTableKeyColumnResponse(BaseModel):
     new_version: int | None = None
 
 
+class CatalogTableRestoreRequest(BaseModel):
+    """Request to restore a table to an earlier Delta version."""
+
+    version: int = Field(ge=0)
+    expected_version: int | None = None
+
+
+class CatalogTableRestoreResponse(BaseModel):
+    table: CatalogTableOut
+    restored_version: int
+    new_version: int | None = None
+
+
 # ==================== SQL Query Schemas ====================
 
 
@@ -660,7 +745,10 @@ class VisualizationCreate(BaseModel):
     """Create a viz. The source must be either a catalog table or an inline
     SQL query — set ``source_type`` accordingly. ``namespace_id`` defaults to
     the parent table's namespace (when ``source_type="table"``) but can be
-    overridden so a viz can live anywhere in the catalog tree."""
+    overridden so a viz can live anywhere in the catalog tree.
+
+    ``dashboard_id`` makes the chart that dashboard's own: it is listed with the dashboard, not in the
+    chart library, and goes when the dashboard goes or stops using it."""
 
     name: str
     description: str | None = None
@@ -675,6 +763,7 @@ class VisualizationCreate(BaseModel):
     sql_query: str | None = None
     namespace_id: int | None = None
     thumbnail_data_url: str | None = None
+    dashboard_id: int | None = None
 
 
 class VisualizationUpdate(BaseModel):
@@ -695,7 +784,7 @@ class VisualizationUpdate(BaseModel):
     def _normalize_expected_updated_at(cls, v: datetime | None) -> datetime | None:
         """Normalize tz-aware tokens to naive UTC — the DB returns naive UTC."""
         if v is not None and v.tzinfo is not None:
-            return v.astimezone(timezone.utc).replace(tzinfo=None)
+            return v.astimezone(UTC).replace(tzinfo=None)
         return v
 
 
@@ -721,9 +810,22 @@ class VisualizationOut(BaseModel):
     table_full_name: str | None = None
     table_type: str | None = None
     namespace_name: str | None = None
+    # The chart's dashboard: both None for a chart of its own, the name None for whoever may not read it.
+    dashboard_id: int | None = None
+    dashboard_name: str | None = None
     access: AccessInfo | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negatives of its ids there.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DashboardChartPruneOut(BaseModel):
+    """What a prune of a dashboard's own charts did: the ids it deleted, and the ids it made charts of
+    their own because another dashboard uses them."""
+
+    deleted: list[int] = Field(default_factory=list)
+    released: list[int] = Field(default_factory=list)
 
 
 class VizSourceDescriptor(BaseModel):
@@ -805,6 +907,17 @@ class ColumnStatsResponse(BaseModel):
 # ==================== Dashboard Schemas ====================
 
 
+class DashboardKpiTrend(BaseModel):
+    """A KPI's trend line: its own measure and aggregation per ``grain`` bucket of ``field``.
+
+    ``field`` is a date or datetime column of the KPI's source, by name, so it travels in a
+    project export as it is. ``grain`` "auto" picks day to year from the span of the rows in view.
+    """
+
+    field: str = Field(min_length=1, max_length=255)
+    grain: Literal["auto", "day", "week", "month", "quarter", "year"] = "auto"
+
+
 class DashboardKpi(BaseModel):
     """Headline-number config for a ``type == "kpi"`` tile.
 
@@ -815,6 +928,7 @@ class DashboardKpi(BaseModel):
     ``target``; "previous_period" compares against the same aggregate over
     the targeting dashboard date_range filter shifted back by its own length.
     ``value_size`` fixes the number's font size ("auto" fits it to the tile).
+    ``trend`` None draws no trend line.
     """
 
     field: str | None = None
@@ -828,6 +942,155 @@ class DashboardKpi(BaseModel):
     target: float | None = None
     higher_is_better: bool = True
     value_size: Literal["auto", "sm", "md", "lg", "xl"] = "auto"
+    trend: DashboardKpiTrend | None = None
+
+
+class DashboardTableColumn(BaseModel):
+    """One column a ``type == "table"`` tile shows, in display order.
+
+    ``label`` replaces the column name in the header. ``decimals`` (None =
+    auto) and ``thousands`` format the column's numbers; text cells ignore them.
+    """
+
+    field: str = Field(min_length=1)
+    label: str | None = Field(default=None, max_length=120)
+    decimals: int | None = Field(default=None, ge=0, le=6)
+    thousands: bool = True
+
+
+class DashboardTableConfig(BaseModel):
+    """Rows config for a ``type == "table"`` tile.
+
+    ``columns`` empty shows every column of the source. ``sort_by`` is the
+    default sort, applied in ``sort_direction`` to every listed column (one
+    polars-gw ``sort`` step); a viewer's header click replaces it for the
+    session and is not saved, nor is the page they are on.
+    """
+
+    columns: list[DashboardTableColumn] = Field(default_factory=list)
+    sort_by: list[str] = Field(default_factory=list)
+    sort_direction: Literal["ascending", "descending"] = "ascending"
+    page_size: int = Field(default=25, ge=5, le=500)
+
+
+class DashboardChartFormat(BaseModel):
+    """How a ``type == "viz"`` tile presents its chart, without touching the saved chart.
+
+    ``number_format`` and ``time_format`` are d3-format and d3-time-format strings handed to
+    Graphic Walker as the drawn copy's ``layout.format``; ``x_title`` and ``y_title`` become the
+    display name of the field that ends the columns and rows shelves, which is what Graphic
+    Walker writes as the axis title (an aggregated measure keeps its aggregation: ``sum(<title>)``).
+    None keeps the chart's own. The same chart on two tiles can be formatted differently.
+    """
+
+    number_format: str | None = Field(default=None, max_length=64)
+    time_format: str | None = Field(default=None, max_length=64)
+    x_title: str | None = Field(default=None, max_length=120)
+    y_title: str | None = Field(default=None, max_length=120)
+
+
+DASHBOARD_IMAGE_MAX_BYTES = 300 * 1024
+DASHBOARD_IMAGES_TOTAL_MAX_BYTES = 2 * 1024 * 1024
+DASHBOARD_IMAGE_ALT_MAX_LENGTH = 300
+_DASHBOARD_IMAGE_TYPES = {
+    "image/png": "PNG",
+    "image/jpeg": "JPEG",
+    "image/webp": "WebP",
+    "image/gif": "GIF",
+    "image/svg+xml": "SVG",
+}
+_DATA_URL_HEADER = re.compile(r"data:([\w.+-]+/[\w.+-]+);base64")
+# The header and a little slack over the base64 of the largest image allowed.
+_MAX_DATA_URL_LENGTH = (DASHBOARD_IMAGE_MAX_BYTES + 2) // 3 * 4 + 64
+
+
+def _byte_size(n: int) -> str:
+    """A byte count as a user reads it, rounded up so a size just over a cap never reads as the cap:
+    ``412 KB``, ``2.1 MB``."""
+    if n > 1024 * 1024:
+        return f"{math.ceil(n * 10 / (1024 * 1024)) / 10:g} MB"
+    if n == 1024 * 1024:
+        return "1 MB"
+    return f"{max(1, math.ceil(n / 1024))} KB"
+
+
+def _base64_size(payload: str) -> int:
+    """The number of bytes a base64 payload decodes to, from its length alone."""
+    return len(payload) * 3 // 4 - (2 if payload.endswith("==") else 1 if payload.endswith("=") else 0)
+
+
+def _image_holds(mime: str, data: bytes) -> bool:
+    if mime == "image/png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if mime == "image/jpeg":
+        return data.startswith(b"\xff\xd8\xff")
+    if mime == "image/gif":
+        return data[:6] in (b"GIF87a", b"GIF89a")
+    if mime == "image/webp":
+        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    try:
+        return "<svg" in data.decode("utf-8-sig").lower()
+    except UnicodeDecodeError:
+        return False
+
+
+def _split_data_url(data_url: str) -> tuple[str | None, str]:
+    """A base64 data URL's media type (None when the header is not one) and its payload."""
+    comma = data_url.find(",", 0, 256)
+    match = _DATA_URL_HEADER.fullmatch(data_url[:comma]) if comma >= 0 else None
+    return (match.group(1) if match else None), data_url[comma + 1 :]
+
+
+def dashboard_image_size(data_url: str) -> int:
+    """The image bytes an image tile's ``data_url`` holds, from its length."""
+    return _base64_size(_split_data_url(data_url)[1])
+
+
+def validate_dashboard_image(data_url: str) -> str:
+    """Refuse a ``data_url`` that is not a base64 data URL of a PNG, JPEG, WebP, GIF or SVG image
+    holding at most ``DASHBOARD_IMAGE_MAX_BYTES``, or whose bytes do not decode to that type."""
+    mime, payload = _split_data_url(data_url)
+    if mime not in _DASHBOARD_IMAGE_TYPES:
+        raise ValueError("the image is not a PNG, JPEG, WebP, GIF or SVG image (expected a base64 data:image/... URL)")
+    size = _base64_size(payload)
+    if len(data_url) > _MAX_DATA_URL_LENGTH or size > DASHBOARD_IMAGE_MAX_BYTES:
+        raise ValueError(
+            f"the image is {_byte_size(size)}; an image may be at most {_byte_size(DASHBOARD_IMAGE_MAX_BYTES)}. "
+            "Choose a smaller image"
+        )
+    try:
+        data = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("the image could not be read: its data is not valid base64") from None
+    if not _image_holds(mime, data):
+        raise ValueError(f"the image does not hold {_DASHBOARD_IMAGE_TYPES[mime]} data, though it says it does")
+    return data_url
+
+
+def _reading_stored(info: ValidationInfo) -> bool:
+    """True while a stored layout is read back (``context={"stored": True}``): save-time limits, which may
+    tighten after a row was written, are not applied to it again."""
+    return bool(info.context and info.context.get("stored"))
+
+
+def _checked_dashboard_image(data_url: str, info: ValidationInfo) -> str:
+    return data_url if _reading_stored(info) else validate_dashboard_image(data_url)
+
+
+class DashboardTileImage(BaseModel):
+    """The picture a ``type == "image"`` tile shows, stored in the layout itself.
+
+    ``data_url`` is a base64 ``data:`` URL of a PNG, JPEG, WebP, GIF or SVG image of at most
+    ``DASHBOARD_IMAGE_MAX_BYTES`` (the browser scales a large raster down before it is sent); a
+    layout holds at most ``DASHBOARD_IMAGES_TOTAL_MAX_BYTES`` of images in all. The frontend only
+    ever shows it as an ``<img>`` source, where an SVG runs no script. ``fit`` "contain" shows the
+    whole image, never larger than its own size; "cover" fills the tile and crops. ``alt`` is the
+    text a screen reader reads. It holds no machine-local id, so it travels in a project as is.
+    """
+
+    data_url: Annotated[str, AfterValidator(_checked_dashboard_image)]
+    alt: str | None = Field(default=None, max_length=DASHBOARD_IMAGE_ALT_MAX_LENGTH)
+    fit: Literal["contain", "cover"] = "contain"
 
 
 class DashboardTile(BaseModel):
@@ -836,30 +1099,65 @@ class DashboardTile(BaseModel):
     ``id`` is a client-generated UUID, stable across saves so the frontend
     can preserve component state on layout updates. ``type`` discriminates
     tile kinds: ``"viz"`` renders a saved visualization (uses ``viz_id`` /
-    ``chart_index``); ``"text"`` renders user-authored Markdown from
+    ``chart_index``; ``title`` replaces the chart's name as the tile's heading
+    and ``show_title`` False hides the heading from viewers; ``chart_format`` formats its
+    numbers, dates and axis titles); ``"text"`` renders user-authored Markdown from
     ``text_md``; ``"separator"`` draws a rule to break the page into
     sections (``orientation``, ``thickness`` in px and ``line_color`` style
-    it); ``"kpi"`` shows one headline aggregate of the ``viz_id``
-    visualization's source configured by ``kpi`` (``chart_index`` is ignored;
-    ``kpi`` None is an unconfigured placeholder). Type-irrelevant fields are
-    simply ignored.
+    it); ``"kpi"`` shows one headline aggregate configured by ``kpi``
+    (``chart_index`` is ignored; ``kpi`` None is an unconfigured placeholder);
+    ``"table"`` shows the source's rows, paged and sorted on the worker,
+    configured by ``table`` (None = every column, default page size);
+    ``"filter"`` shows the control of the layout filter whose ``id`` is
+    ``filter_id`` (a layout-internal id, so it travels in a project as is);
+    a filter so placed is not shown in the filter strip, and it reads no data;
+    ``"image"`` shows the picture in ``image`` (None: an empty tile, blank to viewers), reads no
+    data and takes no filter or note.
+
+    ``note_md`` is an optional Markdown note a chart, KPI, table or filter tile shows behind
+    an info icon (a definition or a caveat); it holds no machine-local id, so it travels in
+    a project as is.
+
+    A KPI or table tile reads either a catalog table directly (``table_id``)
+    or a saved chart's data source (``viz_id``, how a SQL source is reached),
+    never both. Type-irrelevant fields are simply ignored.
+
+    ``tab_id`` names the layout tab the tile is on (``None`` on a layout without
+    tabs); ``x``/``y`` are positions on that tab's own canvas.
     """
 
     id: str
-    type: Literal["viz", "text", "separator", "kpi"] = "viz"
+    type: Literal["viz", "text", "separator", "kpi", "table", "filter", "image"] = "viz"
     viz_id: int | None = None
+    table_id: int | None = None
     chart_index: int = 0
+    title: str | None = Field(default=None, max_length=120)
+    show_title: bool = True
+    chart_format: DashboardChartFormat | None = None
     text_md: str | None = None
+    note_md: str | None = Field(default=None, max_length=4000)
     bg_color: str | None = None
     text_color: str | None = None
     orientation: Literal["horizontal", "vertical"] = "horizontal"
     thickness: int | None = Field(default=None, ge=1, le=24)
     line_color: str | None = None
     kpi: DashboardKpi | None = None
+    table: DashboardTableConfig | None = None
+    filter_id: str | None = None
+    image: DashboardTileImage | None = None
+    tab_id: str | None = None
     x: int
     y: int
     w: int
     h: int
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "DashboardTile":
+        if self.type in ("kpi", "table") and self.viz_id is not None and self.table_id is not None:
+            raise ValueError(f"tile '{self.id}' reads a chart or a table, not both (viz_id and table_id are set)")
+        if self.type == "filter" and not self.filter_id:
+            raise ValueError(f"filter tile '{self.id}' names no filter (filter_id is not set)")
+        return self
 
 
 class DashboardGrid(BaseModel):
@@ -889,10 +1187,17 @@ class DashboardFilter(BaseModel):
     ``field_name`` of a compatible type — the datasource then only supplies
     the value list.
 
+    ``datasource_viz_id`` (optional, never with ``datasource_id``) binds the
+    filter to a saved SQL chart's source instead, for a query that has no
+    table: the fields and values come from that chart's source, and scope
+    ``"datasource"`` reaches the tiles reading that chart.
+
     ``state`` carries widget-specific values (selected categorical values,
     a date range, a numeric range). The frontend injects these as a
     ``filter`` workflow step at the front of every targeted tile's GW
     payload before forwarding to ``/visualizations/{viz_id}/compute``.
+    ``multiple`` False makes a categorical filter single-select: the state
+    keeps its ``selected`` list, holding at most one value.
     """
 
     id: str
@@ -903,13 +1208,105 @@ class DashboardFilter(BaseModel):
     target: Literal["all", "tiles"] = "all"
     target_tile_ids: list[str] = Field(default_factory=list)
     datasource_id: int | None = None
+    datasource_viz_id: int | None = None
     scope: Literal["datasource", "all"] = "datasource"
+    multiple: bool = True
+
+    @model_validator(mode="after")
+    def _one_datasource(self) -> "DashboardFilter":
+        if self.datasource_id is not None and self.datasource_viz_id is not None:
+            raise ValueError(
+                f"filter '{self.id}' reads a table or a chart, not both (datasource_id and datasource_viz_id are set)"
+            )
+        return self
+
+
+class DashboardColorAssignment(BaseModel):
+    """The colour one value of a chart colour field has on every chart tile of a dashboard.
+
+    ``slot`` indexes the frontend's categorical chart palette (``vizTheme.ts``, the same slot in
+    light and dark). The frontend gives a value the first free slot when a tile first draws it and
+    stores it with the author's next edit; a value never gets a second entry, and one without an
+    entry past the palette's last slot is drawn grey. Field names and values only, nothing
+    machine-local, so the list travels in a project as is.
+    """
+
+    field: str = Field(min_length=1, max_length=255)
+    value: StrictStr | StrictBool | StrictInt | StrictFloat | None
+    slot: int = Field(ge=0, le=255)
+
+
+def _color_value_key(value: str | bool | int | float | None) -> tuple[str, object]:
+    """A value's identity as the frontend matches it: 1 and 1.0 are one value, 1 and "1" two."""
+    if isinstance(value, bool):
+        return ("boolean", value)
+    if isinstance(value, int | float):
+        return ("number", float(value))
+    return (type(value).__name__, value)
+
+
+DASHBOARD_AUTO_REFRESH_MIN_SECONDS = 60
+DASHBOARD_AUTO_REFRESH_MAX_SECONDS = 24 * 60 * 60
+
+
+class DashboardTab(BaseModel):
+    """One tab of a dashboard, a canvas of its own. ``id`` is layout-internal, so it travels in a
+    project as is."""
+
+    id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=60)
 
 
 class DashboardLayout(BaseModel):
+    """A dashboard's canvas.
+
+    ``auto_refresh_seconds`` is the interval a viewer's page refreshes its data at by default
+    (``None``: off). A viewer may change or pause it for their own session; it is never shorter
+    than a minute, so an open dashboard cannot hammer the worker.
+
+    ``tabs`` (ordered) splits the dashboard into canvases; each tile names its tab in ``tab_id``.
+    No tabs is one canvas. A save must place every tile on a tab of the layout (the catalog service
+    checks it); a stored layout whose tile names no known tab still reads, and the frontend shows that
+    tile on the first tab until the author's next edit stores it there. The image limits and the one
+    colour per value rule are save-time checks too: a stored layout read with ``context={"stored": True}``
+    skips them.
+    """
+
     tiles: list[DashboardTile] = Field(default_factory=list)
     grid: DashboardGrid = Field(default_factory=DashboardGrid)
     filters: list[DashboardFilter] = Field(default_factory=list)
+    color_assignments: list[DashboardColorAssignment] = Field(default_factory=list, max_length=5000)
+    auto_refresh_seconds: int | None = Field(
+        default=None, ge=DASHBOARD_AUTO_REFRESH_MIN_SECONDS, le=DASHBOARD_AUTO_REFRESH_MAX_SECONDS
+    )
+    tabs: list[DashboardTab] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def _images_fit(self, info: ValidationInfo) -> "DashboardLayout":
+        if _reading_stored(info):
+            return self
+        total = sum(dashboard_image_size(t.image.data_url) for t in self.tiles if t.image is not None)
+        if total > DASHBOARD_IMAGES_TOTAL_MAX_BYTES:
+            raise ValueError(
+                f"the images on this dashboard take {_byte_size(total)}; a dashboard may hold at most "
+                f"{_byte_size(DASHBOARD_IMAGES_TOTAL_MAX_BYTES)} of images. Remove or replace an image"
+            )
+        return self
+
+    @field_validator("color_assignments")
+    @classmethod
+    def _one_colour_per_value(
+        cls, assignments: list[DashboardColorAssignment], info: ValidationInfo
+    ) -> list[DashboardColorAssignment]:
+        if _reading_stored(info):
+            return assignments
+        seen: set[tuple[str, tuple[str, object]]] = set()
+        for a in assignments:
+            key = (a.field, _color_value_key(a.value))
+            if key in seen:
+                raise ValueError(f"value {a.value!r} of field '{a.field}' has more than one colour")
+            seen.add(key)
+        return assignments
 
 
 class DashboardCreate(BaseModel):
@@ -940,6 +1337,8 @@ class DashboardOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negatives of its ids there.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -959,6 +1358,17 @@ class TableFavoriteOut(BaseModel):
 # ==================== Schedule Schemas ====================
 
 
+def _schedule_backend(value: str | None) -> str | None:
+    """A schedule's backend becomes the value of the run command's ``--backend``, so it may not read as an option."""
+    stripped = (value or "").strip()
+    if stripped.startswith("-") or len(stripped) > 255:
+        raise ValueError("A backend id cannot start with '-' and is at most 255 characters long.")
+    return value
+
+
+ScheduleBackend = Annotated[str | None, AfterValidator(_schedule_backend)]
+
+
 class FlowScheduleCreate(BaseModel):
     registration_id: int
     schedule_type: Literal["interval", "cron", "table_trigger", "table_set_trigger"]
@@ -970,6 +1380,7 @@ class FlowScheduleCreate(BaseModel):
     enabled: bool = True
     name: str | None = None
     description: str | None = None
+    backend: ScheduleBackend = None
 
 
 class FlowScheduleUpdate(BaseModel):
@@ -979,6 +1390,7 @@ class FlowScheduleUpdate(BaseModel):
     cron_timezone: str | None = None
     name: str | None = None
     description: str | None = None
+    backend: ScheduleBackend = None
 
 
 class FlowScheduleOut(BaseModel):
@@ -1000,10 +1412,14 @@ class FlowScheduleOut(BaseModel):
     trigger_table_ids: list[int] = Field(default_factory=list)
     trigger_table_names: list[str] = Field(default_factory=list)
     trigger_full_table_names: list[str] = Field(default_factory=list)
+    backend: str | None = None
+    disabled_reason: str | None = None
     last_triggered_at: datetime | None = None
     last_trigger_table_updated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1034,8 +1450,11 @@ class ActiveFlowRun(BaseModel):
     started_at: datetime
     nodes_completed: int = 0
     number_of_nodes: int = 0
-    run_type: Literal["in_designer_run", "scheduled", "manual", "on_demand"] = "in_designer_run"
+    run_type: RunType = "in_designer_run"
     schedule_id: int | None = None
+    remote_run_id: str | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negative of its id there as ``id``.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1063,6 +1482,9 @@ class CatalogStats(BaseModel):
 
 
 class SchedulerStatusOut(BaseModel):
+    """A scheduler's status; ``place`` says whose it is once a remote catalog's is listed beside this install's."""
+
+    place: str | None = None
     active: bool
     holder_id: str | None = None
     started_at: datetime | None = None
@@ -1082,6 +1504,7 @@ class CatalogOverview(BaseModel):
     active_runs: list[ActiveFlowRun] = Field(default_factory=list)
     runs: PaginatedFlowRuns
     scheduler: SchedulerStatusOut
+    schedulers: list[SchedulerStatusOut] = Field(default_factory=list)
     default_namespace_id: int | None = None
 
 
@@ -1129,6 +1552,8 @@ class NotebookOut(BaseModel):
     updated_at: datetime
     namespace_name: str | None = None
     access: AccessInfo | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negatives of its ids there.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1146,6 +1571,8 @@ class NotebookSummaryOut(BaseModel):
     updated_at: datetime
     namespace_name: str | None = None
     access: AccessInfo | None = None
+    # Which catalog keeps the row; a remote catalog's row carries the negatives of its ids there.
+    source: Literal["local", "hub"] = "local"
 
     model_config = ConfigDict(from_attributes=True)
 

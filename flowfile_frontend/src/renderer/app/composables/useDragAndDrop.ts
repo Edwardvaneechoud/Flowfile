@@ -15,7 +15,6 @@ import type {
   NodeHandle,
   VueFlowInput,
   NodeCopyInput,
-  NodeCopyValue,
   NodePromise,
   MultiNodeCopyValue,
   GraphOperation,
@@ -38,12 +37,14 @@ import {
 } from "./useNodeGroups";
 import { fetchNodeTemplates } from "./useNodes";
 import { useEditorStore } from "../stores/editor-store";
+import { useFlowStore } from "../stores/flow-store";
 import { useTutorialStore } from "../stores/tutorial-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
 import { DEFAULT_OUTPUT_HANDLE, outputHandle } from "../utils/outputHandle";
 import { deriveHandles } from "../utils/nodeHandles";
 import {
   findAutoConnectMatch,
+  freeInputHandles,
   preferUnusedOutputs,
   type AutoConnectDrop,
   type AutoConnectMatch,
@@ -239,6 +240,10 @@ function missingNodeTemplate(node: NodeInput): NodeTemplate {
     custom_node: true,
     output_names: node.output_names,
     dynamic_inputs: node.dynamic_inputs,
+    inputs: node.inputs,
+    outputs: node.outputs,
+    input_labels: node.input_labels,
+    control_input_indices: node.control_input_indices,
   };
 }
 
@@ -306,57 +311,16 @@ export async function getComponent(node: NodeTemplate | string): Promise<any> {
   return componentPromise;
 }
 
-async function getComponentRaw(item: string): Promise<any> {
-  const nodeTemplate = await getNodeTemplateByItem(item);
-
-  if (!nodeTemplate) {
-    throw new Error(`Node template not found for item: ${item}`);
-  }
-
-  const formattedItemName = toTitleCase(nodeTemplate.item);
-  const dirName = toCamelCase(nodeTemplate.item);
-
-  // Use CustomNode for nodes marked as custom_node, otherwise use specific component
-  const modulePath = nodeTemplate.custom_node
-    ? "../components/nodes/node-types/elements/customNode/CustomNode.vue"
-    : `../components/nodes/node-types/elements/${dirName}/${formattedItemName}.vue`;
-
-  console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node);
-
-  // Validate module names to prevent path traversal (only needed for non-custom nodes)
-  if (
-    !nodeTemplate.custom_node &&
-    (!isValidModuleName(formattedItemName) || !isValidModuleName(dirName))
-  ) {
-    throw new Error(`Invalid module name: ${formattedItemName}`);
-  }
-
-  // Use Object.hasOwn to safely check module exists (prevents prototype pollution)
-  if (!Object.hasOwn(nodeModules, modulePath)) {
-    const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`);
-    console.error("Failed to load component:", formattedItemName, error);
-    console.log("Available modules:", Object.keys(nodeModules));
-    throw error;
-  }
-
-  // Safe to access after hasOwn check
-  const moduleLoader = nodeModules[modulePath];
-
-  if (typeof moduleLoader !== "function") {
-    const error = new Error(`Invalid module loader for: ${formattedItemName}`);
-    console.error("Failed to load component:", formattedItemName, error);
-    throw error;
-  }
-
-  return moduleLoader()
-    .then((module: any) => markRaw(module.default))
-    .catch((error) => {
-      console.error("Failed to load component:", formattedItemName, error);
-      throw error;
-    });
-}
-
 export default function useDragAndDrop() {
+  const flowStore = useFlowStore();
+  let canvasGeneration = 0;
+  watch(
+    () => [flowStore.flowId, flowStore.pendingReloadCounter],
+    () => {
+      canvasGeneration += 1;
+    },
+    { flush: "sync" },
+  );
   const { draggedType, isDragOver, isDragging } = state;
 
   const {
@@ -517,9 +481,7 @@ export default function useDragAndDrop() {
         {
           id: node.id,
           ...rect,
-          freeInputs: (data.inputs ?? [])
-            .filter((h) => h.position === Position.Left && (multi || !occupied.has(h.id)))
-            .map((h) => h.id),
+          freeInputs: freeInputHandles(data.inputs ?? [], occupied, multi),
           outputs: preferUnusedOutputs(
             (data.outputs ?? []).map((h) => h.id),
             used,
@@ -656,6 +618,7 @@ export default function useDragAndDrop() {
    * keeps its place among the user's edits; the canvas shows the node once core has it.
    */
   async function createCopyNode(node: NodeCopyInput): Promise<boolean> {
+    const generation = canvasGeneration;
     const nodeId: number = getId();
     const nodePromise: NodePromise = {
       node_id: nodeId,
@@ -668,45 +631,20 @@ export default function useDragAndDrop() {
     const copied = FlowApi.copyNode(node.nodeIdToCopyFrom, node.flowIdToCopyFrom, nodePromise);
     let newNode: Node;
     try {
-      [newNode] = await Promise.all([
-        buildCopiedNode(node, nodeId, { x: node.posX, y: node.posY }),
-        copied,
-      ]);
+      await copied;
+      // Core copies the source's current settings, not the clipboard's handle snapshot.
+      const flowData = await FlowApi.getFlowData(node.flowId);
+      const copiedNode = flowData.node_inputs.find((input) => input.id === nodeId);
+      if (!copiedNode) throw new Error(`Copied node ${nodeId} is missing from core`);
+      newNode = await getNodeToAdd(copiedNode);
     } catch (error) {
       recoverFromFailedMutation(error, "Failed to paste node");
       return false;
     }
+    // The mutation succeeded, but a newer canvas load owns projection now.
+    if (generation !== canvasGeneration || flowStore.flowId !== node.flowId) return true;
     addNodes(newNode);
     return true;
-  }
-
-  /** A pasted node's canvas node; handle snapshots from copy time win over the template's counts. */
-  async function buildCopiedNode(
-    node: NodeCopyValue,
-    newNodeId: number,
-    position: { x: number; y: number },
-  ): Promise<Node> {
-    const component = await getComponentRaw(node.type);
-    const derived = deriveHandles({
-      input: node.numberOfInputs,
-      output: node.numberOfOutputs,
-      dynamic_inputs: node.nodeTemplate?.dynamic_inputs,
-      output_names: node.nodeTemplate?.output_names,
-      input_labels: node.nodeTemplate?.input_labels,
-    });
-    return {
-      id: String(newNodeId),
-      type: "custom-node",
-      position,
-      data: {
-        id: newNodeId,
-        label: node.label,
-        component: markRaw(component),
-        inputs: node.inputHandles ?? derived.inputs,
-        outputs: node.outputHandles ?? derived.outputs,
-        nodeTemplate: node.nodeTemplate,
-      },
-    };
   }
 
   const getMaxDataId = (nodes: NodeInput[]): number => {
@@ -843,25 +781,7 @@ export default function useDragAndDrop() {
     else addNodes(allNodes);
     seedNodeId(getMaxDataId(flowData.node_inputs));
 
-    // Add labels to edges from source node output handles, node_reference, or df_{nodeId} default
-    const editorStore = useEditorStore();
-    const edgesWithLabels = flowData.node_edges.map((edge) => {
-      if (!editorStore.showEdgeLabels) return edge;
-      const sourceNode = childNodes.find((n) => n.id === edge.source);
-      if (sourceNode?.data?.outputs) {
-        const output = (sourceNode.data.outputs as NodeHandle[]).find(
-          (o) => o.id === edge.sourceHandle,
-        );
-        if (output?.label) {
-          return { ...edge, label: output.label };
-        }
-      }
-      if (sourceNode?.data?.nodeReference) {
-        return { ...edge, label: sourceNode.data.nodeReference };
-      }
-      return { ...edge, label: `df_${sourceNode?.data?.id ?? edge.source}` };
-    });
-
+    const edgesWithLabels = labelEdges(flowData.node_edges, childNodes);
     if (keepExisting) {
       // Drop edges core no longer has first, or a rewired single input is refused as occupied.
       const incoming = new Set(edgesWithLabels.map(edgeKey));
@@ -990,6 +910,26 @@ export default function useDragAndDrop() {
     }
   }
 
+  function labelEdges(edges: Edge[], nodes: Node[]): Edge[] {
+    const editorStore = useEditorStore();
+    return edges.map((edge) => {
+      if (!editorStore.showEdgeLabels) return edge;
+      const sourceNode = nodes.find((n) => n.id === edge.source);
+      if (sourceNode?.data?.outputs) {
+        const output = (sourceNode.data.outputs as NodeHandle[]).find(
+          (o) => o.id === edge.sourceHandle,
+        );
+        if (output?.label) {
+          return { ...edge, label: output.label };
+        }
+      }
+      if (sourceNode?.data?.nodeReference) {
+        return { ...edge, label: sourceNode.data.nodeReference };
+      }
+      return { ...edge, label: `df_${sourceNode?.data?.id ?? edge.source}` };
+    });
+  }
+
   /** Paste several copied nodes plus the edges between them as one step. */
   async function createMultiCopyNodes(
     multiCopyValue: MultiNodeCopyValue,
@@ -997,6 +937,7 @@ export default function useDragAndDrop() {
     baseY: number,
     flowId: number,
   ): Promise<boolean> {
+    const generation = canvasGeneration;
     const nodeIdMapping: Map<number, number> = new Map();
     const nodeInfos = multiCopyValue.nodes.map((node, i) => {
       const newNodeId = getId();
@@ -1024,34 +965,11 @@ export default function useDragAndDrop() {
         },
       }),
     );
-    const newEdges: Edge[] = [];
+    let newEdges: Edge[] = [];
     for (const edge of multiCopyValue.edges) {
       const newSourceId = nodeIdMapping.get(edge.sourceNodeId);
       const newTargetId = nodeIdMapping.get(edge.targetNodeId);
       if (newSourceId === undefined || newTargetId === undefined) continue;
-      const sourceNodeInfo = multiCopyValue.nodes.find(
-        (n) => n.nodeIdToCopyFrom === edge.sourceNodeId,
-      );
-      const outputIndex = parseInt(edge.sourceHandle.replace("output-", ""), 10);
-      const snapshotHandles = sourceNodeInfo?.outputHandles;
-      const snapshotLabel =
-        snapshotHandles && snapshotHandles.length > 1
-          ? snapshotHandles[outputIndex]?.label
-          : undefined;
-      const outputLabel =
-        snapshotLabel ??
-        (sourceNodeInfo?.nodeTemplate?.output_names &&
-        sourceNodeInfo.nodeTemplate.output_names.length > 1
-          ? sourceNodeInfo.nodeTemplate.output_names[outputIndex]
-          : undefined);
-      newEdges.push({
-        id: `e${newSourceId}-${newTargetId}-${edge.sourceHandle}-${edge.targetHandle}`,
-        source: String(newSourceId),
-        target: String(newTargetId),
-        sourceHandle: edge.sourceHandle,
-        targetHandle: edge.targetHandle,
-        ...(outputLabel ? { label: outputLabel } : {}),
-      });
       operations.push({
         op: "connect",
         connection: connection(newSourceId, edge.sourceHandle, newTargetId, edge.targetHandle),
@@ -1064,20 +982,33 @@ export default function useDragAndDrop() {
       `Paste ${plural(nodeInfos.length, "node")}`,
       operations,
     );
-    const building = Promise.all(
-      nodeInfos.map(({ node, newNodeId, offsetX, offsetY }) =>
-        buildCopiedNode(node, newNodeId, { x: offsetX, y: offsetY }),
-      ),
-    );
     let newNodes: Node[];
     try {
-      [newNodes] = await Promise.all([building, pasted]);
+      await pasted;
+      const flowData = await FlowApi.getFlowData(flowId);
+      const copiedNodes = new Map(flowData.node_inputs.map((node) => [node.id, node]));
+      newNodes = await Promise.all(
+        nodeInfos.map(({ newNodeId }) => {
+          const copiedNode = copiedNodes.get(newNodeId);
+          if (!copiedNode) throw new Error(`Copied node ${newNodeId} is missing from core`);
+          return getNodeToAdd(copiedNode);
+        }),
+      );
+      const copiedIds = new Set(newNodes.map((node) => node.id));
+      newEdges = labelEdges(
+        flowData.node_edges.filter(
+          (edge) => copiedIds.has(edge.source) && copiedIds.has(edge.target),
+        ),
+        newNodes,
+      );
     } catch (error) {
       recoverFromFailedMutation(error, "Failed to paste nodes");
       return false;
     }
+    if (generation !== canvasGeneration || flowStore.flowId !== flowId) return true;
     addNodes(newNodes);
     await nextTick();
+    if (generation !== canvasGeneration || flowStore.flowId !== flowId) return true;
     addEdges(newEdges);
     return true;
   }

@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   e2e-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Playwright 1.57 has no chromium build for ubuntu-latest (26.04)
     timeout-minutes: 30
 
     steps:
@@ -108,6 +108,7 @@ jobs:
 
       # Start backend server in background; `poetry -P` keeps the empty working directory (Poetry 2's -C cds into the repo).
       - name: Start backend server
+        id: backend
         working-directory: ${{ runner.temp }}/core_cwd
         # Telemetry off: an undecided consent renders a modal over the designer.
         env:
@@ -126,7 +127,7 @@ jobs:
             sleep 2
           done
 
-      # csp.spec.ts mounts graphic-walker, which needs chart data from the worker.
+      # csp.spec.ts, the dashboard*.spec.ts specs and chart-ai.spec.ts mount graphic-walker, which needs chart data from the worker.
       - name: Start worker server
         working-directory: ${{ runner.temp }}/worker_cwd
         run: |
@@ -163,7 +164,43 @@ jobs:
           TEST_URL: http://localhost:4173
           API_URL: http://localhost:63578
           E2E_AWS_PROFILE_CONFIGURED: '1'
-        run: npx playwright test tests/web-flow.spec.ts tests/two-tabs-sync.spec.ts tests/notebook-popout.spec.ts tests/drawer-conflict.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts tests/notebook-interactions.spec.ts tests/csp.spec.ts tests/group-by.spec.ts tests/pivot-unpivot.spec.ts tests/output-drawer.spec.ts tests/cloud-storage-flow.spec.ts tests/compute-banner.spec.ts tests/placement-picker.spec.ts tests/placement-fallback.spec.ts tests/drawer-general-settings.spec.ts tests/history-hotkeys.spec.ts --reporter=html
+        run: npx playwright test tests/web-flow.spec.ts tests/two-tabs-sync.spec.ts tests/notebook-popout.spec.ts tests/drawer-conflict.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts tests/notebook-interactions.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/dashboard-ai.spec.ts tests/dashboard-ai-map.spec.ts tests/chart-ai.spec.ts tests/group-by.spec.ts tests/pivot-unpivot.spec.ts tests/output-drawer.spec.ts tests/cloud-storage-flow.spec.ts tests/compute-banner.spec.ts tests/placement-picker.spec.ts tests/placement-fallback.spec.ts tests/drawer-general-settings.spec.ts tests/project.spec.ts tests/history-hotkeys.spec.ts --reporter=html
+
+      # Clipboard lifecycle tests inspect live stores to detect recovery reloads
+      # and control paste races. Keep these separate from production-build E2E.
+      - name: Run clipboard lifecycle regressions against Vite
+        # Without a backend every test only reports a refused connection.
+        if: (success() || failure()) && steps.backend.outcome == 'success'
+        working-directory: flowfile_frontend
+        env:
+          TEST_URL: http://localhost:4174
+          API_URL: http://localhost:63578
+        run: |
+          npm run dev:web -- --host 127.0.0.1 --port 4174 --strictPort > "$RUNNER_TEMP/clipboard-vite.log" 2>&1 &
+          vite_pid=$!
+          trap 'kill "$vite_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for i in {1..30}; do
+            if curl -fsS http://localhost:4174/app/stores/flow-store.ts >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != true ]; then
+            exit 1
+          fi
+          npx playwright test tests/canvas-clipboard.spec.ts --retries=0 --workers=1 --reporter=line --output=clipboard-test-results
+
+      - name: Upload clipboard lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipboard-lifecycle-results
+          path: |
+            flowfile_frontend/clipboard-test-results/
+            ${{ runner.temp }}/clipboard-vite.log
+          if-no-files-found: warn
 
       # A server that writes into its working directory resolved a path it should have refused.
       - name: Check the servers wrote nothing into their working directories

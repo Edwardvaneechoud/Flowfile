@@ -1,13 +1,14 @@
 """Git-friendly Flowfile project endpoints (JWT-gated).
 
-Projection (DB→files) happens automatically elsewhere; these endpoints cover the
-explicit boundaries: create a project, open/rebuild one, check status, save a version.
-There is deliberately no "export" or "apply" endpoint — the folder stays in sync on its own.
+These endpoints cover the explicit boundaries: create a project, open/rebuild one, check status,
+save a version (the one write of the folder besides init, the settings toggle and a restore).
+``POST /plan`` only previews what a restore or reload would change.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi import Path as FPath
@@ -17,26 +18,38 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
+from flowfile_core.flowfile.community_nodes import github_client
+from flowfile_core.flowfile.community_nodes.github_client import (
+    GithubApiError,
+    GithubAuthError,
+    GithubNotConfiguredError,
+)
 from flowfile_core.project import git_ops, project_sync
 from flowfile_core.project.git_ops import _SHA_RE
 from flowfile_core.project.importer import ImportTooLargeError
 from flowfile_core.project.models import ActiveProject, NoActiveProjectError
 from flowfile_core.project.service import project_root_base
+from flowfile_core.routes.community_github import _api_http, _auth_http, _not_configured
 from flowfile_core.secret_manager.secret_manager import SecretInput, upsert_secret
 from shared.storage_config import storage
 
 
+def _multi_user_server() -> bool:
+    """Docker or a server run by hand, read where ``is_docker_mode`` reads it."""
+    return settings.FLOWFILE_MODE in ("docker", "server")
+
+
 def require_projects_enabled() -> None:
-    """404 (not 403/503) in docker unless an operator opted in: in a multi-tenant deployment the
+    """404 (not 403/503) on a multi-user server unless an operator opted in: in a multi-tenant deployment the
     git-tracking router does not exist by default. package/electron are always on."""
-    if settings.is_docker_mode() and not settings.FLOWFILE_ENABLE_PROJECTS:
+    if _multi_user_server() and not settings.FLOWFILE_ENABLE_PROJECTS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
 def require_projects_admin(current_user=Depends(get_current_active_user)) -> None:
-    """In docker mode the git-tracking router is admin-only (404, matching require_projects_enabled,
+    """On a multi-user server the git-tracking router is admin-only (404, matching require_projects_enabled,
     so the endpoints stay undisclosed to non-admins). electron/package are single-user and unrestricted."""
-    if settings.is_docker_mode() and not getattr(current_user, "is_admin", False):
+    if _multi_user_server() and not getattr(current_user, "is_admin", False):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
@@ -65,6 +78,7 @@ class OpenProjectRequest(BaseModel):
 
 class SaveVersionRequest(BaseModel):
     message: str
+    overwrite: bool = False
 
 
 class RestoreRequest(BaseModel):
@@ -76,6 +90,17 @@ class RestoreRequest(BaseModel):
     @classmethod
     def _validate_sha(cls, v: str) -> str:
         if not _SHA_RE.match(v):
+            raise ValueError(f"sha must be 7-40 hex characters, got {v!r}")
+        return v
+
+
+class PlanRequest(BaseModel):
+    sha: str | None = None
+
+    @field_validator("sha")
+    @classmethod
+    def _validate_sha(cls, v: str | None) -> str | None:
+        if v is not None and not _SHA_RE.match(v):
             raise ValueError(f"sha must be 7-40 hex characters, got {v!r}")
         return v
 
@@ -104,12 +129,15 @@ class ImportedCounts(BaseModel):
     flows: int
     connections: int
     schedules: int
+    by_kind: dict[str, int] = {}
 
 
 class SetupResultOut(BaseModel):
     imported: ImportedCounts
     placeholder_secrets: list[str]
-    prune_errors: list[str]
+    unknown_kinds: list[str] = []
+    not_applied: list[str] = []
+    incomplete: list[str] = []
     recovery_sha: str | None = None
 
 
@@ -125,7 +153,10 @@ class ActiveProjectOut(BaseModel):
     project: ProjectPayload | None = None
     has_external_changes: bool | None = None
     dirty: bool | None = None
-    projection_failed: bool | None = None
+    external_edits: bool | None = None
+    projection_failed: bool | None = Field(
+        default=None, deprecated="Always false: no save writes into the project folder any more."
+    )
 
 
 class SettingsOut(BaseModel):
@@ -231,7 +262,8 @@ def get_active(current_user=Depends(get_current_active_user)) -> ActiveProjectOu
         project=_payload(project),
         has_external_changes=project_sync.has_external_changes(current_user.id),
         dirty=project_sync.has_uncommitted_changes(current_user.id),
-        projection_failed=project_sync.projection_failed(current_user.id),
+        external_edits=project_sync.external_edits(current_user.id),
+        projection_failed=False,
     )
 
 
@@ -241,15 +273,19 @@ def update_settings(req: UpdateSettingsRequest, current_user=Depends(get_current
         value = project_sync.update_settings(current_user.id, req.track_data_artifacts)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return SettingsOut(track_data_artifacts=value)
 
 
 @router.post("/versions", response_model=SaveVersionOut)
 def save_version(req: SaveVersionRequest, current_user=Depends(get_current_active_user)) -> SaveVersionOut:
     try:
-        sha = project_sync.save_version(current_user.id, req.message)
+        sha = project_sync.save_version(current_user.id, req.message, req.overwrite)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return SaveVersionOut(sha=sha)
 
 
@@ -278,15 +314,18 @@ def restore_version(req: RestoreRequest, current_user=Depends(get_current_active
 _SHA_PATH = FPath(..., pattern=r"^[0-9a-fA-F]{7,40}$")
 
 
-@router.get("/versions/{sha}/changes", response_model=ChangesOut)
+@router.get("/versions/{sha}/changes", response_model=ChangesOut, deprecated=True)
 def version_changes(
     sha: str = _SHA_PATH,
     current_user=Depends(get_current_active_user),
 ) -> ChangesOut:
+    """What restoring ``sha`` would change: ``POST /project/plan`` with ``{"sha": ...}``, kept for older clients."""
     try:
-        changes = project_sync.changes_for_version(current_user.id, sha)
+        changes = project_sync.plan(current_user.id, sha)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return ChangesOut(changes=changes)
 
 
@@ -305,9 +344,22 @@ def version_diff(
 @router.get("/uncommitted", response_model=ChangesOut)
 def uncommitted(current_user=Depends(get_current_active_user)) -> ChangesOut:
     try:
-        changes = project_sync.uncommitted_changes(current_user.id)
+        changes = project_sync.unsaved_changes(current_user.id)
     except NoActiveProjectError as e:
         raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
+    return ChangesOut(changes=changes)
+
+
+@router.post("/plan", response_model=ChangesOut)
+def plan(req: PlanRequest | None = None, current_user=Depends(get_current_active_user)) -> ChangesOut:
+    try:
+        changes = project_sync.plan(current_user.id, req.sha if req is not None else None)
+    except NoActiveProjectError as e:
+        raise _no_active_project(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
     return ChangesOut(changes=changes)
 
 
@@ -334,5 +386,253 @@ def fill_secrets(req: FillSecretsRequest, current_user=Depends(get_current_activ
     with get_db_context() as db:
         for item in req.secrets:
             upsert_secret(db, SecretInput(name=item.name, value=SecretStr(item.value)), current_user.id)
-    project_sync.secret_changed(current_user.id)
     return UpdatedOut(updated=len(req.secrets))
+
+
+class BranchRow(BaseModel):
+    name: str
+    sha: str
+    current: bool
+    ahead: int | None = None
+    behind: int | None = None
+
+
+class BranchStateOut(BaseModel):
+    current: str | None
+    branches: list[BranchRow]
+    remote: str | None
+    has_token: bool
+
+
+class CreateBranchRequest(BaseModel):
+    name: str
+    switch: bool = True
+
+
+class CreateBranchOut(BaseModel):
+    name: str
+    sha: str
+
+
+class SwitchBranchRequest(BaseModel):
+    name: str
+    force: bool = False
+
+
+class RemoteRequest(BaseModel):
+    url: str = Field(max_length=2048)
+    token: SecretStr | None = None
+    username: str | None = Field(default=None, max_length=200)
+
+
+class PushOut(BaseModel):
+    branch: str
+    sha: str | None
+    unsaved: bool
+
+
+class PullRequest(BaseModel):
+    force: bool = False
+
+
+class MergeItem(BaseModel):
+    path: str
+    key: str | None
+    kind: str
+    label: str
+    message: str
+    step_id: int | None = None
+    ours_label: str
+    theirs_label: str
+    ours: list[str]
+    theirs: list[str]
+
+
+class MergeStateOut(BaseModel):
+    branch: str
+    ours: str
+    theirs: str
+    sides: dict[str, str]
+    conflicts: list[MergeItem]
+    flows: list[str]
+    warnings: list[str]
+
+
+class PullOut(BaseModel):
+    state: str
+    sha: str | None = None
+    result: SetupResultOut | None = None
+    conflicts: list[MergeItem] = []
+    warnings: list[str] = []
+
+
+class MergeStatusOut(BaseModel):
+    merge: MergeStateOut | None
+
+
+class SettleRequest(BaseModel):
+    path: str = Field(max_length=1024)
+    key: str | None = Field(default=None, max_length=200)
+    take: Literal["ours", "theirs"]
+    force: bool = False
+
+
+class SettleOut(BaseModel):
+    merge: MergeStateOut | None = None
+    pull: PullOut | None = None
+
+
+class OpenMergeFlowRequest(BaseModel):
+    path: str = Field(max_length=1024)
+
+
+class OpenMergeFlowOut(BaseModel):
+    flow_id: int
+
+
+class ConcludeRequest(BaseModel):
+    force: bool = False
+
+
+def _git_error(e: git_ops.GitRemoteError) -> HTTPException:
+    detail = {"code": "GIT_REFUSED", "message": str(e)}
+    if isinstance(e, git_ops.UnmergedFilesError):
+        detail["paths"] = e.paths
+    return HTTPException(status.HTTP_409_CONFLICT, detail)
+
+
+def _pull_out(result) -> PullOut:
+    return PullOut(
+        state=result.state,
+        sha=result.sha,
+        result=SetupResultOut(**result.result.to_dict()) if result.result is not None else None,
+        conflicts=[MergeItem(**row) for row in result.conflicts],
+        warnings=result.warnings,
+    )
+
+
+def _project_call(call, *args):
+    try:
+        return call(*args)
+    except NoActiveProjectError as e:
+        raise _no_active_project(e) from e
+    except git_ops.GitRemoteError as e:
+        raise _git_error(e) from e
+    except ValueError as e:
+        raise _import_error(e) from e
+
+
+@router.get("/branches", response_model=BranchStateOut)
+def list_branches(current_user=Depends(get_current_active_user)) -> BranchStateOut:
+    return BranchStateOut(**_project_call(project_sync.branch_state, current_user.id))
+
+
+@router.post("/branches", response_model=CreateBranchOut, status_code=status.HTTP_201_CREATED)
+def create_branch(req: CreateBranchRequest, current_user=Depends(get_current_active_user)) -> CreateBranchOut:
+    return CreateBranchOut(**_project_call(project_sync.create_branch, current_user.id, req.name, req.switch))
+
+
+@router.post("/branches/switch", response_model=SetupResultOut)
+def switch_branch(req: SwitchBranchRequest, current_user=Depends(get_current_active_user)) -> SetupResultOut:
+    result = _project_call(project_sync.switch_branch, current_user.id, req.name, req.force)
+    return SetupResultOut(**result.to_dict())
+
+
+@router.put("/remote", response_model=BranchStateOut)
+def set_remote(req: RemoteRequest, current_user=Depends(get_current_active_user)) -> BranchStateOut:
+    """Set the remote's address and, when given, this person's token for it (kept as a secret, never answered)."""
+    token = req.token.get_secret_value() if req.token is not None else None
+    state = _project_call(project_sync.set_remote, current_user.id, req.url, token, req.username)
+    return BranchStateOut(**state)
+
+
+# A project repository may be private, which an OAuth app reaches only with the ``repo`` scope.
+GITHUB_REMOTE_SCOPE = "repo"
+
+
+class GithubDevicePollRequest(BaseModel):
+    device_code: str = Field(max_length=200)
+
+
+class GithubDevicePollOut(BaseModel):
+    status: Literal["pending", "slow_down", "connected"]
+    interval: int | None = None
+    login: str = ""
+
+
+def _github_error(e: Exception) -> HTTPException:
+    """The community publishing routes' typed answers (never 401, which the client reads as a lapsed session)."""
+    if isinstance(e, GithubNotConfiguredError):
+        return _not_configured(e)
+    if isinstance(e, GithubAuthError):
+        return _auth_http(e)
+    return _api_http(e)
+
+
+@router.post("/remote/github/device/start", response_model=github_client.DeviceStart)
+def remote_github_device_start(current_user=Depends(get_current_active_user)) -> github_client.DeviceStart:
+    """Begin a GitHub sign-in whose token becomes this person's remote token, as the node designer's publishing does."""
+    try:
+        return github_client.device_start(scope=GITHUB_REMOTE_SCOPE)
+    except (GithubNotConfiguredError, GithubApiError) as e:
+        raise _github_error(e) from e
+
+
+@router.post("/remote/github/device/poll", response_model=GithubDevicePollOut)
+def remote_github_device_poll(
+    req: GithubDevicePollRequest, current_user=Depends(get_current_active_user)
+) -> GithubDevicePollOut:
+    """Poll the sign-in once; once GitHub grants it, the token is kept as the remote token and never answered."""
+    try:
+        result = github_client.device_poll(req.device_code)
+        if result.status != "success":
+            return GithubDevicePollOut(status=result.status, interval=result.interval)
+        login = github_client.fetch_login(result.access_token)
+    except (GithubNotConfiguredError, GithubAuthError, GithubApiError) as e:
+        raise _github_error(e) from e
+    _project_call(project_sync.keep_remote_token, current_user.id, result.access_token)
+    return GithubDevicePollOut(status="connected", login=login)
+
+
+@router.post("/push", response_model=PushOut)
+def push(current_user=Depends(get_current_active_user)) -> PushOut:
+    return PushOut(**_project_call(project_sync.push, current_user.id))
+
+
+@router.post("/pull", response_model=PullOut)
+def pull(req: PullRequest | None = None, current_user=Depends(get_current_active_user)) -> PullOut:
+    force = req.force if req is not None else False
+    return _pull_out(_project_call(project_sync.pull, current_user.id, force))
+
+
+@router.get("/merge", response_model=MergeStatusOut)
+def merge_status(current_user=Depends(get_current_active_user)) -> MergeStatusOut:
+    state = _project_call(project_sync.merge_state, current_user.id)
+    return MergeStatusOut(merge=MergeStateOut(**state) if state is not None else None)
+
+
+@router.post("/merge/settle", response_model=SettleOut)
+def settle_merge(req: SettleRequest, current_user=Depends(get_current_active_user)) -> SettleOut:
+    """Settle one item; settling the last concludes the merge, answered as the pull it finishes."""
+    answer = _project_call(project_sync.settle_merge, current_user.id, req.path, req.take, req.key, req.force)
+    if isinstance(answer, dict) or answer is None:
+        return SettleOut(merge=MergeStateOut(**answer) if answer else None)
+    return SettleOut(pull=_pull_out(answer))
+
+
+@router.post("/merge/conclude", response_model=PullOut)
+def conclude_merge(req: ConcludeRequest | None = None, current_user=Depends(get_current_active_user)) -> PullOut:
+    force = req.force if req is not None else False
+    return _pull_out(_project_call(project_sync.conclude_merge, current_user.id, force))
+
+
+@router.post("/merge/abort", response_model=OkOut)
+def abort_merge(current_user=Depends(get_current_active_user)) -> OkOut:
+    _project_call(project_sync.abort_merge, current_user.id)
+    return OkOut(ok=True)
+
+
+@router.post("/merge/open", response_model=OpenMergeFlowOut)
+def open_merge_flow(req: OpenMergeFlowRequest, current_user=Depends(get_current_active_user)) -> OpenMergeFlowOut:
+    """Open a conflicted flow of the waiting merge in the editor, where its steps are settled one by one."""
+    return OpenMergeFlowOut(flow_id=_project_call(project_sync.open_merge_flow, current_user.id, req.path))

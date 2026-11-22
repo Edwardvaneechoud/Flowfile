@@ -34,11 +34,45 @@ let tablePreviewRequestToken = 0;
 
 // Selected history follows the artifact-versions request ownership idiom.
 let tableHistoryRequestToken = 0;
+
+// A tree refresh that resolves after a newer one must not put the older tree back.
+let treeRequestToken = 0;
+
+// Newest overview wins; a slice whose own loader started while one was out keeps its newer data.
+let overviewRequestToken = 0;
+const sliceRequests = {
+  flows: 0,
+  tables: 0,
+  stats: 0,
+  favorites: 0,
+  schedules: 0,
+  activeRuns: 0,
+  schedulers: 0,
+};
+
+// Newest request wins for each slice below; a response for an item no longer selected is dropped too.
+let runsRequestToken = 0;
+let flowRunsRequestToken = 0;
+let flowSchedulesRequestToken = 0;
+let flowArtifactsRequestToken = 0;
+let runDetailRequestToken = 0;
+let scheduleDetailRequestToken = 0;
+let scheduleRunsRequestToken = 0;
 // Cache ownership is per table: background maintenance must not cancel the selected read.
 const tableHistoryCacheRequests: Record<number, symbol> = {};
 
+/** A runs trigger filter as the runs route takes it: `schedule:<id>` names a schedule, anything else a run type. */
+function triggerFilterParams(filter: string | null): { scheduleId?: number; runType?: string } {
+  if (!filter) return {};
+  if (filter.startsWith("schedule:")) return { scheduleId: Number(filter.split(":")[1]) };
+  return { runType: filter };
+}
+
 // Re-entering the catalog within this window reuses the last overview instead of refetching.
 export const OVERVIEW_TTL_MS = 30_000;
+
+/** The catalog items a route can select, which `holdsItem` looks up in the loaded overview. */
+export type CatalogItemKind = "namespace" | "table" | "flow" | "schedule" | "artifact";
 
 interface CatalogState {
   tree: NamespaceTree[];
@@ -50,17 +84,29 @@ interface CatalogState {
   runsTotalSuccess: number;
   runsTotalFailed: number;
   runsTotalRunning: number;
+  runsTotalCancelled: number;
   runsPage: number;
   runsPageSize: number;
   runsTriggerFilter: string | null;
   runsSearch: string | null;
+  runsError: string | null;
+  /** The flow page's runs, apart from the global `runs` page; `flowRunsFlowId` names the flow they belong to. */
+  flowRunsFlowId: number | null;
+  flowRunsData: PaginatedFlowRuns | null;
+  flowRunsPage: number;
+  flowRunsTriggerFilter: string | null;
+  flowRunsError: string | null;
+  /** Newest run of that flow with a snapshot, read off its first unfiltered page only. */
+  flowLatestSnapshotRunId: number | null;
   stats: CatalogStats | null;
   selectedFlowId: number | null;
   selectedRunId: number | null;
   selectedRunDetail: FlowRunDetail | null;
+  runDetailError: string | null;
   selectedArtifactId: number | null;
   selectedArtifact: GlobalArtifact | null;
   flowArtifacts: GlobalArtifact[];
+  flowArtifactsFlowId: number | null;
   loadingArtifacts: boolean;
   artifactVersions: ArtifactVersionInfo[];
   artifactVersionsTotal: number;
@@ -82,20 +128,31 @@ interface CatalogState {
   allTables: CatalogTable[];
   schedules: FlowSchedule[];
   flowSchedules: FlowSchedule[];
+  flowSchedulesFlowId: number | null;
   selectedScheduleId: number | null;
   selectedSchedule: FlowSchedule | null;
+  scheduleDetailError: string | null;
+  /** The schedule whose detail was fetched; until then `selectedSchedule` is its unconfirmed list row. */
+  scheduleDetailLoadedId: number | null;
   scheduleRuns: FlowRun[];
+  scheduleRunsScheduleId: number | null;
+  scheduleRunsError: string | null;
   scheduleRunsTotal: number;
   scheduleRunsTotalSuccess: number;
   scheduleRunsTotalFailed: number;
   scheduleRunsTotalRunning: number;
+  scheduleRunsTotalCancelled: number;
   scheduleRunsPage: number;
   scheduleRunsTriggerFilter: string | null;
   activeRuns: ActiveFlowRun[];
-  schedulerStatus: SchedulerStatus | null;
+  // This install's scheduler first, then a remote catalog's, each saying whose once both are listed.
+  schedulers: SchedulerStatus[];
   defaultNamespaceId: number | null;
   overviewLoadedAt: number | null;
+  overviewError: string | null;
+  treeLoaded: boolean;
   activeTab: CatalogTab;
+  /** True only while the overview request is in flight; tree refreshes leave it alone. */
   loading: boolean;
   error: string | null;
   visualizationsByTable: Record<number, CatalogVisualization[]>;
@@ -148,17 +205,27 @@ export const useCatalogStore = defineStore("catalog", {
     runsTotalSuccess: 0,
     runsTotalFailed: 0,
     runsTotalRunning: 0,
+    runsTotalCancelled: 0,
     runsPage: 1,
     runsPageSize: 25,
     runsTriggerFilter: null,
     runsSearch: null,
+    runsError: null,
+    flowRunsFlowId: null,
+    flowRunsData: null,
+    flowRunsPage: 1,
+    flowRunsTriggerFilter: null,
+    flowRunsError: null,
+    flowLatestSnapshotRunId: null,
     stats: null,
     selectedFlowId: null,
     selectedRunId: null,
     selectedRunDetail: null,
+    runDetailError: null,
     selectedArtifactId: null,
     selectedArtifact: null,
     flowArtifacts: [],
+    flowArtifactsFlowId: null,
     loadingArtifacts: false,
     artifactVersions: [],
     artifactVersionsTotal: 0,
@@ -180,19 +247,27 @@ export const useCatalogStore = defineStore("catalog", {
     allTables: [],
     schedules: [],
     flowSchedules: [],
+    flowSchedulesFlowId: null,
     selectedScheduleId: null,
     selectedSchedule: null,
+    scheduleDetailError: null,
+    scheduleDetailLoadedId: null,
     scheduleRuns: [],
+    scheduleRunsScheduleId: null,
+    scheduleRunsError: null,
     scheduleRunsTotal: 0,
     scheduleRunsTotalSuccess: 0,
     scheduleRunsTotalFailed: 0,
     scheduleRunsTotalRunning: 0,
+    scheduleRunsTotalCancelled: 0,
     scheduleRunsPage: 1,
     scheduleRunsTriggerFilter: null,
     activeRuns: [],
-    schedulerStatus: null,
+    schedulers: [],
     defaultNamespaceId: null,
     overviewLoadedAt: null,
+    overviewError: null,
+    treeLoaded: false,
     activeTab: "runs",
     loading: false,
     error: null,
@@ -203,12 +278,35 @@ export const useCatalogStore = defineStore("catalog", {
   }),
 
   getters: {
+    /** The overview has landed once, so an empty slice it fills means empty, not "not loaded yet". */
+    overviewLoaded: (state): boolean => state.overviewLoadedAt !== null,
+
+    /** No overview has ever landed and the last attempt failed: views offer a retry. */
+    overviewFailed: (state): boolean =>
+      state.overviewLoadedAt === null && state.overviewError !== null,
+
+    schedulerStatus: (state): SchedulerStatus | null => state.schedulers[0] ?? null,
+
     selectedFlow: (state): FlowRegistration | null =>
       state.allFlows.find((f) => f.id === state.selectedFlowId) ?? null,
 
-    flowRuns: (state): FlowRun[] => {
-      if (state.selectedFlowId === null) return state.runs;
-      return state.runs.filter((r) => r.registration_id === state.selectedFlowId);
+    /** The flow page's runs page when it holds that flow's runs, else null: the one ownership check. */
+    flowRunsPageFor:
+      (state) =>
+      (flowId: number): PaginatedFlowRuns | null =>
+        state.flowRunsFlowId === flowId ? state.flowRunsData : null,
+
+    /** The selected run as far as it is known: its detail once loaded, else its row in a loaded runs list. */
+    selectedRun: (state): FlowRun | FlowRunDetail | null => {
+      const id = state.selectedRunId;
+      if (id === null) return null;
+      if (state.selectedRunDetail) return state.selectedRunDetail;
+      return (
+        state.runs.find((r) => r.id === id) ??
+        state.flowRunsData?.items.find((r) => r.id === id) ??
+        state.scheduleRuns.find((r) => r.id === id) ??
+        null
+      );
     },
 
     runsTotalPages: (state): number => Math.max(1, Math.ceil(state.runsTotal / state.runsPageSize)),
@@ -242,19 +340,22 @@ export const useCatalogStore = defineStore("catalog", {
   },
 
   actions: {
+    /** Refreshes the tree in place: the current tree stays shown until the new one replaces it. */
     async loadTree() {
-      this.loading = true;
+      const token = ++treeRequestToken;
       this.error = null;
       try {
-        this.tree = await CatalogApi.getNamespaceTree();
+        const tree = await CatalogApi.getNamespaceTree();
+        if (token !== treeRequestToken) return;
+        this.tree = tree;
+        this.treeLoaded = true;
       } catch (e: any) {
-        this.error = e?.message ?? "Failed to load catalog tree";
-      } finally {
-        this.loading = false;
+        if (token === treeRequestToken) this.error = e?.message ?? "Failed to load catalog tree";
       }
     },
 
     async loadAllFlows() {
+      sliceRequests.flows++;
       try {
         this.allFlows = await CatalogApi.getFlows();
       } catch (e: any) {
@@ -263,6 +364,7 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     async loadFavorites() {
+      sliceRequests.favorites++;
       try {
         this.favorites = await CatalogApi.getFavorites();
       } catch (e: any) {
@@ -278,67 +380,155 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
-    async loadRuns(registrationId?: number | null) {
+    /** The global runs page (Run History tab, StatsPanel); a flow page's runs are `loadFlowRuns`'. */
+    async loadRuns() {
+      const token = ++runsRequestToken;
       try {
         const offset = (this.runsPage - 1) * this.runsPageSize;
-        let scheduleId: number | undefined;
-        let runType: string | undefined;
-        if (this.runsTriggerFilter) {
-          if (this.runsTriggerFilter.startsWith("schedule:")) {
-            scheduleId = Number(this.runsTriggerFilter.split(":")[1]);
-          } else {
-            runType = this.runsTriggerFilter;
-          }
-        }
+        const { scheduleId, runType } = triggerFilterParams(this.runsTriggerFilter);
         const result = await CatalogApi.getRuns(
-          registrationId,
+          null,
           this.runsPageSize,
           offset,
           scheduleId,
           runType,
           this.runsSearch,
         );
+        if (token !== runsRequestToken) return;
         this.applyRunsPage(result);
       } catch (e: any) {
+        if (token !== runsRequestToken) return;
         this.error = e?.message ?? "Failed to load runs";
+        this.runsError = this.error;
       }
     },
 
+    /** One page of a flow's runs, kept apart so the global page and the flow page never show each other's. */
+    async loadFlowRuns(flowId: number) {
+      const token = ++flowRunsRequestToken;
+      const newestFirst = this.flowRunsPage === 1 && !this.flowRunsTriggerFilter;
+      try {
+        const offset = (this.flowRunsPage - 1) * this.runsPageSize;
+        const { scheduleId, runType } = triggerFilterParams(this.flowRunsTriggerFilter);
+        const result = await CatalogApi.getRuns(
+          flowId,
+          this.runsPageSize,
+          offset,
+          scheduleId,
+          runType,
+        );
+        if (token !== flowRunsRequestToken || this.selectedFlowId !== flowId) return;
+        this.flowRunsData = result;
+        this.flowRunsFlowId = flowId;
+        this.flowRunsError = null;
+        if (newestFirst) {
+          this.flowLatestSnapshotRunId = result.items.find((r) => r.has_snapshot)?.id ?? null;
+        }
+      } catch (e: any) {
+        if (token !== flowRunsRequestToken || this.selectedFlowId !== flowId) return;
+        this.flowRunsError = e?.message ?? "Failed to load runs";
+      }
+    },
+
+    /** Refreshes the global runs page and, while a flow is selected, that flow's page. */
+    async refreshRuns() {
+      const loads = [this.loadRuns()];
+      if (this.selectedFlowId !== null) loads.push(this.loadFlowRuns(this.selectedFlowId));
+      await Promise.all(loads);
+    },
+
+    setFlowRunsPage(page: number, flowId: number) {
+      this.flowRunsPage = page;
+      this.loadFlowRuns(flowId);
+    },
+
+    setFlowRunsTriggerFilter(filter: string | null, flowId: number) {
+      this.flowRunsTriggerFilter = filter;
+      this.flowRunsPage = 1;
+      this.loadFlowRuns(flowId);
+    },
+
+    /**
+     * Opens a flow's page: its runs, schedules and artifacts load, and a slice still holding
+     * another flow's data is emptied first so the page shows a placeholder, never that flow's rows.
+     * Nothing is awaited: each load fills its own slice and handles its own failure, and a view
+     * reads readiness off the slice's owner id (`flowRunsPageFor`, `flowSchedulesFlowId`, …).
+     */
+    loadFlowDetail(flowId: number) {
+      if (this.flowRunsFlowId !== flowId) {
+        this.flowRunsFlowId = null;
+        this.flowRunsData = null;
+        this.flowRunsPage = 1;
+        this.flowRunsTriggerFilter = null;
+        this.flowLatestSnapshotRunId = null;
+      }
+      this.flowRunsError = null;
+      if (this.flowSchedulesFlowId !== flowId) {
+        this.flowSchedulesFlowId = null;
+        this.flowSchedules = [];
+      }
+      if (this.flowArtifactsFlowId !== flowId) {
+        this.flowArtifactsFlowId = null;
+        this.flowArtifacts = [];
+      }
+      this.loadFlowRuns(flowId);
+      this.loadFlowArtifacts(flowId);
+      this.loadFlowSchedules(flowId);
+    },
+
     applyRunsPage(result: PaginatedFlowRuns) {
+      this.runsError = null;
       this.runs = result.items;
       this.runsTotal = result.total;
       this.runsTotalSuccess = result.total_success;
       this.runsTotalFailed = result.total_failed;
       this.runsTotalRunning = result.total_running;
+      this.runsTotalCancelled = result.total_cancelled ?? 0;
     },
 
-    setRunsPage(page: number, registrationId?: number | null) {
+    setRunsPage(page: number) {
       this.runsPage = page;
-      this.loadRuns(registrationId);
+      this.loadRuns();
     },
 
     setTriggerFilter(filter: string | null) {
       this.runsTriggerFilter = filter;
       this.runsPage = 1;
-      this.loadRuns(this.selectedFlowId);
+      this.loadRuns();
     },
 
     setRunsSearch(search: string | null) {
       this.runsSearch = search && search.trim() ? search.trim() : null;
       this.runsPage = 1;
-      this.loadRuns(this.selectedFlowId);
+      this.loadRuns();
     },
 
+    /** Selects a run at once; its detail replaces the row it is shown from when it arrives. */
     async loadRunDetail(runId: number) {
+      const token = ++runDetailRequestToken;
+      if (this.selectedRunId !== runId) this.selectedRunDetail = null;
+      this.selectedRunId = runId;
+      this.runDetailError = null;
       try {
-        this.selectedRunId = runId;
-        this.selectedRunDetail = await CatalogApi.getRunDetail(runId);
+        const detail = await CatalogApi.getRunDetail(runId);
+        if (token !== runDetailRequestToken || this.selectedRunId !== runId) return;
+        this.selectedRunDetail = detail;
       } catch (e: any) {
+        if (token !== runDetailRequestToken || this.selectedRunId !== runId) return;
         this.error = e?.message ?? "Failed to load run detail";
+        this.runDetailError = this.error;
       }
     },
 
+    clearRunSelection() {
+      runDetailRequestToken++;
+      this.selectedRunId = null;
+      this.selectedRunDetail = null;
+      this.runDetailError = null;
+    },
+
     async loadStats() {
+      sliceRequests.stats++;
       try {
         this.stats = await CatalogApi.getStats();
       } catch (e: any) {
@@ -415,13 +605,21 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     async loadFlowArtifacts(registrationId: number) {
+      const token = ++flowArtifactsRequestToken;
+      const stale = () =>
+        token !== flowArtifactsRequestToken || this.selectedFlowId !== registrationId;
       this.loadingArtifacts = true;
       try {
-        this.flowArtifacts = await CatalogApi.getFlowArtifacts(registrationId);
+        const artifacts = await CatalogApi.getFlowArtifacts(registrationId);
+        if (stale()) return;
+        this.flowArtifacts = artifacts;
+        this.flowArtifactsFlowId = registrationId;
       } catch {
+        if (stale()) return;
         this.flowArtifacts = [];
+        this.flowArtifactsFlowId = registrationId;
       } finally {
-        this.loadingArtifacts = false;
+        if (token === flowArtifactsRequestToken) this.loadingArtifacts = false;
       }
     },
 
@@ -560,6 +758,7 @@ export const useCatalogStore = defineStore("catalog", {
     // -- Catalog Table actions --
 
     async loadAllTables() {
+      sliceRequests.tables++;
       try {
         this.allTables = await CatalogApi.getTables();
       } catch (e: any) {
@@ -699,6 +898,18 @@ export const useCatalogStore = defineStore("catalog", {
       await this.loadAllTables();
     },
 
+    /** Restore a table to an earlier version, guarded by the version this window last saw. */
+    async restoreTableVersion(tableId: number, version: number) {
+      const expected =
+        this.selectedTableId === tableId ? (this.tableHistory?.current_version ?? null) : null;
+      const response = await CatalogApi.restoreTableVersion(tableId, {
+        version,
+        expected_version: expected,
+      });
+      await this.handleTableEdited(response.table);
+      return response;
+    },
+
     async optimizeTable(tableId: number, zOrderColumns?: string[] | null) {
       const result = await CatalogApi.optimizeTable(tableId, zOrderColumns);
       if (this.selectedTable && this.selectedTable.id === tableId) {
@@ -798,6 +1009,22 @@ export const useCatalogStore = defineStore("catalog", {
       return this.tree.find((c) => c.id === namespaceId) ?? null;
     },
 
+    /** Whether the loaded overview holds this item (a namespace at any depth of the tree). */
+    holdsItem(kind: CatalogItemKind, id: number): boolean {
+      switch (kind) {
+        case "namespace":
+          return this.tree.some((c) => c.id === id || (c.children ?? []).some((s) => s.id === id));
+        case "table":
+          return this.findTableInTree(id) !== null;
+        case "flow":
+          return this.allFlows.some((flow) => flow.id === id);
+        case "schedule":
+          return this.getScheduleById(id) !== undefined;
+        case "artifact":
+          return this.findArtifactInTree(id) !== null;
+      }
+    },
+
     selectNamespace(namespaceId: number) {
       this.selectedNamespaceId = namespaceId;
       this.selectedNamespace = this.findNamespaceInTree(namespaceId);
@@ -817,6 +1044,7 @@ export const useCatalogStore = defineStore("catalog", {
     // -- Schedule actions --
 
     async loadSchedules() {
+      sliceRequests.schedules++;
       try {
         this.schedules = await CatalogApi.getSchedules();
       } catch (e: any) {
@@ -825,17 +1053,38 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     async loadFlowSchedules(registrationId: number) {
+      const token = ++flowSchedulesRequestToken;
+      const stale = () =>
+        token !== flowSchedulesRequestToken || this.selectedFlowId !== registrationId;
       try {
-        this.flowSchedules = await CatalogApi.getSchedules(registrationId);
+        const schedules = await CatalogApi.getSchedules(registrationId);
+        if (stale()) return;
+        this.flowSchedules = schedules;
+        this.flowSchedulesFlowId = registrationId;
       } catch (e: any) {
+        if (stale()) return;
         this.error = e?.message ?? "Failed to load flow schedules";
+        // A first load that failed ends the placeholder; a failed refresh keeps the list shown.
+        if (this.flowSchedulesFlowId !== registrationId) {
+          this.flowSchedules = [];
+          this.flowSchedulesFlowId = registrationId;
+        }
       }
     },
 
     // -- Schedule detail actions --
 
+    /**
+     * Selects a schedule at once from its row in `schedules` when it has one; the fetched detail
+     * replaces it on arrival. Switching schedules empties the runs slice so the next one's runs
+     * show a placeholder, never the previous schedule's.
+     */
     async selectSchedule(scheduleId: number) {
-      this.selectedScheduleId = scheduleId;
+      if (this.selectedScheduleId !== scheduleId) {
+        this.clearScheduleSelection();
+        this.selectedScheduleId = scheduleId;
+        this.selectedSchedule = this.getScheduleById(scheduleId) ?? null;
+      }
       this.selectedFlowId = null;
       this.selectedRunId = null;
       this.selectedRunDetail = null;
@@ -847,15 +1096,28 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     async loadScheduleDetail(scheduleId: number) {
+      const token = ++scheduleDetailRequestToken;
+      const stale = () =>
+        token !== scheduleDetailRequestToken || this.selectedScheduleId !== scheduleId;
+      this.scheduleDetailError = null;
       try {
-        this.selectedSchedule = await CatalogApi.getSchedule(scheduleId);
+        const schedule = await CatalogApi.getSchedule(scheduleId);
+        if (stale()) return;
+        this.selectedSchedule = schedule;
+        this.scheduleDetailLoadedId = scheduleId;
       } catch (e: any) {
+        if (stale()) return;
         this.error = e?.message ?? "Failed to load schedule detail";
-        this.selectedSchedule = null;
+        this.scheduleDetailError = this.error;
+        // A row never confirmed by its own fetch may be gone; a failed refresh keeps the detail shown.
+        if (this.scheduleDetailLoadedId !== scheduleId) this.selectedSchedule = null;
       }
     },
 
     async loadScheduleRuns(scheduleId: number) {
+      const token = ++scheduleRunsRequestToken;
+      const stale = () =>
+        token !== scheduleRunsRequestToken || this.selectedScheduleId !== scheduleId;
       try {
         const offset = (this.scheduleRunsPage - 1) * this.runsPageSize;
         const runType = this.scheduleRunsTriggerFilter ?? undefined;
@@ -866,13 +1128,19 @@ export const useCatalogStore = defineStore("catalog", {
           scheduleId,
           runType,
         );
+        if (stale()) return;
         this.scheduleRuns = result.items;
         this.scheduleRunsTotal = result.total;
         this.scheduleRunsTotalSuccess = result.total_success;
         this.scheduleRunsTotalFailed = result.total_failed;
         this.scheduleRunsTotalRunning = result.total_running;
+        this.scheduleRunsTotalCancelled = result.total_cancelled ?? 0;
+        this.scheduleRunsScheduleId = scheduleId;
+        this.scheduleRunsError = null;
       } catch (e: any) {
+        if (stale()) return;
         this.error = e?.message ?? "Failed to load schedule runs";
+        this.scheduleRunsError = this.error;
       }
     },
 
@@ -888,13 +1156,20 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     clearScheduleSelection() {
+      scheduleDetailRequestToken++;
+      scheduleRunsRequestToken++;
       this.selectedScheduleId = null;
       this.selectedSchedule = null;
+      this.scheduleDetailError = null;
+      this.scheduleDetailLoadedId = null;
       this.scheduleRuns = [];
+      this.scheduleRunsScheduleId = null;
+      this.scheduleRunsError = null;
       this.scheduleRunsTotal = 0;
       this.scheduleRunsTotalSuccess = 0;
       this.scheduleRunsTotalFailed = 0;
       this.scheduleRunsTotalRunning = 0;
+      this.scheduleRunsTotalCancelled = 0;
       this.scheduleRunsPage = 1;
       this.scheduleRunsTriggerFilter = null;
     },
@@ -902,8 +1177,9 @@ export const useCatalogStore = defineStore("catalog", {
     // -- Scheduler actions --
 
     async loadSchedulerStatus() {
+      sliceRequests.schedulers++;
       try {
-        this.schedulerStatus = await CatalogApi.getSchedulerStatus();
+        this.schedulers = await CatalogApi.getSchedulers();
       } catch {
         // Non-critical — leave current state
       }
@@ -930,6 +1206,7 @@ export const useCatalogStore = defineStore("catalog", {
     // -- Active runs actions --
 
     async loadActiveRuns() {
+      sliceRequests.activeRuns++;
       try {
         this.activeRuns = await CatalogApi.getActiveRuns();
       } catch (e: any) {
@@ -943,6 +1220,8 @@ export const useCatalogStore = defineStore("catalog", {
         await this.loadActiveRuns();
       } catch (e: any) {
         this.error = e?.message ?? "Failed to cancel run";
+        // A remote run's refusal is its catalog's sentence, which the caller shows.
+        if (runId < 0) throw e;
       }
     },
 
@@ -953,12 +1232,7 @@ export const useCatalogStore = defineStore("catalog", {
       this.clearTableSelection();
       this.clearScheduleSelection();
       this.clearNamespaceSelection();
-      if (flowId !== null) {
-        this.runsPage = 1;
-        this.loadRuns(flowId);
-        this.loadFlowArtifacts(flowId);
-        this.loadFlowSchedules(flowId);
-      }
+      if (flowId !== null) this.loadFlowDetail(flowId);
     },
 
     setActiveTab(tab: CatalogTab) {
@@ -979,6 +1253,17 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     /**
+     * The catalog's rows changed underneath the store (a project branch switch, pull, restore or
+     * reload rewrote its flows): refetch now, and expire the cache so the next mount refetches
+     * too should this load fail. `overviewLoadedAt` 0 keeps "loaded" true and the TTL expired.
+     */
+    async invalidateOverview() {
+      if (this.overviewLoadedAt === null) return;
+      this.overviewLoadedAt = 0;
+      await this.initialize(true);
+    },
+
+    /**
      * Load everything the catalog screen needs in one request. Within OVERVIEW_TTL_MS of the
      * last load this is a no-op (back-navigation keeps the store's data); in-catalog mutations
      * refresh their own slices, so the cache only governs re-mounts. `force` bypasses it.
@@ -987,30 +1272,44 @@ export const useCatalogStore = defineStore("catalog", {
       const fresh =
         this.overviewLoadedAt !== null && Date.now() - this.overviewLoadedAt < OVERVIEW_TTL_MS;
       if (fresh && !force) return;
+      const token = ++overviewRequestToken;
+      const before = { ...sliceRequests, tree: treeRequestToken, runs: runsRequestToken };
       this.loading = true;
       this.error = null;
+      this.overviewError = null;
       try {
         const overview = await CatalogApi.getOverview(this.runsPageSize);
-        this.tree = overview.tree;
-        this.allFlows = overview.flows;
-        this.allTables = overview.tables;
-        this.stats = overview.stats;
-        this.favorites = overview.favorites;
-        this.schedules = overview.schedules;
-        this.activeRuns = overview.active_runs;
-        this.schedulerStatus = overview.scheduler;
-        this.defaultNamespaceId = overview.default_namespace_id;
-        this.overviewLoadedAt = Date.now();
-        // The overview carries page 1 unfiltered; a persisted page/filter needs its own query.
-        if (this.runsPage === 1 && !this.runsTriggerFilter && !this.runsSearch) {
-          this.applyRunsPage(overview.runs);
-        } else {
-          await this.loadRuns();
+        if (token !== overviewRequestToken) return;
+        const treeUntouched = treeRequestToken === before.tree;
+        if (treeUntouched || !this.treeLoaded) {
+          // Only a tree request older than this overview is cancelled.
+          if (treeUntouched) treeRequestToken++;
+          this.tree = overview.tree;
+          this.treeLoaded = true;
         }
+        if (sliceRequests.flows === before.flows) this.allFlows = overview.flows;
+        if (sliceRequests.tables === before.tables) this.allTables = overview.tables;
+        if (sliceRequests.stats === before.stats) this.stats = overview.stats;
+        if (sliceRequests.favorites === before.favorites) this.favorites = overview.favorites;
+        if (sliceRequests.schedules === before.schedules) this.schedules = overview.schedules;
+        if (sliceRequests.activeRuns === before.activeRuns) this.activeRuns = overview.active_runs;
+        if (sliceRequests.schedulers === before.schedulers) this.schedulers = overview.schedulers;
+        this.defaultNamespaceId = overview.default_namespace_id;
+        // The overview carries page 1 unfiltered; a persisted page/filter needs its own query.
+        if (this.runsPage !== 1 || this.runsTriggerFilter || this.runsSearch) {
+          await this.loadRuns();
+          if (token !== overviewRequestToken) return;
+        } else if (runsRequestToken === before.runs) {
+          runsRequestToken++;
+          this.applyRunsPage(overview.runs);
+        }
+        this.overviewLoadedAt = Date.now();
       } catch (e: any) {
+        if (token !== overviewRequestToken) return;
         this.error = e?.message ?? "Failed to load catalog";
+        this.overviewError = this.error;
       } finally {
-        this.loading = false;
+        if (token === overviewRequestToken) this.loading = false;
       }
     },
 
@@ -1078,6 +1377,40 @@ export const useCatalogStore = defineStore("catalog", {
       }
       this.visualizationsByTable = next;
       this.visualizationLibrary = this.visualizationLibrary.filter((v) => v.id !== vizId);
+    },
+
+    /** Make a dashboard's chart a chart of its own; the lists that hold it follow. */
+    async detachVisualization(vizId: number) {
+      const kept = await CatalogApi.detachVisualization(vizId);
+      const own = { dashboard_id: kept.dashboard_id, dashboard_name: kept.dashboard_name };
+      const next = { ...this.visualizationsByTable };
+      for (const tid of Object.keys(next)) {
+        next[Number(tid)] = next[Number(tid)].map((v) => (v.id === vizId ? { ...v, ...own } : v));
+      }
+      this.visualizationsByTable = next;
+      this.visualizationLibrary = this.visualizationLibrary.map((v) =>
+        v.id === vizId ? { ...v, ...own } : v,
+      );
+      return kept;
+    },
+
+    /** Remove a dashboard's own charts its saved layout no longer uses; the lists follow. */
+    async pruneDashboardCharts(dashboardId: number) {
+      const pruned = await CatalogApi.pruneDashboardCharts(dashboardId);
+      const deleted = new Set(pruned.deleted);
+      const released = new Set(pruned.released);
+      if (!deleted.size && !released.size) return pruned;
+      const settle = (items: CatalogVisualization[]) =>
+        items
+          .filter((v) => !deleted.has(v.id))
+          .map((v) =>
+            released.has(v.id) ? { ...v, dashboard_id: null, dashboard_name: null } : v,
+          );
+      const next = { ...this.visualizationsByTable };
+      for (const tid of Object.keys(next)) next[Number(tid)] = settle(next[Number(tid)]);
+      this.visualizationsByTable = next;
+      this.visualizationLibrary = settle(this.visualizationLibrary);
+      return pruned;
     },
 
     /** Always refetch: the worker caches fields per Delta version, so a

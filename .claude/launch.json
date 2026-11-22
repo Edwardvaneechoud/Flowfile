@@ -163,6 +163,33 @@
       "runtimeExecutable": "C:/Users/edwar/miniconda3/envs/ff/Scripts/flowfile_core.cmd",
       "runtimeArgs": [],
       "port": 63578
+    },
+    {
+      "name": "core-dash",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "D=\"${TMPDIR:-/tmp}/flowfile-dash-verify\" && mkdir -p \"$D/storage\" \"$D/user\" \"$D/secure\" && export FLOWFILE_DB_PATH=\"$D/ff.db\" FLOWFILE_STORAGE_DIR=\"$D/storage\" FLOWFILE_USER_DATA_DIR=\"$D/user\" FLOWFILE_SECURE_STORAGE_PATH=\"$D/secure\" FLOWFILE_KERNEL_GC=0 FLOWFILE_TELEMETRY=0 FLOWFILE_WORKER_PORT=63599 CORE_PORT=63598 && poetry run flowfile_core --port 63598"
+      ],
+      "port": 63598
+    },
+    {
+      "name": "worker-dash",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "D=\"${TMPDIR:-/tmp}/flowfile-dash-verify\" && mkdir -p \"$D/storage\" \"$D/user\" \"$D/secure\" && export FLOWFILE_DB_PATH=\"$D/ff.db\" FLOWFILE_STORAGE_DIR=\"$D/storage\" FLOWFILE_USER_DATA_DIR=\"$D/user\" FLOWFILE_SECURE_STORAGE_PATH=\"$D/secure\" FLOWFILE_KERNEL_GC=0 FLOWFILE_TELEMETRY=0 FLOWFILE_WORKER_PORT=63599 CORE_PORT=63598 && poetry run flowfile_worker --port 63599"
+      ],
+      "port": 63599
+    },
+    {
+      "name": "web-dash",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_CORE_PORT=63598 npm run dev:web --prefix flowfile_frontend -- --port 8089"
+      ],
+      "port": 8089
     }
   ]
 }

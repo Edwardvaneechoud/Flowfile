@@ -868,8 +868,8 @@ const showStandaloneThinking = computed<boolean>(() => {
           <p class="ai-assistant__settings-hint">
             Applies to every AI feature, not just this chat.
           </p>
-          <!-- Footer link: the full settings page — API keys, the cheaper
-               simple-task tier, agent variant and verification, on-device AI. -->
+          <!-- Footer link: the full settings page — API keys, per-task
+               models, agent variant and verification, on-device AI. -->
           <div class="ai-assistant__settings-footer">
             <button
               type="button"

@@ -39,7 +39,7 @@
 Build pipelines on a visual canvas with a live preview at every node, or write them in Python with a Polars-like API — code and visual are two views of the same graph. Around it: a Delta-backed catalog, a SQL editor, a scheduler, sandboxed Python kernels, and sharing for teams.
 
 - Just want to see it? [demo.flowfile.org](https://demo.flowfile.org).
-- Transforming files on your laptop? `pip install Flowfile` (Python 3.10–3.13).
+- Transforming files on your laptop? `pip install Flowfile` (Python 3.11–3.14).
 - Running it for a team? Docker Compose, which adds accounts, groups and a shared catalog. See the [Quick Start](#quick-start).
 
 <div align="center">
@@ -58,7 +58,7 @@ Build pipelines on a visual canvas with a live preview at every node, or write t
 
 **A visual canvas** with 49 node types — joins, fuzzy matching, bill-of-materials explosion, filters, pivots, aggregations, text-to-rows, window functions, conditional branching. Beyond the nodes, the formula editor brings 95 transformation functions, and a Polars code node gives you full Polars for anything the palette doesn't cover — all running in-process, no external engine.
 
-It connects to local files (CSV, Parquet, Excel, JSON and friends), five databases (PostgreSQL, MySQL, SQL Server, SQLite, DuckDB), cloud storage (S3, ADLS, GCS — Delta included, Iceberg read-only), Kafka (consumer only), Google Analytics, and REST APIs. That's the whole list — no Snowflake, BigQuery or Oracle driver yet, and no CDC; if your data lives there, land it somewhere Flowfile can reach first.
+It connects to local files (CSV, Parquet, Excel, JSON and friends), seven databases (PostgreSQL, MySQL, SQL Server, SQLite, DuckDB, Denodo, Snowflake — Snowflake needs `pip install "flowfile[snowflake]"` outside the desktop app and Docker images), cloud storage (S3, ADLS, GCS — Delta included, Iceberg read-only), Kafka (consumer only), Google Analytics, and REST APIs. That's the whole list — no BigQuery or Oracle driver yet, and no CDC; if your data lives there, land it somewhere Flowfile can reach first.
 
 **A Python API** with Polars-like syntax — write a pipeline, call `open_graph_in_editor()`, and it opens as an editable flow. Porting an existing Polars script over is mostly mechanical.
 
@@ -131,7 +131,7 @@ The Docker deployment makes it multi-user: accounts, groups, and sharing of conn
 
 **In the browser** — [demo.flowfile.org](https://demo.flowfile.org) runs a 23-node subset on Pyodide; good for a first look and small files.
 
-**On your laptop** (Python 3.10–3.13):
+**On your laptop** (Python 3.11–3.14):
 
 ```bash
 pip install Flowfile
@@ -173,7 +173,7 @@ The compose file in this repo builds from source. To run the published Docker Hu
 **Desktop app** — installers for Windows, macOS, and Linux on the [Releases](https://github.com/edwardvaneechoud/Flowfile/releases) page.
 
 <details>
-<summary><b>From source</b> — for contributors (Python 3.10–3.13, Node.js 20+)</summary>
+<summary><b>From source</b> — for contributors (Python 3.11–3.14, Node.js 20+)</summary>
 
 ```bash
 git clone https://github.com/edwardvaneechoud/Flowfile.git

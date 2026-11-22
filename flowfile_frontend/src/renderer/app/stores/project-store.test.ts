@@ -20,21 +20,29 @@ const mocks = vi.hoisted(() => {
     updateSettings: vi.fn(),
     restore: vi.fn(),
     reload: vi.fn(),
+    plan: vi.fn(),
     setSecrets: vi.fn(),
     close: vi.fn(),
-    warning: vi.fn(),
+    switchBranch: vi.fn(),
+    pull: vi.fn(),
+    settleMerge: vi.fn(),
+    concludeMerge: vi.fn(),
+    abortMerge: vi.fn(),
+    getMerge: vi.fn(),
+    openMergeFlow: vi.fn(),
     setFlowId: vi.fn(),
+    invalidateOverview: vi.fn(() => Promise.resolve()),
   };
 });
-
-vi.mock("element-plus", () => ({
-  ElMessage: { warning: mocks.warning },
-}));
 
 // Mock the flow store: the real module pulls in the `../api` barrel (axios.config),
 // which reaches DOM globals at import time and would crash under the node env.
 vi.mock("./flow-store", () => ({
   useFlowStore: () => ({ setFlowId: mocks.setFlowId }),
+}));
+
+vi.mock("./catalog-store", () => ({
+  useCatalogStore: () => ({ invalidateOverview: mocks.invalidateOverview }),
 }));
 
 vi.mock("../api/project.api", () => ({
@@ -48,8 +56,16 @@ vi.mock("../api/project.api", () => ({
     updateSettings: mocks.updateSettings,
     restore: mocks.restore,
     reload: mocks.reload,
+    plan: mocks.plan,
     setSecrets: mocks.setSecrets,
     close: mocks.close,
+    switchBranch: mocks.switchBranch,
+    pull: mocks.pull,
+    settleMerge: mocks.settleMerge,
+    concludeMerge: mocks.concludeMerge,
+    abortMerge: mocks.abortMerge,
+    getMerge: mocks.getMerge,
+    openMergeFlow: mocks.openMergeFlow,
   },
 }));
 
@@ -106,23 +122,24 @@ describe("status getter", () => {
 });
 
 describe("refreshActive", () => {
-  it("captures the projection_failed flag", async () => {
-    mocks.getActive.mockResolvedValue({ project: PROJECT, projection_failed: true });
+  it("captures the external_edits flag", async () => {
+    mocks.getActive.mockResolvedValue({ project: PROJECT, external_edits: true });
     const store = useProjectStore();
     await store.refreshActive();
-    expect(store.projectionFailed).toBe(true);
+    expect(store.externalEdits).toBe(true);
+    expect(store.status).toBe("external");
   });
 
   it("clears all status when no project is active", async () => {
     mocks.getActive.mockResolvedValue({ project: null });
     const store = useProjectStore();
     store.hasExternalChanges = true;
-    store.projectionFailed = true;
+    store.externalEdits = true;
     store.dirty = true;
     await store.refreshActive();
     expect(store.activeProject).toBeNull();
     expect(store.hasExternalChanges).toBe(false);
-    expect(store.projectionFailed).toBe(false);
+    expect(store.externalEdits).toBe(false);
     expect(store.dirty).toBe(false);
   });
 
@@ -168,13 +185,13 @@ describe("initProject", () => {
     mocks.init.mockResolvedValue(PROJECT);
     const store = useProjectStore();
     store.hasExternalChanges = true;
-    store.projectionFailed = true;
+    store.externalEdits = true;
 
     const project = await store.initProject("/p", "Demo");
     expect(project).toEqual(PROJECT);
     expect(store.activeProject).toEqual(PROJECT);
     expect(store.status).toBe("clean");
-    expect(store.projectionFailed).toBe(false);
+    expect(store.externalEdits).toBe(false);
     expect(store.loading).toBe(false);
   });
 });
@@ -197,25 +214,44 @@ describe("openProject", () => {
 });
 
 describe("restoreVersion", () => {
-  it("warns on prune errors and refreshes status", async () => {
+  it("refreshes status after a restore", async () => {
     mocks.restore.mockResolvedValue({
       imported: { flows: 0, connections: 0, schedules: 0 },
       placeholder_secrets: [],
-      prune_errors: ["table x"],
     });
     mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
     const store = useProjectStore();
     store.activeProject = PROJECT;
 
     await store.restoreVersion("deadbeef", "rollback");
-    expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback");
-    expect(mocks.warning).toHaveBeenCalled();
+    expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback", false);
     expect(mocks.getActive).toHaveBeenCalled();
     expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
+    expect(mocks.invalidateOverview).toHaveBeenCalled();
+  });
+
+  it("sends force when the caller keeps a recovery point", async () => {
+    mocks.restore.mockResolvedValue({ imported: {}, placeholder_secrets: [] });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.restoreVersion("deadbeef", "rollback", true);
+    expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback", true);
   });
 });
 
 describe("reloadFromDisk", () => {
+  it("sends force when the caller keeps a recovery point", async () => {
+    mocks.reload.mockResolvedValue({ imported: {}, placeholder_secrets: [] });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.reloadFromDisk(true);
+    expect(mocks.reload).toHaveBeenCalledWith(true);
+  });
+
   it("rebuilds from disk and reconciles status", async () => {
     mocks.reload.mockResolvedValue({
       imported: { flows: 2, connections: 1, schedules: 0 },
@@ -230,6 +266,7 @@ describe("reloadFromDisk", () => {
     expect(store.placeholderSecrets).toEqual(["s"]);
     expect(mocks.getActive).toHaveBeenCalled();
     expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
+    expect(mocks.invalidateOverview).toHaveBeenCalled();
   });
 
   it("hides the reload action when the route is unavailable", async () => {
@@ -239,6 +276,15 @@ describe("reloadFromDisk", () => {
 
     await expect(store.reloadFromDisk()).rejects.toBeInstanceOf(mocks.ProjectFeatureUnavailable);
     expect(store.reloadAvailable).toBe(false);
+  });
+});
+
+describe("loadPlan", () => {
+  it("asks for the plan of the sha and returns its rows", async () => {
+    const rows = [{ change: "removed", kind: "flow", label: "a", path: "flows/a.flow.yaml" }];
+    mocks.plan.mockResolvedValue(rows);
+    expect(await useProjectStore().loadPlan("abc123")).toEqual(rows);
+    expect(mocks.plan).toHaveBeenCalledWith("abc123");
   });
 });
 
@@ -281,8 +327,9 @@ describe("closeProject", () => {
 });
 
 describe("saveVersion", () => {
-  it("clears unsaved state and refreshes history", async () => {
+  it("re-reads status after the save and refreshes history", async () => {
     mocks.saveVersion.mockResolvedValue({ sha: "abc123" });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
     const store = useProjectStore();
     store.activeProject = PROJECT;
     store.dirty = true;
@@ -290,9 +337,37 @@ describe("saveVersion", () => {
 
     const sha = await store.saveVersion("note");
     expect(sha).toBe("abc123");
+    expect(mocks.getActive).toHaveBeenCalledTimes(1);
+    expect(mocks.saveVersion.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.getActive.mock.invocationCallOrder[0],
+    );
     expect(store.dirty).toBe(false);
     expect(store.hasUnsavedChanges).toBe(false);
     expect(mocks.getVersions).toHaveBeenCalled();
+  });
+
+  it("passes overwrite to the api, false unless asked", async () => {
+    mocks.saveVersion.mockResolvedValue({ sha: "abc123" });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+
+    await store.saveVersion("m", true);
+    expect(mocks.saveVersion).toHaveBeenLastCalledWith("m", true);
+    await store.saveVersion("m");
+    expect(mocks.saveVersion).toHaveBeenLastCalledWith("m", false);
+  });
+
+  it("keeps the server's dirty answer when nothing was committed", async () => {
+    mocks.saveVersion.mockResolvedValue({ sha: null });
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: true });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+    store.dirty = true;
+
+    expect(await store.saveVersion("note")).toBeNull();
+    expect(store.dirty).toBe(true);
+    expect(store.status).toBe("unsaved");
   });
 });
 
@@ -333,5 +408,116 @@ describe("loadVersions capability degradation", () => {
     await store.loadVersions();
     expect(store.versionsAvailable).toBe(true);
     expect(store.error).toBe("boom");
+  });
+});
+
+const imported = (secrets: string[]) => ({
+  imported: { flows: 1, connections: 0, schedules: 0 },
+  placeholder_secrets: secrets,
+});
+
+const pullResult = (state: string, result: unknown = null) => ({
+  state,
+  sha: "abc",
+  result,
+  conflicts: [],
+  warnings: [],
+});
+
+describe("branch switch, pull and merge", () => {
+  const activeStore = () => {
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+    return store;
+  };
+
+  const expectPostImport = () => {
+    expect(mocks.setFlowId).toHaveBeenCalledWith(-1);
+    expect(mocks.invalidateOverview).toHaveBeenCalled();
+    expect(mocks.getActive).toHaveBeenCalled();
+    expect(mocks.getVersions).toHaveBeenCalled();
+  };
+
+  it("a switch clears the open flow, keeps its secrets to fill and re-reads the project", async () => {
+    mocks.switchBranch.mockResolvedValue(imported(["prod_pw"]));
+    const store = activeStore();
+    await store.switchBranch("feature", true);
+    expect(mocks.switchBranch).toHaveBeenCalledWith("feature", true);
+    expect(store.placeholderSecrets).toEqual(["prod_pw"]);
+    expectPostImport();
+  });
+
+  it("a pull that applied an import runs the same path", async () => {
+    mocks.pull.mockResolvedValue(pullResult("fast_forward", imported(["api_key"])));
+    const store = activeStore();
+    const result = await store.pull();
+    expect(result.state).toBe("fast_forward");
+    expect(store.placeholderSecrets).toEqual(["api_key"]);
+    expectPostImport();
+  });
+
+  it("a pull stopped on conflicts, or with nothing to pull, leaves the open flow alone", async () => {
+    const store = activeStore();
+    store.placeholderSecrets = ["kept"];
+    for (const state of ["conflicted", "up_to_date", "ahead"]) {
+      mocks.pull.mockResolvedValueOnce(pullResult(state));
+      await store.pull();
+    }
+    expect(mocks.setFlowId).not.toHaveBeenCalled();
+    expect(mocks.invalidateOverview).not.toHaveBeenCalled();
+    expect(store.placeholderSecrets).toEqual(["kept"]);
+  });
+
+  it("settling the last item, or concluding, applies the merge like a pull", async () => {
+    const store = activeStore();
+    mocks.settleMerge.mockResolvedValueOnce({ merge: { conflicts: [] }, pull: null });
+    await store.settleMerge("flows/a.flow.yaml", "step:2", "ours");
+    expect(mocks.setFlowId).not.toHaveBeenCalled();
+
+    mocks.settleMerge.mockResolvedValueOnce({
+      merge: null,
+      pull: pullResult("merged", imported(["s1"])),
+    });
+    await store.settleMerge("flows/a.flow.yaml", "step:3", "theirs", true);
+    expect(mocks.settleMerge).toHaveBeenLastCalledWith(
+      "flows/a.flow.yaml",
+      "step:3",
+      "theirs",
+      true,
+    );
+    expect(store.placeholderSecrets).toEqual(["s1"]);
+    expectPostImport();
+
+    vi.clearAllMocks();
+    mocks.getVersions.mockResolvedValue([]);
+    mocks.concludeMerge.mockResolvedValue(pullResult("merged", imported(["s2"])));
+    await store.concludeMerge(true);
+    expect(mocks.concludeMerge).toHaveBeenCalledWith(true);
+    expect(store.placeholderSecrets).toEqual(["s2"]);
+    expectPostImport();
+  });
+
+  it("remembers a flow opened from the merge until the merge ends", async () => {
+    const store = activeStore();
+    mocks.openMergeFlow.mockResolvedValue(42);
+    expect(await store.openMergeFlow("flows/a.flow.yaml")).toBe(42);
+    expect(store.isMergeFlow(42)).toBe(true);
+    expect(store.isMergeFlow(7)).toBe(false);
+
+    mocks.concludeMerge.mockResolvedValue(pullResult("merged", imported([])));
+    await store.concludeMerge();
+    expect(store.isMergeFlow(42)).toBe(false);
+  });
+
+  it("after the editor settled a flow, answers what is left of the pull", async () => {
+    const store = activeStore();
+    mocks.getMerge.mockResolvedValueOnce({ conflicts: [{}, {}] });
+    expect(await store.afterEditorSettle()).toEqual({ state: "settle_rest", left: 2 });
+    mocks.getMerge.mockResolvedValueOnce({ conflicts: [] });
+    expect(await store.afterEditorSettle()).toEqual({ state: "conclude" });
+    mocks.getMerge.mockResolvedValueOnce(null);
+    expect(await store.afterEditorSettle()).toEqual({ state: "merged" });
+    expect(mocks.invalidateOverview).toHaveBeenCalled();
   });
 });

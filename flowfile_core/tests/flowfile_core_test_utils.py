@@ -62,3 +62,16 @@ def run_generator():
         sleep(1)
 
     print(os.environ["TESTING"])
+
+
+def as_server(monkeypatch, mode: str) -> None:
+    """Make the flow-folder checks see a multi-user server in ``mode`` (``docker`` or ``server``).
+
+    The test clients sign in as the desktop (electron) and their tokens would not verify under another
+    ``FLOWFILE_MODE``, so the environment is left alone and ``storage_config.is_server_mode`` is replaced by
+    the answer it gives under ``mode``, read from ``storage_config.SERVER_MODES``. The replacement runs on
+    request threads, where writing ``os.environ`` would race native code reading it.
+    """
+    from shared import storage_config
+
+    monkeypatch.setattr(storage_config, "is_server_mode", lambda: mode in storage_config.SERVER_MODES)

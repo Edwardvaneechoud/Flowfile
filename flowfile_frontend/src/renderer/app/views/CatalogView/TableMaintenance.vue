@@ -1,10 +1,20 @@
 <template>
   <span class="maintenance-actions">
-    <button class="action-btn-lg" :disabled="!table.file_exists" @click="openOptimize">
+    <button
+      class="action-btn-lg"
+      data-testid="table-optimize"
+      :disabled="!table.file_exists"
+      @click="openOptimize"
+    >
       <i class="fa-solid fa-compress"></i>
       Optimize
     </button>
-    <button class="action-btn-lg" :disabled="!table.file_exists" @click="openVacuum">
+    <button
+      class="action-btn-lg"
+      data-testid="table-vacuum"
+      :disabled="!table.file_exists"
+      @click="openVacuum"
+    >
       <i class="fa-solid fa-broom"></i>
       Vacuum
     </button>

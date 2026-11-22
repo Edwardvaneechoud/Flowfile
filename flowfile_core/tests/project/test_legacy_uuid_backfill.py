@@ -37,6 +37,7 @@ def _create_legacy_db(path: Path, tables_data: dict) -> None:
 
 def _run_migration(db_path: Path, monkeypatch, legacy_path: Path) -> None:
     monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+    monkeypatch.delenv("FLOWFILE_DATABASE_URL", raising=False)
     import shared.storage_config
 
     monkeypatch.setattr(shared.storage_config, "get_legacy_database_path", lambda: legacy_path)

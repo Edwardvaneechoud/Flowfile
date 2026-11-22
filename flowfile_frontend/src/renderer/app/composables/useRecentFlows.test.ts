@@ -262,7 +262,11 @@ describe("useRecentFlows", () => {
 
   it("prefers the catalog display name when recording from flow settings", () => {
     const { recentFlows, recordFlowFromSettings } = useRecentFlows();
-    recordFlowFromSettings({ path: "/flows/41_house.yaml", name: "41_house", display_name: "Q3 Sales" });
+    recordFlowFromSettings({
+      path: "/flows/41_house.yaml",
+      name: "41_house",
+      display_name: "Q3 Sales",
+    });
 
     expect(recentFlows.value[0].name).toBe("Q3 Sales");
   });
@@ -311,7 +315,12 @@ describe("useRecentFlows.reconcileWithCatalog", () => {
 
   it("leaves entries untouched when nothing changed", async () => {
     const { recentFlows, recordFlow, reconcileWithCatalog } = useRecentFlows();
-    recordFlow({ path: "/flows/a.yaml", name: "Q3 Sales", catalogRef: "General.default.Q3 Sales", catalogId: 3 });
+    recordFlow({
+      path: "/flows/a.yaml",
+      name: "Q3 Sales",
+      catalogRef: "General.default.Q3 Sales",
+      catalogId: 3,
+    });
     const before = recentFlows.value[0];
     mocks.getFlows.mockResolvedValue([
       { id: 3, name: "Q3 Sales", flow_path: "/flows/a.yaml", namespace_id: 2 },
@@ -320,6 +329,28 @@ describe("useRecentFlows.reconcileWithCatalog", () => {
     await reconcileWithCatalog();
 
     expect(recentFlows.value[0]).toBe(before);
+  });
+
+  it("drops an entry whose registered file is gone", async () => {
+    const { recentFlows, recordFlow, reconcileWithCatalog, loadRecentFlows } = useRecentFlows();
+    recordFlow({ path: "/flows/hub/kept.yaml", name: "kept" });
+    recordFlow({ path: "/flows/hub/old.yaml", name: "old" });
+    mocks.getFlows.mockResolvedValue([
+      { id: 3, name: "old", flow_path: "/flows/hub/old.yaml", namespace_id: 2, file_exists: false },
+      {
+        id: 4,
+        name: "kept",
+        flow_path: "/flows/hub/kept.yaml",
+        namespace_id: 2,
+        file_exists: true,
+      },
+    ]);
+
+    await reconcileWithCatalog();
+
+    expect(recentFlows.value.map((f) => f.path)).toEqual(["/flows/hub/kept.yaml"]);
+    loadRecentFlows();
+    expect(recentFlows.value.map((f) => f.path)).toEqual(["/flows/hub/kept.yaml"]);
   });
 
   it("swallows a catalog failure and keeps the list intact", async () => {

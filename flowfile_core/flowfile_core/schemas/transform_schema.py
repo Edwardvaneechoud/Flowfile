@@ -137,6 +137,12 @@ for the AI agent and preventing the ``join + how="cross"`` shape
 that bypasses the dedicated cross_join node.
 """
 
+
+def polars_join_how(how: str) -> str:
+    """Polars' name for *how*: Flowfile's ``"outer"`` is ``"full"``, as Polars 2 refuses ``"outer"``."""
+    return "full" if how == "outer" else how
+
+
 JoinKeyStrategy = Literal["inner", "left", "right", "full", "semi", "anti", "outer"]
 """Key-based join strategies — every option requires ``join_mapping``
 to specify the equality keys. Used by :class:`JoinInput.how` so the

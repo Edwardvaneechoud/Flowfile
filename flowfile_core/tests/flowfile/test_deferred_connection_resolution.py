@@ -270,3 +270,33 @@ def test_undo_after_deleting_only_node_restores_owner_user_id():
     assert restored.setting_input.user_id == OWNER_USER_ID, (
         "Undo on an empty graph must re-stamp the session owner's user_id, not None"
     )
+
+
+def test_a_kafka_source_keeps_its_connection_after_the_connection_is_renamed():
+    """The node holds the connection's id and the name it had when saved, so a rename leaves the id to find it."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.flowfile.flow_graph.builders.connectors import _kafka_consumer_config
+    from flowfile_core.kafka.connection_manager import (
+        delete_kafka_connection,
+        store_kafka_connection,
+        update_kafka_connection,
+    )
+    from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate, KafkaConnectionUpdate
+
+    with get_db_context() as db:
+        stored = store_kafka_connection(
+            db,
+            KafkaConnectionCreate(connection_name="orders_before_rename", bootstrap_servers="broker.test:9092"),
+            OWNER_USER_ID,
+        )
+        update_kafka_connection(
+            db, stored.id, KafkaConnectionUpdate(connection_name="orders_after_rename"), OWNER_USER_ID
+        )
+    try:
+        saved = input_schema.KafkaSourceSettings(
+            kafka_connection_id=stored.id, kafka_connection_name="orders_before_rename", topic_name="orders"
+        )
+        assert _kafka_consumer_config(saved, OWNER_USER_ID)["bootstrap.servers"] == "broker.test:9092"
+    finally:
+        with get_db_context() as db:
+            delete_kafka_connection(db, stored.id, OWNER_USER_ID)

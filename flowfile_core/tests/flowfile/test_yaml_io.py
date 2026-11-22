@@ -466,6 +466,19 @@ class TestLegacyPickleLoad:
         print(f"Nodes: {len(data['nodes'])}")
         print(yaml.dump(data, default_flow_style=False)[:1000] + "...")
 
+    def test_a_settings_object_without_hub_origin_saves_no_origin(self, temp_dir: Path):
+        """A FlowSettings unpickled from a release before hub_origin existed has no such attribute at all."""
+        graph = create_graph(flow_id=77)
+        legacy = {k: v for k, v in graph.flow_settings.__dict__.items() if k != "hub_origin"}
+        object.__setattr__(graph.flow_settings, "__dict__", legacy)
+        add_manual_input(graph, [{"a": 1}])
+
+        assert graph.get_flowfile_data().flowfile_settings.hub_origin is None
+
+        yaml_path = temp_dir / "legacy_settings.yaml"
+        graph.save_flow(str(yaml_path))
+        assert "hub_origin" not in yaml.safe_load(yaml_path.read_text())["flowfile_settings"]
+
 
 class TestFlowfileDataModel:
     """Test FlowfileData Pydantic model."""
@@ -1318,3 +1331,33 @@ class TestSaveDoesNotRenameSamePathFlow:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+class TestCatalogNodesOfTheOwnCatalog:
+    """A flow that names no catalog elsewhere is saved as it was before ``source`` existed."""
+
+    @staticmethod
+    def _saved(setting, node_type: str) -> dict:
+        node = schemas.FlowfileNode(id=setting.node_id, type=node_type, setting_input=setting)
+        return node.model_dump(mode="json")["setting_input"]
+
+    def test_a_reader_and_a_writer_are_saved_without_source_and_open_as_local(self):
+        reader = input_schema.NodeCatalogReader(flow_id=1, node_id=1, catalog_full_table_name="sales.orders")
+        writer = input_schema.NodeCatalogWriter(
+            flow_id=1, node_id=2, catalog_write_settings=input_schema.CatalogWriteSettings(table_name="out")
+        )
+
+        saved_reader = self._saved(reader, "catalog_reader")
+        saved_writer = self._saved(writer, "catalog_writer")
+
+        assert "source" not in saved_reader
+        assert "source" not in saved_writer["catalog_write_settings"]
+        assert input_schema.NodeCatalogReader(flow_id=1, node_id=1, **saved_reader).source == "local"
+        assert input_schema.NodeCatalogWriter(flow_id=1, node_id=2, **saved_writer).catalog_write_settings.source == "local"
+
+    def test_a_reader_of_a_catalog_elsewhere_keeps_its_source(self):
+        reader = input_schema.NodeCatalogReader(
+            flow_id=1, node_id=1, source="hub", catalog_full_table_name="lake.sales.orders"
+        )
+
+        assert self._saved(reader, "catalog_reader")["source"] == "hub"

@@ -50,10 +50,12 @@ export class FileApi {
     }
   }
 
-  static async createDirectory(directoryName: string): Promise<boolean> {
+  /** Creates the folder `dirName` inside `sourcePath`; a taken name rejects with status 409. */
+  static async createDirectory(sourcePath: string, dirName: string): Promise<boolean> {
     try {
       const response = await axios.post<boolean>("files/create_directory", {
-        name: directoryName,
+        source_path: sourcePath,
+        dir_name: dirName,
       });
       return response.data;
     } catch (error) {

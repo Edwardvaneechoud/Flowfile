@@ -89,6 +89,12 @@
                 <div class="backend-worker__identity">
                   <h4 class="backend-worker__name">
                     <code>{{ backend.id }}</code>
+                    <span
+                      v-if="backend.source === 'remote'"
+                      class="compute-chip compute-chip--neutral"
+                      :data-testid="`backend-managed-${backend.id}`"
+                      >Managed elsewhere</span
+                    >
                   </h4>
                   <div class="backends-url">{{ backend.url }}</div>
                 </div>
@@ -108,6 +114,7 @@
                     <i class="fa-solid fa-rotate" aria-hidden="true"></i> Handshake
                   </el-button>
                   <el-button
+                    v-if="backend.source !== 'remote'"
                     size="small"
                     type="danger"
                     plain

@@ -27,6 +27,7 @@ def add_read_from_database(
     schema_name: str | None = None,
     query: str | None = None,
     description: str | None = None,
+    database_name: str | None = None,
 ) -> int:
     """Add a database reader node to the flow graph.
 
@@ -40,6 +41,7 @@ def add_read_from_database(
         schema_name: Database schema name (e.g., 'public' for PostgreSQL).
         query: SQL query to execute instead of reading a table.
         description: Optional description for the node.
+        database_name: Database the table is in; unset, the connection's default database.
 
     Returns:
         int: The node ID of the created database reader node.
@@ -66,6 +68,7 @@ def add_read_from_database(
             query_mode=query_mode,
             table_name=table_name,
             schema_name=schema_name,
+            database_name=database_name,
             query=query,
         ),
     )
@@ -83,6 +86,7 @@ def add_write_to_database(
     schema_name: str | None = None,
     if_exists: Literal["append", "replace", "fail"] = "append",
     description: str | None = None,
+    database_name: str | None = None,
 ) -> int:
     """Add a database writer node to the flow graph.
 
@@ -97,6 +101,7 @@ def add_write_to_database(
             - 'replace': Drop and recreate table
             - 'fail': Raise an error
         description: Optional description for the node.
+        database_name: Database to write the table to; unset, the connection's default database.
 
     Returns:
         int: The node ID of the created database writer node.
@@ -115,6 +120,7 @@ def add_write_to_database(
             database_connection_name=connection_name,
             table_name=table_name,
             schema_name=schema_name,
+            database_name=database_name,
             if_exists=if_exists,
         ),
     )
@@ -131,6 +137,7 @@ def read_database(
     query: str | None = None,
     description: str | None = None,
     flow_graph: FlowGraph | None = None,
+    database_name: str | None = None,
 ) -> FlowFrame:
     """Read data from a database using a stored connection.
 
@@ -146,6 +153,19 @@ def read_database(
         query: SQL query to execute instead of reading a table.
         description: Optional description for the node.
         flow_graph: Optional existing FlowGraph to add the node to.
+        database_name: Database the table is in, for a connection that reaches several
+            (Snowflake, SQL Server). Unset, the connection's default database. With a table
+            the node reads ``database_name.schema_name.table_name``, so a schema is required;
+            a query is run as written.
+
+    Example:
+        >>> import flowfile as ff
+        >>> customers = ff.read_database(
+        ...     "sf",
+        ...     table_name="CUSTOMER",
+        ...     schema_name="TPCH_SF100",
+        ...     database_name="SNOWFLAKE_SAMPLE_DATA",
+        ... )
 
     Returns:
         FlowFrame: A FlowFrame backed by a database reader node.
@@ -167,6 +187,7 @@ def read_database(
         schema_name=schema_name,
         query=query,
         description=description,
+        database_name=database_name,
     )
 
     return source_frame(flow_graph, node_id)
@@ -179,6 +200,7 @@ def write_database(
     *,
     schema_name: str | None = None,
     if_exists: Literal["append", "replace", "fail"] = "append",
+    database_name: str | None = None,
 ) -> None:
     """Write data to a database using a stored connection.
 
@@ -193,6 +215,13 @@ def write_database(
             - 'append': Add rows to existing table
             - 'replace': Drop and recreate table
             - 'fail': Raise an error
+        database_name: Database to write to, for a connection that reaches several
+            (Snowflake, SQL Server). Unset, the connection's default database. Set, the
+            target is ``database_name.schema_name.table_name`` and a schema is required.
+
+    Example:
+        >>> import flowfile as ff
+        >>> ff.write_database(df, "sf", "CUSTOMER_COPY", schema_name="PUBLIC", database_name="ANALYTICS")
 
     Raises:
         ValueError: If the connection is not found.
@@ -205,4 +234,5 @@ def write_database(
         table_name=table_name,
         schema_name=schema_name,
         if_exists=if_exists,
+        database_name=database_name,
     )

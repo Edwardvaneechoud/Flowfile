@@ -21,10 +21,10 @@ from multiprocessing import Array, Queue, Value
 import polars as pl
 from pydantic import SecretStr
 
+from flowfile_worker import utils as _plan_decryptor  # noqa: F401 (registers the $ffsec$ plan decryptor)
 from flowfile_worker.flow_logger import FlowfileLogHandler, get_worker_logger
 from flowfile_worker.secrets import decrypt_secret
 from flowfile_worker.task_errors import describe_exception, record_task_failure, record_task_failure_text
-from flowfile_worker.utils import collect_lazy_frame
 
 PREVIEW_ROW_LIMIT_DEFAULT = 100
 
@@ -210,7 +210,7 @@ def execute_custom_node_task(
             primary_name = (output_names or ["main"])[0]
             for name, lf in outputs.items():
                 path = _output_path(file_path, name, primary_name)
-                df = collect_lazy_frame(lf)
+                df = lf.collect()
                 df.write_ipc(path)
                 payload["outputs"][name] = {"path": path, "row_count": df.height}
                 if dry_run:

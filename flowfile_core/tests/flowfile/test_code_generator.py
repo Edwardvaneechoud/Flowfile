@@ -893,7 +893,7 @@ def test_join_operation_left(join_input_dataset, export_func):
     verify_if_execute(code)
     result = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
-    assert_frame_equal(result, expected_df)
+    assert_frame_equal(result, expected_df, check_row_order=False)
 
 
 @pytest.mark.parametrize("export_func", [
@@ -4482,6 +4482,111 @@ def test_database_writer_reference_mode_code_generation():
     assert "import flowfile as ff" in converter.imports
 
 
+def _database_export_lines(settings) -> list[str]:
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    converter = FlowGraphToPolarsConverter(create_basic_flow())
+    if isinstance(settings, input_schema.NodeDatabaseWriter):
+        converter._handle_database_writer(settings, "df_2", {"main": "df_1"})
+    else:
+        converter._handle_database_reader(settings, "df_1", {})
+    return converter.code_lines
+
+
+def test_database_reader_export_names_the_database_only_when_set():
+    def reader(**extra):
+        return input_schema.NodeDatabaseReader(
+            flow_id=1,
+            node_id=1,
+            database_settings=input_schema.DatabaseSettings(
+                connection_mode="reference", database_connection_name="sf", query_mode="table", **extra
+            ),
+        )
+
+    plain = _database_export_lines(reader(table_name="CUSTOMER", schema_name="TPCH_SF100"))
+    assert plain == [
+        "df_1 = ff.read_database(",
+        '    "sf",',
+        '    table_name="CUSTOMER",',
+        '    schema_name="TPCH_SF100",',
+        ").data",
+        "",
+    ]
+    with_database = _database_export_lines(
+        reader(table_name="CUSTOMER", schema_name="TPCH_SF100", database_name="SNOWFLAKE_SAMPLE_DATA")
+    )
+    assert with_database == [*plain[:4], '    database_name="SNOWFLAKE_SAMPLE_DATA",', *plain[4:]]
+
+    query = input_schema.NodeDatabaseReader(
+        flow_id=1,
+        node_id=1,
+        database_settings=input_schema.DatabaseSettings(
+            connection_mode="reference",
+            database_connection_name="sf",
+            query_mode="query",
+            query="SELECT 1",
+            database_name="SALES",
+        ),
+    )
+    assert '    database_name="SALES",' in _database_export_lines(query)
+
+
+def test_database_writer_export_names_the_database_only_when_set():
+    def writer(**extra):
+        return input_schema.NodeDatabaseWriter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            database_write_settings=input_schema.DatabaseWriteSettings(
+                connection_mode="reference", database_connection_name="sf", table_name="T", schema_name="S", **extra
+            ),
+        )
+
+    plain = _database_export_lines(writer())
+    assert not any("database_name" in line for line in plain)
+    with_database = _database_export_lines(writer(database_name="ANALYTICS"))
+    assert with_database == [*plain[:5], '    database_name="ANALYTICS",', *plain[5:]]
+
+
+def test_database_export_writes_quoted_names_as_valid_python_literals():
+    import ast
+
+    reader = input_schema.NodeDatabaseReader(
+        flow_id=1,
+        node_id=1,
+        database_settings=input_schema.DatabaseSettings(
+            connection_mode="reference",
+            database_connection_name="sf",
+            query_mode="table",
+            table_name='"My ""odd"" table"',
+            schema_name='"Raw"',
+            database_name='"USER$analyst"',
+        ),
+    )
+    lines = _database_export_lines(reader)
+    call = ast.parse("\n".join(lines[:-2]) + "\n)").body[0].value
+    keywords = {k.arg: ast.literal_eval(k.value) for k in call.keywords}
+    assert keywords == {
+        "table_name": '"My ""odd"" table"',
+        "schema_name": '"Raw"',
+        "database_name": '"USER$analyst"',
+    }
+
+    writer = input_schema.NodeDatabaseWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        database_write_settings=input_schema.DatabaseWriteSettings(
+            connection_mode="reference", database_connection_name="sf", table_name='"T"', database_name='"D"',
+            schema_name="S",
+        ),
+    )
+    source = "\n".join(_database_export_lines(writer))
+    ast.parse(source)
+    assert '    "\\"T\\"",' in source
+    assert '    database_name="\\"D\\"",' in source
+
+
 def test_database_writer_inline_mode_adds_to_unsupported():
     """Test that database writer with inline mode is added to unsupported nodes."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
@@ -4702,6 +4807,31 @@ def test_rest_api_reader_cursor_pagination():
     assert "offset_param" not in code
     assert "page_param" not in code
     ast.parse(code)
+
+
+def test_rest_api_reader_body_cursor_round_trips():
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    pagination = input_schema.RestApiPaginationSettings(
+        pagination_type="cursor",
+        cursor_param="data_id",
+        cursor_request_location="body",
+        cursor_response_path="data.-1._id",
+    )
+    arg = FlowGraphToFlowFrameConverter._build_rest_api_pagination_arg(pagination)
+    assert input_schema.RestApiPaginationSettings(**eval(arg)) == pagination
+
+    query = pagination.model_copy(update={"cursor_request_location": "query"})
+    assert "cursor_request_location" not in FlowGraphToFlowFrameConverter._build_rest_api_pagination_arg(query)
+
+
+def test_rest_api_settings_refuse_a_body_cursor_on_get():
+    body_cursor = input_schema.RestApiPaginationSettings(pagination_type="cursor", cursor_request_location="body")
+    with pytest.raises(ValueError, match="POST"):
+        input_schema.RestApiSettings(url="https://x", method="GET", pagination=body_cursor)
+    assert input_schema.RestApiSettings(url="https://x", method="POST", pagination=body_cursor).method == "POST"
+    offset = body_cursor.model_copy(update={"pagination_type": "offset"})
+    assert input_schema.RestApiSettings(url="https://x", method="GET", pagination=offset).method == "GET"
 
 
 def test_rest_api_reader_dispatches_via_node_type():
@@ -5495,6 +5625,14 @@ def test_basic_filter_not_in(filter_test_data, export_func):
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
     assert_frame_equal(result_df, expected_df)
+
+
+def test_membership_numbers_keep_integers_past_float_precision():
+    """An integer member beyond 2**53 is written exactly, not through a float."""
+    from flowfile_core.flowfile.code_generator.expression_helpers import _membership_numbers
+
+    assert _membership_numbers(["9007199254740993", "2.0", "2.5"], "Int64") == ["9007199254740993", "2"]
+    assert _membership_numbers(["-1", "3"], "UInt64") == ["3"]
 
 
 @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])

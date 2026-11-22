@@ -1,6 +1,7 @@
 // Catalog tree search + leaf filtering. Kept Vue-free so the matching rules stay
 // unit-testable, mirroring usePaletteGroups.ts.
 import type { NotebookSummary } from "../../api/notebook.api";
+import { isOffered, unavailableReason } from "./hubRows";
 import type {
   CatalogTable,
   CatalogVisualization,
@@ -91,6 +92,16 @@ export function visibleNotebooks(node: NamespaceTree, filter: TreeFilter): Noteb
 }
 
 /**
+ * Whether the tree shows a namespace at all: never one core does not offer (a joined server's own), and a hub
+ * catalog this Flowfile cannot use only under "Show unavailable".
+ */
+export const namespaceShown = (node: NamespaceTree, filter: TreeFilter): boolean =>
+  isOffered(node) && (filter.showUnavailable || unavailableReason(node) === null);
+
+export const shownNamespaces = (nodes: NamespaceTree[], filter: TreeFilter): NamespaceTree[] =>
+  nodes.filter((node) => namespaceShown(node, filter));
+
+/**
  * Leaf sections render only on level-1 (schema) nodes. The backend also attaches
  * flows and tables to level-0 catalogs, which the tree never shows — matching on
  * those would expand a catalog row with nothing under it.
@@ -116,7 +127,7 @@ export const hasVisibleLeaves = (node: NamespaceTree, filter: TreeFilter): boole
 
 /** Matching leaves in this namespace and everything below it — the count chip. */
 export function subtreeLeafCount(node: NamespaceTree, filter: TreeFilter): number {
-  return node.children.reduce(
+  return shownNamespaces(node.children, filter).reduce(
     (sum, child) => sum + subtreeLeafCount(child, filter),
     visibleLeafCount(node, filter),
   );
@@ -124,6 +135,7 @@ export function subtreeLeafCount(node: NamespaceTree, filter: TreeFilter): numbe
 
 /** Whether this namespace or anything under it matches the active search. */
 export function subtreeMatches(node: NamespaceTree, filter: TreeFilter): boolean {
+  if (!namespaceShown(node, filter)) return false;
   if (!filter.query) return true;
   // A namespace matched by its own name shows its full contents.
   if (namespaceNameMatches(node, filter.query)) return true;

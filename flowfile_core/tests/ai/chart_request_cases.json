@@ -1,0 +1,494 @@
+{
+  "about": "Chart requests with the verdict core's check_chart gives them against these columns, read by flowfile_core/tests/ai/test_chart_request_cases.py (core) and flowfile_frontend/src/renderer/app/views/CatalogView/chartRequestCases.test.ts (the browser's mirror, chartRequest.ts::coreRefusals). accepted: core takes the request exactly as written. rejected: core refuses it or rewrites it. Only rules the browser can judge from number, date or text are here: not integer against decimal, boolean values, hour on a date, column-name case or filter values of another type.",
+  "columns": [
+    { "name": "region", "type": "string" },
+    { "name": "category", "type": "string" },
+    { "name": "amount", "type": "float" },
+    { "name": "quantity", "type": "integer" },
+    { "name": "order_date", "type": "date" },
+    { "name": "lat", "type": "float" },
+    { "name": "lon", "type": "float" }
+  ],
+  "cases": [
+    {
+      "name": "bar of a sum per category",
+      "verdict": "accepted",
+      "request": { "mark": "bar", "x": { "field": "region" }, "y": { "field": "amount", "aggregate": "sum" } }
+    },
+    {
+      "name": "top 3 bars",
+      "verdict": "accepted",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "sort": "descending",
+        "limit": 3
+      }
+    },
+    {
+      "name": "row count per category",
+      "verdict": "accepted",
+      "request": { "mark": "bar", "x": { "field": "region" }, "y": { "field": "*", "aggregate": "count" } }
+    },
+    {
+      "name": "distinct count of a text column",
+      "verdict": "accepted",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "category", "aggregate": "distinctCount" }
+      }
+    },
+    {
+      "name": "monthly line",
+      "verdict": "accepted",
+      "request": {
+        "mark": "line",
+        "x": { "field": "order_date", "timeUnit": "month" },
+        "y": { "field": "amount", "aggregate": "sum" }
+      }
+    },
+    {
+      "name": "normalized area split by colour",
+      "verdict": "accepted",
+      "request": {
+        "mark": "area",
+        "x": { "field": "order_date", "timeUnit": "quarter" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "color": { "field": "region" },
+        "stack": "normalize"
+      }
+    },
+    {
+      "name": "pie",
+      "verdict": "accepted",
+      "request": { "mark": "arc", "theta": { "field": "amount", "aggregate": "sum" }, "color": { "field": "region" } }
+    },
+    {
+      "name": "heatmap",
+      "verdict": "accepted",
+      "request": {
+        "mark": "rect",
+        "x": { "field": "region" },
+        "y": { "field": "category" },
+        "color": { "field": "amount", "aggregate": "mean" }
+      }
+    },
+    {
+      "name": "scatter of raw rows",
+      "verdict": "accepted",
+      "request": { "mark": "point", "x": { "field": "quantity" }, "y": { "field": "amount" }, "aggregate": false }
+    },
+    {
+      "name": "scatter of sums per colour",
+      "verdict": "accepted",
+      "request": {
+        "mark": "point",
+        "x": { "field": "amount", "aggregate": "sum" },
+        "y": { "field": "quantity", "aggregate": "sum" },
+        "color": { "field": "region" }
+      }
+    },
+    {
+      "name": "box plot",
+      "verdict": "accepted",
+      "request": { "mark": "boxplot", "x": { "field": "region" }, "y": { "field": "amount" }, "aggregate": false }
+    },
+    {
+      "name": "table of two measures",
+      "verdict": "accepted",
+      "request": {
+        "mark": "table",
+        "y": { "field": "region" },
+        "x": [
+          { "field": "amount", "aggregate": "sum" },
+          { "field": "*", "aggregate": "count" }
+        ]
+      }
+    },
+    {
+      "name": "histogram",
+      "verdict": "accepted",
+      "request": { "mark": "bar", "x": { "field": "quantity", "bin": 10 }, "y": { "field": "*", "aggregate": "count" } }
+    },
+    {
+      "name": "every filter kind",
+      "verdict": "accepted",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "filters": [
+          { "field": "region", "oneOf": ["West", "East"] },
+          { "field": "category", "notIn": ["Toys"] },
+          { "field": "amount", "range": [10, null] },
+          { "field": "order_date", "dateRange": ["2024-01-01", "2024-12-31"] }
+        ]
+      }
+    },
+    {
+      "name": "sum of a text column",
+      "verdict": "rejected",
+      "request": { "mark": "bar", "x": { "field": "category" }, "y": { "field": "region", "aggregate": "sum" } }
+    },
+    {
+      "name": "date grain on a text column",
+      "verdict": "rejected",
+      "request": {
+        "mark": "line",
+        "x": { "field": "region", "timeUnit": "month" },
+        "y": { "field": "amount", "aggregate": "sum" }
+      }
+    },
+    {
+      "name": "bins on a text column",
+      "verdict": "rejected",
+      "request": { "mark": "bar", "x": { "field": "region", "bin": 10 }, "y": { "field": "*", "aggregate": "count" } }
+    },
+    {
+      "name": "one bin",
+      "verdict": "rejected",
+      "request": { "mark": "bar", "x": { "field": "quantity", "bin": 1 }, "y": { "field": "*", "aggregate": "count" } }
+    },
+    {
+      "name": "bins with an aggregate",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "quantity", "bin": 10, "aggregate": "sum" }
+      }
+    },
+    {
+      "name": "date grain with an aggregate",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "order_date", "timeUnit": "month", "aggregate": "count" }
+      }
+    },
+    {
+      "name": "bar with numbers on both axes",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "quantity", "aggregate": "sum" },
+        "y": { "field": "amount", "aggregate": "sum" }
+      }
+    },
+    {
+      "name": "bar without a number axis",
+      "verdict": "rejected",
+      "request": { "mark": "bar", "x": { "field": "region" }, "y": { "field": "category" } }
+    },
+    {
+      "name": "two measures on one axis",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": [
+          { "field": "amount", "aggregate": "sum" },
+          { "field": "quantity", "aggregate": "sum" }
+        ]
+      }
+    },
+    {
+      "name": "a column grouped and aggregated",
+      "verdict": "rejected",
+      "request": { "mark": "bar", "x": { "field": "quantity" }, "y": { "field": "quantity", "aggregate": "sum" } }
+    },
+    {
+      "name": "pie written on x and y",
+      "verdict": "rejected",
+      "request": { "mark": "arc", "x": { "field": "region" }, "y": { "field": "amount", "aggregate": "sum" } }
+    },
+    {
+      "name": "sorted pie",
+      "verdict": "rejected",
+      "request": {
+        "mark": "arc",
+        "theta": { "field": "amount", "aggregate": "sum" },
+        "color": { "field": "region" },
+        "sort": "descending"
+      }
+    },
+    {
+      "name": "heatmap with an aggregated axis",
+      "verdict": "rejected",
+      "request": {
+        "mark": "rect",
+        "x": { "field": "amount", "aggregate": "sum" },
+        "y": { "field": "category" },
+        "color": { "field": "amount", "aggregate": "sum" }
+      }
+    },
+    {
+      "name": "scatter that draws one point",
+      "verdict": "rejected",
+      "request": {
+        "mark": "point",
+        "x": { "field": "amount", "aggregate": "sum" },
+        "y": { "field": "quantity", "aggregate": "sum" }
+      }
+    },
+    {
+      "name": "box plot left aggregated",
+      "verdict": "rejected",
+      "request": { "mark": "boxplot", "x": { "field": "region" }, "y": { "field": "amount" } }
+    },
+    {
+      "name": "box plot of two categories",
+      "verdict": "rejected",
+      "request": { "mark": "boxplot", "x": { "field": "region" }, "y": { "field": "category" }, "aggregate": false }
+    },
+    {
+      "name": "table of raw rows",
+      "verdict": "rejected",
+      "request": { "mark": "table", "y": { "field": "region" }, "x": { "field": "amount" }, "aggregate": false }
+    },
+    {
+      "name": "raw rows with an aggregate",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "aggregate": false
+      }
+    },
+    {
+      "name": "size on a bar",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "size": { "field": "quantity", "aggregate": "sum" }
+      }
+    },
+    {
+      "name": "angle on a bar",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "theta": { "field": "quantity", "aggregate": "sum" }
+      }
+    },
+    {
+      "name": "sort on a time axis",
+      "verdict": "rejected",
+      "request": {
+        "mark": "line",
+        "x": { "field": "order_date", "timeUnit": "month" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "sort": "descending"
+      }
+    },
+    {
+      "name": "sort on a number axis",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "quantity" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "sort": "descending"
+      }
+    },
+    {
+      "name": "sorted heatmap with the category on y",
+      "verdict": "accepted",
+      "request": {
+        "mark": "rect",
+        "x": { "field": "order_date", "timeUnit": "month" },
+        "y": { "field": "region" },
+        "color": { "field": "amount", "aggregate": "sum" },
+        "sort": "descending"
+      }
+    },
+    {
+      "name": "sorted heatmap with the time axis on y",
+      "verdict": "rejected",
+      "request": {
+        "mark": "rect",
+        "x": { "field": "region" },
+        "y": { "field": "order_date", "timeUnit": "month" },
+        "color": { "field": "amount", "aggregate": "sum" },
+        "sort": "descending"
+      }
+    },
+    {
+      "name": "sort with no category axis",
+      "verdict": "rejected",
+      "request": {
+        "mark": "point",
+        "x": { "field": "quantity" },
+        "y": { "field": "amount" },
+        "aggregate": false,
+        "sort": "descending"
+      }
+    },
+    {
+      "name": "limit without sort",
+      "verdict": "rejected",
+      "request": { "mark": "bar", "x": { "field": "region" }, "y": { "field": "amount", "aggregate": "sum" }, "limit": 3 }
+    },
+    {
+      "name": "limit over a colour split",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "color": { "field": "category" },
+        "sort": "descending",
+        "limit": 3
+      }
+    },
+    {
+      "name": "value filter on a date",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "filters": [{ "field": "order_date", "oneOf": ["2024-01-01"] }]
+      }
+    },
+    {
+      "name": "value filter on no values",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "filters": [{ "field": "region", "oneOf": [] }]
+      }
+    },
+    {
+      "name": "range on a text column",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "filters": [{ "field": "region", "range": [1, 5] }]
+      }
+    },
+    {
+      "name": "range the wrong way round",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "filters": [{ "field": "amount", "range": [50, 10] }]
+      }
+    },
+    {
+      "name": "date range on a text column",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "filters": [{ "field": "region", "dateRange": ["2024-01-01", null] }]
+      }
+    },
+    {
+      "name": "date range the wrong way round",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "filters": [{ "field": "order_date", "dateRange": ["2024-12-31", "2024-01-01"] }]
+      }
+    },
+    {
+      "name": "row count without its aggregate",
+      "verdict": "rejected",
+      "request": { "mark": "bar", "x": { "field": "region" }, "y": { "field": "*" } }
+    },
+    {
+      "name": "no fields",
+      "verdict": "rejected",
+      "request": { "mark": "bar" }
+    },
+    {
+      "name": "map of points",
+      "verdict": "accepted",
+      "request": { "mark": "map", "latitude": { "field": "lat" }, "longitude": { "field": "lon" }, "aggregate": false }
+    },
+    {
+      "name": "map with colour and size",
+      "verdict": "accepted",
+      "request": {
+        "mark": "map",
+        "latitude": { "field": "lat" }, "longitude": { "field": "lon" },
+        "color": { "field": "region" },
+        "size": { "field": "amount" },
+        "aggregate": false
+      }
+    },
+    {
+      "name": "map without aggregate false",
+      "verdict": "rejected",
+      "request": { "mark": "map", "latitude": { "field": "lat" }, "longitude": { "field": "lon" } }
+    },
+    {
+      "name": "map without longitude",
+      "verdict": "rejected",
+      "request": { "mark": "map", "latitude": { "field": "lat" }, "aggregate": false }
+    },
+    {
+      "name": "map on x and y",
+      "verdict": "rejected",
+      "request": { "mark": "map", "x": { "field": "lon" }, "y": { "field": "lat" }, "aggregate": false }
+    },
+    {
+      "name": "map on a text coordinate",
+      "verdict": "rejected",
+      "request": {
+        "mark": "map",
+        "latitude": { "field": "region" },
+        "longitude": { "field": "lon" },
+        "aggregate": false
+      }
+    },
+    {
+      "name": "map with an aggregated size",
+      "verdict": "rejected",
+      "request": {
+        "mark": "map",
+        "latitude": { "field": "lat" }, "longitude": { "field": "lon" },
+        "size": { "field": "amount", "aggregate": "sum" },
+        "aggregate": false
+      }
+    },
+    {
+      "name": "map with a text size",
+      "verdict": "rejected",
+      "request": { "mark": "map", "latitude": { "field": "lat" }, "longitude": { "field": "lon" }, "size": { "field": "region" }, "aggregate": false }
+    },
+    {
+      "name": "sorted map",
+      "verdict": "rejected",
+      "request": { "mark": "map", "latitude": { "field": "lat" }, "longitude": { "field": "lon" }, "aggregate": false, "sort": "descending" }
+    },
+    {
+      "name": "coordinates on a bar",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "latitude": { "field": "lat" }
+      }
+    }
+  ]
+}

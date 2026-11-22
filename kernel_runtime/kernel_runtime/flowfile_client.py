@@ -115,7 +115,11 @@ def _set_context(
     interactive: bool = False,
     available_artifacts: dict[str, int] | None = None,
     dry_run: bool = False,
+    kernel_token: str | None = None,
 ) -> None:
+    if kernel_token:
+        # The token of the kernel's current run, also for a caller outside this context.
+        os.environ["FLOWFILE_KERNEL_TOKEN"] = kernel_token
     _context.set(
         {
             "node_id": node_id,
@@ -126,6 +130,7 @@ def _set_context(
             "source_registration_id": source_registration_id,
             "log_callback_url": log_callback_url,
             "internal_token": internal_token,
+            "kernel_token": kernel_token,
             "interactive": interactive,
             "available_artifacts": available_artifacts,
             "dry_run": dry_run,
@@ -334,25 +339,20 @@ _SHARED_PATH = os.environ.get("FLOWFILE_SHARED_PATH", "/shared")
 def _get_internal_auth_headers() -> dict[str, str]:
     """Get authentication headers for Core API calls.
 
-    Prefers the token passed via ExecuteRequest context (always fresh),
-    falls back to FLOWFILE_INTERNAL_TOKEN env var for backwards compatibility.
-    X-Kernel-Id is included so Core can attribute ownership to the kernel's
-    actual owner rather than the synthetic internal-service user.
+    X-Internal-Token carries the kernel's own token: the one Core stamped on this execution (always fresh), else
+    the one the container started with (FLOWFILE_KERNEL_TOKEN). A Core from before a token per kernel hands out
+    neither, and its internal token is sent there as before. X-Kernel-Id names this kernel to such a Core.
     """
     headers: dict[str, str] = {}
-    # Prefer token from execution context (set per-request by Core)
-    try:
-        ctx = _context.get({})
-        token = ctx.get("internal_token")
-        if token:
-            headers["X-Internal-Token"] = token
-    except LookupError:
-        pass
-    # Fall back to env var (set at container creation time)
-    if "X-Internal-Token" not in headers:
-        token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
-        if token:
-            headers["X-Internal-Token"] = token
+    ctx = _context.get({})
+    token = (
+        ctx.get("kernel_token")
+        or os.environ.get("FLOWFILE_KERNEL_TOKEN")
+        or ctx.get("internal_token")
+        or os.environ.get("FLOWFILE_INTERNAL_TOKEN")
+    )
+    if token:
+        headers["X-Internal-Token"] = token
     if not headers:
         return headers
     kernel_id = os.environ.get("FLOWFILE_KERNEL_ID")
@@ -400,7 +400,7 @@ def _dry_run_publish_global(
             python_type=python_type,
             serialization_format=serialization_format,
             size_bytes=None,
-            created_at=datetime.datetime.now(datetime.timezone.utc),
+            created_at=datetime.datetime.now(datetime.UTC),
             tags=list(tags or []),
             owner_id=-1,
         ),
@@ -1964,6 +1964,14 @@ def _read_virtual_table(
             )
         except Exception:  # noqa: BLE001 - warning is best-effort, never break the read
             pass
+    snapshot = _materialize_virtual_table(client, row, table_name)
+    if snapshot["format"] == "ipc":
+        return pl.scan_ipc(snapshot["path"])
+    return pl.scan_delta(snapshot["path"])
+
+
+def _materialize_virtual_table(client: httpx.Client, row: dict[str, Any], table_name: str) -> dict[str, str]:
+    """Return an authenticated worker snapshot reference, translated for this kernel."""
     # Producer re-runs can be slow; override the client's default timeout.
     resp = client.post(f"{_CORE_URL}/catalog/tables/{row['id']}/materialize", timeout=600.0)
     if resp.status_code == 403:
@@ -1978,11 +1986,9 @@ def _read_virtual_table(
     body = resp.json()
     kernel_path = _translate_host_path_to_container(body["path"])
     fmt = body.get("format", "ipc")
-    if fmt == "ipc":
-        return pl.scan_ipc(kernel_path)
-    if fmt == "delta":
-        return pl.scan_delta(kernel_path)
-    raise RuntimeError(f"Unsupported materialization format '{fmt}' for catalog view '{table_name}'")
+    if fmt not in ("ipc", "delta"):
+        raise RuntimeError(f"Unsupported materialization format '{fmt}' for catalog view '{table_name}'")
+    return {"path": kernel_path, "format": fmt}
 
 
 def write_catalog_table(

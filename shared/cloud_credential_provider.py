@@ -3,7 +3,8 @@
 Polars inlines ``storage_options`` into a serialized plan, so a plan carries its credentials through a provider
 instead. ``EncryptedCredentialProvider`` holds a ``$ffsec$`` ciphertext and decrypts through whatever the executing
 process registered with :func:`register_secret_decryptor`. ``CredentialRefProvider`` holds only a stored
-connection's id and user, resolved against the executing process's own catalog. Stdlib-only at import and outside
+connection's id and user, resolved against the executing process's own catalog; a credential sealed to the
+servers of a run is ``shared.sealed``'s, imported at use. Stdlib-only at import and outside
 ``shared.cloud_storage`` (whose ``__init__`` loads ``shared.delta_utils``): every spawned worker child imports this
 module.
 """
@@ -13,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping
+from datetime import UTC
 from typing import Any
 
 PROVIDER_CREDENTIAL_KEYS = frozenset(
@@ -129,6 +131,22 @@ def resolve_credential_ref(connection_id: int, user_id: int) -> tuple[dict[str, 
     return _provider_credentials(fields["storage_type"], options)
 
 
+def connection_credentials(settings: Mapping[str, Any]) -> tuple[dict[str, str], int | None]:
+    """The Polars credentials of a cloud connection given whole, its secrets in plain, and their expiry.
+
+    ``settings`` are a stored connection's fields as core's ``FullCloudStorageConnection`` serialises them, as a hub
+    seals one to the node that runs a step (``shared.sealed.SealedConnectionProvider``); they are resolved here as
+    ``resolve_credential_ref`` resolves a stored one.
+    """
+    import inspect
+
+    from shared.cloud_storage.storage_options import build_storage_options
+
+    known = inspect.signature(build_storage_options).parameters
+    options = build_storage_options(**{key: value for key, value in settings.items() if key in known})
+    return _provider_credentials(settings["storage_type"], options)
+
+
 AMBIENT_AUTH_METHODS = frozenset({"env_vars", "managed_identity"})
 """Auth methods whose connection holds no credential: a sink or scan of one takes none and resolves ambiently."""
 
@@ -175,6 +193,31 @@ def credential_ref_kwargs(connection_id: int, user_id: int) -> dict[str, Any]:
         verify_ssl=fields["verify_ssl"],
     )
     return kwargs
+
+
+def credential_body_kwargs(credential: Mapping[str, Any] | None) -> dict[str, Any]:
+    """What a sink or scan of a URI takes for the credential an export or import body names, resolved here.
+
+    ``None`` takes nothing; ``{"connection_id", "user_id"}`` is a stored connection (``credential_ref_kwargs``);
+    ``{"sealed": {<node>: <token>}}`` is what a hub vended and sealed to the nodes of a run, opened with this node's
+    key (``shared.sealed.sealed_scan_kwargs``); ``{"options", "encrypted"}`` is what a hub vended to the core this
+    process runs beside, its secrets a ciphertext opened where the sink or scan runs (``EncryptedCredentialProvider``).
+
+    Raises:
+        CredentialResolutionError: The catalog could not be read, or the sealed credential could not be opened.
+    """
+    if credential is None:
+        return {}
+    if "sealed" in credential:
+        from shared.sealed import sealed_scan_kwargs
+
+        return sealed_scan_kwargs(credential["sealed"])
+    if "encrypted" in credential:
+        kwargs: dict[str, Any] = {"storage_options": dict(credential["options"])}
+        if credential["encrypted"]:
+            kwargs["credential_provider"] = EncryptedCredentialProvider(credential["encrypted"])
+        return kwargs
+    return credential_ref_kwargs(credential["connection_id"], credential["user_id"])
 
 
 def _decrypt_stored(ciphertext: str, label: str) -> str:
@@ -230,7 +273,6 @@ def _azure_bearer_token(tenant_id: str, client_id: str, client_secret: str) -> t
 
 def _gcs_bearer_token(service_account_key: str) -> tuple[dict[str, str], int | None]:
     """A read-only token for a GCS service-account key; google-auth answers the expiry as a naive UTC datetime."""
-    from datetime import timezone
 
     import google.auth.transport.requests
     from google.oauth2 import service_account
@@ -241,4 +283,4 @@ def _gcs_bearer_token(service_account_key: str) -> tuple[dict[str, str], int | N
     credentials.refresh(google.auth.transport.requests.Request())
     if credentials.expiry is None:
         return {"bearer_token": credentials.token}, None
-    return {"bearer_token": credentials.token}, int(credentials.expiry.replace(tzinfo=timezone.utc).timestamp())
+    return {"bearer_token": credentials.token}, int(credentials.expiry.replace(tzinfo=UTC).timestamp())

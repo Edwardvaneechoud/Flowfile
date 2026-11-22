@@ -6,13 +6,15 @@ const COMPUTE_BACKENDS_URL = "/compute_backends";
 
 /**
  * A configured worker as every user lists it: `url` is null for a non-administrator, `verdict` until it was
- * checked. `shares_core_disk`: core offers the worker local files whatever it declares.
+ * checked. `shares_core_disk`: core offers the worker local files whatever it declares. `source` says who filled
+ * the row: `local` for one added on the Backends page, `remote` for one a remote keeps current, not removed here.
  */
 export interface ComputeBackend {
   id: string;
   url: string | null;
   shares_core_disk: boolean;
   verdict: HandshakeVerdict | null;
+  source: "local" | "remote";
 }
 
 /** The add body, an administrator's; the token and CA certificate are sent once and never answered. */
@@ -43,6 +45,8 @@ export interface WorkerCapabilities {
 
 /**
  * `ok` false with `error` is a backend refused whole; `backend` is null when its capabilities could not be read.
+ * `error_kind` names the refusal's kind without its sentence ("ComputeUnavailable" for a worker this server could
+ * not reach), since `error` may name the worker's address and a non-administrator gets a word in its place.
  * `absent` names what an `ok` backend lacks and why ("python": core's Python functions); `offered` is `backend`
  * with only the plugins it offers.
  */
@@ -55,6 +59,7 @@ export interface HandshakeVerdict {
   differences: string[];
   absent: Record<string, string>;
   error: string | null;
+  error_kind: string | null;
 }
 
 export async function listComputeBackends(): Promise<ComputeBackend[]> {

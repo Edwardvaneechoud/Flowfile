@@ -57,6 +57,7 @@ def test_no_params_unchanged():
     assert uri == "postgresql://u:p@h:5432/d"
 
 
-def test_sqlalchemy_uri_keeps_query_params():
+def test_sqlalchemy_uri_keeps_query_params(monkeypatch):
+    monkeypatch.setattr("shared.sql_utils._has_module", lambda name: True)
     uri = construct_sql_uri(database_type="postgresql", host="h", username="u", database="d", ssl_enabled=True)
     assert get_sqlalchemy_uri(uri) == uri

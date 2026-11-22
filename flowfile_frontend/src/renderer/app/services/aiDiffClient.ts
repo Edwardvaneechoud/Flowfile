@@ -102,6 +102,8 @@ const postJson = async <TBody, TResponse>(
   });
 
   if (!response.ok) {
+    // A 401 renews the session, or ends it when the server refuses that too.
+    if (response.status === 401) await authService.refreshAccessToken();
     const detail = await readErrorDetail(response);
     throw new AiDiffHttpError(response.status, detail);
   }

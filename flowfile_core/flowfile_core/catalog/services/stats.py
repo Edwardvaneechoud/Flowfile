@@ -32,11 +32,13 @@ class StatsService:
     def get_catalog_stats(self, user_id: int) -> CatalogStats:
         """Return an overview of the catalog for the dashboard.
 
-        Uses bulk enrichment for favourite flows to avoid N+1 queries.
+        Uses bulk enrichment for favourite flows to avoid N+1 queries. Run counts
+        and run lists cover only the runs the caller may see.
         """
+        visible_runs = self._runs.visible_run_filters()
         total_namespaces = self.repo.count_catalog_namespaces()
         total_flows = self.repo.count_all_flows()
-        total_runs = self.repo.count_runs()
+        total_runs = self.repo.count_runs(**visible_runs)
         total_favorites = self.repo.count_favorites(user_id)
         total_table_favorites = self.repo.count_table_favorites(user_id)
         total_artifacts = self.repo.count_all_active_artifacts()
@@ -44,7 +46,7 @@ class StatsService:
         total_virtual_tables = self.repo.count_virtual_tables()
         total_schedules = self.repo.count_schedules()
 
-        recent_runs_raw = self.repo.list_runs(limit=10, offset=0)
+        recent_runs_raw = self.repo.list_runs(limit=10, offset=0, **visible_runs)
         recent_out = [self._runs.run_to_out(r) for r in recent_runs_raw]
 
         favorites = self.repo.list_favorites(user_id)

@@ -167,6 +167,7 @@ class FlowGraph(
         self._any_input_liveness: dict[str | int, frozenset] = {}
         # Gate id -> dead output handles of the last run_graph (parameter and formula gates).
         self._last_closed_gate_handles: dict[str | int, frozenset[str]] = {}
+        self.known_rows_out = {}
         # Visual groups (box registry; membership lives on setting_input.group_id). Never read by the executor.
         self._groups: dict[int, schemas.GroupInformation] = {}
         self._group_id_seq: int = 0  # monotonic group-id allocator; never reuses a freed id
@@ -198,6 +199,8 @@ class FlowGraph(
         self._commit_sources: bool = True
         # Last user_id seen on node settings, so restore_from_snapshot can re-stamp an empty graph.
         self._owner_user_id: int | None = None
+        # Open merge conflicts (routes/flow_merge.py); saved with the flow, carried by the step that changed them.
+        self.merge_conflicts: dict | None = None
         self._node_observers: list[NodeObserver] = []
         # Off only on a graph `notebook_cells.seed_session` seeded, where cells re-place the seeded ports.
         self.unique_subflow_port_names = True

@@ -50,6 +50,44 @@
         <el-icon><Odometer /></el-icon>
         <span>KPI</span>
       </el-button>
+      <el-button
+        size="small"
+        plain
+        class="picker-tool-btn"
+        draggable="true"
+        title="Click or drag onto the canvas"
+        @click="emit('add-table')"
+        @dragstart="onTableDragStart($event)"
+      >
+        <el-icon><Grid /></el-icon>
+        <span>Table</span>
+      </el-button>
+      <el-button
+        size="small"
+        plain
+        class="picker-tool-btn"
+        draggable="true"
+        title="Click or drag onto the canvas, then choose an image; or drop an image file on the canvas"
+        data-testid="insert-image"
+        @click="emit('add-image')"
+        @dragstart="onImageDragStart($event)"
+      >
+        <el-icon><Picture /></el-icon>
+        <span>Image</span>
+      </el-button>
+      <el-button
+        size="small"
+        plain
+        class="picker-tool-btn"
+        draggable="true"
+        title="Click or drag onto the canvas, then choose its source and column"
+        data-testid="insert-filter"
+        @click="emit('add-filter')"
+        @dragstart="onNewFilterDragStart($event)"
+      >
+        <el-icon><Filter /></el-icon>
+        <span>Filter</span>
+      </el-button>
     </div>
     <div class="picker-divider" />
     <div class="picker-header">
@@ -130,8 +168,20 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { EditPen, Minus, Odometer, Plus, Search } from "@element-plus/icons-vue";
+import {
+  EditPen,
+  Filter,
+  Grid,
+  Minus,
+  Odometer,
+  Picture,
+  Plus,
+  Search,
+} from "@element-plus/icons-vue";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useDashboardsStore } from "../../stores/dashboards-store";
+import { chartsForDashboard } from "../CatalogView/chartLibraryFilter";
+import { chartsOfDashboardCatalog } from "./dashboardCatalog";
 import { useDashboardDragAndDrop } from "../../composables/useDashboardDragAndDrop";
 import type { CatalogVisualization, SeparatorOrientation } from "../../types";
 
@@ -142,19 +192,30 @@ const emit = defineEmits<{
   (e: "add-text"): void;
   (e: "add-separator", orientation: SeparatorOrientation): void;
   (e: "add-kpi"): void;
+  (e: "add-table"): void;
+  (e: "add-image"): void;
+  (e: "add-filter"): void;
   (e: "create"): void;
 }>();
 
 const catalogStore = useCatalogStore();
-const { onVizDragStart, onTextDragStart, onSeparatorDragStart, onKpiDragStart } =
-  useDashboardDragAndDrop();
+const dashboardsStore = useDashboardsStore();
+const {
+  onVizDragStart,
+  onTextDragStart,
+  onSeparatorDragStart,
+  onKpiDragStart,
+  onTableDragStart,
+  onImageDragStart,
+  onNewFilterDragStart,
+} = useDashboardDragAndDrop();
 const search = ref("");
 const tableFilter = ref<number | null>(null);
 
 // Distinct catalog tables that back at least one saved visualization.
 const tableOptions = computed(() => {
   const seen = new Map<number, string>();
-  for (const v of catalogStore.visualizationLibrary) {
+  for (const v of offered.value) {
     if (v.source_type === "table" && v.catalog_table_id != null && !seen.has(v.catalog_table_id)) {
       seen.set(
         v.catalog_table_id,
@@ -171,10 +232,18 @@ const hasActiveFilter = computed(
   () => search.value.trim().length > 0 || typeof tableFilter.value === "number",
 );
 
+// The charts of their own and this dashboard's; another dashboard's charts are not offered.
+const offered = computed(() =>
+  chartsForDashboard(
+    chartsOfDashboardCatalog(catalogStore.visualizationLibrary, dashboardsStore.current),
+    dashboardsStore.current?.id,
+  ),
+);
+
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase();
   const table = typeof tableFilter.value === "number" ? tableFilter.value : null;
-  return catalogStore.visualizationLibrary.filter((v) => {
+  return offered.value.filter((v) => {
     if (table !== null && v.catalog_table_id !== table) return false;
     if (!q) return true;
     return (

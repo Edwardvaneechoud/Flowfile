@@ -96,6 +96,16 @@ function newEphemeralSessionId(): number {
   return -(1_500_000_000 + Math.floor(Math.random() * 100_000_000));
 }
 
+/** The kernel namespace of a saved notebook: -id for this machine's; a hub's notebook, whose id is negative here,
+ * gets a range of its own between those and the ephemeral ones, so it is never a real flow id either. */
+export function notebookSessionId(persistedId: number): number {
+  return persistedId > 0 ? -persistedId : -(1_000_000_000 - persistedId);
+}
+
+/** A hub's notebook keeps no kernel: a kernel belongs to the machine the notebook is opened on. */
+const savedKernelId = (targetId: number | null, kernelId: string | null): string | null =>
+  targetId != null && targetId < 0 ? null : kernelId;
+
 /** The kernel namespace a flow's session runs in (core's kernel_runner.kernel_flow_id), below both ranges above. */
 export function flowSessionId(flowId: number): number {
   return -(2 ** 40) - flowId;
@@ -146,10 +156,12 @@ function toWire(cells: NotebookCellModel[]): NotebookCellWire[] {
 }
 
 /** Python that reads a catalog table; the typed ref chain only fits the
- * catalog.schema.table shape, anything else falls back to the string form. */
-export function readTableSnippet(qualifiedName: string): string {
+ * catalog.schema.table shape, anything else falls back to the string form.
+ * A hub table (`byName`) is always read by its name: core finds it on the hub,
+ * while the ref chain walks this machine's own catalogs. */
+export function readTableSnippet(qualifiedName: string, byName = false): string {
   const parts = qualifiedName.split(".");
-  if (parts.length === 3) {
+  if (parts.length === 3 && !byName) {
     const [catalog, schema, table] = parts.map((p) => JSON.stringify(p));
     return `df = flowfile_ctx.get_catalog(${catalog}).get_schema(${schema}).get_table_ref(${table}).read()`;
   }
@@ -637,7 +649,8 @@ function hydrateTab(p: PersistedNotebook): OpenNotebook {
   return {
     tabId: p.tabId,
     persistedId: p.persistedId,
-    sessionFlowId: p.persistedId != null ? -p.persistedId : newEphemeralSessionId(),
+    sessionFlowId:
+      p.persistedId != null ? notebookSessionId(p.persistedId) : newEphemeralSessionId(),
     name: p.name,
     description: p.description,
     namespaceId: p.namespaceId,
@@ -804,7 +817,7 @@ export const useNotebookStore = defineStore("notebook", {
         const tab: OpenNotebook = {
           tabId: uid("tab"),
           persistedId: nb.id,
-          sessionFlowId: -nb.id,
+          sessionFlowId: notebookSessionId(nb.id),
           name: nb.name,
           description: nb.description,
           namespaceId: nb.namespace_id,
@@ -917,7 +930,7 @@ export const useNotebookStore = defineStore("notebook", {
           description: nb.description,
           namespace_id: nb.namespaceId,
           cells: toWire(nb.cells),
-          default_kernel_id: nb.kernelId,
+          default_kernel_id: savedKernelId(nb.persistedId, nb.kernelId),
         });
         nb.dirty = false;
         this._schedulePersist();
@@ -938,10 +951,10 @@ export const useNotebookStore = defineStore("notebook", {
           namespace_id: namespaceId,
           description: nb.description,
           cells: toWire(nb.cells),
-          default_kernel_id: nb.kernelId,
+          default_kernel_id: savedKernelId(namespaceId, nb.kernelId),
         });
         nb.persistedId = created.id;
-        nb.sessionFlowId = -created.id;
+        nb.sessionFlowId = notebookSessionId(created.id);
         nb.name = created.name;
         nb.namespaceId = created.namespace_id;
         nb.dirty = false;
@@ -1135,10 +1148,10 @@ export const useNotebookStore = defineStore("notebook", {
     /** Insert a read of `qualifiedName` (catalog.schema.table) at the caret of the
      * last-focused Python cell. Without one, a trailing blank Python cell is filled
      * in, else a new cell is appended. */
-    insertReadCell(qualifiedName: string) {
+    insertReadCell(qualifiedName: string, byName = false) {
       const nb = this.active;
       if (!nb) return;
-      const snippet = readTableSnippet(qualifiedName);
+      const snippet = readTableSnippet(qualifiedName, byName);
       const focused = nb.cells.find((c) => c.id === nb.focusedCellId);
       if (focused?.cellType === "python") {
         const { at, insert, cursor } = snippetInsertion(focused.code, focused.cursor ?? 0, snippet);

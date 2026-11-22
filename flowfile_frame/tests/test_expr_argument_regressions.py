@@ -1,7 +1,6 @@
 """Expressions whose arguments are functions, frame expressions or Polars' own defaults."""
 
 import polars as pl
-import pytest
 
 import flowfile as ff
 
@@ -42,12 +41,10 @@ def test_a_filter_predicate_carries_its_function_sources():
     assert df.select(expr.sum()).collect().to_dicts() == [{"a": 5}]
 
 
-def test_list_to_struct_takes_polars_defaults():
+def test_list_to_struct_names_its_fields():
     df = ff.from_dict({"l": [[1, 2], [3, 4]]})
 
-    with pytest.raises(Exception, match="upper_bound"):
-        df.select(ff.col("l").list.to_struct()).collect()
-    widened = df.select(ff.col("l").list.to_struct(upper_bound=2)).collect()
+    result = df.select(ff.col("l").list.to_struct(["a", "b"])).collect()
 
-    assert widened.schema["l"] == pl.Struct({"field_0": pl.Int64, "field_1": pl.Int64})
-    assert "first_non_null" not in str(ff.col("l").list.to_struct(upper_bound=2))
+    assert result.schema["l"] == pl.Struct({"a": pl.Int64, "b": pl.Int64})
+    assert result["l"].to_list() == [{"a": 1, "b": 2}, {"a": 3, "b": 4}]

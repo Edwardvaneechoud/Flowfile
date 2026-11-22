@@ -26,6 +26,7 @@ from flowfile_core.catalog.constants import DEFAULT_VISUALIZATION_ROWS, MAX_VISU
 from flowfile_core.catalog.storage_backend import serialized_frame_uses_cloud
 from flowfile_core.configs import logger, settings
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.errors import RESULT_GONE, ComputeError
 from flowfile_core.flowfile.execution.payloads import VizSessionPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
@@ -125,7 +126,12 @@ def viz_request(
 
 
 def _answer(node: FlowNode, request: VizSessionPayload) -> dict[str, Any]:
-    """The session's answer to *request*, on the backend holding *node*'s result when it offers one, else the worker."""
+    """The session's answer to *request*, on the backend holding *node*'s result when it offers one, else the worker.
+
+    Raises:
+        NodeNotRunError: The session failed, or answered an error, and the node's result is gone
+            (``FlowNode.result_is_gone``).
+    """
     backend = registry.backend(registry.WORKER_BACKEND_ID)
     ref = node.results.result_ref
     if settings.FLOWFILE_COMPUTE_PROTOCOL and ref is not None:
@@ -133,7 +139,15 @@ def _answer(node: FlowNode, request: VizSessionPayload) -> dict[str, Any]:
         verdict = handshake.verdict_for(holder)
         if verdict.ok and OperationKind.viz_session.value in verdict.offered.operations:
             backend = holder
-    return backend.run_op(OperationKind.viz_session, op_payload(request)).metadata
+    try:
+        answer = backend.run_op(OperationKind.viz_session, op_payload(request)).metadata
+    except (RuntimeError, ComputeError):
+        if node.result_is_gone():
+            raise NodeNotRunError(RESULT_GONE) from None
+        raise
+    if answer.get("error") and node.result_is_gone():
+        raise NodeNotRunError(RESULT_GONE)
+    return answer
 
 
 def compute_node_rows(

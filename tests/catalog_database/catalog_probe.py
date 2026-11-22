@@ -72,6 +72,46 @@ if sys.argv[1] == "populated":
     constraints = inspect(engine).get_unique_constraints("workspace_projects")
     assert any(set(c["column_names"]) == {"owner_id", "folder_path"} for c in constraints)
     assert not any(c["column_names"] == ["folder_path"] for c in constraints)
+    command.upgrade(cfg, "039")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO flow_runs (flow_name, user_id, started_at, nodes_completed, number_of_nodes, run_type) "
+                "VALUES ('sent', :o, CURRENT_TIMESTAMP, 0, 0, 'hub')"
+            ),
+            {"o": owner},
+        )
+    command.upgrade(cfg, "040")
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT run_type FROM flow_runs WHERE flow_name = 'sent'")) == "dispatched"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO flow_registrations (name, flow_path, owner_id, flow_uuid) "
+                "VALUES ('scheduled', '/scheduled.yaml', :o, 'a7c1c8e2-0000-4000-8000-000000000041')"
+            ),
+            {"o": owner},
+        )
+        reg = conn.scalar(text("SELECT id FROM flow_registrations WHERE name = 'scheduled'"))
+        for interval in (3600, 7200):
+            conn.execute(
+                text(
+                    "INSERT INTO flow_schedules (registration_id, owner_id, enabled, schedule_type, interval_seconds) "
+                    "VALUES (:r, :o, true, 'interval', :i)"
+                ),
+                {"r": reg, "o": owner, "i": interval},
+            )
+    command.upgrade(cfg, "042")
+    with engine.connect() as conn:
+        uuids = conn.execute(text("SELECT schedule_uuid FROM flow_schedules")).scalars().all()
+    assert len(uuids) == 2 and all(uuids) and len(set(uuids)) == 2
+    [column] = [c for c in inspect(engine).get_columns("flow_schedules") if c["name"] == "schedule_uuid"]
+    assert column["nullable"] is False
+    command.downgrade(cfg, "041")
+    assert "schedule_uuid" not in {c["name"] for c in inspect(engine).get_columns("flow_schedules")}
+    command.downgrade(cfg, "039")
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT run_type FROM flow_runs WHERE flow_name = 'sent'")) == "hub"
 
 migration.run_startup_migration()
 init_db()

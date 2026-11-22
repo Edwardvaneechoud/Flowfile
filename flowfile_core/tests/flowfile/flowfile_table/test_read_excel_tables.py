@@ -345,10 +345,10 @@ def test_complex_raw_export_names_blank_and_duplicate_headers():
 
 
 def test_complex_inventory_reads_despite_excel_error_values():
-    """unit_cost holds floats, an int and '#N/A'; the mixed column becomes text rather than failing."""
+    """unit_cost holds floats, an int and '#N/A'; the error cell reads as null and the column stays numeric."""
     flowfile_table = FlowDataEngine.create_from_path(complex_table("Inventory"))
     assert flowfile_table.columns == ["sku", "location", "on_hand", "reorder_at", "unit_cost", "status"]
-    assert "#N/A" in [row["unit_cost"] for row in flowfile_table.to_pylist()]
+    assert [row["unit_cost"] for row in flowfile_table.to_pylist()] == [12.5, None, 3.99, 0.0001, 45.0]
 
 
 def test_complex_timesheet_header_below_a_title_row():

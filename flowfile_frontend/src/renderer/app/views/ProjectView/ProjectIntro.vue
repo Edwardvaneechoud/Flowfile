@@ -81,7 +81,7 @@
           <div class="card-content">
             <p class="intro-copy">
               A project turns a folder on your computer into a safe, versioned copy of your work.
-              Your flows, connections and schedules are mirrored there automatically as you go.
+              Your flows, connections and schedules are written there each time you save a version.
             </p>
           </div>
         </section>
@@ -95,9 +95,9 @@
           </div>
           <div class="card-content">
             <p class="intro-copy">
-              Whenever you like, <strong>save a version</strong> — a named snapshot you can come
-              back to later. It's like a save point for your whole workspace: experiment freely, and
-              restore an earlier version if something goes wrong.
+              Whenever you like, <strong>save a version</strong> — a commit of your definitions you
+              can come back to later. It's like a save point for your whole workspace: experiment
+              freely, and restore an earlier version if something goes wrong.
             </p>
           </div>
         </section>

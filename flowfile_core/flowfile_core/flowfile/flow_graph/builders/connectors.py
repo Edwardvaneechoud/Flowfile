@@ -14,7 +14,7 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_encrypted_credential,
     get_ga_connection,
 )
-from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution import registry, run_secrets
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.payloads import (
     DatabaseReadPayload,
@@ -42,9 +42,11 @@ from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     SqlSource,
+    qualified_table,
 )
 from flowfile_core.kafka.connection_manager import (
     build_consumer_config,
+    consumer_config_of,
     get_kafka_connection,
     get_kafka_connection_by_name,
 )
@@ -52,10 +54,10 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import (
     HistoryActionType,
 )
+from flowfile_core.secret_manager import credential_sources
 from flowfile_core.secret_manager.secret_manager import (
     _encrypt_with_master_key,
     decrypt_secret,
-    get_encrypted_secret,
 )
 from shared.db_dialects import get_dialect_or_generic
 from shared.kafka.consumer import make_kafka_commit_callback
@@ -89,9 +91,11 @@ def _resolve_database_credentials(
         and database_settings.database_connection is not None
         and get_dialect_or_generic(database_settings.database_connection.database_type).file_based
     )
+    if database_settings.connection_mode == "inline":
+        sql_utils.refuse_inline_snowflake(database_settings.database_connection)
     if database_settings.connection_mode == "inline" and not is_file_based:
         database_connection = database_settings.database_connection
-        encrypted_password = get_encrypted_secret(current_user_id=user_id, secret_name=database_connection.password_ref)
+        encrypted_password = run_secrets.encrypted_secret(user_id, database_connection.password_ref)
         if encrypted_password is None:
             raise HTTPException(status_code=400, detail="Password not found")
         return database_connection, encrypted_password, None
@@ -111,6 +115,61 @@ def _resolve_database_credentials(
         return ref_settings, encrypted_password, ref_settings
 
 
+def _step_database_credentials(database_settings, user_id: int, resolved) -> tuple:
+    """The connection and password a database step carries: ``resolved()``'s connection, and for a connection
+    (``granted``) or a secret a provider elsewhere keeps its password as the run was granted it
+    (``run_secrets.granted_value``, which refuses where the grant does not reach). The password is looked up per run,
+    never kept with ``resolved()``'s."""
+    if database_settings.connection_mode == "inline":
+        connection = database_settings.database_connection
+        name = connection.password_ref if connection is not None else None
+        if name and run_secrets.is_provider_secret(user_id, name):
+            return connection, run_secrets.granted_value(name)
+    database_connection, encrypted_password, ref = resolved()
+    if ref is not None and ref.granted:
+        return database_connection, run_secrets.granted_value(ref.connection_name, kind="database", field="password")
+    return database_connection, encrypted_password
+
+
+def _step_kafka_settings(read_settings: KafkaReadSettings, kafka_settings, user_id: int) -> KafkaReadSettings:
+    """The read settings a Kafka step carries: for a provider's connection each secret field the grant names as the
+    run was granted it (``run_secrets.granted_fields``, which refuses where the grant does not reach)."""
+    name = kafka_settings.kafka_connection_name
+    if run_secrets.provider_row("kafka", name, user_id) is None:
+        return read_settings
+    fields = run_secrets.granted_fields("kafka", name)
+    return read_settings.model_copy(update={f: v for f, v in fields.items() if f in KafkaReadSettings.model_fields})
+
+
+def _kafka_consumer_config(kafka_settings, user_id: int) -> dict:
+    """The consumer config of a Kafka source's connection, its secrets encrypted.
+
+    The node stores an id and the name the connection had then. The id's connection is taken when its name still
+    matches; else the name is looked up, here and then at a provider, whose row holds no secret
+    (``_step_kafka_settings``), since an id from another machine's document names nothing here. Only when the name
+    resolves nowhere is the id's connection taken, as one renamed since the node was saved.
+    """
+    from flowfile_core.schemas.kafka_schemas import KafkaConnectionCreate
+
+    name = kafka_settings.kafka_connection_name
+    with get_db_context() as db:
+        by_id = get_kafka_connection(db, kafka_settings.kafka_connection_id, user_id)
+        db_conn = by_id if by_id is not None and (not name or by_id.connection_name == name) else None
+        if db_conn is None and name:
+            db_conn = get_kafka_connection_by_name(db, name, user_id)
+        if db_conn is not None:
+            return build_consumer_config(db, db_conn, user_id)
+    row = credential_sources.connection(user_id, "kafka", name)
+    if row is not None:
+        fields = {key: value for key, value in row.items() if key in KafkaConnectionCreate.model_fields}
+        return consumer_config_of(KafkaConnectionCreate.model_validate(fields), user_id)
+    with get_db_context() as db:
+        renamed = get_kafka_connection(db, kafka_settings.kafka_connection_id, user_id)
+        if renamed is None:
+            raise HTTPException(status_code=400, detail="Kafka connection not found")
+        return build_consumer_config(db, renamed, user_id)
+
+
 class ConnectorBuildersMixin(GraphMixinBase):
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):
@@ -124,14 +183,17 @@ class ConnectorBuildersMixin(GraphMixinBase):
         database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
 
         def _func(df: FlowDataEngine):
-            database_connection, encrypted_password, _ = _resolve_database_credentials(
-                database_settings, node_database_writer.user_id
+            database_connection, encrypted_password = _step_database_credentials(
+                database_settings,
+                node_database_writer.user_id,
+                lambda: _resolve_database_credentials(database_settings, node_database_writer.user_id),
             )
             df.lazy = True
-            table_name = (
-                database_settings.schema_name + "." + database_settings.table_name
-                if database_settings.schema_name
-                else database_settings.table_name
+            table_name = qualified_table(
+                get_dialect_or_generic(database_connection.database_type or "generic"),
+                database_settings.database_name,
+                database_settings.schema_name,
+                database_settings.table_name,
             )
             write = DatabaseWritePayload(
                 plan=df.data_frame,
@@ -185,7 +247,9 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 return _creds["v"]
 
         def _func():
-            database_connection, encrypted_password, _ = _get_creds()
+            database_connection, encrypted_password = _step_database_credentials(
+                database_settings, node_database_reader.user_id, _get_creds
+            )
             backend = current_context(self).backend
             read = DatabaseReadPayload(
                 flow_id=node_database_reader.flow_id,
@@ -205,7 +269,9 @@ class ConnectorBuildersMixin(GraphMixinBase):
             # Prefer the cached schema so a saved flow renders columns without a live connection.
             if node_database_reader.fields:
                 return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_database_reader.fields]
-            database_connection, encrypted_password, _ = _get_creds()
+            database_connection, encrypted_password, ref = _get_creds()
+            if ref is not None and ref.granted:
+                raise ValueError(run_secrets.refusal(ref.connection_name))
             sql_source = SqlSource(
                 connection_string=sql_utils.construct_sql_uri(
                     database_type=database_connection.database_type,
@@ -216,12 +282,14 @@ class ConnectorBuildersMixin(GraphMixinBase):
                     password=decrypt_secret(encrypted_password) if encrypted_password else None,
                     ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
                     connect_timeout=10,
+                    **sql_utils.dialect_uri_options(database_connection),
                 ),
                 query=None if database_settings.query_mode == "table" else database_settings.query,
                 table_name=database_settings.table_name,
                 schema_name=database_settings.schema_name,
                 fields=node_database_reader.fields,
                 database_type=database_connection.database_type,
+                database_name=database_settings.database_name,
             )
             return sql_source.get_schema()
 
@@ -288,18 +356,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
         def _get_kafka_read_settings() -> KafkaReadSettings:
             with _read_settings_lock:
                 if "v" not in _read_settings:
-                    with get_db_context() as db:
-                        db_conn = get_kafka_connection(
-                            db, kafka_settings.kafka_connection_id, node_kafka_source.user_id
-                        )
-                        if db_conn is None:
-                            if kafka_settings.kafka_connection_name:
-                                db_conn = get_kafka_connection_by_name(
-                                    db, kafka_settings.kafka_connection_name, node_kafka_source.user_id
-                                )
-                            if db_conn is None:
-                                raise HTTPException(status_code=400, detail="Kafka connection not found")
-                        consumer_config = build_consumer_config(db, db_conn, node_kafka_source.user_id)
+                    consumer_config = _kafka_consumer_config(kafka_settings, node_kafka_source.user_id)
                     _read_settings["v"] = KafkaReadSettings.from_consumer_config(
                         consumer_config,
                         topic=kafka_settings.topic_name,
@@ -320,14 +377,19 @@ class ConnectorBuildersMixin(GraphMixinBase):
             read = KafkaReadPayload(
                 flow_id=node_kafka_source.flow_id,
                 node_id=node_kafka_source.node_id,
-                settings=kafka_read_settings,
+                settings=_step_kafka_settings(kafka_read_settings, kafka_settings, node_kafka_source.user_id),
                 read_kafka_source=root().read_kafka_source,
             )
             result = node.run_op(backend, OperationKind.kafka_read, op_payload(read), job_id=read.job_id)
             fl = engine_from_read(backend, result.refs["result"])
             # Committed once the flow completes, so a failed or cancelled run commits nothing.
             offsets = result.metadata.get("offsets")
-            if offsets is not None:
+            if offsets is not None and _elsewhere():
+                self.flow_logger.warning(
+                    f"Node {node_kafka_source.node_id} read through a connection core never opens: its "
+                    "offsets are not committed"
+                )
+            elif offsets is not None:
                 node._on_flow_complete = make_kafka_commit_callback(
                     kafka_read_settings,
                     offsets,
@@ -335,19 +397,25 @@ class ConnectorBuildersMixin(GraphMixinBase):
                     self.flow_logger,
                     _decrypt_fn,
                 )
-            # The read frame may have fewer columns than inferred (empty topic); align to the schema.
-            expected_columns = schema_callback()
-            fl = fl.align_to_schema(expected_columns)
+            if not _elsewhere():
+                # The read frame may have fewer columns than inferred (empty topic); align to the schema.
+                fl = fl.align_to_schema(schema_callback())
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
         def _decrypt_fn(encrypted: str) -> str:
             return decrypt_secret(encrypted).get_secret_value()
 
+        def _elsewhere() -> bool:
+            name = kafka_settings.kafka_connection_name
+            return run_secrets.provider_row("kafka", name, node_kafka_source.user_id) is not None
+
         def schema_callback():
             # Prefer the cached schema so a saved flow renders columns without sampling the topic.
             if node_kafka_source.fields:
                 return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_kafka_source.fields]
+            if _elsewhere():
+                raise ValueError(run_secrets.refusal(kafka_settings.kafka_connection_name))
             schema_pairs = root().infer_topic_schema(_get_kafka_read_settings(), sample_size=10, decrypt_fn=_decrypt_fn)
             # Since the schema callback takes quite some time, we only run the function once.
             if not schema_pairs:
@@ -521,6 +589,8 @@ class ConnectorBuildersMixin(GraphMixinBase):
         def _resolve_secret_encrypted() -> str | None:
             if _inline_encrypted is not None:
                 return _inline_encrypted
+            if auth.secret_name:
+                return run_secrets.encrypted_secret(node_rest_api_reader.user_id, auth.secret_name)
             return resolve_auth_secret_encrypted(auth, node_rest_api_reader.user_id)
 
         def _func() -> FlowDataEngine:

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, SecretStr
 
 from flowfile_core.schemas.sharing_schema import AccessInfo
@@ -7,6 +9,8 @@ class Token(BaseModel):
     access_token: str
     refresh_token: str | None = None
     token_type: str
+    expires_at: int | None = None
+    """When the access token expires, in milliseconds since the epoch; answered for a sign-in through the hub."""
 
 
 class TokenData(BaseModel):
@@ -68,6 +72,7 @@ class Secret(BaseModel):
     user_id: str
     id: int | None = None
     access: AccessInfo | None = None
+    source: Literal["local", "hub"] = "local"
 
 
 class SecretInDB(BaseModel):

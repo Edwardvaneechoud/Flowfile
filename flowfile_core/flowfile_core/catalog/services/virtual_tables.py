@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import logging
 import re
+import secrets
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -17,7 +17,7 @@ from requests.exceptions import RequestException
 
 from flowfile_core.auth import sharing
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
-from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
+from flowfile_core.catalog.delta_utils import get_live_delta_version, is_delta_table
 from flowfile_core.catalog.exceptions import (
     CatalogError,
     FlowNotFoundError,
@@ -31,7 +31,12 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.tables import TableService
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
+from flowfile_core.catalog.storage_backend import (
+    CatalogStorageTarget,
+    _is_cloud_uri,
+    resolve_for_table,
+)
+from flowfile_core.catalog.table_sources import remote_sql_tables, row_targets, scan_delta, table_row
 from flowfile_core.catalog.text_utils import (
     hash_source_versions,
     is_table_reference,
@@ -49,11 +54,12 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
 from flowfile_core.schemas.catalog_schema import CatalogTableMaterializeResult, CatalogTableOut
 from shared.delta_utils import validate_catalog_path
-from shared.storage_config import storage
+from shared.storage_config import require_flow_in_storage, storage
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.services.sql import SqlService
     from flowfile_core.flowfile.execution.protocol import ResultRef
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +67,10 @@ logger = logging.getLogger(__name__)
 _UNSET: str = "\x00unset\x00"
 
 _ABS_PATH_RE = re.compile(r"(?:/[\w.\-]+){2,}")
+MIXED_STORAGE = (
+    "This query names tables on object storage and tables or views this Flowfile reads from its own disk; "
+    "the SQL editor reads one or the other. Combine them in a flow."
+)
 
 
 def _scrub_abs_paths(text: str) -> str:
@@ -68,11 +78,38 @@ def _scrub_abs_paths(text: str) -> str:
     return _ABS_PATH_RE.sub(lambda m: m.group(0).rsplit("/", 1)[-1], text)
 
 
-def _project_sync_tables(owner_id: int) -> None:
-    """Mirror a SQL-view create/update into the active project's tables.yaml (no-op when none active)."""
-    from flowfile_core.project import project_sync
+def scan_object_storage_table(
+    table: CatalogTable | CatalogTableOut, target: CatalogStorageTarget, user_id: int | None, display: str
+) -> pl.LazyFrame:
+    """A lazy scan of a physical table on object storage from its row and its storage target, its plan holding no
+    secret. A table whose catalog names no storage has nothing to be read with and is refused, never read with
+    whatever credentials this process has."""
+    if not target.is_cloud:
+        raise ValueError(
+            f"Table '{display}' is stored in cloud/object storage, but its catalog has no storage connection to "
+            "read it with."
+        )
+    return scan_delta(target, table.file_path, user_id)
 
-    project_sync.tables_changed(owner_id)
+
+def _lazy_writer_input(table_name: str, writer_node: FlowNode) -> pl.LazyFrame:
+    """The plan a lazy producer's virtual writer receives, built from its input without running anything.
+
+    Raises:
+        ValueError: The writer has no input, or building the plan failed.
+    """
+    inputs = writer_node.node_inputs.main_inputs
+    if not inputs:
+        raise ValueError(f"No data produced for table '{table_name}'")
+    try:
+        flowframe = inputs[0].get_resulting_data()
+    except ComputeError:
+        raise
+    except Exception as e:
+        raise ValueError(f"Flow errors for table '{table_name}': {e}") from e
+    if flowframe is None or flowframe.data_frame is None:
+        raise ValueError(f"No data produced for table '{table_name}'")
+    return flowframe.data_frame.lazy()
 
 
 class VirtualTableService:
@@ -107,7 +144,6 @@ class VirtualTableService:
         producer_registration_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool = False,
         schema_json: str | None = None,
         polars_plan: str | None = None,
@@ -129,7 +165,6 @@ class VirtualTableService:
             storage_format="delta",
             table_type="virtual",
             producer_registration_id=producer_registration_id,
-            serialized_lazy_frame=serialized_lazy_frame,
             is_optimized=is_optimized,
             schema_json=schema_json,
             polars_plan=polars_plan,
@@ -145,7 +180,6 @@ class VirtualTableService:
         description: str | None = None,
         namespace_id: int | None = None,
         producer_registration_id: int | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool | None = None,
         schema_json: str | None = None,
         polars_plan: str | None = None,
@@ -173,8 +207,6 @@ class VirtualTableService:
             if producer is None:
                 raise FlowNotFoundError(registration_id=producer_registration_id)
             table.producer_registration_id = producer_registration_id
-        if serialized_lazy_frame is not None:
-            table.serialized_lazy_frame = serialized_lazy_frame
         if is_optimized is not None:
             table.is_optimized = is_optimized
         if schema_json is not None:
@@ -228,14 +260,12 @@ class VirtualTableService:
             storage_format="delta",
             table_type="virtual",
             producer_registration_id=None,
-            serialized_lazy_frame=None,
             is_optimized=False,
             sql_query=sql_query,
             schema_json=schema_json,
             column_count=len(schema_list),
         )
         table = self.repo.create_table(table)
-        _project_sync_tables(owner_id)
         return self._tables.table_to_out(table)
 
     def update_query_virtual_table(
@@ -283,7 +313,6 @@ class VirtualTableService:
         table = self.repo.update_table(table)
 
         self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
-        _project_sync_tables(table.owner_id)
 
         return self._tables.table_to_out(table)
 
@@ -363,7 +392,10 @@ class VirtualTableService:
             for alias in aliases_by_table[tbl_id]:
                 sql_context.register(alias, lazy_frame)
 
-        return sql_context.execute(rewritten_query)
+        result = sql_context.execute(rewritten_query)
+        # Polars 2 validates a query when its schema resolves, not in execute(): fail here as before.
+        result.collect_schema()
+        return result
 
     def _resolve_table_for_sql_context(
         self,
@@ -375,8 +407,8 @@ class VirtualTableService:
         """Return a LazyFrame for a single referenced table when resolving a SQL context.
 
         ``resolve_or_log`` covers the broad set of errors that can come out of
-        nested virtual-table resolution — corrupt serialized frames, missing
-        producer files, polars eval errors, recursion bugs.
+        nested virtual-table resolution — missing producer files, polars eval
+        errors, recursion bugs.
         """
         if t.table_type == "virtual":
             if getattr(t, "sql_query", None):
@@ -385,13 +417,6 @@ class VirtualTableService:
                     kind="nested query virtual table",
                     identifier=t.name,
                 )
-            if (
-                t.is_optimized
-                and t.serialized_lazy_frame
-                and not serialized_frame_uses_cloud(t.serialized_lazy_frame)
-                and check_source_versions_current(t.source_table_versions)
-            ):
-                return pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame))
             if t.producer_registration_id:
                 return resolve_or_log(
                     lambda: self.resolve_virtual_flow_table(t.id, user_id=user_id),
@@ -401,7 +426,7 @@ class VirtualTableService:
             return None
         if t.file_path and _is_cloud_uri(t.file_path):
             # The resolved frame is shipped to the worker, so the credentials must not sit in the plan.
-            return pl.scan_delta(t.file_path, **resolve_for_namespace(t.namespace_id).scan_kwargs(user_id))
+            return pl.scan_delta(t.file_path, **resolve_for_table(t.file_path, t.namespace_id).scan_kwargs(user_id))
         if t.file_path and is_delta_table(Path(t.file_path)):
             return pl.scan_delta(t.file_path)
         return None
@@ -415,9 +440,10 @@ class VirtualTableService:
     ) -> pl.LazyFrame:
         """Resolve a virtual flow table to a LazyFrame.
 
-        For optimized tables, deserializes the stored LazyFrame directly.
         For query-based virtual tables, delegates to resolve_query_virtual_table.
-        For non-optimized tables, runs the producer flow's writer node with ``run_location`` as its location, else
+        For a producer whose writer branch is lazy, builds the plan the writer receives in this process: nothing
+        runs, nothing is sent to a backend and the catalog row is not written.
+        For the others, runs the producer flow's writer node with ``run_location`` as its location, else
         on the current execution context's backend. A writer that failed on ``ComputeUnavailable`` raises it.
         """
         with self.held_virtual_flow_table(table_id, user_id, run_location, node_logger) as (plan, _):
@@ -433,9 +459,10 @@ class VirtualTableService:
     ) -> Iterator[tuple[pl.LazyFrame, ResultRef | None]]:
         """Resolve a virtual flow table as ``resolve_virtual_flow_table`` does; its plan and its producer run's ref.
 
-        The ref is ``None`` for a table that resolves without a run (a query table, an optimized one whose sources
-        are current). Otherwise it is the writer node's result, held for the block: a deferred one is released when
-        the block ends, a stored one stays, since the plan scans it.
+        The ref is ``None`` for a query table and a lazy producer, which resolve without a run. Laziness is read
+        from the producer flow as it is saved (``check_upstream_laziness``), not from the table's ``is_optimized``,
+        which the last producer run recorded. Otherwise the ref is the writer node's result, held for the block: a
+        deferred one is released when the block ends, a stored one stays, since the plan scans it.
         """
         if run_location is None:
             run_location = current_context().backend_id
@@ -450,16 +477,6 @@ class VirtualTableService:
             yield self.resolve_query_virtual_table(table_id, user_id=user_id), None
             return
 
-        if (
-            table.is_optimized
-            and table.serialized_lazy_frame
-            and not serialized_frame_uses_cloud(table.serialized_lazy_frame)
-        ):
-            if check_source_versions_current(table.source_table_versions):
-                yield pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame)), None
-                return
-            logger.info("Source table versions changed for virtual table %r, running its producer flow", table.name)
-
         if not table.producer_registration_id:
             raise ValueError(f"Virtual table {table.name} has no producer flow")
 
@@ -467,7 +484,7 @@ class VirtualTableService:
         if producer is None:
             raise FlowNotFoundError(registration_id=table.producer_registration_id)
 
-        flow = open_flow(Path(producer.flow_path), user_id=user_id)
+        flow = open_flow(require_flow_in_storage(Path(producer.flow_path)), user_id=user_id)
         selected_node = None
         for node in flow.nodes:
             if node.name == "catalog_writer" and node.setting_input.catalog_write_settings.table_name == table.name:
@@ -480,11 +497,18 @@ class VirtualTableService:
         producer_context = ExecutionContext.for_flow(
             flow.flow_settings.model_copy(update={"execution_location": run_location})
         )
+        is_lazy, _ = selected_node.check_upstream_laziness()
         with ExitStack() as params:
             params.enter_context(use_context(producer_context))
             for node in [selected_node, *upstream]:
                 params.enter_context(node_parameters_resolved(node))
-            selected_node.execute_node(reset_cache=True, performance_mode=True, node_logger=node_logger)
+            if is_lazy:
+                plan = _lazy_writer_input(table.name, selected_node)
+            else:
+                selected_node.execute_node(reset_cache=True, performance_mode=True, node_logger=node_logger)
+        if is_lazy:
+            yield plan, None
+            return
 
         if selected_node.results.errors:
             if isinstance(selected_node._last_run_error, ComputeUnavailable):
@@ -509,33 +533,51 @@ class VirtualTableService:
         session identity map. Callers must invoke it AFTER resolution, or they
         key the cache on the pre-resolution fingerprint and the worker serves
         the old snapshot while the fresh compute is discarded.
+
+        A lazy table's read restamps nothing, so its key is the live versions of the sources its last producer run
+        recorded (the worker also keys on the plan bytes, which follow the producer flow); a source it cannot
+        probe gives a key no snapshot has.
         """
         table = self.repo.get_table_fresh(table_id)
-        return hash_source_versions(table.source_table_versions if table is not None else None)
+        recorded = table.source_table_versions if table is not None else None
+        if table is None or not table.is_optimized or not recorded:
+            return hash_source_versions(recorded)
+        try:
+            live = [{**entry, "version": get_live_delta_version(entry["file_path"])} for entry in json.loads(recorded)]
+        except Exception:
+            logger.debug("Could not probe the sources of virtual table %s", table_id, exc_info=True)
+            return secrets.token_hex(32)
+        return hash_source_versions(json.dumps(live))
 
     def materialize_virtual_table(self, table_id: int, user_id: int | None = None) -> CatalogTableMaterializeResult:
-        """Resolve a virtual table and have the worker materialise it to a kernel-readable IPC file.
+        """Resolve a virtual table and have the worker materialise it to a kernel-readable IPC file. A physical
+        table on object storage, this catalog's or a remote one's, is written the same way from a scan with its
+        storage target: a kernel holds no credential for it.
 
         Every call rebuilds the snapshot: a serialised plan records table paths,
         not data, so its sha256 stays constant when referenced data changes.
         The plan hash therefore only names the snapshot file (the worker skips
         its idempotency cache for the kernel_shared target).
         """
-        table = self.repo.get_table(table_id)
-        if table is None:
-            raise TableNotFoundError(table_id=table_id)
-        if getattr(table, "table_type", "physical") != "virtual":
+        table = table_row(self.repo, table_id, user_id)
+        on_storage = bool(table.table_type != "virtual" and table.file_path and _is_cloud_uri(table.file_path))
+        if getattr(table, "table_type", "physical") != "virtual" and not on_storage:
             raise NotAVirtualTableError(table_id=table_id)
 
         try:
-            plan_bytes = self.resolve_virtual_flow_table(table_id, user_id=user_id).serialize()
+            if on_storage:
+                [target] = row_targets([table], user_id, "notebook")
+                plan_bytes = scan_object_storage_table(table, target, user_id, table.name).serialize()
+            else:
+                plan_bytes = self.resolve_virtual_flow_table(table_id, user_id=user_id).serialize()
         except (CatalogError, ValueError):
             raise
         except pl.exceptions.PolarsError as e:
             # e.g. a circular view leaves an unregistered relation behind.
             raise ValueError(f"Could not resolve virtual table '{table.name}': {_scrub_abs_paths(str(e))}") from e
 
-        key = hashlib.sha256(plan_bytes).hexdigest()
+        # A scan's encrypted credential differs on every build, so a table on object storage names its own file.
+        key = hashlib.sha256(f"{table_id}:{user_id}".encode() if on_storage else plan_bytes).hexdigest()
         try:
             result = trigger_resolve_virtual_table(
                 table_id, plan_bytes, key, target="kernel_shared", worker_url=registry.worker_url()
@@ -595,13 +637,12 @@ class VirtualTableService:
                     delta_map[alias] = dir_name
         return delta_map, virtual_map
 
-    def resolve_cloud_only_table_aliases(
-        self, accessible_table_ids: set[int] | None = None, exclude: set[str] | frozenset = frozenset()
-    ) -> dict[str, str]:
-        """Map each SQL name of an object-storage-backed physical table to its fully-qualified
-        display name. These tables are excluded from the worker-offloaded SQL path (known
-        limitation), so the SQL editor uses this to return a clear error instead of a raw
-        'relation not found'. ``exclude`` drops names also served by a queryable table."""
+    def _object_storage_tables(
+        self, accessible_table_ids: set[int] | None, exclude: set[str] | frozenset
+    ) -> dict[str, tuple[CatalogTable, str]]:
+        """Each SQL name of an object-storage-backed physical table with its row and display name. The worker's SQL
+        route reads tables by directory name under the local root, so these are read as a plan
+        (``object_storage_plan``)."""
         tables = self.repo.list_tables()
         if accessible_table_ids is not None:
             tables = [t for t in tables if t.id in accessible_table_ids]
@@ -610,7 +651,7 @@ class VirtualTableService:
             if t.table_type != "virtual" and t.file_path and _is_cloud_uri(t.file_path):
                 bare_counts[t.name] = bare_counts.get(t.name, 0) + 1
         path_cache: dict[int | None, str | None] = {}
-        aliases: dict[str, str] = {}
+        aliases: dict[str, tuple[CatalogTable, str]] = {}
         for table in tables:
             if table.table_type == "virtual" or not table.file_path or not _is_cloud_uri(table.file_path):
                 continue
@@ -618,5 +659,43 @@ class VirtualTableService:
             display = format_full_name(path_cache.get(table.namespace_id), table.name)
             for name in names:
                 if name not in exclude:
-                    aliases[name] = display
+                    aliases[name] = (table, display)
         return aliases
+
+    def object_storage_plan(
+        self,
+        query: str,
+        user_id: int | None,
+        own: set[str],
+        accessible_table_ids: set[int] | None = None,
+        purpose: str = "sql",
+    ) -> tuple[pl.LazyFrame, list[str]] | None:
+        """``query`` as a lazy plan over the physical tables on object storage it names, and those names; ``None``
+        when it names none.
+
+        The tables are this catalog's and, under the names this catalog does not use, a remote catalog's
+        (``remote_sql_tables``). Each is scanned with its storage target's ``scan_kwargs``, so the plan holds no
+        secret, and a remote catalog is asked for its targets once, now. ``own`` are the names of this catalog's
+        tables on disk and its views, which the worker's SQL route reads: a query that names both kinds is refused.
+
+        Raises:
+            ValueError: A sentence for the person: both kinds named, a table whose catalog has no storage
+                connection, or a remote catalog's refusal.
+            pl.exceptions.PolarsError: The SQL does not hold over the tables' columns.
+        """
+        local = self._object_storage_tables(accessible_table_ids, own)
+        tables: dict[str, CatalogTable | CatalogTableOut] = {name: table for name, (table, _) in local.items()}
+        tables.update(remote_sql_tables(query, user_id, own | set(tables)))
+        collapsed = rewrite_qualified_references(query, set(tables) | own)
+        tables = {name: table for name, table in tables.items() if is_table_reference(name, collapsed)}
+        if not tables:
+            return None
+        if any(is_table_reference(name, collapsed) for name in own):
+            raise ValueError(MIXED_STORAGE)
+        rows = list({table.id: table for table in tables.values()}.values())
+        targets = dict(zip((row.id for row in rows), row_targets(rows, user_id, purpose), strict=True))
+        context = pl.SQLContext()
+        for name, table in tables.items():
+            display = local[name][1] if name in local else name
+            context.register(name, scan_object_storage_table(table, targets[table.id], user_id, display))
+        return context.execute(collapsed), sorted(tables)

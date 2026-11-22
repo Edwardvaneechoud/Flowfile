@@ -1,5 +1,5 @@
 // src/app/services/axios-setup.ts
-import axios, { InternalAxiosRequestConfig, AxiosResponse, AxiosError } from "axios";
+import axios, { InternalAxiosRequestConfig, AxiosError } from "axios";
 import authService from "./auth.service";
 import { createMutationQueue, installMutationChannel } from "./mutationChannel";
 import { CLIENT_HEADER, clientId } from "./clientId";
@@ -37,29 +37,7 @@ axios.interceptors.request.use(
   },
 );
 
-axios.interceptors.response.use(
-  (response: AxiosResponse) => {
-    return response;
-  },
-  async (error: AxiosError) => {
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
-
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-
-      try {
-        await authService.getToken();
-        return axios(originalRequest);
-      } catch (refreshError) {
-        console.error("Token refresh failed:", refreshError);
-        authService.logout();
-        return Promise.reject(error);
-      }
-    }
-
-    return Promise.reject(error);
-  },
-);
+// A 401 is answered by the auth service's own response interceptor, registered when it is imported above.
 
 // Registered after the auth interceptors on purpose; see installMutationChannel.
 const mutationQueue = createMutationQueue();

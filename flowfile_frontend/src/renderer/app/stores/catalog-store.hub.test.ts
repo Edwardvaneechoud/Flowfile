@@ -1,0 +1,95 @@
+// @vitest-environment happy-dom
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
+import { ns, table } from "../__fixtures__/catalogTree";
+
+const { getTablePreviewMock, getTableHistoryMock, addTableFavoriteMock, cancelRunMock } =
+  vi.hoisted(() => ({
+    cancelRunMock: vi.fn(),
+    getTablePreviewMock: vi.fn(),
+    getTableHistoryMock: vi.fn(),
+    addTableFavoriteMock: vi.fn(),
+  }));
+
+vi.mock("../api/catalog.api", () => ({
+  CatalogApi: {
+    getTablePreview: getTablePreviewMock,
+    getTableHistory: getTableHistoryMock,
+    addTableFavorite: addTableFavoriteMock,
+    cancelRun: cancelRunMock,
+    getActiveRuns: vi.fn().mockResolvedValue([]),
+  },
+}));
+
+import { useCatalogStore } from "./catalog-store";
+
+const localTable = table({ id: 5, is_remote_storage: false, is_favorite: false });
+const hubTable = table({
+  ...localTable,
+  id: -5,
+  source: "hub",
+  is_remote_storage: true,
+});
+
+describe("catalog-store with hub rows in the tree", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    sessionStorage.clear();
+    getTablePreviewMock.mockReset().mockResolvedValue({ rows: [] });
+    getTableHistoryMock.mockReset().mockResolvedValue(null);
+    addTableFavoriteMock.mockReset().mockResolvedValue(undefined);
+  });
+
+  const seed = () => {
+    const store = useCatalogStore();
+    store.tree = [
+      ns({ id: 1, children: [ns({ id: 2, level: 1, tables: [localTable] })] }),
+      ns({
+        id: -1,
+        source: "hub",
+        children: [ns({ id: -3, level: 1, source: "hub", tables: [hubTable] })],
+      }),
+    ];
+    return store;
+  };
+
+  it("selects a hub table as a local one on object storage: history at once, the preview when asked", async () => {
+    const store = seed();
+    store.selectTable(-5);
+    expect(store.selectedTableId).toBe(-5);
+    expect(store.selectedTable?.source).toBe("hub");
+    expect(getTablePreviewMock).not.toHaveBeenCalled();
+    expect(getTableHistoryMock).toHaveBeenCalledWith(-5);
+
+    await store.loadSelectedPreview();
+    expect(getTablePreviewMock).toHaveBeenCalledWith(-5, 100, null);
+  });
+
+  it("loads a local table's preview and history as before", () => {
+    const store = seed();
+    store.selectTable(5);
+    expect(store.selectedTable?.name).toBe("orders");
+    expect(getTablePreviewMock).toHaveBeenCalledWith(5, 100, null);
+    expect(getTableHistoryMock).toHaveBeenCalledWith(5);
+  });
+
+  it("favourites a hub table through the same route as a local one, by the id its row carries", async () => {
+    const store = seed();
+    await store.toggleTableFavorite(-5);
+    expect(addTableFavoriteMock).toHaveBeenCalledWith(-5);
+
+    await store.toggleTableFavorite(5);
+    expect(addTableFavoriteMock).toHaveBeenCalledWith(5);
+  });
+
+  it("hands a hub run's refused cancel to the caller with the hub's sentence, and keeps a local one's as before", async () => {
+    const store = useCatalogStore();
+    const refused = {
+      response: { status: 422, data: { detail: "The server could not be told." } },
+    };
+    cancelRunMock.mockReset().mockRejectedValue(refused);
+    await expect(store.cancelRun(-9)).rejects.toBe(refused);
+    expect(cancelRunMock).toHaveBeenCalledWith(-9);
+    await expect(store.cancelRun(9)).resolves.toBeUndefined();
+  });
+});

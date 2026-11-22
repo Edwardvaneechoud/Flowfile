@@ -58,7 +58,7 @@ Invariant 1 binds a core that serves: the desktop sidecar, the Docker image, the
 `ComputeBackend` is a `runtime_checkable` `Protocol` in `flowfile_core/flowfile_core/flowfile/execution/protocol.py`. `Capabilities` and `PROTOCOL_VERSION` live in `shared/compute_protocol.py`, which core and the worker both import.
 
 ```python
-PROTOCOL_VERSION = 1                         # the worker contract: everything core and a worker exchange
+PROTOCOL_VERSION = 3                         # the worker contract: everything core and a worker exchange
 
 class ComputeBackend(Protocol):
     id: str                                  # "local", "worker", "worker:team"
@@ -169,7 +169,7 @@ The worker materialises when `must_materialise or (wide and (preview_rows is not
 
 | Kind | Returns |
 |---|---|
-| `database_read`, `kafka_read`, `google_analytics_read`, `rest_api_read`, `file_read` | one reference; `kafka_read` adds its offsets as `metadata` |
+| `database_read`, `kafka_read`, `google_analytics_read`, `rest_api_read`, `file_read` | one reference; `kafka_read` adds its offsets as `metadata`, `rest_api_read` the requests it sent (`trace`, secrets masked) and, for a read with a `sample_size`, its first response's `suggested_paths`, `response_tree` and `response_text` |
 | `fuzzy_join`, `ml_apply` | one reference |
 | `polars_code`, `sql_query` | one reference, its schema from running the code on the backend |
 | `random_split` | one reference per split |
@@ -203,6 +203,7 @@ A worker on another host therefore needs core's catalog database (the shared Pos
 - The catalog's own object-storage work stays in core, with core's identity: the freshness probe at the start of a run, enabling a change feed, scanning an SCD2 result. A deployment's core therefore needs access to the buckets of its object-storage catalogs.
 - A GCS connection with a custom endpoint is read on the executor by a native scan too. Core's gcsfs read remains only for the protocol off and for the writers.
 - With the protocol off, a plan carries a `$ffsec$` ciphertext in an `EncryptedCredentialProvider` instead, and Azure and GCS secrets travel in its `storage_options`.
+- **`credential_resolution: vended`.** A worker on a server whose extension opens what an issuer seals to it (`shared.sealed.can_open`) declares it: besides what its master key opens, it opens what was sealed to that server. Such a credential travels in place of the plain one and core never opens it: `SealedCredentialBody` in the export and import bodies, `sealed` on a cloud storage connection, a `shared.sealed.SealedDeltaSource` scan in a plan, and a `$ffseal$1$` string where a step carried a `$ffsec$` ciphertext. `shared/sealed.py` carries them and opening one is the server extension's (`open_sealed`), so a machine with no extension carries these and opens none. Placement sends a sealed step only to a backend that declares `vended` and whose server it was sealed to (`placement.unsealed_for`).
 - A write to a backend whose verdict declares `credential_resolution: ambient` carries its connection's transport options only: `WorkerBackend` sends the cloud write's and the Delta operations' connection with every credential field `None` (`_transport_only`). Placement already keeps every connection but `env_vars` and `managed_identity` off such a backend, and those hold no secret, so this only keeps ciphertext the backend could not decrypt off the wire.
 
 ## Where data lives
@@ -294,7 +295,13 @@ A refusal is a `VersionMismatch`, raised before the backend is sent any work and
 
 Core and a worker of different app releases work together while they speak one contract. Workers upgrade when the number changes, and when Polars does.
 
+Version 2 added `cursor_request_location` to the REST API read's `PaginationConfig` (the `rest_api_read` operation and `POST /store_rest_api_read_result`), so a version 1 worker is refused by a version 2 core and the other way round.
+
+Version 3 lets a credential cross sealed or encrypted in place of a stored connection's reference: `sealed` on a cloud storage connection (cloud and Delta writes, and the catalog routes' `storage`), and `SealedCredentialBody` and `EncryptedCredentialBody` in the export and import bodies.
+
 The worker serves its capabilities at `GET /capabilities` and `GET /v1/capabilities`. `POST /shutdown` takes the internal token like every other route; without it, the worker answers only a loopback peer while the desktop shell supervises it (`FLOWFILE_SUPERVISOR_PID`).
+
+`GET /health` takes no token and answers `{"status": "ok", "version": "<the worker's Flowfile version>"}` and nothing more, so whatever watches the worker can tell it is up and which release it runs; core never calls it, and it is not part of the contract.
 
 ## Bounded reads
 
@@ -342,10 +349,15 @@ A worker's serving process does nothing but bounded reads of the results it hold
 
 - Backends register through the `flowfile.compute_backends` entry-point group. Configured workers live in the `compute_backends` table in core's catalog database: id, URL, bearer token (stored through the secret manager) and an optional `ca_cert`. An administrator fills it on **Settings → Execution → Backends**, or a control plane through `/compute_backends`. Core does not host, register, lease or scale workers; that is the control plane's job.
 - A running core reads a row the first time it uses that id and keeps the backend it built, so a row edited directly in the database takes effect on restart; removing one on the settings page drops it at once. `GET /compute_backends` shows every user the ids and their last verdicts, and only administrators the URLs.
-- A configured backend's own token signs its `/v1` requests, its submit socket and its `capabilities()`, handshake probes included. The task routes core still calls (the Delta operations, the visualisation session, the catalog services, the custom-node dry run) sign with core's `FLOWFILE_INTERNAL_TOKEN`, so a configured worker is started with core's token.
+- A configured backend's own token signs its `/v1` requests, its submit socket and its `capabilities()`, handshake probes included, and the task routes core still calls on it (the Delta operations, the visualisation session). The catalog services and the custom-node dry run call the default worker, which takes core's `FLOWFILE_INTERNAL_TOKEN`.
+- A server may be extended by the one module its configuration names (`FLOWFILE_SERVER_EXTENSION`, `shared/server_extension.py`), loaded on first use and never because it happens to be installed, and absent on every desktop. The module may add flags, bind the socket, run something while the server serves, mount routes, say how people sign in and who else may call the worker ([A node that trusts an issuer](#a-node-that-trusts-an-issuer)), and open what an issuer seals to the server. `flowfile run ui` serves other machines only with `FLOWFILE_MODE=docker`, where people sign in; in the default mode it refuses any host but a loopback one.
 
 !!! warning "A worker token grants code execution"
     Plans carry user code and operations run it, so whoever holds a worker's token can run code on that worker. The worker serves TLS itself when `FLOWFILE_WORKER_TLS_CERT` and `FLOWFILE_WORKER_TLS_KEY` name a certificate and key, and a row's `ca_cert` names the CA core trusts for that URL on every call. Plans are not signed; TLS carries their integrity. The Backends page warns while a worker's URL is plain `http` to a host other than loopback. [TLS](../users/deployment/remote-worker.md#tls) has the setup.
+
+### A node that trusts an issuer
+
+A worker takes, beside the internal token, a token its server's extension vouches for (`caller_claims`): the worker's `auth.py` asks the extension about any `X-Flowfile-Internal` value that is not the internal token and answers a refusal's reason, never the token. A worker with no extension takes only the internal token. Core signs every call to a `compute_backends` row's URL with that row's token, the task routes and the legacy socket included, and, on a server whose extension joined a controller, asks for each call's token for a row that controller filled (`WorkerBackend(token_source=)`). A refused token is a 401 whose detail names the reason (`expired`, `wrong audience`, `unknown key`, ...), and a run placed on such a node fails with that answer before anything is sent.
 
 ### The registry
 
@@ -357,7 +369,7 @@ Core reaches a backend through an `ExecutionContext(backend_id, parallelism, pre
 
 ## Headless runs
 
-`flowfile run flow` (`--run-flow` in a packaged build), and the scheduler, which spawns it, compute on the worker embedded in the runner's own process unless a backend is named. To a headless run, `"auto"` and `"remote"` mean its own process, so a scheduled run in Docker computes in core's container, with that container's memory and CPU. A backend is named by `--backend <id>`, else by a specific backend id saved in the flow, else by `FLOWFILE_COMPUTE_BACKEND` in the runner's environment, which a scheduled run inherits from core, so a deployment that sets the variable sends every scheduled run to that backend; the runner makes it the process's default (`registry.set_default_override`) and the run goes there through the same `ExecutionContext` the designer uses; if it cannot be reached, the nodes fail with `ComputeUnavailable` and nothing computes locally instead. The Google Analytics reader always runs on the default worker. The scheduler stays free of core imports and only spawns `flowfile run flow`, which reads the flow's setting from its YAML. [Headless runs](../users/deployment/cli.md) covers the CLI.
+`flowfile run flow` (`--run-flow` in a packaged build), and the scheduler, which spawns it, compute on the worker embedded in the runner's own process unless a backend is named. To a headless run, `"auto"` and `"remote"` mean its own process, so a scheduled run in Docker computes in core's container, with that container's memory and CPU. A backend is named by `--backend <id>` (which the scheduler, Run now and the push trigger pass from a schedule's `flow_schedules.backend` when it is set, and leave out when it is NULL), else by a specific backend id saved in the flow, else by `FLOWFILE_COMPUTE_BACKEND` in the runner's environment, which a scheduled run inherits from core, so a deployment that sets the variable sends every scheduled run to that backend; the runner makes it the process's default (`registry.set_default_override`) and the run goes there through the same `ExecutionContext` the designer uses; if it cannot be reached, the nodes fail with `ComputeUnavailable` and nothing computes locally instead. The Google Analytics reader always runs on the default worker. The scheduler stays free of core imports and only spawns `flowfile run flow`, which reads the flow's setting from its YAML. [Headless runs](../users/deployment/cli.md) covers the CLI.
 
 ## Where it is tested
 
@@ -373,6 +385,7 @@ Paths are under `flowfile_core/tests/flowfile/execution/` unless given in full.
 | the handshake, refusing whole or narrowing what a backend offers | `test_handshake.py` |
 | the worker contract pin and unknown-field refusal | `shared/tests/test_worker_contract.py` |
 | a worker over TLS with a self-signed certificate | `test_worker_tls.py` |
+| a worker that takes the token its server's extension vouches for, and refuses one it does not | `flowfile_worker/tests/test_server_extension.py` |
 | no inline `execution_location` branch, no worker-setting read outside the registry | `test_inline_location_branches.py` |
 | no collect over a `plan_for` leaf in core or the pip server's app | `test_serving_app_ratchet.py` |
 | the embedded worker's typed errors and in-process jobs, with no port | `test_embedded_backend.py`, `test_local_backend.py` |

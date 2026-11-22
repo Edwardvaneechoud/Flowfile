@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -56,7 +56,7 @@ EVENT_RULE_FLAGS = {
 
 def _utcnow() -> datetime:
     """Naive UTC — the catalog DB stores naive datetimes and compares them naively."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _make_session() -> Session:
@@ -159,10 +159,15 @@ def _claim_run(session: Session, run_id: int, now: datetime) -> bool:
 
 
 def _previous_run_failed(session: Session, run: FlowRun) -> bool:
-    """Whether the completed run before this one, for the same flow, failed."""
+    """Whether the completed run before this one, for the same flow, failed.
+
+    A cancelled run says nothing about the flow's health, so it is looked past: a success after a failure and a
+    cancel still recovers, and a success after a cancel alone recovers from nothing.
+    """
     query = session.query(FlowRun).filter(
         FlowRun.id < run.id,
         FlowRun.ended_at.isnot(None),
+        FlowRun.cancelled.is_(False),
         FlowRun.run_type.in_(RUN_EVENT_RUN_TYPES),
     )
     if run.flow_uuid is not None:
@@ -204,7 +209,9 @@ def evaluate_completed_runs(session: Session) -> int:
 
         events: list[str] = []
         age = (now - run.ended_at.replace(tzinfo=None)).total_seconds()
-        if age <= MAX_EVENT_AGE_SECONDS:
+        if run.success is False and run.cancelled:
+            logger.debug("Run %s was cancelled — stamping without alerting", run.id)
+        elif age <= MAX_EVENT_AGE_SECONDS:
             if run.success is False:
                 events.append("run_failed")
             elif run.success is True:

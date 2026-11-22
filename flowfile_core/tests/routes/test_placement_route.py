@@ -62,6 +62,8 @@ def test_it_answers_the_node_that_would_run_on_the_default_backend(client, http_
     assert response.status_code == 200, response.text
     assert response.json() == {
         "available": True,
+        "cached_node_ids": [],
+        "unchecked_backend_ids": [],
         "assignment": {"1": registry.LOCAL_BACKEND_ID},
         "fallbacks": [
             {
@@ -83,7 +85,113 @@ def test_it_answers_unavailable_with_the_protocol_off(client, http_read_flow, mo
 
     response = client.get("/flow/placement", params={"flow_id": FLOW_ID})
 
-    assert response.json() == {"available": False, "assignment": {}, "fallbacks": [], "refusals": [], "boundaries": []}
+    assert response.json() == {
+        "available": False, "cached_node_ids": [], "unchecked_backend_ids": [],
+        "assignment": {}, "fallbacks": [], "refusals": [], "boundaries": []
+    }
+
+
+@pytest.mark.parametrize("cache_enabled,state", [(False, "materialised"), (True, None), (True, "deferred")])
+def test_cache_check_skips_ineligible_nodes(client, http_read_flow, monkeypatch, cache_enabled, state):
+    from types import SimpleNamespace
+
+    graph, _ = http_read_flow
+    node = graph.get_node(1)
+    node.node_settings.cache_results = cache_enabled
+    node.results.result_ref = None if state is None else SimpleNamespace(state=state)
+    monkeypatch.setattr(node, "held_result", lambda _: pytest.fail("must not hash an ineligible node"))
+    # Placement has its own purpose; the badge must not compute it again.
+    placement = graph.preview_placement()
+    calls = []
+
+    def preview(hub_store=None, *, probe=True):
+        calls.append(True)
+        return placement
+
+    monkeypatch.setattr(graph, "preview_placement", preview)
+    response = client.get("/flow/placement", params={"flow_id": FLOW_ID})
+    assert response.status_code == 200
+    assert response.json()["cached_node_ids"] == []
+    assert calls == [True]
+
+
+def test_cache_error_does_not_break_placement(client, http_read_flow, monkeypatch):
+    from types import SimpleNamespace
+
+    graph, _ = http_read_flow
+    node = graph.get_node(1)
+    node.node_settings.cache_results = True
+    node.results.result_ref = SimpleNamespace(state="materialised")
+
+    def broken_cache(_):
+        raise RuntimeError("cache lookup failed")
+
+    monkeypatch.setattr(node, "is_cached_on", broken_cache)
+    response = client.get("/flow/placement", params={"flow_id": FLOW_ID})
+    assert response.status_code == 200
+    assert response.json()["available"] is True
+    assert response.json()["cached_node_ids"] == []
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_network_free_preview_uses_only_known_verdicts(client, http_read_flow, monkeypatch, warm):
+    graph, _ = http_read_flow
+    if warm:
+        expected = client.get("/flow/placement", params={"flow_id": FLOW_ID}).json()
+    else:
+        expected = None
+
+    def no_live_check(_):
+        pytest.fail("A network-free preview must not check workers")
+
+    monkeypatch.setattr(handshake, "verdict_for", no_live_check)
+    response = client.get("/flow/placement", params={"flow_id": FLOW_ID, "probe": False})
+    assert response.status_code == 200
+    data = response.json()
+    if warm:
+        assert data == expected
+    else:
+        assert data["assignment"] == {"1": BACKEND_ID}
+        assert BACKEND_ID in data["unchecked_backend_ids"]
+        assert data["fallbacks"] == []
+        assert data["refusals"] == []
+
+
+def test_rejected_backend_preview_requests_recheck_and_recovers(client, http_read_flow):
+    _, backend = http_read_flow
+    compatible = backend.declared
+    backend.declared = compatible.model_copy(update={"polars_version": "0.0.0"})
+    handshake.reset_handshake()
+    params = {"flow_id": FLOW_ID}
+    assert client.get("/flow/placement", params=params).json()["refusals"]
+
+    backend.declared = compatible
+    asked = backend.asked
+    preview = client.get("/flow/placement", params={**params, "probe": False})
+    assert preview.status_code == 200
+    assert preview.json()["refusals"]
+    assert preview.json()["unchecked_backend_ids"] == []
+    assert backend.asked == asked  # The fast response itself must stay network-free.
+
+    live = client.get("/flow/placement", params=params)
+    assert live.status_code == 200
+    assert live.json()["refusals"] == []
+    assert live.json()["unchecked_backend_ids"] == []
+    assert backend.asked > asked
+
+
+def test_unreachable_backend_preview_matches_live_without_refusals(client, http_read_flow):
+    from flowfile_core.flowfile.execution.errors import ComputeUnavailable
+
+    _, backend = http_read_flow
+    backend.declared = ComputeUnavailable("worker down", backend_id=BACKEND_ID)
+    params = {"flow_id": FLOW_ID}
+    live = client.get("/flow/placement", params=params).json()
+    assert live["refusals"] == []
+    asked = backend.asked
+    preview = client.get("/flow/placement", params={**params, "probe": False}).json()
+    assert preview == live
+    assert backend.asked == asked
 
 
 def test_an_unknown_flow_is_not_found(client):

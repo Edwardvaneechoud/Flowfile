@@ -28,7 +28,7 @@ Snapshots go in a `db_backups/` directory beside the database file:
 | Desktop and Python package | `~/.flowfile/database/db_backups/` (or `$FLOWFILE_STORAGE_DIR/database/db_backups/`) |
 | Docker | `/app/internal_storage/database/db_backups/`, inside the internal-storage volume |
 
-Each file name carries the reason and a UTC timestamp — for example `flowfile_catalog.pre-update.20260903T101500Z.db` for the snapshot taken before an update, `.manual.` for one you asked for, and `<from>-to-<to>` for a migration snapshot naming the schema revisions it sits between.
+Each file name carries the reason and a UTC timestamp — for example `flowfile_catalog.pre-update.20260903T101500Z.db` for the snapshot taken before an update, `.manual.` for one you asked for, `.pre-apply.` for the one taken before a project restore or reload, and `<from>-to-<to>` for a migration snapshot naming the schema revisions it sits between.
 
 Flowfile keeps the newest ten and prunes the rest. `FLOWFILE_DB_BACKUP_KEEP` changes that count; setting it to `0` disables snapshots entirely, including the ones taken before a migration.
 

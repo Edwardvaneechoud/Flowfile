@@ -128,10 +128,13 @@ class RestApiReadPayload(OperationPayload):
     Attributes:
         settings: The node's ``NodeRestApiReader``; its ``rest_api_settings`` name the request and how to page.
         encrypted_secret: The auth secret as stored; ``None`` when the request carries none.
+        sample_size: Set for a test request: one page of at most this many records, whose ``metadata`` also
+            describes the first response. ``None`` for a run.
     """
 
     settings: input_schema.NodeRestApiReader
     encrypted_secret: str | None
+    sample_size: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -170,7 +173,7 @@ class DatabaseWritePayload(OperationPayload):
         settings: The node's settings; ``database_write_settings`` holds the connection mode and ``if_exists``.
         connection: The inline connection, or the stored one a reference names (its ``password`` the ciphertext).
         encrypted_password: The connection's password as stored, ``None`` for a file-based database.
-        table_name: The table to write, qualified by its schema when the settings name one.
+        table_name: The table to write, qualified by its schema (and database) when the settings name one.
     """
 
     plan: pl.LazyFrame

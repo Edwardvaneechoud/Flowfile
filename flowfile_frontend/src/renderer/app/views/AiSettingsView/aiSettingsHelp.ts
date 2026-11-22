@@ -8,7 +8,7 @@ export const aiSettingsHelp: PageHelpContent = {
       title: "Two tabs, one assistant",
       icon: "fa-solid fa-info-circle",
       description:
-        "Everything the AI features need lives here. What you set applies to every AI surface: the chat drawer, ⌘K, next-node suggestions, schedule text and code generation.",
+        "Everything the AI features need lives here. What you set applies to every AI surface: the chat drawer, ⌘K, next-node suggestions, schedule text, code generation, the chart builder's prompt bar and Build with AI for dashboards.",
       features: [
         {
           icon: "fa-solid fa-plug",
@@ -20,7 +20,7 @@ export const aiSettingsHelp: PageHelpContent = {
           icon: "fa-solid fa-wand-magic-sparkles",
           title: "Assistant",
           description:
-            "Pick the default provider and model, optionally route simple tasks to a cheaper model, and choose how the agent plans and applies changes.",
+            "Pick the default provider and model, optionally give a task its own model, and choose how the agent plans and applies changes.",
         },
       ],
     },
@@ -32,9 +32,9 @@ export const aiSettingsHelp: PageHelpContent = {
       features: [
         {
           icon: "fa-solid fa-layer-group",
-          title: "Two tiers",
+          title: "A model per task",
           description:
-            "With the cheaper-model split on, chat, agent runs, ⌘K and code generation use the main model while schedule text and settings autocomplete use the simple one.",
+            "Chat, agent runs, ⌘K and code generation always use the main model. Charts, Dashboards, Schedules and Settings suggestions can each have their own model, and use the main model until you pick one.",
         },
         {
           icon: "fa-solid fa-diagram-project",

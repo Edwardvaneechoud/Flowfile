@@ -49,7 +49,7 @@ from flowfile_core.flowfile.execution.payloads import (
     unpack,
 )
 from flowfile_core.flowfile.execution.protocol import (
-    CredentialRef,
+    Credential,
     JobHandle,
     JobStatus,
     OperationKind,
@@ -218,7 +218,7 @@ class EmbeddedWorkerBackend(_WorkerReferences):
             return pl.LazyFrame.deserialize(io.BytesIO(location.plan))
         raise OperationUnsupported(f"Result {ref.result_id} is a blob: it has no rows to plan over")
 
-    def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
+    def export(self, ref: ResultRef, uri: str, credential: Credential | None) -> str:
         """Write ``ref`` to ``uri`` as parquet by the worker's export job, or copy a blob there, and return ``uri``.
 
         Raises:
@@ -240,7 +240,7 @@ class EmbeddedWorkerBackend(_WorkerReferences):
         uri: str,
         schema: Schema | None,
         row_count: int | None,
-        credential: CredentialRef | None,
+        credential: Credential | None,
         kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
         """Hold a scan of the parquet at ``uri`` as a deferred result under a fresh id, or a blob of its bytes.
@@ -406,7 +406,7 @@ class EmbeddedWorkerBackend(_WorkerReferences):
         for (name, frame), result_id in zip(frames.items(), service._op_outputs(job.job_id, len(frames)), strict=True):
             path = service._output_file(job.flow_id, result_id)
             try:
-                frame.lazy().collect(engine="streaming").write_ipc(path)
+                frame.lazy().collect().write_ipc(path)
                 written = pl.scan_ipc(path)
                 row_count = written.select(pl.len()).collect().item()
                 held = service._hold_output(

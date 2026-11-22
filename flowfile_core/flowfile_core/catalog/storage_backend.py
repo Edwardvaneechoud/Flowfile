@@ -199,6 +199,18 @@ def resolve_for_namespace(namespace_id: int | None, *, db: Session | None = None
         return _resolve_in_session(own_db, namespace_id)
 
 
+def resolve_for_table(file_path: str | None, namespace_id: int | None) -> CatalogStorageTarget:
+    """The storage of an existing table's data, for a read or maintenance that starts from its row.
+
+    A path on local disk answers the local target, one on object storage its namespace's
+    (:func:`resolve_for_namespace`). Registration, overwrite and ``CatalogTableOut.is_remote_storage`` answer by
+    namespace alone.
+    """
+    if not file_path or not _is_cloud_uri(file_path):
+        return _local_target()
+    return resolve_for_namespace(namespace_id)
+
+
 def resolve_catalog_storage(_user_id: int, *, namespace_id: int | None = None) -> CatalogStorageTarget:
     """Shim around :func:`resolve_for_namespace`; *_user_id* is ignored (credentials resolve as the owner)."""
     return resolve_for_namespace(namespace_id)

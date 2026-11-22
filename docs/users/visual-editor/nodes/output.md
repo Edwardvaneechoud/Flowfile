@@ -45,7 +45,7 @@ CSV defaults to a `,` delimiter and `UTF-8` encoding.
 <div class="ff-split" markdown>
 
 <div markdown>
-Writes the incoming table to a database table.
+Writes the incoming table to a database table: PostgreSQL, MySQL, SQLite, DuckDB, SQL Server, Denodo (untested) or Snowflake (through a saved connection only; see [Snowflake](../connections.md#snowflake)).
 
 [Connect to PostgreSQL](../tutorials/database-connectivity.md) is a step-by-step walkthrough.
 </div>
@@ -65,6 +65,7 @@ Writes the incoming table to a database table.
 
 | Setting | Description |
 |---|---|
+| **Database** | Snowflake connections only: the database to write to. Empty uses the connection's default database. With a database set, choose a schema too; the target is `database.schema.table`. |
 | **Schema** | Target schema, e.g. `public`. |
 | **Table** | Target table name. |
 | **Write Mode** | **Append** adds rows to the existing table, **Replace** drops and recreates it with the new data, **Fail** errors if the table already exists. |
@@ -180,7 +181,7 @@ A table that is already SCD2-tracked accepts only further `scd2` writes or a pla
 
 The **Virtual Table** tab creates a [virtual flow table](../catalog/virtual-tables.md) — a catalog entry that stores no data on disk and resolves on demand by executing the producer flow. Selecting the tab checks whether the pipeline supports optimized resolution:
 
-- **Green checkmark** — every upstream node is lazy, so the virtual table stores a serialized execution plan and resolves instantly with predicate and projection pushdown.
+- **Green checkmark** — every upstream node is lazy, so a read builds the producer's plan without computing anything and keeps predicate and projection pushdown.
 - **Yellow warning** — some upstream nodes are eager or conditional, so resolution re-executes the full producer flow on each read. The blocking nodes are listed.
 
 !!! warning "Flow registration required"

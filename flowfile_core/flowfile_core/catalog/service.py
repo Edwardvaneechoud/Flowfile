@@ -62,6 +62,7 @@ from flowfile_core.catalog.services.tables import (
 from flowfile_core.catalog.services.virtual_tables import _UNSET as _VERSIONS_UNSET
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
+from flowfile_core.catalog.table_sources import remote_of, table_row
 
 # Re-exported under the underscore names external callers and tests still use.
 from flowfile_core.catalog.text_utils import hash_source_versions as _hash_source_versions  # noqa: F401
@@ -107,9 +108,12 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableMaterializeResult,
     CatalogTableOut,
     CatalogTablePreview,
+    CatalogTableRestoreResponse,
+    CdcCursorCommitRequest,
     CdcCursorOut,
     CdcStatusOut,
     ColumnStatsResponse,
+    DashboardChartPruneOut,
     DashboardCreate,
     DashboardOut,
     DashboardUpdate,
@@ -136,7 +140,7 @@ from flowfile_core.schemas.catalog_schema import (
     VizSourceDescriptor,
 )
 from flowfile_core.schemas.sharing_schema import AccessInfo
-from shared.storage_config import storage
+from shared.storage_config import registered_flow_path, storage
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
@@ -169,7 +173,7 @@ class CatalogService:
         self.access = access
         self._namespaces = NamespaceService(repo)
         self._flows = FlowRegistrationService(repo, self._namespaces)
-        self._runs = FlowRunService(repo)
+        self._runs = FlowRunService(repo, access=access)
         self._engagement = FlowEngagementService(repo, self._flows)
         self._schedules = ScheduleService(repo, self._runs, self._namespaces)
         self._tables = TableService(repo, self._namespaces, self._flows, self._schedules, access=access)
@@ -182,7 +186,7 @@ class CatalogService:
 
         self._previews = TablePreviewService(repo, self._tables, self._virtual_tables)
         self._visualizations = VisualizationService(
-            repo, self._namespaces, self._tables, self._virtual_tables, self._sql
+            repo, self._namespaces, self._tables, self._virtual_tables, self._sql, access=access
         )
         # Bound to the facade, so tests that patch its methods reach these sub-services.
         self._visualizations.bind_facade(self)
@@ -204,11 +208,13 @@ class CatalogService:
         return (self.access.user_id if self.access is not None else None) or -1
 
     def _require_use(self, resource_type: str, resource_id: int) -> None:
-        if self._restricted:
+        """A table of a remote catalog (``table_sources.remote_of``) is that catalog's to refuse, not this one's."""
+        if self._restricted and not (resource_type == "catalog_table" and remote_of(resource_id) is not None):
             self.access.require_use(resource_type, resource_id)
 
     def _require_manage(self, resource_type: str, resource_id: int) -> None:
-        if self._restricted:
+        """As ``_require_use``: a remote catalog refuses the write of its own table."""
+        if self._restricted and not (resource_type == "catalog_table" and remote_of(resource_id) is not None):
             self.access.require_manage(resource_type, resource_id)
 
     def _require_namespace_writable(self, namespace_id: int | None) -> None:
@@ -248,8 +254,8 @@ class CatalogService:
         raise NotAuthorizedError(self.access.user_id or -1, "modify this schedule")
 
     def _require_manage_cdc_cursor(self, table_id: int, consumer_key: str) -> None:
-        """Editing a change cursor needs cursor ownership, manage on its table, or admin."""
-        if not self._restricted:
+        """Editing a change cursor needs cursor ownership, manage on its table, or admin; a remote catalog's is its."""
+        if not self._restricted or remote_of(table_id) is not None:
             return
         self._require_use("catalog_table", table_id)
         cursor = self.repo.get_cdc_cursor(table_id, consumer_key)
@@ -259,9 +265,27 @@ class CatalogService:
             return
         self._require_manage("catalog_table", table_id)
 
+    def _require_commit_cdc_cursor(self, table_id: int, consumer_key: str, cursor) -> None:
+        """Who may advance ``cursor`` (``None`` for one this commit creates), beyond reading its table.
+
+        A named cursor is shared by every reader of the table. A flow's cursor (``flow:<flow_uuid>:node:<id>``) is
+        advanced by whoever may use that flow, since a flow has one cursor whoever runs it; that of a flow this
+        catalog does not hold by its owner. Whoever manages the table advances any, as they may reset it.
+        """
+        if not self._restricted or remote_of(table_id) is not None or not consumer_key.startswith("flow:"):
+            return
+        flow = self.repo.get_flow_by_uuid(consumer_key.split(":")[1])
+        if flow is not None:
+            allowed = self.access.can_use("flow", flow.id)
+        else:
+            allowed = cursor is None or cursor.owner_id in (None, self.access.user_id)
+        if not allowed and not self.access.can_manage("catalog_table", table_id):
+            raise NotAuthorizedError(self.access.user_id or -1, "advance this flow's change cursor")
+
     def _require_use_visualization(self, viz_id: int) -> None:
-        """Viz read: creator, a use/manage grant, or read on its parent table."""
-        if not self._restricted:
+        """Viz read: creator, a use/manage grant, or read on its parent table. A chart of a remote catalog
+        (``table_sources.remote_of``) is that catalog's to refuse when its row is read."""
+        if not self._restricted or remote_of(viz_id) is not None:
             return
         viz = self.repo.get_visualization(viz_id)
         if viz is None:
@@ -306,6 +330,18 @@ class CatalogService:
             return
         if not self.access.can_manage("dashboard", dashboard_id, owner_id=dashboard.created_by):
             raise NotAuthorizedError(self.access.user_id or -1, "modify this dashboard")
+
+    def caller_can_read(self, resource_type: str, resource_id: int) -> bool:
+        """Whether this request's caller may read an existing chart (``"visualization"``) or table
+        (``"catalog_table"``); always True unrestricted."""
+        try:
+            if resource_type == "visualization":
+                self._require_use_visualization(resource_id)
+            else:
+                self._require_use(resource_type, resource_id)
+        except NotAuthorizedError:
+            return False
+        return True
 
     def _require_use_viz_source(self, source) -> None:
         """Guard an ad-hoc viz source. Table sources require read on that table."""
@@ -386,6 +422,16 @@ class CatalogService:
             elif item.id in details:
                 item.access = details[item.id]
         return items
+
+    def _charts_out(self, charts: list[VisualizationOut]) -> list[VisualizationOut]:
+        """Stamp each chart's access, and name a chart's dashboard only to a caller the dashboards list shows it
+        to: reading a chart, or its table, is not reading the dashboard it belongs to."""
+        if self._restricted and any(chart.dashboard_name for chart in charts):
+            readable = self.access.accessible_ids("dashboard")
+            for chart in charts:
+                if chart.dashboard_id not in readable:
+                    chart.dashboard_name = None
+        return self._stamp_access(charts, "visualization")
 
     # Private helpers
 
@@ -593,10 +639,11 @@ class CatalogService:
         owner_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
+        flow_uuid: str | None = None,
     ) -> FlowRegistrationOut:
-        """Register a new flow in the catalog."""
+        """Register a new flow in the catalog, under ``flow_uuid`` when the caller supplies one."""
         self._require_namespace_writable(namespace_id)
-        return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description)
+        return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description, flow_uuid=flow_uuid)
 
     def update_flow(
         self,
@@ -696,23 +743,14 @@ class CatalogService:
         offset: int = 0,
         search: str | None = None,
     ) -> PaginatedFlowRuns:
-        """List run summaries (without snapshots) with total count for pagination."""
-        if self._restricted and registration_id is not None:
-            self._require_use("flow", registration_id)
-        elif self._restricted and schedule_id is not None:
-            schedule = self._schedules.get_schedule(schedule_id)
-            self._require_use("flow", schedule.registration_id)
-        result = self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset, search)
-        if self._restricted and registration_id is None and schedule_id is None:
-            # Best-effort page filter, so totals may drift; by-id run reads are guarded separately.
-            allowed_flows = self.access.accessible_ids("flow")
-            user_id = self.access.user_id
-            result.items = [r for r in result.items if r.user_id == user_id or (r.registration_id in allowed_flows)]
-        return result
+        """List run summaries (without snapshots) with total count for pagination.
+
+        Restricted callers get only their visible runs; the filter is in the query, so totals match.
+        """
+        return self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset, search)
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
-        """Get a single run including the YAML snapshot."""
-        self._require_use_run(run_id)
+        """Get a single run including the YAML snapshot; a run the caller may not see is not found."""
         return self._runs.get_run_detail(run_id)
 
     def get_run(self, run_id: int) -> FlowRun:
@@ -741,9 +779,12 @@ class CatalogService:
         nodes_completed: int,
         number_of_nodes: int | None = None,
         node_results_json: str | None = None,
+        cancelled: bool = False,
     ) -> FlowRun:
-        """Mark a run as completed."""
-        return self._runs.complete_run(run_id, success, nodes_completed, number_of_nodes, node_results_json)
+        """Mark a run as completed; ``cancelled`` when it was stopped on purpose and nothing in it failed."""
+        return self._runs.complete_run(
+            run_id, success, nodes_completed, number_of_nodes, node_results_json, cancelled=cancelled
+        )
 
     def create_completed_run(
         self,
@@ -759,6 +800,7 @@ class CatalogService:
         run_type: RunType,
         node_results_json: str | None = None,
         flow_snapshot: str | None = None,
+        cancelled: bool = False,
     ) -> FlowRun:
         """Record a fully completed run in one step (fallback when start_run was skipped)."""
         return self._runs.create_completed_run(
@@ -774,6 +816,7 @@ class CatalogService:
             run_type,
             node_results_json,
             flow_snapshot,
+            cancelled=cancelled,
         )
 
     def auto_register_flow(self, flow_path: str, name: str, user_id: int) -> FlowRegistration | None:
@@ -804,9 +847,10 @@ class CatalogService:
                 ROOT_CATALOG.name,
             )
             return None
-        existing = self.repo.get_flow_by_path(flow_path)
-        if existing:
+        # The lookup takes the path as given, so a row from before the rule is found under its own spelling.
+        if self.repo.get_flow_by_path(flow_path):
             return None
+        flow_path = registered_flow_path(flow_path)
         reg = FlowRegistration(
             name=name or Path(flow_path).stem,
             flow_path=flow_path,
@@ -975,6 +1019,8 @@ class CatalogService:
         size_bytes: int | None = None,
         partition_columns: list[str] | None = None,
         scd2_config: dict | None | object = _KEEP_SCD2,
+        cdc_enabled_version: int | None = None,
+        data_changed: bool = True,
     ) -> CatalogTableOut:
         """Replace the data of an existing catalog table in-place, preserving its ID."""
         self._require_manage("catalog_table", table_id)
@@ -992,6 +1038,8 @@ class CatalogService:
             size_bytes,
             partition_columns,
             scd2_config,
+            cdc_enabled_version=cdc_enabled_version,
+            data_changed=data_changed,
         )
 
     def _fire_table_trigger_schedules(self, table_id: int, table_updated_at: datetime) -> int:
@@ -1070,7 +1118,6 @@ class CatalogService:
         producer_registration_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool = False,
         schema_json: str | None = None,
         polars_plan: str | None = None,
@@ -1084,7 +1131,6 @@ class CatalogService:
             producer_registration_id,
             namespace_id,
             description,
-            serialized_lazy_frame,
             is_optimized,
             schema_json,
             polars_plan,
@@ -1098,7 +1144,6 @@ class CatalogService:
         description: str | None = None,
         namespace_id: int | None = None,
         producer_registration_id: int | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool | None = None,
         schema_json: str | None = None,
         polars_plan: str | None = None,
@@ -1118,7 +1163,6 @@ class CatalogService:
             description,
             namespace_id,
             producer_registration_id,
-            serialized_lazy_frame,
             is_optimized,
             schema_json,
             polars_plan,
@@ -1215,15 +1259,19 @@ class CatalogService:
         self._require_use("catalog_table", table_id)
         return self._previews.resolve_virtual_flow_table_preview(table_id, limit, user_id)
 
-    def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
+    def get_table_history(
+        self, table_id: int, limit: int | None = None, user_id: int | None = None
+    ) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table."""
         self._require_use("catalog_table", table_id)
-        return self._previews.get_table_history(table_id, limit)
+        return self._previews.get_table_history(table_id, limit, user_id)
 
-    def optimize_table(self, table_id: int, z_order_columns: list[str] | None = None) -> OptimizeTableResponse:
+    def optimize_table(
+        self, table_id: int, z_order_columns: list[str] | None = None, user_id: int | None = None
+    ) -> OptimizeTableResponse:
         """Compact (and optionally Z-order) a Delta catalog table."""
         self._require_manage("catalog_table", table_id)
-        return self._tables.optimize_table(table_id, z_order_columns)
+        return self._tables.optimize_table(table_id, z_order_columns, user_id=user_id)
 
     def vacuum_table(
         self,
@@ -1231,25 +1279,49 @@ class CatalogService:
         retention_hours: int = 168,
         dry_run: bool = True,
         force: bool = False,
+        user_id: int | None = None,
     ) -> VacuumTableResponse:
         """Vacuum tombstoned files from a Delta catalog table."""
         self._require_manage("catalog_table", table_id)
-        return self._tables.vacuum_table(table_id, retention_hours=retention_hours, dry_run=dry_run, force=force)
+        return self._tables.vacuum_table(
+            table_id, retention_hours=retention_hours, dry_run=dry_run, force=force, user_id=user_id
+        )
 
-    def get_table_cdc_status(self, table_id: int) -> CdcStatusOut:
+    def get_table_cdc_status(self, table_id: int, user_id: int | None = None) -> CdcStatusOut:
         """Change-tracking state and cursor positions for a catalog table."""
         self._require_use("catalog_table", table_id)
-        return self._tables.get_cdc_status(table_id)
+        return self._tables.get_cdc_status(table_id, user_id=user_id)
 
-    def enable_table_cdc(self, table_id: int) -> CdcStatusOut:
+    def enable_table_cdc(self, table_id: int, user_id: int | None = None) -> CdcStatusOut:
         """Turn change tracking on for a catalog table (idempotent)."""
         self._require_manage("catalog_table", table_id)
-        return self._tables.enable_cdc(table_id)
+        return self._tables.enable_cdc(table_id, user_id=user_id)
 
-    def reset_table_cdc_cursor(self, table_id: int, consumer_key: str, to: str | int = "now") -> CdcCursorOut:
+    def reset_table_cdc_cursor(
+        self, table_id: int, consumer_key: str, to: str | int = "now", user_id: int | None = None
+    ) -> CdcCursorOut:
         """Move one consumer's cursor to head, to the start of the tracked history, or a version."""
         self._require_manage_cdc_cursor(table_id, consumer_key)
-        return self._tables.reset_cdc_cursor(table_id, consumer_key, to)
+        return self._tables.reset_cdc_cursor(table_id, consumer_key, to, user_id=user_id)
+
+    def commit_table_cdc_cursor(
+        self, table_id: int, commit: CdcCursorCommitRequest, owner_id: int | None
+    ) -> CdcCursorOut:
+        """Record a consumer's read of the table's changes up to ``commit.last_version``, as a run's reader does.
+
+        ``owner_id`` owns a cursor this commit creates, or one nobody owns yet; a cursor that has an owner keeps it,
+        so a commit never hands the caller the owner's right to reset or delete it. A flow's cursor takes more than
+        reading the table (``_require_commit_cdc_cursor``).
+        """
+        self.get_table(table_id)
+        fields = commit.model_dump(exclude={"consumer_key", "last_version"})
+        existing = self.repo.get_cdc_cursor(table_id, commit.consumer_key)
+        self._require_commit_cdc_cursor(table_id, commit.consumer_key, existing)
+        owner = owner_id if existing is None or existing.owner_id is None else None
+        cursor = self.repo.upsert_cdc_cursor(
+            table_id, commit.consumer_key, commit.last_version, owner_id=owner, **fields
+        )
+        return CdcCursorOut.model_validate(cursor)
 
     def delete_table_cdc_cursor(self, table_id: int, consumer_key: str) -> None:
         """Forget one consumer's cursor."""
@@ -1260,8 +1332,10 @@ class CatalogService:
         """Re-read a table as a fully enriched, access-stamped DTO after a write.
 
         ``overwrite_table_data`` knows neither the caller nor the sharing filter, so its
-        DTO carries ``is_favorite=False`` and no ``access``.
+        DTO carries ``is_favorite=False`` and no ``access``. A remote catalog's row is read again from it.
         """
+        if remote_of(table_id) is not None:
+            return table_row(self.repo, table_id, user_id)
         return self._stamp_access([self._tables.get_table(table_id, user_id)], "catalog_table")[0]
 
     def apply_table_edits(
@@ -1282,6 +1356,7 @@ class CatalogService:
             new_columns=[c.model_dump() for c in edits.new_columns],
             delete_keys=edits.delete_keys,
             edited_by=edited_by,
+            user_id=user_id,
         )
         return CatalogTableEditsResponse(
             table=self._reloaded_table_out(table_id, user_id),
@@ -1300,11 +1375,30 @@ class CatalogService:
         """Mint a sequential row-id column so a keyless table becomes editable."""
         self._require_manage("catalog_table", table_id)
         _, result = self._tables.add_table_key_column(
-            table_id, column_name=column_name, expected_version=expected_version
+            table_id, column_name=column_name, expected_version=expected_version, user_id=user_id
         )
         return CatalogTableKeyColumnResponse(
             table=self._reloaded_table_out(table_id, user_id),
             column_name=column_name,
+            new_version=result.get("new_version"),
+        )
+
+    def restore_table_version(
+        self,
+        table_id: int,
+        version: int,
+        expected_version: int | None = None,
+        restored_by: str | None = None,
+        user_id: int | None = None,
+    ) -> CatalogTableRestoreResponse:
+        """Restore a table to an earlier Delta version (manage-gated, like overwrite)."""
+        self._require_manage("catalog_table", table_id)
+        _, result = self._tables.restore_table_version(
+            table_id, version, expected_version=expected_version, restored_by=restored_by
+        )
+        return CatalogTableRestoreResponse(
+            table=self._reloaded_table_out(table_id, user_id),
+            restored_version=result.get("restored_version", version),
             new_version=result.get("new_version"),
         )
 
@@ -1339,6 +1433,7 @@ class CatalogService:
         enabled: bool = True,
         name: str | None = None,
         description: str | None = None,
+        backend: str | None = None,
     ) -> FlowScheduleOut:
         """Create a new schedule (interval, cron, table_trigger or table_set_trigger) for a flow."""
         # Use suffices: the schedule runs as its creator, so it resolves secrets and connections as them.
@@ -1355,6 +1450,7 @@ class CatalogService:
             enabled=enabled,
             name=name,
             description=description,
+            backend=backend,
         )
 
     def update_schedule(
@@ -1366,8 +1462,9 @@ class CatalogService:
         cron_timezone: str | None = None,
         name: str | None = None,
         description: str | None = None,
+        backend: str | None = None,
     ) -> FlowScheduleOut:
-        """Update a schedule's enabled flag, interval, cron expression/timezone, name or description."""
+        """Update a schedule's enabled flag, interval, cron expression/timezone, name, description or backend."""
         self._require_manage_schedule(schedule_id)
         return self._schedules.update_schedule(
             schedule_id=schedule_id,
@@ -1377,6 +1474,7 @@ class CatalogService:
             cron_timezone=cron_timezone,
             name=name,
             description=description,
+            backend=backend,
         )
 
     def delete_schedule(self, schedule_id: int) -> None:
@@ -1434,16 +1532,11 @@ class CatalogService:
     # Active runs + cancel
 
     def list_active_runs(self) -> list[ActiveFlowRun]:
-        """List all currently running flows (``ended_at IS NULL``)."""
-        runs = self._runs.list_active_runs()
-        if self._restricted:
-            allowed = self.access.accessible_ids("flow")
-            user_id = self.access.user_id
-            runs = [r for r in runs if r.user_id == user_id or r.registration_id in allowed]
-        return runs
+        """List all currently running flows (``ended_at IS NULL``) the caller may see."""
+        return self._runs.list_active_runs()
 
     def cancel_run(self, run_id: int) -> None:
-        """Cancel a running flow by terminating its subprocess and marking the run failed."""
+        """Cancel a run that has not ended: mark it cancelled and terminate its subprocess."""
         self._require_use_run(run_id)
         self._runs.cancel_run(run_id)
 
@@ -1463,12 +1556,6 @@ class CatalogService:
     def resolve_all_queryable_tables(self) -> tuple[dict[str, str], dict[str, int]]:
         """Return Delta + virtual name maps, keyed by qualified name and by bare name (when unique)."""
         return self._virtual_tables.resolve_all_queryable_tables()
-
-    def resolve_cloud_only_table_aliases(self, exclude: set[str] | frozenset = frozenset()) -> dict[str, str]:
-        """Map SQL names of object-storage-backed physical tables (not queryable in the SQL editor)
-        to their fully-qualified display name. Virtual tables are excluded — they materialize
-        through their flow (with the flow's credentials) and do resolve."""
-        return self._virtual_tables.resolve_cloud_only_table_aliases(exclude=exclude)
 
     def execute_sql_query(
         self, query: str, max_rows: int = DEFAULT_SQL_MAX_ROWS, user_id: int | None = None
@@ -1499,9 +1586,7 @@ class CatalogService:
     def list_visualizations_for_table(self, table_id: int, user_id: int | None = None) -> list[VisualizationOut]:
         """List visualizations bound to a specific catalog table."""
         self._require_use("catalog_table", table_id)
-        return self._stamp_access(
-            self._visualizations.list_visualizations_for_table(table_id, user_id), "visualization"
-        )
+        return self._charts_out(self._visualizations.list_visualizations_for_table(table_id, user_id))
 
     def list_visualization_library(self, user_id: int | None = None) -> list[VisualizationOut]:
         """Return all saved visualizations as catalog library entries (specs omitted)."""
@@ -1510,12 +1595,12 @@ class CatalogService:
             viz_ids = self.access.accessible_ids("visualization")  # own ∪ granted (+ ns-inherited)
             table_ids = self.access.accessible_ids("catalog_table")
             vizzes = [v for v in vizzes if v.id in viz_ids or (v.catalog_table_id in table_ids)]
-        return self._stamp_access(vizzes, "visualization")
+        return self._charts_out(vizzes)
 
     def get_visualization(self, viz_id: int, user_id: int | None = None) -> VisualizationOut:
         """Get a single visualization by ID."""
         self._require_use_visualization(viz_id)
-        return self._stamp_access([self._visualizations.get_visualization(viz_id, user_id)], "visualization")[0]
+        return self._charts_out([self._visualizations.get_visualization(viz_id, user_id)])[0]
 
     _validate_thumbnail = staticmethod(validate_thumbnail)
     _validate_viz_source = staticmethod(validate_viz_source)
@@ -1526,7 +1611,9 @@ class CatalogService:
             self._require_use("catalog_table", payload.catalog_table_id)
         # A None namespace_id defaults to the source table's, which the use check above covers.
         self._require_namespace_writable(payload.namespace_id)
-        return self._stamp_access([self._visualizations.create_visualization(payload, user_id)], "visualization")[0]
+        if payload.dashboard_id is not None:
+            self._require_manage_dashboard(payload.dashboard_id)
+        return self._charts_out([self._visualizations.create_visualization(payload, user_id)])[0]
 
     def update_visualization(self, viz_id: int, payload: VisualizationUpdate, user_id: int) -> VisualizationOut:
         """Update a visualization's spec, name, namespace or thumbnail."""
@@ -1535,14 +1622,23 @@ class CatalogService:
             self._require_use("catalog_table", payload.catalog_table_id)
         if payload.namespace_id is not None:
             self._require_namespace_writable(payload.namespace_id)
-        return self._stamp_access(
-            [self._visualizations.update_visualization(viz_id, payload, user_id)], "visualization"
-        )[0]
+        return self._charts_out([self._visualizations.update_visualization(viz_id, payload, user_id)])[0]
 
     def delete_visualization(self, viz_id: int, user_id: int) -> None:
         """Delete a visualization by ID."""
         self._require_manage_visualization(viz_id)
         self._visualizations.delete_visualization(viz_id, user_id)
+
+    def detach_visualization(self, viz_id: int, user_id: int) -> VisualizationOut:
+        """Make a dashboard's chart a chart of its own. Open to whoever manages the chart or its dashboard."""
+        try:
+            self._require_manage_visualization(viz_id)
+        except NotAuthorizedError:
+            viz = self.repo.get_visualization(viz_id)
+            if viz is None or viz.dashboard_id is None:
+                raise
+            self._require_manage_dashboard(viz.dashboard_id)
+        return self._charts_out([self._visualizations.detach_visualization(viz_id, user_id)])[0]
 
     def list_notebooks(self, user_id: int | None = None) -> list[NotebookSummaryOut]:
         """List saved notebooks (own ∪ granted in restricted mode)."""
@@ -1602,9 +1698,14 @@ class CatalogService:
         ]
 
     def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
-        """Delete a dashboard by ID."""
+        """Delete a dashboard by ID, with the charts that belong to it."""
         self._require_manage_dashboard(dashboard_id)
         self._visualizations.delete_dashboard(dashboard_id, user_id)
+
+    def prune_dashboard_charts(self, dashboard_id: int, user_id: int) -> DashboardChartPruneOut:
+        """Remove the dashboard's own charts that its layout no longer uses."""
+        self._require_manage_dashboard(dashboard_id)
+        return self._visualizations.prune_dashboard_charts(dashboard_id, user_id)
 
     # Compute
 

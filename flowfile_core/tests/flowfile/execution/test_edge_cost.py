@@ -15,10 +15,11 @@ from dataclasses import replace
 
 import pytest
 
+from flowfile_core.configs.exchange_config import ExchangeConfig
 from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.flowfile.execution.placement import Refusal
-from flowfile_core.flowfile.execution.protocol import OperationKind, ResultRef
+from flowfile_core.flowfile.execution.protocol import OperationKind, ResultRef, SealedCredential
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
@@ -39,9 +40,16 @@ OUT = DEFAULT_OUTPUT_HANDLE
 BOTH_EDGES = [(1, OUT, 2), (2, OUT, 3)]
 
 
-def above(source_id: int, backend_id: str, rows: int, columns: int, limit: int) -> str:
+STEPS = {1: "Manual input 1", 2: "Filter data 2"}
+"""The sources of ``chain``'s edges as the canvas names them."""
+SPLIT = "Random Split 2"
+
+
+def above(source: int | str, backend_id: str, rows: int, columns: int, limit: int) -> str:
+    """The refusal of an input from ``source`` (a node of ``chain`` or a step's name) above ``limit`` rows."""
+    step = STEPS[source] if isinstance(source, int) else source
     return (
-        f'the input from node {source_id} would cross from backend "{backend_id}" with {rows} rows of {columns} '
+        f'the input from the step "{step}" would cross from backend "{backend_id}" with {rows} rows of {columns} '
         f"columns, above FLOWFILE_EXCHANGE_MAX_ROWS={limit}"
     )
 
@@ -218,7 +226,7 @@ def test_a_split_whose_input_changed_after_it_ran_is_not_priced_by_that_run(
     add_manual_input(graph, 1, [{"id": i} for i in range(10)])
     changed, edges = placed(graph)
 
-    assert ran.refusals == [Refusal(3, LOCAL, above(2, BACKEND_ID, 80, 1, 50), OWN_REMEDY)]
+    assert ran.refusals == [Refusal(3, LOCAL, above(SPLIT, BACKEND_ID, 80, 1, 50), OWN_REMEDY)]
     assert changed.refusals == []
     assert crossings(edges) == [(2, OUT, 3)]
 
@@ -249,7 +257,7 @@ def test_a_node_reading_two_outputs_of_one_source_above_the_limit_is_refused_onc
 
     placement, edges = placed(graph)
 
-    assert placement.refusals == [Refusal(9, LOCAL, above(2, BACKEND_ID, 80, 1, 10), OWN_REMEDY)]
+    assert placement.refusals == [Refusal(9, LOCAL, above(SPLIT, BACKEND_ID, 80, 1, 10), OWN_REMEDY)]
     assert edges == []
 
 
@@ -263,6 +271,37 @@ def test_a_limit_that_is_not_a_whole_number_refuses_each_crossing_naming_it(prot
     for refusal in placement.refusals:
         assert "FLOWFILE_EXCHANGE_MAX_ROWS" in refusal.reason and "'ten'" in refusal.reason, refusal.reason
     assert edges == []
+
+
+def test_a_run_given_its_hubs_store_crosses_through_it_held_to_the_hubs_limit(
+    protocol_on, declare, connection_name, monkeypatch
+):
+    """Nothing set on the node: the store a joined server's hub vended for the run, sealed to its nodes, places it on
+    more than one backend, its edges are written under the hub's URI and the hub's row limit prices them; without it
+    the crossing is refused for want of a store."""
+    vending = everything().model_copy(update={"credential_resolution": "vended"})
+    declare(vending)
+    declare(vending, registry.LOCAL_BACKEND_ID)
+    monkeypatch.setattr("flowfile_core.flowfile.execution.registry.server_name", lambda backend_id: backend_id)
+    graph = chain(make_graph(8541), filter_on=LOCAL, user_id=1)
+    flow_starts = graph._flow_starts + graph.get_implicit_starter_nodes()
+    plan = compute_execution_plan(nodes=graph.nodes, flow_starts=flow_starts)
+    vended = ExchangeConfig(STORE, connection_name, max_rows=6, vended_for=1)
+    run = ExchangeRun(graph.flow_id, uuid.uuid4().hex, hub_store=vended)
+    run.sealed = SealedCredential(base_uri=STORE, sealed={BACKEND_ID: "sealed-token", registry.LOCAL_BACKEND_ID: "sealed-token"})
+
+    placement, edges = graph._place_run(plan, run)
+
+    assert run.max_rows() == 6
+    assert placement.refusals == [Refusal(2, LOCAL, above(1, BACKEND_ID, 7, 4, 6), OWN_REMEDY)]
+    assert crossings(edges) == [(2, OUT, 3)]
+    assert edges[0].uri == f"{STORE}/8541/{run.run_id}/2-{OUT}-3.parquet"
+
+    placement, edges = graph._place_run(plan, ExchangeRun(graph.flow_id, uuid.uuid4().hex))
+
+    assert edges == []
+    assert [refusal.node_id for refusal in placement.refusals] == [2]
+    assert "no exchange store can carry its data between backends" in placement.refusals[0].reason
 
 
 def test_with_the_protocol_off_nothing_is_placed_or_priced(protocol_off, declare, store, monkeypatch):

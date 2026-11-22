@@ -38,6 +38,8 @@ from flowfile_core.schemas.flow_api_schema import (
     ApiParamSpec,
 )
 from flowfile_core.schemas.schemas import FlowParameter
+from shared.storage_config import storage
+from tests.flowfile_core_test_utils import as_server
 
 # Helpers / fixtures
 
@@ -93,6 +95,8 @@ def db_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     db_models.Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
+    session.add(db_models.User(id=1, username="owner1", disabled=False))
+    session.commit()
     try:
         yield session
     finally:
@@ -407,6 +411,27 @@ def test_verify_api_key_expired(db_session):
     assert exc.value.status_code == 401
 
 
+@pytest.mark.parametrize("owner_state", ["disabled", "deleted"])
+def test_verify_api_key_refuses_an_endpoint_whose_owner_is_disabled_or_gone(db_session, owner_state):
+    ep, raw = _make_endpoint_with_key(db_session)
+    owner = db_session.get(db_models.User, ep.owner_id)
+    if owner_state == "disabled":
+        owner.disabled = True
+    else:
+        db_session.delete(owner)
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        api_key_mod.verify_api_key(slug="sales", x_api_key=raw, db=db_session)
+    assert exc.value.status_code == 401
+
+
+def test_verify_api_key_answers_for_an_enabled_owner(db_session):
+    ep, raw = _make_endpoint_with_key(db_session)
+    assert db_session.get(db_models.User, ep.owner_id).disabled is False
+    assert api_key_mod.verify_api_key(slug="sales", x_api_key=raw, db=db_session).id == ep.id
+
+
 # Management endpoints (publish + keys)
 
 
@@ -701,3 +726,72 @@ def test_list_publishable_flows(db_session, tmp_path):
     assert by_name["alpha"].registration_id == a.id
     assert by_name["alpha"].file_exists is True
     assert by_name["epsilon"].file_exists is False  # flagged, but still offered
+
+
+FOLDER_REFUSAL = "the flow's file is outside the server's flow folders"
+
+
+def _registered(db_session, flow_path, name="api_flow"):
+    reg = db_models.FlowRegistration(flow_uuid=str(uuid4()), name=name, flow_path=str(flow_path), owner_id=1)
+    db_session.add(reg)
+    db_session.commit()
+    db_session.refresh(reg)
+    return reg
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["docker", "server"])
+async def test_server_opens_a_published_flow_only_inside_the_flow_folders(db_session, tmp_path, monkeypatch, mode):
+    """Every flow API route that opens a registration's file refuses one outside the folders on a server."""
+    _reg, ep, user = _publish_via_db(db_session, tmp_path)
+    other = _registered(db_session, tmp_path / "other.yaml", name="other")
+    _build_and_save_flow(other.flow_path, "records")
+    monkeypatch.setattr(flow_api, "run_flow_as_api", lambda *a, **k: pytest.fail("the flow must not run"))
+    as_server(monkeypatch, mode)
+
+    with pytest.raises(HTTPException) as exc:
+        flow_api.publish_endpoint(
+            ApiEndpointCreate(registration_id=other.id, slug="other"), current_user=user, db=db_session
+        )
+    assert (exc.value.status_code, exc.value.detail) == (422, FOLDER_REFUSAL)
+    assert flow_api.get_flow_parameters(other.id, current_user=user, db=db_session) == []
+    assert [p.name for p in flow_api.get_endpoint(ep.id, current_user=user, db=db_session).parameters] == ["region"]
+    with pytest.raises(HTTPException) as exc:
+        await flow_api.test_endpoint(ep.id, None, current_user=user, db=db_session)
+    assert (exc.value.status_code, exc.value.detail) == (422, FOLDER_REFUSAL)
+    with pytest.raises(HTTPException) as exc:
+        await flow_api.run_published_flow(
+            slug=ep.slug, request=SimpleNamespace(query_params={}), endpoint=ep, db=db_session
+        )
+    assert (exc.value.status_code, exc.value.detail) == (500, "Published flow is no longer available")
+
+
+@pytest.mark.parametrize("mode", ["docker", "server"])
+def test_server_publishes_and_reads_a_flow_inside_the_flow_folders(db_session, monkeypatch, mode):
+    storage.flows_directory.mkdir(parents=True, exist_ok=True)
+    flow_path = storage.flows_directory / f"api_inside_{uuid4().hex[:8]}.yaml"
+    _build_and_save_flow(flow_path, "records")
+    try:
+        reg = _registered(db_session, flow_path)
+        user = SimpleNamespace(id=1)
+        as_server(monkeypatch, mode)
+        out = flow_api.publish_endpoint(
+            ApiEndpointCreate(registration_id=reg.id, slug="inside"), current_user=user, db=db_session
+        )
+        assert out.slug == "inside"
+        assert [p.name for p in flow_api.get_flow_parameters(reg.id, current_user=user, db=db_session)] == ["region"]
+    finally:
+        flow_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("mode", ["docker", "server"])
+def test_server_picker_does_not_say_whether_a_file_outside_the_flow_folders_exists(
+    db_session, tmp_path, monkeypatch, mode
+):
+    user = SimpleNamespace(id=1)
+    real = tmp_path / "alpha.yaml"
+    _build_and_save_flow(real, "records")
+    _reg(db_session, name="alpha", flow_path=str(real))
+    assert [f.file_exists for f in flow_api.list_publishable_flows(current_user=user, db=db_session)] == [True]
+    as_server(monkeypatch, mode)
+    assert [f.file_exists for f in flow_api.list_publishable_flows(current_user=user, db=db_session)] == [False]

@@ -62,7 +62,7 @@ def _ensure_known_provider(name: str | None) -> None:
         )
 
 
-def _resolve_provider(db: Session, user_id: int, name: str | None, *, model: str | None):
+def _resolve_provider(db: Session, user_id: int, name: str | None, *, model: str | None, surface: str = "explain"):
     """Resolve a configured provider, preferring ``name`` if given.
 
     The generate-code button has no provider picker, so it must not dead-end when
@@ -82,7 +82,7 @@ def _resolve_provider(db: Session, user_id: int, name: str | None, *, model: str
                 db,
                 user_id,
                 candidate,
-                surface="explain",
+                surface=surface,
                 model=model if candidate == name else None,
             )
         except (ProviderNotConfiguredError, UnknownProviderError):

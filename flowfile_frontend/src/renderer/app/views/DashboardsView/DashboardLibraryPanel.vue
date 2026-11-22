@@ -17,6 +17,16 @@
             <el-icon><Search /></el-icon>
           </template>
         </el-input>
+        <el-button
+          v-if="aiDashboardStore.available"
+          size="small"
+          data-testid="dashboard-ai-new"
+          title="Ask a question over your tables; the AI builds a dashboard that answers it"
+          @click="onNewWithAi"
+        >
+          <span class="material-icons dash-library-ai-icon" aria-hidden="true">auto_awesome</span>
+          <span>Build with AI</span>
+        </el-button>
         <el-button type="primary" size="small" @click="onNew">
           <el-icon><Plus /></el-icon>
           <span>New dashboard</span>
@@ -33,10 +43,10 @@
         :description="
           search
             ? 'No dashboards match your filter.'
-            : 'No dashboards yet. Create one and drop saved visualizations onto the canvas.'
+            : 'No dashboards yet. Start one and drop saved visualizations onto the canvas.'
         "
       >
-        <el-button v-if="!search" type="primary" @click="onNew">Create dashboard</el-button>
+        <el-button v-if="!search" type="primary" @click="onNew">New dashboard</el-button>
       </el-empty>
     </div>
 
@@ -71,6 +81,8 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { Plus, Search } from "@element-plus/icons-vue";
 import { useDashboardsStore } from "../../stores/dashboards-store";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useAiDashboardStore } from "../../stores/ai-dashboard-store";
+import { useAiStore } from "../../stores/ai-store";
 import DashboardCard from "./DashboardCard.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
@@ -79,6 +91,7 @@ import type { Dashboard } from "../../types";
 const router = useRouter();
 const store = useDashboardsStore();
 const catalogStore = useCatalogStore();
+const aiDashboardStore = useAiDashboardStore();
 const search = ref("");
 
 const thumbnails = computed<Record<number, string>>(() => {
@@ -109,6 +122,9 @@ const filtered = computed(() => {
 });
 
 onMounted(() => {
+  useAiStore()
+    .loadProviders()
+    .catch(() => undefined);
   store.loadLibrary().catch(() => {
     ElMessage.error(store.error ?? "Failed to load dashboards");
   });
@@ -122,6 +138,10 @@ const onNew = () => {
   router.push({ name: "dashboard-new" });
 };
 
+const onNewWithAi = () => {
+  router.push({ name: "dashboard-new", query: { ai: "1" } });
+};
+
 const onView = (d: Dashboard) => {
   router.push({ name: "dashboard-view", params: { id: d.id } });
 };
@@ -131,9 +151,12 @@ const onEdit = (d: Dashboard) => {
 };
 
 const onDelete = async (d: Dashboard) => {
+  // The charts made on a dashboard are its own and go with it.
+  const own = catalogStore.visualizationLibrary.filter((v) => v.dashboard_id === d.id).length;
+  const charts = own ? ` and the ${own === 1 ? "chart" : `${own} charts`} made on it` : "";
   try {
     await ElMessageBox.confirm(
-      `Delete dashboard "${d.name}"? This cannot be undone.`,
+      `Delete dashboard "${d.name}"${charts}? This cannot be undone.`,
       "Delete dashboard",
       { type: "warning", confirmButtonText: "Delete", cancelButtonText: "Cancel" },
     );
@@ -142,6 +165,7 @@ const onDelete = async (d: Dashboard) => {
   }
   try {
     await store.deleteDashboard(d.id);
+    if (own) catalogStore.loadVisualizationLibrary().catch(() => undefined);
     ElMessage.success(`Deleted "${d.name}"`);
   } catch {
     ElMessage.error(store.error ?? "Failed to delete");
@@ -150,6 +174,11 @@ const onDelete = async (d: Dashboard) => {
 </script>
 
 <style scoped>
+.dash-library-ai-icon {
+  margin-right: 4px;
+  font-size: 15px;
+  color: var(--color-accent);
+}
 .dash-library {
   display: flex;
   flex-direction: column;

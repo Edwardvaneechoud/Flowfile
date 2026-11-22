@@ -19,9 +19,17 @@ export interface CatalogNamespace {
   storage_uri?: string | null;
   storage_connection_name?: string | null;
   access?: AccessInfo | null;
+  // "hub" for a connected hub's catalog: its id is the negative of the hub's own id.
+  source?: "local" | "hub";
 }
 
 export interface NamespaceTree extends CatalogNamespace {
+  // Where the catalog lives, in words ("On this computer", the hub's name); set by core.
+  place?: string | null;
+  // False for this machine's catalogs on a server joined to a hub; absent means offered.
+  offered?: boolean;
+  // Why this Flowfile cannot use a hub catalog's tables, in the words a run over it is refused with.
+  unavailable_reason?: string | null;
   children: NamespaceTree[];
   flows: FlowRegistration[];
   artifacts: GlobalArtifact[];
@@ -42,14 +50,15 @@ export const SYSTEM_NAMESPACE_NAMES = new Set([
 // get a bulk "clean up" action; the cleanup route enforces the same set server-side.
 export const SCRATCH_NAMESPACE_NAMES = new Set(["Unnamed Flows", "Python Editor"]);
 
-// Shallow copy of the tree with system schemas removed from the "General" root.
-// Scoped to "General" so a user-created schema sharing a name elsewhere is kept.
+// The local tree (a hub's catalogs left out) without the system schemas of the "General" root.
 export function filterSelectableNamespaces(tree: NamespaceTree[]): NamespaceTree[] {
-  return tree.map((node) =>
-    node.name === "General" && node.parent_id === null
-      ? { ...node, children: node.children.filter((c) => !SYSTEM_NAMESPACE_NAMES.has(c.name)) }
-      : node,
-  );
+  return tree
+    .filter((node) => node.source !== "hub")
+    .map((node) =>
+      node.name === "General" && node.parent_id === null
+        ? { ...node, children: node.children.filter((c) => !SYSTEM_NAMESPACE_NAMES.has(c.name)) }
+        : node,
+    );
 }
 
 // Ancestry names from root to the namespace with the given id (e.g.
@@ -119,12 +128,19 @@ export interface FlowRegistration {
   run_count: number;
   last_run_at: string | null;
   last_run_success: boolean | null;
+  // The last run was stopped on purpose (it keeps success false); absent from an older core.
+  last_run_cancelled?: boolean;
   file_exists: boolean;
   is_api_compatible: boolean;
   artifact_count: number;
   tables_produced: CatalogTableSummary[];
   tables_read: CatalogTableSummary[];
   access?: AccessInfo | null;
+  // "hub" for a flow published to a connected hub: its id is the negative of the hub's own.
+  source?: "local" | "hub";
+  flow_uuid?: string | null;
+  latest_version?: number | null;
+  author_name?: string | null;
 }
 
 export type FlowCodeFormat = "yaml" | "notebook" | "flowframe" | "polars";
@@ -179,13 +195,22 @@ export interface FlowRun {
   started_at: string;
   ended_at: string | null;
   success: boolean | null;
+  // Stopped on purpose before it finished (it keeps success false); absent from an older core.
+  cancelled?: boolean;
   nodes_completed: number;
   number_of_nodes: number;
   duration_seconds: number | null;
-  run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand";
+  run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "dispatched";
   schedule_id: number | null;
   has_snapshot: boolean;
   has_log: boolean;
+  // A run executed elsewhere: where, under which run id, where its log is and the published version that ran.
+  executed_on?: string | null;
+  remote_run_id?: string | null;
+  log_ref?: string | null;
+  flow_version?: number | null;
+  // Which catalog keeps the row; a hub's row carries the negative of the hub's id as `id`.
+  source?: "local" | "hub";
 }
 
 export interface PaginatedFlowRuns {
@@ -194,11 +219,17 @@ export interface PaginatedFlowRuns {
   total_success: number;
   total_failed: number;
   total_running: number;
+  // Runs stopped on purpose, which total_failed leaves out; absent from an older core.
+  total_cancelled?: number;
 }
 
 export interface FlowRunDetail extends FlowRun {
   flow_snapshot: string | null;
   node_results_json: string | null;
+  // The executor's log route for a run whose log is kept elsewhere, when core can name it.
+  log_url?: string | null;
+  // The run's page in the executor's editor, which a person opens to read that log; absent from an older core.
+  log_page_url?: string | null;
 }
 
 // Global Artifact
@@ -343,6 +374,8 @@ export interface CatalogTable {
   created_at: string;
   updated_at: string;
   access?: AccessInfo | null;
+  // "hub" for a table on a connected hub: id and namespace_id are the hub's own negated.
+  source?: "local" | "hub";
 }
 
 export interface OptimizeTableRequest {
@@ -436,6 +469,17 @@ export interface CatalogTableKeyColumnRequest {
 export interface CatalogTableKeyColumnResponse {
   table: CatalogTable;
   column_name: string;
+  new_version: number | null;
+}
+
+export interface CatalogTableRestoreRequest {
+  version: number;
+  expected_version?: number | null;
+}
+
+export interface CatalogTableRestoreResponse {
+  table: CatalogTable;
+  restored_version: number;
   new_version: number | null;
 }
 
@@ -534,10 +578,14 @@ export interface FlowSchedule {
   trigger_table_ids: number[];
   trigger_table_names: string[];
   trigger_full_table_names: string[];
+  backend: string | null;
+  disabled_reason?: string | null;
   last_triggered_at: string | null;
   last_trigger_table_updated_at: string | null;
   created_at: string;
   updated_at: string;
+  // Which catalog keeps the row; a hub's row carries the negative of the hub's id as `id`.
+  source?: "local" | "hub";
 }
 
 export interface FlowScheduleCreate {
@@ -551,6 +599,7 @@ export interface FlowScheduleCreate {
   enabled?: boolean;
   name?: string | null;
   description?: string | null;
+  backend?: string | null;
 }
 
 export interface FlowScheduleUpdate {
@@ -560,6 +609,7 @@ export interface FlowScheduleUpdate {
   cron_timezone?: string | null;
   name?: string | null;
   description?: string | null;
+  backend?: string | null;
 }
 
 export interface CronValidationRequest {
@@ -584,7 +634,9 @@ export interface ActiveFlowRun {
   started_at: string;
   nodes_completed: number;
   number_of_nodes: number;
-  run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand";
+  run_type: "in_designer_run" | "scheduled" | "manual" | "on_demand" | "dispatched";
+  // Which catalog keeps the row; a hub's row carries the negative of the hub's id as `id`.
+  source?: "local" | "hub";
 }
 
 // Catalog Stats
@@ -608,6 +660,8 @@ export interface CatalogStats {
 // Scheduler Status
 
 export interface SchedulerStatus {
+  // Whose scheduler, once a remote catalog's is listed beside this install's.
+  place?: string | null;
   active: boolean;
   holder_id?: string;
   started_at?: string;
@@ -626,7 +680,7 @@ export interface CatalogOverview {
   schedules: FlowSchedule[];
   active_runs: ActiveFlowRun[];
   runs: PaginatedFlowRuns;
-  scheduler: SchedulerStatus;
+  schedulers: SchedulerStatus[];
   default_namespace_id: number | null;
 }
 
@@ -686,7 +740,18 @@ export interface CatalogVisualization {
   table_full_name?: string | null;
   table_type?: string | null;
   namespace_name?: string | null;
+  /** The dashboard the chart belongs to, and its name; absent or null for a chart of its own. */
+  dashboard_id?: number | null;
+  dashboard_name?: string | null;
   access?: AccessInfo | null;
+  // "hub" for a chart saved in a hub's catalog: its ids are the negatives of the hub's own.
+  source?: "local" | "hub";
+}
+
+/** What pruning a dashboard's own charts did: the ids deleted, and the ids made charts of their own. */
+export interface DashboardChartPrune {
+  deleted: number[];
+  released: number[];
 }
 
 export interface VisualizationCreatePayload {
@@ -700,6 +765,8 @@ export interface VisualizationCreatePayload {
   sql_query?: string | null;
   namespace_id?: number | null;
   thumbnail_data_url?: string | null;
+  /** Makes the chart that dashboard's own. */
+  dashboard_id?: number | null;
 }
 
 export interface VisualizationUpdatePayload {

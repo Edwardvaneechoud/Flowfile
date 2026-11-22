@@ -3,13 +3,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, node_dict, register_missing_node_template, registry
-from flowfile_core.configs.settings import is_docker_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph, restore_dynamic_input_connections
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
-from shared.storage_config import storage
+from shared.flow_merge.conflict import refuse_conflicted
+from shared.storage_config import flow_storage_directories, is_server_mode, storage
 
 try:
     import yaml
@@ -17,22 +17,20 @@ except ImportError:
     yaml = None
 
 
-def _flow_storage_directories() -> list[Path]:
-    return [storage.flows_directory, storage.uploads_directory, storage.temp_directory_for_flows]
+def working_copy_directory() -> Path:
+    """Where this install keeps the file of an open flow that a remote catalog holds.
 
-
-def require_flow_in_storage(flow_path: Path) -> Path:
-    """``flow_path`` resolved; in docker mode it must lie under the flows, uploads or temp flows folder.
-
-    Stricter than ``_validate_flow_path``, which lets any absolute path through: a catalog registration
-    stores whatever path it was given, so reading a registered file must not reach past these folders.
+    A cache, never a place a person saves in or opens from: the file is written from what the catalog answers at
+    every open, read by that open and written by the flow's saves while it is open, and removed when it is closed.
     """
-    resolved = flow_path.resolve()
-    if is_docker_mode() and not any(
-        resolved.is_relative_to(directory.resolve()) for directory in _flow_storage_directories()
-    ):
-        raise ValueError("the flow's file is outside the server's flow folders")
-    return resolved
+    return storage.temp_directory_for_flows / "remote_catalog"
+
+
+def is_working_copy(flow_path: Path | str | None) -> bool:
+    """Whether ``flow_path`` is such a file (``working_copy_directory``)."""
+    if not flow_path:
+        return False
+    return Path(flow_path).resolve().is_relative_to(working_copy_directory().resolve())
 
 
 def _validate_flow_path(flow_path: Path) -> Path:
@@ -46,8 +44,8 @@ def _validate_flow_path(flow_path: Path) -> Path:
     if not resolved.is_file():
         raise FileNotFoundError(f"Flow file not found: {resolved}")
 
-    if is_docker_mode():
-        is_safe = any(resolved.is_relative_to(safe_dir) for safe_dir in _flow_storage_directories())
+    if is_server_mode():
+        is_safe = any(resolved.is_relative_to(safe_dir) for safe_dir in flow_storage_directories())
     else:
         is_safe = True
 
@@ -134,6 +132,7 @@ def _load_flowfile_yaml(flow_path: Path) -> schemas.FlowInformation:
     flow_path = _validate_flow_path(flow_path)
     with open(flow_path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
+    refuse_conflicted(data, f"The flow file {flow_path.name}")
     # Load as FlowfileData first (handles setting_input validation via node type)
     flowfile_data = schemas.FlowfileData.model_validate(data)
     return _flowfile_data_to_flow_information(flowfile_data)
@@ -152,6 +151,7 @@ def _load_flowfile_json(flow_path: Path) -> schemas.FlowInformation:
     flow_path = _validate_flow_path(flow_path)
     with open(flow_path, encoding="utf-8") as f:
         data = json.load(f)
+    refuse_conflicted(data, f"The flow file {flow_path.name}")
 
     # Load as FlowfileData first (handles setting_input validation via node type)
     flowfile_data = schemas.FlowfileData.model_validate(data)
@@ -174,6 +174,7 @@ def _keep_auto_description_auto(setting_input) -> None:
 
 
 def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> schemas.FlowInformation:
+    """``flowfile_data`` as the graph builder takes it, each node's settings validated for its type."""
     nodes_dict = {}
     node_starts = []
     for node in flowfile_data.nodes:
@@ -266,6 +267,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         max_parallel_workers=flowfile_data.flowfile_settings.max_parallel_workers,
         source_registration_id=flowfile_data.flowfile_settings.source_registration_id,
         parameters=flowfile_data.flowfile_settings.parameters,
+        hub_origin=getattr(flowfile_data.flowfile_settings, "hub_origin", None),
     )
 
     return schemas.FlowInformation(
@@ -277,6 +279,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         node_connections=connections,
         groups=[schemas.GroupInformation(**group.model_dump()) for group in flowfile_data.groups],
         comments=[schemas.CommentInformation(**comment.model_dump()) for comment in flowfile_data.comments],
+        merge_conflicts=getattr(flowfile_data.flowfile_settings, "merge_conflicts", None),
     )
 
 
@@ -331,7 +334,7 @@ def _resolve_flow_name(flow_path: Path, stored_name: str | None) -> str:
     file still renames the flow.
     """
     name = (stored_name or "").strip()
-    if name and storage.is_scratch_flow_path(str(flow_path)):
+    if name and (storage.is_scratch_flow_path(str(flow_path)) or is_working_copy(flow_path)):
         return name
     return flow_path.stem
 
@@ -354,7 +357,8 @@ def _add_node_promise(graph: FlowGraph, node_info: schemas.NodeInformation) -> N
     if (is_user_defined and node_info.type not in CUSTOM_NODE_STORE) or node_info.type not in node_dict:
         # Before wiring: a node file written since the last scan must lend its real template, not the placeholder.
         registry.refresh()
-    if is_user_defined and node_info.type not in CUSTOM_NODE_STORE:
+    if (is_user_defined and node_info.type not in CUSTOM_NODE_STORE) or node_info.type not in node_dict:
+        # Unconfigured custom nodes have no settings marker; preserve unknown types too.
         register_missing_node_template(node_info.type)
     node_promise = input_schema.NodePromise(
         flow_id=graph.flow_id,
@@ -481,6 +485,8 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     flow_storage_obj.flow_name = resolved_name
 
     new_flow = FlowGraph(name=flow_storage_obj.flow_name, flow_settings=flow_storage_obj.flow_settings)
+    # Only an open takes them from the file; a snapshot restore keeps the live ones, like the flow settings.
+    new_flow.merge_conflicts = getattr(flow_storage_obj, "merge_conflicts", None)
     if user_id is not None:
         new_flow._owner_user_id = user_id
     owner_of = (lambda _node_id: user_id) if user_id is not None else None

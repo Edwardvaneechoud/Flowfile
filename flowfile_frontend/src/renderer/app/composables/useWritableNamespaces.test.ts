@@ -9,7 +9,12 @@ vi.mock("./useResourceSharing", () => ({
   useResourceSharing: () => ({ canManage: () => true }),
 }));
 
-import { collectWritableSchemaOptions, pruneNonWritableSchemas } from "./useWritableNamespaces";
+import {
+  collectSaveTargetOptions,
+  collectWritableSchemaOptions,
+  groupSaveTargets,
+  pruneNonWritableSchemas,
+} from "./useWritableNamespaces";
 
 // canManage semantics from useResourceSharing, without Pinia (no admin override).
 const canManage = (r: { access?: AccessInfo | null }) =>
@@ -132,5 +137,121 @@ describe("pruneNonWritableSchemas", () => {
     const input = tree();
     pruneNonWritableSchemas(input, canManage);
     expect(input.find((n) => n.id === 20)?.children).toHaveLength(2);
+  });
+});
+
+// A hub's catalogs as core lists them after this machine's own: negative ids, the hub's name as their place.
+const hubCatalog = (
+  id: number,
+  name: string,
+  schemas: [number, string, AccessInfo | null][],
+  overrides: Partial<NamespaceTree> = {},
+): NamespaceTree =>
+  ns(
+    id,
+    name,
+    { source: "hub", place: "Acme Data", ...overrides },
+    schemas.map(([schemaId, schemaName, schemaAccess]) =>
+      ns(schemaId, schemaName, {
+        parent_id: id,
+        level: 1,
+        source: "hub",
+        place: "Acme Data",
+        access: schemaAccess,
+      }),
+    ),
+  );
+
+const own = (offered: boolean): NamespaceTree =>
+  ns(1, "General", { place: "On this server", offered }, [
+    ns(2, "default", { parent_id: 1, level: 1, place: "On this server", offered }),
+  ]);
+
+const sales = () =>
+  hubCatalog(-10, "sales", [
+    [-11, "curated", access("manage")],
+    [-12, "raw", access("use")],
+    [-13, "mine", access("owner", true)],
+  ]);
+
+describe("collectWritableSchemaOptions on a server that joined a hub", () => {
+  it("does not offer this server's own schemas, which core marks not offered", () => {
+    expect(collectWritableSchemaOptions([own(false), sales()], canManage)).toEqual([]);
+  });
+
+  it("never offers a hub schema: flows, tables and query views are not saved there", () => {
+    const ids = collectWritableSchemaOptions([own(true), sales()], canManage).map((o) => o.id);
+    expect(ids).toEqual([2]);
+  });
+});
+
+describe("collectSaveTargetOptions", () => {
+  it("offers a hub schema the person may write, and none they may only use", () => {
+    const options = collectSaveTargetOptions([own(false), sales()], canManage);
+    expect(options.map((o) => o.id)).toEqual([-11, -13]);
+    expect(options.every((o) => o.hub && o.place === "Acme Data")).toBe(true);
+    expect(options[0].label).toBe("sales / curated");
+  });
+
+  it("offers this computer's own schemas first and the hub's after them", () => {
+    const options = collectSaveTargetOptions([own(true), sales()], canManage);
+    expect(options.map((o) => [o.id, o.hub])).toEqual([
+      [2, false],
+      [-11, true],
+      [-13, true],
+    ]);
+  });
+
+  it("does not offer a schema marked not offered", () => {
+    const options = collectSaveTargetOptions([own(false), sales()], canManage);
+    expect(options.some((o) => o.id === 2)).toBe(false);
+  });
+
+  it("inherits the hub catalog's grant for a schema the hub did not stamp", () => {
+    const granted = hubCatalog(-20, "finance", [[-21, "ledger", null]], { access: access("use") });
+    const managed = hubCatalog(-30, "ops", [[-31, "runs", null]], { access: access("manage") });
+    const ids = collectSaveTargetOptions([granted, managed], canManage).map((o) => o.id);
+    expect(ids).toEqual([-31]);
+  });
+
+  it("does not take this install's admin for the hub's: a use-only hub schema stays out", () => {
+    // useResourceSharing.canManage for an admin of this install: admin of local rows only.
+    const asLocalAdmin = (r: { access?: AccessInfo | null; source?: string | null }) =>
+      canManage(r) || !r.source || r.source === "local";
+    const ids = collectSaveTargetOptions([own(true), sales()], asLocalAdmin).map((o) => o.id);
+    expect(ids).toEqual([2, -11, -13]);
+  });
+
+  it("leaves out a hub catalog this Flowfile cannot use", () => {
+    const onItsDisk = hubCatalog(-40, "legacy", [[-41, "old", access("manage")]], {
+      unavailable_reason: "The hub keeps the tables of legacy on its own disk",
+    });
+    expect(collectSaveTargetOptions([onItsDisk], canManage)).toEqual([]);
+  });
+
+  it("is the local list when no hub is connected", () => {
+    expect(collectSaveTargetOptions(tree(), canManage).map((o) => o.id)).toEqual(
+      collectWritableSchemaOptions(tree(), canManage).map((o) => o.id),
+    );
+  });
+});
+
+describe("groupSaveTargets", () => {
+  it("heads the hub's schemas with the hub's name and this machine's with its place", () => {
+    const groups = groupSaveTargets(collectSaveTargetOptions([own(true), sales()], canManage));
+    expect(groups.map((g) => [g.label, g.options.map((o) => o.id)])).toEqual([
+      ["On this server", [2]],
+      ["Acme Data (hub)", [-11, -13]],
+    ]);
+  });
+
+  it("marks the hub's schemas as the hub's where they are the only ones", () => {
+    const groups = groupSaveTargets(collectSaveTargetOptions([own(false), sales()], canManage));
+    expect(groups.map((g) => g.label)).toEqual(["Acme Data (hub)"]);
+  });
+
+  it("uses no heading without a hub", () => {
+    const groups = groupSaveTargets(collectSaveTargetOptions(tree(), canManage));
+    expect(groups.map((g) => g.label)).toEqual([null]);
   });
 });

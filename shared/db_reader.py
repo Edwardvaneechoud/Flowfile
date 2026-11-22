@@ -155,6 +155,7 @@ def read_sql_with_fallback(
         sa = _Attempt("sqlalchemy", lambda: _read_sqlalchemy(query, uri)).start()
     hedge_at = time.monotonic() + delay
     give_up_at: float | None = None
+    cx_error: BaseException | None = None
 
     def _start_sqlalchemy(reason: str) -> _Attempt:
         logger.warning(
@@ -185,7 +186,11 @@ def read_sql_with_fallback(
                     logger.info("SQLAlchemy read won the hedge; skipping connectorx for this connection")
                 return sa.result
             if cx is None:
-                raise RuntimeError(f"Database read failed via both connectorx and SQLAlchemy: {sa.error}") from sa.error
+                if cx_error is None:
+                    raise RuntimeError(f"Database read failed via SQLAlchemy: {sa.error}") from sa.error
+                raise RuntimeError(
+                    f"{cx_error} (Database read failed via both connectorx and SQLAlchemy; SQLAlchemy: {sa.error})"
+                ) from cx_error
             if give_up_at is None:
                 give_up_at = time.monotonic() + max(delay, 30.0)
                 logger.warning("SQLAlchemy fallback failed (%s); awaiting connectorx", sa.error)

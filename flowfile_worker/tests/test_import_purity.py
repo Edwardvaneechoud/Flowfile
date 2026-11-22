@@ -73,11 +73,12 @@ def _modules_after(stmt: str, tmp_path) -> set[str]:
 
 # shared/__init__ re-exports the sql/delta/cloud helpers lazily (PEP 562), so importing
 # `shared` never pulls the pydantic-backed dialect registry -- a boot-path win for core,
-# the scheduler and the CLI.
+# the scheduler and the CLI -- nor storage_config, so a worker can pick its storage dir first.
 SHARED_MUST_STAY_LAZY = (
     "shared.sql_utils",
     "shared.db_dialects",
     "shared.delta_utils",
+    "shared.storage_config",
     "pydantic",
 )
 
@@ -226,9 +227,10 @@ FORBIDDEN_MODULES_IN_SPAWNED_CHILD = (
     "shared.db_dialects",
     "shared.delta_utils",
 )
-# Measured 345 after Phase 2b (513 before). Headroom is deliberately small: re-eagerizing
+# Measured 345 after Phase 2b (513 before), 418 on Polars 2.1, whose own import loads ~72 more
+# (importlib.metadata and the email stack). Headroom is deliberately small: re-eagerizing
 # models costs ~161 modules and pl_fuzzy_frame_match ~62, so either trips this.
-CHILD_MODULE_CEILING = 380
+CHILD_MODULE_CEILING = 450
 
 _PROBE_TARGET = '''
 import json

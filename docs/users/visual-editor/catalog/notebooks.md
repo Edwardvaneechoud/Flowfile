@@ -45,6 +45,8 @@ explore(lf)                                              # Graphic Walker explor
 
 Reads come back as LazyFrames; `flowfile_ctx.write_catalog_table` persists a result as a real catalog table, and `flowfile_ctx.publish_global` saves a Python object (a trained model, a config) as a [global artifact](index.md#global-artifacts) that survives across sessions and flows. The full cell-side API — inputs, outputs, display, artifacts — is documented in [The flowfile_ctx API](../kernel-api.md).
 
+When using `flowfile_frame` in a Catalog notebook, cloud-backed physical tables aren't supported as direct reads or SQL sources. Unrelated cloud-backed tables do not block a SQL query. Use a flow with a Catalog Reader node for those tables.
+
 <details markdown="1">
 <summary>See it: a catalog notebook cell in action</summary>
 

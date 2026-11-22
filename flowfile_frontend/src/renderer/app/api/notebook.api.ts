@@ -28,6 +28,8 @@ export interface NotebookSummary {
   updated_at: string;
   namespace_name: string | null;
   access: AccessInfo | null;
+  // "hub" for a notebook saved in a hub's catalog: its ids are the negatives of the hub's own.
+  source?: "local" | "hub";
 }
 
 export interface Notebook extends NotebookSummary {

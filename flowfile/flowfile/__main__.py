@@ -3,6 +3,7 @@
 import codecs
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -122,7 +123,8 @@ def _run_flow(flow_path: str, param_overrides: list[str] | None, run_id: int | N
         pass
 
     try:
-        result = flow.run_graph()
+        with registry.for_run_record(run_id):
+            result = flow.run_graph()
     except Exception as e:
         print(f"Error running flow: {e}", file=sys.stderr)
         _complete_run_if_needed(run_id, success=False, nodes_completed=0)
@@ -355,12 +357,31 @@ def _run_import_command(
 
 
 def _run_project_command(action: str | None, arg: str | None) -> None:
-    """Headless project init/open/save — the proof that build-from-scratch works without the UI."""
+    """Headless project init/open/save/plan/apply — the proof that build-from-scratch works without the UI."""
     from fastapi import HTTPException
 
     from flowfile_core.auth.utils import get_local_user_id
     from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
     from flowfile_core.project import project_sync
+    from flowfile_core.project.models import NoActiveProjectError
+
+    def _or_exit(call, *args):
+        """Run ``call``; on an expected project error print one line to stderr and exit 1."""
+        try:
+            return call(*args)
+        except HTTPException as e:
+            print(e.detail["message"] if isinstance(e.detail, dict) else e.detail, file=sys.stderr)
+        except (ValueError, NoActiveProjectError) as e:
+            print(str(e), file=sys.stderr)
+        sys.exit(1)
+
+    def _exit_if_incomplete(result) -> None:
+        if result.incomplete:
+            print("The database was updated, but these steps did not finish:", file=sys.stderr)
+            for line in result.incomplete:
+                print(f"  {line}", file=sys.stderr)
+            print("Run `flowfile project apply` to finish them.", file=sys.stderr)
+            sys.exit(1)
 
     def _validated_folder(usage: str) -> str:
         if not arg:
@@ -377,9 +398,14 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
         folder = _validated_folder("Usage: flowfile project init <folder>")
         project = project_sync.init_project(folder, Path(folder).name, owner_id)
         print(f"Initialized project '{project.name}' at {project.root}")
+        from flowfile_core.project.manifest import GIT_CONFIG_COMMANDS
+
+        print("To merge and diff its flows step by step, run these once in each clone:")
+        for command in GIT_CONFIG_COMMANDS:
+            print(f"  {command}")
     elif action == "open":
         folder = _validated_folder("Usage: flowfile project open <folder>")
-        project, result = project_sync.open_project(folder, owner_id)
+        project, result = _or_exit(project_sync.open_project, folder, owner_id)
         print(f"Opened project '{project.name}' at {project.root}")
         print(
             f"Imported: flows={result.imported_flows}, "
@@ -388,14 +414,63 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
         missing = len(result.placeholder_secrets)
         if missing:
             print(f"{missing} value(s) need to be set (FLOWFILE_SECRET_<NAME> or update them in the app).")
+        _exit_if_incomplete(result)
     elif action == "save":
         if not arg:
             print('Usage: flowfile project save "<message>"', file=sys.stderr)
             sys.exit(1)
-        sha = project_sync.save_version(owner_id, arg)
+        sha = _or_exit(project_sync.save_version, owner_id, arg)
         print(f"Saved version {sha[:8] if sha else '(no changes)'}")
+    elif action == "plan":
+        if not arg:
+            print("Usage: flowfile project plan <sha|.>", file=sys.stderr)
+            sys.exit(1)
+        for c in _or_exit(project_sync.plan, owner_id, None if arg == "." else arg):
+            line = f'{c["change"]} {c["kind"]} "{c["label"]}"'
+            print(f"{line}: {c['consequence']}" if c["consequence"] else line)
+    elif action == "apply":
+        result = _or_exit(project_sync.reload_from_disk, owner_id)
+        print(f"Imported: {', '.join(f'{k}={n}' for k, n in result.by_kind.items()) or 'nothing'}")
+        _exit_if_incomplete(result)
+    elif action == "branch":
+        if arg:
+            _or_exit(project_sync.create_branch, owner_id, arg, True)
+            print(f"On new branch {arg}")
+        else:
+            for row in _or_exit(project_sync.branch_state, owner_id)["branches"]:
+                print(f"{'*' if row['current'] else ' '} {row['name']} {row['sha'][:8]}")
+    elif action == "switch":
+        if not arg:
+            print("Usage: flowfile project switch <branch>", file=sys.stderr)
+            sys.exit(1)
+        result = _or_exit(project_sync.switch_branch, owner_id, arg)
+        print(f"On branch {arg}; imported: {', '.join(f'{k}={n}' for k, n in result.by_kind.items()) or 'nothing'}")
+        _exit_if_incomplete(result)
+    elif action == "remote":
+        if not arg:
+            print("Usage: flowfile project remote <url>  (token from FLOWFILE_PROJECT_TOKEN)", file=sys.stderr)
+            sys.exit(1)
+        token = os.environ.get("FLOWFILE_PROJECT_TOKEN")
+        state = _or_exit(project_sync.set_remote, owner_id, arg, token)
+        print(f"Remote {state['remote']}{' with a token' if state['has_token'] else ''}")
+    elif action == "push":
+        answer = _or_exit(project_sync.push, owner_id)
+        print(f"Pushed {answer['branch']} at {(answer['sha'] or '')[:8]}")
+        if answer["unsaved"]:
+            print("Changes not saved as a version were not pushed.", file=sys.stderr)
+    elif action == "pull":
+        answer = _or_exit(project_sync.pull, owner_id)
+        print(f"Pull: {answer.state.replace('_', ' ')}")
+        for row in answer.conflicts:
+            print(f"  {row['path']}: {row['label']}: {row['message']}", file=sys.stderr)
+        if answer.conflicts:
+            print("Settle them in the app's project view, then the merge is applied.", file=sys.stderr)
+            sys.exit(1)
     else:
-        print("Usage: flowfile project {init|open|save} <folder-or-message>", file=sys.stderr)
+        print(
+            "Usage: flowfile project {init|open|save|plan|apply|branch|switch|remote|push|pull} <argument>",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -429,13 +504,22 @@ def main():
     parser.add_argument(
         "component",
         nargs="?",
-        choices=["ui", "core", "worker", "flow", "init", "open", "save", "yxdb", "alteryx"],
-        help="Component to run, project sub-command (init/open/save), convert format (yxdb) or import format (alteryx)",
+        choices=[
+            *("ui", "core", "worker", "flow", "init", "open", "save", "plan", "apply"),
+            *("branch", "switch", "remote", "push", "pull", "yxdb", "alteryx"),
+        ],
+        help="Component to run, project sub-command (init/open/save/plan/apply/branch/switch/remote/push/pull), "
+        "convert format (yxdb) or import format (alteryx)",
     )
     parser.add_argument(
         "file_path", nargs="?", help="Flow file path, project folder, version message, or file/dir to convert"
     )
-    parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind the server to; for run ui, a host other machines reach needs FLOWFILE_MODE=docker, "
+        "where everyone signs in",
+    )
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
     parser.add_argument(
@@ -465,6 +549,10 @@ def main():
     parser.add_argument("--format", default="md", choices=["md", "json"], help="Format of the --inspect report")
     parser.add_argument("--csv", action="store_true", help="Convert to CSV instead of Parquet")
     parser.add_argument("--overwrite", action="store_true", help="Replace existing converted files or flows")
+    # A server's extension reads its own flags from this command line; listed here so run ui and run core take them.
+    from shared import server_extension
+
+    server_extension.call("add_arguments", parser)
 
     args = parser.parse_args()
 
@@ -473,7 +561,7 @@ def main():
             try:
                 from flowfile.web import start_server as start_web_ui
 
-                start_web_ui(open_browser=not args.no_browser)
+                start_web_ui(host=args.host, port=args.port, open_browser=not args.no_browser)
             except KeyboardInterrupt:
                 print("\nFlowFile service stopped.")
         elif args.component == "core":
@@ -541,7 +629,8 @@ def main():
         print("  flowfile run worker  # Start only the worker service")
         print("")
         print("  # Options")
-        print("  flowfile run ui --host 0.0.0.0 --port 8080  # Custom host/port")
+        print("  flowfile run ui --port 8080  # Custom port")
+        print("  FLOWFILE_MODE=docker flowfile run ui --host 0.0.0.0  # Serve other machines; everyone signs in")
         print("  flowfile run ui --no-browser  # Don't open browser")
         print("")
         print("  # Python API usage examples")

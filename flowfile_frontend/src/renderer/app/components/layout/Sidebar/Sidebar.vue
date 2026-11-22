@@ -3,6 +3,18 @@
     <div class="center-container">
       <Logo width="50px" :app-name="''" position-app-name="left" :click-action="goHome" />
     </div>
+    <div class="sidebar-search">
+      <div class="footer-btn-wrapper" :data-tooltip="`Search (${searchShortcut})`">
+        <button
+          class="info-button"
+          aria-label="Search"
+          data-testid="sidebar-search"
+          @click="globalSearch.open()"
+        >
+          <i class="fa-solid fa-magnifying-glass"></i>
+        </button>
+      </div>
+    </div>
     <div class="sidebar-container">
       <menu-accordion :items="items" :is-collapse="true" />
     </div>
@@ -11,6 +23,55 @@
         <button class="info-button" @click="showHelp = true">
           <i class="fa-solid fa-circle-info"></i>
         </button>
+      </div>
+      <div class="footer-btn-wrapper" data-tooltip="Feedback &amp; community">
+        <el-popover
+          ref="feedbackPopover"
+          placement="right-end"
+          :width="240"
+          trigger="click"
+          popper-class="sidebar-more-popover"
+          :show-arrow="true"
+        >
+          <template #reference>
+            <button
+              class="info-button"
+              aria-label="Feedback and community"
+              data-testid="sidebar-feedback"
+            >
+              <i class="fa-solid fa-comment-dots"></i>
+            </button>
+          </template>
+          <div class="sidebar-more-menu">
+            <p class="sidebar-more-heading">Feedback &amp; community</p>
+            <button
+              class="sidebar-more-item"
+              data-testid="sidebar-report-issue"
+              @click="handleReportIssue"
+            >
+              <i class="fa-solid fa-bug"></i>
+              <span>Report an issue</span>
+            </button>
+            <button class="sidebar-more-item" @click="handleRequestNode">
+              <i class="fa-solid fa-lightbulb"></i>
+              <span>Request a node</span>
+            </button>
+            <button class="sidebar-more-item" @click="openLink(DISCUSSIONS_URL)">
+              <i class="fa-solid fa-comments"></i>
+              <span>Ask a question</span>
+            </button>
+            <button class="sidebar-more-item" @click="openLink(ISSUES_URL)">
+              <i class="fa-solid fa-list-check"></i>
+              <span>Browse open issues</span>
+            </button>
+            <div class="sidebar-more-divider" aria-hidden="true"></div>
+            <button class="sidebar-more-item" @click="openLink(REPO_URL)">
+              <i class="fa-brands fa-github"></i>
+              <span>Flowfile on GitHub</span>
+            </button>
+            <p class="sidebar-more-status">Opens GitHub in your browser.</p>
+          </div>
+        </el-popover>
       </div>
       <div class="footer-btn-wrapper" data-tooltip="Help &amp; more">
         <el-popover
@@ -38,10 +99,6 @@
             <button class="sidebar-more-item" @click="handleOpenDocumentation">
               <i class="fa-solid fa-book"></i>
               <span>Documentation</span>
-            </button>
-            <button class="sidebar-more-item" @click="handleRequestNode">
-              <i class="fa-solid fa-lightbulb"></i>
-              <span>Request a node</span>
             </button>
             <button class="sidebar-more-item" @click="handleOpenPrivacy">
               <i class="fa-solid fa-shield-halved"></i>
@@ -91,17 +148,27 @@ import { NodeRequestDialog, PageHelpModal } from "../../common";
 import type { PageHelpContent } from "../../common/PageHelpModal/types";
 import authService from "../../../services/auth.service";
 import { desktop } from "../../../../lib/desktop";
-import { DOCS_BASE_URL } from "../../../lib/docsLinks";
+import { DISCUSSIONS_URL, DOCS_BASE_URL, ISSUES_URL, REPO_URL } from "../../../lib/docsLinks";
+import { openBugReport } from "../../../composables/useBugReport";
 import { useAuthStore } from "../../../stores/auth-store";
+import { useHubConnectionStore } from "../../../stores/hub-connection-store";
+import { showsTab } from "../../../views/ComputeView/computeTabs";
 import { useMultiUser } from "../../../composables/useMultiUser";
 import { useTheme } from "../../../composables/useTheme";
 import { useAppUpdate } from "../../../composables/useAppUpdate";
 import { useProjectStore } from "../../../stores/project-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
+import { useGlobalSearchStore } from "../../../stores/global-search-store";
+import { globalSearchShortcutLabel } from "../../../features/search/globalSearchHotkey";
+import { IS_MAC } from "../../../utils/shortcuts";
 import { gettingStartedTutorial } from "../../tutorial/tutorials";
 import { designerHelp } from "../../../views/DesignerView/designerHelp";
 import { catalogHelp } from "../../../views/CatalogView/catalogHelp";
-import { lastCatalogQuery } from "../../../views/CatalogView/catalogLastLocation";
+import {
+  catalogTabLocation,
+  lastCatalogQuery,
+  lastCatalogQueryByTab,
+} from "../../../views/CatalogView/catalogLastLocation";
 import { catalogSectionOfTab } from "../../../views/CatalogView/catalogTabs";
 import { connectionsHelp } from "../../../views/ConnectionsView/connectionsHelp";
 import { aiSettingsHelp } from "../../../views/AiSettingsView/aiSettingsHelp";
@@ -122,8 +189,11 @@ defineEmits(["toggle-collapse"]);
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const hub = useHubConnectionStore();
 const projectStore = useProjectStore();
 const tutorialStore = useTutorialStore();
+const globalSearch = useGlobalSearchStore();
+const searchShortcut = globalSearchShortcutLabel(IS_MAC);
 const { isMultiUser } = useMultiUser();
 const { isDark, toggleTheme } = useTheme();
 
@@ -165,14 +235,23 @@ const items = computed(() => {
     if ((entry.hideInElectron || entry.dockerOnly) && isDesktopShell) return false;
     // Projects are admin-only in docker; admins keep it even when disabled (to reach the how-to page).
     if (entry.name === "project" && isMultiUser.value && !isAdmin) return false;
-    return !entry.requiresAdmin || isAdmin;
+    return showsTab(entry, isAdmin, hub.joined);
   };
   const decorate = (entry: INavigationRoute): INavigationRoute =>
     entry.name === "project" ? { ...entry, statusDot: projectDot } : entry;
 
+  // A catalog tab's entry reopens where that tab was left (its open table or flow).
+  const currentCatalogTab =
+    route.name === "catalog" ? (route.query.tab as string | undefined) : undefined;
+  const byTab = lastCatalogQueryByTab.value;
+  const resume = (entry: INavigationRoute): INavigationRoute =>
+    entry.name === "catalog" && entry.query?.tab
+      ? { ...entry, query: catalogTabLocation(entry.query.tab, currentCatalogTab, byTab) }
+      : entry;
+
   return NavigationRoutes.routes.filter(visible).map((route) => {
     if (!route.children) return decorate(route);
-    const children = route.children.filter(visible).map(decorate);
+    const children = route.children.filter(visible).map(decorate).map(resume);
     const parent: INavigationRoute = { ...route };
     // A child's status dot (project sync state) also shows on the collapsed rail icon.
     const statusDot = children.find((c) => c.statusDot)?.statusDot;
@@ -226,22 +305,36 @@ async function handleCheckForUpdates() {
   if (await checkForUpdates()) morePopover.value?.hide();
 }
 
+const feedbackPopover = ref<{ hide: () => void } | null>(null);
+
+const openLink = (url: string) => {
+  feedbackPopover.value?.hide();
+  void desktop.openExternal(url);
+};
+
+const handleReportIssue = () => {
+  feedbackPopover.value?.hide();
+  openBugReport(version.value);
+};
+
 const showNodeRequest = ref(false);
 const handleRequestNode = () => {
-  morePopover.value?.hide();
+  feedbackPopover.value?.hide();
   showNodeRequest.value = true;
 };
 
 // The native Help menu forwards its "Request a Node" item here (see menu.rs).
 let stopHelpRequestNode: (() => void) | null = null;
 onMounted(async () => {
+  // An admin sees every entry; anyone else gets the Hub entry only where the server belongs to a hub.
+  if (!authStore.isAdmin) void hub.load();
   stopHelpRequestNode = await desktop.onHelpRequestNode(handleRequestNode);
 });
 onBeforeUnmount(() => stopHelpRequestNode?.());
 
-const handleLogout = () => {
+const handleLogout = async () => {
   // Store logout, not authService: per-user store state must be torn down too.
-  authStore.logout();
+  await authStore.logout();
   router.push({ name: "login" });
 };
 </script>
@@ -265,6 +358,12 @@ const handleLogout = () => {
   justify-content: center;
   width: 100%;
   padding: var(--spacing-8) 0;
+}
+
+.sidebar-search {
+  display: flex;
+  justify-content: center;
+  padding-bottom: var(--spacing-2);
 }
 
 .sidebar-footer {
@@ -406,6 +505,16 @@ const handleLogout = () => {
   height: 1px;
   margin: var(--spacing-1) var(--spacing-2);
   background-color: var(--color-border-primary);
+}
+
+.sidebar-more-heading {
+  margin: 0;
+  padding: var(--spacing-1) var(--spacing-3);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
 }
 
 .sidebar-more-status {

@@ -16,12 +16,8 @@ so the tests are hermetic — no outbound network, no extra dependency.
 
 from __future__ import annotations
 
-import json
 import os
 import platform
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import requests
@@ -33,10 +29,12 @@ from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.routes.routes import flow_file_handler
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
+from flowfile_core.routes.routes import _cap_for_test_request, _sample_failure, flow_file_handler
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.transform_schema import SelectInput
 from shared.compute_protocol import WorkerLocation
+from test_utils.rest_api_server import KEYSET_RECORDS, SECURE_TOKEN, Reply, closed_port_url, start_api_server
 from tests.conftest import protocol_states
 
 # Windows has no 0.0.0.0 loopback alias for connects; the worker binds 127.0.0.1 there.
@@ -45,97 +43,11 @@ WORKER_HOST = os.environ.get(
 )
 WORKER_PORT = int(os.environ.get("FLOWFILE_WORKER_PORT", 63579))
 
-# A bearer token the in-process server requires on its /secure route. Routed
-# end-to-end as an inline plaintext secret (encrypted on the core, decrypted on
-# the worker), so a successful /secure fetch proves cross-process decryption.
-SECURE_TOKEN = "e2e-secret-token"
-
-
-# --- in-process "real" API server --------------------------------------------
-
-
-class _ApiHandler(BaseHTTPRequestHandler):
-    """Serves canned JSON for each REST feature, recording what it received.
-
-    Runs in the pytest process; the worker subprocess reaches it over TCP, so
-    anything stored on ``self.server`` is visible to the test assertions.
-    """
-
-    def log_message(self, *_args):  # noqa: D401 - silence per-request logging
-        pass
-
-    def _send(self, status: int, payload, headers: dict[str, str] | None = None):
-        body = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        for k, v in (headers or {}).items():
-            self.send_header(k, v)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
-        parts = urlsplit(self.path)
-        path = parts.path
-        params = {k: v[0] for k, v in parse_qs(parts.query).items()}
-        srv = self.server
-        srv.request_count += 1  # counts every inbound request (re-run / re-fetch checks)
-
-        if path == "/items":
-            self._send(200, [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}, {"id": 3, "name": "c"}])
-        elif path == "/wrapped":
-            self._send(
-                200,
-                {"data": {"items": [{"id": 1, "nested": {"city": "ams"}}, {"id": 2, "nested": {"city": "rtm"}}]}},
-            )
-        elif path == "/offset":
-            rows = [{"id": i} for i in range(5)]
-            offset = int(params.get("offset", "0"))
-            limit = int(params.get("limit", "100"))
-            self._send(200, rows[offset : offset + limit])
-        elif path == "/page":
-            page = int(params.get("page", "1"))
-            self._send(200, [{"id": page}] if page <= 3 else [])
-        elif path == "/cursor":
-            cursor = params.get("cursor")
-            nxt = {None: ("c2", 1), "c2": ("c3", 2), "c3": (None, 3)}
-            next_cursor, rid = nxt.get(cursor, (None, 99))
-            self._send(200, {"rows": [{"id": rid}], "next": next_cursor})
-        elif path == "/secure":
-            srv.seen_authorization = self.headers.get("Authorization")
-            if srv.seen_authorization == f"Bearer {SECURE_TOKEN}":
-                self._send(200, [{"id": 1, "name": "secret"}])
-            else:
-                self._send(401, {"error": "unauthorized"})
-        elif path == "/flaky":
-            srv.flaky_calls += 1
-            if srv.flaky_calls == 1:
-                self._send(429, {"error": "slow down"}, headers={"Retry-After": "0"})
-            else:
-                self._send(200, [{"id": 1}])
-        else:
-            self._send(404, {"error": "not found"})
-
 
 @pytest.fixture(scope="module")
 def api_server():
-    """A real HTTP server on an ephemeral 127.0.0.1 port serving canned JSON.
-
-    Yields the server so tests can read ``request_count`` (how many requests the
-    worker actually made) and a ``base_url`` to point nodes at.
-    """
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _ApiHandler)
-    server.seen_authorization = None
-    server.flaky_calls = 0
-    server.request_count = 0
-    host, port = server.server_address
-    server.base_url = f"http://{host}:{port}"
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
+    with start_api_server() as server:
         yield server
-    finally:
-        server.shutdown()
-        thread.join(timeout=5)
 
 
 @pytest.fixture(scope="module")
@@ -280,6 +192,33 @@ def test_e2e_cursor_pagination(local_api_server):
     assert sorted(df["id"].to_list()) == [1, 2, 3]
 
 
+def test_e2e_keyset_cursor_in_json_body(api_server):
+    api_server.reset()
+    graph = _graph()
+    _add_reader(
+        graph,
+        _make_node(
+            graph,
+            url=f"{api_server.base_url}/keyset",
+            method="POST",
+            json_body={"app_id": "app-1", "entry_id": "entry-1", "limit": 3},
+            record_path="data",
+            pagination=input_schema.RestApiPaginationSettings(
+                pagination_type="cursor",
+                cursor_param="data_id",
+                cursor_request_location="body",
+                cursor_response_path="data.-1._id",
+            ),
+        ),
+    )
+    _run(graph)
+
+    df = _collect(graph)
+    assert df["_id"].to_list() == [r["_id"] for r in KEYSET_RECORDS]
+    assert api_server.request_count == 4
+    assert [r.body.get("data_id") for r in api_server.requests] == [None, "id03", "id06", "id07"]
+
+
 def test_e2e_bearer_auth_credential_reaches_server(local_api_server):
     """An inline bearer secret is encrypted on the core, decrypted on the worker,
     and applied to the request — proven by the protected route succeeding."""
@@ -343,7 +282,7 @@ def test_e2e_read_api_public_function(local_api_server):
 def test_performance_mode_refetches_on_every_run(api_server):
     """In Performance mode (the default), each run re-executes the source node,
     so the worker hits the API again — no stale reuse across runs."""
-    api_server.request_count = 0
+    api_server.reset()
     graph = _graph(execution_mode="Performance")
     _add_reader(graph, _make_node(graph, url=f"{api_server.base_url}/items"))
 
@@ -357,7 +296,7 @@ def test_development_mode_reuses_result_without_refetch(api_server):
     """In Development mode, a re-run with unchanged settings is skipped and the
     prior (staged) result is reused — so the API is NOT hit again. Changing a
     setting (here the URL) invalidates the node and forces a fresh fetch."""
-    api_server.request_count = 0
+    api_server.reset()
     graph = _graph(execution_mode="Development")
     node = _make_node(graph, url=f"{api_server.base_url}/items")
     _add_reader(graph, node)
@@ -474,13 +413,261 @@ def test_sample_route_fetches_one_page(api_client, api_server, protocol_flag):
         user_id=1,
         rest_api_settings=input_schema.RestApiSettings(url=url, pagination=pagination),
     ).model_dump()
-    api_server.request_count = 0
+    api_server.reset()
 
     resp = api_client.post("/rest_api/sample", json=payload, params={"sample_size": 3})
 
     assert resp.status_code == 200, resp.text
     assert {f["name"] for f in resp.json()["fields"]} == {"id"}
     assert api_server.request_count == 1
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_sample_route_suggests_record_and_cursor_paths(api_client, local_api_server, monkeypatch):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+    flow_id, node_id = 7005, 1
+    url = f"{local_api_server}/wrapped"
+    _register_rest_node_in_global_handler(flow_id, node_id, url)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url)
+    ).model_dump()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["suggested_paths"] == {"record_paths": ["data.items"], "cursor_paths": ["data.items.-1.id"]}
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_sample_route_returns_the_request_it_sent_and_the_shape_of_the_response(
+    api_client, local_api_server, monkeypatch
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+    flow_id, node_id = 7006, 1
+    url = f"{local_api_server}/wrapped"
+    auth = input_schema.RestApiAuthSettings(auth_type="bearer", secret=SECURE_TOKEN)
+    _register_rest_node_in_global_handler(flow_id, node_id, url, auth=auth)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        user_id=1,
+        rest_api_settings=input_schema.RestApiSettings(url=url, auth=auth, record_path="data.items"),
+    ).model_dump()
+    payload["rest_api_settings"]["auth"]["secret"] = SECURE_TOKEN
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    (sent,) = body["trace"]
+    assert (sent["method"], sent["url"], sent["status"], sent["records"]) == ("GET", url, 200, 2)
+    assert sent["headers"] == {"Authorization": "Bearer REDACTED"}
+    items = body["response_tree"]["children"][0]["children"][0]
+    assert (items["path"], items["kind"], items["length"], items["records"]) == ("data.items", "list", 2, True)
+    assert '"city": "ams"' in body["response_text"] and body["response_truncated"] is False
+    assert SECURE_TOKEN not in resp.text
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_failed_sample_names_the_request_and_the_answer_without_the_secret(
+    api_client, local_api_server, protocol_flag
+):
+    flow_id, node_id = 7007, 1
+    url = f"{local_api_server}/secure"
+    auth = input_schema.RestApiAuthSettings(
+        auth_type="api_key", api_key_name="api_key", api_key_location="query", secret="wrong-key-value"
+    )
+    _register_rest_node_in_global_handler(flow_id, node_id, url, auth=auth)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url, auth=auth)
+    ).model_dump()
+    payload["rest_api_settings"]["auth"]["secret"] = "wrong-key-value"
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]["message"]
+    assert f"GET {url}?api_key=REDACTED answered 401 Unauthorized" in detail
+    assert '{"error": "unauthorized"}' in detail
+    assert resp.json()["detail"]["request"] == {"method": "GET", "url": f"{url}?api_key=REDACTED", "headers": {}, "body": None}
+    assert "wrong-key-value" not in resp.text
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_failure_after_a_good_answer_names_its_class_and_no_request(api_client, local_api_server, monkeypatch):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+
+    def _unreadable(*_args, **_kwargs):
+        raise RuntimeError("the sample could not be read")
+
+    monkeypatch.setattr(WorkerBackend, "sample", _unreadable)
+    flow_id, node_id = 7010, 1
+    url = f"{local_api_server}/items"
+    _register_rest_node_in_global_handler(flow_id, node_id, url)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url)
+    ).model_dump()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == {
+        "message": "Failed to fetch sample from REST API: The test request could not run (RuntimeError).",
+        "request": None,
+    }
+    assert "the sample could not be read" not in resp.text
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_settings_refused_before_any_request_name_no_request(api_client, api_server, protocol_flag):
+    url = api_server.route("/never-asked", lambda _r, _s: Reply(200, {"data": []}))
+    pagination = input_schema.RestApiPaginationSettings(
+        pagination_type="cursor", cursor_response_path="next", cursor_request_location="body"
+    )
+    rest = {"method": "POST", "json_body": "${body}", "pagination": pagination}
+    flow_id, node_id = 7012, 1
+    _register_rest_node_in_global_handler(flow_id, node_id, url, **rest)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url, **rest)
+    ).model_dump()
+    api_server.reset()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    assert "needs the body to be a JSON object" in resp.json()["detail"]["message"]
+    assert resp.json()["detail"]["request"] is None
+    assert api_server.requests_to("/never-asked") == []
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_secret_the_worker_cannot_open_names_no_request_and_no_traceback(
+    api_client, api_server, protocol_flag, monkeypatch
+):
+    from cryptography.fernet import Fernet
+
+    foreign = f"$ffsec$1$1${Fernet(Fernet.generate_key()).encrypt(b'a-token-value').decode()}"
+    monkeypatch.setattr("flowfile_core.routes.routes.resolve_auth_secret_encrypted", lambda *_a: foreign)
+    url = api_server.route("/never-asked", lambda _r, _s: Reply(200, {"data": []}))
+    auth = input_schema.RestApiAuthSettings(auth_type="bearer", secret_name="elsewhere")
+    flow_id, node_id = 7013, 1
+    _register_rest_node_in_global_handler(flow_id, node_id, url, auth=auth)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url, auth=auth)
+    ).model_dump()
+    api_server.reset()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == {
+        "message": "Failed to fetch sample from REST API: The test request could not run (InvalidToken).",
+        "request": None,
+    }
+    assert foreign.split("$")[-1] not in resp.text
+    assert api_server.requests_to("/never-asked") == []
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_test_request_retries_an_error_answer_once_whatever_the_node_allows(api_client, api_server, protocol_flag):
+    url = api_server.route("/always-503", lambda _r, _s: Reply(503, {"error": "unavailable"}))
+    flow_id, node_id = 7011, 1
+    _register_rest_node_in_global_handler(flow_id, node_id, url, max_retries=3)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        user_id=1,
+        rest_api_settings=input_schema.RestApiSettings(url=url, max_retries=3),
+    ).model_dump()
+    api_server.reset()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    assert "answered 503" in resp.json()["detail"]["message"]
+    assert len(api_server.requests_to("/always-503")) == 2
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_failed_test_request_answers_only_the_text_worded_for_it():
+    from pydantic import BaseModel, ValidationError
+
+    class _Strict(BaseModel):
+        n: int
+
+    try:
+        _Strict(n="ciphertext-like-input")
+    except ValidationError as error:
+        refused = error
+
+    def message(error: Exception) -> str:
+        return _sample_failure(error, None, None, 1)["message"].removeprefix("Failed to fetch sample from REST API: ")
+
+    assert message(refused) == "The test request could not run (ValidationError)."
+    worker_refusal = "ValueError: Cursor pagination needs a cursor path."
+    assert message(RuntimeError(worker_refusal)) == worker_refusal
+    unreachable = ComputeUnavailable("Cannot reach the worker", backend_id="worker")
+    assert message(unreachable) == str(unreachable)
+    assert message(RuntimeError("KeyError: 'internal'")) == "The test request could not run (KeyError)."
+
+
+def test_a_test_request_reads_within_its_cap_and_keeps_a_shorter_timeout():
+    capped = input_schema.RestApiSettings(url="https://api.test/items", timeout_seconds=300, max_retries=5)
+    _cap_for_test_request(capped)
+    assert (capped.timeout_seconds, capped.max_retries) == (30.0, 1)
+    short = input_schema.RestApiSettings(url="https://api.test/items", timeout_seconds=5, max_retries=0)
+    _cap_for_test_request(short)
+    assert (short.timeout_seconds, short.max_retries) == (5, 0)
+
+
+def test_a_failed_sample_keeps_its_message_when_its_request_cannot_be_described(
+    api_client, local_api_server, monkeypatch
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+
+    def _refuse(*_args, **_kwargs):
+        raise RuntimeError("settings could not be built")
+
+    monkeypatch.setattr("flowfile_core.routes.routes.build_rest_api_worker_settings", _refuse)
+    flow_id, node_id = 7009, 1
+    url = f"{local_api_server}/nope"
+    _register_rest_node_in_global_handler(flow_id, node_id, url)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url)
+    ).model_dump()
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    assert f"GET {url} answered 404" in resp.json()["detail"]["message"]
+    assert resp.json()["detail"]["request"] is None
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_a_failed_sample_of_an_unreachable_host_names_the_request_it_sent(api_client, protocol_flag):
+    flow_id, node_id = 7008, 1
+    url = closed_port_url()
+    auth = input_schema.RestApiAuthSettings(auth_type="bearer", secret="a-token-value")
+    _register_rest_node_in_global_handler(flow_id, node_id, url, auth=auth, max_retries=3)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        user_id=1,
+        rest_api_settings=input_schema.RestApiSettings(url=url, auth=auth, max_retries=3, headers={"X-Team": "data"}),
+    ).model_dump()
+    payload["rest_api_settings"]["auth"]["secret"] = "a-token-value"
+
+    resp = api_client.post("/rest_api/sample", json=payload)
+
+    assert resp.status_code == 422
+    assert "failed: ConnectError" in resp.json()["detail"]["message"]
+    assert resp.json()["detail"]["request"] == {
+        "method": "GET",
+        "url": url,
+        "headers": {"X-Team": "data", "Authorization": "Bearer REDACTED"},
+        "body": None,
+    }
+    assert "a-token-value" not in resp.text
     flow_file_handler.delete_flow(flow_id)
 
 
