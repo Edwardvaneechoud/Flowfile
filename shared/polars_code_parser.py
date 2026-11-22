@@ -404,7 +404,7 @@ def _bound_names(tree: ast.AST) -> set[str]:
 
 
 def _is_inert_expression_load(call: ast.Call) -> bool:
-    """Whether ``call`` is ``pl.Expr.deserialize(BytesIO(<literal>), format='json')`` over an inert plan.
+    """Whether ``call`` is ``pl.Expr.deserialize(BytesIO(<bytes literal>), format='json')`` over an inert plan.
 
     This is the form flowfile_frame writes for an expression it cannot spell as code; every other
     ``deserialize`` can unpickle, so the validator refuses it.
@@ -432,7 +432,7 @@ def _is_inert_expression_load(call: ast.Call) -> bool:
         and len(source.args) == 1
         and not source.keywords
         and isinstance(source.args[0], ast.Constant)
-        and isinstance(source.args[0].value, bytes | str)
+        and isinstance(source.args[0].value, bytes)
     ):
         return False
     return expression_plan_is_inert(source.args[0].value)
