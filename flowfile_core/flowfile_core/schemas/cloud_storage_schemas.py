@@ -1,10 +1,11 @@
 """Cloud storage connection schemas for S3, ADLS, and other cloud providers."""
 
 import base64
-from typing import Literal
+import re
+from typing import Any, Literal
 
 import polars as pl
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_serializer, model_validator
 
 from flowfile_core.schemas.change_feed import ChangeFeedReadSettings
 from flowfile_core.schemas.delta_write import MERGE_MODES, validate_delta_write_rules
@@ -183,12 +184,61 @@ class FullCloudStorageConnectionInterface(AuthSettingsInput):
     source: Literal["local", "hub"] = "local"
 
 
+class IcebergCatalogSettings(BaseModel):
+    """The Iceberg REST catalog that keeps a node's table: its address, its warehouse and how to sign in.
+
+    ``token_secret`` is the name of a stored secret holding a bearer token; the token itself is never in a flow.
+    """
+
+    uri: str
+    warehouse: str | None = None
+    token_secret: str | None = None
+
+    @field_validator("uri")
+    @classmethod
+    def _http_address(cls, uri: str) -> str:
+        if "${" not in uri and not uri.startswith(("http://", "https://")):
+            raise ValueError("An Iceberg REST catalog's address starts with http:// or https://")
+        return uri
+
+
+_ICEBERG_TABLE_NAME = re.compile(r"^[^./\s]+(\.[^./\s]+)+$")
+
+
+def _validate_iceberg(file_format: str, settings: "CloudStorageSettings") -> None:
+    """An Iceberg node names its table and catalog and nothing about storage; no other format names a catalog."""
+    if file_format != "iceberg":
+        if settings.iceberg_catalog is not None:
+            raise ValueError("iceberg_catalog is only used with the 'iceberg' file format")
+        return
+    if settings.iceberg_catalog is None:
+        raise ValueError("An Iceberg table is reached through its catalog: set iceberg_catalog")
+    if settings.connection_name:
+        raise ValueError("An Iceberg table's storage keys come from its catalog; leave the connection empty.")
+    name = settings.resource_path
+    if "${" not in name and not _ICEBERG_TABLE_NAME.match(name):
+        raise ValueError(f"An Iceberg table is named namespace.table, not '{name}'")
+
+
 class CloudStorageSettings(BaseModel):
-    """Settings for cloud storage nodes in the visual designer"""
+    """Settings for cloud storage nodes in the visual designer.
+
+    With ``file_format`` ``iceberg``, ``resource_path`` is the table's name (``namespace.table``) and
+    ``iceberg_catalog`` the catalog that keeps it; the key is left out of a dump when unset, so other nodes save as
+    before.
+    """
 
     auth_mode: CloudStorageAuthMode = "auto"
     connection_name: str | None = None
     resource_path: str  # s3://bucket/path/to/file.csv
+    iceberg_catalog: IcebergCatalogSettings | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize_without_unset_catalog(self, handler: Any, _info: Any) -> Any:
+        data = handler(self)
+        if isinstance(data, dict) and self.iceberg_catalog is None:
+            data.pop("iceberg_catalog", None)
+        return data
 
 
 class CloudStorageReadSettings(ChangeFeedReadSettings, CloudStorageSettings):
@@ -205,6 +255,11 @@ class CloudStorageReadSettings(ChangeFeedReadSettings, CloudStorageSettings):
     csv_encoding: str | None = "utf8"
     delta_version: int | None = None
     cdc_mode: Literal["off", "since_version", "since_timestamp"] = "off"
+
+    @model_validator(mode="after")
+    def _validate_iceberg_source(self) -> "CloudStorageReadSettings":
+        _validate_iceberg(self.file_format, self)
+        return self
 
     @model_validator(mode="after")
     def _validate_change_feed_source(self) -> "CloudStorageReadSettings":
@@ -258,8 +313,17 @@ class CloudStorageWriteSettings(CloudStorageSettings, WriteSettingsWorkerInterfa
 
     Shares the key-column and change-tracking rules with ``CatalogWriteSettings``
     (``validate_delta_write_rules``); on top of them every mode beyond overwrite/append, and
-    ``track_changes``, is Delta-only.
+    ``track_changes``, is Delta-only. ``iceberg`` is this model's own: the worker's write settings do not take it.
     """
+
+    file_format: Literal["csv", "parquet", "json", "delta", "iceberg"] = "parquet"
+
+    @model_validator(mode="after")
+    def _validate_iceberg_write(self) -> "CloudStorageWriteSettings":
+        _validate_iceberg(self.file_format, self)
+        if self.file_format == "iceberg" and self.partition_by:
+            raise ValueError("An Iceberg table's own partitioning applies: leave partition_by empty.")
+        return self
 
     @model_validator(mode="after")
     def _validate_delta_write(self) -> "CloudStorageWriteSettings":

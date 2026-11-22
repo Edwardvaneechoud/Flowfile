@@ -16,7 +16,7 @@ import sys
 import time
 import uuid
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -122,6 +122,7 @@ class Services:
     cwds: dict[str, Path]
     storage: dict[str, Path]
     flows_dir: Path
+    pids: dict[str, int] = field(default_factory=dict)
 
     def get(self, path: str, **params):
         response = self.http.get(f"{self.base}{path}", params=params)
@@ -247,7 +248,8 @@ def running_services(
         assert token.status_code == 200, token.text
         http = requests.Session()
         http.headers["Authorization"] = f"Bearer {token.json()['access_token']}"
-        yield Services(mode=mode, base=base, http=http, cwds=cwds, storage=storage, flows_dir=flows_dir)
+        pids = {name: proc.pid for name, proc in procs.items()}
+        yield Services(mode=mode, base=base, http=http, cwds=cwds, storage=storage, flows_dir=flows_dir, pids=pids)
     finally:
         for proc in reversed(procs.values()):
             stop(proc)

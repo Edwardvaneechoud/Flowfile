@@ -48,6 +48,13 @@ ENCRYPTION_KEY = "icebergproof-encryption-key-only-local"
 DEFAULT_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 
+SKIP_REASON = (
+    f"Iceberg REST catalog is not running at {CATALOG_URI}; "
+    "start it with: python -m test_utils.iceberg_rest start "
+    "(if it is paused after an interrupted run: stop, then start)"
+)
+
+
 def catalog_properties() -> dict[str, str]:
     """What a client needs to reach the catalog: its address and warehouse, nothing about storage."""
     return {"type": "rest", "uri": CATALOG_URI, "warehouse": WAREHOUSE, "token": "dummy"}
@@ -210,7 +217,8 @@ def start() -> bool:
 
 def stop() -> None:
     """Remove this stack's containers, network and volumes, then list what is left with its name (expected: nothing)."""
-    subprocess.run(["docker", "unpause", CATALOG_CONTAINER], capture_output=True, check=False)
+    for container in (CATALOG_CONTAINER, MINIO_CONTAINER):
+        subprocess.run(["docker", "unpause", container], capture_output=True, check=False)
     result = _compose("down", "-v", "--remove-orphans")
     if result.returncode != 0:
         logger.error("docker compose down failed:\n%s", mask(result.stderr[-3000:]))
@@ -240,6 +248,16 @@ def catalog_paused() -> Generator[None, None, None]:
         yield
     finally:
         subprocess.run(["docker", "unpause", CATALOG_CONTAINER], capture_output=True, check=False)
+
+
+@contextmanager
+def minio_paused() -> Generator[None, None, None]:
+    """Freeze the store's process while the catalog keeps answering, so nothing inside the block can read a file."""
+    subprocess.run(["docker", "pause", MINIO_CONTAINER], capture_output=True, check=True)
+    try:
+        yield
+    finally:
+        subprocess.run(["docker", "unpause", MINIO_CONTAINER], capture_output=True, check=False)
 
 
 def attach_lake(connection, extension_dir: str | Path | None = None) -> None:
@@ -312,8 +330,9 @@ def run_child(module: str, payload: dict, env: dict[str, str], secrets=()) -> di
     answer = json.loads(result.stdout.strip().splitlines()[-1])
     if "readers" in answer:
         answer["readers"] = {name: mask(text, secrets) for name, text in answer["readers"].items()}
-    if "warnings" in answer:
-        answer["warnings"] = [mask(text, secrets) for text in answer["warnings"]]
+    for listed in ("warnings", "notes"):
+        if listed in answer:
+            answer[listed] = [mask(text, secrets) for text in answer[listed]]
     return answer
 
 

@@ -31,7 +31,7 @@ See [Databases](../visual-editor/tutorials/database-connectivity.md) for the con
 
 ## Cloud storage
 
-Read and write **Amazon S3**, **Azure Data Lake Storage (ADLS)**, and **Google Cloud Storage (GCS)**. Eight authentication methods are available (`access_key`, `iam_role`, `service_principal`, `managed_identity`, `sas_token`, `aws-cli`, `env_vars`, and `service_account`), so a connection can use stored keys or delegate to the ambient cloud credentials. Read formats are CSV, Parquet, JSON, and Delta; write formats are CSV, Parquet, JSON, and Delta. Iceberg reading and writing is on the [roadmap](../../roadmap.md).
+Read and write **Amazon S3**, **Azure Data Lake Storage (ADLS)**, and **Google Cloud Storage (GCS)**. Eight authentication methods are available (`access_key`, `iam_role`, `service_principal`, `managed_identity`, `sas_token`, `aws-cli`, `env_vars`, and `service_account`), so a connection can use stored keys or delegate to the ambient cloud credentials. Read formats are CSV, Parquet, JSON, and Delta; write formats are CSV, Parquet, JSON, and Delta. An Iceberg table kept by an Iceberg REST catalog is read and written by its name and the catalog's address, with the storage keys the catalog hands out each run, from Python and in a flow opened in the designer (the designer's own forms do not offer Iceberg yet). See [An Iceberg table kept by a REST catalog](../python-api/reference/reading-data.md#an-iceberg-table-kept-by-a-rest-catalog) for what is supported.
 
 Paths are full URIs (`s3://`, `az://`, `abfss://`, `gs://`). A node can also run with no connection on the credentials of the machine running Flowfile, except on a multi-user Docker server, where every cloud node needs a saved connection.
 

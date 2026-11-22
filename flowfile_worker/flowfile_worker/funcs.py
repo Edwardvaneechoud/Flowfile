@@ -797,6 +797,40 @@ def write_to_cloud_storage(
             raise
 
 
+def write_iceberg(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    table: dict,
+    mode: str,
+    flowfile_flow_id: int = -1,
+    flowfile_node_id: int | str = -1,
+) -> None:
+    """Append the plan's rows to an Iceberg table or replace them, with the keys its catalog hands this child.
+
+    ``table`` is an ``IcebergTableRef``'s fields: the catalog's address and warehouse, the table's name and at most
+    the ``$ffsec$`` ciphertext of a token, decrypted here.
+    """
+    from shared.iceberg_utils import IcebergTableRef, write_iceberg_table
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    try:
+        ref = IcebergTableRef(**table)
+        write_iceberg_table(
+            ref, _load_plan(polars_serializable_object), mode, flow_id=flowfile_flow_id, node_id=flowfile_node_id
+        )
+        flowfile_logger.info(f"Wrote {ref.table} ({mode})")
+        with progress.get_lock():
+            progress.value = 100
+    except BaseException as e:
+        flowfile_logger.error(f"Error during the Iceberg write: {str(e)}")
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
+
+
 def write_output(
     polars_serializable_object: bytes,
     progress: Value,

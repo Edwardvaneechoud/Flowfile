@@ -35,6 +35,7 @@ from flowfile_core.flowfile.execution.errors import (
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
 from flowfile_core.flowfile.execution.payloads import (
+    IcebergWritePayload,
     op_payload,
     PAYLOAD_KEY,
     CatalogTableIdentity,
@@ -55,6 +56,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared.compute_protocol import local_capabilities
+from shared.iceberg_utils import IcebergTableRef
 from shared.storage_config import storage
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
@@ -265,10 +267,21 @@ def cloud_write() -> CloudWritePayload:
     )
 
 
+def iceberg_write() -> IcebergWritePayload:
+    return IcebergWritePayload(
+        plan=ROWS.lazy(),
+        table=IcebergTableRef("http://127.0.0.1:9/catalog", "demo.people", "proof"),
+        mode="append",
+        flow_id=7,
+        node_id=3,
+    )
+
+
 WRITE_PAYLOADS = {
     OperationKind.file_write: file_write,
     OperationKind.database_write: referenced_database_write,
     OperationKind.cloud_write: cloud_write,
+    OperationKind.iceberg_write: iceberg_write,
     OperationKind.delta_write: lambda: delta_write("/tables/t"),
     OperationKind.delta_merge: lambda: delta_merge("/tables/t", ROWS.lazy()),
     OperationKind.delta_scd2: lambda: delta_scd2("/tables/dim"),

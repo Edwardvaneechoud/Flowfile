@@ -135,6 +135,33 @@ def test_a_cloud_change_read_is_a_plan_that_may_carry_a_python_function():
     )
 
 
+def test_an_iceberg_read_is_a_plan_over_s3_whose_source_is_a_python_function_and_names_no_connection():
+    cloud = cloud_storage_schemas.CloudStorageReadSettings(
+        resource_path="demo.orders",
+        file_format="iceberg",
+        iceberg_catalog=cloud_storage_schemas.IcebergCatalogSettings(uri="http://127.0.0.1:18181/catalog"),
+    )
+    settings = input_schema.NodeCloudStorageReader(**_ids(cloud_storage_settings=cloud))
+
+    assert _requirements("cloud_storage_reader", settings) == NodeRequirements(
+        read_schemes=frozenset({"s3"}), python_function=True
+    )
+
+
+def test_an_iceberg_write_runs_the_iceberg_write_and_writes_s3():
+    cloud = cloud_storage_schemas.CloudStorageWriteSettings(
+        resource_path="demo.orders",
+        file_format="iceberg",
+        write_mode="append",
+        iceberg_catalog=cloud_storage_schemas.IcebergCatalogSettings(uri="http://127.0.0.1:18181/catalog"),
+    )
+    settings = input_schema.NodeCloudStorageWriter(**_ids(cloud_storage_settings=cloud))
+
+    assert _requirements("cloud_storage_writer", settings) == NodeRequirements(
+        operation=OperationKind.iceberg_write, write_schemes=frozenset({"s3"})
+    )
+
+
 def test_a_cloud_read_without_a_connection_names_none():
     cloud = cloud_storage_schemas.CloudStorageReadSettings(resource_path="s3://bucket/data.parquet")
     settings = input_schema.NodeCloudStorageReader(**_ids(cloud_storage_settings=cloud))

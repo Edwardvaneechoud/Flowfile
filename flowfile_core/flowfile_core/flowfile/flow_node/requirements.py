@@ -205,8 +205,13 @@ def _cloud_scheme(path: str, role: Literal["reader", "writer"]) -> frozenset[str
 
 
 def _cloud_storage_reader(settings: input_schema.NodeCloudStorageReader) -> NodeRequirements:
-    """A plan over the object-storage path; a change read's plan carries a Python function, its change-feed source."""
+    """A plan over the object-storage path; a change read's plan carries a Python function, its change-feed source.
+
+    An Iceberg read is a plan over S3 whose source is a Python function that asks the table's catalog for its keys.
+    """
     cloud = settings.cloud_storage_settings
+    if cloud.file_format == "iceberg":
+        return NodeRequirements(read_schemes=frozenset({"s3"}), python_function=True)
     return NodeRequirements(
         read_schemes=_cloud_scheme(cloud.resource_path, "reader"),
         credentials=_names(cloud.connection_name),
@@ -217,6 +222,8 @@ def _cloud_storage_reader(settings: input_schema.NodeCloudStorageReader) -> Node
 def _cloud_storage_writer(settings: input_schema.NodeCloudStorageWriter) -> NodeRequirements:
     """A Delta merge or a tracked Delta write runs the Delta operations; every other write is ``cloud_write``."""
     cloud = settings.cloud_storage_settings
+    if cloud.file_format == "iceberg":
+        return NodeRequirements(operation=OperationKind.iceberg_write, write_schemes=frozenset({"s3"}))
     if cloud.file_format == "delta" and (cloud.write_mode in MERGE_MODES or cloud.track_changes):
         operation = OperationKind.delta_merge if cloud.write_mode in MERGE_MODES else OperationKind.delta_write
     else:

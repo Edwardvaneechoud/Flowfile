@@ -4,18 +4,42 @@ An Iceberg REST catalog can answer a table load with short-lived keys for that t
 those keys out of a loaded table, carry them with the table's metadata location, and give them to Polars, so a
 process can read the table without any storage key of its own and without talking to the catalog.
 
+A flow names a table by an ``IcebergTableRef`` (the catalog's address, its warehouse, the table's dotted name and at
+most a ``$ffsec$`` ciphertext of a bearer token). ``scan_iceberg_table`` turns one into a lazy frame whose plan holds
+that ref and nothing else: the process that runs the plan asks the catalog for the keys itself.
+
 Only S3-compatible storage is handled. The keys are not renewed when they expire: load the table again for new ones.
+Every ``pyiceberg`` import is inside a function, so importing this module loads only Polars.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import logging
+import re
+import time
+import warnings
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 import polars as pl
 
 if TYPE_CHECKING:
+    from polars._typing import SchemaDict
     from pyiceberg.table import Table
+
+MIN_CREDENTIAL_SECONDS = 60
+"""A read or write is refused when the catalog's credential has less than this left when it starts."""
+
+CATALOG_TIMEOUT = (10, 60)
+"""Seconds to connect to the catalog and to wait for each of its answers; PyIceberg sets no limit of its own."""
+
+_TOKEN_PREFIX = "$ffsec$"
+_EXPIRY_KEY = "s3.session-token-expires-at-ms"
+_PLANNER_WARNING = r".*Planning the Iceberg scan with PyIceberg instead"
+
+_run_log: Callable[[int, int | str, str], None] | None = None
 
 _STORAGE_PREFIXES = ("s3.",)
 _STORAGE_KEYS = ("client.region",)
@@ -85,3 +109,385 @@ def write_table(table: Table, frame: pl.LazyFrame, mode: Literal["append", "over
     a catalog: a table opened from its metadata file alone can be read but not written.
     """
     frame.sink_iceberg(table, mode=mode, storage_options=_handed_out_keys(table))
+
+
+@dataclass(frozen=True)
+class IcebergTableRef:
+    """One table as a flow names it: its REST catalog's address and warehouse and its dotted name.
+
+    ``table`` is ``namespace.table``; further dots separate nested namespaces. ``token`` is the ``$ffsec$``
+    ciphertext of a bearer token for the catalog, decrypted only where the catalog is asked, so a clear token can never
+    be serialized with a plan or a request. Nothing here can hold a storage key: those come from the catalog each time.
+    """
+
+    catalog_uri: str
+    table: str
+    warehouse: str | None = None
+    token: str | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.token is not None and not self.token.startswith(_TOKEN_PREFIX):
+            raise ValueError(
+                "The catalog's token travels encrypted: pass the stored secret's ciphertext (save the secret again if"
+                " it predates encryption per user)."
+            )
+        parts = self.table.split(".")
+        if len(parts) < 2 or not all(parts) or re.search(r"[/\s]", self.table):
+            raise ValueError(f"An Iceberg table is named namespace.table, not {self.table!r}.")
+
+
+def register_run_log(log: Callable[[int, int | str, str], None] | None) -> None:
+    """Set where this process writes the lines a read or write says about itself (flow id, node id, message)."""
+    global _run_log
+    _run_log = log
+
+
+def _say(flow_id: int, node_id: int | str, message: str) -> None:
+    if _run_log is not None:
+        _run_log(flow_id, node_id, message)
+    else:
+        logging.getLogger(__name__).info(message)
+
+
+def catalog_properties(ref: IcebergTableRef) -> dict[str, str]:
+    """The catalog client's whole configuration: the address, the warehouse and the token in plain, nothing else.
+
+    No ``s3.*`` setting can come out of a ref, so every storage property a loaded table holds is one the catalog
+    answered.
+    """
+    from shared.cloud_credential_provider import decrypt_stored
+
+    properties = {"uri": ref.catalog_uri}
+    if ref.warehouse:
+        properties["warehouse"] = ref.warehouse
+    if ref.token:
+        properties["token"] = decrypt_stored(ref.token, "the catalog's token")
+    return properties
+
+
+def _timeout() -> tuple[float, float]:
+    return CATALOG_TIMEOUT
+
+
+def _catalog(ref: IcebergTableRef):
+    """The ref's REST catalog, built directly so no ``~/.pyiceberg.yaml`` or ``PYICEBERG_*`` setting is merged in.
+
+    Every request to it gives up after ``CATALOG_TIMEOUT``: a catalog that never answers would otherwise hold a run
+    before its first node, where a cancel does not reach.
+    """
+    from pyiceberg.catalog.rest import RestCatalog
+
+    class _TimedRestCatalog(RestCatalog):
+        def _create_session(self):
+            session = super()._create_session()
+            send = session.send
+            session.send = lambda request, **kw: send(request, **{**kw, "timeout": kw.get("timeout") or _timeout()})
+            return session
+
+    return _TimedRestCatalog("flowfile", **catalog_properties(ref))
+
+
+def load_table(ref: IcebergTableRef) -> Table:
+    """The table loaded from its catalog, which hands out the keys to its files with it."""
+    from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
+
+    try:
+        return _catalog(ref).load_table(ref.table)
+    except (NoSuchTableError, NoSuchNamespaceError):
+        raise ValueError(f"The catalog at {ref.catalog_uri} has no table {ref.table}.") from None
+
+
+def table_schema(ref: IcebergTableRef) -> pl.Schema:
+    """The table's columns as Polars types, from the catalog's description of the table and no storage read.
+
+    The catalog may hand out a credential with that description (Lakekeeper always does); it is dropped with the table
+    object when this returns.
+    """
+    table = load_table(ref)
+    return pl.scan_iceberg(table, storage_options=storage_properties(table)).collect_schema()
+
+
+def metadata_fingerprint(ref: IcebergTableRef) -> str:
+    """The table's current metadata file as its catalog reports it: every commit, by any engine, writes a new one."""
+    return f"{ref.catalog_uri}#{ref.table}@{load_table(ref).metadata_location}"
+
+
+def credential_seconds_left(properties: Mapping[str, str], now: float | None = None) -> float | None:
+    """Seconds until the handed-out credential expires; ``None`` when the catalog gave no expiry."""
+    expires = properties.get(_EXPIRY_KEY)
+    if not expires:
+        return None
+    return int(expires) / 1000 - (time.time() if now is None else now)
+
+
+def refuse_short_credential(
+    properties: Mapping[str, str], table: str, minimum_seconds: float, purpose: Literal["read", "write"]
+) -> float | None:
+    """The seconds left on the credential, refused when fewer than ``minimum_seconds``: it is not renewed mid-run."""
+    left = credential_seconds_left(properties)
+    if left is not None and left < minimum_seconds:
+        raise ValueError(
+            f"The catalog's credential for {table} runs out in {max(int(left), 0)} seconds, too soon to {purpose} it;"
+            " run again in a moment."
+        )
+    return left
+
+
+def _quiet_planner() -> None:
+    """Silence Polars' warning that PyIceberg plans the scan while the ``polars_iceberg`` plugin is not installed.
+
+    Without the plugin PyIceberg plans every scan anyway; the warning only suggests installing it. A warnings filter
+    rather than ``POLARS_ICEBERG_PLANNER``, because a scan may be built on any thread and the environment must not be
+    written off the main thread. Called once, when this module is imported.
+    """
+    if importlib.util.find_spec("polars_iceberg") is None:
+        warnings.filterwarnings("ignore", message=_PLANNER_WARNING, category=pl.exceptions.PerformanceWarning)
+
+
+_quiet_planner()
+
+
+def _credential_line(verb: str, table: str, properties: Mapping[str, str], left: float | None) -> str:
+    storage = (properties.get("s3.endpoint") or "").rstrip("/") or "its catalog's storage"
+    valid = "" if left is None else f", valid for {int(left // 60)} more minutes"
+    return f"{verb} {table} {'from' if verb == 'Reading' else 'to'} {storage} with the catalog's credential{valid}."
+
+
+def _native_failure(exc: Exception) -> str | None:
+    """Why Polars' own reader refused the table, when ``exc`` is that refusal; ``None`` for any other error."""
+    first = str(exc).splitlines()[0] if str(exc) else ""
+    if not isinstance(exc, pl.exceptions.ComputeError) or "reader_override='native' failed" not in first:
+        return None
+    reason = first.split("failed: ", 1)[-1]
+    return re.sub(r":\s*\S+://\S*$", "", reason).strip()
+
+
+def _equality_deletes(table: str, exc: BaseException) -> ValueError | None:
+    if "equality delete" in str(exc).lower():
+        return ValueError(
+            f"{table} has equality deletes (rows deleted by value, as Flink writes them), which neither Polars nor"
+            " PyIceberg reads yet."
+        )
+    return None
+
+
+@dataclass(frozen=True)
+class _TableScan:
+    """The source of a ``scan_iceberg_table`` plan: the ref and the run's ids, and nothing that could hold a key.
+
+    It is a module-level class so a plan pickles it by reference and its fields: the keys are asked for when it is
+    called, in the process that reads.
+    """
+
+    ref: IcebergTableRef
+    flow_id: int
+    node_id: int | str
+    minimum_seconds: float
+
+    def __call__(
+        self, with_columns: list[str] | None, predicate: pl.Expr | None, n_rows: int | None, batch_size: int | None
+    ) -> Iterator[pl.DataFrame]:
+        name = self.ref.table
+        access = table_access(load_table(self.ref))
+        left = refuse_short_credential(access.storage_properties, name, self.minimum_seconds, "read")
+        _say(self.flow_id, self.node_id, _credential_line("Reading", name, access.storage_properties, left))
+        yielded = False
+        try:
+            for batch in self._batches(access, "native", with_columns, predicate, n_rows, batch_size):
+                yielded = True
+                yield batch
+            return
+        except Exception as exc:
+            refusal = _equality_deletes(name, exc)
+            if refusal is not None:
+                raise refusal from None
+            reason = _native_failure(exc)
+            if yielded or reason is None:
+                raise
+        _say(
+            self.flow_id,
+            self.node_id,
+            f"Polars' own reader cannot read {name} ({reason}); reading it with PyIceberg, which is slower.",
+        )
+        try:
+            yield from self._batches(access, "pyiceberg", with_columns, predicate, n_rows, batch_size)
+        except Exception as exc:
+            refusal = _equality_deletes(name, exc)
+            if refusal is not None:
+                raise refusal from None
+            raise
+
+    @staticmethod
+    def _batches(
+        access: IcebergTableAccess,
+        reader: Literal["native", "pyiceberg"],
+        with_columns: list[str] | None,
+        predicate: pl.Expr | None,
+        n_rows: int | None,
+        batch_size: int | None,
+    ) -> Iterator[pl.DataFrame]:
+        frame = scan_table(access, reader_override=reader)
+        if with_columns is not None:
+            frame = frame.select(with_columns)
+        if predicate is not None:
+            frame = frame.filter(predicate)
+        if n_rows is not None:
+            frame = frame.head(n_rows)
+        yield from frame.collect_batches(chunk_size=batch_size)
+
+
+def scan_iceberg_table(
+    ref: IcebergTableRef,
+    *,
+    schema: SchemaDict | None = None,
+    flow_id: int = -1,
+    node_id: int | str = -1,
+    minimum_seconds: float = MIN_CREDENTIAL_SECONDS,
+) -> pl.LazyFrame:
+    """A lazy scan of the table whose plan holds ``ref`` and nothing else, so it can be serialized and sent.
+
+    Where the plan runs, the catalog is asked for the table and its keys, columns and filters are pushed into the
+    Iceberg scan and rows stream in batches. Polars' own reader reads first; when it refuses the table (position
+    delete files it cannot apply), PyIceberg reads it and the run log says so. Without ``schema`` the columns are read
+    from the catalog here.
+    """
+    return pl.io.plugins.register_io_source(
+        _TableScan(ref, flow_id, node_id, minimum_seconds),
+        schema=dict(schema if schema is not None else table_schema(ref)),
+        explain_name="ICEBERG",
+        explain_detail=ref.table,
+    )
+
+
+def creatable_schema(schema: Mapping[str, pl.DataType]) -> dict[str, pl.DataType]:
+    """The columns a new table gets for a frame of ``schema``: ``UInt32`` widened to ``Int64``, ``UInt64`` refused.
+
+    Iceberg has no unsigned integers, and PyIceberg would map both to a signed type of the same width.
+    """
+    columns: dict[str, pl.DataType] = {}
+    for name, dtype in schema.items():
+        if dtype == pl.UInt64:
+            raise ValueError(f"Column {name} is UInt64, which no Iceberg type holds in full; cast it first.")
+        columns[name] = pl.Int64() if dtype == pl.UInt32 else dtype
+    return columns
+
+
+def _load_or_create(ref: IcebergTableRef, frame: pl.LazyFrame) -> Table:
+    from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
+
+    catalog = _catalog(ref)
+    try:
+        return catalog.load_table(ref.table)
+    except (NoSuchTableError, NoSuchNamespaceError):
+        pass
+    namespace = ref.table.rsplit(".", 1)[0]
+    if not catalog.namespace_exists(namespace):
+        raise ValueError(f"The catalog has no namespace {namespace}; create it there first.")
+    empty = pl.DataFrame(schema=creatable_schema(frame.collect_schema()))
+    catalog.create_table(ref.table, schema=empty.to_arrow(compat_level=pl.CompatLevel.oldest()).schema)
+    return catalog.load_table(ref.table)
+
+
+def refuse_unwritable(table: Table) -> None:
+    """Refuse a table this Flowfile cannot write: Polars writes no manifest of an Iceberg version 3 table."""
+    if table.metadata.format_version >= 3:
+        name = ".".join(table.name())
+        raise ValueError(f"{name} is an Iceberg version 3 table, which this Flowfile reads and cannot write yet.")
+
+
+def _data_folders(table: Table) -> set[str] | None:
+    """The immediate children of the table's ``data/`` folder, listed with the handed-out keys, or ``None``."""
+    from urllib.parse import urlparse
+
+    data = f"{table.metadata.location.rstrip('/')}/data"
+    parsed = urlparse(data)
+    fs_by_scheme = getattr(table.io, "fs_by_scheme", None)
+    if fs_by_scheme is None:
+        return None
+    try:
+        from pyarrow.fs import FileSelector
+
+        fs = fs_by_scheme(parsed.scheme, parsed.netloc)
+        infos = fs.get_file_info(FileSelector(f"{parsed.netloc}{parsed.path}", allow_not_found=True))
+    except Exception:
+        return None
+    return {f"{parsed.scheme}://{info.path}" for info in infos}
+
+
+def _sink(table: Table, frame: pl.LazyFrame, mode: Literal["append", "overwrite"]) -> None:
+    """Write and commit; on a failure, name what the attempt left under the table's ``data/`` folder.
+
+    An overwrite is one commit of two snapshots (a delete and an append), and the delete files earlier writes left stay
+    listed. A table created for this write stays, empty, when it fails. The folders new under ``data/`` are named and
+    not removed: a listing cannot tell this write's files from those of another write that ran at the same moment.
+    """
+    before = _data_folders(table)
+    try:
+        write_table(table, frame, mode)
+    except Exception as exc:
+        cause = (str(exc).splitlines() or [type(exc).__name__])[0]
+        name = ".".join(table.name())
+        if _commit_state_unknown(exc):
+            raise RuntimeError(
+                f"The write to {name} may not have committed ({cause}): the catalog did not say. Load the table before"
+                " removing anything."
+            ) from exc
+        after = _data_folders(table)
+        if before is None or after is None:
+            left = " The files it may have left could not be listed."
+        else:
+            new = sorted(after - before)
+            shown = ", ".join(new[:5]) + (f" and {len(new) - 5} more" if len(new) > 5 else "")
+            left = (
+                f" New under its data/ folder since this write began: {shown}. If no other write ran at the same time"
+                " they are this write's files, which the table does not use; nothing removes them."
+                if new
+                else " It left no files under data/."
+            )
+        raise RuntimeError(f"The write to {name} did not commit ({cause}).{left}") from exc
+
+
+def _commit_state_unknown(exc: BaseException) -> bool:
+    """Whether the commit may have gone through: the catalog answered 5xx, or the connection dropped mid-request."""
+    from pyiceberg.exceptions import CommitStateUnknownException
+    from requests.exceptions import ConnectionError as RequestsConnectionError
+    from requests.exceptions import Timeout
+
+    seen = exc
+    while seen is not None:
+        if isinstance(seen, CommitStateUnknownException | RequestsConnectionError | Timeout):
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return False
+
+
+def write_iceberg_table(
+    ref: IcebergTableRef,
+    frame: pl.LazyFrame,
+    mode: Literal["append", "overwrite"],
+    *,
+    flow_id: int = -1,
+    node_id: int | str = -1,
+    minimum_seconds: float = MIN_CREDENTIAL_SECONDS,
+) -> None:
+    """Append ``frame`` to the ref's table or replace its rows, creating the table when the catalog has none.
+
+    The catalog is asked for the table and its keys here, in the process that writes. A missing table is created
+    first and stays, empty, if a check then fails; no data file is written before every check passed: the table is
+    writable, the keys are usable and have time left, and the frame has the table's column names. The frame is cast
+    to the table's own types (strictly: a value that does not fit fails the write), and the table's columns and
+    partitioning are never changed.
+    """
+    table = _load_or_create(ref, frame)
+    refuse_unwritable(table)
+    properties = _handed_out_keys(table)
+    left = refuse_short_credential(properties, ref.table, minimum_seconds, "write")
+    columns = pl.scan_iceberg(table, storage_options=properties).collect_schema()
+    given = list(frame.collect_schema())
+    if sorted(given) != sorted(columns):
+        raise ValueError(
+            f"The table has columns {list(columns)} and the data has {given}; a write here does not change a table's"
+            " columns."
+        )
+    _say(flow_id, node_id, _credential_line("Writing", ref.table, properties, left))
+    _sink(table, frame.cast(dict(columns)).select(list(columns)), mode)

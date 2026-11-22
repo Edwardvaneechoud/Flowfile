@@ -11,11 +11,7 @@ import pytest
 
 from test_utils.iceberg_rest import fixtures
 
-SKIP_REASON = (
-    f"Iceberg REST catalog is not running at {fixtures.CATALOG_URI}; "
-    "start it with: python -m test_utils.iceberg_rest start "
-    "(if it is paused after an interrupted run: stop, then start)"
-)
+SKIP_REASON = fixtures.SKIP_REASON
 
 
 @pytest.fixture(scope="session")

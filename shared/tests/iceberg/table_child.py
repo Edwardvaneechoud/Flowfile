@@ -1,10 +1,13 @@
 """A separate process that reads or writes one Iceberg table and prints one JSON line about what it saw.
 
-Run as ``python -m shared.tests.iceberg.table_child`` with a JSON document on stdin. It is given either a catalog's
-address (``"catalog"``) or a table's metadata location and storage keys (``"access"``), and nothing else: it never
-imports the module that holds the test store's root keys, so those are not even in its memory.
+Run as ``python -m shared.tests.iceberg.table_child`` with a JSON document on stdin. It is given a catalog's address
+(``"catalog"``), a table's metadata location and storage keys (``"access"``), a table ref (``"ref"``) or a serialized
+plan (``"plan"``), and nothing else: it never imports the module that holds the test store's root keys, so those are
+not even in its memory.
 """
 
+import base64
+import io
 import json
 import os
 import sys
@@ -12,7 +15,18 @@ import warnings
 
 import polars as pl
 
-from shared.iceberg_utils import IcebergTableAccess, scan_table, storage_properties, table_access, write_table
+from shared.iceberg_utils import (
+    IcebergTableAccess,
+    IcebergTableRef,
+    register_run_log,
+    scan_iceberg_table,
+    scan_table,
+    storage_properties,
+    table_access,
+    table_schema,
+    write_iceberg_table,
+    write_table,
+)
 
 READERS = {"default": None, "pyiceberg": "pyiceberg", "native": "native"}
 
@@ -91,10 +105,50 @@ def write(payload: dict) -> dict:
     }
 
 
+def _aws_env() -> list[str]:
+    return sorted(name for name in os.environ if name.startswith("AWS_"))
+
+
+def _noting() -> list[str]:
+    notes: list[str] = []
+    register_run_log(lambda flow_id, node_id, message: notes.append(message))
+    return notes
+
+
+def collect_plan(payload: dict) -> dict:
+    """Read the table through a plan another process built and serialized; the plan is all this process is given."""
+    notes = _noting()
+    plan = pl.LazyFrame.deserialize(io.BytesIO(base64.b64decode(payload["plan"])))
+    with warnings.catch_warnings(record=True) as seen:
+        rows, id_sum = _count(plan)
+        answer = {"rows": rows, "id_sum": id_sum}
+        if "bound" in payload:
+            filtered = plan.filter(pl.col("id") > int(payload["bound"])).select("id", "grp")
+            answer["filtered_rows"] = filtered.select(pl.len()).collect().item()
+    answer["warnings"] = sorted({f"{w.category.__name__}: {str(w.message).splitlines()[0][:200]}" for w in seen})
+    return {**answer, "notes": notes, "aws_env": _aws_env()}
+
+
+def schema_ref(payload: dict) -> dict:
+    schema = table_schema(IcebergTableRef(**payload["ref"]))
+    return {"schema": {name: str(dtype) for name, dtype in schema.items()}, "aws_env": _aws_env()}
+
+
+def write_ref(payload: dict) -> dict:
+    """Write rows through a ref, then read them back through a fresh scan of the same ref."""
+    notes = _noting()
+    ref = IcebergTableRef(**payload["ref"])
+    write_iceberg_table(ref, rows_frame(int(payload["rows"]), int(payload.get("start", 0))), payload["mode"])
+    rows, id_sum = _count(scan_iceberg_table(ref))
+    return {"rows": rows, "id_sum": id_sum, "notes": notes, "aws_env": _aws_env()}
+
+
+OPS = {"read": read, "write": write, "collect_plan": collect_plan, "schema_ref": schema_ref, "write_ref": write_ref}
+
+
 def main() -> None:
     payload = json.loads(sys.stdin.read())
-    result = read(payload) if payload["op"] == "read" else write(payload)
-    print(json.dumps(result))
+    print(json.dumps(OPS[payload["op"]](payload)))
 
 
 if __name__ == "__main__":

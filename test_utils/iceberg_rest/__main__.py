@@ -1,20 +1,24 @@
-"""python -m test_utils.iceberg_rest start|stop|demo: the local Iceberg REST catalog and a short walk through it."""
+"""python -m test_utils.iceberg_rest start|stop|demo|flow: the local Iceberg REST catalog and two short walks through it."""
 
 import logging
 import sys
 
-USAGE = "usage: python -m test_utils.iceberg_rest start|stop|demo"
+USAGE = "usage: python -m test_utils.iceberg_rest start|stop|demo|flow"
 
 
 def main(argv: list[str]) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    if len(argv) != 1 or argv[0] not in ("start", "stop", "demo"):
+    if len(argv) != 1 or argv[0] not in ("start", "stop", "demo", "flow"):
         print(USAGE, file=sys.stderr)
         return 2
     if argv[0] == "demo":
         from test_utils.iceberg_rest.demo import run_demo
 
         return run_demo()
+    if argv[0] == "flow":
+        from test_utils.iceberg_rest.flow_demo import run_flow_demo
+
+        return run_flow_demo()
     from test_utils.iceberg_rest import fixtures
 
     if argv[0] == "stop":

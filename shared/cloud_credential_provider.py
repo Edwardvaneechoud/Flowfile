@@ -126,7 +126,7 @@ def resolve_credential_ref(connection_id: int, user_id: int) -> tuple[dict[str, 
             "connection against the catalog core writes, so it must use core's catalog database."
         )
     fields, ciphertexts = record
-    secrets = {name: _decrypt_stored(value, label) for name, value in ciphertexts.items() if value}
+    secrets = {name: decrypt_stored(value, label) for name, value in ciphertexts.items() if value}
     options = build_storage_options(**fields, **secrets)
     return _provider_credentials(fields["storage_type"], options)
 
@@ -220,7 +220,8 @@ def credential_body_kwargs(credential: Mapping[str, Any] | None) -> dict[str, An
     return credential_ref_kwargs(credential["connection_id"], credential["user_id"])
 
 
-def _decrypt_stored(ciphertext: str, label: str) -> str:
+def decrypt_stored(ciphertext: str, label: str) -> str:
+    """A stored ``$ffsec$`` value in plain, through this process's decryptor; ``label`` names it in an error."""
     if _decrypt is None:
         raise CredentialDecryptionError(f"No secret decryptor is registered in this process to resolve {label}.")
     try:
