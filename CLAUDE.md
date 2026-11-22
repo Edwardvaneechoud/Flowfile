@@ -266,7 +266,8 @@ make test_e2e_cloud    # MinIO + an isolated stack on free ports; tests/cloud_e2
 ```
 
 > Note: `make test_e2e` starts flowfile_core and flowfile_worker and runs only
-> `web-flow.spec.ts`, `csp.spec.ts` and `dashboard.spec.ts` (the last two mount
+> `web-flow.spec.ts`, `csp.spec.ts`, `dashboard.spec.ts`, `dashboard-ai.spec.ts`,
+> `dashboard-ai-map.spec.ts` and `chart-ai.spec.ts` (all but the first mount
 > graphic-walker, hence the worker). On macOS/Linux it exits with Playwright's status (Windows still ignores
 > it). `poetry run seed_cloud_e2e` idempotently writes
 > `s3://flowfile-test/cloud-e2e/source.parquet`, the source the cloud spec reads.

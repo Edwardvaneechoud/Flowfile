@@ -58,6 +58,7 @@ vi.mock("../../stores/catalog-store", () => ({
 
 import DashboardAiBuilder, { type PlacedPage } from "./DashboardAiBuilder.vue";
 import type { BuiltPage } from "./aiDashboard";
+import { useAiDashboardStore } from "../../stores/ai-dashboard-store";
 
 const STUBS = {
   "el-dialog": element("div"),
@@ -279,6 +280,20 @@ describe("a build", () => {
     expect(text(entries[2])).toContain("no_chart");
     expect(text(entries[4])).toContain("Add to dashboard");
     expect(text(log)).toContain("FLOWFILE_AI_LOG_PROMPTS=true");
+  });
+
+  it("opens without the log of a build made before it opened", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useAiDashboardStore().beginPlacing("Another dashboard's page");
+    expect(useAiDashboardStore().log).toHaveLength(1);
+    const host = await mountIn(DashboardAiBuilder, {
+      pinia,
+      stubs: STUBS,
+      props: { modelValue: true, place: vi.fn(), initialTableIds: [1] },
+    });
+    expect(host.querySelector('[data-testid="dashboard-ai-log"]')).toBeNull();
+    expect(useAiDashboardStore().log).toEqual([]);
   });
 
   it("keeps the build log in view when the plan fails", async () => {

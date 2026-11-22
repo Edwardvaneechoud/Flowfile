@@ -27,8 +27,8 @@ import {
 } from "../views/DashboardsView/aiDashboard";
 import type { ChartConverter } from "../views/DashboardsView/aiDashboardCharts";
 import {
-  cancelRunning,
   finishEntry,
+  settleRunning,
   settledStatus,
   startEntry,
   type BuildLogEntry,
@@ -43,6 +43,7 @@ import {
   type ChartPromptMessage,
 } from "../views/CatalogView/chartPrompt";
 import { useAiStore } from "./ai-store";
+import { onSessionEnd } from "./sessionScoped";
 
 export const DASHBOARD_SURFACE = "dashboard";
 export const CHART_SURFACE = "chart";
@@ -80,6 +81,13 @@ interface Built {
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+/** A message with its detail, as the log shows why a step failed. */
+const fullText = (message: ChartPromptMessage): string =>
+  message.detail ? `${message.text} ${message.detail}` : message.text;
+
+const BUILD_ENDED_DETAIL = "The build ended before this step finished.";
+const AI_OFF_DETAIL = "AI was turned off while this step ran.";
+
 /** What the plan holds, as the log's note on it. */
 function planDetail(plan: DashboardPlan): string {
   const parts = [plural(plan.checks.length, "chart"), plural(plan.kpis.length, "KPI")];
@@ -90,7 +98,11 @@ function planDetail(plan: DashboardPlan): string {
 /** How much of the story rests on measured numbers, as the log's note on it. */
 function evidenceDetail(story: DashboardStoryResponse): string {
   const measured = story.evidence.filter((e) => e.status === "measured").length;
-  if (!story.evidence.length) return "Written without numbers read from the data.";
+  if (measured === 0) {
+    return story.evidence.some((e) => e.status === "withheld")
+      ? "Written without numbers: data values are not shared with the AI."
+      : "Written without numbers read from the data.";
+  }
   return `Written from ${measured} of ${story.evidence.length} measured items.`;
 }
 
@@ -115,10 +127,29 @@ export const useAiDashboardStore = defineStore("aiDashboard", () => {
     if (owner !== logOwner) return;
     log.value = [...log.value, startEntry(key, step, title, target, Date.now(), asked)];
   };
+  /** Settle a running entry; a cancelled build's entries, and settled ones, stay as they are. */
   const logEnd = (owner: AbortSignal | null, key: string, change: EntryChange): void => {
-    if (owner !== logOwner) return;
+    if (owner !== logOwner || owner?.aborted) return;
     const now = Date.now();
-    log.value = log.value.map((e) => (e.key === key ? finishEntry(e, change, now) : e));
+    log.value = log.value.map((e) =>
+      e.key === key && e.status === "running" ? finishEntry(e, change, now) : e,
+    );
+  };
+
+  /** Forget the last build's log and progress; a build still running is stopped first. */
+  const reset = (): void => {
+    cancel();
+    logOwner = null;
+    log.value = [];
+    checks.value = [];
+  };
+
+  /** Clear a finished build's log, as a dialog opening for a new build does. */
+  const clearLog = (): void => {
+    if (busy.value) return;
+    logOwner = null;
+    log.value = [];
+    checks.value = [];
   };
   /** What a response says about who answered it. */
   const answeredBy = (response: { provider?: string | null; model?: string | null }) => ({
@@ -180,10 +211,7 @@ export const useAiDashboardStore = defineStore("aiDashboard", () => {
     } catch (error) {
       if (signal.aborted || error instanceof AiDisabledError) throw error;
       const failure = requestFailureMessage(error);
-      logEnd(signal, key, {
-        status: "failed",
-        detail: failure.detail ? `${failure.text} ${failure.detail}` : failure.text,
-      });
+      logEnd(signal, key, { status: "failed", detail: fullText(failure) });
       return failure.text;
     }
     const outcome = {
@@ -195,9 +223,9 @@ export const useAiDashboardStore = defineStore("aiDashboard", () => {
       warnings: response.warnings,
     };
     if (response.degraded || !response.chart) {
-      const text = degradedMessage(response).text;
-      logEnd(signal, key, { ...outcome, status: "failed", detail: text });
-      return text;
+      const message = degradedMessage(response);
+      logEnd(signal, key, { ...outcome, status: "failed", detail: fullText(message) });
+      return message.text;
     }
     const converted = await convert(check.table_id, response.chart);
     if (!converted.ok) {
@@ -299,6 +327,11 @@ export const useAiDashboardStore = defineStore("aiDashboard", () => {
     log.value = [];
     logOwner = signal;
     stage.value = "planning";
+    let endDetail = BUILD_ENDED_DETAIL;
+    const disabled = (): BuildDashboardOutcome => {
+      endDetail = AI_OFF_DETAIL;
+      return { status: "disabled" };
+    };
     try {
       let planned;
       logStart(signal, "plan", "plan", "Plan the page", dashboardTarget.value, args.prompt);
@@ -309,9 +342,9 @@ export const useAiDashboardStore = defineStore("aiDashboard", () => {
         );
       } catch (error) {
         if (signal.aborted) return { status: "cancelled" };
-        if (error instanceof AiDisabledError) return { status: "disabled" };
+        if (error instanceof AiDisabledError) return disabled();
         const failure = planRequestFailure(error);
-        logEnd(signal, "plan", { status: "failed", detail: failure.text });
+        logEnd(signal, "plan", { status: "failed", detail: fullText(failure) });
         return { status: "failed", message: failure };
       }
       if (signal.aborted) return { status: "cancelled" };
@@ -328,7 +361,7 @@ export const useAiDashboardStore = defineStore("aiDashboard", () => {
           ...planOutcome,
           status: "failed",
           answer: planned.explanation ?? undefined,
-          detail: failure.detail ? `${failure.text} ${failure.detail}` : failure.text,
+          detail: fullText(failure),
         });
         return { status: "failed", message: failure };
       }
@@ -389,9 +422,12 @@ export const useAiDashboardStore = defineStore("aiDashboard", () => {
         );
       } catch (error) {
         if (signal.aborted) return { status: "cancelled" };
-        if (error instanceof AiDisabledError) return { status: "disabled" };
+        if (error instanceof AiDisabledError) return disabled();
         story = null;
-        logEnd(signal, "story", { status: "failed", detail: requestFailureMessage(error).text });
+        logEnd(signal, "story", {
+          status: "failed",
+          detail: fullText(requestFailureMessage(error)),
+        });
       }
       if (signal.aborted) return { status: "cancelled" };
       if (story) {
@@ -410,16 +446,23 @@ export const useAiDashboardStore = defineStore("aiDashboard", () => {
       };
     } catch (error) {
       if (signal.aborted) return { status: "cancelled" };
-      if (error instanceof AiDisabledError) return { status: "disabled" };
+      if (error instanceof AiDisabledError) return disabled();
       return { status: "failed", message: requestFailureMessage(error) };
     } finally {
-      if (signal.aborted && logOwner === signal) log.value = cancelRunning(log.value, Date.now());
+      if (logOwner === signal) {
+        const change: EntryChange = signal.aborted
+          ? { status: "cancelled" }
+          : { status: "failed", detail: endDetail };
+        log.value = settleRunning(log.value, change, Date.now());
+      }
       if (inflight === controller) {
         inflight = null;
         stage.value = "idle";
       }
     }
   };
+
+  onSessionEnd(reset);
 
   return {
     stage,
@@ -430,6 +473,8 @@ export const useAiDashboardStore = defineStore("aiDashboard", () => {
     dashboardTarget,
     chartTarget,
     cancel,
+    reset,
+    clearLog,
     build,
     beginPlacing,
     endPlacing,

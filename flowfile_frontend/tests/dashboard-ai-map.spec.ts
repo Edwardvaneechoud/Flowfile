@@ -5,16 +5,11 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
 import { API_URL, authHeaders, getAuthToken } from "./helpers/api";
 import { login } from "./helpers/canvas";
 
-// An AI-built page shaped like a customer-and-depot question: a map of the customers, two bar
-// charts, a scatter last, one chart the model declines and a filter. The three AI routes are
-// stubbed; the charts are saved, placed and drawn for real, so a worker is needed (else skip).
-// It checks the map is drawn, the build log names each step, and the canvas's bottom padding
-// shows below the last tile once scrolled to the end.
-//
-// DASHBOARD_AI_SCREENS=<dir> also writes screenshots there.
+// An AI-built page with a map, drawn for real with the AI routes stubbed (needs a worker, else skips).
 
 type Json = Record<string, any>;
 
+// DASHBOARD_AI_SCREENS=<dir> also writes screenshots there.
 const SCREENS = process.env.DASHBOARD_AI_SCREENS;
 
 async function shot(page: Page, name: string) {

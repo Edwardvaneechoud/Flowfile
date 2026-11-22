@@ -93,11 +93,18 @@ export function settledStatus(warnings: string[] | undefined, attempts?: number)
   return (warnings?.length ?? 0) > 0 || (attempts ?? 0) > 1 ? "warning" : "ok";
 }
 
+/** Every running entry settled with `change`, for a build that is over. */
+export function settleRunning(
+  entries: BuildLogEntry[],
+  change: EntryChange,
+  now: number,
+): BuildLogEntry[] {
+  return entries.map((e) => (e.status === "running" ? finishEntry(e, change, now) : e));
+}
+
 /** Every running entry marked cancelled, for a build that was stopped. */
 export function cancelRunning(entries: BuildLogEntry[], now: number): BuildLogEntry[] {
-  return entries.map((e) =>
-    e.status === "running" ? finishEntry(e, { status: "cancelled" }, now) : e,
-  );
+  return settleRunning(entries, { status: "cancelled" }, now);
 }
 
 export function durationText(entry: BuildLogEntry): string {

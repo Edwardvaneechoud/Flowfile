@@ -893,6 +893,33 @@ describe("maps", () => {
     });
   });
 
+  it.each([
+    ["color then size", { color: { field: "revenue" }, size: { field: "revenue" } }],
+    ["size then color", { size: { field: "revenue" }, color: { field: "revenue" } }],
+  ])("colours and sizes points by one number column (%s)", (_, channels) => {
+    const chart = buildMap({ ...MAP, ...channels });
+    expect(chart.encodings.size[0].analyticType).toBe("measure");
+    expect(chart.encodings.color[0].analyticType).toBe("measure");
+    expect(describeChart(chart, geoCtx())).toEqual({
+      ok: true,
+      request: { ...MAP, color: { field: "revenue" }, size: { field: "revenue" } },
+    });
+  });
+
+  it("still refuses a column grouped and aggregated on an aggregated chart", () => {
+    const result = chartFromRequest(
+      {
+        mark: "bar",
+        x: { field: "region" },
+        y: { field: "revenue", aggregate: "sum" },
+        color: { field: "revenue" },
+      },
+      geoCtx(),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("both grouped and aggregated");
+  });
+
   it("describes a map back as the request it came from", () => {
     const result = describeChart(buildMap(MAP), geoCtx());
     expect(result).toEqual({ ok: true, request: MAP });

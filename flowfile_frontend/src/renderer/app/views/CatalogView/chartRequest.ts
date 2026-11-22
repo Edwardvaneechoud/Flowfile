@@ -206,10 +206,19 @@ function buildChart(request: ChartRequest, ctx: ChartContext): IChart {
   }
   const columns = new Map(ctx.fields.map((f) => [f.fid, f]));
   const roles = new Map<string, IAnalyticType>();
-  const setRole = (column: string, role: IAnalyticType) => {
+  const softDimensions = new Set<string>();
+  const setRole = (column: string, role: IAnalyticType, plain = false) => {
+    // A raw chart groups nothing, so a plain column on a dimension channel yields to its measure use.
+    const soft = plain && !aggregated;
     const previous = roles.get(column);
     if (previous && previous !== role) {
-      fail(`"${column}" is both grouped and aggregated. Use "bin" on one, or drop one.`);
+      if (soft && role === "dimension") return;
+      if (!(soft && softDimensions.has(column))) {
+        fail(`"${column}" is both grouped and aggregated. Use "bin" on one, or drop one.`);
+      }
+      softDimensions.delete(column);
+    } else if (soft && role === "dimension" && !previous) {
+      softDimensions.add(column);
     }
     roles.set(column, role);
   };
@@ -261,7 +270,7 @@ function buildChart(request: ChartRequest, ctx: ChartContext): IChart {
       !aggregated &&
       (channel === "x" || channel === "y" || channel === "size") &&
       column.semanticType === "quantitative";
-    setRole(field, measure ? "measure" : "dimension");
+    setRole(field, measure ? "measure" : "dimension", true);
     return { channel, measure, terse: `fid:${field}` };
   };
 

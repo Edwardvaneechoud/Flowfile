@@ -392,6 +392,7 @@ watch(
     if (!open) return;
     result.value = null;
     message.value = null;
+    store.clearLog();
     aiStore.loadProviders().catch(() => undefined);
     if (!catalogStore.allTables.length) void catalogStore.loadAllTables();
   },

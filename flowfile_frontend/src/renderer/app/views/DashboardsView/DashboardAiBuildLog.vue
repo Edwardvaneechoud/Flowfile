@@ -44,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { onBeforeUnmount, ref, watch } from "vue";
 
 import { copyTextEverywhere } from "../../utils/clipboardUtils";
 import {
@@ -62,7 +62,16 @@ import {
 
 const props = defineProps<{ entries: BuildLogEntry[]; open?: boolean }>();
 
+const COPIED_MS = 2000;
 const copied = ref(false);
+let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+const clearCopied = () => {
+  if (copiedTimer) clearTimeout(copiedTimer);
+  copiedTimer = null;
+  copied.value = false;
+};
+watch(() => props.entries, clearCopied);
+onBeforeUnmount(clearCopied);
 
 const ICONS: Record<LogStatus, string> = {
   running: "autorenew",
@@ -74,7 +83,10 @@ const ICONS: Record<LogStatus, string> = {
 const statusIcon = (status: LogStatus): string => ICONS[status];
 
 const onCopy = async () => {
-  copied.value = await copyTextEverywhere(logAsText(props.entries));
+  const ok = await copyTextEverywhere(logAsText(props.entries));
+  clearCopied();
+  copied.value = ok;
+  if (ok) copiedTimer = setTimeout(clearCopied, COPIED_MS);
 };
 </script>
 

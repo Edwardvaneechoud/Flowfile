@@ -46,6 +46,7 @@ vi.mock("../composables/useGraphicWalkerCompute", () => ({ useGraphicWalkerCompu
 
 import type { ChartConverter } from "../views/DashboardsView/aiDashboardCharts";
 import { CHART_CONCURRENCY, useAiDashboardStore } from "./ai-dashboard-store";
+import { endSession } from "./sessionScoped";
 
 const check = (n: number, tableId = 1) => ({
   id: `c${n}`,
@@ -420,6 +421,90 @@ describe("the build log", () => {
     await pending;
     expect(store.log[0].status).toBe("ok");
     expect(store.log.slice(1).every((e) => e.status === "cancelled")).toBe(true);
+  });
+
+  it("logs core's problem sentence for a chart answer that could not be used", async () => {
+    mocks.generateChart.mockResolvedValueOnce({
+      ...chartResponse(),
+      chart: null,
+      degraded: true,
+      reason: "invalid_chart",
+      message: "A map takes latitude and longitude, each one plain number column.",
+    });
+    const store = useAiDashboardStore();
+    await store.build(args());
+    const failed = store.log.find((e) => e.status === "failed");
+    expect(failed?.detail).toContain("A map takes latitude and longitude");
+    expect(store.checks.find((c) => c.status === "failed")?.message).not.toContain("A map takes");
+  });
+
+  it("settles every step when AI is turned off mid-build", async () => {
+    mocks.planDashboard.mockRejectedValueOnce(new mocks.AiDisabledError());
+    const store = useAiDashboardStore();
+    expect((await store.build(args())).status).toBe("disabled");
+    expect(store.log).toHaveLength(1);
+    expect(store.log[0]).toMatchObject({ status: "failed", detail: expect.stringContaining("AI") });
+    expect(store.log[0].endedAt).not.toBeNull();
+
+    mocks.generateChart.mockRejectedValue(new mocks.AiDisabledError());
+    expect((await store.build(args())).status).toBe("disabled");
+    expect(store.log.some((e) => e.status === "running")).toBe(false);
+  });
+
+  it("a chart that lands after a cancel stays cancelled", async () => {
+    let releaseConvert: () => void = () => undefined;
+    const slowConvert: ChartConverter = vi.fn(
+      (_tableId, request) =>
+        new Promise<Awaited<ReturnType<ChartConverter>>>((resolve) => {
+          releaseConvert = () =>
+            resolve({ ok: true as const, chart: { name: request.mark } as any, payload: null });
+        }),
+    );
+    mocks.planDashboard.mockResolvedValue(planResponse(1));
+    const store = useAiDashboardStore();
+    const pending = store.build({ ...args(), convert: slowConvert });
+    await vi.waitFor(() => expect(slowConvert).toHaveBeenCalled());
+    store.cancel();
+    releaseConvert();
+    expect(await pending).toEqual({ status: "cancelled" });
+    expect(store.log.find((e) => e.key === "chart:c1")?.status).toBe("cancelled");
+  });
+
+  it("says when the story was written with data values withheld", async () => {
+    mocks.aiStore.sendsData = false;
+    mocks.writeDashboardStory.mockResolvedValue(
+      storyResponse({
+        grounded: false,
+        evidence: [
+          { id: "k1", kind: "kpi", status: "withheld", detail: null },
+          { id: "c1", kind: "chart", status: "withheld", detail: null },
+        ],
+      }),
+    );
+    const store = useAiDashboardStore();
+    await store.build(args());
+    expect(store.log.find((e) => e.key === "story")?.detail).toBe(
+      "Written without numbers: data values are not shared with the AI.",
+    );
+  });
+
+  it("reset and clearLog forget the last build's log", async () => {
+    const store = useAiDashboardStore();
+    await store.build(args());
+    expect(store.log.length).toBeGreaterThan(0);
+    store.clearLog();
+    expect(store.log).toEqual([]);
+    await store.build(args());
+    store.reset();
+    expect(store.log).toEqual([]);
+    expect(store.checks).toEqual([]);
+  });
+
+  it("a session end (sign-out, user switch) clears the log", async () => {
+    const store = useAiDashboardStore();
+    await store.build(args());
+    endSession();
+    expect(store.log).toEqual([]);
   });
 });
 
