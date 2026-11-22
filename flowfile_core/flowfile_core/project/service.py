@@ -881,7 +881,7 @@ class ProjectSyncService:
                     wrapper["flow_uuid"],
                     wrapper.get("catalog_name") or "",
                     wrapper.get("namespace"),
-                    lookup=_reference_lookup(db),
+                    lookup=_reference_lookup(db, marker["owner_id"]),
                 )
             merging.settle_flow_document(state, marker["path"], document, flow.merge_conflicts)
             merging.save_state(proj.root, state)
