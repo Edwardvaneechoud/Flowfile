@@ -208,6 +208,8 @@ export interface Dashboard {
   created_at: string;
   updated_at: string;
   access?: AccessInfo | null;
+  // "hub" for a dashboard saved in a hub's catalog: its ids are the negatives of the hub's own.
+  source?: "local" | "hub";
 }
 
 export interface DashboardCreatePayload {

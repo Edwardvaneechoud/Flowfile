@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   publishToHub: vi.fn(),
   publishCheck: vi.fn(),
   openFromHub: vi.fn(),
+  mergeFromHub: vi.fn(),
+  listMergeConflicts: vi.fn(),
+  resolveMergeConflict: vi.fn(),
 }));
 
 // The real hubFlows.api for refusalOf, over a stand-in for axios so nothing reads tokens at import.
@@ -18,6 +21,9 @@ vi.mock("../../../api/hubFlows.api", async () => ({
   publishToHub: mocks.publishToHub,
   publishCheck: mocks.publishCheck,
   openFromHub: mocks.openFromHub,
+  mergeFromHub: mocks.mergeFromHub,
+  listMergeConflicts: mocks.listMergeConflicts,
+  resolveMergeConflict: mocks.resolveMergeConflict,
 }));
 vi.mock("element-plus", () => ({
   ElMessage: { success: vi.fn(), error: vi.fn() },
@@ -71,9 +77,11 @@ const origin = {
 
 let host: HTMLElement;
 let published: unknown[] = [];
+let mergedEvents: unknown[] = [];
 
 const open = async () => {
   published = [];
+  mergedEvents = [];
   host = await mountIn(HubPublishDialog, {
     props: {
       visible: true,
@@ -81,6 +89,7 @@ const open = async () => {
       hubOrigin: origin,
       flowName: "Sales report",
       onPublished: (result: unknown) => published.push(result),
+      onMerged: (result: unknown) => mergedEvents.push(result),
     },
     stubs,
   });
@@ -97,6 +106,9 @@ beforeEach(() => {
   mocks.publishToHub.mockReset().mockResolvedValue({ version: 5, name: "Sales report" });
   mocks.publishCheck.mockReset().mockResolvedValue([]);
   mocks.openFromHub.mockReset();
+  mocks.mergeFromHub.mockReset();
+  mocks.listMergeConflicts.mockReset();
+  mocks.resolveMergeConflict.mockReset();
 });
 
 describe("HubPublishDialog for a flow already on the hub", () => {
@@ -202,5 +214,135 @@ describe("HubPublishDialog for a flow already on the hub", () => {
     await click("hub-publish");
     expect(mocks.publishToHub.mock.calls[0][0]).toMatchObject({ namespace_id: null });
     expect(mocks.publishToHub.mock.calls[0][0]).not.toHaveProperty("as_new");
+  });
+});
+
+describe("HubPublishDialog when the hub moved on", () => {
+  const version = (n: number, message: string) => ({
+    flow_uuid: origin.flow_uuid,
+    version: n,
+    author_id: 7,
+    published_at: "2026-11-20T10:00:00Z",
+    message,
+  });
+  const stale = () =>
+    httpError(409, {
+      kind: "stale_base",
+      flow_uuid: origin.flow_uuid,
+      base: version(4, "mine"),
+      current: version(5, "theirs"),
+    });
+
+  it("merges the newest version in and then publishes on top of it", async () => {
+    mocks.publishToHub.mockRejectedValueOnce(stale());
+    mocks.mergeFromHub.mockResolvedValue({
+      version: 5,
+      applied: true,
+      changes: [{ kind: "added", label: "step 7 filter", details: [] }],
+      conflicts: [],
+      warnings: [],
+    });
+    await open();
+    await click("hub-publish");
+    expect(text(byTestId("hub-merge"))).toBe("Merge v5 in");
+
+    await click("hub-merge");
+    expect(mocks.mergeFromHub).toHaveBeenCalledWith(42);
+    expect(mergedEvents).toHaveLength(1);
+    expect(byTestId("hub-merged")?.getAttribute("title")).toBe(
+      "Merged v5: 1 step changed on your canvas. Publish to put both on the hub.",
+    );
+    expect(text(byTestId("hub-merged-changes"))).toBe("added step 7 filter");
+
+    mocks.publishToHub.mockResolvedValueOnce({ version: 6, name: "Sales report" });
+    await click("hub-publish");
+    expect(mocks.publishToHub.mock.calls[1][0]).toMatchObject({ overwrite_version: undefined });
+  });
+
+  const row = {
+    key: "step:2",
+    kind: "both_changed",
+    label: "step 2 sample",
+    message: "Both sides changed step 2.",
+    step_id: 2,
+    ours_label: "version 5",
+    theirs_label: "your copy",
+    ours: ["settings.sample_size: 3 → 50"],
+    theirs: ["settings.sample_size: 3 → 70"],
+  };
+
+  it("shows what each side did to a step both changed, and publishes once it is settled", async () => {
+    mocks.publishToHub.mockRejectedValueOnce(stale());
+    mocks.mergeFromHub.mockResolvedValue({
+      version: 5,
+      applied: true,
+      changes: [],
+      conflicts: [{ key: row.key, kind: row.kind, label: row.label, message: row.message }],
+      warnings: [],
+    });
+    mocks.listMergeConflicts.mockResolvedValue([row]);
+    mocks.resolveMergeConflict.mockResolvedValue([]);
+    await open();
+    await click("hub-publish");
+    await click("hub-merge");
+
+    expect(byTestId("hub-merged")?.getAttribute("title")).toContain("1 step both of you changed");
+    const settleRow = text(byTestId("hub-settle-step:2"));
+    expect(settleRow).toContain("Both sides changed step 2.");
+    for (const piece of [
+      "settings.sample_size: 3 → 70",
+      "settings.sample_size: 3 → 50",
+      "Keep your copy",
+      "Keep version 5",
+    ]) {
+      expect(settleRow).toContain(piece);
+    }
+    expect(byTestId("hub-publish")).toBeNull();
+
+    await click("hub-settle-ours-step:2");
+    expect(mocks.resolveMergeConflict).toHaveBeenCalledWith(42, "step:2", "ours");
+    expect(mergedEvents).toHaveLength(2);
+    expect(byTestId("hub-merged")?.getAttribute("title")).toBe(
+      "Every conflict is settled. Publish to put your copy on the hub.",
+    );
+    expect(byTestId("hub-publish")).not.toBeNull();
+  });
+
+  it("lists the conflicts still open when a publish is refused for them", async () => {
+    mocks.publishToHub.mockRejectedValueOnce(
+      httpError(409, {
+        kind: "unresolved_conflicts",
+        count: 1,
+        message: "Settle the 1 merge conflict in this flow first.",
+      }),
+    );
+    mocks.listMergeConflicts.mockResolvedValue([row]);
+    await open();
+    await click("hub-publish");
+    expect(mocks.listMergeConflicts).toHaveBeenCalledWith(42);
+    expect(byTestId("hub-settle-step:2")).not.toBeNull();
+    expect(byTestId("hub-merged-done")).not.toBeNull();
+  });
+
+  it("re-reads the conflicts after a settle fails, dropping a row the flow no longer holds", async () => {
+    mocks.publishToHub.mockRejectedValueOnce(
+      httpError(409, {
+        kind: "unresolved_conflicts",
+        count: 1,
+        message: "Settle the 1 merge conflict in this flow first.",
+      }),
+    );
+    mocks.listMergeConflicts.mockResolvedValueOnce([row]).mockResolvedValueOnce([]);
+    mocks.resolveMergeConflict.mockRejectedValue(
+      httpError(404, "No open merge conflict step:2 in this flow."),
+    );
+    await open();
+    await click("hub-publish");
+    await click("hub-settle-ours-step:2");
+    expect(mocks.listMergeConflicts).toHaveBeenCalledTimes(2);
+    expect(byTestId("hub-settle-step:2")).toBeNull();
+    expect(byTestId("hub-publish-error")?.getAttribute("title")).toBe(
+      "No open merge conflict step:2 in this flow.",
+    );
   });
 });

@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field, SecretBytes, SecretStr
 
 # Undo/redo covers the graph only; flow-level settings and identity are never part of a step.
 IN_SCOPE_KEYS = ("nodes", "groups", "comments")
+# The exception: settings that describe the canvas, restored with the step whose transaction changed them.
+CARRIED_SETTINGS = ("hub_origin", "merge_conflicts")
 _PERSISTED_SETTINGS_EXCLUDE = ("source_registration_id",)
 
 
@@ -196,10 +198,14 @@ class HistoryEntry:
     Stores a compressed snapshot of the flow state along with metadata
     about the action that created this entry.
 
+    ``carried`` names the flow settings (of ``CARRIED_SETTINGS``) the step's own transaction changed: restoring the
+    entry also restores those from its snapshot, so they go back with the undo and forward with the redo while every
+    other step keeps the live settings.
+
     Uses __slots__ for memory efficiency.
     """
 
-    __slots__ = ("_snapshot", "action_type", "description", "timestamp", "node_id")
+    __slots__ = ("_snapshot", "action_type", "description", "timestamp", "node_id", "carried")
 
     def __init__(
         self,
@@ -208,12 +214,14 @@ class HistoryEntry:
         description: str,
         timestamp: float,
         node_id: int | None = None,
+        carried: tuple[str, ...] = (),
     ):
         self._snapshot = snapshot
         self.action_type = action_type
         self.description = description
         self.timestamp = timestamp
         self.node_id = node_id
+        self.carried = carried
 
     @classmethod
     def from_snapshot(
@@ -224,10 +232,11 @@ class HistoryEntry:
         timestamp: float,
         node_id: int | None = None,
         compression_level: int = 6,
+        carried: tuple[str, ...] = (),
     ) -> "HistoryEntry":
         """Create a HistoryEntry from a :class:`HistorySnapshot`, reusing its pickle and hash."""
         compressed = CompressedSnapshot.from_pickled(snapshot.pickled, snapshot.graph_hash, compression_level)
-        return cls(compressed, action_type, description, timestamp, node_id)
+        return cls(compressed, action_type, description, timestamp, node_id, carried)
 
     def get_snapshot(self) -> dict:
         """Decompress and return the snapshot dictionary."""

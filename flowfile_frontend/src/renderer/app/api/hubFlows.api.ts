@@ -62,9 +62,41 @@ export type HubRefusal =
     }
   | { kind: "refused"; status: number; detail: string }
   | { kind: "other_hub"; hub_url: string }
-  | { kind: "local_copy_exists"; flow_path: string };
+  | { kind: "local_copy_exists"; flow_path: string }
+  | { kind: "unresolved_conflicts"; count: number; message: string };
 
-const REFUSAL_KINDS: unknown[] = ["stale_base", "refused", "other_hub", "local_copy_exists"];
+const REFUSAL_KINDS: unknown[] = [
+  "stale_base",
+  "refused",
+  "other_hub",
+  "local_copy_exists",
+  "unresolved_conflicts",
+];
+
+/** One step a merge changed on the open canvas, with the values that differ. */
+export interface HubMergeStep {
+  kind: "added" | "removed" | "changed";
+  label: string;
+  details: string[];
+}
+
+/** A part both sides changed; the canvas keeps the person's version until it is settled. */
+export interface HubMergeConflict {
+  key: string;
+  kind: string;
+  label: string;
+  message: string;
+}
+
+export interface HubMergeResult {
+  /** The hub's version merged in. */
+  version: number;
+  /** False when the open flow already builds on the hub's newest version. */
+  applied: boolean;
+  changes: HubMergeStep[];
+  conflicts: HubMergeConflict[];
+  warnings: string[];
+}
 
 export async function listHubFlowVersions(flowUuid: string): Promise<HubFlowVersion[]> {
   const response = await axios.get<HubFlowVersion[]>(`${BASE}/flows/${flowUuid}/versions`);
@@ -84,6 +116,12 @@ export async function publishToHub(input: HubPublishInput): Promise<HubPublishRe
   return response.data;
 }
 
+/** Merge the hub's newest version into the open flow, step by step, as one undo step. */
+export async function mergeFromHub(flowId: number): Promise<HubMergeResult> {
+  const response = await axios.post<HubMergeResult>(`${BASE}/merge`, { flow_id: flowId });
+  return response.data;
+}
+
 export async function openFromHub(input: HubOpenInput): Promise<HubOpenResult> {
   const response = await axios.post<HubOpenResult>(`${BASE}/open`, input);
   return response.data;
@@ -94,4 +132,38 @@ export function refusalOf(error: unknown): HubRefusal | null {
   const failure = error as { response?: { data?: { detail?: HubRefusal } } };
   const detail = failure?.response?.data?.detail;
   return REFUSAL_KINDS.includes(detail?.kind) ? (detail as HubRefusal) : null;
+}
+
+/** A merge conflict held on the open flow, with what each side did to the step, one line each. */
+export interface MergeConflictRow {
+  key: string;
+  kind: string;
+  label: string;
+  message: string;
+  step_id: number | null;
+  ours_label: string;
+  theirs_label: string;
+  ours: string[];
+  theirs: string[];
+}
+
+export async function listMergeConflicts(flowId: number): Promise<MergeConflictRow[]> {
+  const response = await axios.get<{ conflicts: MergeConflictRow[] }>("/editor/merge/conflicts", {
+    params: { flow_id: flowId },
+  });
+  return response.data.conflicts;
+}
+
+/** Take one side of one conflict, as one undo step; answers the conflicts left. */
+export async function resolveMergeConflict(
+  flowId: number,
+  key: string,
+  take: "ours" | "theirs",
+): Promise<MergeConflictRow[]> {
+  const response = await axios.post<{ conflicts: MergeConflictRow[] }>("/editor/merge/resolve/", {
+    flow_id: flowId,
+    key,
+    take,
+  });
+  return response.data.conflicts;
 }

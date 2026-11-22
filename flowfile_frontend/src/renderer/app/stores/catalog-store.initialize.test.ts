@@ -107,4 +107,27 @@ describe("catalog-store initialize", () => {
     expect(getOverview).toHaveBeenCalledTimes(2);
     expect(store.error).toBeNull();
   });
+
+  it("invalidateOverview refetches a loaded overview and leaves an unloaded one alone", async () => {
+    const store = useCatalogStore();
+    await store.invalidateOverview();
+    expect(getOverview).not.toHaveBeenCalled();
+
+    await store.initialize();
+    getOverview.mockResolvedValue({ ...overview(), flows: [{ id: 11, name: "branch flow" }] });
+    await store.invalidateOverview();
+    expect(getOverview).toHaveBeenCalledTimes(2);
+    expect(store.allFlows.map((f) => f.id)).toEqual([11]);
+  });
+
+  it("a failed invalidation still makes the next mount refetch", async () => {
+    const store = useCatalogStore();
+    await store.initialize();
+    getOverview.mockRejectedValueOnce(new Error("down"));
+    await store.invalidateOverview();
+    expect(store.overviewLoaded).toBe(true);
+
+    await store.initialize();
+    expect(getOverview).toHaveBeenCalledTimes(3);
+  });
 });

@@ -52,7 +52,7 @@ It is a Poetry package — `{ include = "shared" }` in root `pyproject.toml`, wi
 - `models.py` maps only columns non-core consumers need; if you add a column here, the canonical schema still lives in `flowfile_core.database.models`.
 
 ## Running / entry points
-Not a service — no router, no CLI of its own. It's a library: consumers do `from shared.storage_config import storage`, `from shared.kafka.consumer import read_kafka_source`, etc. The package `__init__.py` re-exports the common surface (`storage`, cloud/delta/sql helpers); the cloud/delta/sql re-exports are **lazy** (PEP 562 module `__getattr__`) — importing `shared` loads none of them. `flowfile_worker/tests/test_import_purity.py` + `test_lazy_export_surface.py` pin both the laziness and the public surface.
+Not a service and no router. Its one CLI is `flowfile-merge` (`shared/flow_merge/cli.py`, stdlib and PyYAML only), whose `check --build` loads core's build check through the `flowfile.flow_merge` entry point group instead of importing core. Otherwise it's a library: consumers do `from shared.storage_config import storage`, `from shared.kafka.consumer import read_kafka_source`, etc. The package `__init__.py` re-exports the common surface (`storage`, cloud/delta/sql helpers); the cloud/delta/sql re-exports are **lazy** (PEP 562 module `__getattr__`) — importing `shared` loads none of them. `flowfile_worker/tests/test_import_purity.py` + `test_lazy_export_surface.py` pin both the laziness and the public surface.
 
 ## Testing
 Tests live in `shared/tests/` and run from the repo root:

@@ -35,6 +35,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useDashboardsStore } from "../../stores/dashboards-store";
 import { chartsForDashboard } from "../CatalogView/chartLibraryFilter";
+import { chartsOfDashboardCatalog, tablesOfDashboardCatalog } from "./dashboardCatalog";
 
 /** Picks what a KPI or table tile reads: a catalog table directly, or a saved chart's source
  * (how a SQL source is reached). Exactly one of the two is set. */
@@ -67,7 +68,7 @@ const pickTable = (id: number | undefined) =>
 const pickViz = (id: number | undefined) => emit("change", { viz_id: id ?? null, table_id: null });
 
 const tableOptions = computed(() =>
-  catalogStore.allTables
+  tablesOfDashboardCatalog(catalogStore.allTables, catalogStore.tree, dashboardsStore.current)
     .map((t) => ({ id: t.id, label: t.full_table_name ?? t.name }))
     .sort((a, b) => a.label.localeCompare(b.label)),
 );
@@ -75,7 +76,7 @@ const tableOptions = computed(() =>
 const vizGroups = computed(() => {
   const groups = new Map<string, { label: string; items: { id: number; name: string }[] }>();
   for (const v of chartsForDashboard(
-    catalogStore.visualizationLibrary,
+    chartsOfDashboardCatalog(catalogStore.visualizationLibrary, dashboardsStore.current),
     dashboardsStore.current?.id,
   )) {
     const label =

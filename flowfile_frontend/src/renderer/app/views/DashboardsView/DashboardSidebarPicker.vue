@@ -181,6 +181,7 @@ import {
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useDashboardsStore } from "../../stores/dashboards-store";
 import { chartsForDashboard } from "../CatalogView/chartLibraryFilter";
+import { chartsOfDashboardCatalog } from "./dashboardCatalog";
 import { useDashboardDragAndDrop } from "../../composables/useDashboardDragAndDrop";
 import type { CatalogVisualization, SeparatorOrientation } from "../../types";
 
@@ -233,7 +234,10 @@ const hasActiveFilter = computed(
 
 // The charts of their own and this dashboard's; another dashboard's charts are not offered.
 const offered = computed(() =>
-  chartsForDashboard(catalogStore.visualizationLibrary, dashboardsStore.current?.id),
+  chartsForDashboard(
+    chartsOfDashboardCatalog(catalogStore.visualizationLibrary, dashboardsStore.current),
+    dashboardsStore.current?.id,
+  ),
 );
 
 const filtered = computed(() => {

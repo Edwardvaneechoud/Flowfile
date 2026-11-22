@@ -470,11 +470,27 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           clearable
           style="width: 100%"
         >
-          <el-option v-for="ns in schemaNamespaces" :key="ns.id" :label="ns.label" :value="ns.id" />
+          <template v-for="group in saveTargetGroups" :key="group.label ?? ''">
+            <el-option-group v-if="group.label" :label="group.label">
+              <el-option
+                v-for="ns in group.options"
+                :key="ns.id"
+                :label="ns.label"
+                :value="ns.id"
+              />
+            </el-option-group>
+            <template v-else>
+              <el-option
+                v-for="ns in group.options"
+                :key="ns.id"
+                :label="ns.label"
+                :value="ns.id"
+              />
+            </template>
+          </template>
         </el-select>
-        <p v-if="!schemaNamespaces.length" class="nb-saveas-hint">
-          No namespaces available — the notebook will be saved without one and won't appear in the
-          catalog tree.
+        <p v-if="!schemaNamespaces.length" class="nb-saveas-hint" data-testid="nb-saveas-hint">
+          {{ noSaveTargetHint }}
         </p>
       </div>
       <template #footer>
@@ -514,7 +530,8 @@ import {
   rememberedFlowKernel,
 } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
-import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { NO_HUB_SCHEMA_TO_SAVE_IN, offersOwnCatalog } from "./hubRows";
+import { groupSaveTargets, useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import { catalogSaveErrorMessage, detailMessage } from "../../composables/saveError";
 import { KernelApi } from "../../api/kernel.api";
 import { NotebookApi } from "../../api/notebook.api";
@@ -605,7 +622,14 @@ const saveAsName = ref("");
 const saveAsNamespaceId = ref<number | null>(null);
 const saveAsSaving = ref(false);
 
-const { writableSchemaNamespaces: schemaNamespaces } = useWritableNamespaces();
+// This machine's schemas first, then the hub's the person may write: a notebook is saved straight into either.
+const { saveTargetNamespaces: schemaNamespaces } = useWritableNamespaces();
+const saveTargetGroups = computed(() => groupSaveTargets(schemaNamespaces.value));
+const noSaveTargetHint = computed(() =>
+  offersOwnCatalog(catalogStore.tree)
+    ? "No namespaces available — the notebook will be saved without one and won't appear in the catalog tree."
+    : NO_HUB_SCHEMA_TO_SAVE_IN,
+);
 
 // Prefer General/default when writable; otherwise the first writable schema.
 const defaultNamespaceId = computed<number | null>(() => {
@@ -1393,6 +1417,12 @@ async function confirmSaveAs() {
   const name = saveAsName.value.trim();
   if (!name) {
     ElMessage.warning("A name is required");
+    return;
+  }
+  if (saveAsNamespaceId.value == null && !offersOwnCatalog(catalogStore.tree)) {
+    ElMessage.warning(
+      schemaNamespaces.value.length ? "Pick a namespace to save in" : NO_HUB_SCHEMA_TO_SAVE_IN,
+    );
     return;
   }
   saveAsSaving.value = true;

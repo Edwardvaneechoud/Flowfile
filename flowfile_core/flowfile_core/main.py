@@ -61,6 +61,7 @@ from flowfile_core.routes.custom_node_mounts import router as custom_node_mounts
 from flowfile_core.routes.file_manager import router as file_manager_router
 from flowfile_core.routes.flow_api import data_router as flow_api_data_router
 from flowfile_core.routes.flow_api import management_router as flow_api_management_router
+from flowfile_core.routes.flow_merge import router as flow_merge_router
 from flowfile_core.routes.ga_connections import router as ga_connections_router
 from flowfile_core.routes.hub_client import router as hub_client_router
 from flowfile_core.routes.kafka import router as kafka_router
@@ -273,6 +274,7 @@ app.include_router(custom_node_mounts_router, prefix="/custom-node-mounts", tags
 app.include_router(community_nodes_router, prefix="/community_nodes", tags=["community_nodes"])
 app.include_router(community_github_router, prefix="/community_nodes/github", tags=["community_nodes"])
 app.include_router(hub_client_router, prefix="/hub_client", tags=["hub_client"])
+app.include_router(flow_merge_router)
 for _extension_router, _extension_prefix in server_extension.call("routers", "core", default=()):
     app.include_router(_extension_router, prefix=_extension_prefix, tags=["server_extension"])
 app.include_router(kernel_router, tags=["kernels"])
