@@ -7,6 +7,7 @@ person signs in on the hub's own page and this side never sees a password. Conne
 table every user shares, so they need an admin.
 """
 
+import copy
 import os
 import re
 import socket
@@ -590,7 +591,7 @@ def merge_newest(request: HubMergeRequest, current_user=Depends(get_current_acti
         raise _hub_error(e) from e
 
     live = flow.get_flowfile_data().model_dump(mode="json")
-    result = merge_flows(_for_merge(base), _for_merge(latest), _for_merge(yaml.safe_load(yaml.safe_dump(live))))
+    result = merge_flows(_for_merge(base), _for_merge(latest), _for_merge(copy.deepcopy(live)))
     sides = {"base": f"version {origin.version}", "ours": f"version {newest}", "theirs": "your copy"}
     held = None
     shown = result.document

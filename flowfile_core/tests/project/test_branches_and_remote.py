@@ -817,6 +817,14 @@ def test_an_entry_added_differently_on_both_sides_names_its_values():
         ),
         ("fatal: repository 'https://git.example.invalid/team403/x.git/' not found", "No repository"),
         (" ! [rejected]        main -> main (fetch first)\nhint: the tip 4a14030f is behind", "pull first"),
+        (" ! [rejected]        main -> main (non-fast-forward)", "pull first"),
+        (
+            "remote: error: GH006: Protected branch update failed for refs/heads/main.\n"
+            " ! [remote rejected] main -> main (protected branch hook declined)\n"
+            "error: failed to push some refs to 'https://git.example.invalid/x.git'",
+            "declined the push",
+        ),
+        (" ! [remote rejected] main -> main (pre-receive hook declined)", "declined the push"),
         (
             "fatal: unable to access 'https://git.example.invalid/x.git/': The requested URL returned error: 403",
             "refused the sign-in",
@@ -830,6 +838,19 @@ def test_an_entry_added_differently_on_both_sides_names_its_values():
 )
 def test_a_remote_failure_is_read_from_gits_words_not_from_digits_in_an_address(stderr, message):
     assert message in git_ops._remote_failure(stderr)
+
+
+def test_a_push_a_hook_on_the_remote_declines_is_not_told_to_pull(project, remote):
+    hook = remote / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'pushes to main go through review' >&2\nexit 1\n", newline="\n")
+    hook.chmod(0o755)
+    _set_remote(str(remote))
+    refused = client.post("/project/push")
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == {
+        "code": "GIT_REFUSED",
+        "message": "The remote declined the push, for example a protected branch or a hook on the remote.",
+    }
 
 
 def _closed_port_holding(digits: str) -> int:

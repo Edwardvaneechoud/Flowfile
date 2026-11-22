@@ -153,9 +153,3 @@ def test_parameters_are_read_by_name_and_written_in_place():
     settings = emit(flow)["flowfile_settings"]
     assert list(settings) == ["description", "parameters", "auto_save"]
     assert [p["name"] for p in settings["parameters"]] == ["a", "b"]
-
-
-def test_readers_of():
-    flow, _ = canonical({"nodes": [_node(1), _node(2, input_ids=[1]), _node(3, input_ids=[2], right_input_id=1)]})
-    assert flow.readers_of(1) == [2, 3]
-    assert flow.readers_of(3) == []

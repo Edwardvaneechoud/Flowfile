@@ -221,14 +221,18 @@ def _friendly_changes(raw: list[dict]) -> list[dict]:
 
 def _with_step_changes(root: Path, sha: str, rows: list[dict]) -> list[dict]:
     """A changed flow's row gains ``steps``: what changed in it step by step, for the version's review."""
-    parent = None
-    for row in rows:
-        owned = kinds.kind_for_path(row["path"])
-        if row["change"] != "modified" or owned is None or owned[0].name != "flow":
-            continue
-        parent = parent or git_ops.parent_of(root, sha)
-        before = git_ops.read_blob(root, parent, row["path"]) if parent else None
-        after = git_ops.read_blob(root, sha, row["path"])
+    flows = [
+        row
+        for row in rows
+        if row["change"] == "modified" and (owned := kinds.kind_for_path(row["path"])) and owned[0].name == "flow"
+    ]
+    parent = git_ops.parent_of(root, sha) if flows else None
+    if parent is None:
+        return rows
+    paths = [row["path"] for row in flows]
+    befores, afters = git_ops.read_blobs(root, parent, paths), git_ops.read_blobs(root, sha, paths)
+    for row in flows:
+        before, after = befores.get(row["path"]), afters.get(row["path"])
         if before is None or after is None:
             continue
         try:
@@ -861,7 +865,10 @@ class ProjectSyncService:
         marker = getattr(flow, "project_merge", None)
         if not marker:
             return None
-        proj = self._require_project(marker["owner_id"])
+        proj = self.get_active_project(marker["owner_id"])
+        if proj is None:
+            logger.info("No active project to record the settle of %s in", marker["path"])
+            return None
         with git_ops.project_lock(proj.root):
             state = merging.load_state(proj.root)
             wrapper = (state or {}).get("flows", {}).get(marker["path"])

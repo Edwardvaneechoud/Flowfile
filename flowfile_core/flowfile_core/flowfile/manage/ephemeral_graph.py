@@ -23,7 +23,6 @@ from flowfile_core.flowfile.manage.io_flowfile import (
 )
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas import schemas
-from shared.flow_merge.conflict import refuse_conflicted
 
 
 def free_flow_id() -> int:
@@ -59,12 +58,12 @@ def ephemeral_flow_graph(flow_path: Path, user_id: int) -> Iterator[FlowGraph]:
 
 
 @contextlib.contextmanager
-def ephemeral_document_graph(document: dict, user_id: int | None = None) -> Iterator[FlowGraph]:
-    """A saved flow given as data (no file) built the way :func:`ephemeral_flow_graph` builds one from a path."""
-    refuse_conflicted(document, "The flow")
+def ephemeral_document_graph(document: dict) -> Iterator[FlowGraph]:
+    """A saved flow given as data (no file, no owner) built the way :func:`ephemeral_flow_graph` builds one from a
+    path. The caller refuses a conflicted document first (``check_document`` reports it as an integrity issue)."""
     info = _flowfile_data_to_flow_information(schemas.FlowfileData.model_validate(document))
     info.flow_settings.execution_location = schemas.loaded_execution_location(info.flow_settings.execution_location)
-    with _ephemeral_graph(info, info.flow_name or "flow", user_id) as graph:
+    with _ephemeral_graph(info, info.flow_name or "flow", None) as graph:
         yield graph
 
 

@@ -42,7 +42,7 @@ class DocumentCheck(BaseModel):
         return out + self.not_wired + self.lost_on_load + self.settings
 
 
-def check_document(document: dict, user_id: int | None = None) -> DocumentCheck:
+def check_document(document: dict) -> DocumentCheck:
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_document_graph
     from flowfile_core.flowfile.settings_validation import validate_flow_settings
 
@@ -50,7 +50,7 @@ def check_document(document: dict, user_id: int | None = None) -> DocumentCheck:
     if is_conflicted(document):
         return result
     try:
-        with ephemeral_document_graph(document, user_id) as graph:
+        with ephemeral_document_graph(document) as graph:
             result.not_wired = [
                 f"Step {node.node_id} {node.node_type} does not have the inputs a {node.node_type} needs."
                 for node in graph.nodes

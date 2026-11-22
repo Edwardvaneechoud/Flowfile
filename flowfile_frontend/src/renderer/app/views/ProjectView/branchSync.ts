@@ -1,4 +1,5 @@
 import type { ProjectBranch, ProjectMergeItem, ProjectPullResult } from "../../types";
+import { plural } from "../../utils/text";
 
 const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
@@ -16,8 +17,6 @@ export const branchNameError = (name: string): string | null => {
   }
   return null;
 };
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** How a branch stands against the remote's copy, as last fetched. */
 export const syncText = (branch: ProjectBranch | null, hasRemote: boolean): string => {

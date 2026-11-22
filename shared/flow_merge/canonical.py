@@ -54,12 +54,6 @@ class CanonicalFlow:
     groups: dict[int, dict] = field(default_factory=dict)
     comments: dict[int, dict] = field(default_factory=dict)
 
-    def readers_of(self, step_id: int) -> list[int]:
-        """The steps that read from ``step_id``, in id order."""
-        return sorted(
-            t for t, slots in self.inputs.items() if any(s == step_id for es in slots.values() for s, _ in es)
-        )
-
 
 def _is_id(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
@@ -87,9 +81,10 @@ def canonical(document: Mapping) -> tuple[CanonicalFlow, list[Issue]]:
     steps = _by_id(doc.get("nodes"), "step", issues)
     keyed = {sid for sid, node in steps.items() if node.get("input_connections")}
     inputs: dict[int, dict[str, tuple[Edge, ...]]] = {}
+    handles = source_handles(steps)
     for sid, node in steps.items():
         slots: dict[str, tuple[Edge, ...]] = {}
-        for handle, edges in incoming_edges(node, steps).items():
+        for handle, edges in incoming_edges(node, steps, handles).items():
             kept = []
             for source, source_handle in edges:
                 if source in steps:

@@ -22,8 +22,8 @@ import copy
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from shared.flow_merge.canonical import Issue, canonical, emit
-from shared.flow_merge.merge import Conflict, IdMap, MergeResult
+from shared.flow_merge.canonical import canonical, emit
+from shared.flow_merge.merge import Conflict, MergeResult
 
 FORMAT = 1
 MARKER = "flowfile_conflict"
@@ -196,23 +196,3 @@ def _resolve_records(conflicted: Mapping, held: dict, choices: Mapping[str, Choi
         "merged": merged,
         "conflicts": left,
     }
-
-
-def as_result(conflicted: Mapping) -> MergeResult:
-    """A wrapper read back as a :class:`MergeResult` (its ``changes`` left empty)."""
-    from shared.flow_merge.diff import FlowDiff
-
-    id_map = conflicted.get("id_map") or {}
-    return MergeResult(
-        document=copy.deepcopy(conflicted["merged"]),
-        changes=FlowDiff(),
-        conflicts=tuple(open_conflicts(conflicted)),
-        warnings=tuple(
-            Issue(w["code"], w["message"], tuple(w.get("ids") or ())) for w in conflicted.get("warnings") or []
-        ),
-        id_map=IdMap(
-            {int(k): v for k, v in (id_map.get("nodes") or {}).items()},
-            {int(k): v for k, v in (id_map.get("groups") or {}).items()},
-            {int(k): v for k, v in (id_map.get("comments") or {}).items()},
-        ),
-    )

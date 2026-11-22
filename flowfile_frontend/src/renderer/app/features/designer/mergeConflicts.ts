@@ -1,7 +1,6 @@
 import type { EditorSettleOutcome } from "../../stores/project-store";
 import { SETTLED } from "./hubFlows";
-
-const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
+import { plural } from "../../utils/text";
 
 /** The conflict bar's heading while the open flow holds merge conflicts. */
 export const conflictsTitle = (count: number): string =>
