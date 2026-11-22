@@ -11,9 +11,12 @@
 // stay live even while editing — Cmd+S in the Formula editor must save the
 // flow, not fall through to the browser's save-page dialog.
 import { onMounted, onUnmounted } from "vue";
+import { IS_MAC } from "../utils/shortcuts";
 
 export interface FlowHotkeyActions {
   flowId: () => number;
+  undo: () => void;
+  redo: () => void;
   selectAll: () => void;
   newFlow: () => void;
   save: () => void;
@@ -74,9 +77,17 @@ export const historyShortcutFor = (
 const inCodeDock = (target: EventTarget | null): boolean =>
   target instanceof Element && !!target.closest(".code-dock");
 
-export const createFlowHotkeysHandler = (actions: FlowHotkeyActions) => {
+export const createFlowHotkeysHandler = (actions: FlowHotkeyActions, isMac = IS_MAC) => {
   return (event: KeyboardEvent): void => {
     if (!(event.ctrlKey || event.metaKey)) return;
+    const historyAction = historyShortcutFor(event, isMac);
+    if (historyAction) {
+      if (actions.flowId() > 0) {
+        event.preventDefault();
+        actions[historyAction]();
+      }
+      return;
+    }
     // Normalize to lowercase to handle Caps Lock being on.
     const key = event.key.toLowerCase();
     const inEditable = isEditableKeydownTarget(event.target) || inCodeDock(event.target);
