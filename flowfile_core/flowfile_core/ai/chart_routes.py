@@ -13,7 +13,7 @@ timeout or an answer that still fails after the retry comes back ``degraded`` wi
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -34,6 +34,8 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.database.connection import get_db_context
 
 router = APIRouter()
+
+AnswerT = TypeVar("AnswerT", bound=BaseModel)
 
 
 class GenerateChartRequest(BaseModel):
@@ -80,6 +82,11 @@ def _table_and_provider(user: Any, body: GenerateChartRequest):
     return table, provider
 
 
+def answered_by(result: AnswerT, provider: Any) -> AnswerT:
+    """The result stamped with the provider and model that answered it, for the builder's log."""
+    return result.model_copy(update={"provider": provider.name, "model": getattr(provider, "model", None)})
+
+
 def _profile_warning(problem: str) -> str:
     return (
         f"Column statistics and example values were not available ({problem}); "
@@ -102,7 +109,7 @@ async def generate_chart_route(
     share_values = body.send_values and send_data_allowed()
     profile = await profile_table(table, current_user, share_values=share_values)
     warnings = [] if profile.complete else [_profile_warning(profile.problem or "unknown error")]
-    return await generate_chart(
+    result = await generate_chart(
         prompt=body.prompt,
         columns=profile.column_infos(),
         profile_text=render_profile(profile),
@@ -112,6 +119,7 @@ async def generate_chart_route(
         warnings=warnings,
         timeout=body.timeout,
     )
+    return answered_by(result, provider)
 
 
-__all__ = ["router", "GenerateChartRequest"]
+__all__ = ["router", "GenerateChartRequest", "answered_by"]
