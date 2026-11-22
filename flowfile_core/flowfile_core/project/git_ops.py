@@ -763,7 +763,7 @@ def _remote_failure(stderr: str) -> str:
         return "The remote refused the sign-in: check the remote's token."
     if "non-fast-forward" in text or "fetch first" in text or "rejected" in text:
         return "The remote has versions this branch does not: pull first."
-    if "could not resolve host" in text or "connection refused" in text or "timed out" in text:
+    if any(s in text for s in ("could not resolve host", "failed to connect", "connection refused", "timed out")):
         return "The remote could not be reached."
     if "does not appear to be a git repository" in text or "not found" in text:
         return "No repository at the remote's address, or none the remote's token can read."

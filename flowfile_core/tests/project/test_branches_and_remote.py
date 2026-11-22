@@ -803,6 +803,16 @@ def test_an_entry_added_differently_on_both_sides_names_its_values():
             "after 2034 ms: Connection refused",
             "could not be reached",
         ),
+        (
+            "fatal: unable to access 'http://127.0.0.1:40100/x.git/': Failed to connect to 127.0.0.1 port 40100 "
+            "after 0 ms: Couldn't connect to server",
+            "could not be reached",
+        ),
+        (
+            "fatal: unable to access 'http://127.0.0.1:40100/x.git/': Failed to connect to 127.0.0.1 port 40100 "
+            "after 0 ms: Could not connect to server",
+            "could not be reached",
+        ),
         ("fatal: repository 'https://git.example.invalid/team403/x.git/' not found", "No repository"),
         (" ! [rejected]        main -> main (fetch first)\nhint: the tip 4a14030f is behind", "pull first"),
         (
