@@ -55,7 +55,7 @@
         v-for="d in filtered"
         :key="d.id"
         :dashboard="d"
-        :thumbnails="thumbnails"
+        :charts="previewCharts"
         @view="onView(d)"
         @edit="onEdit(d)"
         @delete="onDelete(d)"
@@ -84,6 +84,7 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useAiDashboardStore } from "../../stores/ai-dashboard-store";
 import { useAiStore } from "../../stores/ai-store";
 import DashboardCard from "./DashboardCard.vue";
+import type { PreviewChart } from "./layoutPreview";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import type { Dashboard } from "../../types";
@@ -94,10 +95,10 @@ const catalogStore = useCatalogStore();
 const aiDashboardStore = useAiDashboardStore();
 const search = ref("");
 
-const thumbnails = computed<Record<number, string>>(() => {
-  const out: Record<number, string> = {};
+const previewCharts = computed<Record<number, PreviewChart>>(() => {
+  const out: Record<number, PreviewChart> = {};
   for (const v of catalogStore.visualizationLibrary) {
-    if (v.thumbnail_data_url) out[v.id] = v.thumbnail_data_url;
+    out[v.id] = { thumbnail: v.thumbnail_data_url, chartType: v.chart_type };
   }
   return out;
 });
@@ -128,7 +129,7 @@ onMounted(() => {
   store.loadLibrary().catch(() => {
     ElMessage.error(store.error ?? "Failed to load dashboards");
   });
-  // Thumbnails are a nicety: a failed library load just leaves the tinted fallback.
+  // Chart previews are a nicety: a failed library load just leaves the bar sketches.
   if (!catalogStore.visualizationLibrary.length) {
     catalogStore.loadVisualizationLibrary().catch(() => undefined);
   }
