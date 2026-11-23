@@ -439,7 +439,10 @@ def _is_inert_expression_load(call: ast.Call) -> bool:
 
 
 def _refuse_plan_loads(tree: ast.AST) -> None:
-    """Raise ``PLAN_LOAD_REFUSED_MESSAGE`` for any ``deserialize`` in ``tree`` but an inert expression load."""
+    """Raise ``PLAN_LOAD_REFUSED_MESSAGE`` for any ``deserialize`` in ``tree`` but an inert expression load.
+
+    A class pattern's keyword (``case pl.LazyFrame(deserialize=load)``) reads that attribute too, so it counts.
+    """
     inert_loads = {
         id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call) and _is_inert_expression_load(node)
     }
@@ -447,6 +450,8 @@ def _refuse_plan_loads(tree: ast.AST) -> None:
         raise ValueError(PLAN_LOAD_REFUSED_MESSAGE)
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr == "deserialize" and id(node) not in inert_loads:
+            raise ValueError(PLAN_LOAD_REFUSED_MESSAGE)
+        if isinstance(node, ast.MatchClass) and "deserialize" in node.kwd_attrs:
             raise ValueError(PLAN_LOAD_REFUSED_MESSAGE)
 
 
@@ -564,6 +569,12 @@ class PolarsCodeParser:
                 if isinstance(node, ast.Attribute):
                     if node.attr.startswith("_"):
                         raise ValueError(f"Access to '{node.attr}' is not allowed")
+
+                if isinstance(node, ast.MatchClass):
+                    # A class pattern's keyword reads that attribute of the subject.
+                    for name in node.kwd_attrs:
+                        if name.startswith("_"):
+                            raise ValueError(f"Access to '{name}' is not allowed")
 
                 if isinstance(node, ast.Assign | ast.AugAssign | ast.AnnAssign | ast.Delete):
                     targets = node.targets if isinstance(node, ast.Assign | ast.Delete) else [node.target]

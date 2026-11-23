@@ -65,11 +65,31 @@ def test_the_reported_line_is_refused():
         "output_df = input_df.select(pl.Expr.deserialize(BytesIO(base64.b64decode('{blob}')), format='json'))",
         "output_df = input_df.select(pl.Expr.deserialize(BytesIO(base64.b64decode('{blob}')), format='binary'))",
         "def transform(input_df):\n    return pl.LazyFrame.deserialize(BytesIO(base64.b64decode('{blob}')))",
+        "match input_df:\n"
+        "    case pl.LazyFrame(deserialize=load):\n"
+        "        output_df = load(BytesIO(base64.b64decode('{blob}')))",
     ],
-    ids=["dataframe", "alias", "expr binary", "expr json decoded", "expr explicit binary", "function form"],
+    ids=[
+        "dataframe",
+        "alias",
+        "expr binary",
+        "expr json decoded",
+        "expr explicit binary",
+        "function form",
+        "class pattern",
+    ],
 )
 def test_every_other_deserialize_is_refused(template):
     _refused(template.format(blob=_udf_blob()))
+
+
+@pytest.mark.parametrize("mode", ["electron", "package", "docker", "server"])
+def test_a_class_pattern_keyword_is_checked_as_an_attribute(monkeypatch, mode):
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
+    code = "match input_df:\n    case pl.LazyFrame(__class__=found):\n        output_df = input_df"
+
+    with pytest.raises(ValueError, match="Access to '__class__' is not allowed"):
+        polars_code_parser.get_executable(code, 1)
 
 
 @pytest.mark.parametrize(
