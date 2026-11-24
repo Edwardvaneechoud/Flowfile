@@ -15,15 +15,31 @@ if TYPE_CHECKING:
 
 
 def _iceberg_catalog(
-    file_format: str, uri: str | None, warehouse: str | None, token_secret: str | None
+    file_format: str,
+    uri: str | None,
+    warehouse: str | None,
+    token_secret: str | None,
+    catalog: str | None = None,
 ) -> cloud_storage_schemas.IcebergCatalogSettings | None:
     """The catalog block of an Iceberg node; the catalog keywords are refused with any other format."""
     if file_format != "iceberg":
-        if uri or warehouse or token_secret:
-            raise ValueError("catalog_uri, catalog_warehouse and catalog_token_secret need file_format='iceberg'")
+        if uri or warehouse or token_secret or catalog:
+            raise ValueError(
+                "catalog, catalog_uri, catalog_warehouse and catalog_token_secret need file_format='iceberg'"
+            )
         return None
+    if catalog:
+        if uri or warehouse or token_secret:
+            raise ValueError(
+                "Name the catalog either by its name in Flowfile's catalog (catalog) or by its address (catalog_uri),"
+                " not both; a named catalog brings its own warehouse and sign-in."
+            )
+        return cloud_storage_schemas.IcebergCatalogSettings(catalog=catalog)
     if not uri:
-        raise ValueError("file_format='iceberg' needs catalog_uri, the address of the table's Iceberg REST catalog")
+        raise ValueError(
+            "file_format='iceberg' needs catalog_uri, the address of the table's Iceberg REST catalog, or catalog,"
+            " the name of a catalog added to Flowfile's catalog"
+        )
     return cloud_storage_schemas.IcebergCatalogSettings(uri=uri, warehouse=warehouse, token_secret=token_secret)
 
 
@@ -44,6 +60,7 @@ def read_from_cloud_storage(
     catalog_uri: str | None = None,
     catalog_warehouse: str | None = None,
     catalog_token_secret: str | None = None,
+    catalog: str | None = None,
 ) -> FlowFrame:
     """Read data from cloud storage.
 
@@ -51,9 +68,9 @@ def read_from_cloud_storage(
     JSON, Delta, Iceberg). Returns a FlowFrame for consistency with read_database()
     and read_catalog_table().
 
-    With ``file_format="iceberg"``, ``source`` is a table's name (``namespace.table``) and ``catalog_uri`` the
-    address of the Iceberg REST catalog that keeps it; the catalog hands out the storage keys each time the flow
-    runs, so no connection is named.
+    With ``file_format="iceberg"``, ``source`` is a table's name (``namespace.table``) and ``catalog`` the name of
+    a catalog added to Flowfile's catalog, or ``catalog_uri`` the address of the Iceberg REST catalog that keeps it;
+    the catalog hands out the storage keys each time the flow runs, so no connection is named.
 
     Args:
         source: Cloud storage path (e.g., 's3://bucket/path/file.parquet'), or an Iceberg table's name.
@@ -76,7 +93,9 @@ def read_from_cloud_storage(
         catalog_uri: The Iceberg REST catalog's address (only used for Iceberg format).
         catalog_warehouse: The catalog's warehouse (only used for Iceberg format).
         catalog_token_secret: The name of a stored secret holding a bearer token for the catalog (only used for
-            Iceberg format; not yet tested against a catalog that checks it).
+            Iceberg format).
+        catalog: The name of a catalog kept elsewhere in Flowfile's catalog, whose address, warehouse and sign-in
+            are used (only used for Iceberg format; instead of the three ``catalog_*`` keywords).
 
     Returns:
         FlowFrame: A FlowFrame backed by a cloud storage reader node.
@@ -89,7 +108,7 @@ def read_from_cloud_storage(
         scan_parquet_from_cloud_storage,
     )
 
-    catalog = _iceberg_catalog(file_format, catalog_uri, catalog_warehouse, catalog_token_secret)
+    iceberg = _iceberg_catalog(file_format, catalog_uri, catalog_warehouse, catalog_token_secret, catalog)
     if (changes_since is not None or include_change_preimage) and file_format != "delta":
         raise ValueError("changes_since is only supported for the 'delta' file format")
 
@@ -131,7 +150,7 @@ def read_from_cloud_storage(
             output_field_config=output_field_config,
         )
     elif file_format == "iceberg":
-        frame = _scan_iceberg_table(source, catalog, description=description, output_field_config=output_field_config)
+        frame = _scan_iceberg_table(source, iceberg, description=description, output_field_config=output_field_config)
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
 
@@ -154,14 +173,16 @@ def write_to_cloud_storage(
     catalog_uri: str | None = None,
     catalog_warehouse: str | None = None,
     catalog_token_secret: str | None = None,
+    catalog: str | None = None,
 ) -> None:
     """Write data to cloud storage.
 
     Unified function that supports all cloud storage formats (CSV, Parquet,
     JSON, Delta, Iceberg). Consistent with write_database() and write_catalog_table().
 
-    With ``file_format="iceberg"``, ``path`` is a table's name (``namespace.table``) and ``catalog_uri`` the address
-    of the Iceberg REST catalog that keeps it. A missing table is created; ``write_mode`` is ``"overwrite"`` or
+    With ``file_format="iceberg"``, ``path`` is a table's name (``namespace.table``) and ``catalog`` the name of a
+    catalog added to Flowfile's catalog, or ``catalog_uri`` the address of the Iceberg REST catalog that keeps it. A
+    missing table is created; ``write_mode`` is ``"overwrite"`` or
     ``"append"``, and a table's columns and partitioning are never changed.
 
     Args:
@@ -184,9 +205,11 @@ def write_to_cloud_storage(
         catalog_uri: The Iceberg REST catalog's address (only used for Iceberg format).
         catalog_warehouse: The catalog's warehouse (only used for Iceberg format).
         catalog_token_secret: The name of a stored secret holding a bearer token for the catalog (only used for
-            Iceberg format; not yet tested against a catalog that checks it).
+            Iceberg format).
+        catalog: The name of a catalog kept elsewhere in Flowfile's catalog, whose address, warehouse and sign-in
+            are used (only used for Iceberg format; instead of the three ``catalog_*`` keywords).
     """
-    catalog = _iceberg_catalog(file_format, catalog_uri, catalog_warehouse, catalog_token_secret)
+    iceberg = _iceberg_catalog(file_format, catalog_uri, catalog_warehouse, catalog_token_secret, catalog)
     if partition_by and file_format != "delta":
         raise ValueError("partition_by is only supported for the 'delta' file format")
     if (merge_keys or track_changes) and file_format != "delta":
@@ -218,7 +241,7 @@ def write_to_cloud_storage(
         )
     elif file_format == "iceberg":
         node_id = add_write_ff_to_cloud_storage(
-            path, df.flow_graph, df.node_id, write_mode=write_mode, file_format="iceberg", iceberg_catalog=catalog
+            path, df.flow_graph, df.node_id, write_mode=write_mode, file_format="iceberg", iceberg_catalog=iceberg
         )
         df._create_child_frame(node_id)
     else:
@@ -241,7 +264,12 @@ def add_write_ff_to_cloud_storage(
     track_changes: bool = False,
     description: str | None = None,
     iceberg_catalog: cloud_storage_schemas.IcebergCatalogSettings | None = None,
+    catalog: str | None = None,
 ) -> int:
+    if catalog is not None:
+        if iceberg_catalog is not None:
+            raise ValueError("Give iceberg_catalog or catalog, not both.")
+        iceberg_catalog = cloud_storage_schemas.IcebergCatalogSettings(catalog=catalog)
     node_id = generate_node_id()
     flow_id = flow_graph.flow_id
     settings = input_schema.NodeCloudStorageWriter(

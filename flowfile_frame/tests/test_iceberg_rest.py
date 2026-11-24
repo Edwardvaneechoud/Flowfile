@@ -77,3 +77,64 @@ def test_a_frame_writes_a_new_table_and_reads_it_back(namespace):
     back = ff.read_from_cloud_storage(f"{namespace}.orders_grp3", file_format="iceberg", **CATALOG).collect()
     assert sorted(back["grp"].unique().to_list()) == [3, 4]
     assert back.height == 200
+
+
+def test_a_named_catalog_takes_no_address_and_no_other_format():
+    with pytest.raises(ValueError, match="not both"):
+        ff.read_from_cloud_storage("sales.orders", file_format="iceberg", catalog="polaris",
+                                   catalog_uri=fixtures.CATALOG_URI)
+    with pytest.raises(ValueError, match="need file_format='iceberg'"):
+        ff.read_from_cloud_storage("s3://bucket/x.parquet", file_format="parquet", catalog="polaris")
+
+
+@pytest.fixture(scope="module")
+def polaris():
+    """Polaris added to Flowfile's catalog with a client id and secret, ``sales.orders`` 1000 rows on it."""
+    if not fixtures.signed_catalog_ready():
+        pytest.skip(fixtures.SIGNED_SKIP_REASON)
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogNamespace
+    from flowfile_core.schemas.catalog_schema import ExternalCatalogCreate
+    from shared.iceberg_utils import write_table
+
+    principal = fixtures.new_principal()
+    signed = fixtures.signed_catalog(principal)
+    schema = f"frame_{uuid.uuid4().hex[:8]}"
+    signed.create_namespace(schema)
+    frame = pl.LazyFrame({"id": list(range(1000))}).with_columns(grp=pl.col("id") % 10)
+    table = signed.create_table(f"{schema}.orders", schema=frame.collect().to_arrow().schema)
+    write_table(table, frame, "append")
+    name = f"polaris_{uuid.uuid4().hex[:6]}"
+    body = ExternalCatalogCreate(
+        name=name, uri=fixtures.SIGNED_CATALOG_URI, warehouse=fixtures.SIGNED_WAREHOUSE,
+        sign_in="client_credentials", client_id=principal.client_id, client_secret=principal.client_secret,
+        scope=fixtures.SIGNED_SCOPE,
+    )
+    with get_db_context() as db:
+        CatalogService(SQLAlchemyCatalogRepository(db)).create_external_catalog(body, 1)
+    yield name, schema, signed
+    with get_db_context() as db:
+        row = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).first()
+        CatalogService(SQLAlchemyCatalogRepository(db)).delete_external_catalog(row.id)
+    for identifier in signed.list_tables(schema):
+        with contextlib.suppress(Exception):
+            signed.drop_table(identifier)
+    with contextlib.suppress(Exception):
+        signed.drop_namespace(schema)
+    fixtures.drop_principal(principal.name)
+
+
+@pytest.mark.iceberg_rest
+def test_two_python_lines_read_and_write_a_table_by_the_catalogs_name(polaris):
+    name, schema, signed = polaris
+
+    orders = ff.read_from_cloud_storage(f"{schema}.orders", file_format="iceberg", catalog=name)
+    ff.write_to_cloud_storage(orders.filter(ff.col("grp") == 3), f"{schema}.orders_grp3", file_format="iceberg",
+                              catalog=name)
+
+    assert orders.columns == ["id", "grp"]
+    from shared.iceberg_utils import scan_table, table_access
+
+    back = scan_table(table_access(signed.load_table(f"{schema}.orders_grp3"))).collect()
+    assert (back.height, sorted(back["grp"].unique().to_list())) == (100, [3])

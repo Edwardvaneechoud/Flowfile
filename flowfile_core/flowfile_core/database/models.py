@@ -190,6 +190,10 @@ class CatalogNamespace(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     # Seeded system namespaces show to every user as tree containers; contents stay per-user filtered.
     is_public = Column(Boolean, nullable=False, default=False, server_default="0")
+    # A catalog, or a schema of one, that another provider keeps (an ``external_catalogs`` row says how to reach it).
+    kept_elsewhere = Column(Boolean, nullable=False, default=False, server_default="0")
+    # Set on a kept-elsewhere schema the other catalog stopped listing; the row stays until a person removes it.
+    gone_since = Column(DateTime, nullable=True)
     # Per-catalog object storage (level-0 only; schemas/tables inherit). NULL ⇒ local filesystem.
     storage_uri = Column(String, nullable=True)
     storage_connection_name = Column(String, nullable=True)
@@ -197,6 +201,30 @@ class CatalogNamespace(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("name", "parent_id", name="uq_namespace_name_parent"),)
+
+
+class ExternalCatalog(Base):
+    """How a catalog kept by another provider is reached. Its level-0 namespace and that catalog's schemas are ordinary
+    rows marked ``kept_elsewhere``; the sign-in is one secret of the owner's."""
+
+    __tablename__ = "external_catalogs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=False, unique=True)
+    kind = Column(String, nullable=False, default="iceberg_rest")
+    uri = Column(String, nullable=False)
+    warehouse = Column(String, nullable=True)
+    # "none", "token" or "client_credentials"; the token or the client secret is the secret's value.
+    sign_in = Column(String, nullable=False, default="none")
+    client_id = Column(String, nullable=True)
+    scope = Column(String, nullable=True)
+    token_endpoint = Column(String, nullable=True)
+    secret_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
+    synced_at = Column(DateTime, nullable=True)
+    sync_error = Column(Text, nullable=True)
+    not_shown = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class FlowRegistration(Base):

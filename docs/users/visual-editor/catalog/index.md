@@ -236,6 +236,72 @@ Use the **Catalog Reader** input node to read a catalog table (physical or virtu
 
 ---
 
+## A catalog from elsewhere
+
+Give Flowfile the address of the Iceberg catalog your company already runs and a sign-in, and its schemas and tables
+show up in Flowfile's catalog beside your own: nothing is copied, nobody types a storage key, and what you see is what
+the other catalog holds right now.
+
+**New → Add a catalog from elsewhere** opens the form:
+
+| Field | What to enter |
+|---|---|
+| **Name** | How Flowfile names the catalog, in the tree and in a flow (`polaris`). No dot. |
+| **Address** | The catalog's Iceberg REST address, such as `https://…/api/catalog`. |
+| **Warehouse** | The catalog's warehouse (Polaris calls it the catalog's name). |
+| **Sign in with** | *No sign-in*, *A token* (a bearer token you paste), or *A client id and secret*. |
+| **Scope** (under More) | Polaris and Snowflake Open Catalog: `PRINCIPAL_ROLE:ALL`. |
+| **Token endpoint** (under More) | Empty: the catalog's own (`<address>/v1/oauth/tokens`). |
+
+**Test** asks the catalog for its namespaces with that sign-in and says in one sentence what happened: "Signed in. 2
+schemas.", or why not (the catalog asks for a sign-in, refused the client id and secret, has no such warehouse, or
+nothing answers at the address). **Add catalog** tests again, stores the sign-in as one secret of yours, encrypted, and
+brings the catalog's schemas in. The secret is never shown again and never sent to the browser; editing the catalog
+keeps it unless you type a new one, and changing the address, the token endpoint or the kind of sign-in asks for it
+again.
+
+A token is not renewed: a flow that runs longer than the token lives fails, and says so. A client id and secret is
+renewed during a run, so use it for anything that runs on a schedule.
+
+**Schemas are kept in line.** The catalog's top-level namespaces are its schemas in Flowfile. Opening the catalog in
+the tree, or its panel, brings them in line (at most once every half minute); **Refresh** does it now. A schema the
+other catalog added appears; one it dropped is marked *gone*: it shows only under **Show unavailable**, and you can
+remove it. A schema that comes back is the same schema, with the same shares. A catalog that cannot be reached keeps
+the schemas it had, and its panel says why. Namespaces nested inside another, and names with a dot, are not shown;
+the panel counts them.
+
+**Tables are listed live.** Opening a schema asks the other catalog for its tables (kept a minute; Refresh asks
+again). A table's panel shows its columns as Flowfile types, its Iceberg format version, its location, its partition
+columns and when it last changed, all from the catalog's own description of the table. It shows no row count and no
+preview: rows are read when a flow runs. Nothing can be saved into such a catalog's schemas from Flowfile; the
+pickers that save leave it out.
+
+**Read it in a flow.** A flow names the catalog by its name, from Python:
+
+```python
+orders = ff.read_from_cloud_storage("sales.orders", file_format="iceberg", catalog="polaris")
+ff.write_to_cloud_storage(orders.filter(ff.col("grp") == 3), "sales.orders_grp3", file_format="iceberg", catalog="polaris")
+```
+
+Each run, the process that reads or writes asks the catalog for that table's storage keys itself, with the stored
+sign-in.
+
+What it does not do yet, in plain words:
+
+- Proven with Apache Polaris (as Snowflake Open Catalog runs) and Lakekeeper. Signing in by token or by client id and
+  secret only: not AWS request signing, so not AWS Glue; a separate identity provider's token endpoint (Keycloak,
+  Entra, Okta) is the same client code with another address and was not run against one.
+- One level of schemas, and names without a dot.
+- Tables on S3-compatible storage whose keys the catalog hands out.
+- Tables are read and written from Python and in a flow opened in the designer; the designer's own forms do not offer
+  them yet.
+- On a multi-user server only an administrator adds, tests, edits or removes one. It is private until shared like
+  any catalog: Use lets a person see it, list its tables and read them in a flow; Manage also lets them write. Neither
+  changes the address or the sign-in.
+- A project does not carry these catalogs: the address and the sign-in are this install's own.
+
+---
+
 ## Lineage
 
 The catalog tracks full data lineage — which flows produce and consume each table:

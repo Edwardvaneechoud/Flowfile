@@ -60,7 +60,7 @@ class CloudStorageBuildersMixin(GraphMixinBase):
             if write_settings.file_format == "iceberg":
                 iceberg = IcebergWritePayload(
                     plan=df.data_frame,
-                    table=_iceberg_table_ref(write_settings, user_id),
+                    table=_iceberg_table_ref(write_settings, user_id, writes=True),
                     mode=write_settings.write_mode,
                     flow_id=self.flow_id,
                     node_id=node_cloud_storage_writer.node_id,

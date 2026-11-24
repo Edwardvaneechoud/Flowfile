@@ -24,6 +24,7 @@ from flowfile_core.database.models import (
     CatalogTable,
     CatalogTableReadLink,
     CatalogVisualization,
+    ExternalCatalog,
     FlowApiEndpoint,
     FlowApiKey,
     FlowFavorite,
@@ -75,6 +76,20 @@ class CatalogRepository(Protocol):
     def get_root_namespace(self, namespace_id: int) -> CatalogNamespace | None: ...
 
     def count_physical_tables_under_namespace(self, namespace_id: int) -> int: ...
+
+    # -- Catalogs kept elsewhere --
+
+    def get_external_catalog(self, namespace_id: int) -> ExternalCatalog | None: ...
+
+    def get_external_catalog_by_name(self, name: str) -> list[ExternalCatalog]: ...
+
+    def list_external_catalogs(self) -> list[ExternalCatalog]: ...
+
+    def create_external_catalog(self, row: ExternalCatalog) -> ExternalCatalog: ...
+
+    def update_external_catalog(self, row: ExternalCatalog) -> ExternalCatalog: ...
+
+    def delete_external_catalog(self, namespace_id: int) -> None: ...
 
     # -- Flow registration operations ----------------------------------------
 
@@ -458,6 +473,39 @@ class SQLAlchemyCatalogRepository:
 
     def count_children(self, namespace_id: int) -> int:
         return self._db.query(CatalogNamespace).filter_by(parent_id=namespace_id).count()
+
+    # -- Catalogs kept elsewhere ---------------------------------------------
+
+    def get_external_catalog(self, namespace_id: int) -> ExternalCatalog | None:
+        return self._db.query(ExternalCatalog).filter_by(namespace_id=namespace_id).first()
+
+    def get_external_catalog_by_name(self, name: str) -> list[ExternalCatalog]:
+        """Every catalog kept elsewhere whose level-0 namespace has this name, lowest id first."""
+        return (
+            self._db.query(ExternalCatalog)
+            .join(CatalogNamespace, CatalogNamespace.id == ExternalCatalog.namespace_id)
+            .filter(CatalogNamespace.name == name, CatalogNamespace.parent_id.is_(None))
+            .order_by(ExternalCatalog.id)
+            .all()
+        )
+
+    def list_external_catalogs(self) -> list[ExternalCatalog]:
+        return self._db.query(ExternalCatalog).order_by(ExternalCatalog.id).all()
+
+    def create_external_catalog(self, row: ExternalCatalog) -> ExternalCatalog:
+        self._db.add(row)
+        self._db.commit()
+        self._db.refresh(row)
+        return row
+
+    def update_external_catalog(self, row: ExternalCatalog) -> ExternalCatalog:
+        self._db.commit()
+        self._db.refresh(row)
+        return row
+
+    def delete_external_catalog(self, namespace_id: int) -> None:
+        self._db.query(ExternalCatalog).filter_by(namespace_id=namespace_id).delete()
+        self._db.commit()
 
     def get_root_namespace(self, namespace_id: int) -> CatalogNamespace | None:
         """Walk parent links to the level-0 catalog (returns the row itself when already a root)."""

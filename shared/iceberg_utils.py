@@ -5,8 +5,13 @@ those keys out of a loaded table, carry them with the table's metadata location,
 process can read the table without any storage key of its own and without talking to the catalog.
 
 A flow names a table by an ``IcebergTableRef`` (the catalog's address, its warehouse, the table's dotted name and at
-most a ``$ffsec$`` ciphertext of a bearer token). ``scan_iceberg_table`` turns one into a lazy frame whose plan holds
-that ref and nothing else: the process that runs the plan asks the catalog for the keys itself.
+most the ``$ffsec$`` ciphertext of the catalog's sign-in). ``scan_iceberg_table`` turns one into a lazy frame whose plan
+holds that ref and nothing else: the process that runs the plan asks the catalog for the keys itself.
+
+A sign-in is a bearer token, or a client id and secret that PyIceberg trades for a token at the catalog's token
+endpoint and trades again when a token runs out (``client_credentials_sign_in`` writes it, ``sign_in_properties``
+reads it). ``list_schemas``, ``list_table_names`` and ``describe_table`` browse a catalog without asking it for any
+storage key, and ``explain_catalog_error`` turns a refusal into one sentence a person can act on.
 
 Only S3-compatible storage is handled. The keys are not renewed when they expire: load the table again for new ones.
 Every ``pyiceberg`` import is inside a function, so importing this module loads only Polars.
@@ -15,6 +20,7 @@ Every ``pyiceberg`` import is inside a function, so importing this module loads 
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import re
 import time
@@ -35,9 +41,14 @@ MIN_CREDENTIAL_SECONDS = 60
 CATALOG_TIMEOUT = (10, 60)
 """Seconds to connect to the catalog and to wait for each of its answers; PyIceberg sets no limit of its own."""
 
+INTERACTIVE_TIMEOUT = (5, 20)
+"""Seconds to connect and to wait when a person is waiting for the answer (a test, a listing)."""
+
 _TOKEN_PREFIX = "$ffsec$"
 _EXPIRY_KEY = "s3.session-token-expires-at-ms"
 _PLANNER_WARNING = r".*Planning the Iceberg scan with PyIceberg instead"
+_SIGN_IN_KEYS = frozenset({"client_id", "client_secret", "scope", "token_endpoint"})
+_NO_KEYS_HEADER = "header.X-Iceberg-Access-Delegation"
 
 _run_log: Callable[[int, int | str, str], None] | None = None
 
@@ -111,13 +122,22 @@ def write_table(table: Table, frame: pl.LazyFrame, mode: Literal["append", "over
     frame.sink_iceberg(table, mode=mode, storage_options=_handed_out_keys(table))
 
 
+def _refuse_clear_sign_in(token: str | None) -> None:
+    if token is not None and not token.startswith(_TOKEN_PREFIX):
+        raise ValueError(
+            "The catalog's token travels encrypted: pass the stored secret's ciphertext (save the secret again if"
+            " it predates encryption per user)."
+        )
+
+
 @dataclass(frozen=True)
 class IcebergTableRef:
     """One table as a flow names it: its REST catalog's address and warehouse and its dotted name.
 
     ``table`` is ``namespace.table``; further dots separate nested namespaces. ``token`` is the ``$ffsec$``
-    ciphertext of a bearer token for the catalog, decrypted only where the catalog is asked, so a clear token can never
-    be serialized with a plan or a request. Nothing here can hold a storage key: those come from the catalog each time.
+    ciphertext of the catalog's sign-in, a bearer token or a client id and secret, decrypted only where the catalog is
+    asked, so a clear sign-in can never be serialized with a plan or a request. Nothing here can hold a storage key:
+    those come from the catalog each time.
     """
 
     catalog_uri: str
@@ -126,14 +146,81 @@ class IcebergTableRef:
     token: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        if self.token is not None and not self.token.startswith(_TOKEN_PREFIX):
-            raise ValueError(
-                "The catalog's token travels encrypted: pass the stored secret's ciphertext (save the secret again if"
-                " it predates encryption per user)."
-            )
+        _refuse_clear_sign_in(self.token)
         parts = self.table.split(".")
         if len(parts) < 2 or not all(parts) or re.search(r"[/\s]", self.table):
             raise ValueError(f"An Iceberg table is named namespace.table, not {self.table!r}.")
+
+
+@dataclass(frozen=True)
+class IcebergCatalogRef:
+    """A REST catalog as Flowfile reaches it: its address, its warehouse and at most the ciphertext of its sign-in."""
+
+    catalog_uri: str
+    warehouse: str | None = None
+    token: str | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        _refuse_clear_sign_in(self.token)
+
+    def table(self, name: str) -> IcebergTableRef:
+        return IcebergTableRef(self.catalog_uri, name, self.warehouse, self.token)
+
+
+@dataclass(frozen=True)
+class IcebergTableDescription:
+    """A table as its catalog describes it, without reading a file: no row count, nothing from a snapshot."""
+
+    columns: dict[str, pl.DataType]
+    format_version: int
+    location: str
+    partitioned_by: tuple[str, ...]
+    updated_at_ms: int | None
+
+
+def client_credentials_sign_in(
+    client_id: str, client_secret: str, scope: str | None = None, token_endpoint: str | None = None
+) -> str:
+    """The text Flowfile stores for a client id and secret: a small JSON object read back by ``sign_in_properties``."""
+    if ":" in client_id:
+        raise ValueError("A client id cannot hold ':'; the catalog's sign-in separates the id from the secret by it.")
+    body = {"client_id": client_id, "client_secret": client_secret}
+    if scope:
+        body["scope"] = scope
+    if token_endpoint:
+        body["token_endpoint"] = token_endpoint
+    return json.dumps(body)
+
+
+def sign_in_properties(catalog_uri: str, sign_in: str) -> dict[str, str]:
+    """The PyIceberg properties of a stored sign-in: ``token``, or ``credential``, ``scope`` and the token endpoint.
+
+    A text that is not a JSON object is a bearer token. An object must be one ``client_credentials_sign_in`` wrote, so
+    no other property (a storage key among them) can come out of a stored sign-in. The token endpoint is always named,
+    the catalog's own when none was given: PyIceberg otherwise warns that it will stop assuming it.
+    """
+    try:
+        parsed = json.loads(sign_in)
+    except ValueError:
+        parsed = None
+    if not isinstance(parsed, dict):
+        return {"token": sign_in}
+    written = (
+        set(parsed) <= _SIGN_IN_KEYS
+        and all(isinstance(value, str) for value in parsed.values())
+        and bool(parsed.get("client_id"))
+        and bool(parsed.get("client_secret"))
+        and ":" not in parsed.get("client_id", "")
+    )
+    if not written:
+        raise ValueError("The stored sign-in is not one Flowfile wrote; enter it again.")
+    properties = {
+        "credential": f"{parsed['client_id']}:{parsed['client_secret']}",
+        "oauth2-server-uri": parsed.get("token_endpoint") or f"{catalog_uri.rstrip('/')}/v1/oauth/tokens",
+    }
+    if parsed.get("scope"):
+        properties["scope"] = parsed["scope"]
+    return properties
 
 
 def register_run_log(log: Callable[[int, int | str, str], None] | None) -> None:
@@ -149,11 +236,11 @@ def _say(flow_id: int, node_id: int | str, message: str) -> None:
         logging.getLogger(__name__).info(message)
 
 
-def catalog_properties(ref: IcebergTableRef) -> dict[str, str]:
-    """The catalog client's whole configuration: the address, the warehouse and the token in plain, nothing else.
+def catalog_properties(ref: IcebergTableRef | IcebergCatalogRef, *, keys: bool = True) -> dict[str, str]:
+    """The catalog client's whole configuration: the address, the warehouse and the sign-in in plain, nothing else.
 
     No ``s3.*`` setting can come out of a ref, so every storage property a loaded table holds is one the catalog
-    answered.
+    answered. With ``keys=False`` the catalog is asked to hand out no storage key at all (it may still).
     """
     from shared.cloud_credential_provider import decrypt_stored
 
@@ -161,7 +248,9 @@ def catalog_properties(ref: IcebergTableRef) -> dict[str, str]:
     if ref.warehouse:
         properties["warehouse"] = ref.warehouse
     if ref.token:
-        properties["token"] = decrypt_stored(ref.token, "the catalog's token")
+        properties.update(sign_in_properties(ref.catalog_uri, decrypt_stored(ref.token, "the catalog's sign-in")))
+    if not keys:
+        properties[_NO_KEYS_HEADER] = ""
     return properties
 
 
@@ -169,11 +258,14 @@ def _timeout() -> tuple[float, float]:
     return CATALOG_TIMEOUT
 
 
-def _catalog(ref: IcebergTableRef):
+def _catalog(
+    ref: IcebergTableRef | IcebergCatalogRef, *, keys: bool = True, timeout: tuple[float, float] | None = None
+):
     """The ref's REST catalog, built directly so no ``~/.pyiceberg.yaml`` or ``PYICEBERG_*`` setting is merged in.
 
-    Every request to it gives up after ``CATALOG_TIMEOUT``: a catalog that never answers would otherwise hold a run
-    before its first node, where a cancel does not reach.
+    Every request to it gives up after ``timeout``, else ``CATALOG_TIMEOUT``: a catalog that never answers would
+    otherwise hold a run before its first node, where a cancel does not reach. With a client id and secret the
+    catalog is asked for a token here, when it is built.
     """
     from pyiceberg.catalog.rest import RestCatalog
 
@@ -181,10 +273,82 @@ def _catalog(ref: IcebergTableRef):
         def _create_session(self):
             session = super()._create_session()
             send = session.send
-            session.send = lambda request, **kw: send(request, **{**kw, "timeout": kw.get("timeout") or _timeout()})
+            limit = timeout or _timeout()
+            session.send = lambda request, **kw: send(request, **{**kw, "timeout": kw.get("timeout") or limit})
             return session
 
-    return _TimedRestCatalog("flowfile", **catalog_properties(ref))
+    return _TimedRestCatalog("flowfile", **catalog_properties(ref, keys=keys))
+
+
+def _chain(exc: BaseException) -> list[BaseException]:
+    """``exc`` and every exception it was raised from or during, outermost first."""
+    seen: list[BaseException] = []
+    while exc is not None and exc not in seen:
+        seen.append(exc)
+        exc = exc.__cause__ or exc.__context__
+    return seen
+
+
+def _in_chain(exc: BaseException, *kinds: type[BaseException]) -> BaseException | None:
+    return next((link for link in _chain(exc) if isinstance(link, kinds)), None)
+
+
+def explain_catalog_error(exc: BaseException, ref: IcebergTableRef | IcebergCatalogRef) -> str | None:
+    """One sentence for a catalog's refusal a person can act on, ``None`` for any other error.
+
+    No sentence quotes the catalog's own text, so none can repeat a sign-in the catalog echoed.
+    """
+    from pyiceberg.exceptions import (
+        AuthorizationExpiredError,
+        ForbiddenError,
+        NoSuchNamespaceError,
+        OAuthError,
+        RESTError,
+        UnauthorizedError,
+    )
+    from requests.exceptions import ConnectionError as RequestsConnectionError
+    from requests.exceptions import Timeout
+
+    uri = ref.catalog_uri
+    oauth = _in_chain(exc, OAuthError)
+    if oauth is not None:
+        text = str(oauth)
+        if "invalid_scope" in text:
+            return (
+                f"The catalog at {uri} refused the scope; Polaris and Snowflake Open Catalog take PRINCIPAL_ROLE:ALL."
+            )
+        if "unexpected JSON" in text or "<?xml" in text or "<html" in text.lower():
+            return f"{uri} did not answer as an Iceberg REST catalog."
+        return f"The catalog at {uri} refused the client id and secret."
+    if _in_chain(exc, UnauthorizedError, AuthorizationExpiredError) is not None:
+        if not ref.token:
+            return f"The catalog at {uri} asks for a sign-in."
+        return (
+            f"The catalog at {uri} refused the sign-in: it is wrong or has run out. A token is not renewed;"
+            " a client id and secret is."
+        )
+    if _in_chain(exc, ForbiddenError) is not None:
+        return f"The catalog at {uri} knows this sign-in and does not allow it this."
+    if _in_chain(exc, RequestsConnectionError, Timeout) is not None:
+        return f"No catalog answers at {uri}."
+    missing = _in_chain(exc, RESTError, NoSuchNamespaceError)
+    if missing is not None and "warehouse" in str(missing).lower():
+        return f"The catalog at {uri} has no warehouse {ref.warehouse}."
+    if _in_chain(exc, RESTError) is not None:
+        return f"{uri} did not answer as an Iceberg REST catalog."
+    return None
+
+
+def _refusal(exc: BaseException, ref: IcebergTableRef | IcebergCatalogRef) -> ValueError:
+    """The sentence for ``exc`` as a ``ValueError``, naming only the error's class when there is no sentence."""
+    from shared.cloud_credential_provider import CredentialDecryptionError
+
+    if isinstance(exc, ValueError):
+        return exc
+    if isinstance(exc, CredentialDecryptionError):
+        return ValueError(str(exc))
+    sentence = explain_catalog_error(exc, ref)
+    return ValueError(sentence or f"The catalog at {ref.catalog_uri} could not be asked ({type(exc).__name__}).")
 
 
 def load_table(ref: IcebergTableRef) -> Table:
@@ -195,6 +359,72 @@ def load_table(ref: IcebergTableRef) -> Table:
         return _catalog(ref).load_table(ref.table)
     except (NoSuchTableError, NoSuchNamespaceError):
         raise ValueError(f"The catalog at {ref.catalog_uri} has no table {ref.table}.") from None
+    except Exception as exc:
+        sentence = explain_catalog_error(exc, ref)
+        if sentence is None:
+            raise
+        raise ValueError(sentence) from None
+
+
+def list_schemas(ref: IcebergCatalogRef) -> tuple[list[str], int]:
+    """The catalog's top-level namespaces Flowfile shows, sorted, and how many it leaves out.
+
+    Left out: a name holding a dot and every nested namespace (Flowfile names a table ``catalog.schema.table``). The
+    nested ones are counted one call per shown namespace; a catalog that refuses that call adds nothing to the count.
+    No storage key is asked for. A refusal is a ``ValueError`` with one sentence.
+    """
+    try:
+        catalog = _catalog(ref, keys=False, timeout=INTERACTIVE_TIMEOUT)
+        names = catalog.list_namespaces()
+    except Exception as exc:
+        raise _refusal(exc, ref) from None
+    shown = sorted(name[0] for name in names if len(name) == 1 and "." not in name[0])
+    left_out = len(names) - len(shown)
+    for name in shown:
+        try:
+            left_out += len(catalog.list_namespaces(name))
+        except Exception:  # noqa: BLE001
+            continue
+    return shown, left_out
+
+
+def list_table_names(ref: IcebergCatalogRef, schema: str) -> list[str]:
+    """The names of the tables in one namespace, sorted, as the catalog lists them now; no storage key asked for."""
+    from pyiceberg.exceptions import NoSuchNamespaceError
+
+    try:
+        identifiers = _catalog(ref, keys=False, timeout=INTERACTIVE_TIMEOUT).list_tables(schema)
+    except NoSuchNamespaceError:
+        raise ValueError(f"The catalog at {ref.catalog_uri} has no schema {schema}.") from None
+    except Exception as exc:
+        raise _refusal(exc, ref) from None
+    return sorted(identifier[-1] for identifier in identifiers)
+
+
+def describe_table(ref: IcebergTableRef) -> IcebergTableDescription:
+    """A table's columns as Polars types and its metadata, from the catalog's description alone.
+
+    The table is loaded without asking for storage keys and no file is read, so no ``scan_iceberg`` runs here. Nothing
+    comes from a snapshot or its summary: a summary's row count is wrong after deletes.
+    """
+    from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
+
+    try:
+        table = _catalog(ref, keys=False, timeout=INTERACTIVE_TIMEOUT).load_table(ref.table)
+    except (NoSuchTableError, NoSuchNamespaceError):
+        raise ValueError(f"The catalog at {ref.catalog_uri} has no table {ref.table}.") from None
+    except Exception as exc:
+        raise _refusal(exc, ref) from None
+    schema = table.schema()
+    columns = dict(pl.from_arrow(schema.as_arrow().empty_table()).schema)
+    partitioned = dict.fromkeys(schema.find_column_name(part.source_id) for part in table.spec().fields)
+    return IcebergTableDescription(
+        columns=columns,
+        format_version=int(table.metadata.format_version),
+        location=table.metadata.location,
+        partitioned_by=tuple(name for name in partitioned if name),
+        updated_at_ms=table.metadata.last_updated_ms,
+    )
 
 
 def table_schema(ref: IcebergTableRef) -> pl.Schema:
@@ -375,11 +605,16 @@ def creatable_schema(schema: Mapping[str, pl.DataType]) -> dict[str, pl.DataType
 def _load_or_create(ref: IcebergTableRef, frame: pl.LazyFrame) -> Table:
     from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
 
-    catalog = _catalog(ref)
     try:
+        catalog = _catalog(ref)
         return catalog.load_table(ref.table)
     except (NoSuchTableError, NoSuchNamespaceError):
         pass
+    except Exception as exc:
+        sentence = explain_catalog_error(exc, ref)
+        if sentence is None:
+            raise
+        raise ValueError(sentence) from None
     namespace = ref.table.rsplit(".", 1)[0]
     if not catalog.namespace_exists(namespace):
         raise ValueError(f"The catalog has no namespace {namespace}; create it there first.")
@@ -425,26 +660,52 @@ def _sink(table: Table, frame: pl.LazyFrame, mode: Literal["append", "overwrite"
     try:
         write_table(table, frame, mode)
     except Exception as exc:
-        cause = (str(exc).splitlines() or [type(exc).__name__])[0]
+        cause = _without_sign_in((str(exc).splitlines() or [type(exc).__name__])[0], table)
         name = ".".join(table.name())
+        if _sign_in_refused(exc):
+            raise RuntimeError(
+                f"The write to {name} did not commit: the catalog refused the sign-in when the write finished, most"
+                " likely a token that ran out meanwhile. A client id and secret is renewed during a run; a token is"
+                f" not.{_left_behind(table, before)}"
+            ) from None
         if _commit_state_unknown(exc):
             raise RuntimeError(
                 f"The write to {name} may not have committed ({cause}): the catalog did not say. Load the table before"
                 " removing anything."
             ) from exc
-        after = _data_folders(table)
-        if before is None or after is None:
-            left = " The files it may have left could not be listed."
-        else:
-            new = sorted(after - before)
-            shown = ", ".join(new[:5]) + (f" and {len(new) - 5} more" if len(new) > 5 else "")
-            left = (
-                f" New under its data/ folder since this write began: {shown}. If no other write ran at the same time"
-                " they are this write's files, which the table does not use; nothing removes them."
-                if new
-                else " It left no files under data/."
-            )
-        raise RuntimeError(f"The write to {name} did not commit ({cause}).{left}") from exc
+        raise RuntimeError(f"The write to {name} did not commit ({cause}).{_left_behind(table, before)}") from exc
+
+
+def _left_behind(table: Table, before: set[str] | None) -> str:
+    """What a failed write left under the table's ``data/`` folder, as the sentence that ends its error."""
+    after = _data_folders(table)
+    if before is None or after is None:
+        return " The files it may have left could not be listed."
+    new = sorted(after - before)
+    if not new:
+        return " It left no files under data/."
+    shown = ", ".join(new[:5]) + (f" and {len(new) - 5} more" if len(new) > 5 else "")
+    return (
+        f" New under its data/ folder since this write began: {shown}. If no other write ran at the same time"
+        " they are this write's files, which the table does not use; nothing removes them."
+    )
+
+
+def _without_sign_in(text: str, table: Table) -> str:
+    """``text`` with the catalog's token, client secret and their pair masked, as they sit in the table's client."""
+    properties = getattr(table.io, "properties", {}) or {}
+    values = [str(properties.get(name) or "") for name in ("token", "credential")]
+    values += [value.split(":", 1)[-1] for value in values if ":" in value]
+    for value in sorted({value for value in values if len(value) >= 4}, key=len, reverse=True):
+        text = text.replace(value, "***")
+    return text
+
+
+def _sign_in_refused(exc: BaseException) -> bool:
+    """Whether the catalog refused the sign-in: it said so with a 401 or at its token endpoint, so nothing committed."""
+    from pyiceberg.exceptions import AuthorizationExpiredError, OAuthError, UnauthorizedError
+
+    return _in_chain(exc, UnauthorizedError, AuthorizationExpiredError, OAuthError) is not None
 
 
 def _commit_state_unknown(exc: BaseException) -> bool:
@@ -453,12 +714,7 @@ def _commit_state_unknown(exc: BaseException) -> bool:
     from requests.exceptions import ConnectionError as RequestsConnectionError
     from requests.exceptions import Timeout
 
-    seen = exc
-    while seen is not None:
-        if isinstance(seen, CommitStateUnknownException | RequestsConnectionError | Timeout):
-            return True
-        seen = seen.__cause__ or seen.__context__
-    return False
+    return _in_chain(exc, CommitStateUnknownException, RequestsConnectionError, Timeout) is not None
 
 
 def write_iceberg_table(

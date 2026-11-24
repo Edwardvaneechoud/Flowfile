@@ -41,8 +41,8 @@ if TYPE_CHECKING:
 
 
 ICEBERG_ON_A_SERVER = (
-    "An Iceberg catalog named by its address is read and written on a desktop or from Python only, until catalogs can"
-    " be added to Flowfile's catalog."
+    "On a multi-user server an Iceberg table is reached through a catalog an administrator added to Flowfile's"
+    " catalog; name that catalog instead of an address."
 )
 
 
@@ -50,21 +50,29 @@ def iceberg_refusal(settings: CloudStorageSettings) -> str | None:
     """Why an Iceberg node cannot run here, or ``None``.
 
     On a multi-user server the address a person typed would make the server call it and use whatever an open catalog
-    on the server's network hands out, so the node is refused there.
+    on the server's network hands out, so a node with an address is refused there. A node that names a catalog kept
+    elsewhere is not: only an administrator adds one, and the run is checked against its grants.
     """
-    if not sharing.ambient_credentials_allowed():
+    named = settings.iceberg_catalog is not None and settings.iceberg_catalog.catalog is not None
+    if not named and not sharing.ambient_credentials_allowed():
         return ICEBERG_ON_A_SERVER
     return None
 
 
-def _iceberg_table_ref(settings: CloudStorageSettings, user_id: int) -> IcebergTableRef:
-    """The table an Iceberg node names, as its settings are when it runs; a token as its stored ciphertext."""
+def _iceberg_table_ref(settings: CloudStorageSettings, user_id: int | None, *, writes: bool = False) -> IcebergTableRef:
+    """The table an Iceberg node names, as its settings are when it runs; a sign-in as its stored ciphertext."""
     refusal = iceberg_refusal(settings)
     if refusal:
         raise ValueError(refusal)
     catalog = settings.iceberg_catalog
     if catalog is None:
         raise ValueError("An Iceberg table is reached through its catalog: set iceberg_catalog")
+    if catalog.catalog is not None:
+        from flowfile_core.catalog.services.external_catalogs import table_ref_for_run
+        from flowfile_core.database.connection import get_db_context
+
+        with get_db_context() as db:
+            return table_ref_for_run(db, catalog.catalog, settings.resource_path, user_id, writes=writes)
     token = None
     if catalog.token_secret:
         token = run_secrets.encrypted_secret(user_id, catalog.token_secret)

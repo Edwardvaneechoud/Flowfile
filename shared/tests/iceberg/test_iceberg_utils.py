@@ -216,7 +216,7 @@ def test_32_bit_unsigned_columns_are_widened():
 
 
 def test_a_catalog_that_never_answers_fails_within_the_timeout(monkeypatch):
-    """A catalog that accepts the connection and never answers fails the call within ``CATALOG_TIMEOUT``."""
+    """A catalog that accepts the connection and never answers fails the call within ``CATALOG_TIMEOUT``, in a sentence."""
     import socket
     import time
 
@@ -229,7 +229,7 @@ def test_a_catalog_that_never_answers_fails_within_the_timeout(monkeypatch):
     ref = _ref(catalog_uri=f"http://127.0.0.1:{silent.getsockname()[1]}/catalog")
     started = time.monotonic()
     try:
-        with pytest.raises(Exception, match="(?i)timed out|timeout"):
+        with pytest.raises(ValueError, match="No catalog answers at"):
             iceberg_utils.table_schema(ref)
     finally:
         silent.close()

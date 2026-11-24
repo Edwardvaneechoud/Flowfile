@@ -86,6 +86,8 @@ def _access_for(db, requesting_user) -> AccessResolver | None:
 
 
 def require_flow_save_permitted(flow_path: str | None, namespace_id: int | None, requesting_user) -> None:
+    from flowfile_core.catalog.services.external_catalogs import refuse_kept_elsewhere
+
     """Authorize a flow save before any YAML is written, mirroring
     :func:`register_flow_in_namespace`'s own branching:
 
@@ -115,6 +117,7 @@ def require_flow_save_permitted(flow_path: str | None, namespace_id: int | None,
             if not resolver.can_manage("flow", existing.id, owner_id=existing.owner_id):
                 raise NotAuthorizedError(resolver.user_id or -1, "overwrite this registered flow")
             return
+        refuse_kept_elsewhere(db, namespace_id, "save anything into it")
         if namespace_id is not None and resolver.restricted and namespace_id not in resolver.writable_namespace_ids():
             raise NotAuthorizedError(resolver.user_id or -1, "create items in this namespace")
 

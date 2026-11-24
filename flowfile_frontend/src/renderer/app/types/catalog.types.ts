@@ -21,6 +21,93 @@ export interface CatalogNamespace {
   access?: AccessInfo | null;
   // "hub" for a connected hub's catalog: its id is the negative of the hub's own id.
   source?: "local" | "hub";
+  // A catalog, or a schema of one, that another provider keeps (an Iceberg REST catalog).
+  kept_elsewhere?: boolean;
+  // Set on such a schema once the other catalog stopped listing it.
+  gone_since?: string | null;
+  // How a catalog kept elsewhere is reached (level 0 only); never its secret.
+  external?: ExternalCatalogInfo | null;
+}
+
+export type ExternalSignIn = "none" | "token" | "client_credentials";
+
+export interface ExternalCatalogInfo {
+  kind: string;
+  uri: string;
+  warehouse: string | null;
+  sign_in: ExternalSignIn;
+  client_id: string | null;
+  scope: string | null;
+  token_endpoint: string | null;
+  synced_at: string | null;
+  sync_error: string | null;
+  not_shown: number;
+}
+
+/** The add and edit form; the secret fields are typed by the person and never answered by core. */
+export interface ExternalCatalogForm {
+  name: string;
+  description: string;
+  uri: string;
+  warehouse: string;
+  sign_in: ExternalSignIn;
+  token: string;
+  client_id: string;
+  client_secret: string;
+  scope: string;
+  token_endpoint: string;
+}
+
+/** What the add, edit and test routes take; a secret key is absent when the person left it empty. */
+export interface ExternalCatalogPayload {
+  name?: string;
+  description?: string | null;
+  uri: string;
+  warehouse?: string | null;
+  sign_in: ExternalSignIn;
+  token?: string;
+  client_id?: string | null;
+  client_secret?: string;
+  scope?: string | null;
+  token_endpoint?: string | null;
+}
+
+export interface ExternalCatalogTestResult {
+  ok: boolean;
+  message: string;
+  schemas: number | null;
+}
+
+export interface ExternalCatalogSyncResult {
+  added: string[];
+  gone: string[];
+  back: string[];
+  not_shown: number;
+  synced_at: string | null;
+  skipped: boolean;
+  error: string | null;
+}
+
+export interface ExternalTable {
+  name: string;
+  reference: string;
+}
+
+export interface ExternalTableList {
+  tables: ExternalTable[];
+  listed_at: string;
+  cached: boolean;
+}
+
+export interface ExternalTableDetail {
+  name: string;
+  reference: string;
+  table: string;
+  columns: { name: string; dtype: string }[];
+  format_version: number;
+  location: string;
+  partitioned_by: string[];
+  updated_at: string | null;
 }
 
 export interface NamespaceTree extends CatalogNamespace {
@@ -52,8 +139,9 @@ export const SCRATCH_NAMESPACE_NAMES = new Set(["Unnamed Flows", "Python Editor"
 
 // The local tree (a hub's catalogs left out) without the system schemas of the "General" root.
 export function filterSelectableNamespaces(tree: NamespaceTree[]): NamespaceTree[] {
+  // A catalog another provider keeps takes nothing Flowfile saves; core refuses it too.
   return tree
-    .filter((node) => node.source !== "hub")
+    .filter((node) => node.source !== "hub" && !node.kept_elsewhere)
     .map((node) =>
       node.name === "General" && node.parent_id === null
         ? { ...node, children: node.children.filter((c) => !SYSTEM_NAMESPACE_NAMES.has(c.name)) }

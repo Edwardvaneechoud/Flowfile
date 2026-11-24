@@ -87,3 +87,68 @@ def duck(rest_catalog, tmp_path_factory):
         pytest.skip(f"DuckDB's iceberg extension could not be installed or attached: {fixtures.mask(str(exc))[:300]}")
     yield connection
     connection.close()
+
+
+@pytest.fixture(scope="session")
+def signed_ready():
+    if not fixtures.signed_catalog_ready():
+        pytest.skip(fixtures.SIGNED_SKIP_REASON)
+
+
+@pytest.fixture(scope="session")
+def principal(signed_ready):
+    """A principal of the signed catalog that may manage its content; removed after the session."""
+    made = fixtures.new_principal()
+    yield made
+    with contextlib.suppress(Exception):
+        fixtures.drop_principal(made.name)
+
+
+@pytest.fixture(scope="session")
+def signed(principal):
+    """A PyIceberg client on the signed catalog as the principal, for seeding and for checking what was written."""
+    return fixtures.signed_catalog(principal)
+
+
+@pytest.fixture
+def signed_namespace(signed):
+    name = f"signed_{uuid.uuid4().hex[:8]}"
+    signed.create_namespace(name)
+    yield name
+    for child in signed.list_namespaces(name):
+        with contextlib.suppress(Exception):
+            signed.drop_namespace(child)
+    for identifier in signed.list_tables(name):
+        with contextlib.suppress(Exception):
+            signed.drop_table(identifier)  # Polaris refuses a purge unless configured to; the stack is throwaway
+    with contextlib.suppress(Exception):
+        signed.drop_namespace(name)
+
+
+@pytest.fixture
+def seed_signed(signed, signed_namespace):
+    """Create ``<signed_namespace>.<name>`` on the signed catalog with ``rows`` deterministic rows."""
+    from shared.iceberg_utils import write_table
+    from shared.tests.iceberg.table_child import rows_frame
+
+    def seed(name: str, rows: int):
+        import polars as pl
+
+        frame = rows_frame(rows)
+        arrow = frame.collect().to_arrow(compat_level=pl.CompatLevel.oldest())
+        table = signed.create_table(f"{signed_namespace}.{name}", schema=arrow.schema)
+        if rows:
+            write_table(table, frame, "append")
+        return signed.load_table(f"{signed_namespace}.{name}")
+
+    return seed
+
+
+@pytest.fixture
+def sealing(monkeypatch):
+    """Seals a sign-in as stand-in ciphertext this process decrypts, as core and the worker decrypt a stored one."""
+    from shared import cloud_credential_provider
+
+    monkeypatch.setattr(cloud_credential_provider, "_decrypt", cloud_credential_provider._decrypt)
+    cloud_credential_provider.register_secret_decryptor(fixtures.open_sealed)
+    return fixtures.seal

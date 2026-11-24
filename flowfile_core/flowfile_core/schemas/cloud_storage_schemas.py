@@ -188,18 +188,38 @@ class IcebergCatalogSettings(BaseModel):
     """The Iceberg REST catalog that keeps a node's table: its address, its warehouse and how to sign in.
 
     ``token_secret`` is the name of a stored secret holding a bearer token; the token itself is never in a flow.
+    ``catalog`` instead names a catalog kept elsewhere in Flowfile's catalog; its address, warehouse and sign-in come
+    from there. A node names exactly one of ``uri`` and ``catalog``.
     """
 
-    uri: str
+    uri: str | None = None
+    catalog: str | None = None
     warehouse: str | None = None
     token_secret: str | None = None
 
     @field_validator("uri")
     @classmethod
-    def _http_address(cls, uri: str) -> str:
-        if "${" not in uri and not uri.startswith(("http://", "https://")):
+    def _http_address(cls, uri: str | None) -> str | None:
+        if uri is not None and "${" not in uri and not uri.startswith(("http://", "https://")):
             raise ValueError("An Iceberg REST catalog's address starts with http:// or https://")
         return uri
+
+    @model_validator(mode="after")
+    def _address_or_catalog(self):
+        if (self.uri is None) == (self.catalog is None):
+            raise ValueError("Name the Iceberg catalog by its address (uri) or by its name in Flowfile's catalog.")
+        if self.catalog is not None and (self.warehouse is not None or self.token_secret is not None):
+            raise ValueError("A catalog named in Flowfile's catalog brings its own warehouse and sign-in.")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _serialize_the_one_named(self, handler: Any, _info: Any) -> Any:
+        data = handler(self)
+        if isinstance(data, dict):
+            for name in ("uri", "catalog"):
+                if data.get(name) is None:
+                    data.pop(name, None)
+        return data
 
 
 _ICEBERG_TABLE_NAME = re.compile(r"^[^./\s]+(\.[^./\s]+)+$")

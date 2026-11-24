@@ -2049,13 +2049,12 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
         return
     with get_db_context() as db:
         resolver = AccessResolver(db, current_user)
-        if not resolver.restricted:
-            return
         svc = CatalogService(SQLAlchemyCatalogRepository(db))
         ns_id = svc.resolve_namespace_id_by_full_name(settings.namespace_full_name)
         if ns_id is None:
             ns_id = settings.namespace_id
-        if ns_id is None:
+        _refuse_kept_elsewhere(db, ns_id)
+        if not resolver.restricted or ns_id is None:
             return
         existing = svc.repo.get_table_by_name(settings.table_name, ns_id) if settings.table_name else None
         if existing is not None:
@@ -2077,9 +2076,21 @@ def _validate_catalog_namespace_writable_for_user(namespace_id: int | None, curr
     if namespace_id is None:
         return
     with get_db_context() as db:
+        _refuse_kept_elsewhere(db, namespace_id)
         resolver = AccessResolver(db, current_user)
         if resolver.restricted and namespace_id not in resolver.writable_namespace_ids():
             raise HTTPException(status_code=403, detail=detail)
+
+
+def _refuse_kept_elsewhere(db, namespace_id: int | None) -> None:
+    """422 for a target namespace another catalog keeps: nothing is saved into it."""
+    from flowfile_core.catalog.exceptions import KeptElsewhereError
+    from flowfile_core.catalog.services.external_catalogs import refuse_kept_elsewhere
+
+    try:
+        refuse_kept_elsewhere(db, namespace_id, "save anything into it")
+    except KeptElsewhereError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 def _validate_train_model_target(node: input_schema.NodeTrainModel, current_user, flow) -> None:

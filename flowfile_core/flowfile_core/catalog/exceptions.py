@@ -45,6 +45,15 @@ class NestingLimitError(CatalogError):
         super().__init__("Cannot nest deeper than catalog -> schema")
 
 
+class KeptElsewhereError(CatalogError):
+    """Raised when something would be saved into, added to or removed from a catalog another provider keeps."""
+
+    def __init__(self, name: str, action: str):
+        self.name = name
+        self.action = action
+        super().__init__(f"'{name}' is kept by another catalog: Flowfile shows it and does not {action}.")
+
+
 class NamespaceNotEmptyError(CatalogError):
     """Raised when trying to delete a namespace that still has children, flows, or tables."""
 

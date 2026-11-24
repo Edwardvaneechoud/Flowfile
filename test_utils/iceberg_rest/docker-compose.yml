@@ -1,5 +1,6 @@
 name: iceberg-proof
 
+# Two catalogs on one MinIO: Lakekeeper (open) and Apache Polaris (asks for a sign-in).
 # Every value comes from test_utils/iceberg_rest/fixtures.py; start it with: python -m test_utils.iceberg_rest start
 services:
   minio:
@@ -12,6 +13,8 @@ services:
     ports:
       - "127.0.0.1:${ICEBERG_PROOF_S3_PORT:?}:${ICEBERG_PROOF_S3_PORT:?}"
       - "127.0.0.1:${ICEBERG_PROOF_CATALOG_PORT:?}:${ICEBERG_PROOF_CATALOG_PORT:?}"
+      - "127.0.0.1:${ICEBERG_PROOF_POLARIS_PORT:?}:${ICEBERG_PROOF_POLARIS_PORT:?}"
+      - "127.0.0.1:${ICEBERG_PROOF_POLARIS_HEALTH_PORT:?}:${ICEBERG_PROOF_POLARIS_HEALTH_PORT:?}"
     volumes:
       - iceberg-proof-minio-data:/data
     networks: [iceberg-proof-net]
@@ -53,6 +56,24 @@ services:
     environment: *lakekeeper
     depends_on:
       migrate: {condition: service_completed_successfully}
+      minio: {condition: service_started}
+
+  polaris:
+    container_name: iceberg-proof-polaris
+    image: ${ICEBERG_PROOF_POLARIS_IMAGE:?}
+    # Shares MinIO's network, as the other catalog does.
+    network_mode: "service:minio"
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${ICEBERG_PROOF_MINIO_USER:?}
+      AWS_SECRET_ACCESS_KEY: ${ICEBERG_PROOF_MINIO_PASSWORD:?}
+      POLARIS_BOOTSTRAP_CREDENTIALS: POLARIS,root,${ICEBERG_PROOF_POLARIS_ROOT_SECRET:?}
+      polaris.realm-context.realms: POLARIS
+      quarkus.otel.sdk.disabled: "true"
+      quarkus.http.port: ${ICEBERG_PROOF_POLARIS_PORT:?}
+      quarkus.management.port: ${ICEBERG_PROOF_POLARIS_HEALTH_PORT:?}
+      polaris.authentication.token-broker.max-token-generation: ${ICEBERG_PROOF_TOKEN_LIFETIME:?}
+    depends_on:
       minio: {condition: service_started}
 
 networks:

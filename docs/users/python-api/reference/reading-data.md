@@ -193,6 +193,7 @@ df = ff.read_from_cloud_storage(
 - `catalog_uri`, `catalog_warehouse`, `catalog_token_secret`: The Iceberg REST catalog's address, its warehouse and the
   name of a stored secret holding a bearer token. Only used for Iceberg; see
   [An Iceberg table kept by a REST catalog](#an-iceberg-table-kept-by-a-rest-catalog)
+- `catalog`: The name of a catalog added to Flowfile's catalog, instead of the three above
 
 !!! tip "Recommended Approach"
     `read_from_cloud_storage()` is the recommended way to read from cloud storage. The format-specific `scan_*` functions below still work and are useful when you want a more concise call for a known format.
@@ -214,6 +215,10 @@ orders = ff.read_from_cloud_storage(
 orders.filter(ff.col("grp") == 3).collect()
 ```
 
+A catalog added to Flowfile's catalog (see [A catalog from elsewhere](../../visual-editor/catalog/index.md#a-catalog-from-elsewhere))
+is named instead of its address, with `catalog="polaris"`; its address, warehouse and sign-in come from there, and
+the three `catalog_*` keywords are not given. This is also how a flow reads such a table on a multi-user server.
+
 Columns and filters are pushed into the Iceberg scan. What is supported, in plain words:
 
 - The table's files are on S3-compatible storage and its catalog hands out keys to them (vended credentials). Flowfile
@@ -229,9 +234,9 @@ Columns and filters are pushed into the Iceberg scan. What is supported, in plai
 - A read of a table another engine deleted rows from can be slower: Polars' own reader cannot apply every delete file,
   PyIceberg reads it instead, and the run's log says so.
 - A catalog that needs a sign-in takes a bearer token from a stored secret (`catalog_token_secret`, the secret's name;
-  the token is never saved with the flow). This is not yet tested against a catalog that checks the token.
+  the token is never saved with the flow), or a client id and secret when it is named by `catalog=`.
 - It runs from Python, and in a flow opened in the designer; the designer's own forms do not offer Iceberg yet. A
-  multi-user server refuses it, until catalogs can be added to Flowfile's catalog.
+  multi-user server refuses a catalog named by its address and runs one named by `catalog=`.
 
 ### Format-Specific Cloud Readers
 

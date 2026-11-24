@@ -1,4 +1,7 @@
-"""An Iceberg REST catalog (Lakekeeper) on its own MinIO, for tests that use the storage keys the catalog hands out.
+"""Two Iceberg REST catalogs on one MinIO, for tests that use the storage keys a catalog hands out.
+
+Lakekeeper asks for no sign-in. Apache Polaris (the "signed" catalog) asks for one: a client id and secret of one of
+its principals, or a bearer token fetched with them, and every token it issues lives ``TOKEN_LIFETIME``.
 
 The catalog shares MinIO's network namespace, so ``http://127.0.0.1:<S3_PORT>`` is the same store from inside the
 catalog's container and from the host. That matters because the catalog hands clients the storage address it uses
@@ -9,6 +12,8 @@ The root keys below are throwaway values for a store that only listens on 127.0.
 
 import json
 import logging
+import secrets as _secrets
+import uuid
 import os
 import re
 import subprocess
@@ -16,6 +21,7 @@ import sys
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import requests
@@ -37,6 +43,18 @@ CATALOG_IMAGE = os.environ.get("ICEBERG_PROOF_CATALOG_IMAGE", "quay.io/lakekeepe
 MINIO_IMAGE = os.environ.get("ICEBERG_PROOF_MINIO_IMAGE", DEFAULT_MINIO_IMAGE)
 CATALOG_CONTAINER = "iceberg-proof-catalog"
 MINIO_CONTAINER = "iceberg-proof-minio"
+POLARIS_PORT = int(os.environ.get("ICEBERG_PROOF_POLARIS_PORT", 18191))
+POLARIS_HEALTH_PORT = int(os.environ.get("ICEBERG_PROOF_POLARIS_HEALTH_PORT", 18192))
+POLARIS_IMAGE = os.environ.get("ICEBERG_PROOF_POLARIS_IMAGE", "apache/polaris:1.9.0")
+POLARIS_URL = f"http://127.0.0.1:{POLARIS_PORT}"
+POLARIS_CONTAINER = "iceberg-proof-polaris"
+SIGNED_CATALOG_URI = f"{POLARIS_URL}/api/catalog"
+SIGNED_WAREHOUSE = "signed"
+SIGNED_TOKEN_ENDPOINT = f"{SIGNED_CATALOG_URI}/v1/oauth/tokens"
+SIGNED_SCOPE = "PRINCIPAL_ROLE:ALL"
+SIGNED_LOCATION = f"s3://iceberg-proof/{SIGNED_WAREHOUSE}"
+TOKEN_LIFETIME = os.environ.get("ICEBERG_PROOF_TOKEN_LIFETIME", "PT12S")
+_MANAGEMENT = f"{POLARIS_URL}/api/management/v1"
 PROJECT = "iceberg-proof"
 COMPOSE_FILE = Path(__file__).with_name("docker-compose.yml")
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -45,11 +63,18 @@ MINIO_ROOT_USER = "icebergproofroot"
 MINIO_ROOT_PASSWORD = "icebergproof-root-secret-only-local"
 PG_PASSWORD = "icebergproof-pg-only-local"
 ENCRYPTION_KEY = "icebergproof-encryption-key-only-local"
+POLARIS_ROOT_SECRET = "icebergproof-polaris-root-only-local"
 DEFAULT_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 
 SKIP_REASON = (
     f"Iceberg REST catalog is not running at {CATALOG_URI}; "
+    "start it with: python -m test_utils.iceberg_rest start "
+    "(if it is paused after an interrupted run: stop, then start)"
+)
+
+SIGNED_SKIP_REASON = (
+    f"The Iceberg REST catalog that asks for a sign-in (Apache Polaris) is not running at {SIGNED_CATALOG_URI}; "
     "start it with: python -m test_utils.iceberg_rest start "
     "(if it is paused after an interrupted run: stop, then start)"
 )
@@ -62,7 +87,7 @@ def catalog_properties() -> dict[str, str]:
 
 def secret_values() -> list[str]:
     """The throwaway secrets, for masking anything shown from a child process."""
-    return [MINIO_ROOT_PASSWORD, MINIO_ROOT_USER, PG_PASSWORD, ENCRYPTION_KEY]
+    return [MINIO_ROOT_PASSWORD, MINIO_ROOT_USER, PG_PASSWORD, ENCRYPTION_KEY, POLARIS_ROOT_SECRET]
 
 
 def _answers(url: str, timeout: float = 2.0) -> bool:
@@ -89,6 +114,11 @@ def _compose_env() -> dict[str, str]:
         "ICEBERG_PROOF_PG_PASSWORD": PG_PASSWORD,
         "ICEBERG_PROOF_PG_URL": f"postgresql://postgres:{PG_PASSWORD}@iceberg-proof-postgres:5432/postgres",
         "ICEBERG_PROOF_ENCRYPTION_KEY": ENCRYPTION_KEY,
+        "ICEBERG_PROOF_POLARIS_IMAGE": POLARIS_IMAGE,
+        "ICEBERG_PROOF_POLARIS_PORT": str(POLARIS_PORT),
+        "ICEBERG_PROOF_POLARIS_HEALTH_PORT": str(POLARIS_HEALTH_PORT),
+        "ICEBERG_PROOF_POLARIS_ROOT_SECRET": POLARIS_ROOT_SECRET,
+        "ICEBERG_PROOF_TOKEN_LIFETIME": TOKEN_LIFETIME,
     }
 
 
@@ -212,12 +242,16 @@ def start() -> bool:
         logger.error("The catalog did not answer /health; see: docker logs %s", CATALOG_CONTAINER)
         return False
     bootstrap()
+    if not _wait_for(f"http://127.0.0.1:{POLARIS_HEALTH_PORT}/q/health"):
+        logger.error("Polaris did not answer /q/health; see its log through fixtures.mask (it holds the root secret)")
+        return False
+    bootstrap_signed()
     return True
 
 
 def stop() -> None:
     """Remove this stack's containers, network and volumes, then list what is left with its name (expected: nothing)."""
-    for container in (CATALOG_CONTAINER, MINIO_CONTAINER):
+    for container in (CATALOG_CONTAINER, POLARIS_CONTAINER, MINIO_CONTAINER):
         subprocess.run(["docker", "unpause", container], capture_output=True, check=False)
     result = _compose("down", "-v", "--remove-orphans")
     if result.returncode != 0:
@@ -310,12 +344,30 @@ def clean_env(home: Path) -> dict[str, str]:
     }
 
 
+def sign_in_values(plains) -> list[str]:
+    """Each sign-in as given and, for a client id and secret, the secret and the ``id:secret`` pair on their own."""
+    values: list[str] = []
+    for plain in plains:
+        values.append(plain)
+        try:
+            parsed = json.loads(plain)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict) and parsed.get("client_secret"):
+            values += [parsed["client_secret"], f"{parsed.get('client_id')}:{parsed['client_secret']}"]
+    return values
+
+
 def run_child(module: str, payload: dict, env: dict[str, str], secrets=()) -> dict:
     """Run ``module`` in a fresh Python with exactly ``env`` and ``payload`` on stdin; returns its last JSON line.
 
     A failure raises ``AssertionError`` with the child's masked stderr; the error texts it reports are masked too.
     """
-    secrets = [*secrets, *key_values(payload.get("access", {}).get("storage_properties", {}))]
+    secrets = [
+        *secrets,
+        *key_values(payload.get("access", {}).get("storage_properties", {})),
+        *sign_in_values(payload.get("decrypts", {}).values()),
+    ]
     result = subprocess.run(
         [sys.executable, "-m", module],
         cwd=REPO_ROOT,
@@ -352,3 +404,155 @@ def refusal_code(properties: dict[str, str], bucket: str, key: str) -> str | Non
     except ClientError as exc:
         return exc.response["Error"]["Code"]
     return None
+
+
+def _token_answer(client_id: str, client_secret: str) -> requests.Response:
+    return requests.post(
+        SIGNED_TOKEN_ENDPOINT,
+        auth=(client_id, client_secret),
+        data={"grant_type": "client_credentials", "scope": SIGNED_SCOPE},
+        timeout=10,
+    )
+
+
+def _root_headers() -> dict[str, str]:
+    answer = _token_answer("root", POLARIS_ROOT_SECRET)
+    if answer.status_code != 200:
+        raise RuntimeError(f"Polaris refused its root principal ({answer.status_code})")
+    return {"Authorization": f"Bearer {answer.json()['access_token']}", "Content-Type": "application/json"}
+
+
+def _manage(method: str, path: str, headers: dict[str, str], body: dict | None = None, ok=(200, 201, 204)) -> dict:
+    answer = requests.request(method, f"{_MANAGEMENT}{path}", headers=headers, json=body, timeout=30)
+    if answer.status_code not in ok:
+        raise RuntimeError(mask(f"Polaris {method} {path} answered {answer.status_code}: {answer.text[:300]}"))
+    return answer.json() if answer.content else {}
+
+
+def signed_catalog_ready() -> bool:
+    """True when Polaris answers and its root principal reaches the warehouse. Never starts anything."""
+    if not _answers(f"http://127.0.0.1:{POLARIS_HEALTH_PORT}/q/health"):
+        return False
+    try:
+        config = requests.get(
+            f"{SIGNED_CATALOG_URI}/v1/config", params={"warehouse": SIGNED_WAREHOUSE}, headers=_root_headers(), timeout=5
+        )
+    except (requests.RequestException, RuntimeError):
+        return False
+    return config.status_code == 200
+
+
+def bootstrap_signed() -> None:
+    """Create the Polaris catalog ``signed`` on this stack's bucket, keys from MinIO's own STS (safe to run again)."""
+    headers = _root_headers()
+    body = {
+        "catalog": {
+            "name": SIGNED_WAREHOUSE,
+            "type": "INTERNAL",
+            "readOnly": False,
+            "properties": {"default-base-location": SIGNED_LOCATION},
+            "storageConfigInfo": {
+                "storageType": "S3",
+                "allowedLocations": [SIGNED_LOCATION],
+                "endpoint": S3_ENDPOINT,
+                "stsEndpoint": S3_ENDPOINT,
+                "pathStyleAccess": True,
+                "region": REGION,
+            },
+        }
+    }
+    _manage("POST", "/catalogs", headers, body, ok=(200, 201, 409))
+
+
+@dataclass
+class Principal:
+    """A Polaris principal of the signed catalog; its client id and secret stay out of ``repr``."""
+
+    name: str
+    client_id: str = field(repr=False)
+    client_secret: str = field(repr=False)
+
+    @property
+    def credential(self) -> str:
+        return f"{self.client_id}:{self.client_secret}"
+
+
+def new_principal(name: str | None = None, *, privilege: str = "CATALOG_MANAGE_CONTENT") -> Principal:
+    """A new principal holding ``privilege`` on the signed catalog, through a principal role and a catalog role."""
+    name = name or f"flowfile_{uuid.uuid4().hex[:8]}"
+    headers = _root_headers()
+    created = _manage("POST", "/principals", headers, {"principal": {"name": name}})
+    credentials = created["credentials"]
+    _manage("POST", "/principal-roles", headers, {"principalRole": {"name": f"{name}_role"}})
+    _manage("PUT", f"/principals/{name}/principal-roles", headers, {"principalRole": {"name": f"{name}_role"}})
+    _manage("POST", f"/catalogs/{SIGNED_WAREHOUSE}/catalog-roles", headers, {"catalogRole": {"name": f"{name}_cat"}})
+    _manage(
+        "PUT",
+        f"/catalogs/{SIGNED_WAREHOUSE}/catalog-roles/{name}_cat/grants",
+        headers,
+        {"grant": {"type": "catalog", "privilege": privilege}},
+    )
+    _manage(
+        "PUT",
+        f"/principal-roles/{name}_role/catalog-roles/{SIGNED_WAREHOUSE}",
+        headers,
+        {"catalogRole": {"name": f"{name}_cat"}},
+    )
+    return Principal(name, credentials["clientId"], credentials["clientSecret"])
+
+
+def drop_principal(name: str) -> None:
+    """Remove a principal made by ``new_principal`` and its two roles; what is already gone is skipped."""
+    headers = _root_headers()
+    for path in (f"/principals/{name}", f"/principal-roles/{name}_role", f"/catalogs/{SIGNED_WAREHOUSE}/catalog-roles/{name}_cat"):
+        _manage("DELETE", path, headers, ok=(200, 204, 404))
+
+
+def fetch_token(principal: Principal) -> tuple[str, int]:
+    """A bearer token for ``principal`` and the seconds it lives, from the signed catalog's own token endpoint."""
+    answer = _token_answer(principal.client_id, principal.client_secret)
+    if answer.status_code != 200:
+        raise RuntimeError(f"Polaris refused the principal's client id and secret ({answer.status_code})")
+    body = answer.json()
+    return body["access_token"], int(body.get("expires_in") or 0)
+
+
+def token_seconds() -> int:
+    """How long a token of the running signed catalog lives, as its token endpoint says."""
+    answer = _token_answer("root", POLARIS_ROOT_SECRET)
+    answer.raise_for_status()
+    return int(answer.json().get("expires_in") or 0)
+
+
+def signed_catalog(principal: Principal):
+    """A PyIceberg client on the signed catalog as ``principal``, for seeding and for checking what Flowfile wrote."""
+    from pyiceberg.catalog.rest import RestCatalog
+
+    return RestCatalog(
+        "signed",
+        uri=SIGNED_CATALOG_URI,
+        warehouse=SIGNED_WAREHOUSE,
+        credential=principal.credential,
+        scope=SIGNED_SCOPE,
+        **{"oauth2-server-uri": SIGNED_TOKEN_ENDPOINT},
+    )
+
+
+_SEALED: dict[str, str] = {}
+
+
+def seal(plain: str) -> str:
+    """A ``$ffsec$``-shaped stand-in for a stored secret's ciphertext, opened by ``open_sealed`` in this process only."""
+    ciphertext = f"$ffsec$1$0$test-{_secrets.token_hex(8)}"
+    _SEALED[ciphertext] = plain
+    return ciphertext
+
+
+def open_sealed(ciphertext: str) -> str:
+    """The plain text ``seal`` was given; a decryptor for ``register_secret_decryptor``."""
+    return _SEALED[ciphertext]
+
+
+def sealed_map(*ciphertexts: str) -> dict[str, str]:
+    """``{ciphertext: plain}`` for a child process that registers its own decryptor from it."""
+    return {ciphertext: _SEALED[ciphertext] for ciphertext in ciphertexts}

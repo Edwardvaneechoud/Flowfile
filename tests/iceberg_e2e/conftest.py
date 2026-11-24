@@ -25,6 +25,8 @@ def namespace() -> Iterator[str]:
     name = f"e2e_{uuid.uuid4().hex[:8]}"
     yield name
     lake = flow_demo.catalog()
+    if not lake.namespace_exists(name):
+        return
     for identifier in lake.list_tables(name):
         with contextlib.suppress(Exception):
             lake.purge_table(identifier)

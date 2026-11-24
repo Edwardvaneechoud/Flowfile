@@ -127,6 +127,7 @@ ff.write_to_cloud_storage(
 - `catalog_uri`, `catalog_warehouse`, `catalog_token_secret`: The Iceberg REST catalog's address, its warehouse and the
   name of a stored secret holding a bearer token. Only used for Iceberg; `write_mode` is then `"overwrite"` or
   `"append"`. See [An Iceberg table kept by a REST catalog](#an-iceberg-table-kept-by-a-rest-catalog)
+- `catalog`: The name of a catalog added to Flowfile's catalog, instead of the three above
 
 !!! tip "Recommended Approach"
     `write_to_cloud_storage()` is the recommended way to write to cloud storage. The format-specific methods below still work and are useful when you want a more concise call for a known format.
@@ -135,7 +136,8 @@ ff.write_to_cloud_storage(
 
 With `file_format="iceberg"`, `path` is the table's name (`namespace.table`) and `catalog_uri` the address of the
 Iceberg REST catalog that keeps it. The write runs when the function is called; `write_mode` is `"overwrite"`
-(default) or `"append"`.
+(default) or `"append"`. A catalog added to Flowfile's catalog is named instead, with `catalog="polaris"`: its
+address, warehouse and sign-in come from there, and writing it needs Manage on its schema on a multi-user server.
 
 ```python
 import flowfile as ff
@@ -168,9 +170,9 @@ What is supported, in plain words:
 - A read of a table another engine deleted rows from can be slower: Polars' own reader cannot apply every delete file,
   PyIceberg reads it instead, and the run's log says so.
 - A catalog that needs a sign-in takes a bearer token from a stored secret (`catalog_token_secret`, the secret's name;
-  the token is never saved with the flow). This is not yet tested against a catalog that checks the token.
+  the token is never saved with the flow), or a client id and secret when it is named by `catalog=`.
 - It runs from Python, and in a flow opened in the designer; the designer's own forms do not offer Iceberg yet. A
-  multi-user server refuses it, until catalogs can be added to Flowfile's catalog.
+  multi-user server refuses a catalog named by its address and runs one named by `catalog=`.
 
 ### Format-Specific Cloud Writers
 

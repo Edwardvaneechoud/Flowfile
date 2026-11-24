@@ -16,6 +16,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    SecretStr,
     StrictBool,
     StrictFloat,
     StrictInt,
@@ -32,6 +33,167 @@ from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa
 from shared.models import RunType
 
 # ==================== Namespace Schemas ====================
+
+ExternalSignIn = Literal["none", "token", "client_credentials"]
+
+_HTTP = ("http://", "https://")
+
+
+class ExternalCatalogConnection(BaseModel):
+    """How to reach an Iceberg REST catalog. An unknown field is refused: no storage setting can be given."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str
+    warehouse: str | None = None
+    sign_in: ExternalSignIn = "none"
+    token: SecretStr | None = None
+    client_id: str | None = None
+    client_secret: SecretStr | None = None
+    scope: str | None = None
+    token_endpoint: str | None = None
+
+    @field_validator(
+        "uri", "warehouse", "client_id", "scope", "token_endpoint", "token", "client_secret", mode="before"
+    )
+    @classmethod
+    def _blank_is_none(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("uri")
+    @classmethod
+    def _uri_is_http(cls, value: str | None) -> str:
+        if not value or not value.startswith(_HTTP):
+            raise ValueError("The address starts with http:// or https://.")
+        return value
+
+    @field_validator("token_endpoint")
+    @classmethod
+    def _endpoint_is_http(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith(_HTTP):
+            raise ValueError("The token endpoint starts with http:// or https://.")
+        return value
+
+    @model_validator(mode="after")
+    def _fields_of_the_sign_in(self):
+        if self.sign_in == "none" and any(
+            (self.token, self.client_id, self.client_secret, self.scope, self.token_endpoint)
+        ):
+            raise ValueError("With no sign-in, leave the token, client id, secret, scope and token endpoint empty.")
+        if self.sign_in == "token" and any((self.client_id, self.client_secret, self.scope, self.token_endpoint)):
+            raise ValueError("A token sign-in takes only the token.")
+        if self.sign_in == "client_credentials":
+            if self.token is not None:
+                raise ValueError("A client id and secret sign-in takes no token.")
+            if not self.client_id:
+                raise ValueError("A client id and secret sign-in needs the client id.")
+            if ":" in self.client_id:
+                raise ValueError("A client id cannot hold ':'.")
+        return self
+
+    def sign_in_secret(self) -> str | None:
+        """The value the stored secret holds: the token or the client secret, ``None`` when none was given."""
+        given = self.token if self.sign_in == "token" else self.client_secret
+        return given.get_secret_value() if given is not None else None
+
+
+class ExternalCatalogCreate(ExternalCatalogConnection):
+    """A catalog kept elsewhere added under ``name``; a sign-in other than none needs its secret."""
+
+    name: str
+    description: str | None = None
+
+    @model_validator(mode="after")
+    def _secret_is_given(self):
+        if self.sign_in == "token" and self.token is None:
+            raise ValueError("Enter the token.")
+        if self.sign_in == "client_credentials" and self.client_secret is None:
+            raise ValueError("Enter the client secret.")
+        return self
+
+
+class ExternalCatalogUpdate(BaseModel):
+    """A change to a catalog kept elsewhere; a field left out keeps its value, a secret left out the stored one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str | None = None
+    uri: str | None = None
+    warehouse: str | None = None
+    sign_in: ExternalSignIn | None = None
+    token: SecretStr | None = None
+    client_id: str | None = None
+    client_secret: SecretStr | None = None
+    scope: str | None = None
+    token_endpoint: str | None = None
+
+
+class ExternalCatalogTest(ExternalCatalogConnection):
+    """A connection to try; with ``namespace_id`` and no secret, the stored secret of that catalog is used."""
+
+    namespace_id: int | None = None
+
+
+class ExternalCatalogOut(BaseModel):
+    """How a catalog kept elsewhere is reached, as anyone who may see it is told: never its secret."""
+
+    kind: str
+    uri: str
+    warehouse: str | None = None
+    sign_in: ExternalSignIn
+    client_id: str | None = None
+    scope: str | None = None
+    token_endpoint: str | None = None
+    synced_at: datetime | None = None
+    sync_error: str | None = None
+    not_shown: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class ExternalCatalogTestResult(BaseModel):
+    ok: bool
+    message: str
+    schemas: int | None = None
+
+
+class ExternalCatalogSyncResult(BaseModel):
+    """What a sync changed: schema names added, marked gone and back again, and the state it left."""
+
+    added: list[str] = Field(default_factory=list)
+    gone: list[str] = Field(default_factory=list)
+    back: list[str] = Field(default_factory=list)
+    not_shown: int = 0
+    synced_at: datetime | None = None
+    skipped: bool = False
+    error: str | None = None
+
+
+class ExternalTableOut(BaseModel):
+    name: str
+    reference: str
+
+
+class ExternalTableList(BaseModel):
+    tables: list[ExternalTableOut]
+    listed_at: datetime
+    cached: bool
+
+
+class ExternalTableDetail(BaseModel):
+    """A table of a catalog kept elsewhere as that catalog describes it: columns and metadata, no row count."""
+
+    name: str
+    reference: str
+    table: str
+    columns: list["ColumnSchema"]
+    format_version: int
+    location: str
+    partitioned_by: list[str]
+    updated_at: datetime | None = None
 
 
 class NamespaceCreate(BaseModel):
@@ -67,6 +229,9 @@ class NamespaceOut(BaseModel):
     access: AccessInfo | None = None
     # Where the namespace lives; a hub's row carries the negative of the hub's id as ``id``.
     source: Literal["local", "hub"] = "local"
+    kept_elsewhere: bool = False
+    gone_since: datetime | None = None
+    external: ExternalCatalogOut | None = None
 
     model_config = {"from_attributes": True}
 

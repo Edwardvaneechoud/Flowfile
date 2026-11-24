@@ -711,7 +711,7 @@
     {
       "name": "read_from_cloud_storage",
       "kind": "function",
-      "signature": "(source, *, file_format='parquet', connection_name=None, scan_mode=None, delimiter=';', has_header=True, encoding='utf8', delta_version=None, changes_since=None, include_change_preimage=False, description=None, output_field_config=None, catalog_uri=None, catalog_warehouse=None, catalog_token_secret=None)",
+      "signature": "(source, *, file_format='parquet', connection_name=None, scan_mode=None, delimiter=';', has_header=True, encoding='utf8', delta_version=None, changes_since=None, include_change_preimage=False, description=None, output_field_config=None, catalog_uri=None, catalog_warehouse=None, catalog_token_secret=None, catalog=None)",
       "doc_first_line": "Read data from cloud storage."
     },
     {
@@ -849,7 +849,7 @@
     {
       "name": "write_to_cloud_storage",
       "kind": "function",
-      "signature": "(df, path, *, file_format='parquet', connection_name=None, delimiter=';', encoding='utf8', compression='snappy', write_mode='overwrite', partition_by=None, merge_keys=None, track_changes=False, catalog_uri=None, catalog_warehouse=None, catalog_token_secret=None)",
+      "signature": "(df, path, *, file_format='parquet', connection_name=None, delimiter=';', encoding='utf8', compression='snappy', write_mode='overwrite', partition_by=None, merge_keys=None, track_changes=False, catalog_uri=None, catalog_warehouse=None, catalog_token_secret=None, catalog=None)",
       "doc_first_line": "Write data to cloud storage."
     }
   ],

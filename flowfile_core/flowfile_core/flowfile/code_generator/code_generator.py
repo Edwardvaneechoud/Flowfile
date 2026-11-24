@@ -2754,9 +2754,13 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self._add_code("")
 
     def _emit_iceberg_catalog_kwargs(self, cs) -> None:
-        """The catalog keywords of an Iceberg cloud node: its address, and its warehouse and token secret when set."""
+        """The catalog keywords of an Iceberg cloud node: the catalog's name in Flowfile's catalog, or its address and
+        its warehouse and token secret when set."""
         catalog = cs.iceberg_catalog
         if cs.file_format != "iceberg" or catalog is None:
+            return
+        if catalog.catalog is not None:
+            self._add_code(f"    catalog={catalog.catalog!r},")
             return
         self._add_code(f"    catalog_uri={catalog.uri!r},")
         if catalog.warehouse:

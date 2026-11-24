@@ -3,7 +3,8 @@
 Run as ``python -m shared.tests.iceberg.table_child`` with a JSON document on stdin. It is given a catalog's address
 (``"catalog"``), a table's metadata location and storage keys (``"access"``), a table ref (``"ref"``) or a serialized
 plan (``"plan"``), and nothing else: it never imports the module that holds the test store's root keys, so those are
-not even in its memory.
+not even in its memory. A sign-in comes as ``"decrypts"``, a ``{ciphertext: plain}`` map this process decrypts with, as
+the worker decrypts a stored secret with its master key.
 """
 
 import base64
@@ -148,6 +149,10 @@ OPS = {"read": read, "write": write, "collect_plan": collect_plan, "schema_ref":
 
 def main() -> None:
     payload = json.loads(sys.stdin.read())
+    if "decrypts" in payload:
+        from shared.cloud_credential_provider import register_secret_decryptor
+
+        register_secret_decryptor(payload.pop("decrypts").__getitem__)
     print(json.dumps(OPS[payload["op"]](payload)))
 
 

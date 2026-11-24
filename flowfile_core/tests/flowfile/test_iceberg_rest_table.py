@@ -287,3 +287,236 @@ def test_a_rerun_reads_again_only_when_the_table_has_a_new_commit(
     handle_run_info(graph.run_graph())
     assert graph.get_node(1).hash != appended
     assert graph.get_node(2).get_resulting_data().columns == ["id", "grp", "val", "name", "note"]
+
+
+class _Values(list):
+    """Secret values a test searches for; its ``repr`` holds none of them."""
+
+    def __repr__(self) -> str:
+        return f"<{len(self)} secret values>"
+
+
+@pytest.fixture(scope="module")
+def principal():
+    if not fixtures.signed_catalog_ready():
+        pytest.skip(fixtures.SIGNED_SKIP_REASON)
+    made = fixtures.new_principal()
+    yield made
+    fixtures.drop_principal(made.name)
+
+
+@pytest.fixture(scope="module")
+def signed(principal):
+    return fixtures.signed_catalog(principal)
+
+
+@pytest.fixture(scope="module")
+def signed_orders(signed):
+    """A namespace on Polaris holding ``orders``, 1000 rows; ``(namespace, "namespace.orders")``."""
+    from shared.iceberg_utils import write_table
+
+    name = f"flow_{uuid.uuid4().hex[:8]}"
+    signed.create_namespace(name)
+    arrow = _orders(1).to_arrow(compat_level=pl.CompatLevel.oldest())
+    table = signed.create_table(f"{name}.orders", schema=arrow.schema)
+    write_table(table, _orders(1000).lazy(), "append")
+    yield name, f"{name}.orders"
+    for identifier in signed.list_tables(name):
+        with contextlib.suppress(Exception):
+            signed.drop_table(identifier)
+    with contextlib.suppress(Exception):
+        signed.drop_namespace(name)
+
+
+def _add_external(body: dict) -> str:
+    """Add a catalog kept elsewhere through the catalog service, as user 1; returns its name."""
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.schemas.catalog_schema import ExternalCatalogCreate
+
+    with get_db_context() as db:
+        CatalogService(SQLAlchemyCatalogRepository(db)).create_external_catalog(ExternalCatalogCreate(**body), 1)
+    return body["name"]
+
+
+def _remove_external(name: str) -> None:
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogNamespace
+
+    with get_db_context() as db:
+        row = db.query(CatalogNamespace).filter_by(name=name, parent_id=None).first()
+        if row is not None:
+            CatalogService(SQLAlchemyCatalogRepository(db)).delete_external_catalog(row.id)
+
+
+@pytest.fixture(scope="module")
+def polaris(principal, signed_orders):
+    name = _add_external({
+        "name": f"polaris_{uuid.uuid4().hex[:6]}", "uri": fixtures.SIGNED_CATALOG_URI,
+        "warehouse": fixtures.SIGNED_WAREHOUSE, "sign_in": "client_credentials",
+        "client_id": principal.client_id, "client_secret": principal.client_secret, "scope": fixtures.SIGNED_SCOPE,
+    })
+    yield name
+    _remove_external(name)
+
+
+def _named(catalog: str) -> cloud_ss.IcebergCatalogSettings:
+    return cloud_ss.IcebergCatalogSettings(catalog=catalog)
+
+
+def _add_named_reader(graph, table: str, catalog: str, node_id: int = 1, user_id: int = 1) -> None:
+    add_node_promise_on_type(graph, "cloud_storage_reader", node_id)
+    graph.add_cloud_storage_reader(input_schema.NodeCloudStorageReader(
+        flow_id=graph.flow_id, node_id=node_id, user_id=user_id,
+        cloud_storage_settings=cloud_ss.CloudStorageReadSettings(
+            resource_path=table, file_format="iceberg", iceberg_catalog=_named(catalog)),
+    ))
+
+
+def _add_named_writer(graph, table: str, catalog: str, node_id: int, depends_on: int, user_id: int = 1) -> None:
+    add_node_promise_on_type(graph, "cloud_storage_writer", node_id)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(depends_on, node_id))
+    graph.add_cloud_storage_writer(input_schema.NodeCloudStorageWriter(
+        flow_id=graph.flow_id, node_id=node_id, user_id=user_id, depending_on_id=depends_on,
+        cloud_storage_settings=cloud_ss.CloudStorageWriteSettings(
+            resource_path=table, file_format="iceberg", write_mode="overwrite", iceberg_catalog=_named(catalog)),
+    ))
+
+
+def _signed_rows(signed, identifier: str) -> tuple[int, int]:
+    from shared.iceberg_utils import scan_table, table_access
+
+    counted = scan_table(table_access(signed.load_table(identifier))).select(pl.len(), pl.col("id").sum()).collect()
+    return int(counted.item(0, 0)), int(counted.item(0, 1) or 0)
+
+
+def _forms(principal, *tokens) -> _Values:
+    return _Values([principal.client_secret, principal.credential, *tokens])
+
+
+def test_a_reader_and_a_writer_that_name_the_catalog_read_and_write_its_tables(
+    signed, signed_orders, polaris, execution_location
+):
+    namespace, orders = signed_orders
+    target = f"{namespace}.grp3_{execution_location}"
+    graph = create_graph(execution_location=execution_location)
+    _add_named_reader(graph, orders, polaris)
+    _add_filter(graph, 2, 1, "[grp] = 3")
+    _add_named_writer(graph, target, polaris, 3, 2)
+
+    assert [column.column_name for column in graph.get_node(1).schema] == ["id", "grp", "val", "name"]
+    handle_run_info(graph.run_graph())
+
+    kept = [i for i in range(1000) if i % 10 == 3]
+    assert _signed_rows(signed, target) == (len(kept), sum(kept))
+
+
+def test_the_plan_and_the_write_request_hold_ciphertext_and_no_part_of_the_sign_in(
+    principal, signed_orders, polaris, monkeypatch
+):
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+
+    namespace, orders = signed_orders
+    sent = []
+    run_op = FlowNode.run_op
+
+    def recording(self, backend, kind, payload, **kwargs):
+        sent.append(payload)
+        return run_op(self, backend, kind, payload, **kwargs)
+
+    monkeypatch.setattr(FlowNode, "run_op", recording)
+    graph = create_graph(execution_location="local")
+    _add_named_reader(graph, orders, polaris)
+    _add_named_writer(graph, f"{namespace}.plan_check", polaris, 2, 1)
+    blob = graph.get_node(1).get_resulting_data().data_frame.serialize()
+    handle_run_info(graph.run_graph())
+
+    token, _ = fixtures.fetch_token(principal)
+    forms = _forms(principal, token)
+    in_plan = [index for index, value in enumerate(forms) if value.encode() in blob]
+    assert in_plan == []
+    carried = [payload.get("payload") for payload in sent if isinstance(payload, dict)]
+    tables = [item.table for item in carried if hasattr(getattr(item, "table", None), "token")]
+    assert len(tables) == 1
+    request = json.dumps({"uri": tables[0].catalog_uri, "table": tables[0].table, "token": tables[0].token})
+    in_request = [index for index, value in enumerate(forms) if value in request]
+    assert in_request == []
+    ciphertext = tables[0].token.startswith("$ffsec$1$")
+    assert ciphertext and tables[0].token.encode() in blob
+
+
+def _skip_when_tokens_live_long():
+    if fixtures.token_seconds() > 30:
+        pytest.skip(f"the catalog's tokens live {fixtures.token_seconds()} seconds; start it with the default lifetime")
+
+
+def test_a_flow_run_after_the_token_ran_out_still_works_with_a_client_id_and_secret(signed_orders, polaris):
+    import time
+
+    _skip_when_tokens_live_long()
+    _, orders = signed_orders
+    graph = create_graph(execution_location="local")
+    _add_named_reader(graph, orders, polaris)
+    time.sleep(fixtures.token_seconds() + 1)
+
+    handle_run_info(graph.run_graph())
+
+    assert graph.get_node(1).get_resulting_data().collect().height == 1000
+
+
+def test_a_flow_with_a_pasted_token_that_ran_out_fails_with_the_sentence(principal, signed_orders):
+    import time
+
+    _skip_when_tokens_live_long()
+    _, orders = signed_orders
+    token, lifetime = fixtures.fetch_token(principal)
+    name = _add_external({
+        "name": f"pasted_{uuid.uuid4().hex[:6]}", "uri": fixtures.SIGNED_CATALOG_URI,
+        "warehouse": fixtures.SIGNED_WAREHOUSE, "sign_in": "token", "token": token,
+    })
+    try:
+        graph = create_graph(execution_location="local")
+        _add_named_reader(graph, orders, name)
+        time.sleep(lifetime + 1)
+        run = graph.run_graph()
+    finally:
+        _remove_external(name)
+
+    (step,) = [step for step in run.node_step_result if step.node_id == 1]
+    said = step.error or ""
+    assert not step.success
+    assert "refused the sign-in: it is wrong or has run out" in said
+    leaked = [index for index, value in enumerate(_forms(principal, token)) if value in said]
+    assert leaked == []
+
+
+def test_a_write_that_outlasts_the_token_commits_with_a_client_id_and_secret(signed, signed_orders, polaris):
+    _skip_when_tokens_live_long()
+    namespace, orders = signed_orders
+    target = f"{namespace}.slow_copy"
+    seconds = fixtures.token_seconds() + 3
+    graph = create_graph(execution_location="local")
+    _add_named_reader(graph, orders, polaris)
+    add_node_promise_on_type(graph, "polars_code", 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_polars_code(input_schema.NodePolarsCode(
+        flow_id=graph.flow_id, node_id=2, depending_on_ids=[1],
+        polars_code_input=transform_schema.PolarsCodeInput(
+            polars_code=f"output_df = input_df.map_batches(lambda batch: (time.sleep({seconds}), batch)[1])"),
+    ))
+    _add_named_writer(graph, target, polaris, 3, 2)
+
+    handle_run_info(graph.run_graph())
+
+    assert _signed_rows(signed, target) == (1000, sum(range(1000)))
+
+
+def test_an_unknown_catalog_name_fails_the_node_with_the_sentence():
+    graph = create_graph(execution_location="local")
+    _add_named_reader(graph, "sales.orders", "no_such_catalog")
+    run = graph.run_graph()
+
+    (step,) = [step for step in run.node_step_result if step.node_id == 1]
+    assert not step.success
+    assert "No catalog named 'no_such_catalog' is kept elsewhere in Flowfile's catalog." in (step.error or "")

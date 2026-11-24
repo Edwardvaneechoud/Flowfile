@@ -98,3 +98,34 @@ def test_an_iceberg_node_round_trips_and_saves_only_the_secrets_name():
     writer = input_schema.NodeCloudStorageWriter(flow_id=1, node_id=2, cloud_storage_settings=_write())
     assert input_schema.NodeCloudStorageWriter.model_validate(writer.model_dump()) == writer
     assert node.get_default_description() == "Read demo.orders (iceberg)"
+
+
+def test_a_node_names_its_catalog_by_address_or_by_name_and_not_both():
+    named = IcebergCatalogSettings(catalog="polaris")
+    assert (named.uri, named.catalog) == (None, "polaris")
+    for kwargs in ({}, {"uri": CATALOG.uri, "catalog": "polaris"}):
+        with pytest.raises(ValidationError, match="by its address .uri. or by its name"):
+            IcebergCatalogSettings(**kwargs)
+    for kwargs in ({"warehouse": "proof"}, {"token_secret": "lake-token"}):
+        with pytest.raises(ValidationError, match="brings its own warehouse and sign-in"):
+            IcebergCatalogSettings(catalog="polaris", **kwargs)
+
+
+def test_a_node_saved_with_an_address_dumps_as_it_did():
+    node = input_schema.NodeCloudStorageReader(flow_id=1, node_id=1, cloud_storage_settings=_read())
+    dumped = node.model_dump()["cloud_storage_settings"]["iceberg_catalog"]
+    assert list(dumped) == ["uri", "warehouse", "token_secret"]
+    assert '"iceberg_catalog":{"uri":"http://127.0.0.1:18181/catalog","warehouse":"proof","token_secret":null}' in (
+        node.model_dump_json()
+    )
+
+
+def test_a_node_that_names_a_catalog_round_trips():
+    writer = input_schema.NodeCloudStorageWriter(
+        flow_id=1, node_id=2, cloud_storage_settings=_write(iceberg_catalog=IcebergCatalogSettings(catalog="polaris"))
+    )
+    dumped = writer.model_dump()
+    assert dumped["cloud_storage_settings"]["iceberg_catalog"] == {
+        "catalog": "polaris", "warehouse": None, "token_secret": None
+    }
+    assert input_schema.NodeCloudStorageWriter.model_validate(dumped) == writer

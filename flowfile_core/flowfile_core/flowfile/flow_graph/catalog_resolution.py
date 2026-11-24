@@ -105,6 +105,13 @@ def _authorize_catalog_write(db, user_id: int | None, *, existing, namespace_id:
     ``_require_namespace_writable`` (the write then lands in the seeded public
     default namespace).
     """
+    from flowfile_core.catalog.exceptions import KeptElsewhereError
+    from flowfile_core.catalog.services.external_catalogs import refuse_kept_elsewhere
+
+    try:
+        refuse_kept_elsewhere(db, namespace_id, "save anything into it")
+    except KeptElsewhereError as exc:
+        raise PermissionError(str(exc)) from None
     if user_id is None or not sharing.sharing_enabled():
         return
     user = db.get(db_models.User, user_id)
