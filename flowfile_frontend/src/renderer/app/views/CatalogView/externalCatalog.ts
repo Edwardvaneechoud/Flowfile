@@ -147,12 +147,12 @@ export function isKeptElsewhere(node: { kept_elsewhere?: boolean } | null | unde
   return !!node?.kept_elsewhere;
 }
 
-/** The two Python lines that read a table of the catalog and write a copy of it beside it, both by name. */
+/** The Python lines that import flowfile and read a table of the catalog, by name. */
 export function readSnippet(catalog: string, schema: string, table: string): string {
   const where = JSON.stringify(`${catalog}.${schema}`);
   return [
+    "import flowfile as ff",
     `frame = ff.read_catalog_table(${JSON.stringify(table)}, namespace_full_name=${where})`,
-    `ff.write_catalog_table(frame, ${JSON.stringify(`${table}_copy`)}, namespace_full_name=${where})`,
   ].join("\n");
 }
 

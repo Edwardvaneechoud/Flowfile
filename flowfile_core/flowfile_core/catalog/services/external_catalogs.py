@@ -31,6 +31,7 @@ from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.validators import reject_dot_in_name
 from flowfile_core.database.models import CatalogNamespace, CatalogTable, ExternalCatalog, Secret
 from flowfile_core.schemas.catalog_schema import (
+    CatalogTableOut,
     ColumnSchema,
     ExternalCatalogConnection,
     ExternalCatalogCreate,
@@ -552,9 +553,90 @@ def kept_table_row_count(repo: CatalogRepository, namespace_id: int) -> int:
 
 
 def drop_table_rows(repo: CatalogRepository, namespace_id: int) -> None:
-    """Delete the lineage rows of a catalog kept elsewhere's schema, with their read links, favourites and grants."""
+    """Delete the lineage rows of a catalog kept elsewhere's schema, with their read links, favourites and grants, and
+    the snapshots a kernel's reads of their tables left on the shared folder (``fvt-<row id>-*.arrow``)."""
+    from shared.storage_config import storage
+
     for row in _table_rows(repo._db, namespace_id):
         repo.delete_table(row.id)
+        for snapshot in storage.shared_virtual_results_directory.glob(f"fvt-{row.id}-*.arrow"):
+            snapshot.unlink(missing_ok=True)
+
+
+def shared_server_refusal(reference: str) -> str:
+    """The one sentence a notebook kernel gets for a table kept elsewhere (``catalog.schema.table``) on a server."""
+    return f"On a shared server {reference} is read in a flow, not in this notebook."
+
+
+def _kernel_read_ref(db: Session, catalog: str, schema: str, table: str, user_id: int | None) -> IcebergTableRef:
+    """The table a notebook kernel reads, after Use is checked as ``user_id``; both kernel paths go through here.
+
+    Where sharing is on (docker and server modes) every kernel on the server mounts the whole shared folder its
+    snapshot would be written to, so another person's kernel could open it: the read is refused, after the access
+    check, so someone without Use still gets the access sentence, and before the other catalog is asked anything.
+    """
+    from flowfile_core.auth import sharing
+
+    ref = table_ref_for_run(db, catalog, f"{schema}.{table}", user_id, writes=False)
+    if sharing.sharing_enabled():
+        raise ValueError(shared_server_refusal(f"{catalog}.{schema}.{table}"))
+    return ref
+
+
+def kernel_table(db: Session, reference: str, namespace_id: int | None, user_id: int | None) -> CatalogTableOut | None:
+    """The table a notebook kernel names in a catalog kept elsewhere, answered as a view with its columns; ``None``
+    when ``reference`` names no table of such a catalog, so the caller asks the next catalog.
+
+    Named as a cell names a table of Flowfile's own: ``catalog.schema.table``, or the table's name with its schema's
+    row in ``namespace_id``. Use on the schema is checked as ``user_id``, the kernel's owner, before the other catalog
+    is asked anything (``_kernel_read_ref``, which refuses every read on a shared server); that catalog then describes
+    the table, asked for no storage key, and the table gets its hidden row, whose id the kernel's materialize names
+    (``snapshot_scan``). A refusal is a ``ValueError`` with one sentence. No sign-in, ciphertext or key is in the
+    answer: it is the row, its name and its columns.
+    """
+    from shared.iceberg_utils import describe_table
+
+    outside = outside_table(db, reference, None, namespace_id, source=None)
+    if outside is None or not outside.table:
+        return None
+    ref = _kernel_read_ref(db, outside.catalog, outside.schema, outside.table, user_id)
+    if db.get(CatalogNamespace, outside.namespace_id).parent_id is None:
+        raise ValueError(f"{outside.catalog} shows no schema {outside.schema} in Flowfile's catalog; refresh it first.")
+    columns = describe_table(ref).columns
+    row = ensure_table_row(db, outside)
+    return CatalogTableOut(
+        id=row.id,
+        name=row.name,
+        namespace_id=row.namespace_id,
+        namespace_name=outside.schema,
+        full_table_name=f"{outside.schema}.{outside.table}",
+        qualified_name=outside.reference,
+        owner_id=row.owner_id,
+        is_remote_storage=True,
+        schema_columns=[ColumnSchema(name=name, dtype=str(dtype)) for name, dtype in columns.items()],
+        column_count=len(columns),
+        table_type="virtual",
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def snapshot_scan(db: Session, row: CatalogTable, user_id: int | None):
+    """The plan a kernel's snapshot of the table kept elsewhere behind hidden ``row`` is written from.
+
+    Use is checked as ``user_id`` (and the read refused on a shared server, ``_kernel_read_ref``) and the catalog
+    describes the table here, asked for no key; the plan holds the table's ``IcebergTableRef`` (the sign-in's
+    ciphertext only) and those columns, so the process that runs it, the worker, asks the catalog for the keys. A
+    refusal is a ``ValueError`` with one sentence.
+    """
+    from shared.iceberg_utils import describe_table, scan_iceberg_table
+
+    schema = db.get(CatalogNamespace, row.namespace_id)
+    catalog = db.get(CatalogNamespace, schema.parent_id) if schema is not None and schema.parent_id else None
+    if catalog is None:
+        raise ValueError(f"The table {row.name} is no longer in a catalog kept elsewhere.")
+    ref = _kernel_read_ref(db, catalog.name, schema.name, row.name, user_id)
+    return scan_iceberg_table(ref, schema=describe_table(ref).columns)
 
 
 def outside_write_target(

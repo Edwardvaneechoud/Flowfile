@@ -43,8 +43,10 @@ from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _effective_namespace_id,
     unresolved_schema_refusal,
 )
+from flowfile_core.flowfile.flow_graph.history import placement_check
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.graph_tree.graph_tree import render_flow
+from flowfile_core.notebook.lookup import metadata_lookup
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
@@ -614,6 +616,24 @@ def _readable_plan(graph: "FlowGraph", writer_node: "FlowNode") -> str | None:
             "Could not draw the producer branch of virtual table writer %s", writer_node.node_id, exc_info=True
         )
         return None
+
+
+CATALOG_CELL_WRITE_REFUSAL = (
+    "A catalog table is not written from this notebook with ff.write_catalog_table: a table of Flowfile's own is "
+    "written with flowfile_ctx.write_catalog_table(frame.collect(), ...), and a table kept by another catalog is "
+    "written by a flow, with a Write to Catalog node."
+)
+
+
+def refuse_catalog_cell_write() -> None:
+    """Refuse a catalog writer run in a catalog page's notebook cell, before any catalog is opened.
+
+    Such a cell runs in a notebook kernel under the ``metadata_lookup`` hook and outside a notebook session (which
+    sets ``placement_check``, and places a writer without running it). The kernel holds no catalog database, so it
+    cannot tell a table of Flowfile's own from one kept elsewhere: both get the same sentence.
+    """
+    if metadata_lookup.get() is not None and placement_check.get() is None:
+        raise ValueError(CATALOG_CELL_WRITE_REFUSAL)
 
 
 PICK_REMOTE_SCHEMA = "No schema on the hub is picked for this table; pick one you may write to."

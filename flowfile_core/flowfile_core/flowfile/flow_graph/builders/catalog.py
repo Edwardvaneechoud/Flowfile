@@ -44,6 +44,7 @@ from flowfile_core.flowfile.flow_graph.catalog_write import (
     _handle_virtual_table_write,
     _scd2_row_filter,
     _scd2_system_column_dtypes,
+    refuse_catalog_cell_write,
 )
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
 from flowfile_core.flowfile.flow_node.flow_node import (
@@ -544,6 +545,7 @@ class CatalogBuildersMixin(GraphMixinBase):
         """Adds a node that writes its input to the catalog as a Delta table or virtual table."""
 
         def _func(df: FlowDataEngine) -> FlowDataEngine:
+            refuse_catalog_cell_write()
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")

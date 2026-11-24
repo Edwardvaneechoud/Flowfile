@@ -328,6 +328,73 @@ def test_a_notebook_kernels_lookup_answers_the_columns_and_no_secret(principal, 
     assert [index for index, value in enumerate(_Values([principal.client_secret])) if value in text] == []
 
 
+def _info_fields_before_kept_elsewhere() -> list[str]:
+    """The fields ``CatalogTableInfo`` had before tables kept elsewhere, which a kernel of an older release knows."""
+    from flowfile_core.flowfile.flow_graph.catalog_resolution import CatalogTableInfo
+
+    return [field for field in CatalogTableInfo._fields if field != "kept_elsewhere"]
+
+
+def test_a_notebook_kernels_lookup_of_a_delta_table_answers_the_keys_a_kernel_of_an_older_release_knows():
+    """A kernel whose ``flowfile`` predates tables kept elsewhere builds ``CatalogTableInfo(**answer)`` from the answer
+    for a Delta table: the answer has exactly the fields it knows, so ``kept_elsewhere`` is left out when ``None``."""
+    import collections
+
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogNamespace, CatalogTable
+    from flowfile_core.flowfile.flow_graph.catalog_resolution import CatalogTableInfo
+    from flowfile_core.notebook import lookup
+    from tests.flowfile.conftest import add_test_manual_input
+
+    with get_db_context() as db:
+        catalog = CatalogNamespace(name=f"own_{uuid.uuid4().hex[:6]}", level=0, owner_id=1)
+        db.add(catalog)
+        db.commit()
+        own_schema = CatalogNamespace(name="sch", level=1, parent_id=catalog.id, owner_id=1)
+        db.add(own_schema)
+        db.commit()
+        ids = catalog.id, own_schema.id, catalog.name
+    try:
+        graph = create_graph(execution_location="local")
+        add_test_manual_input(graph, [{"id": 1}, {"id": 2}], node_id=1)
+        add_node_promise_on_type(graph, "catalog_writer", 2)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.add_catalog_writer(input_schema.NodeCatalogWriter(
+            flow_id=graph.flow_id, node_id=2, user_id=1, depending_on_id=1,
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name="kept_here", namespace_full_name=f"{ids[2]}.sch"),
+        ))
+        handle_run_info(graph.run_graph())
+
+        answer = lookup.answer("catalog_table", {"node_id": 1, "catalog_full_table_name": f"{ids[2]}.sch.kept_here"}, 1)
+
+        assert sorted(answer) == sorted(_info_fields_before_kept_elsewhere())
+        older = collections.namedtuple("CatalogTableInfo", _info_fields_before_kept_elsewhere())
+        assert older(**answer).table_type == "physical"
+        assert CatalogTableInfo(**answer).kept_elsewhere is None
+    finally:
+        with get_db_context() as db:
+            service = CatalogService(SQLAlchemyCatalogRepository(db))
+            for row in db.query(CatalogTable).filter_by(namespace_id=ids[1]).all():
+                service.delete_table(row.id, delete_file=True)
+            service.delete_namespace(ids[1])
+            service.delete_namespace(ids[0])
+
+
+def test_a_notebook_kernels_lookup_of_a_table_kept_elsewhere_names_it_and_builds_the_kernels_info(
+    polaris, schema, orders
+):
+    from flowfile_core.flowfile.flow_graph.catalog_resolution import CatalogTableInfo
+    from flowfile_core.notebook import lookup
+
+    reference = f"{polaris}.{schema}.{orders}"
+    answer = lookup.answer("catalog_table", {"node_id": 1, "catalog_full_table_name": reference}, 1)
+
+    assert sorted(answer) == sorted([*_info_fields_before_kept_elsewhere(), "kept_elsewhere"])
+    assert CatalogTableInfo(**answer).kept_elsewhere == reference
+
+
 @pytest.fixture
 def producer_flow(tmp_path):
     """A registered flow of this test's own, open in the handler, and the virtual tables it made: ``(graph, path)``."""

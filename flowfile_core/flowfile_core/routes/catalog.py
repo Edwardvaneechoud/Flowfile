@@ -69,6 +69,7 @@ from flowfile_core.catalog import (
     table_sources,
 )
 from flowfile_core.catalog.access import AccessResolver
+from flowfile_core.catalog.services import external_catalogs
 from flowfile_core.catalog.services.tables import catalog_table_location
 from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
 from flowfile_core.configs import logger
@@ -1012,13 +1013,15 @@ def resolve_table(
     kernel_owner: int | None = Depends(kernel_owner_id),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
+    db: Session = Depends(get_db),
 ):
     """Resolve a catalog table by ``"namespace.table"`` or bare ``"table"`` reference.
 
     Strict mode raises ``AmbiguousTableError`` (→ 409) when a bare name matches >1 row.
     Default mode soft-picks deterministically and reports alternatives in ``warnings``.
-    For a kernel, a name this machine's catalog does not hold is looked up among the tables of its owner's remote
-    catalogs, and a negative ``namespace_id`` names a namespace there (``table_sources.kernel_table``).
+    For a kernel, a name this machine's catalog does not hold is looked up next in the catalogs kept elsewhere
+    (``external_catalogs.kernel_table``: a view, or a 422 with the refusal's sentence), then among the tables of its
+    owner's remote catalogs, where a negative ``namespace_id`` names a namespace (``table_sources.kernel_table``).
     """
     if kernel_owner is not None and namespace_id is not None and namespace_id < 0:
         in_namespace = table_sources.kernel_table(kernel_owner, q, namespace_id)
@@ -1033,7 +1036,11 @@ def resolve_table(
             user_id=current_user.id,
         )
     except (TableNotFoundError, NamespaceNotFoundError):
-        elsewhere = table_sources.kernel_table(kernel_owner, q) if kernel_owner is not None else None
+        if kernel_owner is None:
+            raise
+        elsewhere = external_catalogs.kernel_table(db, q, namespace_id, kernel_owner) or table_sources.kernel_table(
+            kernel_owner, q
+        )
         if elsewhere is None:
             raise
         return ResolveTableResult(table=elsewhere)

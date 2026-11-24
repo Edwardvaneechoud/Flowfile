@@ -202,6 +202,12 @@ test.describe("a catalog from elsewhere", () => {
     await expect(page.locator('[data-testid="external-snippet"]')).toContainText(
       'namespace_full_name="polaris.sales"',
     );
+    await expect(page.locator('[data-testid="external-snippet"]')).toContainText(
+      /^import flowfile as ff\n/,
+    );
+    await expect(page.locator('[data-testid="external-snippet"]')).not.toContainText(
+      "write_catalog_table",
+    );
     await shot(page, "03-table-columns.png");
 
     // 5. A wrong secret is one sentence.

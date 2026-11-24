@@ -54,6 +54,24 @@ When using `flowfile_frame` in a Catalog notebook, cloud-backed physical tables 
 
 </details>
 
+### A table kept by another catalog
+
+A table of a [catalog from elsewhere](index.md#a-catalog-from-elsewhere), such as `orders` in the schema `sales` of
+a catalog Flowfile calls `polaris`, is read in a cell with the two lines its table panel shows:
+
+```python
+import flowfile as ff
+orders = ff.read_catalog_table("orders", namespace_full_name="polaris.sales")
+```
+
+When the table cannot be read (a mistyped name, a schema you have no access to), the cell says why in one sentence.
+`flowfile_ctx.read_catalog_table("polaris.sales.orders")` reads the same rows.
+
+Each run of the cell reads the table as it is now, as a snapshot of the whole table that Flowfile writes for the
+kernel, so a very large table is better read in a flow. The kernel never gets the catalog's sign-in. On a shared
+server such a table is read in a flow, not in this notebook. Such a table is written by a flow, with a Write to
+Catalog node.
+
 ## Versioned like flows
 
 A notebook's cells are stored as one clean YAML file on disk — code as readable text, not an opaque blob — which is what lets [Projects](../../projects.md) version notebooks in git exactly like flows: diffs read like code review, and a teammate pulling the project gets your notebooks along with everything else.

@@ -100,7 +100,11 @@ def _catalog_table(args: dict[str, Any], user_id: int) -> dict[str, Any]:
         info = info._replace(
             schema_json=json.dumps([{"name": name, "dtype": str(dtype)} for name, dtype in columns.items()])
         )
-    return info._asdict()
+    answer = info._asdict()
+    # A kernel whose flowfile predates tables kept elsewhere builds CatalogTableInfo without this field.
+    if answer["kept_elsewhere"] is None:
+        del answer["kept_elsewhere"]
+    return answer
 
 
 def _catalog_sql_tables(args: dict[str, Any], user_id: int) -> dict[str, Any]:

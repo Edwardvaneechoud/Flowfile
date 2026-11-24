@@ -1,7 +1,9 @@
 """python -m test_utils.iceberg_rest start|stop|demo|flow|signin|ui|tables: the local Iceberg REST catalogs and walks.
 
-``ui`` takes ``--hold`` (serve a real Flowfile for clicking by hand) and ``--shots DIR`` (where the screenshots go); it
-makes a Polaris catalog and a Lakekeeper warehouse of its own and drops them when it stops. ``tables`` lists each table
+``ui`` takes ``--hold`` (serve a real Flowfile for clicking by hand), ``--shots DIR`` (where the screenshots go) and
+``--kernel-image IMAGE`` (the notebook kernel image the walk's core starts, default the shell's
+``FLOWFILE_KERNEL_IMAGE_NOTEBOOK``, else core's own choice); it makes a Polaris catalog and a Lakekeeper warehouse of its
+own and drops them when it stops. ``tables`` lists each table
 of Polaris's shared warehouse with its rows, counted by reading it, and its last commit (read-only; ``--warehouse NAME``
 for another one).
 """
@@ -12,7 +14,7 @@ import sys
 VERBS = ("start", "stop", "demo", "flow", "signin", "ui", "tables")
 USAGE = (
     f"usage: python -m test_utils.iceberg_rest {'|'.join(VERBS)}\n"
-    "       python -m test_utils.iceberg_rest ui [--hold] [--shots DIR]\n"
+    "       python -m test_utils.iceberg_rest ui [--hold] [--shots DIR] [--kernel-image IMAGE]\n"
     "       python -m test_utils.iceberg_rest tables [--warehouse NAME]"
 )
 

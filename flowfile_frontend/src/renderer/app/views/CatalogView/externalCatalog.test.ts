@@ -167,10 +167,10 @@ describe("the words the screen shows", () => {
     expect(isKeptElsewhere(null)).toBe(false);
   });
 
-  it("writes the two Python lines that read the table and write a copy beside it, by name", () => {
+  it("writes the two Python lines that import flowfile and read the table, by name", () => {
     expect(readSnippet("polaris", "sales", "orders").split("\n")).toEqual([
+      "import flowfile as ff",
       'frame = ff.read_catalog_table("orders", namespace_full_name="polaris.sales")',
-      'ff.write_catalog_table(frame, "orders_copy", namespace_full_name="polaris.sales")',
     ]);
   });
 

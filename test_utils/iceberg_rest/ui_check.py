@@ -1,4 +1,5 @@
-"""python -m test_utils.iceberg_rest ui [--hold] [--shots DIR]: a person adds the two local catalogs in a real Flowfile.
+"""python -m test_utils.iceberg_rest ui [--hold] [--shots DIR] [--kernel-image IMAGE]: a person adds the two local
+catalogs in a real Flowfile.
 
 Each run keeps to what it makes, so it can run while somebody's own tables sit in the same Polaris and Lakekeeper, and
 beside another run. It makes a Polaris catalog ``walk_<pid>_<hex>`` of its own (``sales``: ``orders`` with 1,000 rows
@@ -20,6 +21,13 @@ are printed, and everything stays up until Ctrl-C or SIGTERM. However it ends (a
 second one during cleanup), it stops every process it started and their children, removes its temporary folder and
 drops its principal, its Polaris catalog, its Lakekeeper warehouse and their files. A catalog, warehouse, namespace,
 table or principal it did not make is never dropped or written.
+
+The walk's core gets none of the shell's ``FLOWFILE_*`` variables, so a notebook kernel it starts runs the image core
+picks itself (the published ``flowfile-kernel-notebook`` of this app's version when it is on this machine), not this
+checkout. ``--kernel-image IMAGE`` hands core ``FLOWFILE_KERNEL_IMAGE_NOTEBOOK=IMAGE`` (default: the shell's
+``FLOWFILE_KERNEL_IMAGE_NOTEBOOK`` when set); ``make notebook_kernel_dev`` builds ``flowfile-kernel-notebook:local``
+from this checkout. With ``--hold`` one printed line names the notebook kernel image core will use, and when it is not
+a local build the two commands that give one.
 """
 
 from __future__ import annotations
@@ -44,6 +52,8 @@ FRONTEND = fixtures.REPO_ROOT / "flowfile_frontend"
 SPEC = "tests/external-catalog.spec.ts"
 WALKS = "walks"
 GRACE = 5.0
+KERNEL_IMAGE_VARIABLE = "FLOWFILE_KERNEL_IMAGE_NOTEBOOK"
+LOCAL_KERNEL_IMAGE = "flowfile-kernel-notebook:local"
 
 
 @dataclass
@@ -51,6 +61,7 @@ class _Run:
     """What this run made, so cleanup drops exactly that and nothing else."""
 
     name: str
+    kernel_image: str | None = None
     principal: fixtures.Principal | None = None
     lakekeeper_id: str | None = None
     scratch: Path | None = None
@@ -410,7 +421,17 @@ def _wait(url: str, proc: subprocess.Popen, seconds: float = 120) -> bool:
     return False
 
 
-def _hold(run: _Run, page: str) -> int:
+def _notebook_kernel_image(stack, run: _Run) -> str:
+    """The notebook kernel image the walk's core will start, as its ``/kernels/docker-status`` answers it."""
+    try:
+        images = stack.get("/kernels/docker-status").get("images") or []
+        entry = next(image for image in images if image.get("flavour") == "notebook")
+        return entry.get("resolved_image") or entry["image"]
+    except Exception:
+        return run.kernel_image or "the published flowfile-kernel-notebook of this app's version"
+
+
+def _hold(run: _Run, page: str, stack) -> int:
     principal = run.principal
     typed = run.scratch / "sign-in.txt"
     typed.write_text(
@@ -430,6 +451,14 @@ def _hold(run: _Run, page: str) -> int:
         f"Both catalogs' warehouse is {run.name}, made for this run and dropped with what you write in it when it "
         f"stops; the shared Polaris warehouse {fixtures.SIGNED_WAREHOUSE!r} is not touched."
     )
+    image = _notebook_kernel_image(stack, run)
+    local = image.rsplit(":", 1)[-1] == "local"
+    print(f"Notebook kernel image: {image}" + (" (a local build)" if local else ", not a build of this checkout"))
+    if not local:
+        print(
+            "For a notebook kernel of this checkout: make notebook_kernel_dev, then python -m test_utils.iceberg_rest "
+            f"ui --hold --kernel-image {LOCAL_KERNEL_IMAGE}"
+        )
     print(f"Ctrl-C, or kill {os.getpid()}, stops everything.", flush=True)
     while True:
         time.sleep(1)
@@ -444,7 +473,8 @@ def _walk(run: _Run, signals: _Signals, hold: bool, shots: str | None) -> int:
     for name in ("AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
         os.environ.pop(name, None)
     _make(run)
-    with services.running_services(root / "stack", "electron", env, label="iceberg_ui") as stack:
+    kernel = {KERNEL_IMAGE_VARIABLE: run.kernel_image} if run.kernel_image else {}
+    with services.running_services(root / "stack", "electron", {**env, **kernel}, label="iceberg_ui") as stack:
         try:
             return _serve(run, stack, hold, shots)
         finally:
@@ -495,7 +525,7 @@ def _serve(run: _Run, stack, hold: bool, shots: str | None) -> int:
         print("The preview server did not come up.")
         return 1
     if hold:
-        return _hold(run, page)
+        return _hold(run, page, stack)
     if shots:
         Path(shots).mkdir(parents=True, exist_ok=True)
     child_env = {
@@ -528,16 +558,31 @@ def _serve(run: _Run, stack, hold: bool, shots: str | None) -> int:
     return 0 if _flow_by_name(stack, run) else 1
 
 
+def _option(argv: list[str], flag: str) -> str | None:
+    """The value after ``flag`` in ``argv``, or ``None`` when ``flag`` is absent."""
+    if flag not in argv:
+        return None
+    index = argv.index(flag) + 1
+    if index >= len(argv) or argv[index].startswith("--"):
+        raise ValueError(f"{flag} needs a value")
+    return argv[index]
+
+
 def run_ui_check(argv: list[str]) -> int:
     hold = "--hold" in argv
-    shots = argv[argv.index("--shots") + 1] if "--shots" in argv else None
+    try:
+        shots = _option(argv, "--shots")
+        kernel_image = _option(argv, "--kernel-image") or (os.environ.get(KERNEL_IMAGE_VARIABLE) or "").strip() or None
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
     signals = _Signals()
     signals.install()
     if not (fixtures.catalog_ready() and fixtures.signed_catalog_ready()):
         print("Both local catalogs must run (Lakekeeper and Polaris).")
         print("Start them with: python -m test_utils.iceberg_rest start")
         return 1
-    run = _Run(f"walk_{os.getpid()}_{secrets.token_hex(3)}")
+    run = _Run(f"walk_{os.getpid()}_{secrets.token_hex(3)}", kernel_image=kernel_image)
     started = time.monotonic()
     result = 130
     try:

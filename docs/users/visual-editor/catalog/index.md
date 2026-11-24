@@ -308,16 +308,21 @@ Click a table under the schema to see what the other catalog says about it:
   Flowfile adds one; an Overwrite of a table that holds rows adds two, a delete and an append, and of an empty or new
   table one);
 - **Read by**: the saved flows that read it, and **Written by**: the flow that last wrote it;
-- two Python lines, ready to copy: one reads the table into `frame`, the other writes `frame` to `orders_copy` in
-  the same schema:
+- two Python lines, ready to copy: an import, and a line that reads the table into `frame`:
 
 ```python
+import flowfile as ff
 frame = ff.read_catalog_table("orders", namespace_full_name="polaris.sales")
-ff.write_catalog_table(frame, "orders_copy", namespace_full_name="polaris.sales")
 ```
 
 The panel shows no row count, on purpose. Iceberg keeps a count in each snapshot's summary, but that count is wrong
 once rows have been deleted, and Flowfile would rather show none than a wrong one. Rows are read when a flow runs.
+
+In the catalog's [notebook](notebooks.md#a-table-kept-by-another-catalog) a cell reads such a table with these two
+lines; `flowfile_ctx.read_catalog_table("polaris.sales.orders")` reads the same rows. Each run of the cell reads the
+table as it is now, as a snapshot of the whole table, so a very large table is better read in a flow. On a shared
+server such a table is read in a flow, not in this notebook. Such a table is written by a flow, with a Write to
+Catalog node.
 
 ### What such a table does not have
 

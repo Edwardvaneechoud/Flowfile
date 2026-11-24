@@ -439,3 +439,170 @@ def test_a_kernels_lookup_for_someone_without_use_is_not_authorized_and_asks_the
     assert answer["kept_elsewhere"] == f"{name}.{schema}.orders"
     assert (answer["authorized"], answer["schema_json"]) == (False, None)
     assert asked == []
+
+
+@pytest.fixture
+def kernel_of():
+    """A TestClient signed as a running kernel of a user, with that kernel's own token; teardown removes the rows."""
+    from fastapi.testclient import TestClient
+
+    from flowfile_core import main
+    from flowfile_core.auth.jwt import create_kernel_token
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import Kernel
+
+    made: list[str] = []
+
+    def _client(user_id: int) -> TestClient:
+        kernel_id, token_id = f"ext-share-{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
+        with get_db_context() as db:
+            db.add(Kernel(id=kernel_id, name="Outside catalog", user_id=user_id, token_id=token_id))
+            db.commit()
+        made.append(kernel_id)
+        client = TestClient(main.app)
+        client.headers = {
+            "X-Internal-Token": create_kernel_token(user_id, kernel_id, token_id),
+            "X-Kernel-Id": kernel_id,
+        }
+        return client
+
+    yield _client
+    with get_db_context() as db:
+        db.query(Kernel).filter(Kernel.id.in_(made)).delete(synchronize_session=False)
+        db.commit()
+
+
+@pytest.mark.iceberg_rest
+def test_a_kernel_whose_owner_has_no_use_gets_the_access_sentence_and_the_other_catalog_is_asked_nothing(
+    users, client_for, polaris, seeded, team, grant_factory, kernel_of, monkeypatch
+):
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogTable
+    from shared import iceberg_utils
+
+    catalog_id, _ = polaris
+    schema, schema_id = seeded
+    name = _catalog_name(client_for, catalog_id)
+    asked: list[object] = []
+    build = iceberg_utils._catalog
+
+    def recording(*args, **kwargs):
+        asked.append(kwargs.get("keys"))
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(iceberg_utils, "_catalog", recording)
+    carol = kernel_of(users["carol"].id)
+
+    by_name = carol.get("/catalog/tables/resolve", params={"q": f"{name}.{schema}.orders"})
+    in_schema = carol.get("/catalog/tables/resolve", params={"q": "orders", "namespace_id": schema_id})
+
+    said = f"You have no access to {name}.{schema}; ask its owner to share it."
+    assert (by_name.status_code, by_name.json()["detail"]) == (422, said)
+    assert (in_schema.status_code, in_schema.json()["detail"]) == (422, said)
+    assert asked == []
+    with get_db_context() as db:
+        assert db.query(CatalogTable).filter_by(namespace_id=schema_id, name="orders").count() == 0
+
+    grant_factory("catalog_namespace", catalog_id, team, permission="use", granted_by=users["admin"].id)
+    bob = kernel_of(users["bob"].id).get("/catalog/tables/resolve", params={"q": f"{name}.{schema}.orders"})
+
+    assert (bob.status_code, bob.json()["detail"]) == (422, SHARED_SERVER.format(f"{name}.{schema}.orders"))
+    assert asked == []
+    with get_db_context() as db:
+        assert db.query(CatalogTable).filter_by(namespace_id=schema_id, name="orders").count() == 0
+
+
+SHARED_SERVER = "On a shared server {} is read in a flow, not in this notebook."
+
+
+def _hidden_row(catalog: str, schema: str, schema_id: int) -> int:
+    """The hidden row of ``orders``, made as a flow's node makes it (``ensure_table_row``); its id."""
+    from flowfile_core.catalog.services.external_catalogs import OutsideTable, ensure_table_row
+    from flowfile_core.database.connection import get_db_context
+
+    with get_db_context() as db:
+        return ensure_table_row(db, OutsideTable(catalog, schema, "orders", schema_id)).id
+
+
+def _snapshots(row_id: int) -> list:
+    from shared.storage_config import storage
+
+    return list(storage.shared_virtual_results_directory.glob(f"fvt-{row_id}-*.arrow"))
+
+
+@pytest.mark.iceberg_rest
+def test_on_a_shared_server_no_kernel_reads_a_table_kept_elsewhere_and_no_snapshot_is_written(
+    users, client_for, polaris, seeded, team, grant_factory, kernel_of, monkeypatch
+):
+    """Use is checked first: a stranger gets the access sentence, someone with Use the shared-server sentence, by name,
+    in the schema and by the hidden row's id, from a kernel and from their own sign-in; the other catalog is asked
+    nothing and no snapshot file is written."""
+    from shared import iceberg_utils
+
+    catalog_id, _ = polaris
+    schema, schema_id = seeded
+    name = _catalog_name(client_for, catalog_id)
+    grant_factory("catalog_namespace", catalog_id, team, permission="use", granted_by=users["admin"].id)
+    row_id = _hidden_row(name, schema, schema_id)
+    asked: list[object] = []
+    build = iceberg_utils._catalog
+
+    def recording(*args, **kwargs):
+        asked.append(kwargs.get("keys"))
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(iceberg_utils, "_catalog", recording)
+    callers = {
+        "bob's kernel": kernel_of(users["bob"].id),
+        "carol's kernel": kernel_of(users["carol"].id),
+        "bob": client_for("bob"),
+        "carol": client_for("carol"),
+    }
+
+    def said(response) -> tuple[int, str]:
+        return response.status_code, response.json().get("detail")
+
+    answers = {
+        who: (
+            said(client.get("/catalog/tables/resolve", params={"q": f"{name}.{schema}.orders"})),
+            said(client.get("/catalog/tables/resolve", params={"q": "orders", "namespace_id": schema_id})),
+            said(client.post(f"/catalog/tables/{row_id}/materialize")),
+        )
+        for who, client in callers.items()
+    }
+
+    shared = (422, SHARED_SERVER.format(f"{name}.{schema}.orders"))
+    no_access = (422, f"You have no access to {name}.{schema}; ask its owner to share it.")
+    not_found = (404, "Catalog table not found")
+    not_yours = (403, "Not authorized to access this catalog_table")
+    assert answers == {
+        "bob's kernel": (shared, shared, shared),
+        "carol's kernel": (no_access, no_access, not_yours),
+        "bob": (not_found, not_found, shared),
+        "carol": (not_found, not_found, not_yours),
+    }
+    assert asked == []
+    assert _snapshots(row_id) == []
+
+
+@pytest.mark.iceberg_rest
+def test_the_snapshot_is_checked_as_the_person_it_is_for(users, client_for, polaris, seeded, monkeypatch):
+    """Past the catalog service's own check (an unrestricted service), the snapshot still checks Use as the user it
+    is written for: someone without Use gets the access sentence, not the shared-server one, and nothing is asked."""
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+    from flowfile_core.database.connection import get_db_context
+    from shared import iceberg_utils
+
+    catalog_id, _ = polaris
+    schema, schema_id = seeded
+    name = _catalog_name(client_for, catalog_id)
+    row_id = _hidden_row(name, schema, schema_id)
+    asked: list[object] = []
+    monkeypatch.setattr(iceberg_utils, "_catalog", lambda *args, **kwargs: asked.append(kwargs.get("keys")))
+
+    with get_db_context() as db, pytest.raises(ValueError) as refused:
+        CatalogService(SQLAlchemyCatalogRepository(db)).materialize_table(row_id, user_id=users["carol"].id)
+
+    assert str(refused.value) == f"You have no access to {name}.{schema}; ask its owner to share it."
+    assert asked == []
+    assert _snapshots(row_id) == []

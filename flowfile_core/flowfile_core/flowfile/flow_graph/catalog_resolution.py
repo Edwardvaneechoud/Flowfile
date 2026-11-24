@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Literal, NamedTuple
 
@@ -243,6 +244,35 @@ def _scd2_config_is_stale(cfg: dict, raw_schema: str | None) -> bool:
     return scd2_system_columns_missing(cfg, columns)
 
 
+_MATERIALIZE_FAILED = re.compile(r"Materializing catalog view '.*' failed: (?P<body>\{.*\})", re.DOTALL)
+
+
+def _core_refusal(exc: Exception) -> str | None:
+    """The sentence core refused a catalog page cell's lookup with, else ``None``.
+
+    The kernel runtime asks core's ``GET /catalog/tables/resolve`` and raises a refusal as an HTTP status error
+    carrying the response; core refuses a table kept elsewhere with a 422 whose ``detail`` is one sentence (a mistyped
+    table, a schema not yet in Flowfile's catalog, no Use). A refused ``POST .../materialize`` (what the worker was
+    refused while writing the snapshot) the runtime raises as ``RuntimeError("Materializing catalog view '<name>'
+    failed: <core's answer>")``, whose string ``detail`` is the sentence. Any other error is left as it is.
+    """
+    if isinstance(exc, RuntimeError) and getattr(exc, "response", None) is None:
+        matched = _MATERIALIZE_FAILED.fullmatch(str(exc))
+        try:
+            detail = json.loads(matched["body"]).get("detail") if matched else None
+        except (ValueError, AttributeError):
+            return None
+        return detail if isinstance(detail, str) else None
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) != 422:
+        return None
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        return None
+    return detail if isinstance(detail, str) else None
+
+
 def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogReader") -> CatalogTableInfo:
     """Resolve a single catalog table (physical or virtual) for a table reader node.
 
@@ -251,18 +281,21 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     """
     remote = metadata_lookup.get()
     if remote is not None:
-        info = CatalogTableInfo(
-            **remote(
-                "catalog_table",
-                {
-                    "node_id": node_catalog_reader.node_id,
-                    "catalog_table_id": node_catalog_reader.catalog_table_id,
-                    "catalog_full_table_name": node_catalog_reader.catalog_full_table_name,
-                    "catalog_table_name": node_catalog_reader.catalog_table_name,
-                    "catalog_namespace_id": node_catalog_reader.catalog_namespace_id,
-                },
-            )
-        )
+        args = {
+            "node_id": node_catalog_reader.node_id,
+            "catalog_table_id": node_catalog_reader.catalog_table_id,
+            "catalog_full_table_name": node_catalog_reader.catalog_full_table_name,
+            "catalog_table_name": node_catalog_reader.catalog_table_name,
+            "catalog_namespace_id": node_catalog_reader.catalog_namespace_id,
+        }
+        try:
+            answer = remote("catalog_table", args)
+        except Exception as exc:
+            sentence = _core_refusal(exc)
+            if sentence is None:
+                raise
+            raise ValueError(sentence) from None
+        info = CatalogTableInfo(**answer)
         if info.scd2_config and _scd2_config_is_stale(info.scd2_config, info.schema_json):
             return info._replace(scd2_config=None)
         return info
