@@ -630,7 +630,7 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
 
     # Delta directory or legacy Parquet file; NULL for optimized virtual tables with no storage.
     file_path = Column(String, nullable=True)
-    storage_format = Column(String, nullable=False, default="delta")  # "delta" or "parquet"
+    storage_format = Column(String, nullable=False, default="delta")  # "delta", "parquet" or "iceberg"
 
     # Schema metadata (JSON array of {name, dtype} objects)
     schema_json = Column(Text, nullable=True)

@@ -91,7 +91,16 @@ def _catalog_table(args: dict[str, Any], user_id: int) -> dict[str, Any]:
             "catalog_namespace_id": args.get("catalog_namespace_id"),
         }
     )
-    return _resolve_catalog_table_info(settings)._asdict()
+    info = _resolve_catalog_table_info(settings)
+    if info.kept_elsewhere is not None and info.authorized:
+        # A table kept elsewhere has no stored schema: its columns are asked of its catalog here, never a key.
+        from flowfile_core.flowfile.flow_graph.catalog_resolution import _outside_table_columns
+
+        columns = _outside_table_columns(info.kept_elsewhere, user_id)
+        info = info._replace(
+            schema_json=json.dumps([{"name": name, "dtype": str(dtype)} for name, dtype in columns.items()])
+        )
+    return info._asdict()
 
 
 def _catalog_sql_tables(args: dict[str, Any], user_id: int) -> dict[str, Any]:

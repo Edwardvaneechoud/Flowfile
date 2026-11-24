@@ -184,7 +184,14 @@ class ExternalTableList(BaseModel):
 
 
 class ExternalTableDetail(BaseModel):
-    """A table of a catalog kept elsewhere as that catalog describes it: columns and metadata, no row count."""
+    """A table of a catalog kept elsewhere as that catalog describes it: columns and metadata, no row count.
+
+    ``last_commit_at``, ``last_operation`` and ``snapshot_count`` are the current snapshot's commit time and operation
+    and how many snapshots the table keeps, so a person sees a write arrive; none, none and 0 before the first write.
+
+    ``read_by_flows`` and ``written_by`` are Flowfile's lineage of it: the saved flows that read it, and the flow
+    that last wrote it.
+    """
 
     name: str
     reference: str
@@ -194,6 +201,11 @@ class ExternalTableDetail(BaseModel):
     location: str
     partitioned_by: list[str]
     updated_at: datetime | None = None
+    last_commit_at: datetime | None = None
+    last_operation: str | None = None
+    snapshot_count: int = 0
+    read_by_flows: list["FlowSummary"] = Field(default_factory=list)
+    written_by: "FlowSummary | None" = None
 
 
 class NamespaceCreate(BaseModel):
@@ -1859,6 +1871,7 @@ class NotificationHistoryItem(BaseModel):
 
 # Rebuild forward-referenced models
 CatalogTableOut.model_rebuild()
+ExternalTableDetail.model_rebuild()
 FlowRegistrationOut.model_rebuild()
 NamespaceTree.model_rebuild()
 CatalogStats.model_rebuild()

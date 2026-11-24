@@ -26,6 +26,7 @@ from sqlalchemy import and_, false, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from flowfile_core.catalog.access import AccessResolver
+from flowfile_core.catalog.repository import tables_kept_here
 from flowfile_core.database.models import (
     CatalogDashboard,
     CatalogNamespace,
@@ -322,7 +323,10 @@ def tables(ctx: SearchContext) -> list[Candidate]:
         CatalogTable.size_bytes,
         CatalogTable.updated_at,
         CatalogTable.sql_query.isnot(None).label("has_sql"),
-    ).filter(ctx.match_filter([CatalogTable.name, CatalogTable.description], CatalogTable.namespace_id))
+    ).filter(
+        ctx.match_filter([CatalogTable.name, CatalogTable.description], CatalogTable.namespace_id),
+        tables_kept_here(),
+    )
     allowed = ctx.accessible("catalog_table")
     if allowed is not None:
         query = query.filter(CatalogTable.id.in_(allowed))
@@ -381,6 +385,7 @@ def columns(ctx: SearchContext) -> list[Candidate]:
         CatalogTable.id, CatalogTable.name, CatalogTable.namespace_id, CatalogTable.schema_json, CatalogTable.updated_at
     ).filter(
         CatalogTable.schema_json.isnot(None),
+        tables_kept_here(),
         ctx.match_filter(
             [CatalogTable.schema_json, CatalogTable.name], CatalogTable.namespace_id, extra=_tables_spanned_by(ctx)
         ),

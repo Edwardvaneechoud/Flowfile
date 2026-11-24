@@ -108,6 +108,15 @@ export interface ExternalTableDetail {
   location: string;
   partitioned_by: string[];
   updated_at: string | null;
+  // The flows of this Flowfile that read the table, and the one that last wrote it.
+  read_by_flows?: FlowSummary[];
+  written_by?: FlowSummary | null;
+  // The table's current snapshot, from its metadata (naive UTC); absent from a core that does not describe it yet.
+  last_commit_at?: string | null;
+  // Served but not shown: Flowfile's own overwrite commits a delete and then an append.
+  last_operation?: string | null;
+  // 0 for a table with no snapshot.
+  snapshot_count?: number;
 }
 
 export interface NamespaceTree extends CatalogNamespace {

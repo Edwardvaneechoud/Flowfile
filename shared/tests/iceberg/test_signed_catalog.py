@@ -10,6 +10,7 @@ Every test skips unless the catalog runs: ``python -m test_utils.iceberg_rest st
 """
 
 import base64
+import dataclasses
 import time
 import uuid
 
@@ -28,6 +29,7 @@ from shared.iceberg_utils import (
     storage_properties,
     table_access,
     write_iceberg_table,
+    write_table,
 )
 from shared.tests.iceberg.table_child import expected, rows_frame
 from test_utils.iceberg_rest import fixtures
@@ -206,6 +208,35 @@ def test_describing_a_table_hands_this_process_no_storage_key(signed_namespace, 
     assert loads == 1
     handed = sorted(name for name in storage_properties(loaded[0]) if name in ("s3.access-key-id", "s3.session-token"))
     assert handed == []
+
+
+def test_a_tables_description_says_when_it_last_changed_how_and_how_many_snapshots_it_keeps(
+    signed, signed_namespace, seed_signed, principal, sealing
+):
+    """An overwrite through Polars commits a delete and then an append, so the current snapshot's operation is append."""
+    seed_signed("orders", 0)
+    identifier = f"{signed_namespace}.orders"
+    ref = _client_ref(sealing, principal).table(identifier)
+
+    empty = describe_table(ref)
+    write_table(signed.load_table(identifier), rows_frame(10), "append")
+    appended = describe_table(ref)
+    write_table(signed.load_table(identifier), rows_frame(5, 100), "overwrite")
+    overwritten = describe_table(ref)
+
+    assert (empty.last_commit_ms, empty.last_operation, empty.snapshot_count) == (None, None, 0)
+    assert (appended.last_operation, appended.snapshot_count) == ("append", 1)
+    assert abs(time.time() * 1000 - appended.last_commit_ms) < 60_000
+    operations = [snapshot.summary.operation.value for snapshot in signed.load_table(identifier).metadata.snapshots]
+    assert operations == ["append", "delete", "append"]
+    assert (overwritten.last_operation, overwritten.snapshot_count) == ("append", 3)
+    assert overwritten.last_commit_ms >= appended.last_commit_ms
+    counts = [f.name for f in dataclasses.fields(overwritten) if f.name != "snapshot_count" and _names_a_count(f.name)]
+    assert counts == []
+
+
+def _names_a_count(name: str) -> bool:
+    return any(word in name for word in ("count", "rows", "records", "summary"))
 
 
 def test_what_another_process_is_handed_holds_no_part_of_the_sign_in(signed_namespace, seed_signed, principal, sealing):

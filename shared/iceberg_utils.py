@@ -169,13 +169,21 @@ class IcebergCatalogRef:
 
 @dataclass(frozen=True)
 class IcebergTableDescription:
-    """A table as its catalog describes it, without reading a file: no row count, nothing from a snapshot."""
+    """A table as its catalog describes it, without reading a file and with no row count.
+
+    Of the current snapshot only its commit time and its operation are kept, and of the others only how many the table
+    keeps; no count from a snapshot summary, which is wrong after deletes. A table with no snapshot yet has none, none
+    and 0.
+    """
 
     columns: dict[str, pl.DataType]
     format_version: int
     location: str
     partitioned_by: tuple[str, ...]
     updated_at_ms: int | None
+    last_commit_ms: int | None = None
+    last_operation: str | None = None
+    snapshot_count: int = 0
 
 
 def client_credentials_sign_in(
@@ -404,8 +412,9 @@ def list_table_names(ref: IcebergCatalogRef, schema: str) -> list[str]:
 def describe_table(ref: IcebergTableRef) -> IcebergTableDescription:
     """A table's columns as Polars types and its metadata, from the catalog's description alone.
 
-    The table is loaded without asking for storage keys and no file is read, so no ``scan_iceberg`` runs here. Nothing
-    comes from a snapshot or its summary: a summary's row count is wrong after deletes.
+    The table is loaded without asking for storage keys and no file is read, so no ``scan_iceberg`` runs here. From the
+    snapshots only the current one's commit time and operation (``append``, ``overwrite``, ``delete``, ``replace``) and
+    their number are read; no count comes from a snapshot summary, since a summary's row count is wrong after deletes.
     """
     from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
 
@@ -418,12 +427,17 @@ def describe_table(ref: IcebergTableRef) -> IcebergTableDescription:
     schema = table.schema()
     columns = dict(pl.from_arrow(schema.as_arrow().empty_table()).schema)
     partitioned = dict.fromkeys(schema.find_column_name(part.source_id) for part in table.spec().fields)
+    current = table.metadata.current_snapshot()
+    operation = current.summary.operation if current is not None and current.summary is not None else None
     return IcebergTableDescription(
         columns=columns,
         format_version=int(table.metadata.format_version),
         location=table.metadata.location,
         partitioned_by=tuple(name for name in partitioned if name),
         updated_at_ms=table.metadata.last_updated_ms,
+        last_commit_ms=current.timestamp_ms if current is not None else None,
+        last_operation=getattr(operation, "value", operation),
+        snapshot_count=len(table.metadata.snapshots),
     )
 
 

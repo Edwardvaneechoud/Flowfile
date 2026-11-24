@@ -300,10 +300,18 @@ class NamespaceService:
         flows = self.repo.count_flows_in_namespace(namespace_id)
         tables = self.repo.count_tables_in_namespace(namespace_id)
         notebooks = self.repo.count_notebooks_in_namespace(namespace_id)
+        if namespace.kept_elsewhere:
+            from flowfile_core.catalog.services.external_catalogs import kept_table_row_count
+
+            tables -= kept_table_row_count(self.repo, namespace_id)
         if children > 0 or flows > 0 or tables > 0 or notebooks > 0:
             raise NamespaceNotEmptyError(
                 namespace_id=namespace_id, children=children, flows=flows, tables=tables, notebooks=notebooks
             )
+        if namespace.kept_elsewhere:
+            from flowfile_core.catalog.services.external_catalogs import drop_table_rows
+
+            drop_table_rows(self.repo, namespace_id)
         self.repo.delete_namespace(namespace_id)
 
     def get_namespace(self, namespace_id: int) -> CatalogNamespace:

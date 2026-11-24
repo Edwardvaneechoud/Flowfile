@@ -30,6 +30,25 @@ def represent_list_json(dumper, data):
 yaml.add_representer(list, represent_list_json)
 
 
+def _kept_elsewhere_table_ids(db, readers) -> set[int]:
+    """The lineage rows of the tables kept elsewhere that ``readers`` name, as each reader names its table."""
+    from flowfile_core.catalog.services.external_catalogs import outside_table, table_row
+
+    found = set()
+    for setting in readers:
+        outside = outside_table(
+            db,
+            setting.catalog_full_table_name,
+            setting.catalog_table_name,
+            setting.catalog_namespace_id,
+            source=setting.source,
+        )
+        row = table_row(db, outside.namespace_id, outside.table) if outside is not None else None
+        if row is not None:
+            found.add(row.id)
+    return found
+
+
 class PersistenceMixin(GraphMixinBase):
     def print_tree(self):
         """Print the graph top to bottom, one node per line, with lanes where it branches and merges."""
@@ -250,6 +269,8 @@ class PersistenceMixin(GraphMixinBase):
         Scans all nodes for catalog_reader types and replaces the flow's read
         links with exactly that set, so removing a reader drops its link. Runs
         at save time so that source_registration_id is guaranteed to be set.
+        A reader of a table kept elsewhere holds no table id: its row is found
+        by the name it gives, and a table no node was shown yet has none.
         """
         registration_id = self._flow_settings.source_registration_id
         logger.debug("Found registration_id %s", registration_id)
@@ -257,6 +278,7 @@ class PersistenceMixin(GraphMixinBase):
             return
 
         table_ids = set()
+        named = []
         for node in self.nodes:
             if node.node_type != "catalog_reader":
                 continue
@@ -264,6 +286,8 @@ class PersistenceMixin(GraphMixinBase):
             table_id = getattr(setting, "catalog_table_id", None)
             if table_id:
                 table_ids.add(table_id)
+            elif not getattr(setting, "sql_query", None):
+                named.append(setting)
 
         try:
             with get_db_context() as db:
@@ -279,6 +303,7 @@ class PersistenceMixin(GraphMixinBase):
                     )
                     self._flow_settings.source_registration_id = None
                     return
+                table_ids |= _kept_elsewhere_table_ids(db, named)
                 repo.replace_read_links(registration_id, table_ids)
         except Exception:
             logger.warning(
@@ -286,6 +311,43 @@ class PersistenceMixin(GraphMixinBase):
                 table_ids,
                 exc_info=True,
             )
+
+    def _add_outside_read_link(self, reference: str) -> None:
+        """Name this flow as a reader of the table kept elsewhere ``reference``, as one of its readers runs.
+
+        Only adds the one link, never prunes (that is the save's sync) and never changes the flow's registration:
+        a flow that does not own its id (a copied file not saved yet) or has no saved file links nothing. Two readers
+        adding at once are kept apart by the unique pair; the loser rolls back. A failure is logged, never raised.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        from flowfile_core.catalog.services.external_catalogs import outside_table, table_row
+        from flowfile_core.database.models import CatalogTableReadLink
+
+        registration_id = self._flow_settings.source_registration_id
+        if not registration_id:
+            return
+        try:
+            with get_db_context() as db:
+                repo = SQLAlchemyCatalogRepository(db)
+                if not self._owns_registration(
+                    repo, registration_id, self._flow_settings.path or self._flow_settings.save_location
+                ):
+                    return
+                outside = outside_table(db, reference, None, None, source="local")
+                row = table_row(db, outside.namespace_id, outside.table) if outside is not None else None
+                if row is None:
+                    return
+                linked = db.query(CatalogTableReadLink).filter_by(table_id=row.id, registration_id=registration_id)
+                if linked.first() is not None:
+                    return
+                db.add(CatalogTableReadLink(table_id=row.id, registration_id=registration_id))
+                try:
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+        except Exception:
+            logger.warning("Could not record that the flow reads %s", reference, exc_info=True)
 
     def get_frontend_data(self) -> dict:
         """Formats the graph structure into a JSON-like dictionary for a specific legacy frontend.

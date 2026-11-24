@@ -257,6 +257,52 @@ def test_a_node_is_refused_for_someone_the_schema_is_not_shared_with(users, clie
     assert refused[1] == (False, f"You have no access to {name}.{schema}; ask its owner to share it.")
 
 
+def _catalog_reader(user_id: int, reference: str):
+    """A flow of one Catalog Reader on ``reference`` for ``user_id``: its columns before a run and its run's step."""
+    from flowfile_core.schemas import input_schema
+    from tests.flowfile.test_flowfile import add_node_promise_on_type, create_graph
+
+    graph = create_graph(execution_location="local")
+    add_node_promise_on_type(graph, "catalog_reader", 1)
+    graph.add_catalog_reader(input_schema.NodeCatalogReader(
+        flow_id=graph.flow_id, node_id=1, user_id=user_id, catalog_full_table_name=reference,
+    ))
+    columns = [column.column_name for column in graph.get_node(1).schema]
+    run = graph.run_graph()
+    (step,) = [step for step in run.node_step_result if step.node_id == 1]
+    return columns, (step.success, step.error or ""), graph
+
+
+@pytest.mark.iceberg_rest
+def test_a_catalog_reader_reads_a_shared_catalogs_table_for_someone_with_use(
+    users, client_for, polaris, seeded, team, grant_factory
+):
+    catalog_id, _ = polaris
+    schema, _ = seeded
+    grant_factory("catalog_namespace", catalog_id, team, permission="use", granted_by=users["admin"].id)
+    name = _catalog_name(client_for, catalog_id)
+
+    columns, step, graph = _catalog_reader(users["bob"].id, f"{name}.{schema}.orders")
+
+    assert columns == ["id", "grp", "val", "name"]
+    assert step == (True, "")
+    assert graph.get_node(1).get_resulting_data().collect().height == 10
+
+
+@pytest.mark.iceberg_rest
+def test_a_catalog_reader_is_refused_and_shown_no_columns_for_someone_the_schema_is_not_shared_with(
+    users, client_for, polaris, seeded
+):
+    catalog_id, _ = polaris
+    schema, _ = seeded
+    name = _catalog_name(client_for, catalog_id)
+
+    columns, step, _ = _catalog_reader(users["carol"].id, f"{name}.{schema}.orders")
+
+    assert columns == []
+    assert step == (False, f"You have no access to {name}.{schema}; ask its owner to share it.")
+
+
 @pytest.mark.iceberg_rest
 def test_use_reads_and_does_not_write_and_manage_writes(users, client_for, polaris, seeded, team, grant_factory):
     catalog_id, _ = polaris
@@ -269,5 +315,127 @@ def test_use_reads_and_does_not_write_and_manage_writes(users, client_for, polar
     with_manage = _run(users["bob"].id, name, schema, write_to="bob_copy")
 
     assert with_use[1] == (True, "")
-    assert with_use[2] == (False, f"You have no access to {name}.{schema}; ask its owner to share it to write it.")
+    assert with_use[2] == (False, f"You may read {name}.{schema} but not write it; ask its owner to let you write it.")
     assert with_manage[2] == (True, "")
+
+
+def _catalog_writer(user_id: int, namespace: str, table: str):
+    """A flow of two rows into a Catalog Writer (Append) on ``namespace`` for ``user_id``; the writer's step."""
+    from flowfile_core.flowfile.flow_graph import add_connection
+    from flowfile_core.schemas import input_schema
+    from tests.flowfile.conftest import add_test_manual_input
+    from tests.flowfile.test_flowfile import add_node_promise_on_type, create_graph
+
+    graph = create_graph(execution_location="local")
+    add_test_manual_input(graph, [{"id": 1}, {"id": 2}], node_id=1)
+    add_node_promise_on_type(graph, "catalog_writer", 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_catalog_writer(input_schema.NodeCatalogWriter(
+        flow_id=graph.flow_id, node_id=2, user_id=user_id, depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name=table, namespace_full_name=namespace, write_mode="append"),
+    ))
+    run = graph.run_graph()
+    (step,) = [step for step in run.node_step_result if step.node_id == 2]
+    return step.success, step.error or ""
+
+
+@pytest.mark.iceberg_rest
+def test_a_catalog_writer_is_refused_for_someone_who_may_only_read_the_schema_and_writes_with_manage(
+    users, client_for, polaris, seeded, team, grant_factory, signed
+):
+    catalog_id, _ = polaris
+    schema, schema_id = seeded
+    name = _catalog_name(client_for, catalog_id)
+    grant_factory("catalog_namespace", catalog_id, team, permission="use", granted_by=users["admin"].id)
+
+    with_use = _catalog_writer(users["bob"].id, f"{name}.{schema}", "bob_written")
+    grant_factory("catalog_namespace", schema_id, team, permission="manage", granted_by=users["admin"].id)
+    with_manage = _catalog_writer(users["bob"].id, f"{name}.{schema}", "bob_written")
+
+    assert with_use == (False, f"You may read {name}.{schema} but not write it; ask its owner to let you write it.")
+    assert with_manage == (True, "")
+    assert signed.load_table(f"{schema}.bob_written").scan().to_arrow().num_rows == 2
+
+
+@pytest.mark.iceberg_rest
+def test_the_writer_settings_refuse_someone_who_may_only_read_the_schema(
+    users, client_for, polaris, seeded, team, grant_factory
+):
+    from flowfile_core import flow_file_handler
+
+    catalog_id, _ = polaris
+    schema, schema_id = seeded
+    name = _catalog_name(client_for, catalog_id)
+    grant_factory("catalog_namespace", catalog_id, team, permission="use", granted_by=users["admin"].id)
+    bob = client_for("bob")
+    flow_id = bob.post("/editor/create_flow/", params={"persist": False, "register_in_catalog": False}).json()
+    try:
+        bob.post("/editor/add_node",
+                 params={"flow_id": flow_id, "node_id": 1, "node_type": "catalog_writer", "pos_x": 0, "pos_y": 0})
+        payload = {"flow_id": flow_id, "node_id": 1,
+                   "catalog_write_settings": {"table_name": "w", "namespace_id": schema_id, "write_mode": "append"}}
+        refused = bob.post("/update_settings/", json=payload, params={"node_type": "catalog_writer"})
+        grant_factory("catalog_namespace", schema_id, team, permission="manage", granted_by=users["admin"].id)
+        payload["catalog_write_settings"]["table_name"] = "w2"
+        saved = bob.post("/update_settings/", json=payload, params={"node_type": "catalog_writer"})
+    finally:
+        flow_file_handler.delete_flow(flow_id)
+
+    assert (refused.status_code, saved.status_code) == (403, 200), saved.text
+    the_runs_sentence = f"You may read {name}.{schema} but not write it; ask its owner to let you write it."
+    assert refused.json()["detail"] == the_runs_sentence
+
+
+@pytest.mark.iceberg_rest
+def test_the_writer_settings_check_access_before_the_mode_so_a_stranger_learns_nothing_of_the_catalog(
+    users, client_for, polaris, seeded
+):
+    """Someone with no access to the schema gets the ordinary 403 for a refused mode too, never the catalog's name."""
+    from flowfile_core import flow_file_handler
+
+    catalog_id, _ = polaris
+    _, schema_id = seeded
+    name = _catalog_name(client_for, catalog_id)
+    carol = client_for("carol")
+    flow_id = carol.post("/editor/create_flow/", params={"persist": False, "register_in_catalog": False}).json()
+    try:
+        carol.post("/editor/add_node",
+                   params={"flow_id": flow_id, "node_id": 1, "node_type": "catalog_writer", "pos_x": 0, "pos_y": 0})
+        payload = {"flow_id": flow_id, "node_id": 1, "catalog_write_settings": {
+            "table_name": "w", "namespace_id": schema_id, "write_mode": "upsert", "merge_keys": ["id"]}}
+        refused = carol.post("/update_settings/", json=payload, params={"node_type": "catalog_writer"})
+    finally:
+        flow_file_handler.delete_flow(flow_id)
+
+    assert refused.status_code == 403
+    assert refused.json()["detail"] == "You do not have write access to the selected catalog namespace"
+    assert name not in refused.text
+
+
+@pytest.mark.iceberg_rest
+def test_a_kernels_lookup_for_someone_without_use_is_not_authorized_and_asks_the_other_catalog_nothing(
+    users, client_for, polaris, seeded, monkeypatch
+):
+    from flowfile_core.notebook import lookup
+    from shared import iceberg_utils
+
+    catalog_id, _ = polaris
+    schema, _ = seeded
+    name = _catalog_name(client_for, catalog_id)
+    asked: list[object] = []
+    build = iceberg_utils._catalog
+
+    def recording(*args, **kwargs):
+        asked.append(kwargs.get("keys"))
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(iceberg_utils, "_catalog", recording)
+
+    answer = lookup.answer(
+        "catalog_table", {"node_id": 1, "catalog_full_table_name": f"{name}.{schema}.orders"}, users["carol"].id
+    )
+
+    assert answer["kept_elsewhere"] == f"{name}.{schema}.orders"
+    assert (answer["authorized"], answer["schema_json"]) == (False, None)
+    assert asked == []

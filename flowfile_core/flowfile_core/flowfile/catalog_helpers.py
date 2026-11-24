@@ -86,8 +86,6 @@ def _access_for(db, requesting_user) -> AccessResolver | None:
 
 
 def require_flow_save_permitted(flow_path: str | None, namespace_id: int | None, requesting_user) -> None:
-    from flowfile_core.catalog.services.external_catalogs import refuse_kept_elsewhere
-
     """Authorize a flow save before any YAML is written, mirroring
     :func:`register_flow_in_namespace`'s own branching:
 
@@ -101,6 +99,8 @@ def require_flow_save_permitted(flow_path: str | None, namespace_id: int | None,
     while unrestricted callers fall through to ``register_flow``'s 404. No-op when
     there is no requesting user.
     """
+    from flowfile_core.catalog.services.external_catalogs import refuse_kept_elsewhere
+
     if requesting_user is None:
         return
     with get_db_context() as db:

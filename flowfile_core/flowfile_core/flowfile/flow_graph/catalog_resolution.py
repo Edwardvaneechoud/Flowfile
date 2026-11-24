@@ -8,7 +8,7 @@ from typing import Literal, NamedTuple
 import polars as pl
 
 from flowfile_core.auth import sharing
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.delta_utils import is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
@@ -212,6 +212,8 @@ class CatalogTableInfo(NamedTuple):
     materialized: dict[str, str] | None = None
     cdc_enabled: bool = False
     cdc_enabled_version: int | None = None
+    # ``catalog.schema.table`` when the table is kept by another catalog; its columns are that catalog's to say.
+    kept_elsewhere: str | None = None
 
 
 _CDF_COLUMN_DTYPES = (
@@ -282,6 +284,10 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
             svc = CatalogService(repo)
 
             table_record = None
+            if not node_catalog_reader.catalog_table_id:
+                outside = _outside_table_of(db, node_catalog_reader)
+                if outside is not None:
+                    return _outside_table_info(db, node_catalog_reader.user_id, outside)
             if node_catalog_reader.catalog_table_id:
                 table_record = repo.get_table(node_catalog_reader.catalog_table_id)
             else:
@@ -360,6 +366,87 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
         cdc_enabled=cdc_enabled,
         cdc_enabled_version=cdc_enabled_version,
     )
+
+
+def _outside_table_of(db, settings: "input_schema.NodeCatalogReader"):
+    """The table a reader names in a catalog kept elsewhere (``external_catalogs.OutsideTable``), or ``None``."""
+    from flowfile_core.catalog.services.external_catalogs import outside_table
+
+    return outside_table(
+        db,
+        settings.catalog_full_table_name,
+        settings.catalog_table_name,
+        settings.catalog_namespace_id,
+        source=settings.source,
+    )
+
+
+def _outside_table_info(db, user_id: int | None, outside) -> CatalogTableInfo:
+    """A reader's resolution of a table kept elsewhere: its reference, and whether ``user_id`` has Use on its schema."""
+    return CatalogTableInfo(
+        file_path=None,
+        table_type="physical",
+        producer_fingerprint=None,
+        is_optimized=False,
+        authorized=sharing.user_id_can_use(db, user_id, "catalog_namespace", outside.namespace_id),
+        namespace_id=outside.namespace_id,
+        table_name=outside.table,
+        kept_elsewhere=outside.reference,
+    )
+
+
+def _outside_table_ref(reference: str, user_id: int | None):
+    """The ``IcebergTableRef`` of a table kept elsewhere for ``user_id``'s run: ciphertext only, Use checked.
+
+    Raises the sentence ``external_catalogs.table_ref_for_run`` words when the catalog is gone or not shared.
+    """
+    from flowfile_core.catalog.services.external_catalogs import table_ref_for_run
+
+    catalog, table = reference.split(".", 1)
+    with get_db_context() as db:
+        return table_ref_for_run(db, catalog, table, user_id, writes=False)
+
+
+def _outside_table_columns(reference: str, user_id: int | None) -> dict[str, pl.DataType]:
+    """The columns of a table kept elsewhere as its catalog describes them; no storage key is asked for.
+
+    Once described, the table has its lineage row (``_record_outside_table``).
+    """
+    from shared.iceberg_utils import describe_table
+
+    columns = dict(describe_table(_outside_table_ref(reference, user_id)).columns)
+    _record_outside_table(reference)
+    return columns
+
+
+def _record_outside_table(reference: str) -> None:
+    """Give a table kept elsewhere its ``catalog_tables`` row now that its catalog described it for a node.
+
+    The row is lineage only (``external_catalogs.ensure_table_row``), so a failure to write it is logged and never
+    fails the read.
+    """
+    from flowfile_core.catalog.services.external_catalogs import ensure_table_row, outside_table
+
+    try:
+        with get_db_context() as db:
+            ensure_table_row(db, outside_table(db, reference, None, None, source="local"))
+    except Exception:
+        logger.warning("Could not record the catalog row of %s", reference, exc_info=True)
+
+
+def unresolved_schema_refusal(svc: CatalogService, settings) -> str | None:
+    """Why a writer names no schema it can write, or ``None``: its ``namespace_full_name`` resolves nowhere here and it
+    holds no ``namespace_id`` to fall back to (a catalog removed or renamed, a flow from another install, a typo).
+
+    Without this refusal such a writer would write a table into no namespace at all. A writer on the hub names the
+    hub's schema, which resolves nowhere here by design: never refused.
+    """
+    if table_sources.is_remote(getattr(settings, "source", None)):
+        return None
+    name = getattr(settings, "namespace_full_name", None)
+    if not name or settings.namespace_id is not None or svc.resolve_namespace_id_by_full_name(name) is not None:
+        return None
+    return f"There is no catalog schema called {name} here; pick the schema again."
 
 
 def _effective_namespace_id(svc: CatalogService, settings) -> int | None:

@@ -2,9 +2,12 @@
 
 The catalog is a level-0 ``catalog_namespaces`` row marked ``kept_elsewhere`` with one ``external_catalogs`` row
 saying how to reach it, and the other catalog's top-level namespaces are level-1 rows marked the same way, kept in
-line by ``sync``. Its tables are never rows: they are listed live and kept a minute per schema in this process. The
-sign-in is one secret of the owner's, a bearer token or a client id and secret, and only its ciphertext leaves this
-module. Nothing here asks the other catalog for a storage key.
+line by ``sync``. Its tables are listed live and kept a minute per schema in this process. A table gets a
+``catalog_tables`` row (``storage_format`` iceberg, no path, no row count, the catalog's owner) only once the catalog
+described it for a node or a flow wrote it, so read and write lineage can name it; no listing of tables shows such a
+row (``repository.tables_kept_here``), and removing the catalog or a gone schema removes them. The sign-in is one
+secret of the owner's, a bearer token or a client id and secret, and only its ciphertext leaves this module. Nothing
+here asks the other catalog for a storage key.
 """
 
 from __future__ import annotations
@@ -12,9 +15,12 @@ from __future__ import annotations
 import logging
 import time
 from datetime import UTC, datetime
+from typing import NamedTuple
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from flowfile_core.catalog.constants import KEPT_ELSEWHERE_FORMAT
 from flowfile_core.catalog.exceptions import (
     KeptElsewhereError,
     NamespaceExistsError,
@@ -23,7 +29,7 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.validators import reject_dot_in_name
-from flowfile_core.database.models import CatalogNamespace, ExternalCatalog, Secret
+from flowfile_core.database.models import CatalogNamespace, CatalogTable, ExternalCatalog, Secret
 from flowfile_core.schemas.catalog_schema import (
     ColumnSchema,
     ExternalCatalogConnection,
@@ -36,6 +42,7 @@ from flowfile_core.schemas.catalog_schema import (
     ExternalTableDetail,
     ExternalTableList,
     ExternalTableOut,
+    FlowSummary,
     NamespaceOut,
 )
 from shared.iceberg_utils import IcebergCatalogRef, IcebergTableRef, client_credentials_sign_in
@@ -305,17 +312,22 @@ class ExternalCatalogService:
         return self.repo.get_namespace(namespace_id)
 
     def delete(self, namespace_id: int) -> None:
-        """Remove the catalog from Flowfile: its rows, their grants and its secret. The other catalog is not touched."""
+        """Remove the catalog from Flowfile: its rows, their grants and its secret. The other catalog is not touched.
+
+        The rows its tables got for lineage go first, with their read links; any other table, flow or notebook in one
+        of its schemas refuses the removal before anything is deleted.
+        """
         namespace, row = self._row(namespace_id)
         schemas = self.repo.list_child_namespaces(namespace_id)
         for schema in schemas:
-            tables = self.repo.count_tables_in_namespace(schema.id)
+            tables = self.repo.count_tables_in_namespace(schema.id) - len(_table_rows(self._db, schema.id))
             flows = self.repo.count_flows_in_namespace(schema.id)
             notebooks = self.repo.count_notebooks_in_namespace(schema.id)
             if tables or flows or notebooks:
                 raise NamespaceNotEmptyError(schema.id, tables=tables, flows=flows, notebooks=notebooks)
         secret = self._secret_row(row)
         for schema in schemas:
+            drop_table_rows(self.repo, schema.id)
             self.repo.delete_namespace(schema.id)
         forget_tables(row.id)
         self.repo.delete_external_catalog(namespace_id)
@@ -406,6 +418,12 @@ class ExternalCatalogService:
         namespace, row, schema = self._schema(namespace_id, schema_id)
         described = describe_table(self._stored_ref(row).table(f"{schema.name}.{name}"))
         updated = described.updated_at_ms
+        committed = described.last_commit_ms
+        lineage = table_row(self._db, schema.id, name)
+        writer = (
+            self.repo.get_flow(lineage.source_registration_id) if lineage and lineage.source_registration_id else None
+        )
+        readers = self.repo.list_readers_for_table(lineage.id) if lineage is not None else []
         return ExternalTableDetail(
             name=name,
             reference=f"{namespace.name}.{schema.name}.{name}",
@@ -415,7 +433,226 @@ class ExternalCatalogService:
             location=described.location,
             partitioned_by=list(described.partitioned_by),
             updated_at=datetime.fromtimestamp(updated / 1000, UTC).replace(tzinfo=None) if updated else None,
+            last_commit_at=datetime.fromtimestamp(committed / 1000, UTC).replace(tzinfo=None) if committed else None,
+            last_operation=described.last_operation,
+            snapshot_count=described.snapshot_count,
+            read_by_flows=[FlowSummary(id=flow.id, name=flow.name) for flow in readers],
+            written_by=FlowSummary(id=writer.id, name=writer.name) if writer is not None else None,
         )
+
+
+class OutsideTable(NamedTuple):
+    """A table a node names in a catalog kept elsewhere, as Flowfile's catalog rows say, without asking that catalog.
+
+    ``namespace_id`` is the schema's row, or the catalog's when the schema has no row (yet): what Use is checked on.
+    """
+
+    catalog: str
+    schema: str
+    table: str
+    namespace_id: int
+
+    @property
+    def reference(self) -> str:
+        return f"{self.catalog}.{self.schema}.{self.table}"
+
+
+def outside_table(
+    db: Session, full_name: str | None, table_name: str | None, namespace_id: int | None, *, source: str | None
+) -> OutsideTable | None:
+    """The table a catalog reader names when its schema is kept elsewhere, from the database alone; else ``None``.
+
+    Named as a table of Flowfile's own is: ``catalog.schema.table`` in ``full_name``, or a schema row's id in
+    ``namespace_id`` with the table's name in ``table_name`` (else the last part of ``full_name``). A reader whose
+    ``source`` is a remote catalog (the hub) names that catalog's table, never one of this Flowfile's rows.
+    """
+    if _remote(source):
+        return None
+    parts = full_name.split(".") if full_name else []
+    if len(parts) == 3 and all(parts):
+        catalog = (
+            db.query(CatalogNamespace)
+            .filter(CatalogNamespace.name == parts[0], CatalogNamespace.parent_id.is_(None))
+            .first()
+        )
+        if catalog is None or not catalog.kept_elsewhere:
+            return None
+        schema = db.query(CatalogNamespace).filter_by(parent_id=catalog.id, name=parts[1]).first()
+        return OutsideTable(catalog.name, parts[1], parts[2], schema.id if schema is not None else catalog.id)
+    if namespace_id is None:
+        return None
+    schema = db.get(CatalogNamespace, namespace_id)
+    if schema is None or not schema.kept_elsewhere or schema.parent_id is None:
+        return None
+    name = table_name or (parts[-1] if parts else None)
+    if not name:
+        return None
+    catalog = db.get(CatalogNamespace, schema.parent_id)
+    return OutsideTable(catalog.name, schema.name, name, schema.id)
+
+
+def _remote(source: str | None) -> bool:
+    from flowfile_core.catalog.table_sources import is_remote
+
+    return is_remote(source)
+
+
+def _table_rows(db: Session, namespace_id: int) -> list[CatalogTable]:
+    return db.query(CatalogTable).filter_by(namespace_id=namespace_id, storage_format=KEPT_ELSEWHERE_FORMAT).all()
+
+
+def table_row(db: Session, schema_id: int, name: str) -> CatalogTable | None:
+    """The lineage row of the table ``name`` in a schema kept elsewhere, or ``None`` when no node was shown it yet."""
+    return (
+        db.query(CatalogTable)
+        .filter_by(namespace_id=schema_id, name=name, storage_format=KEPT_ELSEWHERE_FORMAT)
+        .first()
+    )
+
+
+def ensure_table_row(db: Session, table: OutsideTable | None, *, written_by: int | None = None) -> CatalogTable | None:
+    """The ``catalog_tables`` row of a table kept elsewhere, made the first time; ``None`` when its schema has no row.
+
+    Called once the other catalog described the table for a node, or a flow wrote it (``written_by``, the flow's
+    registration, then names that flow as the table's writer). The row holds no path, no row count and no columns,
+    and belongs to the catalog's owner whoever asked. Two requests that make it at once make one row: the loser of
+    the unique name in its schema rolls back and reads the winner's. Commits, so pass a session with no pending work.
+    """
+    if table is None:
+        return None
+    schema = db.get(CatalogNamespace, table.namespace_id)
+    if schema is None or schema.parent_id is None or not schema.kept_elsewhere:
+        return None
+    row = table_row(db, schema.id, table.table)
+    if row is None:
+        catalog = db.get(CatalogNamespace, schema.parent_id)
+        db.add(
+            CatalogTable(
+                name=table.table,
+                namespace_id=schema.id,
+                owner_id=catalog.owner_id,
+                storage_format=KEPT_ELSEWHERE_FORMAT,
+                source_registration_id=written_by,
+            )
+        )
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+        row = table_row(db, schema.id, table.table)
+    if row is not None and written_by is not None and row.source_registration_id != written_by:
+        row.source_registration_id = written_by
+        db.commit()
+    return row
+
+
+def kept_table_row_count(repo: CatalogRepository, namespace_id: int) -> int:
+    """How many of a schema's ``catalog_tables`` rows are lineage rows of tables kept elsewhere."""
+    return len(_table_rows(repo._db, namespace_id))
+
+
+def drop_table_rows(repo: CatalogRepository, namespace_id: int) -> None:
+    """Delete the lineage rows of a catalog kept elsewhere's schema, with their read links, favourites and grants."""
+    for row in _table_rows(repo._db, namespace_id):
+        repo.delete_table(row.id)
+
+
+def outside_write_target(
+    db: Session,
+    namespace_full_name: str | None,
+    table_name: str | None,
+    namespace_id: int | None,
+    *,
+    source: str | None,
+) -> OutsideTable | None:
+    """The table a catalog writer names in a schema kept elsewhere, from the database alone; else ``None``.
+
+    Named as a writer names a schema of Flowfile's own, name first: ``catalog.schema`` in ``namespace_full_name``
+    decides when its catalog has a row, else the schema row ``namespace_id``. ``table`` is empty while the writer names
+    no table yet. A writer on the catalog row itself is no such table: nothing is written into a catalog. A writer
+    whose ``source`` is a remote catalog (the hub) names that catalog's schema, never one of this Flowfile's rows.
+    """
+    if _remote(source):
+        return None
+    name = table_name or ""
+    parts = namespace_full_name.split(".") if namespace_full_name else []
+    if len(parts) == 2 and all(parts):
+        catalog = (
+            db.query(CatalogNamespace)
+            .filter(CatalogNamespace.name == parts[0], CatalogNamespace.parent_id.is_(None))
+            .first()
+        )
+        if catalog is not None:
+            if not catalog.kept_elsewhere:
+                return None
+            schema = db.query(CatalogNamespace).filter_by(parent_id=catalog.id, name=parts[1]).first()
+            return OutsideTable(catalog.name, parts[1], name, schema.id if schema is not None else catalog.id)
+    if namespace_id is None:
+        return None
+    schema = db.get(CatalogNamespace, namespace_id)
+    if schema is None or not schema.kept_elsewhere or schema.parent_id is None:
+        return None
+    catalog = db.get(CatalogNamespace, schema.parent_id)
+    return OutsideTable(catalog.name, schema.name, name, schema.id)
+
+
+_REFUSED_WRITE_MODES = {
+    "upsert": "Upsert",
+    "update": "Update",
+    "delete": "Delete",
+    "scd2": "SCD2",
+    "error": "Error if exists",
+    "virtual": "Virtual Table",
+}
+
+
+def outside_write_refusal(
+    catalog: str, *, table: str | None = None, write_mode: str, track_changes: bool, partition_by: list[str] | None
+) -> str | None:
+    """Why a writer cannot write a table kept elsewhere as its settings ask, in one sentence; ``None`` when it can.
+
+    The one wording of these refusals, for the settings route and for the run, naming each choice by the label the
+    writer's drawer shows it with (``el/catalogWriter/outsideTarget.ts`` says the same): the write is
+    ``iceberg_write``, which only appends to or overwrites the table as it is. A table name with a dot is refused as
+    a Delta table's is, since the other catalog would read it as a nested namespace.
+    """
+    if table and "." in table:
+        try:
+            reject_dot_in_name(table, "Table")
+        except ValueError as exc:
+            return str(exc)
+    choice = _REFUSED_WRITE_MODES.get(write_mode)
+    if choice is None and track_changes:
+        choice = "Track changes"
+    if choice is None and partition_by:
+        choice = "Partition by"
+    if choice is None:
+        return None
+    return f"{catalog} keeps this table. Flowfile can Append to it or Overwrite it; {choice} is not available there."
+
+
+def outside_read_refusal(catalog: str, *, changes: bool, version: bool) -> str | None:
+    """Why a reader cannot read a table kept elsewhere as its settings ask, in one sentence; ``None`` when it can.
+
+    The reader's drawer says the same words (``el/catalogPick.ts``: ``outsideNoChanges``, ``outsideNoVersion``).
+    """
+    if changes:
+        return (
+            f"{catalog} keeps this table. Flowfile can read it only as it is now; reading its changes is not "
+            "available there."
+        )
+    if version:
+        return (
+            f"{catalog} keeps this table. Flowfile can read it only as it is now; reading it at a version is not "
+            "available there."
+        )
+    return None
+
+
+def read_only_refusal(schema: str) -> str:
+    """The one sentence for someone who may read the schema ``catalog.schema`` and not write it, for the run and the
+    writer's settings route."""
+    return f"You may read {schema} but not write it; ask its owner to let you write it."
 
 
 def table_ref_for_run(
@@ -468,10 +705,9 @@ def table_ref_for_run(
             if writes
             else sharing.can_use(db, user, "catalog_namespace", target(chosen))
         )
+        if not allowed and writes:
+            raise ValueError(read_only_refusal(f"{catalog_name}.{schema_name}"))
         if not allowed:
-            to_write = " to write it" if writes else ""
-            raise ValueError(
-                f"You have no access to {catalog_name}.{schema_name}; ask its owner to share it{to_write}."
-            )
+            raise ValueError(f"You have no access to {catalog_name}.{schema_name}; ask its owner to share it.")
     secret = db.get(Secret, chosen.secret_id) if chosen.secret_id is not None else None
     return IcebergTableRef(chosen.uri, table, chosen.warehouse, secret.encrypted_value if secret is not None else None)

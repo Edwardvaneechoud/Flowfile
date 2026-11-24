@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.services.external_catalogs import outside_table, outside_write_target
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, locate_for_namespace
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db_context
@@ -719,7 +720,7 @@ def _catalog_target(settings: object, flow: FlowGraph) -> tuple[CatalogStorageTa
     ``catalog_namespace_id``; a reader without one claims no storage. A namespace whose storage cannot be located
     answers ``(None, None, None)`` too, so the node fails when it runs. A node on a table on the hub is placed by the
     base of the credential the hub vended to ``flow``'s run, naming no stored connection; outside a run it claims
-    nothing.
+    nothing. A reader or a writer of a table another catalog keeps claims ``s3`` and names its ``catalog.schema.table``.
     """
     hub = remote_table_schema(settings)
     if hub is not None:
@@ -729,8 +730,33 @@ def _catalog_target(settings: object, flow: FlowGraph) -> tuple[CatalogStorageTa
         except (LookupError, ValueError):
             return None, None, None
         return CatalogStorageTarget(is_cloud=True, base=target.base), hub[0], None
+    if (
+        isinstance(settings, input_schema.NodeCatalogReader)
+        and not settings.sql_query
+        and not settings.catalog_table_id
+    ):
+        with get_db_context() as db:
+            outside = outside_table(
+                db,
+                settings.catalog_full_table_name,
+                settings.catalog_table_name,
+                settings.catalog_namespace_id,
+                source=settings.source,
+            )
+        if outside is not None:
+            return CatalogStorageTarget(is_cloud=True, base="s3://", kept_elsewhere=True), outside.reference, None
     if isinstance(settings, input_schema.NodeCatalogWriter):
         write_settings = settings.catalog_write_settings
+        with get_db_context() as db:
+            outside = outside_write_target(
+                db,
+                write_settings.namespace_full_name,
+                write_settings.table_name,
+                write_settings.namespace_id,
+                source=write_settings.source,
+            )
+        if outside is not None:
+            return CatalogStorageTarget(is_cloud=True, base="s3://", kept_elsewhere=True), outside.reference, None
         with get_db_context() as db:
             service = CatalogService(SQLAlchemyCatalogRepository(db))
             namespace_id = service.resolve_namespace_id_by_full_name(write_settings.namespace_full_name)

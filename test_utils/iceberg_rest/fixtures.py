@@ -477,34 +477,36 @@ class Principal:
         return f"{self.client_id}:{self.client_secret}"
 
 
-def new_principal(name: str | None = None, *, privilege: str = "CATALOG_MANAGE_CONTENT") -> Principal:
-    """A new principal holding ``privilege`` on the signed catalog, through a principal role and a catalog role."""
+def new_principal(
+    name: str | None = None, *, privilege: str = "CATALOG_MANAGE_CONTENT", catalog: str = SIGNED_WAREHOUSE
+) -> Principal:
+    """A new principal holding ``privilege`` on a Polaris catalog, through a principal role and a catalog role."""
     name = name or f"flowfile_{uuid.uuid4().hex[:8]}"
     headers = _root_headers()
     created = _manage("POST", "/principals", headers, {"principal": {"name": name}})
     credentials = created["credentials"]
     _manage("POST", "/principal-roles", headers, {"principalRole": {"name": f"{name}_role"}})
     _manage("PUT", f"/principals/{name}/principal-roles", headers, {"principalRole": {"name": f"{name}_role"}})
-    _manage("POST", f"/catalogs/{SIGNED_WAREHOUSE}/catalog-roles", headers, {"catalogRole": {"name": f"{name}_cat"}})
+    _manage("POST", f"/catalogs/{catalog}/catalog-roles", headers, {"catalogRole": {"name": f"{name}_cat"}})
     _manage(
         "PUT",
-        f"/catalogs/{SIGNED_WAREHOUSE}/catalog-roles/{name}_cat/grants",
+        f"/catalogs/{catalog}/catalog-roles/{name}_cat/grants",
         headers,
         {"grant": {"type": "catalog", "privilege": privilege}},
     )
     _manage(
         "PUT",
-        f"/principal-roles/{name}_role/catalog-roles/{SIGNED_WAREHOUSE}",
+        f"/principal-roles/{name}_role/catalog-roles/{catalog}",
         headers,
         {"catalogRole": {"name": f"{name}_cat"}},
     )
     return Principal(name, credentials["clientId"], credentials["clientSecret"])
 
 
-def drop_principal(name: str) -> None:
+def drop_principal(name: str, catalog: str = SIGNED_WAREHOUSE) -> None:
     """Remove a principal made by ``new_principal`` and its two roles; what is already gone is skipped."""
     headers = _root_headers()
-    for path in (f"/principals/{name}", f"/principal-roles/{name}_role", f"/catalogs/{SIGNED_WAREHOUSE}/catalog-roles/{name}_cat"):
+    for path in (f"/principals/{name}", f"/principal-roles/{name}_role", f"/catalogs/{catalog}/catalog-roles/{name}_cat"):
         _manage("DELETE", path, headers, ok=(200, 204, 404))
 
 
@@ -524,14 +526,14 @@ def token_seconds() -> int:
     return int(answer.json().get("expires_in") or 0)
 
 
-def signed_catalog(principal: Principal):
-    """A PyIceberg client on the signed catalog as ``principal``, for seeding and for checking what Flowfile wrote."""
+def signed_catalog(principal: Principal, warehouse: str = SIGNED_WAREHOUSE):
+    """A PyIceberg client on a Polaris catalog as ``principal``, for seeding and for checking what Flowfile wrote."""
     from pyiceberg.catalog.rest import RestCatalog
 
     return RestCatalog(
         "signed",
         uri=SIGNED_CATALOG_URI,
-        warehouse=SIGNED_WAREHOUSE,
+        warehouse=warehouse,
         credential=principal.credential,
         scope=SIGNED_SCOPE,
         **{"oauth2-server-uri": SIGNED_TOKEN_ENDPOINT},

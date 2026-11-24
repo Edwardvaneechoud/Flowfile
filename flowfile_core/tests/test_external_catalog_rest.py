@@ -401,6 +401,24 @@ def test_a_tables_columns_come_from_its_description_and_no_count_is_given(api, s
     assert after["updated_at"] >= before["updated_at"]
 
 
+def test_a_tables_detail_says_when_a_write_arrived_and_gives_no_count_of_rows(api, signed, polaris, made_namespaces):
+    name = _namespace(signed, made_namespaces)
+    _seed(signed, f"{name}.orders", 0)
+    _sync(api, polaris)
+    path = f"/catalog/external/{polaris}/schemas/{_schema_id(polaris, name)}/table"
+
+    empty = api.call("GET", path, params={"name": "orders"}).json()
+    write_table(signed.load_table(f"{name}.orders"), rows_frame(10), "append")
+    appended = api.call("GET", path, params={"name": "orders"}).json()
+
+    keys = ("last_commit_at", "last_operation", "snapshot_count")
+    assert [empty[key] for key in keys] == [None, None, 0]
+    assert (appended["last_operation"], appended["snapshot_count"]) == ("append", 1)
+    assert appended["last_commit_at"] is not None and "updated_at" in appended
+    counts = [key for key in appended if key in ("row_count", "rows", "summary", "records", "total_records")]
+    assert counts == []
+
+
 def test_listing_and_describing_ask_the_catalog_for_no_storage_key(api, signed, polaris, made_namespaces, monkeypatch):
     name = _namespace(signed, made_namespaces)
     _seed(signed, f"{name}.orders", 5)
@@ -449,3 +467,196 @@ def test_a_schema_gone_on_the_other_side_lists_nothing_and_says_why(api, signed,
     assert listed.json()["detail"].startswith(f"No longer in {catalog_name}'s own catalog since ")
     assert removed.status_code == 204
     assert name not in _children(polaris)
+
+
+@pytest.fixture
+def reader_flow(tmp_path):
+    """A registered flow of this test's own, open in the handler: ``(graph, registration id, name, path)``."""
+    from flowfile_core import flow_file_handler
+    from flowfile_core.catalog import SQLAlchemyCatalogRepository
+    from flowfile_core.database.models import FlowRegistration
+
+    name = f"outside_reader_{uuid.uuid4().hex[:6]}"
+    path = tmp_path / f"{name}.yaml"
+    with get_db_context() as db:
+        registration = FlowRegistration(name=name, flow_path=str(path), owner_id=1)
+        db.add(registration)
+        db.commit()
+        registration_id = registration.id
+    internal_id = flow_file_handler.add_flow(name=name, flow_path=str(path), user_id=1)
+    graph = flow_file_handler.get_flow(internal_id)
+    graph.flow_settings.source_registration_id = registration_id
+    yield graph, registration_id, name, path
+    flow_file_handler.delete_flow(internal_id)
+    with get_db_context() as db:
+        SQLAlchemyCatalogRepository(db).delete_flow(registration_id)
+
+
+def test_a_saved_flow_reading_an_outside_table_lists_it_and_the_tables_detail_names_the_flow(
+    api, signed, polaris, made_namespaces, reader_flow
+):
+    import re
+
+    from flowfile_core.schemas import input_schema
+
+    name = _namespace(signed, made_namespaces)
+    _seed(signed, f"{name}.orders", 5)
+    _sync(api, polaris)
+    catalog, schema_id = _tree_node(api, polaris)["name"], _schema_id(polaris, name)
+    graph, registration_id, flow_name, path = reader_flow
+    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader"))
+    graph.add_catalog_reader(input_schema.NodeCatalogReader(
+        flow_id=graph.flow_id, node_id=1, user_id=1, catalog_full_table_name=f"{catalog}.{name}.orders",
+    ))
+
+    columns = [column.column_name for column in graph.get_node(1).schema]
+    graph.save_flow(str(path))
+    flow = api.call("GET", f"/catalog/flows/{registration_id}").json()
+    detail = api.call("GET", f"/catalog/external/{polaris}/schemas/{schema_id}/table", params={"name": "orders"}).json()
+
+    assert columns == ["id", "grp", "val", "name"]
+    assert [(table["name"], table["namespace_id"]) for table in flow["tables_read"]] == [("orders", schema_id)]
+    assert detail["read_by_flows"] == [{"id": registration_id, "name": flow_name}]
+    assert detail["written_by"] is None
+    assert graph.get_node(1).setting_input.catalog_table_id is None
+    assert re.search(r"catalog_table_id: \d", path.read_text()) is None
+    listed = [table["name"] for table in api.call("GET", "/catalog/tables").json() if table["namespace_id"] == schema_id]
+    assert listed == []
+
+    graph.delete_node(1)
+    graph.save_flow(str(path))
+    after = api.call("GET", f"/catalog/external/{polaris}/schemas/{schema_id}/table", params={"name": "orders"}).json()
+    assert api.call("GET", f"/catalog/flows/{registration_id}").json()["tables_read"] == []
+    assert after["read_by_flows"] == []
+
+
+def test_a_tables_detail_names_the_flow_that_wrote_it(api, signed, polaris, made_namespaces, reader_flow):
+    from flowfile_core.catalog.services.external_catalogs import ensure_table_row, outside_table
+
+    name = _namespace(signed, made_namespaces)
+    _seed(signed, f"{name}.orders", 5)
+    _sync(api, polaris)
+    catalog, schema_id = _tree_node(api, polaris)["name"], _schema_id(polaris, name)
+    _, registration_id, flow_name, _ = reader_flow
+    with get_db_context() as db:
+        ensure_table_row(db, outside_table(db, f"{catalog}.{name}.orders", None, None, source="local"), written_by=registration_id)
+
+    detail = api.call("GET", f"/catalog/external/{polaris}/schemas/{schema_id}/table", params={"name": "orders"}).json()
+
+    assert detail["written_by"] == {"id": registration_id, "name": flow_name}
+    assert detail["read_by_flows"] == []
+    counts = [key for key in detail if key in ("row_count", "rows", "summary", "records")]
+    assert counts == []
+
+
+def test_a_table_no_node_was_shown_has_no_row(api, signed, polaris, made_namespaces):
+    from flowfile_core.database.models import CatalogTable
+
+    name = _namespace(signed, made_namespaces)
+    _seed(signed, f"{name}.orders", 5)
+    _sync(api, polaris)
+    schema_id = _schema_id(polaris, name)
+
+    described = api.call("GET", f"/catalog/external/{polaris}/schemas/{schema_id}/table", params={"name": "orders"})
+
+    assert described.status_code == 200
+    with get_db_context() as db:
+        assert db.query(CatalogTable).filter_by(namespace_id=schema_id).count() == 0
+
+
+@pytest.mark.parametrize("execution_location", ["local", "remote"])
+def test_a_saved_flows_first_run_names_it_as_the_tables_reader_without_another_save(
+    api, signed, polaris, made_namespaces, reader_flow, execution_location
+):
+    """Saved before any node was shown the table, the flow had no read link; the run that makes the row adds it."""
+    from flowfile_core.schemas import input_schema
+
+    name = _namespace(signed, made_namespaces)
+    _seed(signed, f"{name}.orders", 5)
+    _sync(api, polaris)
+    catalog, schema_id = _tree_node(api, polaris)["name"], _schema_id(polaris, name)
+    graph, registration_id, flow_name, path = reader_flow
+    graph.flow_settings.execution_location = execution_location
+    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader"))
+    graph.add_catalog_reader(input_schema.NodeCatalogReader(
+        flow_id=graph.flow_id, node_id=1, user_id=1, catalog_full_table_name=f"{catalog}.{name}.orders",
+    ))
+    graph.save_flow(str(path))
+    saved = api.call("GET", f"/catalog/flows/{registration_id}").json()["tables_read"]
+
+    run = graph.run_graph()
+    flow = api.call("GET", f"/catalog/flows/{registration_id}").json()
+    detail = api.call("GET", f"/catalog/external/{polaris}/schemas/{schema_id}/table", params={"name": "orders"}).json()
+
+    assert run.success, [step.error for step in run.node_step_result if not step.success]
+    assert saved == []
+    assert [(table["name"], table["namespace_id"]) for table in flow["tables_read"]] == [("orders", schema_id)]
+    assert detail["read_by_flows"] == [{"id": registration_id, "name": flow_name}]
+    assert graph.flow_settings.source_registration_id == registration_id
+
+
+def test_two_outside_readers_of_one_run_both_name_the_flow_as_their_tables_reader(
+    api, signed, polaris, made_namespaces, reader_flow
+):
+    """Each reader adds its own link as it runs; neither run takes the other's away."""
+    from flowfile_core.schemas import input_schema
+
+    name = _namespace(signed, made_namespaces)
+    _seed(signed, f"{name}.orders", 5)
+    _seed(signed, f"{name}.customers", 3)
+    _sync(api, polaris)
+    catalog = _tree_node(api, polaris)["name"]
+    graph, registration_id, _, path = reader_flow
+    graph.flow_settings.execution_location = "remote"
+    for node_id, table in ((1, "orders"), (2, "customers")):
+        graph.add_node_promise(
+            input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="catalog_reader")
+        )
+        graph.add_catalog_reader(input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id, node_id=node_id, user_id=1, catalog_full_table_name=f"{catalog}.{name}.{table}",
+        ))
+    graph.save_flow(str(path))
+
+    run = graph.run_graph()
+    flow = api.call("GET", f"/catalog/flows/{registration_id}").json()
+
+    assert run.success, [step.error for step in run.node_step_result if not step.success]
+    assert sorted(table["name"] for table in flow["tables_read"]) == ["customers", "orders"]
+
+
+def test_a_run_of_a_flow_that_does_not_own_its_registration_keeps_the_id_and_links_nothing(
+    api, signed, polaris, made_namespaces, reader_flow, tmp_path
+):
+    """A copied flow file carries another flow's id until it is saved; its run neither clears the id nor names the
+    other flow as the table's reader."""
+    from flowfile_core.catalog import SQLAlchemyCatalogRepository
+    from flowfile_core.database.models import FlowRegistration
+    from flowfile_core.schemas import input_schema
+
+    name = _namespace(signed, made_namespaces)
+    _seed(signed, f"{name}.orders", 5)
+    _sync(api, polaris)
+    catalog = _tree_node(api, polaris)["name"]
+    graph, _, _, path = reader_flow
+    with get_db_context() as db:
+        other = FlowRegistration(name=f"original_{uuid.uuid4().hex[:6]}", flow_path=str(tmp_path / "o.yaml"), owner_id=1)
+        db.add(other)
+        db.commit()
+        other_id = other.id
+    try:
+        graph.flow_settings.source_registration_id = other_id
+        graph.flow_settings.path = str(path)
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader"))
+        graph.add_catalog_reader(input_schema.NodeCatalogReader(
+            flow_id=graph.flow_id, node_id=1, user_id=1, catalog_full_table_name=f"{catalog}.{name}.orders",
+        ))
+
+        run = graph.run_graph()
+        flow = api.call("GET", f"/catalog/flows/{other_id}").json()
+
+        assert run.success, [step.error for step in run.node_step_result if not step.success]
+        assert graph.flow_settings.source_registration_id == other_id
+        assert flow["tables_read"] == []
+    finally:
+        with get_db_context() as db:
+            SQLAlchemyCatalogRepository(db).delete_flow(other_id)

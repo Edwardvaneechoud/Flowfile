@@ -91,8 +91,12 @@ def requirements_for(
     if template.custom_node:
         return _custom_node(template, settings)
     if template.item == "catalog_reader":
-        # A change read's plan carries a Python function, its change-feed source.
-        return replace(_catalog_storage(catalog_target, write=False), python_function=settings.cdc_mode != "off")
+        # A change read's plan, and a read of a table kept elsewhere, carries a Python function as its source.
+        kept_elsewhere = catalog_target is not None and catalog_target.kept_elsewhere
+        return replace(
+            _catalog_storage(catalog_target, write=False),
+            python_function=settings.cdc_mode != "off" or kept_elsewhere,
+        )
     if template.item == "catalog_writer":
         return _catalog_writer(settings, catalog_target)
     if template.item == "train_model":
@@ -160,10 +164,15 @@ def _catalog_storage(
 
 
 def _catalog_writer(settings: input_schema.NodeCatalogWriter, target: CatalogStorageTarget | None) -> NodeRequirements:
-    """``virtual`` writes no data; ``scd2`` is ``delta_scd2``, a merge mode ``delta_merge``, else ``delta_write``."""
+    """``virtual`` writes no data; ``scd2`` is ``delta_scd2``, a merge mode ``delta_merge``, else ``delta_write``.
+
+    A table another catalog keeps is written by ``iceberg_write`` whatever the mode, since the run refuses the others.
+    """
     write_mode = settings.catalog_write_settings.write_mode
     if write_mode == "virtual":
         return NodeRequirements()
+    if target is not None and target.kept_elsewhere:
+        return _catalog_storage(target, write=True, operation=OperationKind.iceberg_write)
     if write_mode == "scd2":
         operation = OperationKind.delta_scd2
     elif write_mode in MERGE_MODES:

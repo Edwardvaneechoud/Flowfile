@@ -37,7 +37,43 @@
         </div>
         <div class="meta-card">
           <span class="meta-label">Last changed</span>
-          <span class="meta-value">{{ lastChanged }}</span>
+          <span class="meta-value" data-testid="external-last-changed">{{ lastChanged }}</span>
+          <span v-if="lastCommit" class="meta-sub" data-testid="external-last-commit">{{
+            lastCommit
+          }}</span>
+          <span v-if="snapshots" class="meta-sub" data-testid="external-snapshots">{{
+            snapshots
+          }}</span>
+        </div>
+      </div>
+
+      <div class="lineage" data-testid="external-lineage">
+        <div class="lineage-row">
+          <span class="meta-label">Read by</span>
+          <span v-if="readBy.length === 0" class="lineage-none" data-testid="external-read-by">
+            No flow here reads it yet.
+          </span>
+          <span v-else class="lineage-flows" data-testid="external-read-by">
+            <button
+              v-for="flow in readBy"
+              :key="flow.id"
+              class="flow-link"
+              @click="emit('navigateToFlow', flow.id)"
+            >
+              {{ flow.name }}
+            </button>
+          </span>
+        </div>
+        <div class="lineage-row">
+          <span class="meta-label">Written by</span>
+          <span v-if="!writtenBy" class="lineage-none" data-testid="external-written-by">
+            No flow here has written it.
+          </span>
+          <span v-else class="lineage-flows" data-testid="external-written-by">
+            <button class="flow-link" @click="emit('navigateToFlow', writtenBy?.id)">
+              {{ writtenBy.name }}
+            </button>
+          </span>
         </div>
       </div>
 
@@ -88,7 +124,7 @@ import type { NamespaceTree } from "../../types";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { copyTextEverywhere } from "../../utils/clipboardUtils";
 import ExternalCatalogBadge from "./ExternalCatalogBadge.vue";
-import { readSnippet } from "./externalCatalog";
+import { changedLines, readSnippet, snapshotsLine } from "./externalCatalog";
 
 const props = defineProps<{
   catalog: NamespaceTree | null;
@@ -96,7 +132,7 @@ const props = defineProps<{
   schemaId: number;
   name: string;
 }>();
-const emit = defineEmits(["close"]);
+const emit = defineEmits(["close", "navigateToFlow"]);
 
 const catalogStore = useCatalogStore();
 const detail = computed(() => catalogStore.externalTable);
@@ -108,15 +144,18 @@ const reference = computed(
   () => detail.value?.reference ?? `${catalogName.value}.${schemaName.value}.${props.name}`,
 );
 const snippet = computed(() => readSnippet(catalogName.value, schemaName.value, props.name));
-const lastChanged = computed(() =>
-  detail.value?.updated_at
-    ? new Date(
-        detail.value.updated_at.endsWith("Z")
-          ? detail.value.updated_at
-          : `${detail.value.updated_at}Z`,
-      ).toLocaleString()
-    : "--",
+const timeCard = computed(() =>
+  changedLines(
+    detail.value?.updated_at,
+    detail.value?.last_commit_at,
+    detail.value?.snapshot_count,
+  ),
 );
+const lastChanged = computed(() => timeCard.value.changed);
+const lastCommit = computed(() => timeCard.value.commit);
+const snapshots = computed(() => snapshotsLine(detail.value?.snapshot_count));
+const readBy = computed(() => detail.value?.read_by_flows ?? []);
+const writtenBy = computed(() => detail.value?.written_by ?? null);
 
 function load() {
   void catalogStore.loadExternalTable(props.catalogId, props.schemaId, props.name);
@@ -168,6 +207,54 @@ onMounted(load);
   margin: var(--spacing-4) 0;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+}
+
+.meta-sub {
+  display: block;
+  margin-top: var(--spacing-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.lineage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-4);
+}
+
+.lineage-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-3);
+}
+
+.lineage-row .meta-label {
+  min-width: 90px;
+}
+
+.lineage-none {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.lineage-flows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+}
+
+.flow-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
+  cursor: pointer;
+}
+
+.flow-link:hover {
+  text-decoration: underline;
 }
 
 .col-name {

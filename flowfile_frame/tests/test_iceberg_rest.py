@@ -138,3 +138,30 @@ def test_two_python_lines_read_and_write_a_table_by_the_catalogs_name(polaris):
 
     back = scan_table(table_access(signed.load_table(f"{schema}.orders_grp3"))).collect()
     assert (back.height, sorted(back["grp"].unique().to_list())) == (100, [3])
+
+
+@pytest.mark.iceberg_rest
+def test_read_catalog_table_reads_a_table_of_a_catalog_kept_elsewhere(polaris):
+    name, schema, _ = polaris
+
+    orders = ff.read_catalog_table("orders", namespace_full_name=f"{name}.{schema}")
+
+    assert orders.columns == ["id", "grp"]
+    result = orders.filter(ff.col("grp") == 3).collect()
+    kept = [i for i in range(1000) if i % 10 == 3]
+    assert (result.height, result["id"].sum()) == (len(kept), sum(kept))
+
+
+@pytest.mark.iceberg_rest
+def test_write_catalog_table_writes_a_table_of_a_catalog_kept_elsewhere_and_read_catalog_table_reads_it_back(polaris):
+    name, schema, signed = polaris
+
+    orders = ff.read_catalog_table("orders", namespace_full_name=f"{name}.{schema}")
+    written = ff.write_catalog_table(orders.filter(ff.col("grp") == 3), "orders_grp3_frame",
+                                     namespace_full_name=f"{name}.{schema}", write_mode="overwrite")
+    run = written.flow_graph.run_graph()
+    back = ff.read_catalog_table("orders_grp3_frame", namespace_full_name=f"{name}.{schema}").collect()
+
+    assert run.success, [step.error for step in run.node_step_result if not step.success]
+    assert (back.height, sorted(back["grp"].unique().to_list())) == (100, [3])
+    assert signed.load_table(f"{schema}.orders_grp3_frame").scan().to_arrow().num_rows == 100

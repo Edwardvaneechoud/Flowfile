@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
+from flowfile_core.catalog.repository import tables_kept_here
 from flowfile_core.catalog.services import notebook_store
 from flowfile_core.catalog.services.tables import _is_managed_table_path
 from flowfile_core.database.models import (
@@ -473,8 +474,8 @@ def tables_manifest_data(db: Session, owner_id: int) -> dict:
     definition + schema + a portable data pointer. Flow-produced virtual tables are skipped
     (their serialized plan isn't portable; re-running the producer flow rebuilds them). Volatile
     data stats (row/size counts, run id, timestamps) are stripped so a pure data write doesn't
-    churn the file."""
-    rows = db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id).all()
+    churn the file. The lineage rows of tables a catalog kept elsewhere keeps are left out, as that catalog is."""
+    rows = db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id, tables_kept_here()).all()
     entries = [_table_entry(db, t) for t in rows if not (t.table_type == "virtual" and not t.sql_query)]
     entries.sort(key=lambda e: (e["name"], json.dumps(e.get("namespace"), sort_keys=True)))
     return {"tables": entries}

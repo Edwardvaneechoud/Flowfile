@@ -2033,8 +2033,18 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
     is authoritative. Incomplete settings (no namespace resolved yet) pass — the
     user may still be configuring the node. An unchanged target also passes: the
     settings drawer re-POSTs on close, and merely viewing a shared flow's writer
-    node must not surface a permission error."""
+    node must not surface a permission error. A schema kept elsewhere takes Overwrite and Append only, refused
+    with the run's own sentence whether or not the target changed, after the access check when it changed. A
+    ``namespace_full_name`` that resolves nowhere with no ``namespace_id`` is refused with the run's sentence too.
+    A writer on the hub names a schema of the hub, never refused as kept elsewhere or as missing here."""
+    from flowfile_core.catalog.services.external_catalogs import outside_write_target
+    from flowfile_core.flowfile.flow_graph.catalog_resolution import unresolved_schema_refusal
+
     settings = node.catalog_write_settings
+    with get_db_context() as db:
+        outside = outside_write_target(
+            db, settings.namespace_full_name, settings.table_name, settings.namespace_id, source=settings.source
+        )
     existing_node = flow.get_node(node.node_id)
     existing_settings = getattr(existing_node, "setting_input", None)
     current = getattr(existing_settings, "catalog_write_settings", None)
@@ -2046,14 +2056,24 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
         prior_user_id = getattr(existing_settings, "user_id", None)
         if prior_user_id is not None:
             node.user_id = prior_user_id
+        _refuse_outside_choice(outside, settings)
         return
     with get_db_context() as db:
         resolver = AccessResolver(db, current_user)
         svc = CatalogService(SQLAlchemyCatalogRepository(db))
+        if outside is not None:
+            if resolver.restricted and outside.namespace_id not in resolver.writable_namespace_ids():
+                raise HTTPException(status_code=403, detail=_outside_write_access_refusal(db, current_user, outside))
+            _refuse_outside_choice(outside, settings)
+            return
+        refusal = unresolved_schema_refusal(svc, settings)
+        if refusal is not None:
+            raise HTTPException(status_code=422, detail=refusal)
         ns_id = svc.resolve_namespace_id_by_full_name(settings.namespace_full_name)
         if ns_id is None:
             ns_id = settings.namespace_id
-        _refuse_kept_elsewhere(db, ns_id)
+        if not table_sources.is_remote(settings.source):
+            _refuse_kept_elsewhere(db, ns_id)
         if not resolver.restricted or ns_id is None:
             return
         existing = svc.repo.get_table_by_name(settings.table_name, ns_id) if settings.table_name else None
@@ -2068,6 +2088,33 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
                 status_code=403,
                 detail="You do not have write access to the selected catalog namespace",
             )
+
+
+def _outside_write_access_refusal(db, current_user, outside) -> str:
+    """The run's sentence for someone who may read the schema kept elsewhere; the generic one for anyone else, so
+    nobody learns of a schema they cannot read."""
+    from flowfile_core.catalog.services.external_catalogs import read_only_refusal
+
+    if sharing.can_use(db, current_user, "catalog_namespace", outside.namespace_id):
+        return read_only_refusal(f"{outside.catalog}.{outside.schema}")
+    return "You do not have write access to the selected catalog namespace"
+
+
+def _refuse_outside_choice(outside, settings: input_schema.CatalogWriteSettings) -> None:
+    """422 with the run's sentence for a choice a schema kept elsewhere refuses; nothing for any other target."""
+    from flowfile_core.catalog.services.external_catalogs import outside_write_refusal
+
+    if outside is None:
+        return
+    refusal = outside_write_refusal(
+        outside.catalog,
+        table=outside.table,
+        write_mode=settings.write_mode,
+        track_changes=settings.track_changes,
+        partition_by=settings.partition_by,
+    )
+    if refusal is not None:
+        raise HTTPException(status_code=422, detail=refusal)
 
 
 def _validate_catalog_namespace_writable_for_user(namespace_id: int | None, current_user, detail: str) -> None:

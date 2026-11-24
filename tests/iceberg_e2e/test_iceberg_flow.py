@@ -138,3 +138,67 @@ def test_a_saved_flow_names_a_signed_catalog_and_runs_on_the_worker(stack, names
             signed.drop_table(identifier)
         signed.drop_namespace(schema)
         fixtures.drop_principal(principal.name)
+
+
+def test_a_saved_flow_of_a_catalog_reader_and_writer_reads_and_writes_tables_polaris_keeps(stack):
+    """The same flow with Flowfile's Catalog Reader and Writer: the nodes name ``catalog.schema.table``, no address."""
+    import uuid
+
+    import polars as pl
+
+    from shared.iceberg_utils import scan_table, storage_properties, table_access, write_table
+    from test_utils.iceberg_rest import fixtures
+
+    if not fixtures.signed_catalog_ready():
+        pytest.skip(fixtures.SIGNED_SKIP_REASON)
+    principal_name = f"flowfile_{uuid.uuid4().hex[:8]}"
+    schema = f"e2e_nodes_{uuid.uuid4().hex[:6]}"
+    signed = added = None
+    try:
+        principal = fixtures.new_principal(principal_name)
+        signed = fixtures.signed_catalog(principal)
+        signed.create_namespace(schema)
+        rows = flow_demo.orders_rows(1000)
+        orders = signed.create_table(f"{schema}.orders", schema=rows.to_arrow(compat_level=pl.CompatLevel.oldest()).schema)
+        write_table(orders, rows.lazy(), "append")
+        name = f"polaris_{uuid.uuid4().hex[:6]}"
+        added = stack.post("/catalog/external", {
+            "name": name, "uri": fixtures.SIGNED_CATALOG_URI, "warehouse": fixtures.SIGNED_WAREHOUSE,
+            "sign_in": "client_credentials", "client_id": principal.client_id,
+            "client_secret": principal.client_secret, "scope": fixtures.SIGNED_SCOPE,
+        })
+        flow = flow_demo.catalog_nodes_flow(f"{name}.{schema}.orders", f"{name}.{schema}", "orders_grp3")
+        flow["flowfile_settings"]["execution_location"] = "remote"
+
+        flow_id = stack.import_flow(flow)
+        columns = stack.get("/node", flow_id=flow_id, node_id=1, get_data=False)["main_output"]["columns"]
+        run = stack.run(flow_id)
+
+        assert columns == flow_demo.COLUMNS
+        assert run["success"], failed_nodes(run)
+        assert sorted(run["nodes"]) == [1, 2, 3] and all(node["success"] for node in run["nodes"].values())
+        written = signed.load_table(f"{schema}.orders_grp3")
+        assert scan_table(table_access(written)).select(pl.len()).collect().item() == 100
+        assert flow_demo.catalog_flow_tables(stack, flow_id) == (["orders"], ["orders_grp3"])
+        token, _ = fixtures.fetch_token(principal)
+        secrets = _Values([principal.client_secret, principal.credential, token])
+        keys = _Values(fixtures.key_values(storage_properties(written)))
+        saved = flow_demo.saved_flow(stack, flow_id)
+        texts = {
+            "the saved flow": saved,
+            "core's log": (stack.cwds["core"].parent / "core.log").read_text(),
+            "the worker's log": (stack.cwds["worker"].parent / "worker.log").read_text(),
+        }
+        assert keys
+        assert flow_demo.leaks(texts, secrets) == []
+        assert flow_demo.leaks(texts, keys) == []
+        assert flow_demo.secret_shapes(saved) == []
+        assert f"{name}.{schema}.orders" in saved and fixtures.SIGNED_CATALOG_URI not in saved
+    finally:
+        if added is not None:
+            stack.http.delete(f"{stack.base}/catalog/external/{added['id']}", timeout=30)
+        if signed is not None and signed.namespace_exists(schema):
+            for identifier in signed.list_tables(schema):
+                signed.drop_table(identifier)
+            signed.drop_namespace(schema)
+        fixtures.drop_principal(principal_name)

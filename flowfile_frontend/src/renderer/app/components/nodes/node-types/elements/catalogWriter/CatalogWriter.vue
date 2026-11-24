@@ -18,7 +18,10 @@
         </div>
 
         <div class="catalog-field">
-          <label class="catalog-label">Catalog / Schema</label>
+          <div class="catalog-label-row">
+            <label class="catalog-label">Catalog / Schema</label>
+            <ExternalCatalogBadge v-if="outsideExternal" :external="outsideExternal" />
+          </div>
           <el-select
             v-model="selectedNamespaceId"
             size="small"
@@ -77,18 +80,19 @@
               <div class="catalog-field">
                 <label class="catalog-label">Write mode</label>
                 <el-select v-model="physicalWriteMode" size="small" @change="handleWriteModeChange">
-                  <el-option label="Overwrite" value="overwrite" />
-                  <el-option label="Error if exists" value="error" />
-                  <el-option label="Append" value="append" />
-                  <el-option label="Upsert" value="upsert" />
-                  <el-option label="Update" value="update" />
-                  <el-option label="Delete" value="delete" />
                   <el-option
-                    v-if="!hubTarget"
-                    label="SCD2 (slowly changing dimension)"
-                    value="scd2"
+                    v-for="m in shownWriteModes"
+                    :key="m.value"
+                    :label="m.label"
+                    :value="m.value"
+                    :disabled="outsideRefusal(outsideCatalog, m.value) !== null"
+                    :title="outsideRefusal(outsideCatalog, m.value) ?? undefined"
                   />
                 </el-select>
+                <div v-if="outsideFallbackNote" class="status-line status-warn">
+                  <i class="fa-solid fa-triangle-exclamation"></i>
+                  <span>{{ outsideFallbackNote }}</span>
+                </div>
               </div>
 
               <div v-if="needsMergeKeys" class="catalog-field">
@@ -108,6 +112,8 @@
                   multiple
                   filterable
                   placeholder="Select partition columns"
+                  :disabled="outsideCatalog !== null"
+                  :title="outsideRefusal(outsideCatalog, 'partition_by') ?? undefined"
                 >
                   <el-option
                     v-for="col in partitionColumnOptions"
@@ -232,9 +238,9 @@
             </div>
           </el-tab-pane>
 
-          <el-tab-pane name="virtual" :disabled="hubTarget">
+          <el-tab-pane name="virtual" :disabled="hubTarget || outsideCatalog !== null">
             <template #label>
-              <span :title="hubTarget ? HUB_VIRTUAL_NOTE : undefined">Virtual Table</span>
+              <span :title="virtualTabTitle">Virtual Table</span>
             </template>
             <div class="tab-content">
               <div class="virtual-info">
@@ -318,6 +324,8 @@ import { buildOutputHandles } from "../../../../../utils/nodeHandles";
 import * as writeModes from "../../../../../utils/deltaWriteModes";
 import { CollapsibleSection, DeltaTableStatusLine, MergeKeysSelect } from "../../../../common";
 import type { CatalogTable, NamespaceTree } from "../../../../../types/catalog.types";
+import ExternalCatalogBadge from "../../../../../views/CatalogView/ExternalCatalogBadge.vue";
+import { outsideCatalogNode, outsideFallback, outsideRefusal } from "./outsideTarget";
 import {
   DEFAULT_SCD2_SETTINGS,
   type CatalogWriteMode,
@@ -378,6 +386,40 @@ const hubTarget = computed(
   () => !!nodeData.value && isHubTarget(nodeData.value.catalog_write_settings),
 );
 
+// The tree as core listed it, to tell a schema of a catalog kept elsewhere.
+const namespaceTree = ref<NamespaceTree[]>([]);
+// The catalog kept elsewhere that holds the target schema, and its name; null for any other target.
+const outsideCatalogRow = computed(() =>
+  outsideCatalogNode(namespaceTree.value, nodeData.value?.catalog_write_settings),
+);
+const outsideCatalog = computed(() => outsideCatalogRow.value?.name ?? null);
+const outsideExternal = computed(() => outsideCatalogRow.value?.external ?? null);
+// Why the drawer moved a saved setting off what such a catalog refuses; shown until the target changes.
+const outsideFallbackNote = ref<string | null>(null);
+
+const WRITE_MODE_OPTIONS: { label: string; value: CatalogWriteMode }[] = [
+  { label: "Overwrite", value: "overwrite" },
+  { label: "Error if exists", value: "error" },
+  { label: "Append", value: "append" },
+  { label: "Upsert", value: "upsert" },
+  { label: "Update", value: "update" },
+  { label: "Delete", value: "delete" },
+  { label: "SCD2 (slowly changing dimension)", value: "scd2" },
+];
+const shownWriteModes = computed(() =>
+  hubTarget.value ? WRITE_MODE_OPTIONS.filter((m) => m.value !== "scd2") : WRITE_MODE_OPTIONS,
+);
+
+const virtualTabTitle = computed(() => {
+  if (hubTarget.value) return HUB_VIRTUAL_NOTE;
+  return outsideRefusal(outsideCatalog.value, "virtual") ?? undefined;
+});
+
+watch(outsideCatalog, (catalog) => {
+  if (catalog) applyOutsideFallback(false);
+  else outsideFallbackNote.value = null;
+});
+
 // A schema this machine cannot use shows only when the node points at it; a read-only one greyed.
 const shownNamespaceOptions = computed(() =>
   pickable(catalogNamespaces.value, selectedNamespaceId.value),
@@ -396,6 +438,23 @@ async function onNamespaceChange(id: number | null) {
   const match = catalogNamespaces.value.find((ns) => ns.id === id) ?? null;
   Object.assign(settings, namespaceChoice(match));
   if (match?.source === "hub") await leaveLocalOnlyModes();
+  else if (outsideCatalog.value) await applyOutsideFallback(true);
+}
+
+// Fall back to what a catalog kept elsewhere takes, and say so; ``prompt`` offers to drop a dead SCD2 output edge.
+async function applyOutsideFallback(prompt: boolean) {
+  const settings = nodeData.value?.catalog_write_settings;
+  const catalog = outsideCatalog.value;
+  if (!settings || !catalog) return;
+  const { patch, note } = outsideFallback(catalog, settings);
+  if (!note) return;
+  Object.assign(settings, patch);
+  if (patch.write_mode) {
+    activeTab.value = "physical";
+    physicalWriteMode.value = "overwrite";
+  }
+  outsideFallbackNote.value = note;
+  if (prompt && patch.write_mode) await handleWriteModeChange("overwrite");
 }
 
 // A hub target takes no virtual table, SCD2 write or change tracking, so a saved node always validates.
@@ -506,10 +565,12 @@ const keyColumnsLabel = computed(() =>
   physicalWriteMode.value === "scd2" ? "Business key columns" : "Key columns",
 );
 
-const trackChangesDisabledReason = computed(() =>
-  writeModes.trackChangesDisabledReason(physicalWriteMode.value, {
-    virtual: activeTab.value === "virtual",
-  }),
+const trackChangesDisabledReason = computed(
+  () =>
+    outsideRefusal(outsideCatalog.value, "track_changes") ??
+    writeModes.trackChangesDisabledReason(physicalWriteMode.value, {
+      virtual: activeTab.value === "virtual",
+    }),
 );
 
 const canPartition = computed(() => writeModes.canPartition(physicalWriteMode.value));
@@ -629,6 +690,12 @@ async function lookupExistingTable() {
     return;
   }
   const settings = nodeData.value!.catalog_write_settings;
+  if (outsideCatalog.value) {
+    // The catalog kept elsewhere lists its own tables; core keeps no row to look up here.
+    existingTable.value = null;
+    tableLookupDone.value = false;
+    return;
+  }
   if (isHubTarget(settings)) {
     // The hub's own listing answers whether the table is there; no local lookup.
     const schema = settings.namespace_full_name;
@@ -672,6 +739,7 @@ watch(
     nodeData.value?.catalog_write_settings.namespace_id,
     nodeData.value?.catalog_write_settings.namespace_full_name,
     nodeData.value?.catalog_write_settings.source,
+    outsideCatalog.value,
   ],
   () => scheduleLookup(),
 );
@@ -745,6 +813,7 @@ function collectHubTables(tree: NamespaceTree[]): CatalogTable[] {
 onMounted(async () => {
   try {
     const fetched = await CatalogApi.getNamespaceTree();
+    namespaceTree.value = fetched;
     allCatalogNamespaces.value = namespaceOptions(fetched);
     // Read-only local schemas are pruned; a hub schema stays, since the hub decides at run time.
     catalogNamespaces.value = namespaceOptions([
@@ -869,6 +938,11 @@ defineExpose({
 
 .catalog-field-inline .partition-hint {
   flex-basis: 100%;
+}
+
+.catalog-label-row {
+  display: flex;
+  align-items: center;
 }
 
 .catalog-label {

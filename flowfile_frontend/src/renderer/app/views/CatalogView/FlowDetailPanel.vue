@@ -288,7 +288,7 @@
               v-for="table in flow.tables_read"
               :key="table.id"
               class="lineage-item read-item"
-              @click="$emit('selectTable', table.id)"
+              @click="openLineageTable(table)"
             >
               <i class="fa-solid fa-table lineage-item-icon"></i>
               <span class="lineage-item-name">{{ table.name }}</span>
@@ -309,7 +309,7 @@
               v-for="table in flow.tables_produced"
               :key="table.id"
               class="lineage-item produced-item"
-              @click="$emit('selectTable', table.id)"
+              @click="openLineageTable(table)"
             >
               <i class="fa-solid fa-table lineage-item-icon"></i>
               <span class="lineage-item-name">{{ table.name }}</span>
@@ -385,7 +385,7 @@ import { CatalogApi } from "../../api/catalog.api";
 import type { FlowRegistration, FlowSchedule, GlobalArtifact } from "../../types";
 import { formatDate, formatSize, formatType } from "./catalog-formatters";
 import { copyTextEverywhere } from "../../utils/clipboardUtils";
-import type { FlowCodeFormat } from "../../types";
+import type { CatalogTableSummary, FlowCodeFormat } from "../../types";
 import RunHistoryTable from "./RunHistoryTable.vue";
 import { RUN_OUTCOME_LABEL, RUN_OUTCOME_TEXT, runOutcome } from "./runStatus";
 import { CollapsibleSection, EmptyState } from "../../components/common";
@@ -395,6 +395,7 @@ import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { isHubRow } from "./hubRows";
+import { outsideTableTarget } from "./externalCatalog";
 
 const catalogStore = useCatalogStore();
 const showShareDialog = ref(false);
@@ -415,6 +416,7 @@ const emit = defineEmits([
   "openFlow",
   "modifyInNotebook",
   "selectTable",
+  "selectExternalTable",
   "deleteFlow",
   "renameFlow",
   "addSchedule",
@@ -425,6 +427,13 @@ const emit = defineEmits([
   "openSnapshot",
   "runsFocused",
 ]);
+
+/** A table of a schema kept by another catalog opens as that catalog describes it; any other, its own page. */
+function openLineageTable(table: CatalogTableSummary) {
+  const outside = outsideTableTarget(table, catalogStore.tree);
+  if (outside) emit("selectExternalTable", outside);
+  else emit("selectTable", table.id);
+}
 
 const runHistorySection = ref<HTMLElement | null>(null);
 

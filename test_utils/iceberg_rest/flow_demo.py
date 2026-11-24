@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import subprocess
 import tempfile
 import uuid
@@ -32,6 +33,11 @@ KEY_NAMES = (
     "AWS_SESSION_TOKEN",
 )
 FALLBACK = "reading it with PyIceberg"
+# A token minted afresh differs from any held before, so a saved flow is also searched for a token's or key's shape.
+SECRET_SHAPES = {
+    "a JWT": re.compile(r"eyJ[\w-]+\.[\w-]+\."),
+    "an access key": re.compile(r"(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])"),
+}
 
 
 def service_env(root: Path) -> dict[str, str]:
@@ -91,6 +97,48 @@ def iceberg_flow(source: str = ORDERS, target: str = GRP3, write_mode: str = "ov
     }
     flow_id = 10**9 + uuid.uuid4().int % 10**9
     return services.flow_document(flow_id, "iceberg flow", [reader, keep, writer])
+
+
+def catalog_nodes_flow(source: str, target_schema: str, target_table: str, write_mode: str = "overwrite") -> dict:
+    """Catalog Reader on ``source`` (``catalog.schema.table``), filter ``[grp] = 3``, Catalog Writer into
+    ``target_schema`` (``catalog.schema``) as ``target_table``, as the drawers save them: names only, no id, no address.
+    """
+    reader = {
+        "id": 1, "type": "catalog_reader", "is_start_node": True, "description": f"Read {source}",
+        "x_position": 0, "y_position": 0, "input_ids": None, "outputs": [2], "output_handles": ["output-0"],
+        "setting_input": {"cache_results": False, "output_field_config": None, "catalog_full_table_name": source},
+    }
+    keep = {
+        "id": 2, "type": "filter", "is_start_node": False, "description": "[grp] = 3",
+        "x_position": 200, "y_position": 0, "input_ids": [1], "outputs": [3], "output_handles": ["output-0"],
+        "setting_input": {
+            "cache_results": False, "output_field_config": None, "split_mode": False,
+            "filter_input": {"mode": "advanced", "basic_filter": None, "advanced_filter": "[grp] = 3",
+                             "filter_type": None},
+        },
+    }
+    writer = {
+        "id": 3, "type": "catalog_writer", "is_start_node": False,
+        "description": f"Write {target_schema}.{target_table} ({write_mode})",
+        "x_position": 400, "y_position": 0, "input_ids": [2], "outputs": [], "output_handles": [],
+        "setting_input": {
+            "cache_results": False, "output_field_config": None,
+            "catalog_write_settings": {"table_name": target_table, "namespace_full_name": target_schema,
+                                       "write_mode": write_mode},
+        },
+    }
+    flow_id = 10**9 + uuid.uuid4().int % 10**9
+    return services.flow_document(flow_id, "catalog nodes flow", [reader, keep, writer])
+
+
+def catalog_flow_tables(stack: services.Services, flow_id: int) -> tuple[list[str], list[str]] | None:
+    """The tables Flowfile's catalog says the registered flow behind open flow ``flow_id`` reads and writes, as
+    ``(tables_read, tables_produced)`` names; None when the flow has no registration."""
+    registration = stack.get("/flow_settings", flow_id=flow_id).get("source_registration_id")
+    if registration is None:
+        return None
+    flow = stack.get(f"/catalog/flows/{registration}")
+    return [t["name"] for t in flow.get("tables_read") or []], [t["name"] for t in flow.get("tables_produced") or []]
 
 
 def catalog():
@@ -173,6 +221,11 @@ def process_environment(pid: int) -> str:
 def leaks(texts: dict[str, str], keys: list[str]) -> list[str]:
     """Which of the texts hold a key value or a secret key's name; names only, never a value."""
     return [where for where, text in texts.items() if any(key and key in text for key in [*keys, *KEY_NAMES])]
+
+
+def secret_shapes(text: str) -> list[str]:
+    """Which of ``SECRET_SHAPES`` the text holds; names only, never a value."""
+    return [name for name, shape in SECRET_SHAPES.items() if shape.search(text)]
 
 
 def _flag(passed: bool) -> str:

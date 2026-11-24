@@ -57,3 +57,23 @@ def test_a_project_export_leaves_out_a_catalog_kept_elsewhere_and_a_reload_keeps
     finally:
         _drop(ids)
         project_sync.close_project(OWNER)
+
+
+def test_a_table_row_of_a_catalog_kept_elsewhere_is_not_exported():
+    from flowfile_core.catalog.services.external_catalogs import ensure_table_row, outside_table
+    from flowfile_core.database.models import CatalogTable
+    from flowfile_core.project.projection import tables_manifest_data
+
+    ids = _rows()
+    row_id = None
+    try:
+        with get_db_context() as db:
+            row = ensure_table_row(db, outside_table(db, "KeptElsewhereCat.sales.orders_kept", None, None, source="local"))
+            row_id = row.id
+            exported = tables_manifest_data(db, OWNER)
+        assert "orders_kept" not in yaml.safe_dump(exported)
+    finally:
+        with get_db_context() as db:
+            db.query(CatalogTable).filter(CatalogTable.id == row_id).delete()
+            db.commit()
+        _drop(ids)

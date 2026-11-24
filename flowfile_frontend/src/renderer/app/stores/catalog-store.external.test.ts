@@ -20,6 +20,7 @@ vi.mock("../api/catalog.api", () => ({
 }));
 
 import { useCatalogStore } from "./catalog-store";
+import type { NamespaceTree } from "../types";
 
 const unchanged = {
   added: [],
@@ -92,6 +93,62 @@ describe("catalog-store with a catalog kept elsewhere", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("uses a fresh list again, and asks core again once a run in this tab has finished", async () => {
+    const store = useCatalogStore();
+    const asked = () =>
+      store.externalTablesStale(71, 81) ? store.loadExternalTables(71, 81) : Promise.resolve();
+    tablesMock.mockResolvedValue({ tables: [], listed_at: "t", cached: false });
+    await asked();
+    await asked();
+    expect(tablesMock).toHaveBeenCalledTimes(1);
+
+    store.markExternalTablesStale();
+    expect(store.externalTablesStale(71, 81)).toBe(true);
+    await asked();
+    expect(tablesMock).toHaveBeenCalledTimes(2);
+    expect(tablesMock).toHaveBeenLastCalledWith(71, 81, false);
+    expect(store.externalTablesStale(71, 81)).toBe(false);
+  });
+
+  it("leaves an ordinary catalog's tables alone when a run finishes", async () => {
+    const store = useCatalogStore();
+    const ordinary = { id: 3, name: "local", level: 1, children: [], tables: [{ id: 30 }] };
+    store.tree = [ordinary] as unknown as NamespaceTree[];
+    store.markExternalTablesStale();
+    expect(store.tree).toEqual([ordinary]);
+    expect(store.externalTables).toEqual({});
+    expect(treeMock).not.toHaveBeenCalled();
+    expect(tablesMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps when each schema's list was taken, and moves it on a re-list of that schema only", async () => {
+    const store = useCatalogStore();
+    tablesMock.mockResolvedValueOnce({
+      tables: [],
+      listed_at: "2026-11-24T09:00:00",
+      cached: false,
+    });
+    tablesMock.mockResolvedValueOnce({
+      tables: [],
+      listed_at: "2026-11-24T09:01:00",
+      cached: false,
+    });
+    await store.loadExternalTables(7, 8);
+    await store.loadExternalTables(7, 9);
+
+    tablesMock.mockResolvedValueOnce({
+      tables: [],
+      listed_at: "2026-11-24T09:05:00",
+      cached: false,
+    });
+    await store.loadExternalTables(7, 8, true);
+
+    expect(tablesMock).toHaveBeenLastCalledWith(7, 8, true);
+    expect(store.externalTablesListedAt(7, 8)).toBe("2026-11-24T09:05:00");
+    expect(store.externalTablesListedAt(7, 9)).toBe("2026-11-24T09:01:00");
+    expect(store.externalTablesListedAt(7, 10)).toBeNull();
   });
 
   it("drops an older listing of a schema that a newer one overtook", async () => {

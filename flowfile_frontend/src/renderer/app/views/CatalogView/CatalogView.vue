@@ -289,6 +289,7 @@
           :schema-id="externalSelection.schemaId"
           :name="externalSelection.name"
           @close="handleCloseDetail"
+          @navigate-to-flow="navigateToFlow($event)"
         />
         <!-- Namespace (catalog) settings view -->
         <NamespaceDetailPanel
@@ -340,6 +341,7 @@
             openFlowInDesigner(catalogStore.selectedFlow, { codePane: 'notebook' })
           "
           @select-table="selectTable($event)"
+          @select-external-table="selectExternalTable($event)"
           @delete-flow="handleDeleteFlow($event)"
           @rename-flow="handleRenameFlow"
           @add-schedule="handleAddFlowSchedule"

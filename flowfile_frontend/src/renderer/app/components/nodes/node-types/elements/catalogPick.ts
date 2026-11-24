@@ -17,9 +17,19 @@ export const HUB_DEFAULT_SCHEMA = "main.default";
 /** Why the writer offers a schema the person may only read, greyed. */
 export const READ_ONLY = "You can read this but not write to it";
 
+/** The warning on a saved reader asking for changes of a table ``catalog`` keeps; core's own words. */
+export const outsideNoChanges = (catalog: string): string =>
+  `${catalog} keeps this table. Flowfile can read it only as it is now; reading its changes is not available there.`;
+
+/** The warning on a saved reader asking for a version of a table ``catalog`` keeps; core's own words. */
+export const outsideNoVersion = (catalog: string): string =>
+  `${catalog} keeps this table. Flowfile can read it only as it is now; reading it at a version is not available there.`;
+
 /** One schema in a picker. ``id`` is the tree's id (negative for a hub schema), ``hubId`` the hub's own. */
 export interface NamespaceOption {
   id: number;
+  /** The tree id of the schema's catalog. */
+  catalogId: number;
   label: string;
   full: string;
   source: "local" | "hub";
@@ -35,6 +45,8 @@ export interface NamespaceOption {
   writable: boolean;
   /** Whether the listing says this person may read here and not write: a ``use`` grant. */
   readOnly: boolean;
+  /** Whether another catalog keeps this schema (an Iceberg REST catalog): its tables are listed live, by name. */
+  keptElsewhere: boolean;
 }
 
 const writableBy = (access: AccessInfo | null | undefined, hub: boolean): boolean =>
@@ -75,8 +87,8 @@ const isWriter = (settings: ReaderTarget | WriterTarget): settings is WriterTarg
 /**
  * One option per schema, the local catalogs first and the hub's after them. The system schemas under the local
  * ``General`` are left out unless ``includeSystemSchemas`` (the reader reads tables kept there), and so is every
- * catalog core does not offer (a joined server's own), and every catalog kept elsewhere (an Iceberg REST catalog,
- * whose tables the reader and writer nodes do not take yet). A schema this machine cannot use is listed, marked with
+ * catalog core does not offer (a joined server's own). A catalog kept elsewhere (an Iceberg REST catalog) is listed
+ * among this machine's, its schemas marked ``keptElsewhere``. A schema this machine cannot use is listed, marked with
  * why, so a node saved on it still finds its row; ``pickable`` decides what a picker shows.
  */
 export function namespaceOptions(
@@ -84,7 +96,7 @@ export function namespaceOptions(
   includeSystemSchemas = false,
 ): NamespaceOption[] {
   const options: NamespaceOption[] = [];
-  const offered = tree.filter((c) => isOffered(c) && !c.kept_elsewhere);
+  const offered = tree.filter(isOffered);
   const ordered = [...offered.filter((c) => !isHubRow(c)), ...offered.filter(isHubRow)];
   for (const catalog of ordered) {
     const hub = isHubRow(catalog);
@@ -99,6 +111,7 @@ export function namespaceOptions(
       }
       options.push({
         id: schema.id,
+        catalogId: catalog.id,
         label: `${catalog.name} / ${schema.name}`,
         full: `${catalog.name}.${schema.name}`,
         source: hub ? "hub" : "local",
@@ -107,6 +120,7 @@ export function namespaceOptions(
         unavailableReason: unavailableReason(schema) ?? unavailableReason(catalog),
         writable: writableBy(schema.access ?? catalog.access, hub),
         readOnly: hub && readOnlyBy(schema.access ?? catalog.access),
+        keptElsewhere: !hub && !!(catalog.kept_elsewhere || schema.kept_elsewhere),
       });
     }
   }
@@ -209,18 +223,61 @@ export function tableChoice(table: CatalogTable | null): Partial<TableWrites> {
   };
 }
 
+/**
+ * The reader's fields for a table kept by another catalog: its name only (``catalog.schema.table``), never an id of
+ * this install's, so the name wins wherever the flow is opened.
+ */
+export function outsideTableChoice(option: NamespaceOption, name: string): Partial<TableWrites> {
+  return {
+    source: "local",
+    catalog_table_name: name,
+    catalog_full_table_name: `${option.full}.${name}`,
+    catalog_table_id: null,
+    catalog_namespace_id: null,
+  };
+}
+
 /** The reader's namespace fields for a picked schema (the table list's filter): where it lives, and a local id. */
 export function readerNamespaceChoice(
   option: NamespaceOption | null,
 ): Pick<ReaderTarget, "source" | "catalog_namespace_id"> {
   if (option?.source === "hub") return { source: "hub", catalog_namespace_id: null };
+  if (option?.keptElsewhere) return { source: "local", catalog_namespace_id: null };
   return { source: "local", catalog_namespace_id: option?.id ?? null };
 }
 
-/** The writer's fields for a picked schema: a hub schema by its qualified name only, a local one as before. */
+/**
+ * The schema and table a saved reader names in a catalog kept elsewhere, as core finds it: by its
+ * ``catalog.schema.table``, else by the schema's id and the table's name (as the Python API may save it).
+ */
+export function selectedOutsideTable(
+  settings: ReaderTarget & Partial<Pick<NodeCatalogReader, "catalog_table_name">>,
+  options: NamespaceOption[],
+): { option: NamespaceOption; name: string } | null {
+  if (settings.source === "hub" || settings.catalog_table_id != null) return null;
+  const full = settings.catalog_full_table_name;
+  const schema = hubSchemaName(full);
+  if (full && schema && full.split(".").length === 3) {
+    const option = options.find((o) => o.keptElsewhere && o.full === schema);
+    if (!option) return null;
+    return { option, name: settings.catalog_table_name || full.slice(schema.length + 1) };
+  }
+  const id = settings.catalog_namespace_id;
+  const option = id != null ? options.find((o) => o.keptElsewhere && o.id === id) : undefined;
+  const name = settings.catalog_table_name || full?.split(".").pop();
+  return option && name ? { option, name } : null;
+}
+
+/**
+ * The writer's fields for a picked schema: a hub schema, or one kept by another catalog, by its qualified name only;
+ * a local one as before.
+ */
 export function namespaceChoice(option: NamespaceOption | null): WriterTarget {
   if (option?.source === "hub") {
     return { source: "hub", namespace_id: null, namespace_full_name: option.full };
+  }
+  if (option?.keptElsewhere) {
+    return { source: "local", namespace_id: null, namespace_full_name: option.full };
   }
   return {
     source: "local",
@@ -242,6 +299,10 @@ export function selectedNamespaceRow(
       ? settings.namespace_full_name
       : hubSchemaName(settings.catalog_full_table_name);
     return full ? (options.find((o) => o.source === "hub" && o.full === full) ?? null) : null;
+  }
+  if (!isWriter(settings)) {
+    const outside = selectedOutsideTable(settings, options);
+    if (outside) return outside.option;
   }
   const localId = isWriter(settings) ? settings.namespace_id : settings.catalog_namespace_id;
   const local = options.filter((o) => o.source === "local");

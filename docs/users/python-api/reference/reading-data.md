@@ -235,7 +235,9 @@ Columns and filters are pushed into the Iceberg scan. What is supported, in plai
   PyIceberg reads it instead, and the run's log says so.
 - A catalog that needs a sign-in takes a bearer token from a stored secret (`catalog_token_secret`, the secret's name;
   the token is never saved with the flow), or a client id and secret when it is named by `catalog=`.
-- It runs from Python, and in a flow opened in the designer; the designer's own forms do not offer Iceberg yet. A
+- It runs from Python, and in a flow opened in the designer. The cloud storage nodes' forms do not offer Iceberg; a
+  table of a catalog added to Flowfile's catalog is read and written in the designer with Read from Catalog and Write
+  to Catalog, and from Python with `ff.read_catalog_table` and `ff.write_catalog_table`. A
   multi-user server refuses a catalog named by its address and runs one named by `catalog=`.
 
 ### Format-Specific Cloud Readers

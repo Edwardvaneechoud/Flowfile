@@ -14,6 +14,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
+from flowfile_core.catalog.constants import KEPT_ELSEWHERE_FORMAT
 from flowfile_core.database.models import (
     ApiConsumer,
     ApiConsumerEndpoint,
@@ -39,6 +40,17 @@ from flowfile_core.database.models import (
     TableFavorite,
 )
 from shared.storage_config import flow_file_key, flow_path_spellings
+
+
+def tables_kept_here():
+    """The clause that leaves out the rows of tables a catalog kept elsewhere keeps.
+
+    Such a row exists only so read and write lineage can name the table: it has no path, no row count and no
+    Delta log, and the tree lists those tables live from their catalog. Every listing, count and name lookup of
+    tables applies this; reads by id and the lineage queries do not.
+    """
+    return CatalogTable.storage_format != KEPT_ELSEWHERE_FORMAT
+
 
 # ---------------------------------------------------------------------------
 # Repository Protocol
@@ -523,7 +535,7 @@ class SQLAlchemyCatalogRepository:
         ids = [namespace_id, *child_ids]
         return (
             self._db.query(CatalogTable)
-            .filter(CatalogTable.namespace_id.in_(ids), CatalogTable.table_type == "physical")
+            .filter(CatalogTable.namespace_id.in_(ids), CatalogTable.table_type == "physical", tables_kept_here())
             .count()
         )
 
@@ -598,6 +610,11 @@ class SQLAlchemyCatalogRepository:
         # Read-lineage links don't cascade either; a stale one would attribute this
         # flow's reads to whichever future registration reuses the SQLite rowid.
         self._db.query(CatalogTableReadLink).filter_by(registration_id=registration_id).delete()
+        # Same for write lineage; self-assigning updated_at keeps table triggers from firing.
+        self._db.query(CatalogTable).filter(CatalogTable.source_registration_id == registration_id).update(
+            {CatalogTable.source_registration_id: None, CatalogTable.updated_at: CatalogTable.updated_at},
+            synchronize_session=False,
+        )
         # Schedules don't FK-cascade; a flow can't have schedules without the flow, so drop them
         # (and their trigger-table links) — otherwise they'd be orphaned on the flow's deletion.
         schedule_ids = [
@@ -1000,7 +1017,7 @@ class SQLAlchemyCatalogRepository:
     def get_table_by_name(
         self, name: str, namespace_id: int | None, owner_id: int | None = None
     ) -> CatalogTable | None:
-        q = self._db.query(CatalogTable).filter_by(name=name, namespace_id=namespace_id)
+        q = self._db.query(CatalogTable).filter_by(name=name, namespace_id=namespace_id).filter(tables_kept_here())
         if owner_id is not None:
             q = q.filter(CatalogTable.owner_id == owner_id)
         return q.first()
@@ -1009,18 +1026,25 @@ class SQLAlchemyCatalogRepository:
         return (
             self._db.query(CatalogTable)
             .filter_by(name=name)
+            .filter(tables_kept_here())
             .order_by(CatalogTable.namespace_id.asc(), CatalogTable.id.asc())
             .all()
         )
 
     def list_tables(self, namespace_id: int | None = None) -> list[CatalogTable]:
-        q = self._db.query(CatalogTable)
+        q = self._db.query(CatalogTable).filter(tables_kept_here())
         if namespace_id is not None:
             q = q.filter_by(namespace_id=namespace_id)
         return q.order_by(CatalogTable.name).all()
 
     def list_tables_for_namespace(self, namespace_id: int) -> list[CatalogTable]:
-        return self._db.query(CatalogTable).filter_by(namespace_id=namespace_id).order_by(CatalogTable.name).all()
+        return (
+            self._db.query(CatalogTable)
+            .filter_by(namespace_id=namespace_id)
+            .filter(tables_kept_here())
+            .order_by(CatalogTable.name)
+            .all()
+        )
 
     def create_table(self, table: CatalogTable) -> CatalogTable:
         self._db.add(table)
@@ -1146,10 +1170,11 @@ class SQLAlchemyCatalogRepository:
         return bool(deleted)
 
     def count_tables_in_namespace(self, namespace_id: int) -> int:
+        """Every row in the namespace, a table kept elsewhere's too: its deletion removes those rows first."""
         return self._db.query(CatalogTable).filter_by(namespace_id=namespace_id).count()
 
     def count_all_tables(self) -> int:
-        return self._db.query(CatalogTable).count()
+        return self._db.query(CatalogTable).filter(tables_kept_here()).count()
 
     # -- Virtual table helpers -----------------------------------------------
 

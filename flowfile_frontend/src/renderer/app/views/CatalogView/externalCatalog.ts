@@ -1,6 +1,8 @@
 // A catalog kept elsewhere (an Iceberg REST catalog): the add and edit form's rules, in core's own words, and the
 // sentences the catalog screen shows about it. Pure, so the form and the panels share one source.
+import { docsUrl } from "../../lib/docsLinks";
 import type {
+  CatalogTableSummary,
   ExternalCatalogForm,
   ExternalCatalogInfo,
   ExternalCatalogPayload,
@@ -145,15 +147,136 @@ export function isKeptElsewhere(node: { kept_elsewhere?: boolean } | null | unde
   return !!node?.kept_elsewhere;
 }
 
-/** The two Python lines that read a table of the catalog and write a filtered copy of it. */
+/** The two Python lines that read a table of the catalog and write a copy of it beside it, both by name. */
 export function readSnippet(catalog: string, schema: string, table: string): string {
-  const name = JSON.stringify(`${schema}.${table}`);
-  const copy = JSON.stringify(`${schema}.${table}_copy`);
-  const named = JSON.stringify(catalog);
+  const where = JSON.stringify(`${catalog}.${schema}`);
   return [
-    `frame = ff.read_from_cloud_storage(${name}, file_format="iceberg", catalog=${named})`,
-    `ff.write_to_cloud_storage(frame, ${copy}, file_format="iceberg", catalog=${named})`,
+    `frame = ff.read_catalog_table(${JSON.stringify(table)}, namespace_full_name=${where})`,
+    `ff.write_catalog_table(frame, ${JSON.stringify(`${table}_copy`)}, namespace_full_name=${where})`,
   ].join("\n");
+}
+
+/** A time core answers without a zone, read as UTC. */
+export function utcTime(value: string): Date {
+  return new Date(/(Z|[+-]\d\d:?\d\d)$/.test(value) ? value : `${value}Z`);
+}
+
+const twoDigits = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * A time core answers as ``HH:MM:SS`` in local time, with ``YYYY-MM-DD`` before it when that is not today; an empty
+ * string for a time that does not parse.
+ */
+export function localStamp(at: string, now: Date = new Date()): string {
+  const time = utcTime(at);
+  if (Number.isNaN(time.getTime())) return "";
+  const clock = [time.getHours(), time.getMinutes(), time.getSeconds()].map(twoDigits).join(":");
+  if (time.toDateString() === now.toDateString()) return clock;
+  const day = [time.getFullYear(), time.getMonth() + 1, time.getDate()].map(twoDigits).join("-");
+  return `${day} ${clock}`;
+}
+
+/**
+ * ``Last commit HH:MM:SS`` in local time, with the date before it when that is not today; null when the table keeps
+ * no snapshot. No operation is named: Flowfile's own overwrite commits a delete and then an append.
+ */
+export function lastCommitLine(
+  at: string | null | undefined,
+  snapshotCount: number | null | undefined,
+  now: Date = new Date(),
+): string | null {
+  if (!at || snapshotCount === 0) return null;
+  const stamp = localStamp(at, now);
+  return stamp ? `Last commit ${stamp}` : null;
+}
+
+/** Two times this close are one moment: the catalog stamps a commit and its metadata a few milliseconds apart. */
+export const SAME_INSTANT_MS = 2_000;
+
+/** Whether two times core answers name the same moment (within two seconds); false when either is missing. */
+export function sameInstant(a: string | null | undefined, b: string | null | undefined): boolean {
+  return !!a && !!b && Math.abs(utcTime(a).getTime() - utcTime(b).getTime()) <= SAME_INSTANT_MS;
+}
+
+/**
+ * The time card's lines: when the table last changed, and its last commit only when that is another moment
+ * (a metadata-only change since), both in ``localStamp``'s format.
+ */
+export function changedLines(
+  updatedAt: string | null | undefined,
+  lastCommitAt: string | null | undefined,
+  snapshotCount: number | null | undefined,
+  now: Date = new Date(),
+): { changed: string; commit: string | null } {
+  return {
+    changed: updatedAt ? localStamp(updatedAt, now) : "--",
+    commit: sameInstant(updatedAt, lastCommitAt)
+      ? null
+      : lastCommitLine(lastCommitAt, snapshotCount, now),
+  };
+}
+
+/** How many snapshots the table keeps; null when the description does not say. */
+export function snapshotsLine(count: number | null | undefined): string | null {
+  if (count == null) return null;
+  return count === 1 ? "1 snapshot kept" : `${count} snapshots kept`;
+}
+
+/** Where a flow's table lives when its schema is kept by another catalog: what its panel opens on; else null. */
+export function outsideTableTarget(
+  table: CatalogTableSummary,
+  tree: NamespaceTree[],
+): { catalogId: number; schemaId: number; name: string } | null {
+  if (table.namespace_id == null) return null;
+  for (const catalog of tree) {
+    if (!catalog.kept_elsewhere) continue;
+    const schema = (catalog.children ?? []).find((child) => child.id === table.namespace_id);
+    if (schema) return { catalogId: catalog.id, schemaId: schema.id, name: table.name };
+  }
+  return null;
+}
+
+/** The docs' section on a catalog from elsewhere, which the badge's pop-over links to. */
+export const OUTSIDE_CATALOG_DOCS_URL = docsUrl(
+  "users/visual-editor/catalog/index.html#a-catalog-from-elsewhere",
+);
+
+/** What a catalog kept elsewhere cannot do in Flowfile, as core refuses it and the user docs list it. */
+export const OUTSIDE_CATALOG_LIMITS: readonly string[] = [
+  "Writing: Append and Overwrite only. No Upsert, Update, Delete, SCD2, virtual tables, change tracking or partitioning.",
+  "Reading: no change feed, no versions, no SQL mode.",
+  "No optimise, vacuum, table trigger, preview outside a flow or charts.",
+  "Iceberg format versions 2 and 3 are read, version 2 is written. Tables with equality deletes are not read.",
+];
+
+export interface ExplainerSection {
+  heading: string;
+  text?: string;
+  items?: readonly string[];
+}
+
+/** The badge's pop-over: what a catalog kept elsewhere is, how a flow uses it, and its limits. */
+export function outsideCatalogExplainer(
+  external: Pick<ExternalCatalogInfo, "uri" | "warehouse">,
+): ExplainerSection[] {
+  const where = external.warehouse
+    ? `${external.uri} (warehouse ${external.warehouse})`
+    : external.uri;
+  return [
+    {
+      heading: "Kept by another catalog",
+      text:
+        `These tables live in an Iceberg REST catalog at ${where}. Flowfile lists them from that catalog and reads ` +
+        "and writes them with temporary keys it hands out. Nothing is copied here and no storage key is stored.",
+    },
+    {
+      heading: "In a flow",
+      text:
+        "Read from Catalog reads a table as it is now. Write to Catalog appends to a table or overwrites it, and " +
+        "creates it when it is missing.",
+    },
+    { heading: "Limits", items: OUTSIDE_CATALOG_LIMITS },
+  ];
 }
 
 /** How long ago the schemas were last brought in line, as the panel says it. */

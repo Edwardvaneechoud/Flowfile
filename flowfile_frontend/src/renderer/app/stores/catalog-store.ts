@@ -397,6 +397,16 @@ export const useCatalogStore = defineStore("catalog", {
       return arrived === undefined || Date.now() - arrived > EXTERNAL_TABLES_STALE_MS;
     },
 
+    /** A run in this tab finished and may have written into a catalog kept elsewhere: every list it holds is stale. */
+    markExternalTablesStale() {
+      for (const key of Object.keys(externalTablesArrived)) delete externalTablesArrived[key];
+    },
+
+    /** When the other catalog's list of a schema's tables was taken (core's UTC time), or null before one arrived. */
+    externalTablesListedAt(catalogId: number, schemaId: number): string | null {
+      return this.externalTables[`${catalogId}:${schemaId}`]?.listedAt ?? null;
+    },
+
     /** The tables of one schema of a catalog kept elsewhere; the newest request for that schema wins. */
     async loadExternalTables(catalogId: number, schemaId: number, refresh = false) {
       const key = `${catalogId}:${schemaId}`;

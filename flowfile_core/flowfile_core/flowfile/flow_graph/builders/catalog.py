@@ -10,6 +10,7 @@ from flowfile_core.catalog.delta_utils import (
     is_legacy_parquet,
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.services.external_catalogs import outside_read_refusal
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, _is_cloud_uri, resolve_for_table
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
@@ -30,6 +31,10 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _CDF_COLUMN_DTYPES,
+    CatalogTableInfo,
+    _outside_table_columns,
+    _outside_table_ref,
+    _record_outside_table,
     _resolve_catalog_sql_tables,
     _resolve_catalog_table_info,
     _resolve_virtual_table,
@@ -98,7 +103,11 @@ class CatalogBuildersMixin(GraphMixinBase):
         elif node_catalog_reader.sql_query:
             is_virtual_optimized = self._add_catalog_sql_reader(node_catalog_reader)
         else:
-            is_virtual_optimized = self._add_catalog_table_reader(node_catalog_reader)
+            info = _resolve_catalog_table_info(node_catalog_reader)
+            if info.kept_elsewhere is not None:
+                is_virtual_optimized = self._add_outside_table_reader(node_catalog_reader, info)
+            else:
+                is_virtual_optimized = self._add_catalog_table_reader(node_catalog_reader, info)
         node_catalog_reader.is_virtual_optimized = is_virtual_optimized
 
     def _add_catalog_sql_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
@@ -325,7 +334,64 @@ class CatalogBuildersMixin(GraphMixinBase):
         )
         return FlowDataEngine(lf)
 
-    def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
+    def _add_outside_table_reader(
+        self, node_catalog_reader: input_schema.NodeCatalogReader, info: CatalogTableInfo
+    ) -> None:
+        """Read a table a catalog kept elsewhere keeps, named as a table of Flowfile's own (``catalog.schema.table``).
+
+        Wiring asks that catalog nothing. The predicted columns are its description of the table, asked for no storage
+        key, and only for someone with Use on the schema; in a notebook kernel they come with the lookup's answer.
+        Once described or read, the table has its lineage row, which a save's read links find by name. The
+        run builds what a cloud storage reader of the same table builds: a plan holding the table's
+        ``IcebergTableRef`` only, whose keys are asked for where it runs. Change reads and a pinned version are refused
+        with a sentence when the node runs.
+        """
+        reference = info.kept_elsewhere
+        user_id = node_catalog_reader.user_id
+        refusal = outside_read_refusal(
+            reference.split(".", 1)[0],
+            changes=node_catalog_reader.cdc_mode != "off",
+            version=node_catalog_reader.delta_version is not None,
+        )
+
+        def _func() -> FlowDataEngine:
+            if refusal is not None:
+                raise ValueError(refusal)
+            engine = FlowDataEngine.from_iceberg_table(
+                _outside_table_ref(reference, user_id), flow_id=self.flow_id, node_id=node_catalog_reader.node_id
+            )
+            _record_outside_table(reference)
+            # The row may be new, so the saved flow is named as its reader now rather than at the next save.
+            self._add_outside_read_link(reference)
+            return engine
+
+        def _schema_callback() -> list[FlowfileColumn]:
+            if not info.authorized:
+                return []
+            if info.schema_json is not None:
+                return [
+                    FlowfileColumn.from_input(column_name=entry["name"], data_type=entry["dtype"])
+                    for entry in json.loads(info.schema_json)
+                ]
+            return [
+                FlowfileColumn.create_from_polars_dtype(name, dtype)
+                for name, dtype in _outside_table_columns(reference, user_id).items()
+            ]
+
+        self.add_node_step(
+            node_id=node_catalog_reader.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="catalog_reader",
+            setting_input=node_catalog_reader,
+            schema_callback=_schema_callback,
+        )
+        self.add_node_to_starting_list(self.get_node(node_catalog_reader.node_id))
+        return None
+
+    def _add_catalog_table_reader(
+        self, node_catalog_reader: input_schema.NodeCatalogReader, info: CatalogTableInfo | None = None
+    ) -> bool | None:
         """Read a single table from the catalog (physical or virtual).
 
         With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a table on object storage takes its schema from the reader's backend
@@ -337,7 +403,8 @@ class CatalogBuildersMixin(GraphMixinBase):
             Whether the virtual table is optimized, or None if not a virtual table.
         """
 
-        info = _resolve_catalog_table_info(node_catalog_reader)
+        if info is None:
+            info = _resolve_catalog_table_info(node_catalog_reader)
 
         # Back-fill the id from a name-only reference; the form and read lineage key on catalog_table_id.
         if node_catalog_reader.catalog_table_id is None and info.table_id is not None:

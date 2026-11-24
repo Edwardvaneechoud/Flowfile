@@ -28,6 +28,15 @@
         :connection-name="node.storage_connection_name"
       />
       <span v-if="totalFlows > 0" class="ns-count">{{ totalFlows }}</span>
+      <button
+        v-if="!isHub && node.level === 0 && keptElsewhere"
+        class="action-btn external-refresh"
+        title="Refresh: ask the other catalog for its schemas now"
+        data-testid="external-refresh"
+        @click.stop="$emit('syncExternal', { id: node.id, force: true })"
+      >
+        <i class="fa-solid fa-rotate"></i>
+      </button>
       <div v-if="isHub && canShare(node)" class="tree-actions" @click.stop>
         <button class="action-btn" title="Share namespace" @click="$emit('namespaceShare', node)">
           <i class="fa-solid fa-share-nodes"></i>
@@ -41,15 +50,6 @@
           @click="$emit('namespaceShare', node)"
         >
           <i class="fa-solid fa-share-nodes"></i>
-        </button>
-        <button
-          v-if="node.level === 0 && keptElsewhere"
-          class="action-btn"
-          title="Refresh: ask the other catalog for its schemas now"
-          data-testid="external-refresh"
-          @click="$emit('syncExternal', { id: node.id, force: true })"
-        >
-          <i class="fa-solid fa-rotate"></i>
         </button>
         <button
           v-if="node.level === 0 && !keptElsewhere"
@@ -143,6 +143,18 @@
         :search-active="searching"
         data-testid="external-tables"
       >
+        <div v-if="listedTime" class="tree-note listed-line" data-testid="external-listed">
+          <span>listed {{ listedTime }}</span>
+          <button
+            class="action-btn"
+            title="Refresh: list this schema's tables again now"
+            data-testid="external-tables-refresh"
+            :disabled="externalState?.loading"
+            @click.stop="relistTables"
+          >
+            <i class="fa-solid fa-rotate" :class="{ 'fa-spin': externalState?.loading }"></i>
+          </button>
+        </div>
         <div v-if="externalState?.loading && !externalState.tables.length" class="tree-note">
           Loading…
         </div>
@@ -428,6 +440,7 @@ import {
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
 import ExternalCatalogBadge from "./ExternalCatalogBadge.vue";
+import { utcTime } from "./externalCatalog";
 import { hubFlowVersionTitle, isHubRow, unavailableReason } from "./hubRows";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
@@ -596,6 +609,22 @@ const showExternalTables = computed(
   () => props.node.level === 1 && keptElsewhere.value && !props.node.gone_since,
 );
 
+// Core sends the time as naive UTC; shown as the reader's local HH:MM.
+const listedTime = computed(() => {
+  if (props.node.parent_id === null) return null;
+  const at = catalogStore.externalTablesListedAt(props.node.parent_id, props.node.id);
+  if (!at) return null;
+  const when = utcTime(at);
+  if (Number.isNaN(when.getTime())) return null;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(when.getHours())}:${pad(when.getMinutes())}`;
+});
+
+function relistTables() {
+  if (props.node.parent_id === null) return;
+  void catalogStore.loadExternalTables(props.node.parent_id, props.node.id, true);
+}
+
 // Opening a catalog kept elsewhere brings its schemas in line (core skips it when done within half a minute);
 // opening one of its schemas lists that schema's tables, again when the list is more than a minute old.
 watch(
@@ -752,6 +781,12 @@ const totalFlows = computed(() => {
 
 .tree-row:hover .tree-actions {
   opacity: 1;
+}
+
+.listed-line {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
 }
 
 .tree-children {
