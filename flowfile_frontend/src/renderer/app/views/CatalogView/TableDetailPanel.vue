@@ -33,12 +33,7 @@
           :class="{ quiet: !semanticLink.facts }"
           type="button"
           data-testid="table-semantic-link"
-          @click="
-            emit('openSemanticTable', {
-              namespaceId: semanticLink.namespaceId,
-              tableId: table.id,
-            })
-          "
+          @click="openSemantic"
         >
           <i class="fa-solid fa-sitemap"></i>
           <template v-if="semanticLink.facts"
@@ -494,8 +489,22 @@
 
     <!-- Schema -->
     <div v-if="table.schema_columns && table.schema_columns.length > 0" class="section">
-      <h3>Schema</h3>
-      <div class="schema-table-wrapper">
+      <div class="schema-heading">
+        <h3>Schema</h3>
+        <button
+          v-if="semanticLink && semanticTable"
+          class="schema-semantic-link"
+          type="button"
+          data-testid="schema-open-semantic"
+          @click="openSemantic"
+        >
+          Open in semantic model
+        </button>
+      </div>
+      <div v-if="semanticTable" class="schema-semantic" data-testid="schema-semantic-grid">
+        <SemanticColumnGrid :table="semanticTable" @propose="saveProposal" />
+      </div>
+      <div v-else class="schema-table-wrapper">
         <table class="styled-table schema-table">
           <thead>
             <tr>
@@ -655,6 +664,7 @@ import type {
   NamespaceTree,
   TableCdcStatus,
 } from "../../types";
+import type { SemanticProposal } from "../../types/semantic.types";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { pendingLabel } from "../../utils/catalogCdc";
@@ -666,6 +676,8 @@ import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { isHubRow } from "./hubRows";
+import SemanticColumnGrid from "./semantic/SemanticColumnGrid.vue";
+import { useTableSemantics } from "../../composables/useTableSemantics";
 import { recallHistoryRows, rememberHistoryRows } from "./tableHistoryRows";
 
 const showReadByModal = ref(false);
@@ -720,6 +732,26 @@ const semanticLink = computed(() => {
   const pending = m?.pending ?? 0;
   return { namespaceId, facts: m ? m.accepted + m.pending + m.stale : 0, pending };
 });
+const openSemantic = () => {
+  if (!semanticLink.value) return;
+  emit("openSemanticTable", {
+    namespaceId: semanticLink.value.namespaceId,
+    tableId: props.table.id,
+  });
+};
+
+const { semanticTable, propose: proposeFacts } = useTableSemantics(computed(() => props.table));
+
+async function saveProposal(proposal: SemanticProposal) {
+  try {
+    if (!(await proposeFacts([proposal]))) {
+      ElMessage.info("Proposed. It waits in the Review tab.");
+    }
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : "Could not save the change");
+  }
+}
+
 // The flow ids are the hub's, so the producer is shown by name and links nowhere.
 const hubProducer = computed(
   () => props.table.producer_registration_name ?? props.table.source_registration_name ?? null,
@@ -1288,6 +1320,34 @@ function formatCell(value: any): string {
   overflow-y: auto;
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
+}
+
+.schema-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-3);
+}
+
+.schema-semantic-link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.schema-semantic-link:hover {
+  text-decoration: underline;
+}
+
+.schema-semantic {
+  max-height: 480px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  padding: 0 var(--spacing-3);
 }
 
 /* schema-table extends .styled-table */

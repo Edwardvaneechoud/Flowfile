@@ -73,6 +73,8 @@ The **Tables** tab lists each table of the schema with its columns. Click a tabl
 
 A status chip appears next to a value only while it still needs a person: proposed and waiting for review, or stale.
 
+A table's own page shows the same columns under **Schema**, and you edit them there in the same way. **Open in semantic model** jumps to the table's card in the **Tables** tab.
+
 A table or column description that is accepted is also written back to the catalog, so it shows wherever the catalog shows descriptions.
 
 ### Confidentiality
