@@ -23,7 +23,13 @@
           </el-select>
           <el-button :disabled="busy || !!merge" @click="onNewBranch">New branch</el-button>
         </div>
-        <p v-if="syncLine" class="sync-line" data-testid="project-branch-sync">{{ syncLine }}</p>
+        <p v-if="switchingTo" class="sync-line switching" data-testid="project-branch-switching">
+          <i class="fa-solid fa-spinner fa-spin"></i>
+          Switching to {{ switchingTo }} and updating the catalog…
+        </p>
+        <p v-else-if="syncLine" class="sync-line" data-testid="project-branch-sync">
+          {{ syncLine }}
+        </p>
 
         <div class="remote-row">
           <span class="remote-address" :title="state.remote ?? ''">
@@ -58,38 +64,28 @@
               :key="`${item.path}:${item.key}`"
               class="merge-item"
             >
-              <p class="merge-item__label">
-                <strong>{{ itemFlowName(item) }}</strong> · {{ item.label }}
-              </p>
-              <p class="merge-item__message">{{ item.message }}</p>
-              <div class="merge-sides">
-                <div class="merge-side">
-                  <p class="merge-side__name">{{ item.ours_label }}</p>
-                  <p v-for="line in item.ours" :key="line" class="merge-side__line">{{ line }}</p>
-                </div>
-                <div class="merge-side">
-                  <p class="merge-side__name">{{ item.theirs_label }}</p>
-                  <p v-for="line in item.theirs" :key="line" class="merge-side__line">{{ line }}</p>
-                </div>
-              </div>
-              <div class="merge-item__actions">
-                <el-button size="small" :disabled="busy" @click="onSettle(item, 'ours')">
-                  {{ takeLabel(item, "ours") }}
-                </el-button>
-                <el-button size="small" :disabled="busy" @click="onSettle(item, 'theirs')">
-                  {{ takeLabel(item, "theirs") }}
-                </el-button>
-                <el-button
-                  v-if="opensInEditor(item)"
-                  size="small"
-                  link
-                  type="primary"
-                  :disabled="busy"
-                  @click="onOpenInEditor(item)"
-                >
-                  Open in editor
-                </el-button>
-              </div>
+              <merge-conflict-item
+                :item="item"
+                :disabled="busy"
+                :action-label="(side) => takeLabel(item, side)"
+                @take="onSettle(item, $event)"
+              >
+                <template #title>
+                  <strong>{{ itemFlowName(item) }}</strong> · {{ item.label }}
+                </template>
+                <template v-if="opensInEditor(item, merge.flows)" #actions>
+                  <el-button
+                    size="small"
+                    link
+                    type="primary"
+                    :disabled="busy"
+                    data-testid="project-merge-open"
+                    @click="onOpenInEditor(item)"
+                  >
+                    Open in editor
+                  </el-button>
+                </template>
+              </merge-conflict-item>
             </li>
           </ul>
           <div class="merge-footer">
@@ -116,6 +112,37 @@
         v-model="remoteUrl"
         placeholder="https://git.example.com/team/project.git"
       />
+      <div v-if="githubAddress" class="github-signin" data-testid="remote-github-signin">
+        <template v-if="githubSignIn">
+          <p class="field-hint">Enter this code on GitHub to let Flowfile push and pull:</p>
+          <div class="device-code-row">
+            <code class="device-code" data-testid="remote-github-code">
+              {{ githubSignIn.user_code }}
+            </code>
+            <el-button size="small" @click="copyGithubCode">Copy</el-button>
+          </div>
+          <div class="device-actions">
+            <el-button type="primary" size="small" @click="openGithubPage">
+              Open github.com/login/device
+            </el-button>
+            <span class="device-waiting">Waiting for GitHub…</span>
+            <el-button link size="small" @click="stopGithubSignIn">Cancel</el-button>
+          </div>
+        </template>
+        <template v-else>
+          <el-button
+            :loading="githubStarting"
+            data-testid="remote-github-start"
+            @click="startGithubSignIn"
+          >
+            <i class="fa-brands fa-github"></i>&nbsp;Sign in with GitHub
+          </el-button>
+          <p class="field-hint">Or paste a personal access token below.</p>
+        </template>
+        <p v-if="githubError" class="field-error" data-testid="remote-github-error">
+          {{ githubError }}
+        </p>
+      </div>
       <label class="field-label" for="project-remote-user">User name (optional)</label>
       <el-input id="project-remote-user" v-model="remoteUser" placeholder="x-access-token" />
       <label class="field-label" for="project-remote-token">Token</label>
@@ -146,17 +173,22 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { desktop } from "../../../lib/desktop";
 import { ProjectApi } from "../../api/project.api";
+import { nextPollDelayMs } from "../../pages/nodeDesigner/publishGithub";
+import { copyTextEverywhere } from "../../utils/clipboardUtils";
 import { ProjectUnsavedChanges } from "../../api/project.errors";
+import MergeConflictItem from "../../components/merge/MergeConflictItem.vue";
 import { confirmRecoveryPoint } from "../../components/project/recoveryPoint";
 import { alertIncomplete } from "../../components/project/importNotice";
 import { useProjectStore } from "../../stores/project-store";
 import { useFlowStore } from "../../stores/flow-store";
 import {
   branchNameError,
+  isGithubAddress,
   itemFlowName,
   opensInEditor,
   pullMessage,
@@ -164,8 +196,8 @@ import {
   takeLabel,
 } from "./branchSync";
 import type {
-  ImportResult,
   ProjectBranchState,
+  ProjectGithubSignIn,
   ProjectMergeItem,
   ProjectMergeState,
   ProjectPullResult,
@@ -203,10 +235,14 @@ const load = async () => {
 
 onMounted(load);
 
-const afterApply = async (result: ImportResult | null, done: string) => {
-  await Promise.all([store.refreshActive(), store.loadVersions(), load()]);
-  if (result && (await alertIncomplete(result, "Not finished"))) return;
-  ElMessage.success(done);
+/** A settle or conclusion that failed may still have moved the merge: show what core holds now. */
+const reloadOnFailure = async (work: () => Promise<void>) => {
+  try {
+    await work();
+  } catch (e) {
+    await load();
+    throw e;
+  }
 };
 
 /** Run `call(force)`; a refusal for unsaved changes asks once, then runs it again with a recovery point. */
@@ -233,12 +269,25 @@ const run = async (flag: typeof busy, work: () => Promise<void>) => {
   }
 };
 
+const switchingTo = ref<string | null>(null);
+
+/** One switch request, shown as under way only while core works on it, not while a confirm waits on the user. */
+const switchTo = async (name: string, force: boolean) => {
+  switchingTo.value = name;
+  try {
+    return await store.switchBranch(name, force);
+  } finally {
+    switchingTo.value = null;
+  }
+};
+
 const onSwitch = (name: string) =>
   run(busy, async () => {
     if (!name || name === state.value?.current) return;
-    const result = await withRecovery((force) => ProjectApi.switchBranch(name, force));
-    if (result) await afterApply(result, `Switched to ${name}`);
-    else await load();
+    const result = await withRecovery((force) => switchTo(name, force));
+    await load();
+    if (result && (await alertIncomplete(result, "Not finished"))) return;
+    if (result) ElMessage.success(`Switched to ${name}`);
   });
 
 const onNewBranch = async () => {
@@ -283,6 +332,84 @@ const saveRemote = (forget: boolean) =>
     ElMessage.success(forget ? "Token forgotten" : "Remote saved");
   });
 
+const githubAddress = computed(() => isGithubAddress(remoteUrl.value));
+const githubSignIn = ref<ProjectGithubSignIn | null>(null);
+const githubStarting = ref(false);
+const githubError = ref("");
+let githubTimer: ReturnType<typeof setTimeout> | null = null;
+let githubInterval = 5;
+
+const stopGithubSignIn = () => {
+  if (githubTimer) clearTimeout(githubTimer);
+  githubTimer = null;
+  githubSignIn.value = null;
+};
+
+/** GitHub granted the sign-in and core kept the token: save the address typed, so one sign-in is the whole setup. */
+const finishGithubSignIn = (login: string) =>
+  run(busy, async () => {
+    state.value = await ProjectApi.setRemote(
+      remoteUrl.value.trim(),
+      undefined,
+      remoteUser.value.trim() || undefined,
+    );
+    remoteDialog.value = false;
+    ElMessage.success(login ? `Signed in to GitHub as @${login}` : "Signed in to GitHub");
+  });
+
+const pollGithubSignIn = async () => {
+  githubTimer = null;
+  const signIn = githubSignIn.value;
+  if (!signIn) return;
+  try {
+    const answer = await ProjectApi.pollGithubSignIn(signIn.device_code);
+    if (githubSignIn.value !== signIn) return;
+    if (answer.status === "connected") {
+      stopGithubSignIn();
+      await finishGithubSignIn(answer.login ?? "");
+      return;
+    }
+    githubInterval = answer.interval ?? githubInterval;
+    githubTimer = setTimeout(pollGithubSignIn, nextPollDelayMs(githubInterval, answer.status));
+  } catch (e: any) {
+    if (githubSignIn.value !== signIn) return;
+    stopGithubSignIn();
+    githubError.value = e?.message || "The GitHub sign-in failed";
+  }
+};
+
+const startGithubSignIn = async () => {
+  githubError.value = "";
+  githubStarting.value = true;
+  try {
+    const signIn = await ProjectApi.startGithubSignIn();
+    githubSignIn.value = signIn;
+    githubInterval = signIn.interval || 5;
+    githubTimer = setTimeout(pollGithubSignIn, nextPollDelayMs(githubInterval, "pending"));
+  } catch (e: any) {
+    githubError.value = e?.message || "Could not start the GitHub sign-in";
+  } finally {
+    githubStarting.value = false;
+  }
+};
+
+const copyGithubCode = async () => {
+  if (githubSignIn.value && (await copyTextEverywhere(githubSignIn.value.user_code))) {
+    ElMessage.success("Code copied");
+  }
+};
+
+const openGithubPage = () => {
+  if (githubSignIn.value) desktop.openExternal(githubSignIn.value.verification_uri);
+};
+
+watch(remoteDialog, (open) => {
+  if (open) return;
+  stopGithubSignIn();
+  githubError.value = "";
+});
+onBeforeUnmount(stopGithubSignIn);
+
 const onPush = () =>
   run(pushing, async () => {
     const answer = await ProjectApi.push();
@@ -296,36 +423,43 @@ const onPush = () =>
     }
   });
 
+/** The store already ran the post-import path for a pull that applied one. */
 const reportPull = async (result: ProjectPullResult) => {
+  await load();
   if (result.state === "conflicted") {
-    await load();
     ElMessage.warning(pullMessage(result));
     return;
   }
-  await afterApply(result.result, pullMessage(result));
+  if (result.result && (await alertIncomplete(result.result, "Not finished"))) return;
+  ElMessage.success(pullMessage(result));
 };
 
 const onPull = () =>
   run(pulling, async () => {
-    const result = await withRecovery((force) => ProjectApi.pull(force));
+    const result = await withRecovery((force) => store.pull(force));
     if (result) await reportPull(result);
   });
 
 const onSettle = (item: ProjectMergeItem, take: "ours" | "theirs") =>
-  run(busy, async () => {
-    const answer = await withRecovery((force) =>
-      ProjectApi.settleMerge(item.path, item.key, take, force),
-    );
-    if (!answer) return;
-    if (answer.pull) await reportPull(answer.pull);
-    else merge.value = answer.merge;
-  });
+  run(busy, () =>
+    reloadOnFailure(async () => {
+      const answer = await withRecovery((force) =>
+        store.settleMerge(item.path, item.key, take, force),
+      );
+      if (!answer) await load();
+      else if (answer.pull) await reportPull(answer.pull);
+      else merge.value = answer.merge;
+    }),
+  );
 
 const onConclude = () =>
-  run(busy, async () => {
-    const result = await withRecovery((force) => ProjectApi.concludeMerge(force));
-    if (result) await reportPull(result);
-  });
+  run(busy, () =>
+    reloadOnFailure(async () => {
+      const result = await withRecovery((force) => store.concludeMerge(force));
+      if (result) await reportPull(result);
+      else await load();
+    }),
+  );
 
 const onAbort = async () => {
   try {
@@ -338,14 +472,14 @@ const onAbort = async () => {
     return;
   }
   await run(busy, async () => {
-    await ProjectApi.abortMerge();
+    await store.abortMerge();
     await load();
   });
 };
 
 const onOpenInEditor = (item: ProjectMergeItem) =>
   run(busy, async () => {
-    const flowId = await ProjectApi.openMergeFlow(item.path);
+    const flowId = await store.openMergeFlow(item.path);
     flowStore.setFlowId(flowId);
     await router.push({ name: "designer" });
   });
@@ -368,10 +502,39 @@ defineExpose({ load });
   color: var(--color-text-tertiary);
 }
 
+.field-error {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+}
+
+.github-signin {
+  margin-top: var(--spacing-3);
+}
+
+.device-code-row,
+.device-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-2);
+}
+
+.device-code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.1em;
+}
+
+.device-waiting {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
 .branch-row,
 .remote-row,
 .sync-actions,
-.merge-item__actions,
 .merge-footer {
   display: flex;
   align-items: center;
@@ -387,6 +550,13 @@ defineExpose({ load });
   margin: var(--spacing-1) 0 0;
   font-size: var(--font-size-sm);
   color: var(--color-text-tertiary);
+}
+
+.sync-line.switching {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  color: var(--color-text-secondary);
 }
 
 .branch-error {
@@ -438,8 +608,7 @@ defineExpose({ load });
   color: var(--color-text-primary);
 }
 
-.merge-text,
-.merge-item__message {
+.merge-text {
   margin: var(--spacing-1) 0 var(--spacing-2);
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
@@ -454,38 +623,6 @@ defineExpose({ load });
 .merge-item {
   padding: var(--spacing-2) 0;
   border-bottom: 1px solid var(--color-border-light);
-}
-
-.merge-item__label {
-  margin: 0;
-  font-size: var(--font-size-sm);
-}
-
-.merge-sides {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--spacing-2);
-  margin-bottom: var(--spacing-2);
-}
-
-.merge-side {
-  padding: var(--spacing-2);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-muted);
-}
-
-.merge-side__name {
-  margin: 0 0 2px;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-tertiary);
-}
-
-.merge-side__line {
-  margin: 0;
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  word-break: break-word;
 }
 
 .merge-footer {

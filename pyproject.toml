@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.25.0"
+version = "0.26.0"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -128,6 +128,10 @@ start_redpanda = "test_utils.kafka.commands:start_redpanda"
 stop_redpanda = "test_utils.kafka.commands:stop_redpanda"
 flowfile-migrate = "tools.migrate.__main__:main"
 flowfile-merge = "shared.flow_merge.cli:main"
+
+# `flowfile-merge check --build` looks this up, so `shared` never imports core.
+[tool.poetry.plugins."flowfile.flow_merge"]
+build_check = "flowfile_core.flowfile.manage.document_check:build_check"
 
 [tool.poetry.group.build]
 optional = true

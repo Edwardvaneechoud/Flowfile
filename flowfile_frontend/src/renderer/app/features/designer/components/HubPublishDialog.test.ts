@@ -323,4 +323,26 @@ describe("HubPublishDialog when the hub moved on", () => {
     expect(byTestId("hub-settle-step:2")).not.toBeNull();
     expect(byTestId("hub-merged-done")).not.toBeNull();
   });
+
+  it("re-reads the conflicts after a settle fails, dropping a row the flow no longer holds", async () => {
+    mocks.publishToHub.mockRejectedValueOnce(
+      httpError(409, {
+        kind: "unresolved_conflicts",
+        count: 1,
+        message: "Settle the 1 merge conflict in this flow first.",
+      }),
+    );
+    mocks.listMergeConflicts.mockResolvedValueOnce([row]).mockResolvedValueOnce([]);
+    mocks.resolveMergeConflict.mockRejectedValue(
+      httpError(404, "No open merge conflict step:2 in this flow."),
+    );
+    await open();
+    await click("hub-publish");
+    await click("hub-settle-ours-step:2");
+    expect(mocks.listMergeConflicts).toHaveBeenCalledTimes(2);
+    expect(byTestId("hub-settle-step:2")).toBeNull();
+    expect(byTestId("hub-publish-error")?.getAttribute("title")).toBe(
+      "No open merge conflict step:2 in this flow.",
+    );
+  });
 });

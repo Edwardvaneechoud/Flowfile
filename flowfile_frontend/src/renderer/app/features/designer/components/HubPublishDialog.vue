@@ -40,40 +40,16 @@
           </li>
         </ul>
         <div v-if="openConflicts.length" class="hub-settle" data-testid="hub-merged-conflicts">
-          <div
+          <merge-conflict-item
             v-for="item in openConflicts"
             :key="item.key"
-            class="hub-settle-row"
-            :data-testid="`hub-settle-${item.key}`"
-          >
-            <p class="hub-settle-message">{{ item.message }}</p>
-            <div class="hub-version-compare">
-              <div class="hub-version-card">
-                <h4>{{ item.theirs_label }}</h4>
-                <p v-for="(line, i) in item.theirs" :key="i" class="hub-settle-line">{{ line }}</p>
-                <el-button
-                  size="small"
-                  :loading="busy"
-                  :data-testid="`hub-settle-theirs-${item.key}`"
-                  @click="settle(item.key, 'theirs')"
-                >
-                  {{ keepLabel(item.theirs_label) }}
-                </el-button>
-              </div>
-              <div class="hub-version-card">
-                <h4>{{ item.ours_label }}</h4>
-                <p v-for="(line, i) in item.ours" :key="i" class="hub-settle-line">{{ line }}</p>
-                <el-button
-                  size="small"
-                  :loading="busy"
-                  :data-testid="`hub-settle-ours-${item.key}`"
-                  @click="settle(item.key, 'ours')"
-                >
-                  {{ keepLabel(item.ours_label) }}
-                </el-button>
-              </div>
-            </div>
-          </div>
+            :item="item"
+            :item-key="item.key"
+            testid="hub-settle"
+            :busy="busy"
+            theirs-first
+            @take="settle(item.key, $event)"
+          />
         </div>
       </template>
 
@@ -305,7 +281,6 @@ import {
   PUBLISH_AS_NEW_NOTE,
   SETTLED,
   conflictLabel,
-  keepLabel,
   mergeLabel,
   mergedLabel,
   newFlowName,
@@ -318,6 +293,7 @@ import {
   warningLines,
 } from "../hubFlows";
 import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
+import MergeConflictItem from "../../../components/merge/MergeConflictItem.vue";
 
 const props = defineProps<{
   visible: boolean;
@@ -460,14 +436,20 @@ async function settle(key: string, take: "ours" | "theirs") {
   if (!current) return;
   busy.value = true;
   error.value = "";
-  try {
-    openConflicts.value = await resolveMergeConflict(props.flowId, key, take);
-    settledSome.value = true;
-    const left = new Set(openConflicts.value.map((row) => row.key));
+  const keep = (rows: MergeConflictRow[]): HubMergeResult => {
+    openConflicts.value = rows;
+    const left = new Set(rows.map((row) => row.key));
     merged.value = { ...current, conflicts: current.conflicts.filter((c) => left.has(c.key)) };
-    emit("merged", merged.value);
+    return merged.value;
+  };
+  try {
+    const next = keep(await resolveMergeConflict(props.flowId, key, take));
+    settledSome.value = true;
+    emit("merged", next);
   } catch (err) {
     error.value = detailOf(err, "Couldn't settle the conflict.");
+    // Show what the flow holds now, so no row names a conflict that is gone.
+    await listMergeConflicts(props.flowId).then(keep, () => undefined);
   } finally {
     busy.value = false;
   }
@@ -511,18 +493,6 @@ async function openInstead() {
   flex-direction: column;
   gap: 12px;
   margin-top: 12px;
-}
-
-.hub-settle-message {
-  margin: 0 0 6px;
-  font-size: 13px;
-}
-
-.hub-settle-line {
-  margin: 0 0 6px;
-  font-family: var(--font-family-mono, monospace);
-  font-size: 12px;
-  color: var(--color-text-secondary, #475569);
 }
 
 .hub-merge-list {

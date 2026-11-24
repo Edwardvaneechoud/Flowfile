@@ -9,7 +9,6 @@ from shared.flow_merge.placement import (  # noqa: F401
     Y_SPACING,
     Box,
     Placer,
-    Point,
     node_box,
     placer_from_payload,
 )

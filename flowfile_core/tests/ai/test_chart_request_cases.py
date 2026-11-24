@@ -38,7 +38,7 @@ def test_the_cases_cover_both_verdicts_and_every_mark() -> None:
     verdicts = {case["verdict"] for case in _DATA["cases"]}
     marks = {case["request"]["mark"] for case in _DATA["cases"] if case["verdict"] == "accepted"}
     assert verdicts == {"accepted", "rejected"}
-    assert marks == {"bar", "line", "area", "point", "arc", "rect", "boxplot", "table"}
+    assert marks == {"bar", "line", "area", "point", "arc", "rect", "boxplot", "table", "map"}
     names = [case["name"] for case in _DATA["cases"]]
     assert len(names) == len(set(names))
 

@@ -5,7 +5,9 @@
     { "name": "category", "type": "string" },
     { "name": "amount", "type": "float" },
     { "name": "quantity", "type": "integer" },
-    { "name": "order_date", "type": "date" }
+    { "name": "order_date", "type": "date" },
+    { "name": "lat", "type": "float" },
+    { "name": "lon", "type": "float" }
   ],
   "cases": [
     {
@@ -416,6 +418,77 @@
       "name": "no fields",
       "verdict": "rejected",
       "request": { "mark": "bar" }
+    },
+    {
+      "name": "map of points",
+      "verdict": "accepted",
+      "request": { "mark": "map", "latitude": { "field": "lat" }, "longitude": { "field": "lon" }, "aggregate": false }
+    },
+    {
+      "name": "map with colour and size",
+      "verdict": "accepted",
+      "request": {
+        "mark": "map",
+        "latitude": { "field": "lat" }, "longitude": { "field": "lon" },
+        "color": { "field": "region" },
+        "size": { "field": "amount" },
+        "aggregate": false
+      }
+    },
+    {
+      "name": "map without aggregate false",
+      "verdict": "rejected",
+      "request": { "mark": "map", "latitude": { "field": "lat" }, "longitude": { "field": "lon" } }
+    },
+    {
+      "name": "map without longitude",
+      "verdict": "rejected",
+      "request": { "mark": "map", "latitude": { "field": "lat" }, "aggregate": false }
+    },
+    {
+      "name": "map on x and y",
+      "verdict": "rejected",
+      "request": { "mark": "map", "x": { "field": "lon" }, "y": { "field": "lat" }, "aggregate": false }
+    },
+    {
+      "name": "map on a text coordinate",
+      "verdict": "rejected",
+      "request": {
+        "mark": "map",
+        "latitude": { "field": "region" },
+        "longitude": { "field": "lon" },
+        "aggregate": false
+      }
+    },
+    {
+      "name": "map with an aggregated size",
+      "verdict": "rejected",
+      "request": {
+        "mark": "map",
+        "latitude": { "field": "lat" }, "longitude": { "field": "lon" },
+        "size": { "field": "amount", "aggregate": "sum" },
+        "aggregate": false
+      }
+    },
+    {
+      "name": "map with a text size",
+      "verdict": "rejected",
+      "request": { "mark": "map", "latitude": { "field": "lat" }, "longitude": { "field": "lon" }, "size": { "field": "region" }, "aggregate": false }
+    },
+    {
+      "name": "sorted map",
+      "verdict": "rejected",
+      "request": { "mark": "map", "latitude": { "field": "lat" }, "longitude": { "field": "lon" }, "aggregate": false, "sort": "descending" }
+    },
+    {
+      "name": "coordinates on a bar",
+      "verdict": "rejected",
+      "request": {
+        "mark": "bar",
+        "x": { "field": "region" },
+        "y": { "field": "amount", "aggregate": "sum" },
+        "latitude": { "field": "lat" }
+      }
     }
   ]
 }

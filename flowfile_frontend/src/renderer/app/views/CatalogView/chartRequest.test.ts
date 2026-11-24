@@ -854,6 +854,116 @@ describe("describeChart: round trip", () => {
   });
 });
 
+describe("maps", () => {
+  const GEO_FIELDS: IMutField[] = [
+    ...FIELDS,
+    { fid: "lat", name: "lat", semanticType: "quantitative", analyticType: "measure" },
+    { fid: "lon", name: "lon", semanticType: "quantitative", analyticType: "measure" },
+  ];
+  const geoCtx = (current: IChart | null = null): ChartContext => ({
+    fields: GEO_FIELDS,
+    current,
+    gw,
+  });
+  const MAP: ChartRequest = {
+    mark: "map",
+    latitude: { field: "lat" },
+    longitude: { field: "lon" },
+    size: { field: "revenue" },
+    color: { field: "region" },
+    aggregate: false,
+  };
+  const buildMap = (request: ChartRequest): IChart => {
+    const result = chartFromRequest(request, geoCtx());
+    if (!result.ok) throw new Error(`expected a chart, got: ${result.error}`);
+    return result.chart;
+  };
+
+  it("draws points at the coordinates on Graphic Walker's symbol map", () => {
+    const chart = buildMap(MAP);
+    expect(chart.config.geoms).toEqual(["poi"]);
+    expect(chart.config.coordSystem).toBe("geographic");
+    expect(chart.config.defaultAggregated).toBe(false);
+    expect(fids(chart.encodings.latitude)).toEqual(["lat"]);
+    expect(fids(chart.encodings.longitude)).toEqual(["lon"]);
+    expect(chart.encodings.size[0].analyticType).toBe("measure");
+    expect(viewStep(chart)).toEqual({
+      type: "view",
+      query: [{ op: "raw", fields: expect.arrayContaining(["lat", "lon", "revenue", "region"]) }],
+    });
+  });
+
+  it.each([
+    ["color then size", { color: { field: "revenue" }, size: { field: "revenue" } }],
+    ["size then color", { size: { field: "revenue" }, color: { field: "revenue" } }],
+  ])("colours and sizes points by one number column (%s)", (_, channels) => {
+    const chart = buildMap({ ...MAP, ...channels });
+    expect(chart.encodings.size[0].analyticType).toBe("measure");
+    expect(chart.encodings.color[0].analyticType).toBe("measure");
+    expect(describeChart(chart, geoCtx())).toEqual({
+      ok: true,
+      request: { ...MAP, color: { field: "revenue" }, size: { field: "revenue" } },
+    });
+  });
+
+  it("still refuses a column grouped and aggregated on an aggregated chart", () => {
+    const result = chartFromRequest(
+      {
+        mark: "bar",
+        x: { field: "region" },
+        y: { field: "revenue", aggregate: "sum" },
+        color: { field: "revenue" },
+      },
+      geoCtx(),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("both grouped and aggregated");
+  });
+
+  it("describes a map back as the request it came from", () => {
+    const result = describeChart(buildMap(MAP), geoCtx());
+    expect(result).toEqual({ ok: true, request: MAP });
+  });
+
+  it("a map is drawn from a generic chart and back", () => {
+    const bar = buildMap({
+      mark: "bar",
+      x: { field: "region" },
+      y: { field: "revenue", aggregate: "sum" },
+    });
+    const result = chartFromRequest(MAP, geoCtx(bar));
+    if (!result.ok) throw new Error(result.error);
+    expect(result.chart.config.coordSystem).toBe("geographic");
+    const back = chartFromRequest(
+      { mark: "bar", x: { field: "region" }, y: { field: "revenue", aggregate: "sum" } },
+      geoCtx(result.chart),
+    );
+    if (!back.ok) throw new Error(back.error);
+    expect(back.chart.config.coordSystem).toBe("generic");
+    expect(back.chart.config.geoms).toEqual(["bar"]);
+  });
+
+  it.each([
+    [{ ...MAP, aggregate: true }, 'set "aggregate": false'],
+    [{ ...MAP, longitude: undefined }, "latitude and longitude"],
+    [{ ...MAP, x: { field: "lon" } }, "latitude and longitude"],
+    [{ ...MAP, limit: 5 }, "cannot be sorted or limited"],
+    [
+      {
+        mark: "bar",
+        x: { field: "region" },
+        y: { field: "revenue", aggregate: "sum" },
+        latitude: { field: "lat" },
+      },
+      "belong on a map",
+    ],
+  ] as [ChartRequest, string][])("refuses %j", (request, phrase) => {
+    const result = chartFromRequest(request, geoCtx());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain(phrase);
+  });
+});
+
 describe("describeChart: parts a request cannot express", () => {
   const bar = () =>
     build({ mark: "bar", x: { field: "region" }, y: { field: "revenue", aggregate: "sum" } });
@@ -1028,13 +1138,25 @@ describe("describeChart: parts a request cannot express", () => {
     expect(unsupported(on(channel, [field(chart, "category")], chart))).toEqual([phrase]);
   });
 
-  it("a map", () => {
+  it("a filled map", () => {
+    const chart = bar();
+    const geo: IChart = {
+      ...on("geoId", [field(chart, "region")], chart),
+      config: { ...chart.config, geoms: ["choropleth"], coordSystem: "geographic" },
+    };
+    expect(unsupported(geo)).toEqual(['the "choropleth" chart type', "a map", "a filled map"]);
+  });
+
+  it("points on a map that also has axes", () => {
     const chart = bar();
     const geo: IChart = {
       ...on("longitude", [field(chart, "price")], chart),
       config: { ...chart.config, geoms: ["poi"], coordSystem: "geographic" },
     };
-    expect(unsupported(geo)).toEqual(['the "poi" chart type', "a map"]);
+    expect(unsupported(geo)).toEqual([
+      "a map of aggregated values",
+      "a map that is not one latitude and one longitude column",
+    ]);
   });
 
   it("a mark outside the eight (auto is resolved first, see below)", () => {

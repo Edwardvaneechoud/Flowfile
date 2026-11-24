@@ -8,6 +8,8 @@ transaction, which records one undo step and restores the graph if any operation
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState
 
 
@@ -15,8 +17,16 @@ def _names(document: dict) -> dict[int, str | None]:
     return {node["id"]: node.get("node_reference") for node in document.get("nodes") or []}
 
 
-def apply_document(flow, target: dict, label: str, current_user) -> tuple[HistoryState, list[str]]:
-    """Turn ``flow`` into ``target`` (a saved-flow document); answers the history state and reconcile's warnings."""
+def apply_document(
+    flow, target: dict, label: str, current_user, then: Callable[[], None] | None = None
+) -> tuple[HistoryState, list[str]]:
+    """Turn ``flow`` into ``target`` (a saved-flow document); answers the history state and reconcile's warnings.
+
+    ``then`` runs inside the same transaction once the operations applied, so what it changes of the flow's carried
+    settings (``hub_origin``, ``merge_conflicts``) goes back with the step's undo and forward with its redo. With
+    ``then`` the transaction runs even when the canvas already is ``target``, and records a step when ``then``
+    changed one of those settings.
+    """
     from flowfile_core.notebook.reconcile import reconcile
     from flowfile_core.routes.routes import _run_operations, edit_flow
 
@@ -34,8 +44,11 @@ def apply_document(flow, target: dict, label: str, current_user) -> tuple[Histor
         group_id_ceiling=flow.group_id_ceiling,
         groups_cell_changed=True,
     )
-    if not plan.operations:
+    if not plan.operations and then is None:
         return flow.get_history_state(), list(plan.warnings)
     with edit_flow(flow, label, HistoryActionType.BATCH) as txn:
-        _run_operations(flow, flow.flow_id, plan.operations, current_user)
+        if plan.operations:
+            _run_operations(flow, flow.flow_id, plan.operations, current_user)
+        if then is not None:
+            then()
     return txn.history, list(plan.warnings)

@@ -194,7 +194,12 @@ def test_show_has_no_positions_or_noise():
 
 def _cli(*args, cwd=REPO_ROOT):
     return subprocess.run(
-        [sys.executable, "-m", "shared.flow_merge", *args], capture_output=True, text=True, cwd=str(cwd), timeout=60
+        [sys.executable, "-m", "shared.flow_merge", *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(cwd),
+        timeout=60,
     )
 
 

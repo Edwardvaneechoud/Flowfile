@@ -1346,6 +1346,17 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     /**
+     * The catalog's rows changed underneath the store (a project branch switch, pull, restore or
+     * reload rewrote its flows): refetch now, and expire the cache so the next mount refetches
+     * too should this load fail. `overviewLoadedAt` 0 keeps "loaded" true and the TTL expired.
+     */
+    async invalidateOverview() {
+      if (this.overviewLoadedAt === null) return;
+      this.overviewLoadedAt = 0;
+      await this.initialize(true);
+    },
+
+    /**
      * Load everything the catalog screen needs in one request. Within OVERVIEW_TTL_MS of the
      * last load this is a no-op (back-navigation keeps the store's data); in-catalog mutations
      * refresh their own slices, so the cache only governs re-mounts. `force` bypasses it.

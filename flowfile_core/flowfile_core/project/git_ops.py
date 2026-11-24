@@ -10,7 +10,7 @@ import re
 import tempfile
 import threading
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import urlsplit
 
 from filelock import FileLock
@@ -231,13 +231,18 @@ def tree_blob_sizes(root: Path, sha: str) -> dict[str, int]:
     return {b.path: b.size for b in tree.traverse() if b.type == "blob"}
 
 
+def _in_tree_read(path: str) -> bool:
+    """A path ``read_tree_at`` answers: ``project.yaml`` or a file a kind owns."""
+    return path == manifest.MANIFEST_NAME or kinds.kind_for_path(path) is not None
+
+
 @functools.lru_cache(maxsize=8)
 def _managed_tree(root: str, hexsha: str) -> dict[str, str]:
     tree = Repo(root).commit(hexsha).tree
     return {
         b.path: b.data_stream.read().decode("utf-8", errors="replace")
         for b in tree.traverse()
-        if b.type == "blob" and (b.path == manifest.MANIFEST_NAME or kinds.kind_for_path(b.path) is not None)
+        if b.type == "blob" and _in_tree_read(b.path)
     }
 
 
@@ -462,23 +467,22 @@ def branches(root: Path) -> list[dict]:
     ``behind`` (``None`` when the remote has no such branch, as last fetched)."""
     if not is_repo(root):
         return []
-    repo = Repo(str(root))
+    local, remote = "refs/heads/", f"refs/remotes/{REMOTE_NAME}/"
+    listed = Repo(str(root)).git.for_each_ref("--format=%(objectname) %(refname)", local, remote)
+    shas = dict(reversed(line.split(" ", 1)) for line in listed.splitlines())
     current = current_branch(root)
     rows = []
-    for head in repo.heads:
-        remote_sha = branch_sha(root, f"refs/remotes/{REMOTE_NAME}/{head.name}")
+    for ref, sha in shas.items():
+        if not ref.startswith(local):
+            continue
+        name = ref[len(local) :]
+        remote_sha = shas.get(remote + name)
         ahead = behind = None
-        if remote_sha is not None:
-            ahead, behind = ahead_behind(root, head.commit.hexsha, remote_sha)
-        rows.append(
-            {
-                "name": head.name,
-                "sha": head.commit.hexsha,
-                "current": head.name == current,
-                "ahead": ahead,
-                "behind": behind,
-            }
-        )
+        if remote_sha == sha:
+            ahead = behind = 0
+        elif remote_sha is not None:
+            ahead, behind = ahead_behind(root, sha, remote_sha)
+        rows.append({"name": name, "sha": sha, "current": name == current, "ahead": ahead, "behind": behind})
     return sorted(rows, key=lambda r: (not r["current"], r["name"]))
 
 
@@ -533,18 +537,81 @@ def merge_base(root: Path, a: str, b: str) -> str | None:
         return None
 
 
+class UnmergedFilesError(GitRemoteError):
+    """Both sides changed a file outside Flowfile's managed files, each in its own way; ``paths`` names them."""
+
+    def __init__(self, paths: list[str]):
+        self.paths = sorted(paths)
+        listed = ", ".join(self.paths)
+        super().__init__(
+            f"This copy and the remote both changed {listed}, each differently, outside the files Flowfile merges. "
+            "Merge them with git, then pull again."
+        )
+
+
+def _tree_entries(repo, sha: str | None) -> dict[str, tuple[str, str]]:
+    """``{path: (mode, object sha)}`` of the files of ``sha``'s tree that ``read_tree_at`` leaves out."""
+    if sha is None:
+        return {}
+    tree = repo.commit(_require_hex_sha(sha)).tree
+    return {
+        item.path: (f"{item.mode:o}", item.hexsha)
+        for item in tree.traverse()
+        if item.type != "tree" and not _in_tree_read(item.path)
+    }
+
+
+def unmanaged_changes(root: Path, base: str | None, ours: str, theirs: str) -> dict[str, list[str] | None]:
+    """What a merge of ``theirs`` into ``ours`` takes from ``theirs`` among the files Flowfile's step merge does not
+    decide (a README, CI files, ``.gitignore``, ``.gitattributes``): ``{path: [mode, object sha]}``, ``None`` for a
+    file ``theirs`` deleted.
+
+    Each path is merged as git would against the merge base ``base`` (``None``: no common history): a change only
+    ``theirs`` made is taken, one only ``ours`` made is kept, the same change on both sides is no conflict. Both sides
+    changing a path differently raises ``UnmergedFilesError`` naming every such path, before anything is written,
+    since picking a side would silently drop the other's work. Compared by object and mode only, through GitPython's
+    tree reads, so any git the project already runs on will do."""
+    repo = Repo(str(root))
+    b, o, t = _tree_entries(repo, base), _tree_entries(repo, ours), _tree_entries(repo, theirs)
+    taken: dict[str, list[str] | None] = {}
+    contested = []
+    for path in sorted({*b, *o, *t}):
+        bv, ov, tv = b.get(path), o.get(path), t.get(path)
+        if ov == tv or tv == bv:
+            continue
+        if ov == bv:
+            taken[path] = list(tv) if tv is not None else None
+        else:
+            contested.append(path)
+    if contested:
+        raise UnmergedFilesError(contested)
+    return taken
+
+
+def _check_project_path(rel: str) -> None:
+    """Refuse a path that leaves the folder on any OS: a backslash separates and a colon names a drive or a
+    stream on Windows, whoever wrote the path."""
+    if rel.startswith("/") or "\\" in rel or ":" in rel or ".." in PurePosixPath(rel).parts:
+        raise ValueError(f"Not a project path: {rel!r}")
+
+
 def commit_tree_changes(
-    root: Path, start: str, changes: dict[str, str | None], message: str, parents: list[str]
+    root: Path,
+    start: str,
+    changes: dict[str, str | None],
+    message: str,
+    parents: list[str],
+    entries: dict[str, list[str] | None] | None = None,
 ) -> str:
     """A commit of ``start``'s tree with ``changes`` made (``None`` removes the file) and ``parents``, built in a
-    temporary folder; no branch, index or working tree of the project moves."""
+    temporary folder; no branch, index or working tree of the project moves. ``entries`` (``unmanaged_changes``) are
+    set in its index as objects, not text, so a binary file, a mode or a symlink comes through as it was."""
     repo = Repo(str(root))
     with tempfile.TemporaryDirectory(prefix="flowfile-merge-") as tmp:
         folder = Path(tmp) / "tree"
         seed_folder(root, folder, _require_hex_sha(start))
         for rel, text in changes.items():
-            if rel.startswith("/") or ".." in Path(rel).parts:
-                raise ValueError(f"Not a project path: {rel!r}")
+            _check_project_path(rel)
             target = folder / rel
             if text is None:
                 target.unlink(missing_ok=True)
@@ -552,6 +619,15 @@ def commit_tree_changes(
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(text, encoding="utf-8")
         _folder_git(repo, folder, "add", "-A", "--", ".")
+        entries = entries or {}
+        for rel in entries:
+            _check_project_path(rel)
+        removed = [rel for rel, entry in entries.items() if entry is None]
+        if removed:
+            _folder_git(repo, folder, "update-index", "--force-remove", "--", *removed)
+        added = [arg for rel, e in entries.items() if e is not None for arg in ("--cacheinfo", e[0], e[1], rel)]
+        if added:
+            _folder_git(repo, folder, "update-index", "--add", *added)
         tree_sha = _folder_git(repo, folder, "write-tree").strip()
     commit = Commit.create_from_tree(
         repo,
@@ -582,22 +658,30 @@ def attach_head(root: Path, branch: str) -> None:
     Repo(str(root)).git.symbolic_ref("HEAD", f"refs/heads/{branch}")
 
 
+def _is_local_folder(url: str) -> bool:
+    """A ``file:`` URL or an absolute folder path in either OS's form (``/srv/x.git``, ``C:\\repos\\x.git``,
+    ``D:/x.git``, ``\\\\host\\share``), judged before ``urlsplit``, which reads a drive letter as a scheme."""
+    if url[:5].lower() == "file:":
+        return True
+    return PurePosixPath(url).is_absolute() or PureWindowsPath(url).is_absolute()
+
+
 def _check_remote_url(url: str, local_allowed: bool) -> str:
     """``url`` when it is an ``https``, ``http`` or ``ssh`` address with no password in it, or, where
     ``local_allowed``, a folder on this machine; never a transport that runs a command (``ext::``)."""
     url = url.strip()
     if not url or url.startswith("-") or "::" in url or any(c in url for c in "\r\n\0"):
         raise GitRemoteError("Not a remote address Flowfile accepts.")
+    if _is_local_folder(url):
+        if not local_allowed:
+            raise GitRemoteError("A folder on the server cannot be a remote here; use an https or ssh address.")
+        return url
     parsed = urlsplit(url)
     if parsed.scheme in ("https", "http", "ssh"):
         if parsed.password is not None:
             raise GitRemoteError("Leave the token out of the address: give it as the remote's token instead.")
         if not parsed.hostname:
             raise GitRemoteError("The remote address names no host.")
-        return url
-    if parsed.scheme == "file" or (not parsed.scheme and Path(url).is_absolute()):
-        if not local_allowed:
-            raise GitRemoteError("A folder on the server cannot be a remote here; use an https or ssh address.")
         return url
     if re.match(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^:]", url):
         return url
@@ -670,16 +754,21 @@ def _remote_git(root: Path, token: str | None, username: str | None, *args: str)
             raise GitRemoteError(_remote_failure(stderr)) from None
 
 
+_SIGN_IN_REFUSED = re.compile(r"authentication failed|could not read username|returned error: 40[13]\b")
+
+
 def _remote_failure(stderr: str) -> str:
     text = stderr.lower()
-    if "authentication failed" in text or "could not read username" in text or "403" in text or "401" in text:
+    if _SIGN_IN_REFUSED.search(text):
         return "The remote refused the sign-in: check the remote's token."
-    if "non-fast-forward" in text or "fetch first" in text or "rejected" in text:
+    if "non-fast-forward" in text or "fetch first" in text:
         return "The remote has versions this branch does not: pull first."
-    if "could not resolve host" in text or "connection refused" in text or "timed out" in text:
+    if "[remote rejected]" in text:
+        return "The remote declined the push, for example a protected branch or a hook on the remote."
+    if any(s in text for s in ("could not resolve host", "failed to connect", "connection refused", "timed out")):
         return "The remote could not be reached."
     if "does not appear to be a git repository" in text or "not found" in text:
-        return "No repository at the remote's address."
+        return "No repository at the remote's address, or none the remote's token can read."
     return "The remote refused the request."
 
 

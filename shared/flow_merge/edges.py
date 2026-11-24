@@ -26,13 +26,16 @@ def source_handles(nodes: dict[int, dict]) -> dict[tuple[int, int], list[str]]:
     return handles
 
 
-def incoming_edges(node: dict, nodes: dict[int, dict]) -> dict[str, list[tuple[int, str]]]:
+def incoming_edges(
+    node: dict, nodes: dict[int, dict], handles: dict[tuple[int, int], list[str]] | None = None
+) -> dict[str, list[tuple[int, str]]]:
     """``target handle -> [(source, source handle)]`` for one node: main in order, right, left, keyed.
 
     Static source handles come from the source's ``outputs``/``output_handles`` (consumed in order, so a
-    source feeding two slots through two handles keeps both); keyed edges carry their own.
+    source feeding two slots through two handles keeps both); keyed edges carry their own. ``handles`` is
+    ``source_handles(nodes)`` when the caller already built it.
     """
-    handles = source_handles(nodes)
+    handles = source_handles(nodes) if handles is None else handles
     used: Counter = Counter()
 
     def handle(source: int) -> str:
@@ -57,8 +60,9 @@ def incoming_edges(node: dict, nodes: dict[int, dict]) -> dict[str, list[tuple[i
 
 def topological(nodes: dict[int, dict]) -> list[int]:
     """Kahn order over the payload's edges with a min-heap on id; ids left in a cycle follow in id order."""
+    handles = source_handles(nodes)
     parents = {
-        nid: {s for edges in incoming_edges(n, nodes).values() for s, _ in edges if s in nodes}
+        nid: {s for edges in incoming_edges(n, nodes, handles).values() for s, _ in edges if s in nodes}
         for nid, n in nodes.items()
     }
     children: dict[int, set[int]] = defaultdict(set)

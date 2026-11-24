@@ -73,7 +73,6 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
 import { ElMessage } from "element-plus";
 import { FlowApi } from "../../api";
 import { useFlowStore } from "../../stores/flow-store";
@@ -84,8 +83,7 @@ import { useDrawerStore } from "../../stores/drawer-store";
 import { whenMutationsIdle } from "../../services/axios.config";
 import { flushPendingEdits } from "../../services/mutationChannel";
 import { recoverFromFailedMutation } from "../../services/mutationFailure";
-import { historyShortcutFor } from "../../composables/useFlowHotkeys";
-import { IS_MAC, MODIFIER_LABEL, SHIFT_LABEL } from "../../utils/shortcuts";
+import { MODIFIER_LABEL, SHIFT_LABEL } from "../../utils/shortcuts";
 import type { UndoRedoResult } from "../../types";
 import { prepareHistoryAction, type HistoryAction } from "./historyAction";
 
@@ -156,15 +154,7 @@ const enqueue = (action: HistoryAction) => {
 const handleUndo = () => enqueue("undo");
 const handleRedo = () => enqueue("redo");
 
-const handleKeyDown = (event: KeyboardEvent) => {
-  const action = historyShortcutFor(event, IS_MAC);
-  if (!action) return;
-  event.preventDefault();
-  enqueue(action);
-};
-
-onMounted(() => window.addEventListener("keydown", handleKeyDown));
-onUnmounted(() => window.removeEventListener("keydown", handleKeyDown));
+defineExpose({ handleUndo, handleRedo });
 </script>
 
 <style scoped>

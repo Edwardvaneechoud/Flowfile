@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { branchNameError, itemFlowName, pullMessage, syncText, takeLabel } from "./branchSync";
+import {
+  branchNameError,
+  isGithubAddress,
+  itemFlowName,
+  opensInEditor,
+  pullMessage,
+  syncText,
+  takeLabel,
+} from "./branchSync";
 import type { ProjectBranch, ProjectMergeItem, ProjectPullResult } from "../../types";
 
 const branch = (ahead: number | null, behind: number | null): ProjectBranch => ({
@@ -58,5 +66,27 @@ describe("branchSync", () => {
     expect(takeLabel(item, "ours")).toBe("Keep feature (this copy)");
     expect(takeLabel(item, "theirs")).toBe("Take origin/feature");
     expect(itemFlowName(item)).toBe("nightly_revenue");
+  });
+
+  it("opens only a step conflict of a conflicted flow file in the editor", () => {
+    const flows = ["flows/nightly_revenue.flow.yaml", "schedules/nightly.yaml"];
+    expect(opensInEditor(item, flows)).toBe(true);
+    expect(
+      opensInEditor({ ...item, path: "schedules/nightly.yaml", key: "schedule:3" }, flows),
+    ).toBe(false);
+    expect(opensInEditor({ ...item, key: "parameter:region" }, flows)).toBe(false);
+    expect(opensInEditor({ ...item, key: null, kind: "file" }, flows)).toBe(false);
+    expect(opensInEditor(item, [])).toBe(false);
+  });
+});
+
+describe("isGithubAddress", () => {
+  it("is a repository on github.com over https, and nothing else", () => {
+    expect(isGithubAddress("https://github.com/acme/project.git")).toBe(true);
+    expect(isGithubAddress("  https://GitHub.com/acme/project  ")).toBe(true);
+    expect(isGithubAddress("https://github.com/acme")).toBe(false);
+    expect(isGithubAddress("git@github.com:acme/project.git")).toBe(false);
+    expect(isGithubAddress("https://github.example.com/acme/project.git")).toBe(false);
+    expect(isGithubAddress("https://git.example.com/github.com/acme/project.git")).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import type {
   HubRefusal,
   LocalPathUse,
 } from "../../api/hubFlows.api";
+import { plural } from "../../utils/text";
 
 export const publishedLabel = (version: number): string => `Published as version ${version}`;
 
@@ -60,13 +61,8 @@ export const openInsteadLabel = (current: HubFlowVersion): string =>
 
 export const mergeLabel = (current: HubFlowVersion): string => `Merge v${current.version} in`;
 
-/** The button that settles a conflict on one side: "Keep your copy", "Keep version 5". */
-export const keepLabel = (side: string): string => `Keep ${side}`;
-
 /** After the last conflict is settled. */
 export const SETTLED = "Every conflict is settled. Publish to put your copy on the hub.";
-
-const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** What a merge did, in one sentence: what changed on the canvas, and what is left to settle. */
 export function mergedLabel(result: HubMergeResult): string {

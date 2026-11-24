@@ -6,6 +6,8 @@ import, read back from the flow's registered file.
 """
 
 import base64
+import os
+import socket
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -14,13 +16,15 @@ from pathlib import Path
 import pytest
 import yaml
 from fastapi.testclient import TestClient
-from git import Repo
+from git import GitCommandError, Repo
 
-from flowfile_core import main
+from flowfile_core import flow_file_handler, main
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRegistration, Secret
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
+from flowfile_core.flowfile.community_nodes import github_client
+from flowfile_core.flowfile.community_nodes.github_client import GithubAuthError
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.project import git_ops, importer, kinds, merging, project_sync
@@ -128,18 +132,23 @@ def remote(tmp_path):
 
 
 def _elsewhere(tmp_path: Path, remote: Path, edit) -> None:
-    """Clone the remote, ``edit(flow document)`` in its only flow file, commit and push with git alone."""
+    """Clone the remote, ``edit(flow document)`` in the fixture's flow file, commit and push with git alone."""
     clone = tmp_path / "ben"
     if not clone.exists():
         _git(tmp_path, "clone", "-q", str(remote), str(clone))
     else:
         _git(clone, "pull", "-q", "--ff-only")
-    flow_file = next((clone / "flows").glob("*.flow.yaml"))
+    flow_file = _branchy_file(clone)
     data = yaml.safe_load(flow_file.read_text())
     edit(data)
     flow_file.write_text(yaml.safe_dump(data, sort_keys=False))
     _git(clone, "commit", "-qam", "Changed elsewhere")
     _git(clone, "push", "-q", "origin", "main")
+
+
+def _branchy_file(folder: Path) -> Path:
+    """The fixture's flow file in a project folder; the owner's other flows (a demo seed) are exported beside it."""
+    return next((folder / "flows").glob("branchy*.flow.yaml"))
 
 
 def _node(data: dict, node_id: int) -> dict:
@@ -209,7 +218,9 @@ def test_a_switch_builds_and_writes_only_the_flows_that_changed(project, tmp_pat
         built, imported = [], []
         real_build, real_import = importer.ephemeral_flow_graph, importer._import_flow
         monkeypatch.setattr(
-            importer, "ephemeral_flow_graph", lambda path, owner: built.append(Path(path).name) or real_build(path, owner)
+            importer,
+            "ephemeral_flow_graph",
+            lambda path, owner: built.append(Path(path).name) or real_build(path, owner),
         )
         monkeypatch.setattr(
             importer, "_import_flow", lambda data, owner: imported.append(data["flow_uuid"]) or real_import(data, owner)
@@ -266,7 +277,7 @@ def test_switch_refused_with_unsaved_changes(project):
     recovery = forced.json()["recovery_sha"]
     assert recovery
     kept = git_ops.read_tree_at(root, recovery)
-    flow_text = next(text for path, text in kept.items() if path.startswith("flows/"))
+    flow_text = next(text for path, text in kept.items() if path.startswith("flows/branchy"))
     assert _node(yaml.safe_load(flow_text), 2)["sample_size"] == 33
     assert _step(flow_uuid, 2)["sample_size"] == 10
 
@@ -437,3 +448,633 @@ def test_a_conflicted_flow_is_settled_in_the_editor(project, remote, tmp_path):
     assert client.get("/project/merge").json()["merge"] is None
     assert _step(flow_uuid, 2)["sample_size"] == 25
     assert len(Repo(str(root)).head.commit.parents) == 2
+
+
+def _open_in_editor(conflict: dict) -> int:
+    opened = client.post("/project/merge/open", json={"path": conflict["path"]})
+    assert opened.status_code == 200, opened.text
+    return opened.json()["flow_id"]
+
+
+def _editor_conflicts(flow_id: int) -> list[str]:
+    rows = client.get("/editor/merge/conflicts", params={"flow_id": flow_id}).json()["conflicts"]
+    return [r["key"] for r in rows]
+
+
+def test_keeping_the_side_the_editor_shows_leaves_an_edit_made_since(project, remote, tmp_path):
+    """The canvas of a flow opened from a pull shows the remote's step; taking that side only stops holding the
+    conflict, so what was typed into the step since the pull is what the merge commits."""
+    root, flow_uuid = _diverge(project, remote, tmp_path, 40)
+    conflict = client.post("/project/pull").json()["conflicts"][0]
+    flow_id = _open_in_editor(conflict)
+    flow = flow_file_handler.get_flow(flow_id)
+    assert flow.merge_conflicts["shown"] == "theirs"
+    assert flow.get_node(2).setting_input.sample_size == 40
+
+    edited = flow.get_node(2).setting_input.model_copy(deep=True)
+    edited.sample_size = 55
+    flow.add_sample(edited)
+    steps_before = client.get("/editor/history_status/", params={"flow_id": flow_id}).json()["undo_count"]
+
+    settled = client.post("/editor/merge/resolve/", json={"flow_id": flow_id, "key": "step:2", "take": "theirs"})
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["history"]["undo_count"] == steps_before
+    assert client.get("/project/merge").json()["merge"] is None
+    assert _step(flow_uuid, 2)["sample_size"] == 55
+    assert len(Repo(str(root)).head.commit.parents) == 2
+
+
+@pytest.mark.parametrize("ending", ["abort", "settle"])
+def test_a_merge_that_ends_on_the_project_page_frees_the_flow_open_in_the_editor(project, remote, tmp_path, ending):
+    _diverge(project, remote, tmp_path, 40)
+    conflict = client.post("/project/pull").json()["conflicts"][0]
+    flow_id = _open_in_editor(conflict)
+    assert _editor_conflicts(flow_id) == ["step:2"]
+
+    if ending == "abort":
+        assert client.post("/project/merge/abort").json() == {"ok": True}
+    else:
+        body = {"path": conflict["path"], "key": conflict["key"], "take": "theirs"}
+        assert client.post("/project/merge/settle", json=body).json()["pull"]["state"] == "merged"
+
+    assert _editor_conflicts(flow_id) == []
+    flow = flow_file_handler.get_flow(flow_id)
+    assert flow.merge_conflicts is None
+    assert getattr(flow, "project_merge", None) is None
+
+
+def test_a_saved_version_never_holds_a_flows_merge_conflicts(project):
+    """A flow file saved with open conflicts (a hub merge) is exported without them."""
+    _, flow_uuid = project
+    path = _flow_path(flow_uuid)
+    graph = open_flow(Path(path))
+    try:
+        node = graph.get_node(2).setting_input.model_copy(deep=True)
+        node.sample_size = 30
+        graph.add_sample(node)
+        graph.merge_conflicts = {"conflicts": [{"key": "step:2", "kind": "both_changed"}], "shown": "theirs"}
+        graph.save_flow(path)
+    finally:
+        graph.close_flow()
+    assert "merge_conflicts" in yaml.safe_load(Path(path).read_text())["flowfile_settings"]
+
+    sha = _save("with conflicts held")
+    exported = [text for name, text in git_ops.read_tree_at(project[0], sha).items() if name.endswith(".flow.yaml")]
+    assert exported
+    assert all("merge_conflicts" not in text for text in exported)
+
+
+def _ben(tmp_path: Path, remote: Path, change, message: str = "Changed elsewhere") -> None:
+    """Clone the remote (or bring the clone up to date), ``change(clone folder)``, commit everything, push."""
+    clone = tmp_path / "ben"
+    if not clone.exists():
+        _git(tmp_path, "clone", "-q", str(remote), str(clone))
+    else:
+        _git(clone, "pull", "-q", "--ff-only")
+    change(clone)
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-qm", message)
+    _git(clone, "push", "-q", "origin", "main")
+
+
+def _ben_adds_a_flow_named(name: str, flow_uuid: str):
+    """A flow file Ben made on his own install: another flow (``flow_uuid``) that took the name ``name``."""
+
+    def change(clone: Path) -> None:
+        source = _branchy_file(clone)
+        data = yaml.safe_load(source.read_text())
+        data.update(flow_uuid=flow_uuid, catalog_name=name)
+        (clone / "flows" / f"{name}.flow.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
+
+    return change
+
+
+def _registered(flow_uuid: str) -> bool:
+    with get_db_context() as db:
+        return db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first() is not None
+
+
+@pytest.mark.parametrize("take", ["ours", "theirs"])
+def test_two_flows_that_took_one_name_are_never_fused(project, remote, tmp_path, take):
+    root, _ = project
+    ben_uuid = "b0b0b0b0-0000-4000-8000-000000000001"
+    _set_remote(str(remote))
+    client.post("/project/push")
+    _ben(tmp_path, remote, _ben_adds_a_flow_named("daily_load", ben_uuid))
+    ana_uuid = _register_flow(tmp_path, "daily_load", 828290)
+    try:
+        ours = _save("ana's daily_load")
+        path = "flows/daily_load.flow.yaml"
+        ana_text = git_ops.read_tree_at(root, ours)[path]
+        assert yaml.safe_load(ana_text)["flow_uuid"] == ana_uuid
+
+        body = client.post("/project/pull").json()
+        assert body["state"] == "conflicted", body
+        ben_text = git_ops.read_tree_at(root, git_ops.branch_sha(root, "refs/remotes/origin/main"))[path]
+        [row] = body["conflicts"]
+        assert (row["path"], row["key"], row["kind"]) == (path, None, "file")
+        assert "different flow" in row["message"]
+        assert row["ours"] == [f"holds daily_load ({ana_uuid[:8]})"]
+        assert row["theirs"] == [f"holds daily_load ({ben_uuid[:8]})"]
+        assert _registered(ana_uuid) and not _registered(ben_uuid)
+
+        settled = client.post("/project/merge/settle", json={"path": path, "take": take})
+        assert settled.status_code == 200, settled.text
+        assert settled.json()["pull"]["state"] == "merged"
+        merged = git_ops.read_tree_at(root, "HEAD")[path]
+        assert merged == (ana_text if take == "ours" else ben_text)
+        assert _registered(ana_uuid) is (take == "ours")
+        assert _registered(ben_uuid) is (take == "theirs")
+    finally:
+        _drop_flow(ana_uuid)
+        _drop_flow(ben_uuid)
+
+
+def test_one_flow_added_on_both_sides_still_merges_by_step():
+    document = {"flow_uuid": "u-1", "catalog_name": "f", "nodes": [{"id": 1, "type": "manual_input"}]}
+    ours, theirs = dict(document), {**document, "flowfile_name": "f"}
+    merged = merging.merge_trees(
+        {}, {"flows/f.flow.yaml": yaml.safe_dump(ours)}, {"flows/f.flow.yaml": yaml.safe_dump(theirs)}, {}
+    )
+    assert not merged.files
+    other = merging.merge_trees(
+        {},
+        {"flows/f.flow.yaml": yaml.safe_dump(ours)},
+        {"flows/f.flow.yaml": yaml.safe_dump({**theirs, "flow_uuid": "u-2"})},
+        {},
+    )
+    assert list(other.files) == ["flows/f.flow.yaml"] and not other.changes
+
+
+def test_a_settle_retried_with_force_after_unsaved_changes_concludes(project, remote, tmp_path):
+    root, flow_uuid = _diverge(project, remote, tmp_path, 40)
+    conflict = client.post("/project/pull").json()["conflicts"][0]
+    unknown = client.post("/project/merge/settle", json={"path": conflict["path"], "key": "step:999", "take": "ours"})
+    assert unknown.status_code == 404
+    _set_sample(flow_uuid, 33)
+    settle = {"path": conflict["path"], "key": conflict["key"], "take": "theirs"}
+
+    refused = client.post("/project/merge/settle", json=settle)
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["code"] == "UNSAVED_CHANGES"
+    assert client.get("/project/merge").json()["merge"]["conflicts"] == []
+
+    forced = client.post("/project/merge/settle", json={**settle, "force": True})
+    assert forced.status_code == 200, forced.text
+    pull = forced.json()["pull"]
+    assert pull["state"] == "merged"
+    assert pull["result"]["recovery_sha"]
+    kept = git_ops.read_tree_at(root, pull["result"]["recovery_sha"])
+    assert _node(yaml.safe_load(kept[conflict["path"]]), 2)["sample_size"] == 33
+    assert _step(flow_uuid, 2)["sample_size"] == 40
+    assert client.get("/project/merge").json()["merge"] is None
+
+
+def _here(root: Path, change, message: str) -> str:
+    """A commit made in the project's own folder with plain git, as someone would outside Flowfile."""
+    change(root)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", message)
+    return git_ops.head_sha(root)
+
+
+def test_a_merging_pull_keeps_what_the_remote_changed_outside_the_managed_files(project, remote, tmp_path):
+    root, flow_uuid = project
+    _here(root, lambda r: (r / "OLD.md").write_text("old\n"), "an old note")
+    _set_remote(str(remote))
+    client.post("/project/push")
+
+    def teammate(clone: Path) -> None:
+        (clone / "README.md").write_text("# Team project\n")
+        (clone / "ci").mkdir()
+        (clone / "ci" / "run.sh").write_text("#!/bin/sh\necho ok\n")
+        (clone / "ci" / "run.sh").chmod(0o755)
+        # Windows has no executable bit on disk; set git's, which the merge must carry.
+        _git(clone, "add", "ci/run.sh")
+        _git(clone, "update-index", "--chmod=+x", "ci/run.sh")
+        (clone / "logo.bin").write_bytes(bytes(range(256)))
+        (clone / ".gitignore").write_text((clone / ".gitignore").read_text() + "build/\n")
+        (clone / "OLD.md").unlink()
+        flow_file = _branchy_file(clone)
+        data = yaml.safe_load(flow_file.read_text())
+        _node(data, 2).update(sample_size=40)
+        flow_file.write_text(yaml.safe_dump(data, sort_keys=False))
+
+    _ben(tmp_path, remote, teammate)
+    _here(root, lambda r: (r / "NOTES.md").write_text("mine\n"), "my notes")
+    _set_sample(flow_uuid, 25)
+    _save("here")
+
+    conflict = client.post("/project/pull").json()["conflicts"][0]
+    settled = client.post(
+        "/project/merge/settle", json={"path": conflict["path"], "key": conflict["key"], "take": "theirs"}
+    )
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["pull"]["state"] == "merged"
+
+    tree = Repo(str(root)).head.commit.tree
+    assert (tree / "README.md").data_stream.read() == b"# Team project\n"
+    assert (tree / "ci" / "run.sh").mode == 0o100755
+    assert (tree / "logo.bin").data_stream.read() == bytes(range(256))
+    assert (tree / ".gitignore").data_stream.read().decode().endswith("build/\n")
+    assert (tree / "NOTES.md").data_stream.read() == b"mine\n"
+    assert "OLD.md" not in {b.path for b in tree.traverse()}
+    assert (root / "README.md").read_text() == "# Team project\n"
+    assert _step(flow_uuid, 2)["sample_size"] == 40
+
+    assert client.post("/project/push").status_code == 200
+    pushed = Repo(str(remote)).commit("main").tree
+    assert (pushed / "README.md").data_stream.read() == b"# Team project\n"
+
+
+def test_a_clean_merging_pull_takes_the_remotes_other_files_too(project, remote, tmp_path):
+    root, flow_uuid = project
+    _set_remote(str(remote))
+    client.post("/project/push")
+    _ben(tmp_path, remote, lambda c: (c / "README.md").write_text("from ben\n"))
+    _set_sample(flow_uuid, 25)
+    _save("here")
+
+    body = client.post("/project/pull").json()
+    assert body["state"] == "merged", body
+    assert (Repo(str(root)).head.commit.tree / "README.md").data_stream.read() == b"from ben\n"
+    assert _step(flow_uuid, 2)["sample_size"] == 25
+
+
+def test_a_pull_is_refused_when_both_changed_an_unmanaged_file_differently(project, remote, tmp_path):
+    root, flow_uuid = project
+    _here(root, lambda r: (r / "README.md").write_text("base\n"), "readme")
+    _set_remote(str(remote))
+    client.post("/project/push")
+    _ben(tmp_path, remote, lambda c: (c / "README.md").write_text("ben's\n"))
+    ours = _here(root, lambda r: (r / "README.md").write_text("ana's\n"), "my readme")
+    _set_sample(flow_uuid, 25)
+    ours = _save("here") or ours
+
+    refused = client.post("/project/pull")
+    assert refused.status_code == 409, refused.text
+    detail = refused.json()["detail"]
+    assert detail["code"] == "GIT_REFUSED"
+    assert detail["paths"] == ["README.md"]
+    assert "README.md" in detail["message"]
+    assert git_ops.head_sha(root) == ours
+    assert client.get("/project/merge").json()["merge"] is None
+    assert (root / "README.md").read_text() == "ana's\n"
+    assert _step(flow_uuid, 2)["sample_size"] == 25
+    assert client.get("/project/active").json()["dirty"] is False
+
+
+_LOCAL_REMOTES = [
+    r"C:\Users\me\remote.git",
+    "D:/shared/proj.git",
+    r"\\fileserver\share\proj.git",
+    "/srv/git/proj.git",
+    "file:///srv/git/proj.git",
+    "FILE:///C:/repos/proj.git",
+]
+
+
+@pytest.mark.parametrize("url", _LOCAL_REMOTES)
+def test_a_local_folder_remote_in_any_os_form_is_judged_as_a_folder(url):
+    assert git_ops._check_remote_url(url, local_allowed=True) == url
+    with pytest.raises(git_ops.GitRemoteError, match="folder on the server"):
+        git_ops._check_remote_url(url, local_allowed=False)
+
+
+@pytest.mark.parametrize(
+    "url", ["https://git.example.invalid/team/x.git", "ssh://git@git.example.invalid/x.git", "git@host.invalid:t/x.git"]
+)
+def test_network_remotes_are_still_accepted_without_local_folders(url):
+    assert git_ops._check_remote_url(url, local_allowed=False) == url
+
+
+@pytest.mark.parametrize("url", ["c:relative.git", "relative/x.git", "ftp://host.invalid/x.git"])
+def test_other_addresses_are_still_refused(url):
+    with pytest.raises(git_ops.GitRemoteError):
+        git_ops._check_remote_url(url, local_allowed=True)
+
+
+def _schedules(cron: str) -> str:
+    entry = {"id": "s-1", "name": "nightly", "schedule_type": "cron", "cron_expression": cron, "enabled": True}
+    return yaml.safe_dump({"flow_uuid": "u-1", "schedules": [entry]})
+
+
+def test_a_schedule_conflict_tells_what_each_side_changed():
+    path = "schedules/f.yaml"
+    merged = merging.merge_trees(
+        {path: _schedules("0 1 * * *")}, {path: _schedules("0 3 * * *")}, {path: _schedules("0 5 * * *")}, {}
+    )
+    [row] = merging.open_items(merging.new_state("main", "a" * 40, "b" * 40, merged, {}))
+    assert row["key"] == "schedule:s-1"
+    assert row["ours"] == ["cron_expression: '0 1 * * *' → '0 3 * * *'"]
+    assert row["theirs"] == ["cron_expression: '0 1 * * *' → '0 5 * * *'"]
+
+
+def test_a_parameter_conflict_tells_what_each_side_changed():
+    def flow(value: str) -> str:
+        return yaml.safe_dump(
+            {
+                "flow_uuid": "u-1",
+                "flowfile_settings": {"parameters": [{"name": "region", "default_value": value}]},
+                "nodes": [{"id": 1, "type": "manual_input"}],
+            }
+        )
+
+    path = "flows/f.flow.yaml"
+    merged = merging.merge_trees({path: flow("North")}, {path: flow("South")}, {path: flow("East")}, {})
+    rows = merging.open_items(merging.new_state("main", "a" * 40, "b" * 40, merged, {}))
+    row = next(r for r in rows if r["key"] == "parameter:region")
+    assert row["ours"] == ["default_value: 'North' → 'South'"]
+    assert row["theirs"] == ["default_value: 'North' → 'East'"]
+    assert row["step_id"] is None
+
+
+def test_an_entry_added_differently_on_both_sides_names_its_values():
+    lines = merging._side(
+        "schedule", None, {"id": "s", "cron_expression": "0 3 * * *"}, {"id": "s", "cron_expression": "x"}
+    )
+    assert lines == ["added the schedule", "cron_expression = '0 3 * * *'"]
+    assert merging._side("parameter", {"name": "r"}, None, {"name": "r"}) == ["removed the parameter"]
+
+
+@pytest.mark.parametrize(
+    ("stderr", "message"),
+    [
+        (
+            "fatal: unable to access 'http://127.0.0.1:4013/x.git/': Failed to connect to 127.0.0.1 port 4013 "
+            "after 2034 ms: Connection refused",
+            "could not be reached",
+        ),
+        (
+            "fatal: unable to access 'http://127.0.0.1:40100/x.git/': Failed to connect to 127.0.0.1 port 40100 "
+            "after 0 ms: Couldn't connect to server",
+            "could not be reached",
+        ),
+        (
+            "fatal: unable to access 'http://127.0.0.1:40100/x.git/': Failed to connect to 127.0.0.1 port 40100 "
+            "after 0 ms: Could not connect to server",
+            "could not be reached",
+        ),
+        ("fatal: repository 'https://git.example.invalid/team403/x.git/' not found", "No repository"),
+        (" ! [rejected]        main -> main (fetch first)\nhint: the tip 4a14030f is behind", "pull first"),
+        (" ! [rejected]        main -> main (non-fast-forward)", "pull first"),
+        (
+            "remote: error: GH006: Protected branch update failed for refs/heads/main.\n"
+            " ! [remote rejected] main -> main (protected branch hook declined)\n"
+            "error: failed to push some refs to 'https://git.example.invalid/x.git'",
+            "declined the push",
+        ),
+        (" ! [remote rejected] main -> main (pre-receive hook declined)", "declined the push"),
+        (
+            "fatal: unable to access 'https://git.example.invalid/x.git/': The requested URL returned error: 403",
+            "refused the sign-in",
+        ),
+        ("fatal: Authentication failed for 'https://git.example.invalid/x.git/'", "refused the sign-in"),
+        (
+            "remote: Repository not found.\nfatal: repository 'https://git.example.invalid/private.git/' not found",
+            "none the remote's token can read",
+        ),
+    ],
+)
+def test_a_remote_failure_is_read_from_gits_words_not_from_digits_in_an_address(stderr, message):
+    assert message in git_ops._remote_failure(stderr)
+
+
+def test_a_push_a_hook_on_the_remote_declines_is_not_told_to_pull(project, remote):
+    hook = remote / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'pushes to main go through review' >&2\nexit 1\n", newline="\n")
+    hook.chmod(0o755)
+    _set_remote(str(remote))
+    refused = client.post("/project/push")
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == {
+        "code": "GIT_REFUSED",
+        "message": "The remote declined the push, for example a protected branch or a hook on the remote.",
+    }
+
+
+def _closed_port_holding(digits: str) -> int:
+    for port in range(20000, 60000):
+        if digits not in str(port):
+            continue
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+        return port
+    raise AssertionError("no free port")
+
+
+def test_a_remote_nothing_listens_on_is_unreachable_whatever_digits_its_port_holds(project):
+    _set_remote(f"http://127.0.0.1:{_closed_port_holding('401')}/team/project.git")
+    refused = client.post("/project/pull")
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == {"code": "GIT_REFUSED", "message": "The remote could not be reached."}
+
+
+@pytest.mark.parametrize(
+    "rel",
+    ["/etc/x", "../x", "a/../b", "a\\..\\b", "C:\\x", "C:/x", "\\x", "\\\\host\\share\\x", "flows/a:b.flow.yaml"],
+)
+def test_a_path_that_leaves_the_folder_on_some_os_is_no_project_path(rel):
+    with pytest.raises(ValueError, match="Not a project path"):
+        git_ops._check_project_path(rel)
+
+
+def test_a_merge_commit_writes_no_file_outside_its_folder(project, tmp_path):
+    root, _ = project
+    head = git_ops.head_sha(root)
+    outside = tmp_path / "outside.txt"
+    with pytest.raises(ValueError, match="Not a project path"):
+        git_ops.commit_tree_changes(root, head, {str(outside): "x"}, "merge", [head])
+    assert not outside.exists()
+    git_ops._check_project_path("flows/sales report.flow.yaml")
+
+
+def test_branches_count_what_each_copy_holds_that_the_other_does_not(project, remote, tmp_path):
+    root, _ = _diverge(project, remote, tmp_path, 40)
+    git_ops.fetch(root)
+    assert client.post("/project/branches", json={"name": "local-only", "switch": False}).status_code == 201
+    rows = {b["name"]: b for b in client.get("/project/branches").json()["branches"]}
+    assert (rows["main"]["ahead"], rows["main"]["behind"], rows["main"]["current"]) == (1, 1, True)
+    assert rows["main"]["sha"] == git_ops.head_sha(root)
+    assert (rows["local-only"]["ahead"], rows["local-only"]["behind"]) == (None, None)
+    assert rows["local-only"]["current"] is False
+
+
+def _on_feature_with_a_bigger_sample(project) -> tuple[Path, str]:
+    root, flow_uuid = project
+    assert client.post("/project/branches", json={"name": "feature"}).status_code == 201
+    _set_sample(flow_uuid, 25)
+    _save("bigger sample")
+    return root, flow_uuid
+
+
+def test_a_switch_git_could_not_finish_goes_back_and_is_refused(project, monkeypatch):
+    root, flow_uuid = _on_feature_with_a_bigger_sample(project)
+    real_checkout = git_ops.checkout
+
+    def stopped_halfway(repo_root, name):
+        real_checkout(repo_root, name)
+        if name == "main":
+            raise GitCommandError("git checkout", 1, b"error: unable to unlink old 'flows/branchy.flow.yaml'")
+
+    monkeypatch.setattr(git_ops, "checkout", stopped_halfway)
+    refused = client.post("/project/branches/switch", json={"name": "main"})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "GIT_REFUSED"
+    assert "changed nothing" in refused.json()["detail"]["message"]
+    assert git_ops.current_branch(root) == "feature"
+    assert not git_ops.is_dirty(root)
+    assert _step(flow_uuid, 2)["sample_size"] == 25
+
+
+@pytest.mark.skipif(os.name != "nt", reason="only Windows refuses to replace a file another handle holds open")
+@pytest.mark.parametrize("action", ["switch", "pull"])
+def test_a_project_file_held_open_refuses_the_apply_and_changes_nothing(project, remote, tmp_path, action):
+    if action == "switch":
+        root, flow_uuid = _on_feature_with_a_bigger_sample(project)
+        before, after, branch = 25, 10, "feature"
+
+        def apply():
+            return client.post("/project/branches/switch", json={"name": "main"})
+    else:
+        root, flow_uuid = project
+        _set_remote(str(remote))
+        client.post("/project/push")
+        _elsewhere(tmp_path, remote, lambda d: _node(d, 2).update(sample_size=40))
+        before, after, branch = 10, 40, "main"
+
+        def apply():
+            return client.post("/project/pull")
+
+    head = git_ops.head_sha(root)
+    with open(_branchy_file(root), "rb"):
+        refused = apply()
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "GIT_REFUSED"
+    assert (git_ops.current_branch(root), git_ops.head_sha(root)) == (branch, head)
+    assert not git_ops.is_dirty(root)
+    assert _step(flow_uuid, 2)["sample_size"] == before
+
+    assert apply().status_code == 200
+    assert _step(flow_uuid, 2)["sample_size"] == after
+
+
+def _edit_on_the_canvas(flow_uuid: str, size: int) -> int:
+    """Open the flow as the editor has it and change step 2 without saving; the open flow's id."""
+    flow_id = flow_file_handler.import_flow(Path(_flow_path(flow_uuid)), user_id=OWNER)
+    flow = flow_file_handler.get_flow(flow_id)
+    node = flow.get_node(2).setting_input.model_copy(deep=True)
+    node.sample_size = size
+    flow.add_sample(node)
+    return flow_id
+
+
+def test_a_switch_names_unsaved_canvas_edits_of_a_flow_it_rewrites_and_keeps_them_when_forced(project):
+    root, flow_uuid = _on_feature_with_a_bigger_sample(project)
+    flow_id = _edit_on_the_canvas(flow_uuid, 77)
+    try:
+        refused = client.post("/project/branches/switch", json={"name": "main"})
+        assert refused.status_code == 409, refused.text
+        detail = refused.json()["detail"]
+        assert detail["code"] == "UNSAVED_CHANGES"
+        assert [c["path"].startswith("flows/branchy") for c in detail["changes"]] == [True]
+        assert git_ops.current_branch(root) == "feature"
+        assert _step(flow_uuid, 2)["sample_size"] == 25
+
+        forced = client.post("/project/branches/switch", json={"name": "main", "force": True})
+        assert forced.status_code == 200, forced.text
+        kept = git_ops.read_tree_at(root, forced.json()["recovery_sha"])
+        flow_text = next(text for path, text in kept.items() if path.startswith("flows/branchy"))
+        assert _node(yaml.safe_load(flow_text), 2)["sample_size"] == 77
+        assert _step(flow_uuid, 2)["sample_size"] == 10
+    finally:
+        flow_file_handler.delete_flow(flow_id, OWNER)
+
+
+def test_unsaved_canvas_edits_of_a_flow_a_switch_leaves_alone_do_not_stop_it(project):
+    root, flow_uuid = project
+    assert client.post("/project/branches", json={"name": "same", "switch": False}).status_code == 201
+    flow_id = _edit_on_the_canvas(flow_uuid, 77)
+    try:
+        assert client.post("/project/branches/switch", json={"name": "same"}).status_code == 200
+        assert flow_file_handler.get_flow(flow_id).get_node(2).setting_input.sample_size == 77
+    finally:
+        flow_file_handler.delete_flow(flow_id, OWNER)
+
+
+def _github_sign_in(monkeypatch, polls: list, login: str = "ben") -> list:
+    """GitHub's side of the device flow, answering ``polls`` in turn; the scopes each start asked for."""
+    starts = []
+
+    def device_start(**kwargs):
+        starts.append(kwargs)
+        return github_client.DeviceStart(
+            device_code="dev-1", user_code="ABCD-1234", verification_uri="https://github.com/login/device"
+        )
+
+    answers = iter(polls)
+
+    def device_poll(device_code, **kwargs):
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(github_client, "device_start", device_start)
+    monkeypatch.setattr(github_client, "device_poll", device_poll)
+    monkeypatch.setattr(github_client, "fetch_login", lambda token, **kwargs: login)
+    return starts
+
+
+def test_a_github_sign_in_becomes_the_remote_token_and_a_push_sends_it(project, monkeypatch):
+    token = "gho_SIGNED-IN-7319"
+    starts = _github_sign_in(
+        monkeypatch,
+        [github_client.DevicePoll(status="pending"), github_client.DevicePoll(status="success", access_token=token)],
+    )
+    server = HTTPServer(("127.0.0.1", 0), _AuthRecorder)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        _set_remote(f"http://127.0.0.1:{server.server_port}/team/project.git")
+        started = client.post("/project/remote/github/device/start")
+        assert started.status_code == 200, started.text
+        assert started.json()["user_code"] == "ABCD-1234"
+        assert starts == [{"scope": "repo"}]
+
+        pending = client.post("/project/remote/github/device/poll", json={"device_code": "dev-1"})
+        assert pending.json()["status"] == "pending"
+        assert client.get("/project/branches").json()["has_token"] is False
+
+        connected = client.post("/project/remote/github/device/poll", json={"device_code": "dev-1"})
+        assert connected.status_code == 200, connected.text
+        assert connected.json() == {"status": "connected", "interval": None, "login": "ben"}
+        assert token not in connected.text
+        assert client.get("/project/branches").json()["has_token"] is True
+
+        _AuthRecorder.seen.clear()
+        refused = client.post("/project/push")
+    finally:
+        server.shutdown()
+    assert refused.status_code == 409
+    assert base64.b64decode(_AuthRecorder.seen[-1].split()[1]).decode() == f"x-access-token:{token}"
+
+
+def test_an_expired_github_sign_in_keeps_no_token_and_is_never_a_401(project, monkeypatch):
+    _github_sign_in(monkeypatch, [GithubAuthError("device_expired", "The sign-in code expired. Start again.")])
+    expired = client.post("/project/remote/github/device/poll", json={"device_code": "dev-1"})
+    assert expired.status_code == 410
+    assert expired.json()["detail"] == {
+        "error_code": "DEVICE_EXPIRED",
+        "message": "The sign-in code expired. Start again.",
+    }
+    assert client.get("/project/branches").json()["has_token"] is False
+
+
+def test_github_sign_in_without_a_client_id_says_so(project, monkeypatch):
+    monkeypatch.setenv("FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID", "")
+    refused = client.post("/project/remote/github/device/start")
+    assert refused.status_code == 503
+    assert refused.json()["detail"]["error_code"] == "GITHUB_NOT_CONFIGURED"

@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.ai.chart_profile import TableProfile, profile_table, render_profile
 from flowfile_core.ai.chart_request import MAX_PROMPT_LEN
-from flowfile_core.ai.chart_routes import _profile_warning, _readable_table
+from flowfile_core.ai.chart_routes import _profile_warning, _readable_table, answered_by
 from flowfile_core.ai.dashboard_plan import (
     DEFAULT_TIMEOUT_SECONDS,
     MAX_CHECKS,
@@ -103,7 +103,7 @@ async def plan_dashboard_route(
 
     share_values = body.send_values and send_data_allowed()
     profiles, warnings = await _profiles(tables, current_user, share_values)
-    return await plan_dashboard(
+    result = await plan_dashboard(
         prompt=body.prompt,
         sources=plan_sources(profiles),
         provider=provider,
@@ -111,6 +111,7 @@ async def plan_dashboard_route(
         warnings=warnings,
         timeout=body.timeout,
     )
+    return answered_by(result, provider)
 
 
 class DashboardStoryRequest(BaseModel):
@@ -165,7 +166,7 @@ async def dashboard_story_route(
         evidence = await gather_evidence(tables=by_id, user=current_user, kpis=body.kpis, charts=body.charts)
     else:
         evidence = withheld_evidence(body.kpis, body.charts)
-    return await write_story(
+    result = await write_story(
         prompt=body.prompt,
         title=body.title,
         kpis=body.kpis,
@@ -177,6 +178,7 @@ async def dashboard_story_route(
         user_id=current_user.id,
         timeout=body.timeout,
     )
+    return answered_by(result, provider)
 
 
 __all__ = ["router", "DashboardStoryRequest", "PlanDashboardRequest"]

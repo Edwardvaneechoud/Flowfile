@@ -51,7 +51,7 @@ class GraphMixinBase:
         _kernel_hold: KernelHold | None
         _commit_sources: bool
         _owner_user_id: int | None
-        _session_user_id: int | None
+        merge_conflicts: dict | None
         _node_observers: list[Callable[[int | str, str, Any, bool], None]]
         _history_manager: HistoryManager
         end_datetime: Any

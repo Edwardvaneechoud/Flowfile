@@ -127,7 +127,7 @@ jobs:
             sleep 2
           done
 
-      # csp.spec.ts, dashboard.spec.ts and chart-ai.spec.ts mount graphic-walker, which needs chart data from the worker.
+      # csp.spec.ts, the dashboard*.spec.ts specs and chart-ai.spec.ts mount graphic-walker, which needs chart data from the worker.
       - name: Start worker server
         working-directory: ${{ runner.temp }}/worker_cwd
         run: |
@@ -164,7 +164,7 @@ jobs:
           TEST_URL: http://localhost:4173
           API_URL: http://localhost:63578
           E2E_AWS_PROFILE_CONFIGURED: '1'
-        run: npx playwright test tests/web-flow.spec.ts tests/two-tabs-sync.spec.ts tests/notebook-popout.spec.ts tests/drawer-conflict.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts tests/notebook-interactions.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/chart-ai.spec.ts tests/group-by.spec.ts tests/pivot-unpivot.spec.ts tests/output-drawer.spec.ts tests/cloud-storage-flow.spec.ts tests/compute-banner.spec.ts tests/placement-picker.spec.ts tests/placement-fallback.spec.ts tests/drawer-general-settings.spec.ts tests/project.spec.ts --reporter=html
+        run: npx playwright test tests/web-flow.spec.ts tests/two-tabs-sync.spec.ts tests/notebook-popout.spec.ts tests/drawer-conflict.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts tests/notebook-interactions.spec.ts tests/csp.spec.ts tests/dashboard.spec.ts tests/dashboard-ai.spec.ts tests/dashboard-ai-map.spec.ts tests/chart-ai.spec.ts tests/group-by.spec.ts tests/pivot-unpivot.spec.ts tests/output-drawer.spec.ts tests/cloud-storage-flow.spec.ts tests/compute-banner.spec.ts tests/placement-picker.spec.ts tests/placement-fallback.spec.ts tests/drawer-general-settings.spec.ts tests/project.spec.ts tests/history-hotkeys.spec.ts --reporter=html
 
       # Clipboard lifecycle tests inspect live stores to detect recovery reloads
       # and control paste races. Keep these separate from production-build E2E.

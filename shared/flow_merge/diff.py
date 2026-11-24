@@ -23,7 +23,9 @@ from typing import Any, Literal
 from shared.flow_merge.canonical import CanonicalFlow, canonical
 
 FLOW_NOISE = frozenset({"flowfile_version", "flowfile_id"})
-SETTINGS_NOISE = frozenset({"source_registration_id", "hub_origin", "execution_location", "path", "modified_on"})
+SETTINGS_NOISE = frozenset(
+    {"source_registration_id", "hub_origin", "merge_conflicts", "execution_location", "path", "modified_on"}
+)
 LAYOUT_FIELDS = ("x_position", "y_position", "group_id")
 CACHED_SCHEMA_TYPES = frozenset({"rest_api_reader", "database_reader", "kafka_source"})
 GROUP_LAYOUT = frozenset({"x_position", "y_position", "width", "height", "collapsed"})

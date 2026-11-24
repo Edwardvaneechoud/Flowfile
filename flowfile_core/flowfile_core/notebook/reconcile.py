@@ -47,8 +47,7 @@ from flowfile_core.flowfile.util.layout.placement import placer_from_payload
 from flowfile_core.notebook.compare import parameters_equal, settings_equal
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
-from shared.flow_merge.edges import DEFAULT_HANDLE, LEFT, MAIN, RIGHT, incoming_edges  # noqa: F401
-from shared.flow_merge.edges import source_handles as _source_handles  # noqa: F401
+from shared.flow_merge.edges import DEFAULT_HANDLE, MAIN, RIGHT, incoming_edges, source_handles  # noqa: F401
 from shared.flow_merge.edges import topological as _topological
 
 
@@ -275,15 +274,20 @@ def reconcile(
     order = _topological(session_nodes)
     removals: list[Edge] = []
     connects: dict[int, list[Edge]] = defaultdict(list)
+    session_handles, live_handles = source_handles(session_nodes), source_handles(live_nodes)
     for target in order:
         if target in skipped:
             continue
-        session_in = incoming_edges(session_nodes[target], session_nodes)
+        session_in = incoming_edges(session_nodes[target], session_nodes, session_handles)
         if any(source in skipped for edges in session_in.values() for source, _ in edges):
             if pinned(target):
                 continue
             plan.warnings.append(f"Node {target} reads from a node its cell did not rebuild; that input is dropped.")
-        live_in = {} if target in added or target in type_changed else incoming_edges(live_nodes[target], live_nodes)
+        live_in = (
+            {}
+            if target in added or target in type_changed
+            else incoming_edges(live_nodes[target], live_nodes, live_handles)
+        )
         for handle in sorted(set(session_in) | set(live_in)):
             old = [(s, h) for s, h in live_in.get(handle, []) if s not in gone and s not in kept_absent]
             new = [(s, h) for s, h in session_in.get(handle, []) if s not in skipped]

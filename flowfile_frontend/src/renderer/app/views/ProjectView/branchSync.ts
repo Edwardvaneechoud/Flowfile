@@ -1,4 +1,5 @@
 import type { ProjectBranch, ProjectMergeItem, ProjectPullResult } from "../../types";
+import { plural } from "../../utils/text";
 
 const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
@@ -16,8 +17,6 @@ export const branchNameError = (name: string): string | null => {
   }
   return null;
 };
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** How a branch stands against the remote's copy, as last fetched. */
 export const syncText = (branch: ProjectBranch | null, hasRemote: boolean): string => {
@@ -46,11 +45,19 @@ export const pullMessage = (result: ProjectPullResult): string => {
   }
 };
 
-/** A step conflict opens in the editor; a whole-file one is settled here. */
-export const opensInEditor = (item: ProjectMergeItem): boolean => item.key !== null;
+/**
+ * Only a step conflict of a conflicted flow file opens in the editor (`flows` is the merge's list); a whole file,
+ * a schedule or a parameter is settled here.
+ */
+export const opensInEditor = (item: ProjectMergeItem, flows: string[]): boolean =>
+  !!item.key?.startsWith("step:") && flows.includes(item.path);
 
 export const takeLabel = (item: ProjectMergeItem, side: "ours" | "theirs"): string =>
   side === "ours" ? `Keep ${item.ours_label}` : `Take ${item.theirs_label}`;
+
+/** An https address of a repository on github.com, where the remote can be signed in to with GitHub. */
+export const isGithubAddress = (url: string): boolean =>
+  /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+/i.test(url.trim());
 
 /** The flow a conflict sits in, by its file name: `flows/nightly_revenue.flow.yaml` -> `nightly_revenue`. */
 export const itemFlowName = (item: ProjectMergeItem): string =>

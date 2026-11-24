@@ -169,15 +169,33 @@ def _removed(changes: list[kinds.Change]) -> list[kinds.Change]:
 
 
 def _change_rows(changes: list[kinds.Change]) -> list[dict]:
-    return [
-        {"change": c.change, "kind": kinds.get(c.kind).label, "label": c.label, "path": c.path} for c in changes
-    ]
+    return [{"change": c.change, "kind": kinds.get(c.kind).label, "label": c.label, "path": c.path} for c in changes]
 
 
 def _unsaved_rows(proj: ActiveProject) -> list[dict]:
     """``compare(HEAD tree, snapshot)`` as rows: what the database holds that the last version does not."""
     head = git_ops.read_tree_at(proj.root, "HEAD")
     return _change_rows(kinds.compare(head, _snapshot(proj.root, proj.owner_id)))
+
+
+def _edited_open_flows(owner_id: int, plan: list[kinds.Change]) -> list[tuple]:
+    """The owner's open flows whose canvas holds edits no file has yet and whose file ``plan`` rewrites or removes,
+    each with its plan change: an apply would leave such a canvas on a file from another version."""
+    from flowfile_core import flow_file_handler
+    from flowfile_core.database.models import FlowRegistration
+
+    by_uuid = {c.key: c for c in plan if c.kind == "flow"}
+    edited = [f for f in flow_file_handler.get_user_flows(owner_id) if f.flow_settings.path and f.has_unsaved_changes()]
+    if not by_uuid or not edited:
+        return []
+    with get_db_context() as db:
+        registered = (
+            db.query(FlowRegistration.flow_path, FlowRegistration.flow_uuid)
+            .filter(FlowRegistration.owner_id == owner_id, FlowRegistration.flow_uuid.in_(list(by_uuid)))
+            .all()
+        )
+    change_of = {path: by_uuid[flow_uuid] for path, flow_uuid in registered}
+    return [(f, change_of[f.flow_settings.path]) for f in edited if f.flow_settings.path in change_of]
 
 
 def _assert_not_foreign_owned(root: Path, owner_id: int) -> None:
@@ -203,14 +221,18 @@ def _friendly_changes(raw: list[dict]) -> list[dict]:
 
 def _with_step_changes(root: Path, sha: str, rows: list[dict]) -> list[dict]:
     """A changed flow's row gains ``steps``: what changed in it step by step, for the version's review."""
-    parent = None
-    for row in rows:
-        owned = kinds.kind_for_path(row["path"])
-        if row["change"] != "modified" or owned is None or owned[0].name != "flow":
-            continue
-        parent = parent or git_ops.parent_of(root, sha)
-        before = git_ops.read_blob(root, parent, row["path"]) if parent else None
-        after = git_ops.read_blob(root, sha, row["path"])
+    flows = [
+        row
+        for row in rows
+        if row["change"] == "modified" and (owned := kinds.kind_for_path(row["path"])) and owned[0].name == "flow"
+    ]
+    parent = git_ops.parent_of(root, sha) if flows else None
+    if parent is None:
+        return rows
+    paths = [row["path"] for row in flows]
+    befores, afters = git_ops.read_blobs(root, parent, paths), git_ops.read_blobs(root, sha, paths)
+    for row in flows:
+        before, after = befores.get(row["path"]), afters.get(row["path"])
         if before is None or after is None:
             continue
         try:
@@ -395,19 +417,30 @@ class ProjectSyncService:
             repository.set_track_data_artifacts(db, proj.id, m.track_data_artifacts)
         proj.track_data_artifacts = m.track_data_artifacts
 
-    def _guard_before_apply(self, proj: ActiveProject, force: bool, action: str) -> str | None:
+    def _guard_before_apply(
+        self, proj: ActiveProject, force: bool, action: str, plan: list[kinds.Change]
+    ) -> str | None:
         """Name what a restore, reload, switch or pull would lose, and keep it first when ``force`` is set.
 
-        Database changes are what status reports (``_unsaved_rows``); a repository with no commit yet has none. All
+        Database changes are what status reports (``_unsaved_rows``); a repository with no commit yet has none. An
+        open flow whose canvas holds unsaved edits and whose file ``plan`` rewrites or removes counts too: with
+        ``force`` it is saved first, so it is a database change the recovery point keeps. All
         but a reload also refuse a dirty folder, since they reset it and discard hand edits; a reload applies them,
         so it refuses only unsaved database changes. With ``force`` a restore autosaves the folder and commits the
         export on the branch; the others keep the folder and the export under ``refs/flowfile/recovery/`` with the
         branch left alone. Returns the sha of the last recovery commit, if any. Holds the caller's lock."""
+        edited = _edited_open_flows(proj.owner_id, plan)
+        if force:
+            for flow, _ in edited:
+                flow.save_flow(flow.flow_settings.path)
         dirty = action != "reload" and git_ops.is_dirty(proj.root)
         changes = _unsaved_rows(proj) if git_ops.head_sha(proj.root) else []
-        if not changes and not dirty:
+        if not changes and not dirty and not edited:
             return None
         if not force:
+            listed = {c["path"] for c in changes}
+            canvas = [{**row, "change": "modified"} for row in _change_rows([c for _, c in edited])]
+            changes += [row for row in canvas if row["path"] not in listed]
             if dirty:
                 listed = {c["path"] for c in changes}
                 folder_rows = [r for r in git_ops.uncommitted_changes(proj.root) if r["path"] not in listed]
@@ -468,7 +501,7 @@ class ProjectSyncService:
             preflight_import_caps(proj.root, sha)
             preflight_import_files(proj.root, sha)
             changes = _plan_changes(proj.root, proj.owner_id, sha)
-            recovery_sha = self._guard_before_apply(proj, force, "restore")
+            recovery_sha = self._guard_before_apply(proj, force, "restore", changes)
             head = git_ops.head_sha(proj.root)
             git_ops.restore(proj.root, sha)
             try:
@@ -502,7 +535,7 @@ class ProjectSyncService:
             preflight_import_caps_worktree(proj.root)
             preflight_import_files_worktree(proj.root)
             changes = _plan_changes(proj.root, proj.owner_id, None)
-            recovery_sha = self._guard_before_apply(proj, force, "reload")
+            recovery_sha = self._guard_before_apply(proj, force, "reload", changes)
             self._snapshot_database()
             result = import_project(proj.root, proj.owner_id, _removed(changes), changes)
             self._sync_track_setting_from_manifest(proj)
@@ -518,12 +551,28 @@ class ProjectSyncService:
     def _apply_commit(self, proj: ActiveProject, sha: str, force: bool, action: str, move, undo) -> SetupResult:
         """Make the database what commit ``sha`` holds: the restore's preflight and plan, the guard, ``move()`` to
         put the folder on ``sha``, then the import with the plan's removals; a failed import runs ``undo()`` so the
-        folder goes back with the database. Holds the caller's lock."""
+        folder goes back with the database, and so does a ``move()`` git could not finish (on Windows a file another
+        program holds open stops it halfway), refused as a ``GitRemoteError``. Holds the caller's lock."""
         preflight_import_caps(proj.root, sha)
         preflight_import_files(proj.root, sha)
         changes = _plan_changes(proj.root, proj.owner_id, sha)
-        recovery_sha = self._guard_before_apply(proj, force, action)
-        move()
+        recovery_sha = self._guard_before_apply(proj, force, action, changes)
+        try:
+            move()
+        except Exception as exc:
+            logger.warning("git could not move the project folder for a %s: %s", action, exc)
+            try:
+                undo()
+            except Exception:
+                logger.exception("The project folder could not be put back after a failed %s", action)
+                raise git_ops.GitRemoteError(
+                    f"Git could not update the project folder for the {action}, nor put it back. A file in it may be "
+                    "open in another program: close it, then reload the project from its folder."
+                ) from None
+            raise git_ops.GitRemoteError(
+                f"Git could not update the project folder, so the {action} changed nothing. A file in it may be open "
+                "in another program: close it and try again."
+            ) from None
         try:
             self._snapshot_database()
             result = import_project(proj.root, proj.owner_id, _removed(changes), changes)
@@ -597,6 +646,13 @@ class ProjectSyncService:
                     delete_user_secret(db, PROJECT_REMOTE_TOKEN_KEY, user_id)
         return self.branch_state(user_id)
 
+    def keep_remote_token(self, user_id: int, token: str) -> dict:
+        """Keep ``token`` as this person's remote token, as ``set_remote`` does for a pasted one."""
+        self._require_project(user_id)
+        with get_db_context() as db:
+            set_user_secret(db, PROJECT_REMOTE_TOKEN_KEY, token, user_id)
+        return self.branch_state(user_id)
+
     @staticmethod
     def _credentials(proj: ActiveProject) -> tuple[str | None, str | None]:
         with get_db_context() as db:
@@ -659,8 +715,12 @@ class ProjectSyncService:
             )
 
     def _merge_remote(self, proj: ActiveProject, branch: str, ours: str, theirs: str, force: bool) -> PullResult:
+        """Merge the remote's copy into this branch: the managed files through ``merging.merge_trees``, every other
+        file by git's three-way rule (``git_ops.unmanaged_changes``, which refuses the pull before anything is written
+        when both sides changed one differently). Clean, it concludes at once; else the state waits to be settled."""
         remote = f"{git_ops.REMOTE_NAME}/{branch}"
         base = git_ops.merge_base(proj.root, ours, theirs)
+        unmanaged = git_ops.unmanaged_changes(proj.root, base, ours, theirs)
         sides = {"base": "base", "ours": f"{branch} (this copy)", "theirs": remote}
         merged = merging.merge_trees(
             git_ops.read_tree_at(proj.root, base) if base else {},
@@ -668,7 +728,7 @@ class ProjectSyncService:
             git_ops.read_tree_at(proj.root, theirs),
             sides,
         )
-        state = merging.new_state(branch, ours, theirs, merged, sides)
+        state = merging.new_state(branch, ours, theirs, merged, sides, unmanaged)
         if merged.clean:
             return self._conclude(proj, state, force)
         merging.save_state(proj.root, state)
@@ -678,10 +738,16 @@ class ProjectSyncService:
         """Commit the settled merge with both parents and apply it; the state goes once the import succeeded."""
         if git_ops.current_branch(proj.root) != state["branch"] or git_ops.head_sha(proj.root) != state["ours"]:
             merging.clear_state(proj.root)
+            self._release_merge_flows(proj.owner_id)
             raise git_ops.GitRemoteError("The branch moved since the pull; pull again.")
         message = f"Merge {git_ops.REMOTE_NAME}/{state['branch']} into {state['branch']}"
         sha = git_ops.commit_tree_changes(
-            proj.root, state["ours"], state["changes"], message, [state["ours"], state["theirs"]]
+            proj.root,
+            state["ours"],
+            state["changes"],
+            message,
+            [state["ours"], state["theirs"]],
+            state.get("unmanaged") or {},
         )
         result = self._apply_commit(
             proj,
@@ -692,7 +758,23 @@ class ProjectSyncService:
             lambda: git_ops.move_branch(proj.root, state["ours"]),
         )
         merging.clear_state(proj.root)
+        self._release_merge_flows(proj.owner_id)
         return PullResult(state="merged", sha=sha, result=result, warnings=list(state.get("warnings") or []))
+
+    @staticmethod
+    def _release_merge_flows(user_id: int) -> None:
+        """The waiting merge is over (concluded or dropped): a flow ``open_merge_flow`` opened from it stops holding
+        its conflicts and its link to the merge, so the editor no longer refuses to run it over a merge that is gone."""
+        from flowfile_core import flow_file_handler
+
+        for flow in flow_file_handler.get_user_flows(user_id):
+            marker = getattr(flow, "project_merge", None)
+            if not marker or marker.get("owner_id") != user_id:
+                continue
+            flow.project_merge = None
+            if flow.merge_conflicts:
+                with flow.transaction("Merge finished", record=False):
+                    flow.merge_conflicts = None
 
     def merge_state(self, user_id: int) -> dict | None:
         """The pull waiting to be settled: its branch, both sides and every item left, ``None`` when there is none."""
@@ -711,12 +793,18 @@ class ProjectSyncService:
         }
 
     def settle_merge(self, user_id: int, path: str, take: str, key: str | None = None, force: bool = False):
-        """Settle one item of the waiting merge; the last one concludes it (``PullResult``), else the state left."""
+        """Settle one item of the waiting merge; the last one concludes it (``PullResult``), else the state left.
+
+        The settled state is saved before the conclusion, which the guard can refuse (409 ``UNSAVED_CHANGES``), so a
+        state with nothing left to settle goes straight to the conclusion: the same request sent again with ``force``
+        after that refusal concludes the merge instead of finding its item gone."""
         proj = self._require_project(user_id)
         with git_ops.project_lock(proj.root):
             state = merging.load_state(proj.root)
             if state is None:
                 raise git_ops.GitRemoteError("No merge is waiting to be settled.")
+            if merging.is_settled(state):
+                return self._conclude(proj, state, force)
             try:
                 state = merging.settle(state, path, take, key)
             except KeyError:
@@ -743,6 +831,7 @@ class ProjectSyncService:
         proj = self._require_project(user_id)
         with git_ops.project_lock(proj.root):
             merging.clear_state(proj.root)
+        self._release_merge_flows(user_id)
 
     def open_merge_flow(self, user_id: int, path: str) -> int:
         """Open a conflicted flow of the waiting merge in the editor: the merged flow, the remote's side of each
@@ -776,7 +865,10 @@ class ProjectSyncService:
         marker = getattr(flow, "project_merge", None)
         if not marker:
             return None
-        proj = self._require_project(marker["owner_id"])
+        proj = self.get_active_project(marker["owner_id"])
+        if proj is None:
+            logger.info("No active project to record the settle of %s in", marker["path"])
+            return None
         with git_ops.project_lock(proj.root):
             state = merging.load_state(proj.root)
             wrapper = (state or {}).get("flows", {}).get(marker["path"])

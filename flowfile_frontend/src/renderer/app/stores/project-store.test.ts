@@ -23,7 +23,15 @@ const mocks = vi.hoisted(() => {
     plan: vi.fn(),
     setSecrets: vi.fn(),
     close: vi.fn(),
+    switchBranch: vi.fn(),
+    pull: vi.fn(),
+    settleMerge: vi.fn(),
+    concludeMerge: vi.fn(),
+    abortMerge: vi.fn(),
+    getMerge: vi.fn(),
+    openMergeFlow: vi.fn(),
     setFlowId: vi.fn(),
+    invalidateOverview: vi.fn(() => Promise.resolve()),
   };
 });
 
@@ -31,6 +39,10 @@ const mocks = vi.hoisted(() => {
 // which reaches DOM globals at import time and would crash under the node env.
 vi.mock("./flow-store", () => ({
   useFlowStore: () => ({ setFlowId: mocks.setFlowId }),
+}));
+
+vi.mock("./catalog-store", () => ({
+  useCatalogStore: () => ({ invalidateOverview: mocks.invalidateOverview }),
 }));
 
 vi.mock("../api/project.api", () => ({
@@ -47,6 +59,13 @@ vi.mock("../api/project.api", () => ({
     plan: mocks.plan,
     setSecrets: mocks.setSecrets,
     close: mocks.close,
+    switchBranch: mocks.switchBranch,
+    pull: mocks.pull,
+    settleMerge: mocks.settleMerge,
+    concludeMerge: mocks.concludeMerge,
+    abortMerge: mocks.abortMerge,
+    getMerge: mocks.getMerge,
+    openMergeFlow: mocks.openMergeFlow,
   },
 }));
 
@@ -208,6 +227,7 @@ describe("restoreVersion", () => {
     expect(mocks.restore).toHaveBeenCalledWith("deadbeef", "rollback", false);
     expect(mocks.getActive).toHaveBeenCalled();
     expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
+    expect(mocks.invalidateOverview).toHaveBeenCalled();
   });
 
   it("sends force when the caller keeps a recovery point", async () => {
@@ -246,6 +266,7 @@ describe("reloadFromDisk", () => {
     expect(store.placeholderSecrets).toEqual(["s"]);
     expect(mocks.getActive).toHaveBeenCalled();
     expect(mocks.setFlowId).toHaveBeenCalledWith(-1); // canvas reset; no stale tab
+    expect(mocks.invalidateOverview).toHaveBeenCalled();
   });
 
   it("hides the reload action when the route is unavailable", async () => {
@@ -387,5 +408,116 @@ describe("loadVersions capability degradation", () => {
     await store.loadVersions();
     expect(store.versionsAvailable).toBe(true);
     expect(store.error).toBe("boom");
+  });
+});
+
+const imported = (secrets: string[]) => ({
+  imported: { flows: 1, connections: 0, schedules: 0 },
+  placeholder_secrets: secrets,
+});
+
+const pullResult = (state: string, result: unknown = null) => ({
+  state,
+  sha: "abc",
+  result,
+  conflicts: [],
+  warnings: [],
+});
+
+describe("branch switch, pull and merge", () => {
+  const activeStore = () => {
+    mocks.getActive.mockResolvedValue({ project: PROJECT, dirty: false });
+    const store = useProjectStore();
+    store.activeProject = PROJECT;
+    return store;
+  };
+
+  const expectPostImport = () => {
+    expect(mocks.setFlowId).toHaveBeenCalledWith(-1);
+    expect(mocks.invalidateOverview).toHaveBeenCalled();
+    expect(mocks.getActive).toHaveBeenCalled();
+    expect(mocks.getVersions).toHaveBeenCalled();
+  };
+
+  it("a switch clears the open flow, keeps its secrets to fill and re-reads the project", async () => {
+    mocks.switchBranch.mockResolvedValue(imported(["prod_pw"]));
+    const store = activeStore();
+    await store.switchBranch("feature", true);
+    expect(mocks.switchBranch).toHaveBeenCalledWith("feature", true);
+    expect(store.placeholderSecrets).toEqual(["prod_pw"]);
+    expectPostImport();
+  });
+
+  it("a pull that applied an import runs the same path", async () => {
+    mocks.pull.mockResolvedValue(pullResult("fast_forward", imported(["api_key"])));
+    const store = activeStore();
+    const result = await store.pull();
+    expect(result.state).toBe("fast_forward");
+    expect(store.placeholderSecrets).toEqual(["api_key"]);
+    expectPostImport();
+  });
+
+  it("a pull stopped on conflicts, or with nothing to pull, leaves the open flow alone", async () => {
+    const store = activeStore();
+    store.placeholderSecrets = ["kept"];
+    for (const state of ["conflicted", "up_to_date", "ahead"]) {
+      mocks.pull.mockResolvedValueOnce(pullResult(state));
+      await store.pull();
+    }
+    expect(mocks.setFlowId).not.toHaveBeenCalled();
+    expect(mocks.invalidateOverview).not.toHaveBeenCalled();
+    expect(store.placeholderSecrets).toEqual(["kept"]);
+  });
+
+  it("settling the last item, or concluding, applies the merge like a pull", async () => {
+    const store = activeStore();
+    mocks.settleMerge.mockResolvedValueOnce({ merge: { conflicts: [] }, pull: null });
+    await store.settleMerge("flows/a.flow.yaml", "step:2", "ours");
+    expect(mocks.setFlowId).not.toHaveBeenCalled();
+
+    mocks.settleMerge.mockResolvedValueOnce({
+      merge: null,
+      pull: pullResult("merged", imported(["s1"])),
+    });
+    await store.settleMerge("flows/a.flow.yaml", "step:3", "theirs", true);
+    expect(mocks.settleMerge).toHaveBeenLastCalledWith(
+      "flows/a.flow.yaml",
+      "step:3",
+      "theirs",
+      true,
+    );
+    expect(store.placeholderSecrets).toEqual(["s1"]);
+    expectPostImport();
+
+    vi.clearAllMocks();
+    mocks.getVersions.mockResolvedValue([]);
+    mocks.concludeMerge.mockResolvedValue(pullResult("merged", imported(["s2"])));
+    await store.concludeMerge(true);
+    expect(mocks.concludeMerge).toHaveBeenCalledWith(true);
+    expect(store.placeholderSecrets).toEqual(["s2"]);
+    expectPostImport();
+  });
+
+  it("remembers a flow opened from the merge until the merge ends", async () => {
+    const store = activeStore();
+    mocks.openMergeFlow.mockResolvedValue(42);
+    expect(await store.openMergeFlow("flows/a.flow.yaml")).toBe(42);
+    expect(store.isMergeFlow(42)).toBe(true);
+    expect(store.isMergeFlow(7)).toBe(false);
+
+    mocks.concludeMerge.mockResolvedValue(pullResult("merged", imported([])));
+    await store.concludeMerge();
+    expect(store.isMergeFlow(42)).toBe(false);
+  });
+
+  it("after the editor settled a flow, answers what is left of the pull", async () => {
+    const store = activeStore();
+    mocks.getMerge.mockResolvedValueOnce({ conflicts: [{}, {}] });
+    expect(await store.afterEditorSettle()).toEqual({ state: "settle_rest", left: 2 });
+    mocks.getMerge.mockResolvedValueOnce({ conflicts: [] });
+    expect(await store.afterEditorSettle()).toEqual({ state: "conclude" });
+    mocks.getMerge.mockResolvedValueOnce(null);
+    expect(await store.afterEditorSettle()).toEqual({ state: "merged" });
+    expect(mocks.invalidateOverview).toHaveBeenCalled();
   });
 });

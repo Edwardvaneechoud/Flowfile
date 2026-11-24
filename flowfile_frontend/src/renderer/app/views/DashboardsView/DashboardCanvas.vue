@@ -499,6 +499,8 @@ const onUpdateTile = (next: DashboardTileType) => {
   position: relative;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
   overflow: auto;
   padding: var(--spacing-2) 0 48px;
   background: var(--el-fill-color-blank);
