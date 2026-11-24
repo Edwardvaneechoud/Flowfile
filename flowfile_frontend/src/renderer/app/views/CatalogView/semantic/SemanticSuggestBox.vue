@@ -34,17 +34,12 @@
         :show-review-link="showReviewLink"
         @review="emit('review')"
       />
-      <p v-if="!running" class="note">
-        The AI only proposes. Every suggestion is checked against your data and waits in Review
-        until someone accepts it.
-      </p>
     </template>
     <template v-else>
       <LocalModelSetupCard
         v-if="canOfferLocal || notSetUp"
         compact
         title="Let AI on this computer make specific suggestions"
-        description="A small model that runs here. Nothing leaves this computer, and you approve everything it proposes."
         @installed="onInstalled"
         @open-settings="router.push({ name: 'ai' })"
       />

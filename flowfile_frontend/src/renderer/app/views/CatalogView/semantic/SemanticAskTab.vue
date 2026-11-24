@@ -71,7 +71,6 @@
           v-if="canOfferLocal || notSetUp"
           compact
           title="Let AI on this computer answer questions"
-          description="A small model that runs here. It only picks an approved metric; the numbers come from your data."
           @installed="notSetUp = false"
           @open-settings="router.push({ name: 'ai' })"
         />

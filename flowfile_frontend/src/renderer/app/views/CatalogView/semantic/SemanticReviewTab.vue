@@ -28,9 +28,6 @@
       class="empty-ask"
       data-testid="review-empty-ask"
     >
-      <p v-if="store.reviewQueue.length === 0" class="muted">
-        Want something particular? Ask the AI for it; what it proposes waits here.
-      </p>
       <SemanticSuggestBox :model="model" :show-review-link="false" @done="boxUsed = true" />
     </div>
 

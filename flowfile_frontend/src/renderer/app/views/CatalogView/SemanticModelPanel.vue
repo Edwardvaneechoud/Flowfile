@@ -108,7 +108,6 @@
         compact
         class="local-offer"
         title="Let AI on this computer write the descriptions"
-        description="A small model that runs here, on your own computer. Nothing leaves it, and you approve everything it proposes."
         @installed="onLocalInstalled"
         @open-settings="router.push({ name: 'ai' })"
       />
@@ -287,7 +286,7 @@ function summarize(out: SuggestOut | SemanticDraftOut): string {
     parts.length === 1
       ? parts[0]
       : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
-  return `Proposed ${list}. Nothing is live until you approve it.`;
+  return `Proposed ${list}.`;
 }
 
 function warningsFor(out: SuggestOut | SemanticDraftOut): string[] {

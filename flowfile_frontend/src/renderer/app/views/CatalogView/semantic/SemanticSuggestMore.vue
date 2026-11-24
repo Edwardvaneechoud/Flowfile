@@ -55,8 +55,8 @@ const testId = computed(() => props.kinds.join("-"));
 
 const buttonHint = computed(() =>
   usable.value
-    ? "The rules look first, then the AI looks for what rules miss. Everything waits in Review."
-    : "The rules look for these from names, types and the data. Everything waits in Review.",
+    ? "The rules look first, then the AI looks for what rules miss."
+    : "The rules look for these from names, types and the data.",
 );
 </script>
 
