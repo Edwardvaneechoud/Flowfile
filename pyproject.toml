@@ -80,6 +80,7 @@ gcsfs = ">=2026.6.0"
 google-analytics-data = ">=0.18.0"
 alembic = "^1.13.0"
 sqlalchemy = "^2.0.27"
+glosslayer = ">=0.1.0,<0.2"
 greenlet = ">=3.0"  # SQLAlchemy 2.1 no longer brings it, and polars' read_database needs its asyncio module
 litellm = "^1.83.14"
 filelock = "^4.2.1"

@@ -15,6 +15,7 @@ from flowfile_core.catalog.delta_utils import (
 )
 from flowfile_core.catalog.exceptions import TableExistsError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.semantic import host as semantic
 from flowfile_core.catalog.storage_backend import (
     _catalog_table_dir_name,
     _is_cloud_uri,
@@ -430,7 +431,7 @@ def _register_catalog_table(
             repo = SQLAlchemyCatalogRepository(db)
             svc = CatalogService(repo)
             if existing is not None:
-                svc.overwrite_table_data(
+                written = svc.overwrite_table_data(
                     table_id=existing.id,
                     table_path=str(dest_path),
                     source_registration_id=source_registration_id,
@@ -441,7 +442,7 @@ def _register_catalog_table(
                     **meta_kwargs,
                 )
             else:
-                svc.register_table_from_data(
+                written = svc.register_table_from_data(
                     name=settings.table_name,
                     table_path=str(dest_path),
                     owner_id=user_id,
@@ -460,6 +461,7 @@ def _register_catalog_table(
             except OSError:
                 logger.warning("Failed to clean up orphan table %s", dest_path, exc_info=True)
         raise
+    semantic.on_table_written(written.qualified_name)
 
     old_path = getattr(existing, "file_path", None) if existing is not None else None
     if old_path and str(old_path) != str(dest_path) and not _is_cloud_uri(str(old_path)) and is_delta_table(old_path):
