@@ -178,8 +178,8 @@ def _table_row(name: str) -> CatalogTable:
 
 
 def _tables_yaml(root: Path) -> dict[str, dict]:
-    data = yaml.safe_load(manifest.tables_manifest_path(root).read_text(encoding="utf-8")) or {}
-    return {e["name"]: e for e in data.get("tables") or []}
+    entries = (yaml.safe_load(f.read_text(encoding="utf-8")) for f in sorted((root / "tables").glob("*.table.yaml")))
+    return {e["name"]: e for e in entries}
 
 
 def _delete_all(tag: str, flow_uuids: list[str]) -> None:
@@ -466,11 +466,11 @@ def test_table_lineage_and_pointers_through_a_reload(tmp_path):
         assert entries[f"view_{tag}"]["source_flow_uuid"] == flow_uuid
         assert entries[f"pointer_{tag}"]["pointer"]["type"] == "external"
 
-        data = yaml.safe_load(manifest.tables_manifest_path(root).read_text(encoding="utf-8"))
-        for e in data["tables"]:
+        for f in (root / "tables").glob("*.table.yaml"):
+            e = yaml.safe_load(f.read_text(encoding="utf-8"))
             if e["name"] == f"pointer_{tag}":
                 e["pointer"] = {"type": "none"}
-        manifest.tables_manifest_path(root).write_text(yaml.safe_dump(data), encoding="utf-8")
+                f.write_text(yaml.safe_dump(e), encoding="utf-8")
         with get_db_context() as db:
             db.query(CatalogTable).filter_by(name=f"view_{tag}").update({"source_registration_id": None})
             db.commit()

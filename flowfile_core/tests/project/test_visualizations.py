@@ -807,7 +807,7 @@ def test_each_chart_and_dashboard_is_a_file_named_after_it(tmp_path):
         assert list(chart)[:2] == ["viz_uuid", "name"] and chart["viz_uuid"] == vuuid
         board = yaml.safe_load(_dash_bytes(root)["Sales_overview.dashboard.yaml"])
         assert board["dashboard_uuid"] == duuid and board["layout"]["tiles"][0]["viz_uuid"] == vuuid
-        assert yaml.safe_load((root / "project.yaml").read_text(encoding="utf-8"))["project_format"] == 3
+        assert yaml.safe_load((root / "project.yaml").read_text(encoding="utf-8"))["project_format"] == 4
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)
@@ -888,7 +888,7 @@ def test_a_folder_of_the_older_layout_opens_unchanged_and_the_next_save_converts
         project_sync.save_version(OWNER, "converted")
         assert not (root / "visualizations.yaml").exists() and not (root / "dashboards.yaml").exists()
         assert (_viz_bytes(root), _dash_bytes(root)) == files
-        assert yaml.safe_load((root / "project.yaml").read_text(encoding="utf-8"))["project_format"] == 3
+        assert yaml.safe_load((root / "project.yaml").read_text(encoding="utf-8"))["project_format"] == 4
         assert not git_ops.is_dirty(root)
         assert project_sync.unsaved_changes(OWNER) == []
     finally:
