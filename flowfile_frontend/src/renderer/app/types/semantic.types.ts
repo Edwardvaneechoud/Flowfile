@@ -343,6 +343,7 @@ export interface SemanticAskOut {
   result: MetricQueryResult | null;
   answered_with: SemanticAnsweredWith | null;
   notes: string[];
+  partial?: boolean;
   degraded: boolean;
   reason: SemanticAskReason | null;
   no_metric_fits: boolean;
