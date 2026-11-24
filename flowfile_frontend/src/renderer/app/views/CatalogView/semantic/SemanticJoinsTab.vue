@@ -18,7 +18,12 @@
       </button>
     </SemanticSuggestMore>
 
-    <div v-if="edges.length > 0" class="diagram" data-testid="semantic-join-diagram">
+    <div
+      v-if="edges.length > 0"
+      class="diagram"
+      :style="{ height: `${diagramHeight}px` }"
+      data-testid="semantic-join-diagram"
+    >
       <VueFlow
         :nodes="nodes"
         :edges="edges"
@@ -28,7 +33,11 @@
         :zoom-on-scroll="false"
         :pan-on-drag="false"
         :zoom-on-double-click="false"
+        :min-zoom="0.2"
+        :max-zoom="1"
         fit-view-on-init
+        @pane-ready="onPaneReady"
+        @nodes-initialized="fitDiagram"
       />
     </div>
 
@@ -74,9 +83,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
-import { MarkerType, Position, VueFlow, type Edge, type Node } from "@vue-flow/core";
+import {
+  MarkerType,
+  Position,
+  VueFlow,
+  type Edge,
+  type Node,
+  type VueFlowStore,
+} from "@vue-flow/core";
 import type { JoinCheck, SemanticJoin, SemanticModel } from "../../../types/semantic.types";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
 import SemanticJoinDialog from "./SemanticJoinDialog.vue";
@@ -222,6 +238,28 @@ const nodes = computed<Node[]>(() => {
   });
 });
 
+/** Tall enough for the fullest column of tables, within limits; the view is refitted when it changes. */
+const diagramHeight = computed(() => {
+  const perColumn = new Map<number, number>();
+  for (const col of columns.value.values()) perColumn.set(col, (perColumn.get(col) ?? 0) + 1);
+  const rows = Math.max(1, ...perColumn.values());
+  return Math.min(480, Math.max(180, rows * 80 + 100));
+});
+
+let flow: VueFlowStore | null = null;
+
+function fitDiagram() {
+  void nextTick(() => flow?.fitView({ padding: 0.2, maxZoom: 1 }));
+}
+
+function onPaneReady(instance: VueFlowStore) {
+  flow = instance;
+  fitDiagram();
+}
+
+// A join added or removed changes the tables shown and the box's height, so the view is fitted again.
+watch([() => nodes.value.map((n) => n.id).join("|"), diagramHeight], fitDiagram, { flush: "post" });
+
 const edges = computed<Edge[]>(() =>
   props.model.joins.map((j) => ({
     id: j.key,
@@ -272,7 +310,6 @@ const edges = computed<Edge[]>(() =>
 }
 
 .diagram {
-  height: 220px;
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   background: var(--color-background-secondary);
