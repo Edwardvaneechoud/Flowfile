@@ -36,6 +36,7 @@ from flowfile_core.schemas.semantic_schema import (
     SemanticModelOut,
     SemanticModelUpdate,
     SemanticSyncOut,
+    SuggestOut,
 )
 
 router = APIRouter(prefix="/catalog", tags=["catalog"], dependencies=[Depends(get_current_active_user)])
@@ -126,6 +127,16 @@ def get_semantic_history(
 def sync_semantic_model(namespace_id: int, service: SemanticModelService = Depends(get_semantic_service)):
     """Re-read the whole catalog into the ledger now (new and dropped tables and columns)."""
     return service.sync(namespace_id)
+
+
+@router.post(f"{_BASE}/suggest", response_model=SuggestOut)
+@_handle
+def suggest_semantic_model(namespace_id: int, service: SemanticModelService = Depends(get_semantic_service)):
+    """Rule-based proposals from one aggregate query per table (no AI): roles, joins and metrics, queued for review.
+
+    A second call adds nothing. Without a reachable worker the rules use names and types, ``stats_available`` false.
+    """
+    return service.suggest(namespace_id)
 
 
 @router.post(f"{_BASE}/query", response_model=MetricQueryResult)

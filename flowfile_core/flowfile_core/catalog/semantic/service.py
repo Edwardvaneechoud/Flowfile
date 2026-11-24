@@ -602,6 +602,212 @@ class SemanticModelService:
         with _ledger_errors(self.user_id):
             return self.view.to_yaml(namespace=path)
 
+    def suggest_candidates(
+        self, namespace_id: int, table_ids: list[int] | None = None
+    ) -> tuple[Any, dict[int, Any], str | None]:
+        """Rule candidates for the model's tables (``suggest.py``), built in memory; nothing is stored here.
+
+        Returns the ``Suggestions``, the model's tables by id and, when statistics fell back, why.
+        """
+        from flowfile_core.catalog.semantic.suggest import collect_stats, suggest
+
+        _ns, _path, _cp, model_tables, _all, _schema_of = self._scope(namespace_id)
+        tables = [t for t in sorted(model_tables.values(), key=lambda t: t.key)]
+        if table_ids:
+            wanted = set(table_ids)
+            unknown = wanted - set(model_tables)
+            if unknown:
+                raise SemanticValueError(f"Table id={min(unknown)} is not part of this semantic model")
+        stats, problem = collect_stats(tables, self._stats_query)
+        sugg = suggest(stats)
+        if table_ids:
+            keep = set(table_ids)
+            sugg.roles = [r for r in sugg.roles if r.table_id in keep]
+            sugg.joins = [j for j in sugg.joins if j.from_table_id in keep or j.to_table_id in keep]
+            sugg.metrics = [m for m in sugg.metrics if m.table_id in keep]
+        sugg.stats = {st.table.table_id: st for st in stats}
+        return sugg, model_tables, problem
+
+    def _stats_query(self, sql: str) -> Any:
+        return self._catalog_service().execute_sql_query(sql, max_rows=1, user_id=self.user_id)
+
+    def suggest(self, namespace_id: int) -> s.SuggestOut:
+        """Rule-based proposals (roles, joins, metrics) stored with an inferred source, so they queue for review."""
+        sugg, model_tables, problem = self.suggest_candidates(namespace_id)
+        out = self.store_suggestions(namespace_id, sugg)
+        out.tables = len(model_tables)
+        out.stats_available = sugg.stats_available and problem is None
+        out.stats_message = problem
+        return out
+
+    def store_suggestions(
+        self,
+        namespace_id: int,
+        sugg: Any,
+        *,
+        words: dict[int, dict[str, Any]] | None = None,
+        ai_source: str | None = None,
+    ) -> s.SuggestOut:
+        """Store ``sugg`` as proposals, skipping what the model already holds; ``words`` are an AI's descriptions.
+
+        Roles and joins keep the rules' inferred source. With ``words`` (per table id: ``description``, ``columns``
+        {column: sentence}, ``metrics`` {rule name: (name, meaning)}) the descriptions and the renamed metrics are
+        stated by ``ai_source`` through a view bound with that ``via``, so glosslayer queues them and never lets the
+        AI accept. Each proposal carries its evidence as the rationale (the ledger's comment) and a confidence.
+        """
+        from glosslayer.ids import SubjectId
+        from glosslayer.ledger import Proposal
+        from glosslayer.modeling import Metric
+
+        from flowfile_core.catalog.semantic.suggest import RULE_SOURCE
+
+        ns, path, catalog_path, model_tables, all_tables, schema_of = self._scope(namespace_id)
+        self._require_writable(ns)
+        snap = self.snapshot(namespace_id, sync=False)
+        words = words or {}
+        out = s.SuggestOut(namespace_id=namespace_id)
+
+        def created(results: list[Any]) -> int:
+            return sum(1 for r in results if r.outcome == "created")
+
+        def held(results: list[Any]) -> int:
+            return sum(1 for r in results if r.outcome != "created")
+
+        def tag(props: list[Any], rationale: str, confidence: float) -> list[Any]:
+            for p in props:
+                p.comment, p.confidence = rationale, round(confidence, 2)
+            return props
+
+        tables_by_id = {t.table_id: t for t in snap.tables}
+        role_props = []
+        for r in sugg.roles:
+            ts = tables_by_id.get(r.table_id)
+            col = ts.column(r.column) if ts else None
+            if ts is None or col is None or col.facts.get("role") is not None:
+                out.skipped.roles += 1
+                continue
+            sid = SubjectId.for_field(ts.key, r.column)
+            role_props.append(Proposal(str(sid), "role", r.role, r.confidence, [], r.rationale))
+
+        existing_joins = {(j.from_table, j.to_table, tuple(j.from_columns), tuple(j.to_columns)) for j in snap.joins}
+        join_props: list[list[Any]] = []
+        for j in sugg.joins:
+            f, t = all_tables.get(j.from_table_id), all_tables.get(j.to_table_id)
+            if f is None or t is None or (f.key, t.key, tuple(j.from_columns), tuple(j.to_columns)) in existing_joins:
+                out.skipped.joins += 1
+                continue
+            from glosslayer.modeling import Relationship
+
+            body = s.JoinProposal(
+                kind="join",
+                name=j.name,
+                from_table_id=j.from_table_id,
+                to_table_id=j.to_table_id,
+                from_columns=j.from_columns,
+                to_columns=j.to_columns,
+                description=j.description,
+            )
+            props = self._join_proposals(
+                body, ns, path, catalog_path, model_tables, all_tables, schema_of, Relationship
+            )
+            join_props.append(tag(props, j.rationale, j.confidence))
+
+        names = self._metric_names(path)
+        exprs = {(m.table, (m.expression or "").replace(" ", "").lower()) for m in snap.metrics}
+        rule_metrics: list[list[Any]] = []
+        ai_metrics: list[list[Any]] = []
+        for m in sugg.metrics:
+            t = model_tables.get(m.table_id)
+            if t is None or (t.key, m.expression.replace(" ", "").lower()) in exprs:
+                out.skipped.metrics += 1
+                continue
+            name, description, by_ai = m.name, m.description, False
+            better = (words.get(m.table_id) or {}).get("metrics", {}).get(m.name)
+            if better and ai_source:
+                name, description, by_ai = better[0] or m.name, better[1] or m.description, True
+            if name in names:
+                if not by_ai or m.name in names:
+                    out.skipped.metrics += 1
+                    continue
+                name, description, by_ai = m.name, m.description, False
+            proposal = s.MetricProposal(
+                kind="metric",
+                table_id=t.table_id,
+                name=name,
+                expression=m.expression,
+                description=description,
+                aggregate=m.aggregate,
+                time_column=m.time_column,
+                dimensions=m.dimensions or None,
+            )
+            try:
+                validate_metric(t, proposal)
+            except SemanticValueError:
+                out.skipped.metrics += 1
+                continue
+            names[name] = t.key
+            metric = Metric(
+                name,
+                m.expression,
+                description=description,
+                aggregate=m.aggregate,
+                time_column=m.time_column,
+                dimensions=list(m.dimensions or []),
+                table=t.key,
+            )
+            rationale = m.rationale + (" Name and meaning written by AI." if by_ai else "")
+            (ai_metrics if by_ai else rule_metrics).append(tag(list(metric.proposals()), rationale, m.confidence))
+
+        desc_props = []
+        if ai_source:
+            for table_id, w in words.items():
+                ts = tables_by_id.get(table_id)
+                if ts is None:
+                    continue
+                text = (w.get("description") or "").strip()
+                if text and ts.facts.get("description") is None:
+                    desc_props.append(
+                        Proposal(str(SubjectId.for_dataset(ts.key)), "description", text, 0.6, [], "Written by AI.")
+                    )
+                for column, sentence in (w.get("columns") or {}).items():
+                    col = ts.column(column)
+                    sentence = (sentence or "").strip()
+                    if col is None or not sentence:
+                        continue
+                    if col.facts.get("description") is not None:
+                        out.skipped.descriptions += 1
+                        continue
+                    desc_props.append(
+                        Proposal(
+                            str(SubjectId.for_field(ts.key, column)), "description", sentence, 0.6, [], "Written by AI."
+                        )
+                    )
+
+        with _ledger_errors(self.user_id):
+            if role_props:
+                res = self.view.propose_many(role_props, source=RULE_SOURCE)
+                out.added.roles += created(res)
+                out.skipped.roles += held(res)
+            for props in join_props:
+                res = self.view.propose_many(props, source=RULE_SOURCE)
+                out.added.joins += 1 if created(res) else 0
+                out.skipped.joins += 0 if created(res) else 1
+            for props in rule_metrics:
+                res = self.view.propose_many(props, source=RULE_SOURCE)
+                out.added.metrics += 1 if created(res) else 0
+                out.skipped.metrics += 0 if created(res) else 1
+            if ai_source and (desc_props or ai_metrics):
+                ai_view = host.view_for(self.user, self.access, via=ai_source)
+                if desc_props:
+                    res = ai_view.propose_many(desc_props, source=ai_source)
+                    out.added.descriptions += created(res)
+                    out.skipped.descriptions += held(res)
+                for props in ai_metrics:
+                    res = ai_view.propose_many(props, source=ai_source)
+                    out.added.metrics += 1 if created(res) else 0
+                    out.skipped.metrics += 0 if created(res) else 1
+        return out
+
     def _catalog_service(self) -> CatalogService:
         """The catalog service as the catalog router builds it, so table access is enforced the same way."""
         return CatalogService(self.repo, access=self.access)

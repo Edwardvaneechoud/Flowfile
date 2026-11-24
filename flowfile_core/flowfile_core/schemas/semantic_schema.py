@@ -314,3 +314,91 @@ class MetricQuerySaveAsFlow(BaseModel):
 class MetricQuerySaveAsFlowOut(BaseModel):
     flow_id: int
     sql: str
+
+
+class SuggestCounts(BaseModel):
+    roles: int = 0
+    descriptions: int = 0
+    joins: int = 0
+    metrics: int = 0
+
+
+class SuggestOut(BaseModel):
+    """What ``POST …/semantic-model/suggest`` (and the AI draft) stored. ``added`` are new proposals; ``skipped`` the
+    candidates the model already holds (accepted, pending or once rejected). ``stats_available`` is false when the
+    worker could not be reached and the rules ran on names and types alone; ``stats_message`` says why."""
+
+    namespace_id: int
+    tables: int = 0
+    added: SuggestCounts = Field(default_factory=SuggestCounts)
+    skipped: SuggestCounts = Field(default_factory=SuggestCounts)
+    stats_available: bool = False
+    stats_message: str | None = None
+
+
+class SemanticDraftIn(BaseModel):
+    """``POST /ai/semantic/draft``: words for the rule candidates of ``table_ids`` (default: every table)."""
+
+    namespace_id: int
+    table_ids: list[int] | None = None
+    provider: str | None = Field(default=None, min_length=1)
+    model: str | None = None
+
+
+class SemanticDraftTable(BaseModel):
+    """One table's call(s): ``ok`` with the words stored, or ``degraded`` with the ``reason`` it fell back on."""
+
+    table_id: int
+    table: str
+    calls: int = 0
+    ok: bool = False
+    reason: str | None = None
+    message: str | None = None
+
+
+class SemanticDraftOut(SuggestOut):
+    provider: str
+    model: str | None = None
+    table_outcomes: list[SemanticDraftTable] = Field(default_factory=list)
+    degraded: bool = False
+    reason: str | None = None
+
+
+class SemanticAskIn(BaseModel):
+    namespace_id: int
+    question: str = Field(min_length=1, max_length=1000)
+    provider: str | None = Field(default=None, min_length=1)
+    model: str | None = None
+
+
+class SemanticAnsweredWith(BaseModel):
+    name: str
+    version: int | None = None
+    status: str
+    approved_by: str | None = None
+
+
+class SemanticAskOut(BaseModel):
+    """``POST /ai/semantic/ask``. ``query`` is what ran (or what the model proposed when it could not run); ``result``
+    the rows, which never go back to the model. ``no_metric_fits`` when no accepted metric answers the question
+    (``notes`` then holds the model's reason). ``notes`` also lists every name repaired or dropped at the seam."""
+
+    question: str
+    provider: str
+    model: str | None = None
+    query: MetricQuery | None = None
+    result: MetricQueryResult | None = None
+    answered_with: SemanticAnsweredWith | None = None
+    notes: list[str] = Field(default_factory=list)
+    degraded: bool = False
+    reason: str | None = None
+    no_metric_fits: bool = False
+    attempts: int = 0
+
+
+class AiNotSetUpOut(BaseModel):
+    """The 409 body of both AI semantic routes when no provider is named, saved or installed locally."""
+
+    error_code: Literal["AI_NOT_SET_UP"] = "AI_NOT_SET_UP"
+    message: str
+    local_available: bool
