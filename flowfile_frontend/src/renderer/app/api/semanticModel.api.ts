@@ -1,6 +1,7 @@
 // Semantic model API: one function per route of routes/catalog_semantic.py (no trailing slashes)
 import axios from "../services/axios.config";
 import type {
+  JoinCheck,
   MetricQuery,
   SemanticAskOut,
   SemanticAskRequest,
@@ -41,6 +42,11 @@ export class SemanticModelApi {
     const response = await axios.post<SemanticFact[]>(`${base(namespaceId)}/proposals`, {
       proposals,
     });
+    return response.data;
+  }
+
+  static async checkJoins(namespaceId: number): Promise<JoinCheck[]> {
+    const response = await axios.post<JoinCheck[]>(`${base(namespaceId)}/joins/check`);
     return response.data;
   }
 

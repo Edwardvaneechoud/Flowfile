@@ -28,6 +28,17 @@
             <el-option v-for="t in tables" :key="t.id" :label="t.label" :value="t.id" />
           </el-select>
         </el-form-item>
+        <button
+          type="button"
+          class="swap-sides"
+          title="Swap sides"
+          aria-label="Swap sides"
+          data-testid="semantic-join-swap"
+          :disabled="fromId === null && toId === null"
+          @click="swapSides"
+        >
+          <i class="fa-solid fa-right-left"></i>
+        </button>
         <el-form-item label="To table (one row)">
           <el-select v-model="toId" filterable placeholder="Table" @change="pairs = [emptyPair()]">
             <el-option v-for="t in tables" :key="t.id" :label="t.label" :value="t.id" />
@@ -62,7 +73,19 @@
       </el-form-item>
     </el-form>
 
-    <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+    <div v-if="error" class="form-error" role="alert">
+      <p>{{ error }}</p>
+      <button
+        v-if="reversed"
+        type="button"
+        class="btn btn-secondary btn-sm"
+        data-testid="semantic-join-swap-retry"
+        :disabled="saving"
+        @click="swapAndRetry"
+      >
+        <i class="fa-solid fa-right-left"></i> Swap sides and try again
+      </button>
+    </div>
 
     <template #footer>
       <button class="btn btn-secondary" @click="emit('update:modelValue', false)">Cancel</button>
@@ -125,6 +148,21 @@ const valid = computed(
     pairs.value.every((p) => p.from && p.to),
 );
 
+// Core's refusal of a join whose sides are the wrong way round starts with this sentence.
+const REVERSED_MARK = "wrong way round";
+const reversed = computed(() => error.value.includes(REVERSED_MARK));
+
+function swapSides() {
+  [fromId.value, toId.value] = [toId.value, fromId.value];
+  pairs.value = pairs.value.map((p) => ({ from: p.to, to: p.from }));
+  error.value = "";
+}
+
+async function swapAndRetry() {
+  swapSides();
+  await save();
+}
+
 function reset() {
   name.value = "";
   fromId.value = null;
@@ -174,7 +212,7 @@ async function save() {
 
 .sides {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr auto 1fr;
   gap: var(--spacing-3);
 }
 
@@ -198,8 +236,36 @@ async function save() {
 }
 
 .form-error {
-  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-2);
   color: var(--color-danger);
   font-size: var(--font-size-sm);
+}
+
+.form-error p {
+  margin: 0;
+}
+
+.swap-sides {
+  align-self: center;
+  margin-top: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.swap-sides:hover:not(:disabled) {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.swap-sides:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 </style>

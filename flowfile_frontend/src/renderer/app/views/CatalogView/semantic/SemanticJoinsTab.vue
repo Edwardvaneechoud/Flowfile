@@ -62,6 +62,29 @@
           </code>
         </div>
         <p v-if="join.description" class="join-desc">{{ join.description }}</p>
+        <div
+          v-if="checkOf(join) && checkOf(join)?.verdict !== 'ok'"
+          class="join-check"
+          :class="checkOf(join)?.verdict === 'unchecked' ? 'join-check-quiet' : 'join-check-warn'"
+          data-testid="semantic-join-check"
+        >
+          <i
+            v-if="checkOf(join)?.verdict !== 'unchecked'"
+            class="fa-solid fa-triangle-exclamation"
+          ></i>
+          <span>{{ checkOf(join)?.message }}</span>
+          <button
+            v-if="canFix(join)"
+            type="button"
+            class="btn btn-secondary btn-sm"
+            data-testid="semantic-join-fix"
+            :disabled="fixing !== null"
+            @click="fixDirection(join)"
+          >
+            <i class="fa-solid fa-right-left"></i>
+            {{ fixing === join.key ? "Fixing…" : "Fix direction" }}
+          </button>
+        </div>
       </li>
     </ul>
 
@@ -70,17 +93,81 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import { ElMessage } from "element-plus";
 import { MarkerType, Position, VueFlow, type Edge, type Node } from "@vue-flow/core";
-import type { SemanticModel } from "../../../types/semantic.types";
+import type { JoinCheck, SemanticJoin, SemanticModel } from "../../../types/semantic.types";
+import { useSemanticModelStore } from "../../../stores/semantic-model-store";
 import SemanticJoinDialog from "./SemanticJoinDialog.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
-import { tablePageLocation } from "./semanticFormat";
+import { errorText, tablePageLocation } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
 const router = useRouter();
+const store = useSemanticModelStore();
 const showDialog = ref(false);
+const fixing = ref<string | null>(null);
+
+// Re-measure when the tab opens and whenever a join's ends, columns or status change.
+const joinsSignature = computed(() =>
+  JSON.stringify([
+    props.model.namespace_id,
+    props.model.joins.map((j) => [
+      j.key,
+      j.from_table,
+      j.to_table,
+      j.from_columns,
+      j.to_columns,
+      j.status,
+    ]),
+  ]),
+);
+watch(joinsSignature, () => void store.checkJoins(), { immediate: true });
+
+const checkOf = (join: SemanticJoin): JoinCheck | undefined => store.joinChecks[join.key];
+
+const isWrong = (join: SemanticJoin) => {
+  const verdict = checkOf(join)?.verdict;
+  return verdict === "reversed" || verdict === "many_to_many";
+};
+
+/** A reversed, accepted join this model owns can be re-proposed under its name with the sides swapped. */
+const canFix = (join: SemanticJoin) =>
+  checkOf(join)?.verdict === "reversed" &&
+  join.status === "accepted" &&
+  join.from_table_id !== null &&
+  join.to_table_id !== null &&
+  (join.layer === "schema" || props.model.level === 0);
+
+async function fixDirection(join: SemanticJoin) {
+  if (join.from_table_id === null || join.to_table_id === null) return;
+  fixing.value = join.key;
+  try {
+    const facts = await store.propose([
+      {
+        kind: "join",
+        name: join.name,
+        from_table_id: join.to_table_id,
+        to_table_id: join.from_table_id,
+        from_columns: join.to_columns,
+        to_columns: join.from_columns,
+        description: join.description,
+      },
+    ]);
+    if (facts.some((f) => f.status !== "accepted")) {
+      ElMessage.info(
+        "Proposed with its sides swapped. It replaces this join once accepted in Review.",
+      );
+    } else {
+      ElMessage.success("Direction fixed.");
+    }
+  } catch (e) {
+    ElMessage.error(errorText(e, "Could not fix the direction"));
+  } finally {
+    fixing.value = null;
+  }
+}
 
 const tableNames = computed(() => {
   const names = new Set<string>();
@@ -145,8 +232,12 @@ const edges = computed<Edge[]>(() =>
     source: j.from_table,
     target: j.to_table,
     label: "many → one",
-    markerEnd: MarkerType.ArrowClosed,
+    markerEnd: isWrong(j)
+      ? { type: MarkerType.ArrowClosed, color: "var(--color-warning-dark)" }
+      : MarkerType.ArrowClosed,
     animated: j.status !== "accepted",
+    style: isWrong(j) ? { stroke: "var(--color-warning-dark)", strokeWidth: 2 } : undefined,
+    labelStyle: isWrong(j) ? { fill: "var(--color-warning-dark)" } : undefined,
   })),
 );
 </script>
@@ -265,6 +356,30 @@ const edges = computed<Edge[]>(() =>
 
 .table-link:hover {
   text-decoration-style: solid;
+}
+
+.join-check {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-2);
+  padding-left: var(--spacing-3);
+  font-size: var(--font-size-xs);
+}
+
+.join-check-warn {
+  border-left: 3px solid var(--color-warning-dark);
+  color: var(--color-warning-dark);
+}
+
+.join-check-quiet {
+  border-left: 3px solid var(--color-border-light);
+  color: var(--color-text-muted);
+}
+
+.join-check span {
+  flex: 1 1 240px;
 }
 
 .join-desc {

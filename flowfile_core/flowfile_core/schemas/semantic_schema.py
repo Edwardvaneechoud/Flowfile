@@ -405,3 +405,14 @@ class AiNotSetUpOut(BaseModel):
     error_code: Literal["AI_NOT_SET_UP"] = "AI_NOT_SET_UP"
     message: str
     local_available: bool
+
+
+class JoinCheckOut(BaseModel):
+    """One join of the model measured against the data: ``ok`` (the to side holds one row per key), ``reversed``
+    (the to side repeats and the from side is unique: the sides are swapped), ``many_to_many`` (both repeat, so the
+    join would multiply rows) or ``unchecked`` (no compute, an empty or unreadable table); ``message`` says which."""
+
+    key: str
+    name: str
+    verdict: Literal["ok", "reversed", "many_to_many", "unchecked"]
+    message: str

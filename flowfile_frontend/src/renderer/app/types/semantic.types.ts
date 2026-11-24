@@ -75,6 +75,16 @@ export interface SemanticJoin {
   layer: "schema" | "catalog";
 }
 
+/** A join measured against the data (POST …/semantic-model/joins/check). */
+export type JoinCheckVerdict = "ok" | "reversed" | "many_to_many" | "unchecked";
+
+export interface JoinCheck {
+  key: string;
+  name: string;
+  verdict: JoinCheckVerdict;
+  message: string;
+}
+
 export interface SemanticTable {
   table_id: number;
   key: string;

@@ -24,6 +24,7 @@ from flowfile_core.catalog.semantic.service import SemanticModelService
 from flowfile_core.database.connection import get_db
 from flowfile_core.schemas.semantic_schema import (
     FactOut,
+    JoinCheckOut,
     MetricQuery,
     MetricQueryResult,
     MetricQuerySaveAsFlow,
@@ -96,6 +97,17 @@ def propose_semantic_facts(
 ):
     """Store proposals after checking them against the catalog; answers the stored facts with their status."""
     return service.propose(namespace_id, body.proposals)
+
+
+@router.post(f"{_BASE}/joins/check", response_model=list[JoinCheckOut])
+@_handle
+def check_semantic_joins(namespace_id: int, service: SemanticModelService = Depends(get_semantic_service)):
+    """Measure every join of the model (accepted and pending) against the data: one aggregate query per side.
+
+    Reading rights are enough. Each entry says ``ok``, ``reversed``, ``many_to_many`` or ``unchecked`` (no compute,
+    an empty or unreadable table), with a sentence a person can act on.
+    """
+    return service.check_joins(namespace_id)
 
 
 @router.get(f"{_BASE}/review", response_model=list[ReviewItemOut])

@@ -4,6 +4,7 @@ import { ref } from "vue";
 import { SemanticModelApi } from "../api/semanticModel.api";
 import { useCatalogStore } from "./catalog-store";
 import type {
+  JoinCheck,
   MetricQuery,
   SemanticAskOut,
   SemanticDraftOut,
@@ -39,8 +40,12 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
   const pendingAsk = ref<MetricQuery | null>(null);
   // A table another part of the UI wants the Tables tab to open; the tab consumes it.
   const focusTableId = ref<number | null>(null);
+  // Each join measured against the data, by join key; filled by checkJoins, empty until it answers.
+  const joinChecks = ref<Record<string, JoinCheck>>({});
 
   let loadToken = 0;
+  let joinCheckRunning = false;
+  let joinCheckAgain = false;
   let historyToken = 0;
 
   async function refreshReview() {
@@ -63,6 +68,7 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
       model.value = null;
       reviewQueue.value = [];
       history.value = [];
+      joinChecks.value = {};
     }
     namespaceId.value = id;
     loading.value = true;
@@ -168,6 +174,33 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     }
   }
 
+  /** Measure the model's joins; one request at a time, a call made meanwhile runs once after it, failures are
+   * silent (the list then shows no warnings). */
+  async function checkJoins() {
+    if (joinCheckRunning) {
+      joinCheckAgain = true;
+      return;
+    }
+    joinCheckRunning = true;
+    try {
+      do {
+        joinCheckAgain = false;
+        const id = namespaceId.value;
+        if (id === null) return;
+        try {
+          const checks = await SemanticModelApi.checkJoins(id);
+          if (namespaceId.value === id && !joinCheckAgain) {
+            joinChecks.value = Object.fromEntries(checks.map((c) => [c.key, c]));
+          }
+        } catch {
+          // a failed check leaves the joins unmarked
+        }
+      } while (joinCheckAgain);
+    } finally {
+      joinCheckRunning = false;
+    }
+  }
+
   const requestAsk = (query: MetricQuery) => {
     pendingAsk.value = query;
   };
@@ -186,6 +219,7 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     history.value = [];
     pendingAsk.value = null;
     focusTableId.value = null;
+    joinChecks.value = {};
     loading.value = false;
   }
 
@@ -204,6 +238,8 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     requestAsk,
     focusTableId,
     requestFocusTable,
+    joinChecks,
+    checkJoins,
     load,
     updateModel,
     propose,

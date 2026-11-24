@@ -85,6 +85,8 @@ def validate_metric(table: TableInfo, proposal: s.MetricProposal, execute: Calla
     error is the ``SemanticValueError`` the author sees, with the engine's message. Compute that cannot be reached
     does not block authoring: the dry-run is skipped and the proposal stored.
     """
+    from requests import RequestException
+
     from flowfile_core.flowfile.execution.errors import ComputeError
 
     candidate = _metric_snap(table, proposal)
@@ -96,7 +98,7 @@ def validate_metric(table: TableInfo, proposal: s.MetricProposal, execute: Calla
         return
     try:
         result = execute(compiled.sql)
-    except ComputeError as exc:
+    except (ComputeError, RequestException) as exc:
         logger.warning(
             "Semantic model: metric %r stored without a dry-run, compute unavailable: %s", proposal.name, exc
         )
@@ -399,9 +401,13 @@ class SemanticModelService:
                         raise SemanticValueError(f"{p.attribute!r} is read from the catalog and cannot be proposed")
                     props.append(Proposal(str(sid), p.attribute, p.value))
                 elif p.kind == "join":
-                    props += self._join_proposals(
+                    join_props = self._join_proposals(
                         p, ns, path, catalog_path, model_tables, all_tables, schema_of, Relationship
                     )
+                    rationale = self._check_new_join(p, all_tables)
+                    for jp in join_props:
+                        jp.comment = rationale
+                    props += join_props
                 else:
                     t = model_table(p.table_id)
                     owner = existing.get(p.name)
@@ -460,6 +466,48 @@ class SemanticModelService:
             namespace=layer,
         )
         return list(rel.proposals())
+
+    def _check_new_join(self, p: s.JoinProposal, all_tables: dict[int, TableInfo]) -> str:
+        """Measure a proposed join's two sides; refuse a reversed or many-to-many one, else answer its evidence."""
+        from flowfile_core.catalog.semantic.join_check import check_join
+
+        found = check_join(
+            all_tables[p.from_table_id],
+            list(p.from_columns),
+            all_tables[p.to_table_id],
+            list(p.to_columns),
+            self._dry_run,
+        )
+        if found.verdict in ("reversed", "many_to_many"):
+            raise SemanticValueError(found.message)
+        if found.verdict == "unchecked":
+            logger.warning("Semantic model: join %r stored unchecked: %s", p.name, found.message)
+            return found.message
+        return f"Checked: {found.message}"
+
+    def check_joins(self, namespace_id: int) -> list[s.JoinCheckOut]:
+        """Every join of the model (accepted and pending, both layers) measured the way a new join is."""
+        from flowfile_core.catalog.semantic.join_check import JoinCheck, check_join
+
+        snap = self.snapshot(namespace_id)
+        _ns, _path, _cp, _model, all_tables, _schema_of = self._scope(namespace_id)
+        by_key = {t.key: t for t in all_tables.values()}
+        out = []
+        for j in snap.joins:
+            f = all_tables.get(j.from_table_id) if j.from_table_id is not None else by_key.get(j.from_table)
+            t = all_tables.get(j.to_table_id) if j.to_table_id is not None else by_key.get(j.to_table)
+            if f is None or t is None or not j.from_columns or len(j.from_columns) != len(j.to_columns):
+                found = JoinCheck("unchecked", "Direction not checked: a table or a column of this join is missing.")
+            elif any(not f.has_column(c) for c in j.from_columns) or any(not t.has_column(c) for c in j.to_columns):
+                found = JoinCheck("unchecked", "Direction not checked: a column of this join is no longer there.")
+            else:
+                try:
+                    found = check_join(f, list(j.from_columns), t, list(j.to_columns), self._dry_run)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Semantic model: checking join %r failed", j.name, exc_info=True)
+                    found = JoinCheck("unchecked", f"Direction not checked: {exc}")
+            out.append(s.JoinCheckOut(key=j.key, name=j.name, verdict=found.verdict, message=found.message))
+        return out
 
     def _metric_names(self, path: str) -> dict[str, str]:
         """Live metric names under ``path`` and the dataset each belongs to."""
@@ -906,7 +954,13 @@ class SemanticModelService:
         return ns, compiled, model_tables
 
     def query_metric(self, namespace_id: int, query: s.MetricQuery) -> s.MetricQueryResult:
-        """Compile the query to one SQL statement and run it through the catalog SQL path (the worker computes)."""
+        """Compile the query to one SQL statement and run it through the catalog SQL path (the worker computes).
+
+        A worker that stopped after its handshake raises a plain ``requests`` error, not a ``ComputeError``; both
+        come back as the result's ``error``, never a 500.
+        """
+        from requests import RequestException
+
         from flowfile_core.flowfile.execution.errors import ComputeError
 
         _ns, compiled, _ = self._compile(namespace_id, query)
@@ -918,6 +972,10 @@ class SemanticModelService:
             result = self._catalog_service().execute_sql_query(compiled.sql, max_rows=query.limit, user_id=self.user_id)
         except ComputeError as exc:
             return s.MetricQueryResult(sql=compiled.sql, metric=metric, error=str(exc))
+        except RequestException:
+            return s.MetricQueryResult(
+                sql=compiled.sql, metric=metric, error="The compute worker could not be reached. Is it running?"
+            )
         return s.MetricQueryResult(
             columns=result.columns,
             dtypes=result.dtypes,
