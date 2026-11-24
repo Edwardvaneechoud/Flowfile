@@ -24,6 +24,10 @@ from flowfile_core.catalog.semantic.service import SemanticModelService
 from flowfile_core.database.connection import get_db
 from flowfile_core.schemas.semantic_schema import (
     FactOut,
+    MetricQuery,
+    MetricQueryResult,
+    MetricQuerySaveAsFlow,
+    MetricQuerySaveAsFlowOut,
     ProposalsIn,
     ReviewAction,
     ReviewItemOut,
@@ -122,6 +126,27 @@ def get_semantic_history(
 def sync_semantic_model(namespace_id: int, service: SemanticModelService = Depends(get_semantic_service)):
     """Re-read the whole catalog into the ledger now (new and dropped tables and columns)."""
     return service.sync(namespace_id)
+
+
+@router.post(f"{_BASE}/query", response_model=MetricQueryResult)
+@_handle
+def query_semantic_metric(
+    namespace_id: int, body: MetricQuery, service: SemanticModelService = Depends(get_semantic_service)
+):
+    """One metric by dimensions, compiled to one SQL statement and run like ``POST /catalog/sql/execute``.
+
+    A query that cannot compile is a 422; an execution failure comes back in ``error``.
+    """
+    return service.query_metric(namespace_id, body)
+
+
+@router.post(f"{_BASE}/query/save-as-flow", response_model=MetricQuerySaveAsFlowOut)
+@_handle
+def save_semantic_metric_query_as_flow(
+    namespace_id: int, body: MetricQuerySaveAsFlow, service: SemanticModelService = Depends(get_semantic_service)
+):
+    """Register the compiled query as a flow of catalog readers into a SQL node."""
+    return service.save_metric_query_as_flow(namespace_id, body)
 
 
 @router.get(f"{_BASE}/export", response_class=PlainTextResponse)

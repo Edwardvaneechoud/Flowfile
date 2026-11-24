@@ -18,8 +18,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -34,11 +35,13 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.semantic import host
+from flowfile_core.catalog.semantic.compiler import CompiledQuery, candidate_snapshot, compile_metric_query
 from flowfile_core.catalog.semantic.snapshot import (
     ACCEPTED,
     GROUPED_KINDS,
     LIVE,
     FactSnap,
+    MetricSnap,
     ModelSnapshot,
     TableInfo,
     annotate,
@@ -75,9 +78,52 @@ def maybe_sync(force: bool = False) -> Any:
         return report
 
 
-def validate_metric(table: TableInfo, proposal: s.MetricProposal) -> None:
-    """Seam for the metric dry-run (step 5): raise ``SemanticValueError`` when the definition cannot compile."""
-    return None
+def validate_metric(table: TableInfo, proposal: s.MetricProposal, execute: Callable[[str], Any] | None = None) -> None:
+    """Compile a proposed metric with no dimensions and, given ``execute``, dry-run it before it is stored.
+
+    ``execute`` takes the SQL and answers a ``SqlQueryResult`` (one row is asked for). A compile failure or an engine
+    error is the ``SemanticValueError`` the author sees, with the engine's message. Compute that cannot be reached
+    does not block authoring: the dry-run is skipped and the proposal stored.
+    """
+    from flowfile_core.flowfile.execution.errors import ComputeError
+
+    candidate = _metric_snap(table, proposal)
+    try:
+        compiled = compile_metric_query(candidate_snapshot(table, candidate), s.MetricQuery(metric=proposal.name))
+    except ValueError as exc:
+        raise SemanticValueError(f"Metric {proposal.name!r} does not compile: {exc}") from None
+    if execute is None:
+        return
+    try:
+        result = execute(compiled.sql)
+    except ComputeError as exc:
+        logger.warning(
+            "Semantic model: metric %r stored without a dry-run, compute unavailable: %s", proposal.name, exc
+        )
+        return
+    if result.error:
+        raise SemanticValueError(f"Metric {proposal.name!r} does not run: {result.error}")
+
+
+def _metric_snap(table: TableInfo, p: s.MetricProposal) -> MetricSnap:
+    """The proposal as an accepted-looking ``MetricSnap``, the shape the compiler reads."""
+    now = datetime.now(UTC)
+    values = {
+        "expression": p.expression,
+        "filter": _clean(p.filter),
+        "time_column": _clean(p.time_column),
+        "dimensions": list(p.dimensions or []) or None,
+    }
+    facts = {
+        attr: FactSnap(
+            id=attr, subject="", attribute=attr, value=v, status=ACCEPTED, source="", created_by="", updated_at=now
+        )
+        for attr, v in values.items()
+        if v is not None
+    }
+    return MetricSnap(
+        key=p.name, name=p.name, table=table.key, table_id=table.table_id, facts=facts, status=ACCEPTED, group=None
+    )
 
 
 @contextmanager
@@ -365,7 +411,7 @@ class SemanticModelService:
                         raise SemanticConflictError(f"Metric {p.name!r} belongs to {owner}, not {t.key}")
                     if p.time_column and not t.has_column(p.time_column):
                         raise SemanticValueError(f"Table {t.name!r} has no column {p.time_column!r}")
-                    validate_metric(t, p)
+                    validate_metric(t, p, execute=self._dry_run)
                     metric = Metric(
                         p.name,
                         p.expression,
@@ -555,6 +601,120 @@ class SemanticModelService:
         _ns, path = self._namespace(namespace_id)
         with _ledger_errors(self.user_id):
             return self.view.to_yaml(namespace=path)
+
+    def _catalog_service(self) -> CatalogService:
+        """The catalog service as the catalog router builds it, so table access is enforced the same way."""
+        return CatalogService(self.repo, access=self.access)
+
+    def _dry_run(self, sql: str) -> Any:
+        return self._catalog_service().execute_sql_query(sql, max_rows=1, user_id=self.user_id)
+
+    def _query_snapshot(self, namespace_id: int, preview: bool) -> tuple[Any, ModelSnapshot, dict[int, TableInfo]]:
+        """The snapshot a metric query compiles from, the namespace, and the model's own tables.
+
+        It covers the whole catalog (every schema's joins, so a query can cross schemas over several hops), with
+        accepted facts only unless ``preview``, which needs the namespace writable. When the caller cannot read at
+        the catalog's level the schema's own snapshot is used, which still holds the catalog-level joins touching it.
+        """
+        from glosslayer.policy import PermissionDenied
+
+        ns, path, catalog_path, model_tables, all_tables, _ = self._scope(namespace_id)
+        if preview:
+            self._require_writable(ns)
+        maybe_sync()
+        catalog = self._catalog_of(ns)
+        kwargs = {"known_tables": {t.key: t.table_id for t in all_tables.values()}, "accepted_only": not preview}
+        try:
+            snap = build_snapshot(
+                self.view,
+                namespace_id=catalog.id,
+                level=0,
+                path=catalog_path,
+                tables=sorted(all_tables.values(), key=lambda t: t.key),
+                **kwargs,
+            )
+        except PermissionDenied:
+            with _ledger_errors(self.user_id):
+                snap = build_snapshot(
+                    self.view,
+                    namespace_id=ns.id,
+                    level=ns.level,
+                    path=path,
+                    tables=sorted(model_tables.values(), key=lambda t: t.key),
+                    catalog_path=catalog_path if ns.level == 1 else None,
+                    **kwargs,
+                )
+        snap.related_tables = {t.key: t for t in all_tables.values()}
+        return ns, snap, model_tables
+
+    def _compile(
+        self, namespace_id: int, query: s.MetricQuery, table_names: dict[str, str] | None = None
+    ) -> tuple[Any, CompiledQuery, dict[int, TableInfo]]:
+        ns, snap, model_tables = self._query_snapshot(namespace_id, query.preview)
+        try:
+            compiled = compile_metric_query(
+                snap, query, metric_tables={t.key for t in model_tables.values()}, table_names=table_names
+            )
+        except ValueError as exc:
+            raise SemanticValueError(str(exc)) from None
+        return ns, compiled, model_tables
+
+    def query_metric(self, namespace_id: int, query: s.MetricQuery) -> s.MetricQueryResult:
+        """Compile the query to one SQL statement and run it through the catalog SQL path (the worker computes)."""
+        from flowfile_core.flowfile.execution.errors import ComputeError
+
+        _ns, compiled, _ = self._compile(namespace_id, query)
+        m = compiled.metric
+        metric = s.MetricQueryMetric(
+            name=compiled.metric_name, version=compiled.metric_version, status=m.status, approved_by=m.approved_by
+        )
+        try:
+            result = self._catalog_service().execute_sql_query(compiled.sql, max_rows=query.limit, user_id=self.user_id)
+        except ComputeError as exc:
+            return s.MetricQueryResult(sql=compiled.sql, metric=metric, error=str(exc))
+        return s.MetricQueryResult(
+            columns=result.columns,
+            dtypes=result.dtypes,
+            rows=result.rows,
+            total_rows=result.total_rows,
+            truncated=result.truncated,
+            sql=compiled.sql,
+            metric=metric,
+            error=result.error,
+        )
+
+    def save_metric_query_as_flow(self, namespace_id: int, body: s.MetricQuerySaveAsFlow) -> s.MetricQuerySaveAsFlowOut:
+        """Save the compiled query as a flow: one catalog reader per table into a SQL node.
+
+        The SQL node names its inputs ``input_1``, ``input_2`` … in reader order, so the query is compiled a second
+        time with those names. ``save_sql_query_as_flow`` finds each reader's table by name in the flow's schema,
+        so every table the query reads must live in that schema.
+        """
+        ns, compiled, _ = self._compile(namespace_id, body.query)
+        target = body.namespace_id if body.namespace_id is not None else (ns.id if ns.level == 1 else None)
+        if target is None:
+            raise SemanticValueError("Choose the schema to save the flow in")
+        by_key = {t.key: t for t in self._catalog_tables(self._catalog_of(ns))[0].values()}
+        names: list[str] = []
+        for key in compiled.tables:
+            info = by_key.get(key)
+            found = self.repo.get_table_by_name(info.name, target) if info is not None else None
+            if found is None or found.id != info.table_id:
+                raise SemanticValueError(
+                    f"Saving as a flow reads tables of the flow's schema only; {key!r} is in another schema"
+                )
+            names.append(info.name)
+        renamed = {key: f"input_{i + 1}" for i, key in enumerate(compiled.tables)}
+        _ns, for_flow, _ = self._compile(namespace_id, body.query, table_names=renamed)
+        flow_id = self._catalog_service().save_sql_query_as_flow(
+            query=for_flow.sql,
+            name=body.name,
+            owner_id=self.user_id,
+            namespace_id=target,
+            description=body.description,
+            used_tables=names,
+        )
+        return s.MetricQuerySaveAsFlowOut(flow_id=flow_id, sql=for_flow.sql)
 
 
 def tree_summaries(tree: list[Any]) -> None:

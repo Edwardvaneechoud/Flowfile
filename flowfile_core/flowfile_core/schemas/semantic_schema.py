@@ -241,3 +241,76 @@ class SemanticModelSummary(BaseModel):
     accepted: int = 0
     pending: int = 0
     stale: int = 0
+
+
+FilterOp = Literal["=", "!=", "<", "<=", ">", ">=", "in", "not in", "between", "is null", "is not null"]
+Grain = Literal["day", "week", "month", "quarter", "year"]
+
+
+class MetricFilter(BaseModel):
+    """``field`` is ``"table.column"`` or a bare column of the metric's table; ``value`` is a list for ``in`` /
+    ``not in`` (any length) and ``between`` (two values), absent for the null checks, one value otherwise."""
+
+    field: str
+    op: FilterOp
+    value: Any = None
+
+
+class MetricOrder(BaseModel):
+    """``field`` is one of the query's dimensions as written (a grain column is ``<time_column>_<grain>``) or the
+    metric's name."""
+
+    field: str
+    direction: Literal["asc", "desc"] = "asc"
+
+
+class MetricQuery(BaseModel):
+    """One metric by ``dimensions`` (``"table.column"`` or a bare base column), filtered, optionally by time grain.
+
+    ``preview`` lets a user who may change the model include pending facts, to try a metric before it is approved.
+    """
+
+    metric: str
+    dimensions: list[str] = Field(default_factory=list)
+    filters: list[MetricFilter] = Field(default_factory=list)
+    grain: Grain | None = None
+    order: MetricOrder | None = None
+    limit: int = Field(default=1000, ge=1, le=10000)
+    preview: bool = False
+
+
+class MetricQueryMetric(BaseModel):
+    name: str
+    version: int | None = None
+    status: FactStatus | str
+    approved_by: str | None = None
+
+
+class MetricQueryResult(BaseModel):
+    """The rows as ``POST /catalog/sql/execute`` answers them, plus the compiled ``sql`` and the metric's identity.
+
+    An execution failure comes back in ``error`` (status 200); a query that cannot compile is a 422.
+    """
+
+    columns: list[str] = Field(default_factory=list)
+    dtypes: list[str] = Field(default_factory=list)
+    rows: list[list] = Field(default_factory=list)
+    total_rows: int = 0
+    truncated: bool = False
+    sql: str
+    metric: MetricQueryMetric
+    error: str | None = None
+
+
+class MetricQuerySaveAsFlow(BaseModel):
+    """Save a metric query as a registered flow; ``namespace_id`` defaults to the model's schema."""
+
+    query: MetricQuery
+    name: str
+    namespace_id: int | None = None
+    description: str | None = None
+
+
+class MetricQuerySaveAsFlowOut(BaseModel):
+    flow_id: int
+    sql: str

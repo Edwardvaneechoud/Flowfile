@@ -147,6 +147,8 @@ class ModelSnapshot:
     tables: list[TableSnap] = field(default_factory=list)
     joins: list[JoinSnap] = field(default_factory=list)
     facts: list[FactSnap] = field(default_factory=list)
+    related_tables: dict[str, TableInfo] = field(default_factory=dict)
+    """Catalog tables outside the model a join may reach, by dataset key; the metric compiler reads their columns."""
 
     def table(self, key_or_name: str) -> TableSnap | None:
         return next((t for t in self.tables if key_or_name in (t.key, t.name)), None)
