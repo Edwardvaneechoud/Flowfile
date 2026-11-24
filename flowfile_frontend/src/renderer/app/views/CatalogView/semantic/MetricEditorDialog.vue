@@ -219,6 +219,10 @@ const valid = computed(
 
 watch(expression, () => (expressionError.value = ""));
 watch(filter, () => (filterError.value = ""));
+watch(tableId, () => {
+  expressionError.value = "";
+  filterError.value = "";
+});
 
 function onTableChange() {
   dimensions.value = [];
@@ -304,6 +308,13 @@ async function save() {
   font-size: var(--font-size-xs);
   line-height: 1.4;
   color: var(--color-text-muted);
+}
+
+/* A refusal is a sentence or two, so it takes its own room instead of overlaying the next field. */
+:deep(.el-form-item__error) {
+  position: static;
+  padding-top: var(--spacing-1);
+  line-height: 1.4;
 }
 
 .form-error {
