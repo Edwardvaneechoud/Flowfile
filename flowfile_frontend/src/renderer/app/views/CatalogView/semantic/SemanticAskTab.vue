@@ -24,6 +24,7 @@
             Ask
           </button>
         </form>
+        <p v-if="!asking && readAs" class="read-as" data-testid="ask-read-as">{{ readAs }}</p>
         <p v-if="examples.length" class="examples">
           Try:
           <a v-for="ex in examples" :key="ex" href="#" @click.prevent="useExample(ex)">{{ ex }}</a>
@@ -39,7 +40,14 @@
           <p v-else-if="answer.degraded" class="q-note warn" data-testid="ask-degraded">
             {{ degradedText(answer.reason) }} The controls below still work.
           </p>
-          <p v-for="n in answer.notes" :key="n" class="q-note">{{ n }}</p>
+          <ul
+            v-if="otherNotes.length"
+            class="note-list"
+            :class="{ warn: answer.partial }"
+            data-testid="ask-notes"
+          >
+            <li v-for="n in otherNotes" :key="n">{{ n }}</li>
+          </ul>
           <p v-if="answer.query" class="q-note">Answered by {{ answerModel }}.</p>
         </template>
       </template>
@@ -156,7 +164,7 @@
             class="btn btn-primary"
             :disabled="!metric || running"
             data-testid="ask-run"
-            @click="run()"
+            @click="runManual()"
           >
             <i :class="running ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-play'"></i> Run
           </button>
@@ -168,6 +176,10 @@
       </p>
 
       <section v-if="result" class="result" data-testid="ask-result">
+        <p v-if="answer?.partial" class="pending-note" data-testid="ask-partial">
+          <i class="fa-solid fa-triangle-exclamation"></i> This answers only part of the question.
+          See what was left out below.
+        </p>
         <div class="provenance" :class="{ warn: resultPending }" data-testid="ask-provenance">
           <i
             :class="resultPending ? 'fa-solid fa-triangle-exclamation' : 'fa-solid fa-circle-check'"
@@ -324,6 +336,13 @@ const answerModel = computed(() => {
   const a = answer.value;
   if (!a) return "";
   return a.model ? `${a.model} (${a.provider})` : a.provider;
+});
+
+const readAs = computed(() => answer.value?.notes.find((n) => n.startsWith("Read as:")) ?? "");
+const otherNotes = computed(() => {
+  const notes = answer.value?.notes ?? [];
+  const i = notes.findIndex((n) => n.startsWith("Read as:"));
+  return i < 0 ? notes : notes.filter((_, j) => j !== i);
 });
 
 const DEGRADED_TEXT: Record<SemanticAskReason, string> = {
@@ -494,6 +513,12 @@ async function run(query?: MetricQuery) {
   } finally {
     running.value = false;
   }
+}
+
+/** A run from the controls is the user's own query, so the last AI answer's notes no longer apply. */
+function runManual() {
+  answer.value = null;
+  void run();
 }
 
 /** Sets every control from a query, then runs it, or shows `ready` when the answer came with one. */
@@ -667,6 +692,27 @@ defineExpose({ applyQuery });
 }
 
 .q-note.warn {
+  color: var(--color-warning-dark);
+}
+
+.read-as {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.note-list {
+  margin: 0;
+  padding: 0 0 0 var(--spacing-4);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.note-list.warn {
+  padding-left: var(--spacing-3);
+  border-left: 3px solid var(--color-warning-dark);
+  list-style-position: inside;
   color: var(--color-warning-dark);
 }
 
