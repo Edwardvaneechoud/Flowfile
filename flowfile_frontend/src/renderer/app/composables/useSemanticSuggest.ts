@@ -39,7 +39,7 @@ const REASONS: Record<string, string> = {
   timeout: "The model did not answer in time.",
   provider_error: "The AI call failed.",
   invalid_answer: "The model's answer could not be read.",
-  all_refused: "Nothing was stored: every suggestion failed its checks.",
+  all_refused: "Nothing was proposed: every suggestion failed its checks.",
 };
 
 const listOf = (parts: string[]) =>
@@ -69,7 +69,7 @@ function waits(n: number): string {
   return n === 1 ? "It waits in Review." : "They wait in Review.";
 }
 
-/** Why none of the AI's suggestions was stored: off the request's subject, or failed a check. */
+/** Why none of the AI's suggestions became a proposal: off the request's subject, or failed a check. */
 function refusedText(skipped: { why: string }[]): string {
   const n = skipped.length;
   if (skipped.every((s) => s.why.startsWith("Not what was asked"))) {
@@ -103,7 +103,7 @@ export function describeAiOutcome(out: SemanticSuggestRequestOut): SuggestOutcom
     line = REASONS[out.reason ?? ""] ?? "The AI could not make a suggestion.";
     warn = true;
   } else if (out.skipped.length > 0) {
-    line = `Nothing was stored: ${refusedText(out.skipped)}.`;
+    line = `Nothing was proposed, so nothing changed: ${refusedText(out.skipped)}.`;
     warn = true;
   } else {
     line = "Nothing new to suggest: the model already holds what the AI found.";

@@ -14,7 +14,7 @@
       <li v-for="note in outcome.notes" :key="note">{{ note }}</li>
     </ul>
     <details v-if="outcome.skipped.length" class="outcome-skipped" data-testid="suggest-skipped">
-      <summary>{{ outcome.skipped.length }} not stored</summary>
+      <summary>{{ outcome.skipped.length }} left out, and why</summary>
       <ul>
         <li v-for="s in outcome.skipped" :key="s.what">
           <span class="skipped-what">{{ s.what }}</span
