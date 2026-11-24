@@ -30,6 +30,9 @@ import type {
 } from "../types";
 
 const externalTableRequests: Record<string, number> = {};
+// When each schema's tables last arrived, by this browser's clock; a list older than a minute is asked for again.
+const externalTablesArrived: Record<string, number> = {};
+export const EXTERNAL_TABLES_STALE_MS = 60_000;
 let externalTableDetailRequest = 0;
 
 /** The sentence core answered with (a 422's string detail), else the fallback. */
@@ -388,6 +391,12 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
+    /** Whether a schema's tables were never listed here, or last arrived more than a minute ago. */
+    externalTablesStale(catalogId: number, schemaId: number): boolean {
+      const arrived = externalTablesArrived[`${catalogId}:${schemaId}`];
+      return arrived === undefined || Date.now() - arrived > EXTERNAL_TABLES_STALE_MS;
+    },
+
     /** The tables of one schema of a catalog kept elsewhere; the newest request for that schema wins. */
     async loadExternalTables(catalogId: number, schemaId: number, refresh = false) {
       const key = `${catalogId}:${schemaId}`;
@@ -402,6 +411,7 @@ export const useCatalogStore = defineStore("catalog", {
       try {
         const listed = await CatalogApi.getExternalTables(catalogId, schemaId, refresh);
         if (token !== externalTableRequests[key]) return;
+        externalTablesArrived[key] = Date.now();
         this.externalTables[key] = {
           tables: listed.tables,
           listedAt: listed.listed_at,

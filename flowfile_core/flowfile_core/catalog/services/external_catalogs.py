@@ -65,6 +65,16 @@ def forget_tables(external_catalog_id: int) -> None:
         _TABLE_LISTS.pop(key, None)
 
 
+def forget_schema_tables(schema_name: str) -> None:
+    """Drop the kept table names of every catalog's schema called ``schema_name``, after a run wrote a table into one.
+
+    A write names its catalog by name, not by row, so every schema of that name is dropped: the next listing of each
+    asks its catalog again, which costs one call and shows a table the run just made.
+    """
+    for key in [key for key in _TABLE_LISTS if key[1] == schema_name]:
+        _TABLE_LISTS.pop(key, None)
+
+
 def gone_sentence(catalog_name: str, gone_since: datetime) -> str:
     return f"No longer in {catalog_name}'s own catalog since {gone_since:%Y-%m-%d %H:%M} UTC."
 

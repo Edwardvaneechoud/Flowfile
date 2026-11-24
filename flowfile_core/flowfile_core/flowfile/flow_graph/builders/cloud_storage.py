@@ -71,6 +71,10 @@ class CloudStorageBuildersMixin(GraphMixinBase):
                     op_payload(iceberg),
                     job_id=iceberg.job_id,
                 )
+                if write_settings.iceberg_catalog is not None and write_settings.iceberg_catalog.catalog is not None:
+                    from flowfile_core.catalog.services.external_catalogs import forget_schema_tables
+
+                    forget_schema_tables(write_settings.resource_path.split(".", 1)[0])
                 return df
             connection = _resolve_cloud_node_connection(write_settings, user_id, role="writer")
             if _cloud_write_uses_delta_ops(write_settings):

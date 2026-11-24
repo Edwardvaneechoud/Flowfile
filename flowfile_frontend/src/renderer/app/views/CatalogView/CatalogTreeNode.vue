@@ -597,13 +597,18 @@ const showExternalTables = computed(
 );
 
 // Opening a catalog kept elsewhere brings its schemas in line (core skips it when done within half a minute);
-// opening one of its schemas lists that schema's tables.
+// opening one of its schemas lists that schema's tables, again when the list is more than a minute old.
 watch(
   expanded,
   (open) => {
     if (!open || !keptElsewhere.value) return;
     if (props.node.level === 0) emit("syncExternal", { id: props.node.id, force: false });
-    else if (showExternalTables.value && !externalState.value && props.node.parent_id !== null)
+    else if (
+      showExternalTables.value &&
+      props.node.parent_id !== null &&
+      !externalState.value?.loading &&
+      catalogStore.externalTablesStale(props.node.parent_id, props.node.id)
+    )
       void catalogStore.loadExternalTables(props.node.parent_id, props.node.id);
   },
   { immediate: true },

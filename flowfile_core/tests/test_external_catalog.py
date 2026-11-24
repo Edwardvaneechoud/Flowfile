@@ -226,3 +226,20 @@ def test_the_tree_marks_the_catalog_and_its_schemas(kept):
     secret_keys = [key for key in catalog["external"] if "secret" in key or key == "token"]
     assert secret_keys == []
     assert [child["kept_elsewhere"] for child in catalog["children"]] == [True]
+
+
+def test_a_write_drops_the_kept_table_list_of_that_schema_only():
+    from flowfile_core.catalog.services import external_catalogs
+
+    lists = external_catalogs._TABLE_LISTS
+    saved = dict(lists)
+    try:
+        lists.clear()
+        lists[(1, "sales")] = (0.0, external_catalogs._now(), ["orders"])
+        lists[(2, "sales")] = (0.0, external_catalogs._now(), ["orders"])
+        lists[(1, "finance")] = (0.0, external_catalogs._now(), ["invoices"])
+        external_catalogs.forget_schema_tables("sales")
+        assert list(lists) == [(1, "finance")]
+    finally:
+        lists.clear()
+        lists.update(saved)

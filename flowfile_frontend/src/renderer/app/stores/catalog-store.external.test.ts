@@ -79,6 +79,21 @@ describe("catalog-store with a catalog kept elsewhere", () => {
     });
   });
 
+  it("counts a schema's tables as stale until they arrive, and again a minute after", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = useCatalogStore();
+      expect(store.externalTablesStale(70, 80)).toBe(true);
+      tablesMock.mockResolvedValueOnce({ tables: [], listed_at: "t", cached: false });
+      await store.loadExternalTables(70, 80);
+      expect(store.externalTablesStale(70, 80)).toBe(false);
+      vi.advanceTimersByTime(61_000);
+      expect(store.externalTablesStale(70, 80)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("drops an older listing of a schema that a newer one overtook", async () => {
     const store = useCatalogStore();
     const held: { resolve?: (value: unknown) => void } = {};
