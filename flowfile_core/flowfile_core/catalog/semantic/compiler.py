@@ -208,6 +208,11 @@ def _paths_from(snapshot: ModelSnapshot, start: str) -> dict[str, list[JoinSnap]
     return paths
 
 
+def reachable_tables(snapshot: ModelSnapshot, start: str) -> list[str]:
+    """The dataset keys a metric on ``start`` can read, ``start`` first, then each table reached many → one."""
+    return list(_paths_from(snapshot, start))
+
+
 def _norm(sql: str) -> str:
     return re.sub(r"\s+", "", sql).lower()
 

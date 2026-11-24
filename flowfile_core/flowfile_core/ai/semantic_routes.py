@@ -275,6 +275,33 @@ def _ref(snap: Any, table_key: str, field: str) -> tuple[str, str] | None:
     return (ts.key, column) if ts is not None else None
 
 
+def _dimensions(snap: Any, metric: Any) -> list[str]:
+    """What a metric can be grouped by on the menu: its allowed dimensions, else every Group-by column it reaches.
+
+    A metric stored with no allowed dimensions may be broken down by any column of its table or of a table reached
+    many to one (the compiler's rule). Offering all of those would crowd a small model's menu, so the default is the
+    columns the model marks as a category, a joined table's written ``<table>.<column>``. A reached table whose
+    short name another one already took is left out, since that name would not say which.
+    """
+    from flowfile_core.catalog.semantic.compiler import reachable_tables
+
+    stored = [d for d in (metric.value("dimensions") or []) if isinstance(d, str)]
+    if stored:
+        return stored
+    found: list[str] = []
+    names: set[str] = set()
+    for key in reachable_tables(snap, metric.table):
+        ts = snap.table(key)
+        if ts is None or ts.name in names:
+            continue
+        names.add(ts.name)
+        for c in ts.columns:
+            role = c.facts.get("role")
+            if role is not None and role.value == "category":
+                found.append(c.name if key == metric.table else f"{ts.name}.{c.name}")
+    return found
+
+
 def _known_values(
     service: Any, namespace_id: int, snap: Any, metrics: list[Any], withheld: Any = None
 ) -> dict[tuple[str, str], list[str]]:
@@ -300,8 +327,8 @@ def _known_values(
     wanted: list[tuple[str, str]] = []
     for m in metrics:
         table = snap.table(m.table)
-        fields = [d for d in (m.value("dimensions") or []) if isinstance(d, str)]
-        fields += [c.name for c in table.columns] if table else []
+        dims = _dimensions(snap, m)
+        fields = dims + ([c.name for c in table.columns] if table else [])
         for f in fields:
             ref = _ref(snap, m.table, f)
             ts = snap.table(ref[0]) if ref else None
@@ -314,7 +341,7 @@ def _known_values(
             text = any(t in str(col.dtype or "").lower() for t in _TEXT_TYPES)
             if kept(ref):
                 continue
-            if role == "category" or (text and f in fields[: len(m.value("dimensions") or [])]):
+            if role == "category" or (text and f in dims):
                 wanted.append(ref)
     try:
         found = service.known_values(wanted)
@@ -364,7 +391,7 @@ def _menu(service: Any, namespace_id: int, question: str, db: Any = None) -> tup
     for m in metrics:
         table = snap.table(m.table)
         columns = [c.name for c in table.columns] if table else []
-        dims = [d for d in (m.value("dimensions") or []) if isinstance(d, str)]
+        dims = _dimensions(snap, m)
         column = re.search(r'\(\s*(?:DISTINCT\s+)?"?([A-Za-z_]\w*)"?\s*\)', m.expression or "")
         private_table = table is None or withheld.whole_table(table.table_id)
         items.append(

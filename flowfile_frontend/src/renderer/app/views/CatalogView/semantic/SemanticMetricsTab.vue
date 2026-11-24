@@ -52,10 +52,8 @@
               <dt>Time</dt>
               <dd>{{ metric.time_column }}</dd>
             </template>
-            <template v-if="metric.dimensions.length">
-              <dt>By</dt>
-              <dd>{{ metric.dimensions.join(", ") }}</dd>
-            </template>
+            <dt>By</dt>
+            <dd>{{ metric.dimensions.length ? metric.dimensions.join(", ") : "any column" }}</dd>
             <template v-if="metric.approved_by">
               <dt>Approved by</dt>
               <dd>{{ metric.approved_by }}</dd>

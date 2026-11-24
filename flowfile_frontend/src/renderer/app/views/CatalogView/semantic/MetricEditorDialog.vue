@@ -69,10 +69,11 @@
           multiple
           filterable
           collapse-tags-tooltip
-          placeholder="Columns this metric can be broken down by"
+          placeholder="Any column"
         >
-          <el-option v-for="c in columns" :key="c" :label="c" :value="c" />
+          <el-option v-for="c in dimensionChoices" :key="c" :label="c" :value="c" />
         </el-select>
+        <p class="usable">Leave empty to let this metric be grouped by any column it can reach.</p>
       </el-form-item>
     </el-form>
 
@@ -172,6 +173,19 @@ function columnsOf(key: string): Completion[] {
 }
 
 const shortName = (key: string) => key.slice(key.lastIndexOf(".") + 1);
+
+/** The base table's columns, then `table.column` for each joined table whose short name is its own. */
+const dimensionChoices = computed(() => {
+  const [, ...joined] = reached.value;
+  const shorts = reached.value.map(shortName);
+  const choices = [...columns.value];
+  for (const key of joined) {
+    const short = shortName(key);
+    if (shorts.filter((s) => s === short).length > 1) continue;
+    for (const c of columnsOf(key)) choices.push(`${short}.${c.label}`);
+  }
+  return [...new Set([...choices, ...dimensions.value])];
+});
 
 /** Each reachable table by its short name, or under its schema when two share one. */
 const completionSchema = computed<SQLNamespace>(() => {

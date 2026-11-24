@@ -120,7 +120,7 @@ Open the **Metrics** tab and click **Add metric**.
 | **Filter (optional)** | A condition that applies to every use of the metric, for example `status = 'completed'`. |
 | **Time column (optional)** | The column used to group by day, week, month, quarter or year. |
 | **Number format (optional)** | For example `#,##0.00`. |
-| **Allowed dimensions** | The columns of the table the metric can be broken down by. |
+| **Allowed dimensions** | The columns the metric can be broken down by: the table's own, or a joined table's as `table.column`. Leave it empty to allow any column the metric can reach; a question in the Ask tab then chooses among the ones marked **Group by**. |
 
 The expression and the filter may also use columns of joined tables, written `table.column` (for example `SUM(quantity * products.price)`, or `schema.table.column` when two tables share a name). Only tables reached by following joins from the many side to the one side can be used, so each row of the metric's table meets at most one row of a joined table and the total is never multiplied. The editor completes the table's columns, the joined tables' columns after `table.` and SQL functions, and lists under the expression which tables can be used.
 
