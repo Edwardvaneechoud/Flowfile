@@ -16,7 +16,19 @@
     <p v-if="groups.length === 0" class="empty">No metrics yet.</p>
 
     <section v-for="group in groups" :key="group.table.table_id" class="metric-group">
-      <h3 class="group-title"><i class="fa-solid fa-table"></i> {{ group.table.name }}</h3>
+      <h3 class="group-title">
+        <i class="fa-solid fa-table"></i> {{ group.table.name }}
+        <el-tooltip content="Open table" placement="top" :show-after="300">
+          <button
+            class="open-table-btn"
+            type="button"
+            aria-label="Open table"
+            @click="router.push(tablePageLocation(group.table.table_id))"
+          >
+            <i class="fa-solid fa-arrow-up-right-from-square"></i>
+          </button>
+        </el-tooltip>
+      </h3>
       <div class="cards">
         <article v-for="metric in group.metrics" :key="metric.key" class="metric-card">
           <header class="card-head">
@@ -67,11 +79,14 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
 import type { SemanticMetric, SemanticModel } from "../../../types/semantic.types";
 import MetricEditorDialog from "./MetricEditorDialog.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
+import { tablePageLocation } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
+const router = useRouter();
 
 const showEditor = ref(false);
 const editing = ref<SemanticMetric | null>(null);
@@ -107,6 +122,27 @@ function openEditor(metric: SemanticMetric | null) {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+}
+
+.open-table-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: var(--spacing-1);
+  border: none;
+  border-radius: var(--border-radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  vertical-align: middle;
+}
+
+.open-table-btn:hover {
+  background: var(--color-background-tertiary);
+  color: var(--color-primary);
 }
 
 .group-title {

@@ -27,6 +27,8 @@ Every fact is a proposal first. It becomes part of the model when it is **accept
 
 In the catalog tree, expand a schema (or a catalog) and click **Semantic model**, the first entry under it. A badge shows how many facts wait for review. The address of the page keeps the selection (`semanticNamespaceId` in the URL), so a reload returns to the same model.
 
+A table that is part of the model shows a small model icon after its name in the catalog tree (blue when it has accepted facts, orange when its facts all wait for review or are stale), and its own page carries the line **In the semantic model**, with its fact count; a table with no facts shows **Describe this table in the semantic model** instead. Both open the model on the Tables tab at that table, with its card expanded and briefly highlighted. From the model, the **Open table** button on a table card (and on a table's heading in the Metrics tab) and the table names in the Joins tab lead back to that table's page.
+
 A schema without facts shows a short explanation and a **Describe your tables** button. The header holds the model's name and description (click to edit), a progress bar of accepted, pending and stale facts, **Re-sync** and **Export YAML**.
 
 A fact is **stale** when the catalog changed underneath it, for example a column it names was removed. **Re-sync** compares the model with the catalog again; the model is also compared when you open it.

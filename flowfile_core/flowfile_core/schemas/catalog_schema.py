@@ -510,6 +510,8 @@ class CatalogTableOut(BaseModel):
     full_table_name: str | None = None
     # Fully-qualified ``catalog.schema.table`` (full_table_name is only 2-part ``schema.table``).
     qualified_name: str | None = None
+    # Semantic-model fact counts for this table; set only on the tables of a namespace tree.
+    semantic_model: SemanticModelSummary | None = None
     description: str | None = None
     owner_id: int
     file_exists: bool = True

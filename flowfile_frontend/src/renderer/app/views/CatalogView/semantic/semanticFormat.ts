@@ -4,6 +4,12 @@ import type {
   SemanticSourceKind,
 } from "../../../types/semantic.types";
 
+/** The catalog page of a table (the same location CatalogView pushes when a table is selected). */
+export const tablePageLocation = (tableId: number) => ({
+  name: "catalog",
+  query: { tab: "catalog", tableId: String(tableId) },
+});
+
 export type ChipState = "accepted" | "pending" | "stale";
 
 export const COLUMN_ROLES = ["key", "time", "category", "amount"] as const;

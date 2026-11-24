@@ -27,6 +27,27 @@
           <SharedBadge :access="table.access" />
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
+        <button
+          v-if="semanticLink"
+          class="semantic-link"
+          :class="{ quiet: !semanticLink.facts }"
+          type="button"
+          data-testid="table-semantic-link"
+          @click="
+            emit('openSemanticTable', {
+              namespaceId: semanticLink.namespaceId,
+              tableId: table.id,
+            })
+          "
+        >
+          <i class="fa-solid fa-sitemap"></i>
+          <template v-if="semanticLink.facts"
+            >In the semantic model · {{ semanticLink.facts }}
+            {{ semanticLink.facts === 1 ? "fact" : "facts" }}
+            <template v-if="semanticLink.pending"> · {{ semanticLink.pending }} to review</template>
+          </template>
+          <template v-else>Describe this table in the semantic model</template>
+        </button>
       </div>
       <div class="header-actions">
         <button
@@ -631,8 +652,10 @@ import type {
   CatalogTablePreview,
   CdcCursor,
   DeltaTableHistory,
+  NamespaceTree,
   TableCdcStatus,
 } from "../../types";
+import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { pendingLabel } from "../../utils/catalogCdc";
 import { formatDate, formatNumber, formatSize } from "./catalog-formatters";
@@ -675,9 +698,28 @@ const emit = defineEmits([
   "editsSaved",
   "restoreVersion",
   "createViz",
+  "openSemanticTable",
 ]);
 
 const isHub = computed(() => isHubRow(props.table));
+
+const catalogStore = useCatalogStore();
+
+function findTreeTable(nodes: NamespaceTree[], id: number): CatalogTable | null {
+  for (const node of nodes) {
+    const hit = (node.tables ?? []).find((t) => t.id === id) ?? findTreeTable(node.children, id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+const semanticLink = computed(() => {
+  const namespaceId = props.table.namespace_id;
+  if (isHub.value || namespaceId === null || namespaceId === undefined) return null;
+  const m = findTreeTable(catalogStore.tree, props.table.id)?.semantic_model;
+  const pending = m?.pending ?? 0;
+  return { namespaceId, facts: m ? m.accepted + m.pending + m.stale : 0, pending };
+});
 // The flow ids are the hub's, so the producer is shown by name and links nowhere.
 const hubProducer = computed(
   () => props.table.producer_registration_name ?? props.table.source_registration_name ?? null,
@@ -1069,6 +1111,28 @@ function formatCell(value: any): string {
   margin: 0;
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-semibold);
+}
+
+.semantic-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  margin-top: var(--spacing-2);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.semantic-link.quiet {
+  color: var(--color-text-muted);
+}
+
+.semantic-link:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
 }
 
 .description {

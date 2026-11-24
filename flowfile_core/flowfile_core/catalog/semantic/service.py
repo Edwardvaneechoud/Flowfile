@@ -967,7 +967,8 @@ def tree_summaries(tree: list[Any]) -> None:
     """Fill ``semantic_model`` on every local node of a namespace tree from two ledger queries for the whole tree.
 
     Counts are of everything at or under a namespace's path; facts the catalog itself accepted are left out, as in
-    ``ModelSnapshot.progress``. Any failure (glosslayer missing, a ledger error) leaves the field ``None``.
+    ``ModelSnapshot.progress``. A table gets the counts at its own key (``catalog.schema.table``), which is the scope
+    of its column facts and its own metrics. Any failure (glosslayer missing, a ledger error) leaves the field ``None``.
     """
     try:
         from glosslayer.model import Status
@@ -1003,6 +1004,9 @@ def tree_summaries(tree: list[Any]) -> None:
                 continue
             node_path = f"{parent}.{node.name}" if parent else node.name
             node.semantic_model = s.SemanticModelSummary(**totals.get(node_path, {}))
+            for table in getattr(node, "tables", None) or []:
+                key = getattr(table, "qualified_name", None) or f"{node_path}.{table.name}"
+                table.semantic_model = s.SemanticModelSummary(**totals.get(key, {}))
             walk(node.children, node_path)
 
     walk(tree, None)

@@ -37,6 +37,8 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
   const busy = ref(false);
   // A query another part of the UI wants the Ask tab to set and run; the tab consumes it.
   const pendingAsk = ref<MetricQuery | null>(null);
+  // A table another part of the UI wants the Tables tab to open; the tab consumes it.
+  const focusTableId = ref<number | null>(null);
 
   let loadToken = 0;
   let historyToken = 0;
@@ -170,6 +172,10 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     pendingAsk.value = query;
   };
 
+  const requestFocusTable = (tableId: number | null) => {
+    focusTableId.value = tableId;
+  };
+
   function clear() {
     loadToken++;
     historyToken++;
@@ -179,6 +185,7 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     reviewQueue.value = [];
     history.value = [];
     pendingAsk.value = null;
+    focusTableId.value = null;
     loading.value = false;
   }
 
@@ -195,6 +202,8 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     busy,
     pendingAsk,
     requestAsk,
+    focusTableId,
+    requestFocusTable,
     load,
     updateModel,
     propose,

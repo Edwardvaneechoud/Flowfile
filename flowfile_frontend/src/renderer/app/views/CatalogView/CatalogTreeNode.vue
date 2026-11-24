@@ -120,6 +120,7 @@
           @select-artifact="$emit('selectArtifact', $event)"
           @select-table="$emit('selectTable', $event)"
           @select-semantic-model="$emit('selectSemanticModel', $event)"
+          @open-semantic-table="$emit('openSemanticTable', $event)"
           @table-context-menu="$emit('tableContextMenu', $event)"
           @artifact-context-menu="$emit('artifactContextMenu', $event)"
           @flow-context-menu="$emit('flowContextMenu', $event)"
@@ -274,6 +275,18 @@
             title="Virtual Flow Table"
             >virtual</span
           >
+          <button
+            v-if="tableModelState(table)"
+            class="semantic-marker"
+            :class="`semantic-marker-${tableModelState(table)}`"
+            type="button"
+            :aria-label="semanticTitle(table)"
+            :title="semanticTitle(table)"
+            data-testid="table-semantic-marker"
+            @click.stop="emit('openSemanticTable', { namespaceId: node.id, tableId: table.id })"
+          >
+            <i class="fa-solid fa-sitemap"></i>
+          </button>
           <span v-if="table.scd2" class="table-scd2-badge" title="SCD2 table">scd2</span>
           <span
             v-if="table.cdc_enabled"
@@ -445,6 +458,7 @@ const emit = defineEmits([
   "selectTable",
   "selectNamespace",
   "selectSemanticModel",
+  "openSemanticTable",
   "tableContextMenu",
   "artifactContextMenu",
   "flowContextMenu",
@@ -488,6 +502,22 @@ function onTableContextMenu(table: CatalogTable, event: MouseEvent) {
 
 const showSemanticEntry = computed(() => !isHub.value && reason.value === null && !searching.value);
 const semanticPending = computed(() => props.node.semantic_model?.pending ?? 0);
+
+function tableModelState(table: CatalogTable): "accepted" | "pending" | null {
+  const m = table.semantic_model;
+  if (!m || isHub.value || m.accepted + m.pending + m.stale === 0) return null;
+  return m.accepted > 0 ? "accepted" : "pending";
+}
+
+function semanticTitle(table: CatalogTable): string {
+  const m = table.semantic_model;
+  if (!m) return "";
+  const total = m.accepted + m.pending + m.stale;
+  const parts = [`In the semantic model: ${total} ${total === 1 ? "fact" : "facts"}.`];
+  if (m.pending > 0) parts.push(`${m.pending} wait for review.`);
+  if (m.stale > 0) parts.push(`${m.stale} may be out of date.`);
+  return parts.join(" ");
+}
 
 const rawQuery = computed(() => normalizeQuery(props.searchQuery));
 const searching = computed(() => rawQuery.value.length > 0);
@@ -897,6 +927,33 @@ const totalFlows = computed(() => {
 .tree-table:hover .flow-actions,
 .tree-table.selected .flow-actions {
   opacity: 1;
+}
+
+.semantic-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-sm);
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.semantic-marker-accepted {
+  color: var(--color-primary);
+}
+
+.semantic-marker-pending {
+  color: var(--color-warning);
+}
+
+.semantic-marker:hover {
+  background: var(--color-background-tertiary);
 }
 
 .semantic-pending-badge {

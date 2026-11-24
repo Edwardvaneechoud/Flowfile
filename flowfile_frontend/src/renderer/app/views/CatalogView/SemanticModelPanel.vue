@@ -375,9 +375,20 @@ watch(
 );
 
 watch(
+  () => store.focusTableId,
+  (id) => {
+    if (id !== null) {
+      started.value = true;
+      activeTab.value = "tables";
+    }
+  },
+  { immediate: true },
+);
+
+watch(
   () => props.namespaceId,
   (id) => {
-    started.value = false;
+    started.value = store.focusTableId !== null;
     activeTab.value = "tables";
     suggestNotice.value = "";
     suggestWarnings.value = [];

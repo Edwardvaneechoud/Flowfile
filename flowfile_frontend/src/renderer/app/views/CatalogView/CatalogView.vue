@@ -181,6 +181,7 @@
                 @select-table="selectTable($event)"
                 @select-namespace="selectNamespace($event)"
                 @select-semantic-model="selectSemanticModel($event)"
+                @open-semantic-table="selectSemanticModel($event.namespaceId, $event.tableId)"
                 @table-context-menu="onTableContextMenu($event)"
                 @artifact-context-menu="onArtifactContextMenu($event)"
                 @flow-context-menu="onFlowContextMenu($event)"
@@ -309,6 +310,7 @@
           @edits-saved="catalogStore.handleTableEdited($event)"
           @restore-version="handleRestoreVersion($event)"
           @create-viz="openCreateViz($event)"
+          @open-semantic-table="selectSemanticModel($event.namespaceId, $event.tableId)"
         />
         <!-- Flow detail view; a hub flow's is the same page with its versions and their Open on it -->
         <FlowDetailPanel
@@ -668,6 +670,7 @@ import { ElCheckbox, ElLoading, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore, type CatalogItemKind } from "../../stores/catalog-store";
 import { useProjectStore } from "../../stores/project-store";
+import { useSemanticModelStore } from "../../stores/semantic-model-store";
 import { useNotebookStore } from "../../stores/notebook-store";
 import { useSqlEditorStore } from "../../stores/sql-editor-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -764,6 +767,7 @@ const router = useRouter();
 const route = useRoute();
 
 const catalogStore = useCatalogStore();
+const semanticModelStore = useSemanticModelStore();
 const presentation = usePresentationStore();
 const projectStore = useProjectStore();
 const notebookStore = useNotebookStore();
@@ -1170,7 +1174,8 @@ function selectNamespace(namespaceId: number) {
   });
 }
 
-function selectSemanticModel(namespaceId: number) {
+function selectSemanticModel(namespaceId: number, tableId: number | null = null) {
+  semanticModelStore.requestFocusTable(tableId);
   router.push({
     name: "catalog",
     query: { tab: "catalog", semanticNamespaceId: String(namespaceId) },

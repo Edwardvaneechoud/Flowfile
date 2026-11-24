@@ -33,9 +33,33 @@
           <SemanticStatusChip :status="join.status" />
         </div>
         <div class="join-sides">
-          <code>{{ join.from_table }}.{{ join.from_columns.join(", ") }}</code>
+          <code>
+            <button
+              v-if="join.from_table_id !== null"
+              class="table-link"
+              type="button"
+              :title="`Open ${join.from_table}`"
+              @click="router.push(tablePageLocation(join.from_table_id))"
+            >
+              {{ join.from_table }}
+            </button>
+            <template v-else>{{ join.from_table }}</template
+            >.{{ join.from_columns.join(", ") }}
+          </code>
           <i class="fa-solid fa-arrow-right"></i>
-          <code>{{ join.to_table }}.{{ join.to_columns.join(", ") }}</code>
+          <code>
+            <button
+              v-if="join.to_table_id !== null"
+              class="table-link"
+              type="button"
+              :title="`Open ${join.to_table}`"
+              @click="router.push(tablePageLocation(join.to_table_id))"
+            >
+              {{ join.to_table }}
+            </button>
+            <template v-else>{{ join.to_table }}</template
+            >.{{ join.to_columns.join(", ") }}
+          </code>
         </div>
         <p v-if="join.description" class="join-desc">{{ join.description }}</p>
       </li>
@@ -47,12 +71,15 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
 import { MarkerType, Position, VueFlow, type Edge, type Node } from "@vue-flow/core";
 import type { SemanticModel } from "../../../types/semantic.types";
 import SemanticJoinDialog from "./SemanticJoinDialog.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
+import { tablePageLocation } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
+const router = useRouter();
 const showDialog = ref(false);
 
 const tableNames = computed(() => {
@@ -223,6 +250,21 @@ const edges = computed<Edge[]>(() =>
 
 .join-sides code {
   color: var(--color-text-primary);
+}
+
+.table-link {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.table-link:hover {
+  text-decoration-style: solid;
 }
 
 .join-desc {

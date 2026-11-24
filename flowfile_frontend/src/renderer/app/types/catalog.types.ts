@@ -342,6 +342,8 @@ export interface CatalogTable {
   full_table_name: string | null;
   // Fully-qualified catalog.schema.table (full_table_name is only 2-part schema.table).
   qualified_name: string | null;
+  // Semantic-model fact counts; set on the tables of the namespace tree only.
+  semantic_model?: SemanticModelSummary | null;
   description: string | null;
   owner_id: number;
   file_exists: boolean;
