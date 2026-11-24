@@ -75,15 +75,16 @@ const isWriter = (settings: ReaderTarget | WriterTarget): settings is WriterTarg
 /**
  * One option per schema, the local catalogs first and the hub's after them. The system schemas under the local
  * ``General`` are left out unless ``includeSystemSchemas`` (the reader reads tables kept there), and so is every
- * catalog core does not offer (a joined server's own). A schema this machine cannot use is listed, marked with why,
- * so a node saved on it still finds its row; ``pickable`` decides what a picker shows.
+ * catalog core does not offer (a joined server's own), and every catalog kept elsewhere (an Iceberg REST catalog,
+ * whose tables the reader and writer nodes do not take yet). A schema this machine cannot use is listed, marked with
+ * why, so a node saved on it still finds its row; ``pickable`` decides what a picker shows.
  */
 export function namespaceOptions(
   tree: NamespaceTree[],
   includeSystemSchemas = false,
 ): NamespaceOption[] {
   const options: NamespaceOption[] = [];
-  const offered = tree.filter(isOffered);
+  const offered = tree.filter((c) => isOffered(c) && !c.kept_elsewhere);
   const ordered = [...offered.filter((c) => !isHubRow(c)), ...offered.filter(isHubRow)];
   for (const catalog of ordered) {
     const hub = isHubRow(catalog);

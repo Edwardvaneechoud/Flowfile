@@ -85,6 +85,18 @@ describe("namespace options", () => {
     ]);
   });
 
+  it("leaves out a catalog kept elsewhere, whose tables the nodes do not take yet", () => {
+    const polaris = ns({
+      id: 7,
+      name: "polaris",
+      kept_elsewhere: true,
+      children: [ns({ id: 8, name: "finance", parent_id: 7 })],
+    });
+    expect(namespaceOptions([...tree, polaris], true).map((o) => o.label)).not.toContain(
+      "polaris / finance",
+    );
+  });
+
   it("keeps the local system schemas when asked, as the reader does", () => {
     expect(namespaceOptions(tree, true).map((o) => o.label)).toEqual([
       "General / default",
