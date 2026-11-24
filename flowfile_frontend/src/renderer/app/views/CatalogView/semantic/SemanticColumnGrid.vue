@@ -6,14 +6,24 @@
       <span>Description</span>
       <span class="head-with-info">
         Used as
-        <el-tooltip :content="ROLE_HELP" placement="top" :show-after="200">
-          <i class="fa-solid fa-circle-info head-info" tabindex="0"></i>
+        <el-tooltip
+          :content="ROLE_HELP"
+          placement="top"
+          :show-after="200"
+          popper-class="semantic-help-tooltip"
+        >
+          <span class="head-info" tabindex="0"><i class="fa-solid fa-circle-info"></i></span>
         </el-tooltip>
       </span>
       <span class="head-with-info">
         Confidentiality
-        <el-tooltip :content="CONFIDENTIALITY_HELP" placement="top" :show-after="200">
-          <i class="fa-solid fa-circle-info head-info" tabindex="0"></i>
+        <el-tooltip
+          :content="CONFIDENTIALITY_HELP"
+          placement="top"
+          :show-after="200"
+          popper-class="semantic-help-tooltip"
+        >
+          <span class="head-info" tabindex="0"><i class="fa-solid fa-circle-info"></i></span>
         </el-tooltip>
       </span>
     </div>
@@ -157,7 +167,9 @@ const saveField = (column: string, attribute: string, value: unknown) => {
   gap: var(--spacing-1);
 }
 
+/* The tooltip's trigger class resets the font, so it sits on a wrapper, not on the icon. */
 .head-info {
+  display: inline-flex;
   color: var(--color-text-muted);
   cursor: help;
   font-size: var(--font-size-xs);
@@ -205,5 +217,13 @@ const saveField = (column: string, attribute: string, value: unknown) => {
 .cell > :first-child {
   flex: 1;
   min-width: 0;
+}
+</style>
+
+<!-- The tooltip is teleported to the body, so its width cannot be set from the scoped block. -->
+<style>
+.semantic-help-tooltip {
+  max-width: 320px;
+  line-height: 1.4;
 }
 </style>
