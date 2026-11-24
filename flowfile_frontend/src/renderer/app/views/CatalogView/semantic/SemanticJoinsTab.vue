@@ -34,53 +34,26 @@
 
     <p v-if="model.joins.length === 0" class="empty">No joins yet.</p>
     <ul v-else class="join-list">
-      <li v-for="join in model.joins" :key="join.key" class="join-row">
-        <div class="join-main">
-          <span class="join-name">{{ join.name }}</span>
-          <span class="layer-badge" :class="`layer-${join.layer}`">{{ join.layer }}</span>
-          <SemanticStatusChip :status="join.status" />
-        </div>
-        <div class="join-sides">
-          <code>
-            <button
-              v-if="join.from_table_id !== null"
-              class="table-link"
-              type="button"
-              :title="`Open ${join.from_table}`"
-              @click="router.push(tablePageLocation(join.from_table_id))"
-            >
-              {{ join.from_table }}
-            </button>
-            <template v-else>{{ join.from_table }}</template
-            >.{{ join.from_columns.join(", ") }}
-          </code>
-          <i class="fa-solid fa-arrow-right"></i>
-          <code>
-            <button
-              v-if="join.to_table_id !== null"
-              class="table-link"
-              type="button"
-              :title="`Open ${join.to_table}`"
-              @click="router.push(tablePageLocation(join.to_table_id))"
-            >
-              {{ join.to_table }}
-            </button>
-            <template v-else>{{ join.to_table }}</template
-            >.{{ join.to_columns.join(", ") }}
-          </code>
-        </div>
-        <p v-if="join.description" class="join-desc">{{ join.description }}</p>
-        <div
-          v-if="checkOf(join) && checkOf(join)?.verdict !== 'ok'"
-          class="join-check"
-          :class="checkOf(join)?.verdict === 'unchecked' ? 'join-check-quiet' : 'join-check-warn'"
-          data-testid="semantic-join-check"
-        >
-          <i
-            v-if="checkOf(join)?.verdict !== 'unchecked'"
-            class="fa-solid fa-triangle-exclamation"
-          ></i>
-          <span>{{ checkOf(join)?.message }}</span>
+      <SemanticJoinRow
+        v-for="join in model.joins"
+        :key="join.key"
+        :join="join"
+        :check="checkOf(join)"
+      >
+        <template #actions>
+          <button
+            v-if="join.can_remove"
+            type="button"
+            class="btn btn-ghost btn-danger btn-sm remove-btn"
+            data-testid="semantic-join-remove"
+            :disabled="removing !== null"
+            @click="removeJoin(join)"
+          >
+            <i class="fa-solid fa-trash"></i>
+            {{ removing === join.key ? "Removing…" : "Remove" }}
+          </button>
+        </template>
+        <template #check-actions>
           <button
             v-if="canFix(join)"
             type="button"
@@ -92,8 +65,8 @@
             <i class="fa-solid fa-right-left"></i>
             {{ fixing === join.key ? "Fixing…" : "Fix direction" }}
           </button>
-        </div>
-      </li>
+        </template>
+      </SemanticJoinRow>
     </ul>
 
     <SemanticJoinDialog v-model="showDialog" :namespace-id="model.namespace_id" />
@@ -102,22 +75,22 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { MarkerType, Position, VueFlow, type Edge, type Node } from "@vue-flow/core";
 import type { JoinCheck, SemanticJoin, SemanticModel } from "../../../types/semantic.types";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
 import SemanticJoinDialog from "./SemanticJoinDialog.vue";
-import SemanticStatusChip from "./SemanticStatusChip.vue";
+import SemanticJoinRow from "./SemanticJoinRow.vue";
 import SemanticSuggestMore from "./SemanticSuggestMore.vue";
-import { errorText, tablePageLocation } from "./semanticFormat";
+import { errorText } from "./semanticFormat";
+import { confirmRemoveJoin } from "./semanticRemoval";
 
 const props = defineProps<{ model: SemanticModel }>();
 const emit = defineEmits<{ "open-tab": [tab: string] }>();
-const router = useRouter();
 const store = useSemanticModelStore();
 const showDialog = ref(false);
 const fixing = ref<string | null>(null);
+const removing = ref<string | null>(null);
 
 // Re-measure when the tab opens and whenever a join's ends, columns or status change.
 const joinsSignature = computed(() =>
@@ -176,6 +149,19 @@ async function fixDirection(join: SemanticJoin) {
     ElMessage.error(errorText(e, "Could not fix the direction"));
   } finally {
     fixing.value = null;
+  }
+}
+
+async function removeJoin(join: SemanticJoin) {
+  if (!(await confirmRemoveJoin(props.model.namespace_id, join))) return;
+  removing.value = join.key;
+  try {
+    await store.removeSubject(join.key);
+    ElMessage.success(`Removed ${join.name}.`);
+  } catch (e) {
+    ElMessage.error(errorText(e, "Could not remove the join"));
+  } finally {
+    removing.value = null;
   }
 }
 
@@ -301,93 +287,7 @@ const edges = computed<Edge[]>(() =>
   list-style: none;
 }
 
-.join-row {
-  padding: var(--spacing-3) var(--spacing-4);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-}
-
-.join-main {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-}
-
-.join-name {
-  font-weight: var(--font-weight-semibold);
-}
-
-.layer-badge {
-  padding: 0 var(--spacing-2);
-  border-radius: var(--border-radius-sm);
-  border: 1px solid var(--color-border-light);
-  font-size: var(--font-size-xs);
-  line-height: 18px;
-  color: var(--color-text-secondary);
-}
-
-.layer-catalog {
-  color: var(--color-primary);
-  border-color: var(--color-primary);
-}
-
-.join-sides {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--spacing-2);
-  margin-top: var(--spacing-2);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
-}
-
-.join-sides code {
-  color: var(--color-text-primary);
-}
-
-.table-link {
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--color-primary);
-  font: inherit;
-  cursor: pointer;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-}
-
-.table-link:hover {
-  text-decoration-style: solid;
-}
-
-.join-check {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--spacing-2);
-  margin-top: var(--spacing-2);
-  padding-left: var(--spacing-3);
-  font-size: var(--font-size-xs);
-}
-
-.join-check-warn {
-  border-left: 3px solid var(--color-warning-dark);
-  color: var(--color-warning-dark);
-}
-
-.join-check-quiet {
-  border-left: 3px solid var(--color-border-light);
-  color: var(--color-text-muted);
-}
-
-.join-check span {
-  flex: 1 1 240px;
-}
-
-.join-desc {
-  margin: var(--spacing-2) 0 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+.remove-btn {
+  white-space: nowrap;
 }
 </style>

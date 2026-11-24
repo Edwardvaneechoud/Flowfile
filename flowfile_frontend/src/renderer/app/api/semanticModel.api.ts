@@ -2,6 +2,7 @@
 import axios from "../services/axios.config";
 import type {
   JoinCheck,
+  JoinDependent,
   MetricQuery,
   SemanticAskOut,
   SemanticAskRequest,
@@ -50,6 +51,13 @@ export class SemanticModelApi {
 
   static async checkJoins(namespaceId: number): Promise<JoinCheck[]> {
     const response = await axios.post<JoinCheck[]>(`${base(namespaceId)}/joins/check`);
+    return response.data;
+  }
+
+  static async joinDependents(namespaceId: number, key: string): Promise<JoinDependent[]> {
+    const response = await axios.get<JoinDependent[]>(`${base(namespaceId)}/joins/dependents`, {
+      params: { key },
+    });
     return response.data;
   }
 

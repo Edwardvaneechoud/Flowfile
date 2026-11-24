@@ -17,7 +17,7 @@ There is one model per **schema**. It holds three kinds of facts:
 | **Joins** | `orders.customer_id` matches `customers.customer_id`. |
 | **Metrics** | `revenue` is `SUM(amount)`, counted on `orders`, without cancelled orders. |
 
-Joins that cross schemas are held one level up, in the model of the **catalog** that contains the schemas.
+Joins that cross schemas are held one level up, by the **catalog** that contains the schemas, and are managed on the catalog's own page.
 
 Every fact is a proposal first. It becomes part of the model when it is **accepted**, and it keeps its author, its status and a history of who changed it and when. Only accepted facts are used to answer questions. A metric that is edited keeps its accepted definition until the new one is accepted, and carries a version number.
 
@@ -25,7 +25,9 @@ Every fact is a proposal first. It becomes part of the model when it is **accept
 
 ## Open a model
 
-In the catalog tree, expand a schema (or a catalog) and click **Semantic model**, the first entry under it. A badge shows how many facts wait for review. The address of the page keeps the selection (`semanticNamespaceId` in the URL), so a reload returns to the same model.
+In the catalog tree, expand a schema and click **Semantic model**, the first entry under it. A badge shows how many facts wait for review. The address of the page keeps the selection (`semanticNamespaceId` in the URL), so a reload returns to the same model.
+
+A catalog has no entry of its own. Click the catalog in the tree: its page lists, under **Semantic models**, each schema with its counts ("12 accepted · 3 waiting for review", or "Not modelled yet") and a button that opens that schema's model (**Start** for one without facts). Below that, **Joins across schemas** lists the joins between tables of two different schemas, with **Add join**, **Suggest joins**, and **Accept** and **Reject** on one that waits for review. An old address that named a catalog's model opens the catalog's page.
 
 The page of a table that is part of the model carries the line **In the semantic model**, with its fact count; a table with no facts shows **Describe this table in the semantic model** instead. Either opens the model on the Tables tab at that table, with its card expanded and briefly highlighted. From the model, the **Open table** button on a table card (and on a table's heading in the Metrics tab) and the table names in the Joins tab lead back to that table's page.
 
@@ -40,7 +42,7 @@ A fact is **stale** when the catalog changed underneath it, for example a column
 A schema with no facts shows **Suggest a model** next to **Describe your tables**; once the model has facts, a **Suggest** button sits in the header. It needs no AI and nothing to configure. Flowfile reads one summary query per table (distinct counts, null counts and, for number and time columns, smallest and largest values) and proposes:
 
 - **Column roles** (`key`, `time`, `category`, `amount`).
-- **Joins**, where a column matches another table's unique key by name and type, each with its evidence, for example "`customer_id` is unique in `customers` (3 of 3 rows) and repeats in `orders`". Joins are suggested only between tables of the same schema.
+- **Joins**, where a column matches another table's unique key by name and type, each with its evidence, for example "`customer_id` is unique in `customers` (3 of 3 rows) and repeats in `orders`". A schema's **Suggest** proposes joins between its own tables; **Suggest joins** on the catalog's page looks across all its schemas and says how many of its proposals wait there and how many in a schema's Review.
 - **Metrics**: a row count, the sum and average of amount columns and a distinct count of keys, with the time column and allowed dimensions filled in.
 
 Everything lands in the **Review** tab, which opens afterwards, and nothing is live until a person accepts it. Running **Suggest** again adds nothing that the model already holds. If the statistics cannot be read, roles come from names and types only, and the page says so.
@@ -121,7 +123,7 @@ Before a join is stored, Flowfile measures it: for each side, the rows that have
 
 An empty table, or a worker that cannot be reached, stores the join marked "Direction not checked". The **Joins** tab flags a join that is already wrong and offers **Fix direction** on an accepted reversed one, which proposes the same join with the sides swapped. A wrong join that was already accepted keeps running until it is fixed.
 
-The to table can be in another schema of the same catalog. That join is stored in the catalog-level model and listed with a `catalog` label.
+The to table can be in another schema of the same catalog. That join belongs to the catalog: it is listed on the catalog's page under **Joins across schemas**, and in the schema's Joins tab with a `catalog` label.
 
 ---
 
@@ -144,7 +146,20 @@ The expression and the filter may also use columns of joined tables, written `ta
 
 Before a metric is stored, Flowfile runs its expression against the table on a single row. An expression that does not run is refused with the engine's message. The SQL dialect is the one the [SQL Editor](sql-editor.md#writing-queries) uses.
 
-Editing a metric proposes a new definition; the old one stays in force until the new one is accepted.
+Editing a metric proposes a new definition; the old one stays in force until the new one is accepted. Clearing an optional part (the filter, the description) in an edit that is accepted at once removes that part.
+
+---
+
+## Remove a metric or a join
+
+- **A metric**: **Remove metric** at the bottom left of the metric's editor, or the bin icon on its card in the **Metrics** tab. After a confirmation, questions and queries can no longer use it.
+- **A join**: **Remove** on its row in the **Joins** tab (or, for a join across schemas, on the catalog's page). The confirmation first lists the metrics that use the join and will stop working, for example a metric whose formula reads `products.price` or that is broken down by `customers.country`, or says that no metric uses it. A query that still asks for such a metric is refused with a sentence naming the table it can no longer reach.
+
+Nothing is deleted. Removing withdraws the metric's or join's facts: an accepted fact, or your own proposal, is **retracted**; a proposal someone else made (a person, the rules or AI) is **rejected**, so the rules and AI do not propose it again. The **History** tab keeps every step, and the same name can be used for a new metric or join afterwards.
+
+To remove a column's description, role or confidentiality, clear it: empty the description, or clear **Used as** or **Confidentiality** back to **Not set**.
+
+On a shared server the same review rules decide who may remove: whoever manages the schema (or, for a join across schemas, the catalog), and anyone for a proposal of their own. The button is not shown to others.
 
 ---
 
@@ -202,7 +217,7 @@ The model suggests a query and Flowfile checks it against the model before anyth
 - A join is followed only from the many side to the one side; Flowfile measures the direction when the join is stored but does not check types of the key columns.
 - Confidentiality keeps column values from AI, not from people with access to the schema.
 - A saved flow cannot read another schema's table, so a query that reaches across schemas can be run but not kept as a flow.
-- Rule-suggested joins stay within one schema. An AI suggestion may join to a table of another schema only when a join already reaches it.
+- Rule-suggested joins from a schema's model stay within that schema; **Suggest joins** on the catalog's page also proposes joins across its schemas. An AI suggestion may join to a table of another schema only when a join already reaches it.
 - The checks on a specific suggestion catch a wrong table, column, type or direction, not a wrong meaning: a well-formed metric with a misleading name passes and is caught only in Review.
 - Tables whose name contains `::` are left out of the model.
 - Actor names in the history are numeric user ids, stable on one installation only.

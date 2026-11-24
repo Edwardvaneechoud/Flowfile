@@ -122,6 +122,10 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
   const review = (action: SemanticReviewAction): Promise<SemanticReviewResult> =>
     run((id) => SemanticModelApi.review(id, action));
 
+  /** Remove a whole metric or join by its key; the history keeps it. */
+  const removeSubject = (subject: string): Promise<SemanticReviewResult> =>
+    run((id) => SemanticModelApi.review(id, { action: "retract", subject }));
+
   const reviewBatch = (actions: SemanticReviewAction[]): Promise<SemanticReviewResult> =>
     run(async (id) => {
       const merged: SemanticReviewResult = { changed: [], errors: [] };
@@ -262,6 +266,7 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     updateModel,
     propose,
     review,
+    removeSubject,
     reviewBatch,
     suggestModel,
     suggestOnRequest,

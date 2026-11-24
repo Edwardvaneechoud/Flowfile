@@ -58,6 +58,8 @@ export interface SemanticMetric {
   approved_at: string | null;
   group: string | null;
   pending_group: string | null;
+  /** Whether the review policy lets this person remove the metric. */
+  can_remove: boolean;
 }
 
 export interface SemanticJoin {
@@ -73,6 +75,19 @@ export interface SemanticJoin {
   status: SemanticFactStatus;
   group: string | null;
   layer: "schema" | "catalog";
+  /** Whether the review policy lets this person remove the join. */
+  can_remove: boolean;
+}
+
+/** An accepted metric that stops working without a join (GET …/semantic-model/joins/dependents). */
+export interface JoinDependent {
+  metric: string;
+  metric_key: string;
+  table: string;
+  table_id: number | null;
+  /** "formula", "time column" or "dimension <name>". */
+  uses: string[];
+  message: string;
 }
 
 /** A join measured against the data (POST …/semantic-model/joins/check). */
@@ -171,6 +186,8 @@ export interface SemanticReviewAction {
   action: SemanticReviewActionType;
   ids?: string[] | null;
   group?: string | null;
+  /** With "retract": remove a whole metric or join by its key. */
+  subject?: string | null;
   comment?: string | null;
 }
 

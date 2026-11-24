@@ -37,6 +37,7 @@
           :model-value="factText(field.facts.role) || undefined"
           size="small"
           placeholder="Not set"
+          clearable
           :disabled="!editable"
           :fit-input-width="false"
           @update:model-value="saveField(field.name, 'role', $event)"
@@ -63,6 +64,7 @@
           :model-value="factText(field.facts.confidentiality) || undefined"
           size="small"
           placeholder="Not set"
+          clearable
           :disabled="!editable"
           :fit-input-width="false"
           @update:model-value="saveField(field.name, 'confidentiality', $event)"
@@ -106,10 +108,18 @@ const props = withDefaults(defineProps<{ table: SemanticTable; editable?: boolea
 });
 const emit = defineEmits<(e: "propose", proposal: SemanticProposal) => void>();
 
+// A cleared value goes as null, which removes the fact; clearing nothing sends nothing.
 const saveField = (column: string, attribute: string, value: unknown) => {
-  if (attribute !== "description" && (value === undefined || value === null || value === ""))
-    return;
-  emit("propose", { kind: "field", table_id: props.table.table_id, column, attribute, value });
+  const blank = value === undefined || value === null || value === "";
+  const held = props.table.fields.find((f) => f.name === column)?.facts[attribute];
+  if (blank && !held) return;
+  emit("propose", {
+    kind: "field",
+    table_id: props.table.table_id,
+    column,
+    attribute,
+    value: blank ? null : value,
+  });
 };
 </script>
 

@@ -80,10 +80,23 @@
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
 
     <template #footer>
-      <button class="btn btn-secondary" @click="emit('update:modelValue', false)">Cancel</button>
-      <button class="btn btn-primary" :disabled="!valid || saving" @click="save">
-        {{ saving ? "Saving…" : metric ? "Save changes" : "Add metric" }}
-      </button>
+      <div class="footer">
+        <button
+          v-if="metric && metric.can_remove"
+          class="btn btn-ghost btn-danger"
+          data-testid="semantic-metric-remove"
+          :disabled="saving || removing"
+          @click="remove"
+        >
+          <i class="fa-solid fa-trash"></i>
+          {{ removing ? "Removing…" : "Remove metric" }}
+        </button>
+        <span class="footer-gap"></span>
+        <button class="btn btn-secondary" @click="emit('update:modelValue', false)">Cancel</button>
+        <button class="btn btn-primary" :disabled="!valid || saving || removing" @click="save">
+          {{ saving ? "Saving…" : metric ? "Save changes" : "Add metric" }}
+        </button>
+      </div>
     </template>
   </el-dialog>
 </template>
@@ -101,6 +114,7 @@ import type { SemanticMetric, SemanticModel } from "../../../types/semantic.type
 import { sqlEditorExtensions, sqlFunctionCompletions } from "../sqlCompletion";
 import { reachLine, reachableTables } from "./metricReach";
 import { errorText } from "./semanticFormat";
+import { confirmRemoveMetric } from "./semanticRemoval";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -122,6 +136,7 @@ const timeColumn = ref("");
 const format = ref("");
 const dimensions = ref<string[]>([]);
 const saving = ref(false);
+const removing = ref(false);
 const error = ref("");
 const expressionError = ref("");
 const filterError = ref("");
@@ -265,6 +280,22 @@ function showRefusal(message: string) {
   else error.value = message;
 }
 
+async function remove() {
+  const metric = props.metric;
+  if (!metric || !(await confirmRemoveMetric(metric))) return;
+  removing.value = true;
+  error.value = "";
+  try {
+    await store.removeSubject(metric.key);
+    ElMessage.success(`Removed ${metric.name}.`);
+    emit("update:modelValue", false);
+  } catch (e) {
+    error.value = errorText(e, "Could not remove the metric");
+  } finally {
+    removing.value = false;
+  }
+}
+
 async function save() {
   if (!valid.value || tableId.value === null) return;
   saving.value = true;
@@ -329,6 +360,16 @@ async function save() {
   position: static;
   padding-top: var(--spacing-1);
   line-height: 1.4;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.footer-gap {
+  flex: 1;
 }
 
 .form-error {

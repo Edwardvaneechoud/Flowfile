@@ -46,6 +46,22 @@
             <button class="icon-btn" type="button" title="Edit metric" @click="openEditor(metric)">
               <i class="fa-solid fa-pen"></i>
             </button>
+            <button
+              v-if="metric.can_remove"
+              class="icon-btn icon-btn-danger"
+              type="button"
+              title="Remove metric"
+              aria-label="Remove metric"
+              data-testid="semantic-metric-card-remove"
+              :disabled="removing !== null"
+              @click="removeMetric(metric)"
+            >
+              <i
+                :class="
+                  removing === metric.key ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-trash'
+                "
+              ></i>
+            </button>
           </header>
           <p v-if="metric.description" class="metric-desc">{{ metric.description }}</p>
           <pre class="expression">{{ metric.expression }}</pre>
@@ -86,24 +102,42 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
+import { ElMessage } from "element-plus";
 import type { SemanticMetric, SemanticModel } from "../../../types/semantic.types";
 import MetricEditorDialog from "./MetricEditorDialog.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
 import SemanticSuggestMore from "./SemanticSuggestMore.vue";
-import { tablePageLocation } from "./semanticFormat";
+import { useSemanticModelStore } from "../../../stores/semantic-model-store";
+import { errorText, tablePageLocation } from "./semanticFormat";
+import { confirmRemoveMetric } from "./semanticRemoval";
 
 const props = defineProps<{ model: SemanticModel }>();
 const emit = defineEmits<{ "open-tab": [tab: string] }>();
 const router = useRouter();
 
+const store = useSemanticModelStore();
 const showEditor = ref(false);
 const editing = ref<SemanticMetric | null>(null);
+const removing = ref<string | null>(null);
 
 const groups = computed(() =>
   props.model.tables
     .filter((t) => t.metrics.length > 0)
     .map((t) => ({ table: t, metrics: t.metrics })),
 );
+
+async function removeMetric(metric: SemanticMetric) {
+  if (!(await confirmRemoveMetric(metric))) return;
+  removing.value = metric.key;
+  try {
+    await store.removeSubject(metric.key);
+    ElMessage.success(`Removed ${metric.name}.`);
+  } catch (e) {
+    ElMessage.error(errorText(e, "Could not remove the metric"));
+  } finally {
+    removing.value = null;
+  }
+}
 
 function openEditor(metric: SemanticMetric | null) {
   editing.value = metric;
@@ -193,6 +227,14 @@ function openEditor(metric: SemanticMetric | null) {
 
 .icon-btn:hover {
   color: var(--color-primary);
+}
+
+.icon-btn + .icon-btn {
+  margin-left: 0;
+}
+
+.icon-btn-danger:hover {
+  color: var(--color-danger);
 }
 
 .metric-desc {

@@ -25,6 +25,7 @@ from flowfile_core.database.connection import get_db
 from flowfile_core.schemas.semantic_schema import (
     FactOut,
     JoinCheckOut,
+    JoinDependentOut,
     MetricQuery,
     MetricQueryResult,
     MetricQuerySaveAsFlow,
@@ -111,6 +112,20 @@ def check_semantic_joins(namespace_id: int, service: SemanticModelService = Depe
     return service.check_joins(namespace_id)
 
 
+@router.get(f"{_BASE}/joins/dependents", response_model=list[JoinDependentOut])
+@_handle
+def get_semantic_join_dependents(
+    namespace_id: int,
+    key: str = Query(..., description="A join's key such as relationship:cat.sales::orders_customers"),
+    service: SemanticModelService = Depends(get_semantic_service),
+):
+    """The accepted metrics that would stop working without this join, worked out by the compiler alone.
+
+    The key goes in the query string because it holds dots and colons. Reading rights are enough.
+    """
+    return service.join_dependents(namespace_id, key)
+
+
 @router.get(f"{_BASE}/review", response_model=list[ReviewItemOut])
 @_handle
 def get_semantic_review_queue(namespace_id: int, service: SemanticModelService = Depends(get_semantic_service)):
@@ -122,6 +137,7 @@ def get_semantic_review_queue(namespace_id: int, service: SemanticModelService =
 def review_semantic_facts(
     namespace_id: int, body: ReviewAction, service: SemanticModelService = Depends(get_semantic_service)
 ):
+    """Accept, reject, retract or reopen facts; ``subject`` with ``retract`` removes a whole metric or join."""
     return service.review(namespace_id, body)
 
 

@@ -176,6 +176,49 @@ def _clean(value: Any) -> Any:
     return None if isinstance(value, str) and not value.strip() else value
 
 
+def _blank(value: Any) -> bool:
+    """A cleared value: nothing, blank text or an empty list. Proposing one means "remove what is there"."""
+    return value is None or (isinstance(value, str) and not value.strip()) or (isinstance(value, list) and not value)
+
+
+# A metric's parts an edit may leave out; the definition itself (``expression``) is always proposed.
+_METRIC_OPTIONAL = ("description", "aggregate", "filter", "time_column", "dimensions", "format")
+
+
+def _withdrawals(view: Any, assertions: list[Any]) -> list[tuple[str, Any]]:
+    """How to take each live fact away: ``reject`` an open fact someone else stated, ``retract`` anything else.
+
+    Retracting is withdrawing what is held (a person's own proposal, or an accepted fact); rejecting is a decision
+    on another's proposal, which also keeps the rules and the AI from proposing the same value again.
+    """
+    out = []
+    for a in assertions:
+        stated_by_caller = view.actor is not None and view.actor in (a.sources or ())
+        out.append(("reject" if a.status.value != ACCEPTED and not stated_by_caller else "retract", a))
+    return out
+
+
+def _withdraw(view: Any, assertions: list[Any], comment: str | None = None) -> list[Any]:
+    """Take every fact in ``assertions`` away in one store transaction; the first refusal undoes them all."""
+    plan = _withdrawals(view, assertions)
+    changed: list[Any] = []
+    with view.store.transaction():
+        for action in ("reject", "retract"):
+            ids = [a.id for act, a in plan if act == action]
+            if not ids:
+                continue
+            done, errors = view.transition_many(action, ids, comment=comment)
+            if errors:
+                raise errors[0][1]
+            changed += done
+    return changed
+
+
+def _may_withdraw(view: Any, assertions: list[Any]) -> bool:
+    """Whether glosslayer's policy lets the view's actor take all of ``assertions`` away (``_withdrawals``)."""
+    return all(view.policy.can(view.actor, action, a, view.context) for action, a in _withdrawals(view, assertions))
+
+
 def fact_out(f: FactSnap) -> s.FactOut:
     return s.FactOut(
         id=f.id,
@@ -286,7 +329,29 @@ class SemanticModelService:
         snap = self.snapshot(namespace_id)
         return self._model_out(snap)
 
+    def _removable(self, snap: ModelSnapshot) -> dict[str, bool]:
+        """Per metric and join subject of ``snap``: whether the policy lets this caller remove it (``remove``)."""
+        subjects = {m.key for m in snap.metrics} | {j.key for j in snap.joins}
+        ids: dict[str, list[str]] = {}
+        for f in snap.facts:
+            if f.subject in subjects:
+                ids.setdefault(f.subject, []).append(f.id)
+        if not ids:
+            return {}
+        try:
+            with _ledger_errors(self.user_id):
+                held = self.view.store.get_many({i for group in ids.values() for i in group})
+                return {
+                    subject: _may_withdraw(self.view, [held[i] for i in group if i in held])
+                    for subject, group in ids.items()
+                }
+        except Exception:  # noqa: BLE001
+            logger.warning("Semantic model: could not tell which facts this caller may remove", exc_info=True)
+            return {}
+
     def _model_out(self, snap: ModelSnapshot) -> s.SemanticModelOut:
+        removable = self._removable(snap)
+
         def value(attr: str) -> Any:
             f = snap.model_facts.get(attr)
             return f.value if f is not None else None
@@ -321,6 +386,7 @@ class SemanticModelService:
                     approved_at=m.approved_at,
                     group=m.group,
                     pending_group=m.pending_group,
+                    can_remove=removable.get(m.key, False),
                 )
                 for m in t.metrics
             ]
@@ -351,6 +417,7 @@ class SemanticModelService:
                 status=j.status,
                 group=j.group,
                 layer=j.layer,
+                can_remove=removable.get(j.key, False),
             )
             for j in snap.joins
         ]
@@ -397,6 +464,11 @@ class SemanticModelService:
         With ``ai_source`` (``ai:<provider>/<model>``) the facts are stated by that actor through a view bound with
         that ``via``, so glosslayer queues them for review and never lets the AI accept; the checks are the same as
         for a person's proposal. ``comment`` is added to each fact's rationale (a join keeps its measurement first).
+
+        A person's blank value for a column or table attribute (an emptied description, "Not set") removes what is
+        there instead of storing an empty value: its live facts are taken away (``_withdraw``), and are not in the
+        answer. Likewise a person's metric edit that is accepted at once (solo) and leaves out an optional part (a
+        cleared filter or description) retracts that part's accepted value; a queued edit keeps it until decided.
         """
         from glosslayer.ids import SubjectId
         from glosslayer.ledger import Proposal
@@ -417,6 +489,8 @@ class SemanticModelService:
         # Live joins, so a metric over a join still waiting for review can be proposed beside it.
         metric_snapshot = self._query_snapshot(namespace_id, preview=True)[1] if has_metric else None
         props: list[Any] = []
+        cleared: list[tuple[str, str]] = []
+        metric_edits: list[tuple[str, set[str]]] = []
         with _ledger_errors(self.user_id):
             for p in proposals:
                 if p.kind in ("field", "table"):
@@ -429,6 +503,10 @@ class SemanticModelService:
                         sid = SubjectId.for_dataset(t.key)
                     if is_structural(sid, p.attribute):
                         raise SemanticValueError(f"{p.attribute!r} is read from the catalog and cannot be proposed")
+                    if _blank(p.value):
+                        if not ai_source:
+                            cleared.append((str(sid), p.attribute))
+                        continue
                     props.append(Proposal(str(sid), p.attribute, p.value))
                 elif p.kind == "join":
                     join_props = self._join_proposals(
@@ -459,7 +537,10 @@ class SemanticModelService:
                         format=_clean(p.format),
                         table=t.key,
                     )
-                    props += list(metric.proposals())
+                    metric_props = list(metric.proposals())
+                    if p.edit and not ai_source:
+                        metric_edits.append((str(metric.subject), {mp.attribute for mp in metric_props}))
+                    props += metric_props
             if comment:
                 for prop in props:
                     prop.comment = f"{prop.comment} {comment}" if getattr(prop, "comment", None) else comment
@@ -470,10 +551,31 @@ class SemanticModelService:
                 results = view.propose_many(props, source=ai_source)
             else:
                 view = self.view
-                results = view.propose_many(props)
+                results = view.propose_many(props) if props else []
+                gone = self._cleared_facts(view, cleared, metric_edits, results)
+                if gone:
+                    _withdraw(view, gone, "cleared")
         facts = list({r.assertion.id: fact_from_assertion(r.assertion) for r in results}.values())
         annotate(view.store, facts)
         return [fact_out(f) for f in facts]
+
+    @staticmethod
+    def _cleared_facts(
+        view: Any, cleared: list[tuple[str, str]], metric_edits: list[tuple[str, set[str]]], results: list[Any]
+    ) -> list[Any]:
+        """The live facts a person's blank values and accepted metric edits take away (``propose``)."""
+        gone: dict[str, Any] = {}
+        for subject, attribute in cleared:
+            for a in view.find(subject=subject, attribute=attribute, statuses=list(LIVE)):
+                gone[a.id] = a
+        for subject, kept in metric_edits:
+            mine = [r.assertion for r in results if r.assertion.subject == subject]
+            if not mine or any(a.status.value != ACCEPTED for a in mine):
+                continue
+            for a in view.find(subject=subject, statuses=[ACCEPTED]):
+                if a.attribute in _METRIC_OPTIONAL and a.attribute not in kept:
+                    gone[a.id] = a
+        return [a for a in gone.values() if not a.redacted]
 
     def _join_proposals(self, p, ns, path, catalog_path, model_tables, all_tables, schema_of, Relationship) -> list:
         """A join's facts, owned by the schema when both ends are in it, else by the catalog."""
@@ -612,6 +714,8 @@ class SemanticModelService:
     def review(self, namespace_id: int, action: s.ReviewAction) -> s.ReviewResultOut:
         from glosslayer.ids import path_covers
 
+        if action.subject:
+            return self.remove(namespace_id, action.subject, comment=action.comment, action=action.action)
         ns, path = self._namespace(namespace_id)
         if not action.ids and not action.group:
             raise SemanticValueError("Give the ids or the group to decide")
@@ -619,6 +723,9 @@ class SemanticModelService:
         with _ledger_errors(self.user_id):
             if action.group:
                 targets = view.find(group=action.group)
+                if action.action == "retract":
+                    # a group's superseded or rejected facts are history, not something to retract
+                    targets = [a for a in targets if a.status.value in LIVE]
             else:
                 targets = [view.get(i) for i in action.ids]
             if not targets:
@@ -640,16 +747,94 @@ class SemanticModelService:
             errors=[s.ReviewError(id=aid, message=str(exc)) for aid, exc in errors],
         )
 
-    def history(self, namespace_id: int, subject: str) -> list[s.SemanticEventOut]:
+    def remove(
+        self, namespace_id: int, subject: str, *, comment: str | None = None, action: str = "retract"
+    ) -> s.ReviewResultOut:
+        """Remove a metric or a join: every live fact of ``subject`` taken away in one transaction (``_withdraw``).
+
+        Append-only: each fact moves to retracted (or rejected, for someone else's open proposal) and the history
+        keeps it, so the same name can be proposed again. Whether the caller may is glosslayer's policy; a refusal
+        undoes the whole removal and comes back as the policy's sentence (403). A catalog-layer join that touches
+        this schema can be removed from the schema's model too, as its history can be read there.
+        """
+        from glosslayer.ids import Kind
+
+        if action != "retract":
+            raise SemanticValueError("A metric or a join is removed with the retract action")
+        with _ledger_errors(self.user_id):
+            sid = self._subject_in_model(namespace_id, subject)
+            if sid.kind not in (Kind.METRIC, Kind.RELATIONSHIP):
+                raise SemanticValueError("Only a metric or a join is removed whole; clear a column's value instead")
+            live = [a for a in self.view.find(subject=str(sid), statuses=list(LIVE)) if not a.redacted]
+            if not live:
+                raise SemanticNotFoundError(f"{subject!r} holds nothing to remove")
+            changed = _withdraw(self.view, live, comment or "removed")
+        facts = [fact_from_assertion(a) for a in changed]
+        annotate(self.view.store, facts)
+        return s.ReviewResultOut(changed=[fact_out(f) for f in facts])
+
+    def _subject_in_model(self, namespace_id: int, subject: str) -> Any:
+        """``subject`` parsed, when it belongs to this namespace's model (a catalog join touching a schema counts)."""
         from glosslayer.ids import Kind, SubjectId, path_covers
 
         ns, path = self._namespace(namespace_id)
+        sid = SubjectId.parse(subject)
+        scope = sid.scope_path
+        catalog_join = ns.level == 1 and sid.kind is Kind.RELATIONSHIP and scope == path.rsplit(".", 1)[0]
+        if not (path_covers(path, scope) or catalog_join):
+            raise SemanticNotFoundError(f"{subject!r} is not part of this semantic model")
+        return sid
+
+    def join_dependents(self, namespace_id: int, key: str) -> list[s.JoinDependentOut]:
+        """The accepted metrics that stop compiling without the join ``key``; nothing is read from the data.
+
+        Each metric is compiled against the published, catalog-wide snapshot a query uses, with and without the
+        join: plain (its formula and stored filter), by its time grain, and by each allowed dimension. What compiles
+        with the join and not without it is what the join is needed for. A metric that may be grouped by any column
+        loses only the joined columns it could have been grouped by, so it is not listed.
+        """
+        from dataclasses import replace
+
+        live = self.snapshot(namespace_id)
+        if not any(j.key == key for j in live.joins):
+            raise SemanticNotFoundError(f"No join {key!r} in this semantic model")
+        _ns, snap, _tables = self._query_snapshot(namespace_id, preview=False)
+        if not any(j.key == key for j in snap.joins):
+            return []
+        without = replace(snap, joins=[j for j in snap.joins if j.key != key])
+        out = []
+        for m in snap.metrics:
+            cases: list[tuple[str, s.MetricQuery]] = [("formula", s.MetricQuery(metric=m.name))]
+            if m.value("time_column"):
+                cases.append(("time column", s.MetricQuery(metric=m.name, grain="month")))
+            for d in m.value("dimensions") or []:
+                if isinstance(d, str):
+                    cases.append((f"dimension {d}", s.MetricQuery(metric=m.name, dimensions=[d])))
+            uses, message = [], ""
+            for what, query in cases:
+                try:
+                    compile_metric_query(snap, query, metric_tables={m.table})
+                except ValueError:
+                    continue
+                try:
+                    compile_metric_query(without, query, metric_tables={m.table})
+                except ValueError as exc:
+                    uses.append(what)
+                    message = message or str(exc)
+            if uses:
+                out.append(
+                    s.JoinDependentOut(
+                        metric=m.name, metric_key=m.key, table=m.table, table_id=m.table_id, uses=uses, message=message
+                    )
+                )
+        return out
+
+    def history(self, namespace_id: int, subject: str) -> list[s.SemanticEventOut]:
+        from glosslayer.ids import SubjectId
+
         with _ledger_errors(self.user_id):
             sid = SubjectId.parse(subject)
-            scope = sid.scope_path
-            catalog_join = ns.level == 1 and sid.kind is Kind.RELATIONSHIP and scope == path.rsplit(".", 1)[0]
-            if not (path_covers(path, scope) or catalog_join):
-                raise SemanticNotFoundError(f"{subject!r} is not part of this semantic model")
+            self._subject_in_model(namespace_id, subject)
             events = self.view.history(sid)
         known = self.view.store.get_many({e.assertion_id for e in events}) if events else {}
         out = []

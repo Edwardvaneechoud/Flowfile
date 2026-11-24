@@ -68,6 +68,8 @@ class MetricOut(BaseModel):
     approved_at: datetime | None = None
     group: str | None = None
     pending_group: str | None = None
+    can_remove: bool = False
+    """Whether glosslayer's policy lets the caller remove this metric (``ReviewAction.subject``)."""
 
 
 class JoinOut(BaseModel):
@@ -86,6 +88,8 @@ class JoinOut(BaseModel):
     status: FactStatus
     group: str | None = None
     layer: Literal["schema", "catalog"]
+    can_remove: bool = False
+    """Whether glosslayer's policy lets the caller remove this join (``ReviewAction.subject``)."""
 
 
 class SemanticTableOut(BaseModel):
@@ -181,11 +185,17 @@ class ProposalsIn(BaseModel):
 
 
 class ReviewAction(BaseModel):
-    """Decide facts by ``ids`` or one whole ``group``; a join's or metric's group is always decided as a unit."""
+    """Decide facts by ``ids`` or one whole ``group``; a join's or metric's group is always decided as a unit.
+
+    ``subject`` (a metric's or join's key, with ``action: "retract"``) removes it whole: every live fact of the
+    subject, whichever groups they came in, is retracted, or rejected when it is an open proposal someone else made.
+    Nothing is deleted; the history keeps every fact.
+    """
 
     action: Literal["accept", "reject", "retract", "reopen"]
     ids: list[str] | None = None
     group: str | None = None
+    subject: str | None = None
     comment: str | None = None
 
 
@@ -210,6 +220,18 @@ class ReviewItemOut(FactOut):
     table_id: int | None = None
     column: str | None = None
     group_facts: list[FactOut] = Field(default_factory=list)
+
+
+class JoinDependentOut(BaseModel):
+    """An accepted metric that stops compiling once a join is removed: what of it needs the join, and the error."""
+
+    metric: str
+    metric_key: str
+    table: str
+    table_id: int | None = None
+    uses: list[str] = Field(default_factory=list)
+    """``formula`` (its expression or stored filter), ``time column`` or ``dimension <name>``."""
+    message: str
 
 
 class SemanticEventOut(BaseModel):

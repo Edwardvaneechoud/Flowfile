@@ -101,9 +101,17 @@ import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useCatalogStore } from "../../../stores/catalog-store";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
+import type { SemanticFact, SemanticProposal } from "../../../types/semantic.types";
 import { errorText } from "./semanticFormat";
 
-const props = defineProps<{ modelValue: boolean; namespaceId: number }>();
+const props = defineProps<{
+  modelValue: boolean;
+  namespaceId: number;
+  /** Where the join goes; the open model panel's store by default. */
+  propose?: (proposals: SemanticProposal[]) => Promise<SemanticFact[]>;
+  /** Said when the join waits for review. */
+  pendingNote?: string;
+}>();
 const emit = defineEmits<(e: "update:modelValue", value: boolean) => void>();
 
 interface Pair {
@@ -177,7 +185,8 @@ async function save() {
   saving.value = true;
   error.value = "";
   try {
-    const facts = await store.propose([
+    const send = props.propose ?? store.propose;
+    const facts = await send([
       {
         kind: "join",
         name: name.value.trim(),
@@ -189,7 +198,7 @@ async function save() {
       },
     ]);
     if (facts.some((f) => f.status !== "accepted")) {
-      ElMessage.info("Proposed. It waits in the Review tab.");
+      ElMessage.info(props.pendingNote ?? "Proposed. It waits in the Review tab.");
     }
     emit("update:modelValue", false);
   } catch (e) {

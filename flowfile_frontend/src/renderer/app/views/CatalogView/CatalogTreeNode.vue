@@ -486,7 +486,10 @@ function onTableContextMenu(table: CatalogTable, event: MouseEvent) {
   emit("tableContextMenu", { table, x: event.clientX, y: event.clientY });
 }
 
-const showSemanticEntry = computed(() => !isHub.value && reason.value === null && !searching.value);
+// A schema's model only; a catalog's joins across schemas live on the catalog's page.
+const showSemanticEntry = computed(
+  () => props.node.level === 1 && !isHub.value && reason.value === null && !searching.value,
+);
 const semanticPending = computed(() => props.node.semantic_model?.pending ?? 0);
 
 const rawQuery = computed(() => normalizeQuery(props.searchQuery));

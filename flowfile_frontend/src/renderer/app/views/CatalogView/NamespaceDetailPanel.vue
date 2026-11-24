@@ -104,6 +104,12 @@
       </p>
     </template>
 
+    <CatalogSemanticSection
+      v-if="showsSemantic"
+      :catalog="namespace"
+      @open-semantic-model="emit('open-semantic-model', $event)"
+    />
+
     <EditCatalogStorageModal
       :visible="showStorageEditor"
       :catalog="namespace"
@@ -121,7 +127,8 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import EditCatalogStorageModal from "./EditCatalogStorageModal.vue";
-import { HUB_MANAGED_NOTE, isHubRow } from "./hubRows";
+import CatalogSemanticSection from "./semantic/CatalogSemanticSection.vue";
+import { HUB_MANAGED_NOTE, isHubRow, unavailableReason } from "./hubRows";
 import { forgetCatalogSelection } from "./catalogLastLocation";
 import { deleteBlockedReason, storageLockedReason } from "./catalogStorageEdit";
 import { fetchCloudStorageConnectionsInterfaces } from "../CloudConnectionView/api";
@@ -132,7 +139,10 @@ import {
 import type { FullCloudStorageConnectionInterface } from "../CloudConnectionView/CloudConnectionTypes";
 
 const props = defineProps<{ namespace: NamespaceTree }>();
-const emit = defineEmits(["close"]);
+const emit = defineEmits<{
+  (e: "close"): void;
+  (e: "open-semantic-model", schemaId: number): void;
+}>();
 
 const catalogStore = useCatalogStore();
 // Storage is the owner's (or an admin's) to change, as core refuses a manage-grantee
@@ -140,6 +150,10 @@ const { canManage, canManageGrants: canChangeStorage } = useResourceSharing();
 
 const isCloud = computed(() => !!props.namespace.storage_uri);
 const isHub = computed(() => isHubRow(props.namespace));
+// The semantic models of this machine's catalogs only; a hub's or an unusable one's are not here.
+const showsSemantic = computed(
+  () => props.namespace.level === 0 && !isHub.value && unavailableReason(props.namespace) === null,
+);
 const connection = ref<FullCloudStorageConnectionInterface | null>(null);
 const loadingConnection = ref(false);
 const showStorageEditor = ref(false);

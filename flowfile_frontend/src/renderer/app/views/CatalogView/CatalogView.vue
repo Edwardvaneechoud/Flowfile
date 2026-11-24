@@ -284,6 +284,7 @@
           v-else-if="catalogStore.selectedNamespace"
           :namespace="catalogStore.selectedNamespace"
           @close="handleCloseDetail"
+          @open-semantic-model="selectSemanticModel($event)"
         />
         <!-- Table detail view -->
         <TableDetailPanel
@@ -1173,7 +1174,15 @@ function selectNamespace(namespaceId: number) {
   });
 }
 
+/** A catalog (level 0) of this machine's tree: its semantic model lives on the catalog's page. */
+const isCatalogId = (namespaceId: number) =>
+  catalogStore.tree.some((c) => c.id === namespaceId && c.level === 0);
+
 function selectSemanticModel(namespaceId: number, tableId: number | null = null) {
+  if (isCatalogId(namespaceId)) {
+    selectNamespace(namespaceId);
+    return;
+  }
   semanticModelStore.requestFocusTable(tableId);
   router.push({
     name: "catalog",
@@ -2056,6 +2065,16 @@ function applyRouteToStore() {
     return;
   }
   const q = route.query;
+  // An old address of a catalog's model opens the catalog's page, which now holds it.
+  const oldCatalogModel = q.semanticNamespaceId ? Number(q.semanticNamespaceId) : null;
+  if (oldCatalogModel !== null && isCatalogId(oldCatalogModel)) {
+    const rest = { ...q };
+    delete rest.semanticNamespaceId;
+    rest.tab = "catalog";
+    rest.namespaceId = String(oldCatalogModel);
+    router.replace({ name: "catalog", query: rest });
+    return;
+  }
   const tab = routeTab();
   const flowId = q.flowId ? Number(q.flowId) : null;
   const runId = q.runId ? Number(q.runId) : null;
