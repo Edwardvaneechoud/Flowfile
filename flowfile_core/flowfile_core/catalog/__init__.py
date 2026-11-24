@@ -37,6 +37,9 @@ from .exceptions import (
     ScheduleConflictError,
     ScheduleNotFoundError,
     SeededNamespaceError,
+    SemanticConflictError,
+    SemanticNotFoundError,
+    SemanticValueError,
     StaleWriteError,
     TableExistsError,
     TableFavoriteNotFoundError,
@@ -93,4 +96,7 @@ __all__ = [
     "CdcNotSupportedError",
     "CdcCursorNotFoundError",
     "CdcCursorsAtRiskError",
+    "SemanticNotFoundError",
+    "SemanticConflictError",
+    "SemanticValueError",
 ]
