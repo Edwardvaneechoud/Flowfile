@@ -193,12 +193,23 @@ def _manifest_entries(root: Path, kind_name: str) -> list:
     return _applied_entries(rel, entries, _ENTRY_NAME_KEYS[kind_name])
 
 
-# The kinds stored one object per file, with the list key of the root file a folder of format 2 or older
-# holds them in and the field that identifies an object.
+def _table_key(entry: dict) -> tuple:
+    namespace = entry.get("namespace") or {}
+    return namespace.get("catalog"), namespace.get("schema"), entry.get("name")
+
+
+# The kinds stored one object per file, with the list key of the root file an older folder holds them in and
+# what identifies an object: a field, or a function for a composite key.
 _OBJECT_KINDS = {
     "visualizations": ("visualizations", "viz_uuid"),
     "dashboards": ("dashboards", "dashboard_uuid"),
+    "tables": ("tables", _table_key),
 }
+
+
+def _object_id(kind_name: str, data: dict):
+    ident = _OBJECT_KINDS[kind_name][1]
+    return ident(data) if callable(ident) else data.get(ident)
 
 
 def _is_object_file(kind_name: str, rel: str) -> bool:
@@ -209,7 +220,7 @@ def _is_object_file(kind_name: str, rel: str) -> bool:
 def _object_entries(root: Path, kind_name: str) -> list:
     """The objects of a kind stored one per file, less those another user owns: each file's mapping, then the
     items of an older folder's root list that no file holds."""
-    list_key, id_key = _OBJECT_KINDS[kind_name]
+    list_key = _OBJECT_KINDS[kind_name][0]
     entries: list = []
     held: set = set()
     listed: list = []
@@ -219,8 +230,8 @@ def _object_entries(root: Path, kind_name: str) -> list:
             listed += _applied_entries(rel, data.get(list_key, []) or [], _ENTRY_NAME_KEYS[kind_name])
         elif _applies(rel, data):
             entries.append(data)
-            held.add(data.get(id_key))
-    return entries + [e for e in listed if e.get(id_key) is None or e.get(id_key) not in held]
+            held.add(_object_id(kind_name, data))
+    return entries + [e for e in listed if _object_id(kind_name, e) not in held]
 
 
 def _after_commit(label: str, action, *args, **kwargs) -> None:
@@ -611,14 +622,15 @@ def _materialize_empty_delta(path: str, schema: list[dict]) -> None:
 
 
 def _import_tables(root: Path, owner_id: int) -> set[int]:
-    """Recreate the owner's physical + SQL-view tables from tables.yaml; return the kept ids.
+    """Recreate the owner's physical + SQL-view tables from the table files (or an older root tables.yaml); return
+    the kept ids.
 
     A physical table re-points to its data when present on this machine; when the managed data is
     absent it is rebuilt as a real 0-row Delta table from the stored schema (so it is queryable and
     repopulates when its flow runs). Existing data is never overwritten. A SQL view is rebuilt from
     its stored query + schema without executing it."""
     kept: set[int] = set()
-    for entry in _manifest_entries(root, "tables"):
+    for entry in _object_entries(root, "tables"):
         name = entry.get("name")
         if not name:
             continue
