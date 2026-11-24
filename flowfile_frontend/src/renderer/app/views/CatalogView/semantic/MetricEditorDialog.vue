@@ -29,20 +29,29 @@
       <el-form-item label="What it means">
         <el-input v-model="description" placeholder="Revenue from completed orders, before tax" />
       </el-form-item>
-      <el-form-item label="Expression">
+      <el-form-item label="Expression" :error="expressionError">
         <div class="editor">
           <codemirror
             v-model="expression"
             placeholder="SUM(amount)"
-            :extensions="extensions"
+            :extensions="expressionExtensions"
             :indent-with-tab="false"
             :tab-size="2"
             :style="{ minHeight: '60px' }"
           />
         </div>
+        <p v-if="usableLine" class="usable">{{ usableLine }}</p>
       </el-form-item>
-      <el-form-item label="Filter (optional)">
-        <el-input v-model="filter" placeholder="status = 'completed'" />
+      <el-form-item label="Filter (optional)" :error="filterError">
+        <div class="editor one-line">
+          <codemirror
+            v-model="filter"
+            placeholder="status = 'completed'"
+            :extensions="filterExtensions"
+            :indent-with-tab="false"
+            :tab-size="2"
+          />
+        </div>
       </el-form-item>
       <div class="row">
         <el-form-item label="Time column (optional)">
@@ -79,14 +88,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { Codemirror } from "vue-codemirror";
-import { sql } from "@codemirror/lang-sql";
-import { oneDark } from "@codemirror/theme-one-dark";
-import type { Extension } from "@codemirror/state";
+import type { Completion } from "@codemirror/autocomplete";
+import type { SQLNamespace } from "@codemirror/lang-sql";
+import { EditorState, type Extension } from "@codemirror/state";
+import { useCatalogStore } from "../../../stores/catalog-store";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
 import type { SemanticMetric, SemanticModel } from "../../../types/semantic.types";
+import { sqlEditorExtensions, sqlFunctionCompletions } from "../sqlCompletion";
+import { reachLine, reachableTables } from "./metricReach";
 import { errorText } from "./semanticFormat";
 
 const props = defineProps<{
@@ -98,7 +110,7 @@ const props = defineProps<{
 const emit = defineEmits<(e: "update:modelValue", value: boolean) => void>();
 
 const store = useSemanticModelStore();
-const extensions: Extension[] = [sql({ upperCaseKeywords: true }), oneDark];
+const catalogStore = useCatalogStore();
 
 const tableId = ref<number | null>(null);
 const name = ref("");
@@ -110,15 +122,103 @@ const format = ref("");
 const dimensions = ref<string[]>([]);
 const saving = ref(false);
 const error = ref("");
+const expressionError = ref("");
+const filterError = ref("");
 
-const columns = computed(
-  () =>
-    props.model.tables.find((t) => t.table_id === tableId.value)?.fields.map((f) => f.name) ?? [],
+const baseTable = computed(() => props.model.tables.find((t) => t.table_id === tableId.value));
+
+const columns = computed(() => baseTable.value?.fields.map((f) => f.name) ?? []);
+
+const editingPending = computed(
+  () => !!props.metric && (props.metric.status !== "accepted" || !!props.metric.pending_group),
 );
+
+const reached = computed(() =>
+  baseTable.value
+    ? reachableTables(baseTable.value.key, props.model.joins, editingPending.value)
+    : [],
+);
+
+const treeColumns = computed(() => {
+  const map = new Map<string, Completion[]>();
+  for (const catalog of catalogStore.tree) {
+    for (const schema of catalog.children) {
+      for (const t of schema.tables ?? []) {
+        const key = t.qualified_name ?? `${catalog.name}.${schema.name}.${t.name}`;
+        map.set(
+          key,
+          (t.schema_columns ?? []).map((c) => ({
+            label: c.name,
+            type: "property",
+            detail: c.dtype,
+          })),
+        );
+      }
+    }
+  }
+  return map;
+});
+
+function columnsOf(key: string): Completion[] {
+  const t = props.model.tables.find((x) => x.key === key);
+  if (!t) return treeColumns.value.get(key) ?? [];
+  return t.fields.map((f) => {
+    const meaning = f.facts.description?.value;
+    const detail = [f.dtype, typeof meaning === "string" ? meaning : ""]
+      .filter(Boolean)
+      .join(" · ");
+    return { label: f.name, type: "property", detail: detail || undefined };
+  });
+}
+
+const shortName = (key: string) => key.slice(key.lastIndexOf(".") + 1);
+
+/** Each reachable table by its short name, or under its schema when two share one. */
+const completionSchema = computed<SQLNamespace>(() => {
+  const schema: Record<string, SQLNamespace> = {};
+  const counts = new Map<string, number>();
+  for (const key of reached.value)
+    counts.set(shortName(key), (counts.get(shortName(key)) ?? 0) + 1);
+  for (const key of reached.value) {
+    const short = shortName(key);
+    if ((counts.get(short) ?? 0) === 1) {
+      schema[short] = columnsOf(key);
+      continue;
+    }
+    const parts = key.split(".");
+    const schemaName = parts[parts.length - 2] ?? short;
+    const holder = (schema[schemaName] ?? {}) as Record<string, SQLNamespace>;
+    holder[short] = columnsOf(key);
+    schema[schemaName] = holder;
+  }
+  return schema;
+});
+
+const languageExtensions = computed<Extension[]>(() => [
+  ...sqlEditorExtensions(
+    completionSchema.value,
+    baseTable.value ? shortName(baseTable.value.key) : undefined,
+  ),
+  sqlFunctionCompletions,
+]);
+
+const oneLine = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || tr.newDoc.lines === 1) return tr;
+  const text = tr.newDoc.toString().replace(/\s*\n\s*/g, " ");
+  return { changes: { from: 0, to: tr.startState.doc.length, insert: text } };
+});
+
+const expressionExtensions = computed<Extension[]>(() => languageExtensions.value);
+const filterExtensions = computed<Extension[]>(() => [...languageExtensions.value, oneLine]);
+
+const usableLine = computed(() => reachLine(reached.value));
 
 const valid = computed(
   () => tableId.value !== null && name.value.trim() !== "" && expression.value.trim() !== "",
 );
+
+watch(expression, () => (expressionError.value = ""));
+watch(filter, () => (filterError.value = ""));
 
 function onTableChange() {
   dimensions.value = [];
@@ -136,12 +236,23 @@ function reset() {
   format.value = m?.format ?? "";
   dimensions.value = [...(m?.dimensions ?? [])];
   error.value = "";
+  expressionError.value = "";
+  filterError.value = "";
+}
+
+/** Puts a refusal under the field it names ("… in the filter)"), else in the dialog's error line. */
+function showRefusal(message: string) {
+  if (message.includes(" in the filter)")) filterError.value = message;
+  else if (message.includes(" in the expression)")) expressionError.value = message;
+  else error.value = message;
 }
 
 async function save() {
   if (!valid.value || tableId.value === null) return;
   saving.value = true;
   error.value = "";
+  expressionError.value = "";
+  filterError.value = "";
   try {
     const facts = await store.propose([
       {
@@ -162,7 +273,7 @@ async function save() {
     }
     emit("update:modelValue", false);
   } catch (e) {
-    error.value = errorText(e, "Could not save the metric");
+    showRefusal(errorText(e, "Could not save the metric"));
   } finally {
     saving.value = false;
   }
@@ -186,6 +297,13 @@ async function save() {
   width: 100%;
   border-radius: var(--border-radius-md);
   overflow: hidden;
+}
+
+.usable {
+  margin: var(--spacing-1) 0 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--color-text-muted);
 }
 
 .form-error {

@@ -35,7 +35,12 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.semantic import host
-from flowfile_core.catalog.semantic.compiler import CompiledQuery, candidate_snapshot, compile_metric_query
+from flowfile_core.catalog.semantic.compiler import (
+    CompiledQuery,
+    candidate_snapshot,
+    compile_metric_query,
+    with_candidate,
+)
 from flowfile_core.catalog.semantic.snapshot import (
     ACCEPTED,
     GROUPED_KINDS,
@@ -78,9 +83,16 @@ def maybe_sync(force: bool = False) -> Any:
         return report
 
 
-def validate_metric(table: TableInfo, proposal: s.MetricProposal, execute: Callable[[str], Any] | None = None) -> None:
+def validate_metric(
+    table: TableInfo,
+    proposal: s.MetricProposal,
+    execute: Callable[[str], Any] | None = None,
+    snapshot: ModelSnapshot | None = None,
+) -> None:
     """Compile a proposed metric with no dimensions and, given ``execute``, dry-run it before it is stored.
 
+    ``snapshot`` is the one a query compiles against (``_query_snapshot``: the catalog's joins and tables), so a
+    formula reading a joined table's column is checked as it will run; without it only the base table is known.
     ``execute`` takes the SQL and answers a ``SqlQueryResult`` (one row is asked for). A compile failure or an engine
     error is the ``SemanticValueError`` the author sees, with the engine's message. Compute that cannot be reached
     does not block authoring: the dry-run is skipped and the proposal stored.
@@ -91,7 +103,10 @@ def validate_metric(table: TableInfo, proposal: s.MetricProposal, execute: Calla
 
     candidate = _metric_snap(table, proposal)
     try:
-        compiled = compile_metric_query(candidate_snapshot(table, candidate), s.MetricQuery(metric=proposal.name))
+        snap = candidate_snapshot(table, candidate)
+        if snapshot is not None:
+            snap = with_candidate(snapshot, table, candidate)
+        compiled = compile_metric_query(snap, s.MetricQuery(metric=proposal.name), metric_tables={table.key})
     except ValueError as exc:
         raise SemanticValueError(f"Metric {proposal.name!r} does not compile: {exc}") from None
     if execute is None:
@@ -385,7 +400,10 @@ class SemanticModelService:
                 raise SemanticValueError(f"Table id={table_id} is not part of this semantic model")
             return t
 
-        existing = self._metric_names(path) if any(p.kind == "metric" for p in proposals) else {}
+        has_metric = any(p.kind == "metric" for p in proposals)
+        existing = self._metric_names(path) if has_metric else {}
+        # Live joins, so a metric over a join still waiting for review can be proposed beside it.
+        metric_snapshot = self._query_snapshot(namespace_id, preview=True)[1] if has_metric else None
         props: list[Any] = []
         with _ledger_errors(self.user_id):
             for p in proposals:
@@ -417,7 +435,7 @@ class SemanticModelService:
                         raise SemanticConflictError(f"Metric {p.name!r} belongs to {owner}, not {t.key}")
                     if p.time_column and not t.has_column(p.time_column):
                         raise SemanticValueError(f"Table {t.name!r} has no column {p.time_column!r}")
-                    validate_metric(t, p, execute=self._dry_run)
+                    validate_metric(t, p, execute=self._dry_run, snapshot=metric_snapshot)
                     metric = Metric(
                         p.name,
                         p.expression,

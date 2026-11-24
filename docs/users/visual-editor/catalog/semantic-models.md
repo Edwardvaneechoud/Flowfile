@@ -122,6 +122,8 @@ Open the **Metrics** tab and click **Add metric**.
 | **Number format (optional)** | For example `#,##0.00`. |
 | **Allowed dimensions** | The columns of the table the metric can be broken down by. |
 
+The expression and the filter may also use columns of joined tables, written `table.column` (for example `SUM(quantity * products.price)`, or `schema.table.column` when two tables share a name). Only tables reached by following joins from the many side to the one side can be used, so each row of the metric's table meets at most one row of a joined table and the total is never multiplied. The editor completes the table's columns, the joined tables' columns after `table.` and SQL functions, and lists under the expression which tables can be used.
+
 Before a metric is stored, Flowfile runs its expression against the table on a single row. An expression that does not run is refused with the engine's message. The SQL dialect is the one the [SQL Editor](sql-editor.md#writing-queries) uses.
 
 Editing a metric proposes a new definition; the old one stays in force until the new one is accepted.
@@ -178,7 +180,7 @@ The model suggests a query and Flowfile checks it against the model before anyth
 ## Limits
 
 - A query asks for **one metric**.
-- A metric belongs to **one table**.
+- A metric belongs to **one table**. Its formula can read columns of tables joined many to one, never of a table with many rows per row of its own (a metric on customers cannot use a column of orders).
 - A join is followed only from the many side to the one side; Flowfile measures the direction when the join is stored but does not check types of the key columns.
 - Confidentiality keeps column values from AI, not from people with access to the schema.
 - A saved flow cannot read another schema's table, so a query that reaches across schemas can be run but not kept as a flow.

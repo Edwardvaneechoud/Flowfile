@@ -11,9 +11,14 @@ The emitted shape is fixed::
     WHERE (<metric filter>) GROUP BY <dimensions> ORDER BY ... LIMIT ...
 
 The inner query keeps every base column under its own name and is aliased with the base table's short name, so a
-stored expression that says ``amount`` or ``orders.amount`` resolves without being parsed. Joins are followed only
-from their many side (``from``) to their one side (``to``), so each base row meets at most one row of a joined table
-and the aggregate never fans out.
+stored expression that says ``amount`` or ``orders.amount`` resolves as written. Joins are followed only from their
+many side (``from``) to their one side (``to``), so each base row meets at most one row of a joined table and the
+aggregate never fans out.
+
+The expression is not parsed as SQL. A small tokenizer (``find_column_references``) finds its ``table.column`` and
+``schema.table.column`` chains, skipping literals, numbers and comments; a chain naming a joined table is projected by
+the inner query under a safe alias and exactly that chain is rewritten to read it (``products.price`` →
+``"orders"."__gloss_d1"``). Everything else in the expression, bare identifiers included, is left as written.
 
 Free SQL comes only from the stored metric (its ``expression`` and ``filter``); everything taken from a query is an
 identifier checked against the snapshot and double-quoted, or a value rendered by ``sql_literal``.
@@ -26,7 +31,7 @@ import decimal
 import math
 import re
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from flowfile_core.catalog.semantic.snapshot import JoinSnap, MetricSnap, ModelSnapshot, TableInfo, TableSnap
@@ -36,6 +41,12 @@ OPS = ("=", "!=", "<", "<=", ">", ">=", "in", "not in", "between", "is null", "i
 DEFAULT_LIMIT = 1000
 MAX_LIMIT = 10000
 _ALIAS_PREFIX = "__gloss_"
+_IDENT = re.compile(r"[^\W\d]\w*")
+_NUMBER = re.compile(r"(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+_KEYWORDS = frozenset(
+    "SELECT FROM WHERE AND OR NOT CASE WHEN THEN ELSE END AS IN IS NULL LIKE ILIKE BETWEEN DISTINCT FILTER OVER "
+    "PARTITION BY ORDER INTERVAL DATE TIMESTAMP TIME CAST TRUE FALSE".split()
+)
 
 
 class _Filter(Protocol):
@@ -90,6 +101,113 @@ def _short(key: str) -> str:
     return key.rsplit(".", 1)[-1]
 
 
+def _schema_table(key: str) -> str:
+    return ".".join(key.split(".")[-2:])
+
+
+def _one_row_of(name: str) -> str:
+    """A naive singular for a message (``customers`` → ``customer``); a name that is not plain English stays."""
+    if name.endswith("ies") and len(name) > 4:
+        return name[:-3] + "y"
+    if name.endswith("s") and not name.endswith("ss") and len(name) > 3:
+        return name[:-1]
+    return f"row of {name}"
+
+
+@dataclass(frozen=True)
+class ColumnReference:
+    """A ``table.column`` or ``schema.table.column`` chain in free SQL: its span in the text and its parts."""
+
+    start: int
+    end: int
+    parts: tuple[str, ...]
+    text: str
+
+
+def _tokens(sql: str) -> list[tuple[str, int, int, str]]:
+    """``(kind, start, end, value)`` for each token; whitespace and comments are dropped, quotes unescaped."""
+    out: list[tuple[str, int, int, str]] = []
+    i, n = 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch.isspace():
+            i += 1
+        elif sql.startswith("--", i):
+            e = sql.find("\n", i)
+            i = n if e < 0 else e + 1
+        elif sql.startswith("/*", i):
+            e = sql.find("*/", i + 2)
+            i = n if e < 0 else e + 2
+        elif ch in "'\"":
+            j, buf = i + 1, []
+            while j < n:
+                if sql[j] == ch:
+                    if j + 1 < n and sql[j + 1] == ch:
+                        buf.append(ch)
+                        j += 2
+                        continue
+                    break
+                buf.append(sql[j])
+                j += 1
+            end = min(j + 1, n)
+            out.append(("string" if ch == "'" else "qident", i, end, "".join(buf)))
+            i = end
+        elif ch.isdigit() or (ch == "." and i + 1 < n and sql[i + 1].isdigit()):
+            m = _NUMBER.match(sql, i)
+            out.append(("number", i, m.end(), m.group()))
+            i = m.end()
+        elif m := _IDENT.match(sql, i):
+            out.append(("ident", i, m.end(), m.group()))
+            i = m.end()
+        else:
+            out.append(("dot" if ch == "." else "punct", i, i + 1, ch))
+            i += 1
+    return out
+
+
+def find_column_references(sql: str) -> list[ColumnReference]:
+    """The two- and three-part identifier chains of ``sql``, in order.
+
+    A chain is identifiers (bare or double-quoted) joined by dots. One followed by ``(`` is a function call and one
+    starting with an unquoted keyword is SQL, so neither counts; a bare identifier is never a reference, and a chain
+    of four or more parts is left alone. Text inside string literals, quoted identifiers and comments is never read
+    as a chain, so ``'products.price'`` stays a string.
+    """
+    tokens = _tokens(sql)
+    refs: list[ColumnReference] = []
+    i = 0
+    while i < len(tokens):
+        kind, start, _end, value = tokens[i]
+        if kind not in ("ident", "qident"):
+            i += 1
+            continue
+        parts, j = [value], i
+        while j + 2 < len(tokens) and tokens[j + 1][0] == "dot" and tokens[j + 2][0] in ("ident", "qident"):
+            parts.append(tokens[j + 2][3])
+            j += 2
+        is_call = j + 1 < len(tokens) and tokens[j + 1][3] == "("
+        is_keyword = kind == "ident" and value.upper() in _KEYWORDS
+        if 2 <= len(parts) <= 3 and not is_call and not is_keyword:
+            end = tokens[j][2]
+            refs.append(ColumnReference(start=start, end=end, parts=tuple(parts), text=sql[start:end]))
+        i = j + 1
+    return refs
+
+
+def _paths_from(snapshot: ModelSnapshot, start: str) -> dict[str, list[JoinSnap]]:
+    """Shortest join path from ``start`` to each table it reaches, joins followed from ``from`` to ``to`` only."""
+    paths: dict[str, list[JoinSnap]] = {start: []}
+    queue = deque([start])
+    joins = sorted(snapshot.joins, key=lambda j: (j.name, j.key))
+    while queue:
+        cur = queue.popleft()
+        for j in joins:
+            if j.from_table == cur and j.to_table not in paths:
+                paths[j.to_table] = [*paths[cur], j]
+                queue.append(j.to_table)
+    return paths
+
+
 def _norm(sql: str) -> str:
     return re.sub(r"\s+", "", sql).lower()
 
@@ -109,15 +227,7 @@ class _Graph:
         self.snapshot = snapshot
         self.base = base
         self.columns = _column_index(snapshot)
-        self.paths: dict[str, list[JoinSnap]] = {base: []}
-        queue = deque([base])
-        joins = sorted(snapshot.joins, key=lambda j: (j.name, j.key))
-        while queue:
-            cur = queue.popleft()
-            for j in joins:
-                if j.from_table == cur and j.to_table not in self.paths:
-                    self.paths[j.to_table] = [*self.paths[cur], j]
-                    queue.append(j.to_table)
+        self.paths = _paths_from(snapshot, base)
 
     def reachable_names(self) -> list[str]:
         return [_short(k) for k in self.paths]
@@ -149,6 +259,49 @@ class _Graph:
             f"Table {_short(self.base)!r} has no column {ref!r}; write a column of a joined table as 'table.column' "
             f"(reachable tables: {', '.join(self.reachable_names())})"
         )
+
+    def resolve_reference(self, ref: ColumnReference, where: str) -> tuple[str, str]:
+        """A chain of a metric's free SQL as ``(dataset key, column)``; a ``ValueError`` naming ``where`` otherwise.
+
+        ``table`` is a short name and ``schema.table`` a key's last two parts. The base table wins its own short
+        name; any other table must be reachable many → one, and two reachable tables that answer the same name are
+        an error that names both, so the author writes ``schema.table.column``.
+        """
+        *table_parts, column = ref.parts
+        at = f"{ref.text} in {where}"
+        usable = ", ".join(self.reachable_names())
+
+        def named(key: str) -> bool:
+            return key.split(".")[-len(table_parts) :] == table_parts
+
+        if len(table_parts) == 1 and table_parts[0] == _short(self.base):
+            key = self.base
+        else:
+            matches = [k for k in self.paths if named(k)]
+            if len(matches) > 1:
+                both = " and ".join(_schema_table(k) for k in matches)
+                raise ValueError(
+                    f"{'.'.join(table_parts)!r} could mean {both} ({at}); write schema.table.column to choose one"
+                )
+            if not matches:
+                known = [k for k in self.columns if named(k)]
+                if not known:
+                    name = ".".join(table_parts)
+                    raise ValueError(f"Unknown table {name!r} ({at}). Tables this metric can use: {usable}")
+                other, base = _short(known[0]), _short(self.base)
+                if self.base in _paths_from(self.snapshot, known[0]):
+                    raise ValueError(
+                        f"{other} has many rows per {_one_row_of(base)}; a metric on {base} cannot use a column of "
+                        f"{other} ({at})"
+                    )
+                raise ValueError(
+                    f"Table {other!r} is not reached from {base} by following joins from their many side to their "
+                    f"one side ({at}). Tables this metric can use: {usable}"
+                )
+            key = matches[0]
+        if column not in self.columns.get(key, set()):
+            raise ValueError(f"Table {_short(key)!r} has no column {column!r} ({at})")
+        return key, column
 
 
 def _column_index(snapshot: ModelSnapshot) -> dict[str, set[str]]:
@@ -259,6 +412,21 @@ def compile_metric_query(
     for f in getattr(query, "filters", None) or []:
         where.append(_render_filter(f, graph, inner_ref))
 
+    def rewrite(text: str, where_name: str) -> str:
+        """``text`` with each chain naming a joined table read from the inner query's alias for it."""
+        out = text
+        for ref in reversed(find_column_references(text)):
+            key, column = graph.resolve_reference(ref, where_name)
+            if key == base and len(ref.parts) == 2:
+                continue
+            out = out[: ref.start] + outer_ref(key, column) + out[ref.end :]
+        return out
+
+    stored_filter = (metric.value("filter") or "").strip()
+    apply_filter = bool(stored_filter) and _norm(stored_filter) not in _norm(expression)
+    expression_sql = rewrite(expression, "the expression")
+    filter_sql = rewrite(stored_filter, "the filter") if apply_filter else ""
+
     names = [name for _expr, name in select]
     metric_name = metric.name
     if metric_name in names:
@@ -295,11 +463,10 @@ def compile_metric_query(
         inner.append("WHERE " + " AND ".join(where))
 
     outer_select = [f"{expr} AS {quote_ident(name)}" for expr, name in select]
-    outer_select.append(f"{expression} AS {quote_ident(metric_name)}")
+    outer_select.append(f"{expression_sql} AS {quote_ident(metric_name)}")
     sql = [f"SELECT {', '.join(outer_select)}", "FROM (" + " ".join(inner) + f") AS {qb}"]
-    stored_filter = (metric.value("filter") or "").strip()
-    if stored_filter and _norm(stored_filter) not in _norm(expression):
-        sql.append(f"WHERE ({stored_filter})")
+    if apply_filter:
+        sql.append(f"WHERE ({filter_sql})")
     if select:
         sql.append("GROUP BY " + ", ".join(expr for expr, _ in select))
     if order_sql:
@@ -335,6 +502,24 @@ def _render_filter(f: _Filter, graph: _Graph, inner_ref) -> str:
     if isinstance(value, list | tuple) or value is None:
         raise ValueError(f"The {op!r} filter on {f.field!r} needs one value; use 'is null' to match missing values")
     return f"{ref} {'<>' if op == '!=' else op} {sql_literal(value)}"
+
+
+def with_candidate(snapshot: ModelSnapshot, table: TableInfo, metric: MetricSnap) -> ModelSnapshot:
+    """``snapshot`` with ``metric`` on ``table`` in place of any metric of that name, for dry-running a proposal.
+
+    The wider snapshot carries the joins and the reachable tables' columns, so a formula that reads a joined table
+    compiles the way it will once stored. A snapshot without the table falls back to ``candidate_snapshot``.
+    """
+    if snapshot.table(table.key) is None:
+        return candidate_snapshot(table, metric)
+    tables = [
+        replace(
+            t,
+            metrics=[m for m in t.metrics if m.name != metric.name] + ([metric] if t.key == table.key else []),
+        )
+        for t in snapshot.tables
+    ]
+    return replace(snapshot, tables=tables)
 
 
 def candidate_snapshot(table: TableInfo, metric: MetricSnap) -> ModelSnapshot:
