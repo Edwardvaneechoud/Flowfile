@@ -9,6 +9,40 @@ export type ChipState = "accepted" | "pending" | "stale";
 export const COLUMN_ROLES = ["key", "time", "category", "amount"] as const;
 export const CONFIDENTIALITY_LEVELS = ["public", "internal", "confidential", "restricted"] as const;
 
+/** What a column is used for when a number is asked for; `value` is what the ledger stores. */
+export const ROLE_OPTIONS: { value: (typeof COLUMN_ROLES)[number]; label: string; hint: string }[] =
+  [
+    { value: "key", label: "Identifier", hint: "Tells rows apart. Counted, never added up." },
+    { value: "time", label: "Date", hint: "When it happened. Used for trends over time." },
+    { value: "category", label: "Group by", hint: "A label to split a number by." },
+    { value: "amount", label: "Amount", hint: "A number to add up or average." },
+  ];
+
+export const ROLE_HELP =
+  "How this column is used when you ask for a number: an identifier is counted, " +
+  "an amount is added up, a date gives a trend, and a group-by column splits the result.";
+
+const ATTRIBUTE_LABELS: Record<string, string> = { role: "used as" };
+
+export const attributeLabel = (attribute: string): string =>
+  ATTRIBUTE_LABELS[attribute] ?? attribute;
+
+/** A fact's value as a person reads it: a role by its label, anything else as text. */
+export const displayValue = (attribute: string, value: unknown): string => {
+  if (attribute === "role") {
+    const option = ROLE_OPTIONS.find((o) => o.value === value);
+    if (option) return option.label;
+  }
+  return valueText(value);
+};
+
+/** True for a fact that still needs a person: proposed or stale. An accepted fact shows no chip. */
+export const needsReview = (fact: SemanticFact | undefined): boolean => {
+  if (!fact) return false;
+  const state = chipState(fact.status);
+  return state === "pending" || state === "stale";
+};
+
 export const chipState = (status: SemanticFactStatus): ChipState | null => {
   if (status === "accepted") return "accepted";
   if (status === "proposed" || status === "reviewed") return "pending";

@@ -38,8 +38,8 @@
           </div>
           <ul class="facts">
             <li v-for="fact in factsOf(item)" :key="fact.id">
-              <span class="fact-attr">{{ fact.attribute }}</span>
-              <span class="fact-value">{{ valueText(fact.value) }}</span>
+              <span class="fact-attr">{{ attributeLabel(fact.attribute) }}</span>
+              <span class="fact-value">{{ displayValue(fact.attribute, fact.value) }}</span>
             </li>
           </ul>
           <p v-if="item.rationale" class="rationale">{{ item.rationale }}</p>
@@ -84,7 +84,7 @@ import type {
 } from "../../../types/semantic.types";
 import SemanticSourceBadge from "./SemanticSourceBadge.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
-import { errorText, valueText } from "./semanticFormat";
+import { attributeLabel, displayValue, errorText } from "./semanticFormat";
 
 defineProps<{ model: SemanticModel }>();
 
