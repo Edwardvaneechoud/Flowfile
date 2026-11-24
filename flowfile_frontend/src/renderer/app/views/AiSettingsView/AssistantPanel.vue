@@ -33,12 +33,12 @@
         </div>
 
         <template v-else>
+          <span class="option-group__label">Main model</span>
           <p class="hint-text models-intro">
-            The chat drawer's model switcher changes this same selection — it is a shortcut, not a
-            separate setting.
+            Used by the assistant on the canvas and by every task below that has no model of its
+            own. The chat drawer's model switcher changes this same selection.
           </p>
 
-          <!-- Main selection — drives everything unless a split is enabled. -->
           <div class="model-row">
             <div class="model-field">
               <label class="model-field__label" for="ai-main-provider"> Provider </label>
@@ -94,60 +94,83 @@
               </el-select>
             </div>
           </div>
-          <p class="model-tier__hint">
-            Used by every AI feature, unless a task below has a model of its own.
+          <span class="option-group__label option-group__label--spaced">Models per task</span>
+          <p class="hint-text models-intro">
+            A task on "Same as main" follows the main model. Give it a provider to use another.
           </p>
 
-          <template v-for="task in TASK_MODELS" :key="task.surface">
-            <div class="model-row model-row--simple">
-              <div class="model-field">
-                <label class="model-field__label" :for="`ai-task-provider-${task.surface}`">
-                  {{ task.label }} provider
-                </label>
-                <el-select
-                  :id="`ai-task-provider-${task.surface}`"
-                  size="default"
-                  placeholder="Same as main"
-                  popper-class="model-select-dropdown"
-                  :model-value="ownPick(task.surface)?.provider ?? ''"
-                  @change="(value: string) => setTaskProvider(task.surface, value)"
-                >
-                  <el-option value="" label="Same as main" />
-                  <el-option
-                    v-for="opt in providerOptions"
-                    :key="opt.value"
-                    :value="opt.value"
-                    :label="opt.label"
-                    :disabled="opt.disabled"
-                  />
-                </el-select>
-                <p
-                  v-if="isUnconfigured(ownPick(task.surface)?.provider ?? null)"
-                  class="model-field__sub model-field__sub--warn"
-                >
-                  <i class="fa-solid fa-triangle-exclamation"></i>
-                  This provider has no API key, so these calls will fail.
-                </p>
-              </div>
-              <div v-if="ownPick(task.surface)" class="model-field">
-                <label class="model-field__label" :for="`ai-task-model-${task.surface}`">
-                  Model
-                </label>
-                <el-select
-                  :id="`ai-task-model-${task.surface}`"
-                  size="default"
-                  placeholder="Provider default"
-                  popper-class="model-select-dropdown"
-                  :model-value="ownPick(task.surface)?.model ?? ''"
-                  @change="(value: string) => setTaskModel(task.surface, value)"
-                >
-                  <el-option value="" label="Provider default" />
-                  <el-option v-for="m in taskModels(task.surface)" :key="m" :value="m" :label="m" />
-                </el-select>
-              </div>
+          <div class="task-table" role="table" aria-label="Models per task">
+            <div class="task-row task-row--head" role="row">
+              <span role="columnheader">Task</span>
+              <span role="columnheader">Provider</span>
+              <span role="columnheader">Model</span>
             </div>
-            <p class="model-tier__hint">{{ task.hint }}</p>
-          </template>
+            <template v-for="group in TASK_GROUPS" :key="group.name">
+              <div class="task-group" role="row">
+                <span role="cell">{{ group.name }}</span>
+              </div>
+              <div
+                v-for="task in group.tasks"
+                :key="task.surface"
+                class="task-row"
+                role="row"
+                :data-testid="`ai-task-row-${task.surface}`"
+              >
+                <div class="task-name" role="cell">
+                  <span class="task-name__label">{{ task.label }}</span>
+                  <span class="task-name__hint">{{ task.hint }}</span>
+                </div>
+                <div class="model-field" role="cell">
+                  <el-select
+                    :id="`ai-task-provider-${task.surface}`"
+                    size="default"
+                    placeholder="Same as main"
+                    popper-class="model-select-dropdown"
+                    :aria-label="`${group.name}, ${task.label}: provider`"
+                    :model-value="ownPick(task.surface)?.provider ?? ''"
+                    @change="(value: string) => setTaskProvider(task.surface, value)"
+                  >
+                    <el-option value="" label="Same as main" />
+                    <el-option
+                      v-for="opt in providerOptions"
+                      :key="opt.value"
+                      :value="opt.value"
+                      :label="opt.label"
+                      :disabled="opt.disabled"
+                    />
+                  </el-select>
+                  <p
+                    v-if="isUnconfigured(ownPick(task.surface)?.provider ?? null)"
+                    class="model-field__sub model-field__sub--warn"
+                  >
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    This provider has no API key, so these calls will fail.
+                  </p>
+                </div>
+                <div class="model-field" role="cell">
+                  <el-select
+                    v-if="ownPick(task.surface)"
+                    :id="`ai-task-model-${task.surface}`"
+                    size="default"
+                    placeholder="Provider default"
+                    popper-class="model-select-dropdown"
+                    :aria-label="`${group.name}, ${task.label}: model`"
+                    :model-value="ownPick(task.surface)?.model ?? ''"
+                    @change="(value: string) => setTaskModel(task.surface, value)"
+                  >
+                    <el-option value="" label="Provider default" />
+                    <el-option
+                      v-for="m in taskModels(task.surface)"
+                      :key="m"
+                      :value="m"
+                      :label="m"
+                    />
+                  </el-select>
+                  <span v-else class="task-follows">{{ mainModelText }}</span>
+                </div>
+              </div>
+            </template>
+          </div>
         </template>
       </div>
     </div>
@@ -379,31 +402,59 @@ const onMainModelChange = (value: string): void => {
   aiStore.setSelectedModel(value || null);
 };
 
-// Tasks that can run on their own model; `surface` is the name passed to `resolveSurface`.
-const TASK_MODELS: ReadonlyArray<{ surface: string; label: string; hint: string }> = [
-  { surface: "chart", label: "Charts", hint: "Used when you ask the AI for a chart." },
+interface TaskModel {
+  surface: string;
+  label: string;
+  hint: string;
+}
+
+// Tasks that can run on their own model, by where they are used; `surface` goes to `resolveSurface`.
+const TASK_GROUPS: ReadonlyArray<{ name: string; tasks: ReadonlyArray<TaskModel> }> = [
   {
-    surface: "semantic_ask",
-    label: "Semantic model: questions",
-    hint: "Answers a question about your data by picking an approved metric.",
+    name: "Flows",
+    tasks: [
+      {
+        surface: "settings_autocomplete",
+        label: "Node settings",
+        hint: "Suggestions inside a node's settings, such as join keys.",
+      },
+      { surface: "cron", label: "Schedules", hint: "Turns a schedule in words into cron." },
+    ],
   },
   {
-    surface: "semantic_suggest",
-    label: "Semantic model: suggestions",
-    hint: "Writes descriptions and proposes metrics, joins and column roles when you press Suggest.",
+    name: "Semantic models",
+    tasks: [
+      {
+        surface: "semantic_ask",
+        label: "Questions",
+        hint: "Answers a question about your data by picking an approved metric.",
+      },
+      {
+        surface: "semantic_suggest",
+        label: "Suggestions",
+        hint: "Writes descriptions and proposes metrics, joins and column roles.",
+      },
+    ],
   },
   {
-    surface: "dashboard",
-    label: "Dashboards",
-    hint: "Plans and writes a dashboard page; each chart on it is built by the Charts model.",
-  },
-  { surface: "cron", label: "Schedules", hint: "Used to turn a schedule in words into cron." },
-  {
-    surface: "settings_autocomplete",
-    label: "Settings suggestions",
-    hint: "Used for suggestions inside node settings, such as join keys.",
+    name: "Dashboards",
+    tasks: [
+      { surface: "chart", label: "Charts", hint: "Builds a chart from a description." },
+      {
+        surface: "dashboard",
+        label: "Dashboard pages",
+        hint: "Plans and writes a page; each chart on it is built by the Charts model.",
+      },
+    ],
   },
 ];
+
+/** What a task on "Same as main" runs on, shown in its Model column. */
+const mainModelText = computed(() => {
+  const provider = providerLabel(aiStore.selectedProvider ?? "");
+  const model = isLocalComplex.value ? localActiveModelName.value : aiStore.selectedModel;
+  return model ? `${provider} · ${model}` : provider;
+});
 
 const onVerifyChange = (event: Event): void => {
   aiStore.setVerifyPlanCompletion((event.target as HTMLInputElement).checked);
@@ -422,8 +473,74 @@ const onVerifyChange = (event: Event): void => {
   flex-wrap: wrap;
 }
 
-.model-row--simple {
-  margin-top: var(--spacing-4);
+.task-table {
+  display: flex;
+  flex-direction: column;
+}
+
+.task-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.3fr) minmax(160px, 1fr) minmax(160px, 1fr);
+  gap: var(--spacing-4);
+  align-items: start;
+  padding: var(--spacing-2) 0;
+}
+
+.task-row .model-field {
+  max-width: none;
+  min-width: 0;
+}
+
+.task-row--head {
+  padding-bottom: var(--spacing-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.task-group {
+  margin-top: var(--spacing-3);
+  padding: var(--spacing-2) 0 var(--spacing-1);
+  border-top: 1px solid var(--color-border-light);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.task-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--spacing-1);
+}
+
+.task-name__label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.task-name__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.task-follows {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+@media (max-width: 720px) {
+  .task-row {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-2);
+  }
+
+  .task-row--head {
+    display: none;
+  }
 }
 
 .model-field {
@@ -470,12 +587,6 @@ const onVerifyChange = (event: Event): void => {
 }
 
 .model-field :deep(.el-select__caret) {
-  color: var(--color-text-tertiary);
-}
-
-.model-tier__hint {
-  margin: var(--spacing-1) 0 0;
-  font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
 }
 
