@@ -39,6 +39,7 @@ from flowfile_core.flowfile.flow_graph.canvas import CanvasMixin
 from flowfile_core.flowfile.flow_graph.execution import ExecutionMixin
 from flowfile_core.flowfile.flow_graph.history import (
     GraphHistoryMixin,
+    stamp_session_person,
 )
 from flowfile_core.flowfile.flow_graph.persistence import PersistenceMixin
 from flowfile_core.flowfile.flow_node.flow_node import (
@@ -199,6 +200,8 @@ class FlowGraph(
         self._commit_sources: bool = True
         # Last user_id seen on node settings, so restore_from_snapshot can re-stamp an empty graph.
         self._owner_user_id: int | None = None
+        # The person whose editor session holds this flow (FlowfileHandler); None outside a session.
+        self._session_user_id: int | None = None
         # Open merge conflicts (routes/flow_merge.py); saved with the flow, carried by the step that changed them.
         self.merge_conflicts: dict | None = None
         self._node_observers: list[NodeObserver] = []
@@ -535,6 +538,7 @@ class FlowGraph(
             The created or updated FlowNode object.
         """
         self._note_graph_write()
+        stamp_session_person(self, setting_input)
         output_field_config = getattr(setting_input, "output_field_config", None) if setting_input else None
 
         logger.info(
