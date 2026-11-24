@@ -181,7 +181,6 @@
                 @select-table="selectTable($event)"
                 @select-namespace="selectNamespace($event)"
                 @select-semantic-model="selectSemanticModel($event)"
-                @open-semantic-table="selectSemanticModel($event.namespaceId, $event.tableId)"
                 @table-context-menu="onTableContextMenu($event)"
                 @artifact-context-menu="onArtifactContextMenu($event)"
                 @flow-context-menu="onFlowContextMenu($event)"
