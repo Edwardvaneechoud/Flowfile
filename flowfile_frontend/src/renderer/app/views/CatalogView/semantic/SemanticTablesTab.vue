@@ -14,8 +14,8 @@
         <i class="fa-solid fa-table table-icon"></i>
         <h3 class="table-name">{{ table.name }}</h3>
         <SemanticStatusChip
-          v-if="table.facts.description"
-          :status="table.facts.description.status"
+          v-if="needsReview(table.facts.description)"
+          :status="table.facts.description!.status"
           :fact="table.facts.description"
         />
         <span class="table-count">{{ table.fields.length }} columns</span>
@@ -34,7 +34,12 @@
           <span>Column</span>
           <span>Type</span>
           <span>Description</span>
-          <span>Role</span>
+          <span class="head-with-info">
+            Used as
+            <el-tooltip :content="ROLE_HELP" placement="top" :show-after="200">
+              <i class="fa-solid fa-circle-info head-info" tabindex="0"></i>
+            </el-tooltip>
+          </span>
           <span>Confidentiality</span>
         </div>
         <div v-for="field in table.fields" :key="field.name" class="grid-row" role="row">
@@ -46,8 +51,8 @@
               @commit="saveField(table, field.name, 'description', $event)"
             />
             <SemanticStatusChip
-              v-if="field.facts.description"
-              :status="field.facts.description.status"
+              v-if="needsReview(field.facts.description)"
+              :status="field.facts.description!.status"
               :fact="field.facts.description"
             />
           </div>
@@ -55,15 +60,24 @@
             <el-select
               :model-value="factText(field.facts.role) || undefined"
               size="small"
-              placeholder="Role"
-              clearable
+              placeholder="Not set"
+              :fit-input-width="false"
               @update:model-value="saveField(table, field.name, 'role', $event)"
             >
-              <el-option v-for="r in COLUMN_ROLES" :key="r" :label="r" :value="r" />
+              <el-option
+                v-for="r in ROLE_OPTIONS"
+                :key="r.value"
+                :label="r.label"
+                :value="r.value"
+                class="role-option"
+              >
+                <span class="role-label">{{ r.label }}</span>
+                <span class="role-hint">{{ r.hint }}</span>
+              </el-option>
             </el-select>
             <SemanticStatusChip
-              v-if="field.facts.role"
-              :status="field.facts.role.status"
+              v-if="needsReview(field.facts.role)"
+              :status="field.facts.role!.status"
               :fact="field.facts.role"
             />
           </div>
@@ -71,14 +85,14 @@
             <el-select
               :model-value="factText(field.facts.confidentiality) || undefined"
               size="small"
-              placeholder="Level"
+              placeholder="Not set"
               @update:model-value="saveField(table, field.name, 'confidentiality', $event)"
             >
               <el-option v-for="c in CONFIDENTIALITY_LEVELS" :key="c" :label="c" :value="c" />
             </el-select>
             <SemanticStatusChip
-              v-if="field.facts.confidentiality"
-              :status="field.facts.confidentiality.status"
+              v-if="needsReview(field.facts.confidentiality)"
+              :status="field.facts.confidentiality!.status"
               :fact="field.facts.confidentiality"
             />
           </div>
@@ -95,7 +109,14 @@ import { useSemanticModelStore } from "../../../stores/semantic-model-store";
 import type { SemanticModel, SemanticProposal, SemanticTable } from "../../../types/semantic.types";
 import SemanticInlineText from "./SemanticInlineText.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
-import { COLUMN_ROLES, CONFIDENTIALITY_LEVELS, errorText, factText } from "./semanticFormat";
+import {
+  CONFIDENTIALITY_LEVELS,
+  ROLE_HELP,
+  ROLE_OPTIONS,
+  errorText,
+  factText,
+  needsReview,
+} from "./semanticFormat";
 
 defineProps<{ model: SemanticModel }>();
 
@@ -181,13 +202,18 @@ const saveField = (table: SemanticTable, column: string, attribute: string, valu
 .grid {
   display: flex;
   flex-direction: column;
+  overflow-x: auto;
+}
+
+.grid-row {
+  min-width: 760px;
 }
 
 .grid-row {
   display: grid;
   grid-template-columns:
-    minmax(120px, 1.1fr) minmax(80px, 0.7fr) minmax(200px, 3fr) minmax(130px, 1fr)
-    minmax(130px, 1fr);
+    minmax(120px, 1.1fr) minmax(80px, 0.7fr) minmax(200px, 3fr) minmax(150px, 1fr)
+    minmax(150px, 1fr);
   align-items: center;
   gap: var(--spacing-3);
   padding: var(--spacing-1) 0;
@@ -201,6 +227,37 @@ const saveField = (table: SemanticTable, column: string, attribute: string, valu
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.head-with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.head-info {
+  color: var(--color-text-muted);
+  cursor: help;
+  font-size: var(--font-size-xs);
+}
+
+.role-option {
+  height: auto;
+  line-height: 1.3;
+  padding-top: var(--spacing-1);
+  padding-bottom: var(--spacing-1);
+}
+
+.role-label {
+  display: block;
+  font-size: var(--font-size-sm);
+}
+
+.role-hint {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: normal;
 }
 
 .col-name {
