@@ -252,10 +252,10 @@ def test_a_plan_that_moves_tables_also_applies_the_flows_that_read_the_catalog(t
 
     assert importer.flows_to_apply(tmp_path, None) is None
     assert importer.flows_to_apply(tmp_path, [flow_change]) == {edited}
-    table_changed = kinds.Change("tables", ("a", "b", "t"), "modified", "t", "tables.yaml")
+    table_changed = kinds.Change("tables", ("a", "b", "t"), "modified", "t", "tables/a.b.t.table.yaml")
     assert importer.flows_to_apply(tmp_path, [flow_change, table_changed]) == {edited}
     for change in ("added", "removed"):
-        moved = kinds.Change("tables", ("a", "b", "t"), change, "t", "tables.yaml")
+        moved = kinds.Change("tables", ("a", "b", "t"), change, "t", "tables/a.b.t.table.yaml")
         assert importer.flows_to_apply(tmp_path, [flow_change, moved]) == {edited, reader}
     schema_gone = kinds.Change("namespaces", ("a", "b"), "removed", "b", "namespaces.yaml")
     assert plain not in importer.flows_to_apply(tmp_path, [schema_gone])

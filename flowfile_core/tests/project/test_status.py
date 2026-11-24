@@ -206,10 +206,11 @@ def test_a_secret_written_by_another_process_shows(tmp_path, every_kind):
 def test_a_last_version_that_does_not_parse_still_answers(tmp_path, every_kind, content):
     root = tmp_path / "project"
     project_sync.init_project(str(root), "status", every_kind, True)
-    (root / "tables.yaml").write_bytes(content)
+    table_file = sorted((root / "tables").glob("*.table.yaml"))[0]
+    table_file.write_bytes(content)
     test_kinds_list._commit_everything(root, "by hand")
     rows = project_sync.unsaved_changes(every_kind)
-    assert [(r["change"], r["path"]) for r in rows] == [("modified", "tables.yaml")]
+    assert [(r["change"], r["path"]) for r in rows] == [("modified", f"tables/{table_file.name}")]
     assert project_sync.has_uncommitted_changes(every_kind)
 
 
