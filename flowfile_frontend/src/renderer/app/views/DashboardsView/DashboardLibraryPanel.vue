@@ -55,7 +55,7 @@
         v-for="d in filtered"
         :key="d.id"
         :dashboard="d"
-        :charts="previewCharts"
+        :charts="chartsReady ? previewCharts : undefined"
         @view="onView(d)"
         @edit="onEdit(d)"
         @delete="onDelete(d)"
@@ -95,6 +95,7 @@ const catalogStore = useCatalogStore();
 const aiDashboardStore = useAiDashboardStore();
 const search = ref("");
 
+const chartsReady = ref(catalogStore.visualizationLibrary.length > 0);
 const previewCharts = computed<Record<number, PreviewChart>>(() => {
   const out: Record<number, PreviewChart> = {};
   for (const v of catalogStore.visualizationLibrary) {
@@ -130,8 +131,11 @@ onMounted(() => {
     ElMessage.error(store.error ?? "Failed to load dashboards");
   });
   // Chart previews are a nicety: a failed library load just leaves the bar sketches.
-  if (!catalogStore.visualizationLibrary.length) {
-    catalogStore.loadVisualizationLibrary().catch(() => undefined);
+  if (!chartsReady.value) {
+    catalogStore
+      .loadVisualizationLibrary()
+      .catch(() => undefined)
+      .finally(() => (chartsReady.value = true));
   }
 });
 

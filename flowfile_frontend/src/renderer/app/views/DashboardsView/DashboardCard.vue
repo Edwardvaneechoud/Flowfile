@@ -75,9 +75,9 @@
                   loading="lazy"
                 />
                 <PreviewChartSketch
-                  v-else
+                  v-else-if="charts"
                   :kind="sketchKind(chartOf(rect)?.chartType)"
-                  :seed="rect.vizId ?? 0"
+                  :seed="rect.vizId ?? hashSeed(rect.id)"
                   :palette="palette"
                 />
               </div>
@@ -168,7 +168,7 @@ import PreviewChartSketch from "./PreviewChartSketch.vue";
 
 const props = defineProps<{
   dashboard: Dashboard;
-  /** viz id → its picture and drawn mark; a chart missing here draws as a bar sketch. */
+  /** viz id → its picture and drawn mark; a chart missing here draws as a bar sketch, and no map leaves plots empty. */
   charts?: Record<number, PreviewChart>;
 }>();
 
