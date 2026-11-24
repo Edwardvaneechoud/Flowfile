@@ -354,6 +354,8 @@ class SemanticDraftTable(BaseModel):
     ok: bool = False
     reason: str | None = None
     message: str | None = None
+    withheld_columns: list[str] = Field(default_factory=list)
+    """Columns kept from AI (confidential or restricted): sent by name and type only, never described by the model."""
 
 
 class SemanticDraftOut(SuggestOut):

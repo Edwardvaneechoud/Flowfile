@@ -57,7 +57,12 @@
               <i class="fa-solid fa-circle-info head-info" tabindex="0"></i>
             </el-tooltip>
           </span>
-          <span>Confidentiality</span>
+          <span class="head-with-info">
+            Confidentiality
+            <el-tooltip :content="CONFIDENTIALITY_HELP" placement="top" :show-after="200">
+              <i class="fa-solid fa-circle-info head-info" tabindex="0"></i>
+            </el-tooltip>
+          </span>
         </div>
         <div v-for="field in table.fields" :key="field.name" class="grid-row" role="row">
           <span class="col-name" :title="field.name">{{ field.name }}</span>
@@ -103,9 +108,19 @@
               :model-value="factText(field.facts.confidentiality) || undefined"
               size="small"
               placeholder="Not set"
+              :fit-input-width="false"
               @update:model-value="saveField(table, field.name, 'confidentiality', $event)"
             >
-              <el-option v-for="c in CONFIDENTIALITY_LEVELS" :key="c" :label="c" :value="c" />
+              <el-option
+                v-for="c in CONFIDENTIALITY_OPTIONS"
+                :key="c.value"
+                :label="c.label"
+                :value="c.value"
+                class="role-option"
+              >
+                <span class="role-label">{{ c.label }}</span>
+                <span class="role-hint">{{ c.hint }}</span>
+              </el-option>
             </el-select>
             <SemanticStatusChip
               v-if="needsReview(field.facts.confidentiality)"
@@ -128,7 +143,8 @@ import type { SemanticModel, SemanticProposal, SemanticTable } from "../../../ty
 import SemanticInlineText from "./SemanticInlineText.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
 import {
-  CONFIDENTIALITY_LEVELS,
+  CONFIDENTIALITY_HELP,
+  CONFIDENTIALITY_OPTIONS,
   ROLE_HELP,
   ROLE_OPTIONS,
   errorText,

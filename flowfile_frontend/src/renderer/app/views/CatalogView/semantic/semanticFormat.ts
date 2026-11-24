@@ -24,6 +24,31 @@ export const ROLE_OPTIONS: { value: (typeof COLUMN_ROLES)[number]; label: string
     { value: "amount", label: "Amount", hint: "A number to add up or average." },
   ];
 
+/** What each level means for AI; `value` is what the ledger stores. People see every level. */
+export const CONFIDENTIALITY_OPTIONS: {
+  value: (typeof CONFIDENTIALITY_LEVELS)[number];
+  label: string;
+  hint: string;
+}[] = [
+  { value: "public", label: "Public", hint: "AI may read it." },
+  { value: "internal", label: "Internal", hint: "AI may read it." },
+  {
+    value: "confidential",
+    label: "Confidential",
+    hint: "Kept from AI: it sees the name and type only.",
+  },
+  {
+    value: "restricted",
+    label: "Restricted",
+    hint: "Kept from AI: it sees the name and type only.",
+  },
+];
+
+export const CONFIDENTIALITY_HELP =
+  "Confidential and restricted columns are kept from AI: no value, description or synonym " +
+  "is sent to a model, only the column's name and type. This applies as soon as the level is " +
+  "proposed. People who can open this schema still see everything.";
+
 export const ROLE_HELP =
   "How this column is used when you ask for a number: an identifier is counted, " +
   "an amount is added up, a date gives a trend, and a group-by column splits the result.";

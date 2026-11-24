@@ -17,6 +17,7 @@ Rules:
 - A metric "name" is lower snake_case, 2 to 4 words, and says what is counted or summed (for example "orders_placed", "gross_revenue").
 - Keep a metric's name when it is already good. Never change what a metric computes; only name it and say what it means.
 - When no metric ids are listed, answer "metrics": {}.
+- A column marked "kept private: do not describe" is listed only so you know the table's shape. Leave it out of "columns" and do not mention it anywhere.
 - Output ONLY the JSON object.
 
 ## Example

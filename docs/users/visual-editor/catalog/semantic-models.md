@@ -13,7 +13,7 @@ There is one model per **schema**. It holds three kinds of facts:
 
 | Fact | Example |
 |---|---|
-| **Descriptions and roles** | "One row per order" on a table; on a column, a description, a role (`key`, `time`, `category` or `amount`) and a confidentiality level (`public`, `internal`, `confidential` or `restricted`). |
+| **Descriptions and roles** | "One row per order" on a table; on a column, a description, how it is used (Identifier, Date, Group by or Amount) and a confidentiality level (Public, Internal, Confidential or Restricted). |
 | **Joins** | `orders.customer_id` matches `customers.customer_id`. |
 | **Metrics** | `revenue` is `SUM(amount)`, counted on `orders`, without cancelled orders. |
 
@@ -62,9 +62,24 @@ The default writer is the small model that runs on your own computer: nothing le
 
 ## Describe columns
 
-The **Tables** tab lists each table of the schema with its columns. Click a table's description, or a column's **Description**, **Role** or **Confidentiality**, to edit it. A status chip next to each value shows whether it is accepted or waiting for review.
+The **Tables** tab lists each table of the schema with its columns. Click a table's description, or a column's **Description**, **Used as** or **Confidentiality**, to edit it. **Used as** offers:
+
+| Option | Meaning |
+|---|---|
+| **Identifier** | Tells rows apart. Counted, never added up. |
+| **Date** | When it happened. Used for trends over time. |
+| **Group by** | A label to split a number by. |
+| **Amount** | A number to add up or average. |
+
+A status chip appears next to a value only while it still needs a person: proposed and waiting for review, or stale.
 
 A table or column description that is accepted is also written back to the catalog, so it shows wherever the catalog shows descriptions.
+
+### Confidentiality
+
+Marking a column **Confidential** or **Restricted** keeps it from AI on every surface that reads catalog tables: the semantic draft and question box, the chart prompt bar, and the dashboard builder and its story. The model gets the column's name and type only, never a value, description or synonym. It applies as soon as the level is proposed, before anyone accepts it, and a table marked at that level covers all its columns. If the level cannot be read, values are withheld for that table.
+
+This does not hide anything from people who can open the schema; they still see every column and value.
 
 ---
 
@@ -77,7 +92,14 @@ Open the **Joins** tab and click **Add join**. Fill in:
 - **Matching columns**, one or more pairs: a column of the from table and a column of the to table.
 - **Description** (optional).
 
-"Many rows on the from side per one row on the to side" means each row of the to table is matched by any number of rows of the from table, and each from row has one match. `orders` is the from side and `customers` the to side because many orders belong to one customer. Flowfile follows a join only in this direction when it answers a question, so a total is never counted twice. Flowfile does not check how many rows match; the direction is the one you declare.
+"Many rows on the from side per one row on the to side" means each row of the to table is matched by any number of rows of the from table, and each from row has one match. `orders` is the from side and `customers` the to side because many orders belong to one customer. Flowfile follows a join only in this direction when it answers a question, so a total is never counted twice. 
+
+Before a join is stored, Flowfile measures it: for each side, the rows that have a key and the distinct keys. A correct join is stored with that measurement as its evidence, for example "`customer_id` is unique in `customers` (40 of 40 rows) and repeats in `orders` (40 distinct in 300 rows)". Two cases are refused with a message that says what to do:
+
+- **Reversed**: the from side has the unique key and the to side repeats. Swap the two sides. The dialog has **Swap sides** for this.
+- **Both sides repeat**: the join would multiply rows. The to side needs columns that identify one row.
+
+An empty table, or a worker that cannot be reached, stores the join marked "Direction not checked". The **Joins** tab flags a join that is already wrong and offers **Fix direction** on an accepted reversed one, which proposes the same join with the sides swapped. A wrong join that was already accepted keeps running until it is fixed.
 
 The to table can be in another schema of the same catalog. That join is stored in the catalog-level model and listed with a `catalog` label.
 
@@ -155,7 +177,8 @@ The model suggests a query and Flowfile checks it against the model before anyth
 
 - A query asks for **one metric**.
 - A metric belongs to **one table**.
-- A join is followed only from the many side to the one side.
+- A join is followed only from the many side to the one side; Flowfile measures the direction when the join is stored but does not check types of the key columns.
+- Confidentiality keeps column values from AI, not from people with access to the schema.
 - A saved flow cannot read another schema's table, so a query that reaches across schemas can be run but not kept as a flow.
 - Suggested joins stay within one schema.
 - Tables whose name contains `::` are left out of the model.

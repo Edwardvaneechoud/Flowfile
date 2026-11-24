@@ -150,6 +150,7 @@ async def draft_semantic_model(body: SemanticDraftIn, current_user=Depends(get_c
     404 unknown provider or namespace · 403 not writable · 409 ``AI_NOT_SET_UP`` · 503 AI off; the rest is a 200.
     """
     from flowfile_core.ai.semantic_draft import draft_words, words_for_store
+    from flowfile_core.catalog.semantic.confidentiality import read_withheld
     from flowfile_core.database.connection import get_db_context
 
     def prepare():
@@ -157,16 +158,22 @@ async def draft_semantic_model(body: SemanticDraftIn, current_user=Depends(get_c
             provider = resolve_semantic_provider(db, current_user.id, body.provider, body.model)
             service = _service(db, current_user)
             sugg, model_tables, problem = service.suggest_candidates(body.namespace_id, body.table_ids)
-            return provider, sugg, model_tables, problem
+            withheld = read_withheld(db, body.table_ids or list(model_tables))
+            return provider, sugg, model_tables, problem, withheld
 
     try:
-        provider, sugg, model_tables, problem = await _in_thread(prepare)
+        provider, sugg, model_tables, problem, withheld = await _in_thread(prepare)
     except _NotSetUp as exc:
         return _not_set_up(exc)
     table_ids = body.table_ids or sorted(model_tables)
     source, model = _source(provider)
     outcomes = await draft_words(
-        provider, sugg, table_ids, user_id=current_user.id, share_values=send_data_allowed() and sugg.stats_available
+        provider,
+        sugg,
+        table_ids,
+        user_id=current_user.id,
+        share_values=send_data_allowed() and sugg.stats_available,
+        withheld=withheld,
     )
     words = words_for_store(outcomes)
 
@@ -177,7 +184,13 @@ async def draft_semantic_model(body: SemanticDraftIn, current_user=Depends(get_c
     stored = await _in_thread(store)
     tables = [
         SemanticDraftTable(
-            table_id=o.table_id, table=o.table, calls=o.calls, ok=o.ok, reason=o.reason, message=o.message
+            table_id=o.table_id,
+            table=o.table,
+            calls=o.calls,
+            ok=o.ok,
+            reason=o.reason,
+            message=o.message,
+            withheld_columns=o.withheld,
         )
         for o in outcomes
     ]
@@ -210,6 +223,9 @@ async def draft_semantic_model(body: SemanticDraftIn, current_user=Depends(get_c
             "added": stored.added.model_dump(),
             "statistics_sent": send_data_allowed() and sugg.stats_available,
             "rows_sent_to_model": 0,
+            "columns_withheld": sum(len(o.withheld) for o in outcomes),
+            "tables_withheld": sum(1 for o in outcomes if o.reason == "kept_private"),
+            "ai_descriptions_dropped": sum(len(o.words.dropped) for o in outcomes),
         },
         reason,
     )
@@ -259,20 +275,28 @@ def _ref(snap: Any, table_key: str, field: str) -> tuple[str, str] | None:
     return (ts.key, column) if ts is not None else None
 
 
-def _known_values(service: Any, namespace_id: int, snap: Any, metrics: list[Any]) -> dict[tuple[str, str], list[str]]:
+def _known_values(
+    service: Any, namespace_id: int, snap: Any, metrics: list[Any], withheld: Any = None
+) -> dict[tuple[str, str], list[str]]:
     """Distinct values of the menu's category columns, for matching the question's words to filter values.
 
     They stay in core: the ask code matches them against the question and they are never put in the prompt, so no
     data value reaches the model and ``send_data_allowed()`` is not involved. One SQL statement per namespace,
     cached for ``_KNOWN_TTL`` seconds in this process per caller (each caller's table access applies); a failed
-    read is an empty map and the ask carries on without it.
+    read is an empty map and the ask carries on without it. A column kept from AI (``withheld``) is never asked for,
+    and is filtered out of a cached answer too, so a level raised since the cache was filled counts at once.
     """
     import time
 
     key = (getattr(service, "user_id", None), namespace_id)
+
+    def kept(ref: tuple[str, str]) -> bool:
+        ts = snap.table(ref[0])
+        return withheld is not None and (ts is None or withheld.blocks(ts.table_id, ref[1]))
+
     hit = _known_cache.get(key)
     if hit is not None and time.monotonic() - hit[0] < _KNOWN_TTL:
-        return hit[1]
+        return {ref: vals for ref, vals in hit[1].items() if not kept(ref)}
     wanted: list[tuple[str, str]] = []
     for m in metrics:
         table = snap.table(m.table)
@@ -288,6 +312,8 @@ def _known_values(service: Any, namespace_id: int, snap: Any, metrics: list[Any]
             if role in ("key", "time", "amount"):
                 continue
             text = any(t in str(col.dtype or "").lower() for t in _TEXT_TYPES)
+            if kept(ref):
+                continue
             if role == "category" or (text and f in fields[: len(m.value("dimensions") or [])]):
                 wanted.append(ref)
     try:
@@ -299,11 +325,27 @@ def _known_values(service: Any, namespace_id: int, snap: Any, metrics: list[Any]
     return found
 
 
-def _menu(service: Any, namespace_id: int, question: str) -> list[Any]:
-    """The accepted metrics as menu items, narrowed to ``MAX_MENU`` by glosslayer's keyword search."""
+def _withheld_for(db: Any, snap: Any) -> Any:
+    """What the snapshot's tables keep from AI (``confidentiality.read_withheld``)."""
+    from flowfile_core.catalog.semantic.confidentiality import read_withheld
+
+    return read_withheld(db, [t.table_id for t in snap.tables])
+
+
+def _withheld_count(snap: Any, withheld: Any) -> int:
+    return sum(len(withheld.names(t.table_id, [c.name for c in t.columns])) for t in snap.tables)
+
+
+def _menu(service: Any, namespace_id: int, question: str, db: Any = None) -> tuple[list[Any], int]:
+    """The accepted metrics as menu items, narrowed to ``MAX_MENU`` by glosslayer's keyword search.
+
+    Also answers how many of the model's columns are kept from AI: such a column stays on the menu by name only (no
+    label or synonyms for grounding, no known values read).
+    """
     from flowfile_core.ai.semantic_ask import MAX_MENU, MenuItem
 
     snap = service.snapshot(namespace_id, accepted_only=True)
+    withheld = _withheld_for(db if db is not None else service.db, snap)
     metrics = snap.metrics
     if len(metrics) > MAX_MENU:
         from glosslayer.ids import SubjectId
@@ -317,31 +359,40 @@ def _menu(service: Any, namespace_id: int, question: str) -> list[Any]:
                 continue
         picked = [m for m in metrics if m.name in wanted]
         metrics = (picked or metrics)[:MAX_MENU]
-    known = _known_values(service, namespace_id, snap, metrics)
+    known = _known_values(service, namespace_id, snap, metrics, withheld)
     items = []
     for m in metrics:
         table = snap.table(m.table)
         columns = [c.name for c in table.columns] if table else []
         dims = [d for d in (m.value("dimensions") or []) if isinstance(d, str)]
         column = re.search(r'\(\s*(?:DISTINCT\s+)?"?([A-Za-z_]\w*)"?\s*\)', m.expression or "")
+        private_table = table is None or withheld.whole_table(table.table_id)
         items.append(
             MenuItem(
                 name=m.name,
-                meaning=m.value("description"),
+                meaning=None if private_table else m.value("description"),
                 time_column=m.value("time_column"),
                 dimensions=dims,
                 filter_fields=columns,
                 aggregate=m.value("aggregate"),
                 column=column.group(1) if column else None,
                 table=m.table,
-                synonyms=[x for x in (m.value("synonyms") or []) if isinstance(x, str)],
-                dimension_words={d: _column_words(snap, table, d) for d in dims},
+                synonyms=[] if private_table else [x for x in (m.value("synonyms") or []) if isinstance(x, str)],
+                dimension_words={
+                    d: [] if _kept(snap, m.table, d, withheld) else _column_words(snap, table, d) for d in dims
+                },
                 known_values={
                     f: known[ref] for f in dict.fromkeys([*dims, *columns]) if (ref := _ref(snap, m.table, f)) in known
                 },
             )
         )
-    return items
+    return items, _withheld_count(snap, withheld)
+
+
+def _kept(snap: Any, table_key: str, field: str, withheld: Any) -> bool:
+    ref = _ref(snap, table_key, field)
+    ts = snap.table(ref[0]) if ref else None
+    return ts is None or withheld.blocks(ts.table_id, ref[1])
 
 
 @router.post("/ask", response_model=SemanticAskOut, tags=["ai"], responses={409: {"model": AiNotSetUpOut}})
@@ -356,10 +407,11 @@ async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_curre
     def prepare():
         with get_db_context() as db:
             provider = resolve_semantic_provider(db, current_user.id, body.provider, body.model)
-            return provider, _menu(_service(db, current_user), body.namespace_id, body.question)
+            menu, withheld = _menu(_service(db, current_user), body.namespace_id, body.question, db)
+            return provider, menu, withheld
 
     try:
-        provider, menu = await _in_thread(prepare)
+        provider, menu, withheld_count = await _in_thread(prepare)
     except _NotSetUp as exc:
         return _not_set_up(exc)
     _source_str, model = _source(provider)
@@ -410,6 +462,7 @@ async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_curre
             "sql": result.sql if result is not None else None,
             "rows_returned": len(result.rows) if result is not None else 0,
             "rows_sent_to_model": 0,
+            "columns_withheld": withheld_count,
             "attempts": attempts,
         },
         out.reason,

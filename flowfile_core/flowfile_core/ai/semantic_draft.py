@@ -133,6 +133,8 @@ class Chunk:
     rows: int | None
     columns: list[tuple[str, str]]
     metrics: list[tuple[str, str]]
+    private: tuple[str, ...] = ()
+    private_table: bool = False
 
 
 @dataclass
@@ -140,13 +142,21 @@ class DraftWords:
     description: str | None = None
     columns: dict[str, str] = field(default_factory=dict)
     metrics: dict[str, tuple[str | None, str | None]] = field(default_factory=dict)
+    dropped: set[str] = field(default_factory=set)
 
     def empty(self) -> bool:
         return not (self.description or self.columns or self.metrics)
 
 
-def chunks_for(sugg: Any, table_ids: list[int], *, share_values: bool) -> list[Chunk]:
-    """The calls for ``table_ids``: columns described by type and role, values only when ``share_values``."""
+PRIVATE_MARK = "kept private: do not describe"
+
+
+def chunks_for(sugg: Any, table_ids: list[int], *, share_values: bool, withheld: Any = None) -> list[Chunk]:
+    """The calls for ``table_ids``: columns described by type and role, values only when ``share_values``.
+
+    A column ``withheld`` keeps from AI (``catalog/semantic/confidentiality.Withheld``) is listed by name and type
+    with ``PRIVATE_MARK`` and nothing else: no role, count or value.
+    """
     from flowfile_core.catalog.semantic.suggest import type_class
 
     roles = {(r.table_id, r.column): r.role for r in sugg.roles}
@@ -156,8 +166,13 @@ def chunks_for(sugg: Any, table_ids: list[int], *, share_values: bool) -> list[C
         if ts is None:
             continue
         lines = []
+        private: list[str] = []
         for c in ts.columns:
             bits = [type_class(c.dtype).replace("numeric", "decimal").replace("string", "text")]
+            if withheld is not None and withheld.blocks(tid, c.name):
+                private.append(c.name)
+                lines.append((c.name, f"{c.name} ({bits[0]}, {PRIVATE_MARK})"))
+                continue
             role = roles.get((tid, c.name))
             if role:
                 bits.append(f"role {role}")
@@ -170,7 +185,20 @@ def chunks_for(sugg: Any, table_ids: list[int], *, share_values: bool) -> list[C
         metrics = [(m.name, m.expression) for m in sugg.metrics if m.table_id == tid]
         groups = [lines[i : i + MAX_COLUMNS] for i in range(0, len(lines), MAX_COLUMNS)] or [[]]
         for i, group in enumerate(groups):
-            out.append(Chunk(tid, ts.table.name, i + 1, len(groups), ts.row_count, group, metrics if i == 0 else []))
+            names = {n for n, _ in group}
+            out.append(
+                Chunk(
+                    tid,
+                    ts.table.name,
+                    i + 1,
+                    len(groups),
+                    ts.row_count,
+                    group,
+                    metrics if i == 0 else [],
+                    private=tuple(n for n in private if n in names),
+                    private_table=withheld is not None and withheld.whole_table(tid),
+                )
+            )
     return out
 
 
@@ -206,8 +234,11 @@ def read_words(content: str | None, chunk: Chunk) -> tuple[DraftWords, list[str]
         col = match_name(key, names)
         text = sentence(value)
         if col and text:
+            if col in chunk.private:
+                words.dropped.add(col)
+                continue
             words.columns[col] = text
-    missing = [n for n in names if n not in words.columns]
+    missing = [n for n in names if n not in words.columns and n not in chunk.private]
     if missing:
         problems.append("Describe these columns too: " + ", ".join(missing) + ".")
     ids = [n for n, _ in chunk.metrics]
@@ -232,6 +263,7 @@ def _merge(into: DraftWords, words: DraftWords) -> None:
         into.columns.setdefault(k, v)
     for k, v in words.metrics.items():
         into.metrics.setdefault(k, v)
+    into.dropped |= words.dropped
 
 
 @dataclass
@@ -243,6 +275,7 @@ class TableOutcome:
     reason: str | None = None
     message: str | None = None
     words: DraftWords = field(default_factory=DraftWords)
+    withheld: list[str] = field(default_factory=list)
 
 
 async def draft_chunk(
@@ -276,23 +309,54 @@ async def draft_chunk(
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+def _private_note(out: TableOutcome, private_table: bool) -> str:
+    if private_table:
+        return "This table is kept from AI: it was not sent to the model and keeps its rule-based candidates only."
+    note = f"Kept from AI (sent by name and type only): {', '.join(out.withheld)}."
+    if out.words.dropped:
+        note += f" The model described {', '.join(sorted(out.words.dropped))} anyway; that was dropped, not stored."
+    return note
+
+
 async def draft_words(
-    provider: Provider, sugg: Any, table_ids: list[int], *, user_id: int | None, share_values: bool
+    provider: Provider,
+    sugg: Any,
+    table_ids: list[int],
+    *,
+    user_id: int | None,
+    share_values: bool,
+    withheld: Any = None,
 ) -> list[TableOutcome]:
-    """Every table's words, one table at a time (the local model serves one request at a time anyway)."""
+    """Every table's words, one table at a time (the local model serves one request at a time anyway).
+
+    A table ``withheld`` keeps from AI as a whole is not sent; a column it keeps is sent by name and type, and any
+    description the model writes for it is dropped here, so none is ever stored.
+    """
     started = time.monotonic()
     outcomes: dict[int, TableOutcome] = {}
-    for chunk in chunks_for(sugg, table_ids, share_values=share_values):
+    private_tables: set[int] = set()
+    for chunk in chunks_for(sugg, table_ids, share_values=share_values, withheld=withheld):
         out = outcomes.setdefault(chunk.table_id, TableOutcome(chunk.table_id, chunk.table))
+        out.withheld += [n for n in chunk.private if n not in out.withheld]
+        if chunk.private_table:
+            private_tables.add(chunk.table_id)
+            continue
         words, calls, reason, message = await draft_chunk(provider, chunk, user_id=user_id)
         out.calls += calls
         _merge(out.words, words)
         if reason and out.reason is None:
             out.reason, out.message = reason, message
     for out in outcomes.values():
+        for col in out.withheld:
+            out.words.columns.pop(col, None)
+        if out.table_id in private_tables:
+            out.ok, out.reason, out.message = True, "kept_private", _private_note(out, True)
+            continue
         out.ok = not out.words.empty()
         if out.words.empty() and out.reason is None:
             out.reason = "invalid_answer"
+        if out.withheld:
+            out.message = " ".join(m for m in (out.message, _private_note(out, False)) if m)
     logger.info("semantic draft: %d tables in %.1fs", len(outcomes), time.monotonic() - started)
     return list(outcomes.values())
 
@@ -300,15 +364,20 @@ async def draft_words(
 def words_for_store(outcomes: list[TableOutcome]) -> dict[int, dict[str, Any]]:
     """The outcomes as ``SemanticModelService.store_suggestions(words=)`` reads them."""
     return {
-        o.table_id: {"description": o.words.description, "columns": o.words.columns, "metrics": o.words.metrics}
+        o.table_id: {
+            "description": o.words.description,
+            "columns": {c: d for c, d in o.words.columns.items() if c not in o.withheld},
+            "metrics": o.words.metrics,
+        }
         for o in outcomes
-        if not o.words.empty()
+        if not o.words.empty() and o.reason != "kept_private"
     }
 
 
 __all__ = [
     "MAX_COLUMNS",
     "MAX_TOKENS",
+    "PRIVATE_MARK",
     "SURFACE",
     "Chunk",
     "DraftWords",
