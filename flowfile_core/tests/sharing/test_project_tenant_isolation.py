@@ -27,7 +27,6 @@ from flowfile_core.project.manifest import (
     flows_dir,
     kernels_manifest_path,
     namespaces_manifest_path,
-    tables_manifest_path,
     visualizations_manifest_path,
     dashboards_manifest_path,
     write_manifest,
@@ -237,7 +236,8 @@ def _write_dashboard_manifest(root: Path, dashboards: list[dict]) -> None:
 
 
 def _write_tables_manifest(root: Path, tables: list[dict]) -> None:
-    write_yaml(tables_manifest_path(root), {"tables": tables})
+    for table in tables:
+        write_yaml(root / "tables" / f"{table['name']}.table.yaml", table)
 
 
 def _minimal_project_dir(tmp_path: Path, name: str = "project") -> Path:
@@ -976,7 +976,7 @@ class TestSingleUserNonRegression:
 
 
 class TestH4_ManagedTablePointerSanitization:
-    """H4 — a tables.yaml managed pointer name containing '../' or an absolute path must be
+    """H4 — a table's managed pointer name containing '../' or an absolute path must be
     sanitized (reduced to basename + containment check) so no directory/file is created
     outside catalog_tables_directory.
 

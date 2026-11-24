@@ -1,7 +1,7 @@
 """A version lists its kinds in ``project.yaml``, and an import applies only the kinds it lists.
 
 Proven on the every-kind install of ``test_kinds.py``, real git and the test database: init and save write
-``project_format: 3`` with the kinds a save exports; a format-1 folder opens and lists its kinds at the next
+``project_format: 4`` with the kinds a save exports; a format-1 folder opens and lists its kinds at the next
 save; a kind a version leaves out is neither imported nor pruned; a listed kind no registry entry knows keeps
 its committed files and is reported; a newer format is refused before anything changes; an entry or file owned
 by another user, or under a reserved ``@<username>/`` level, is reported as not applied. Same-named flows and
@@ -145,18 +145,19 @@ def test_init_lists_every_kind_and_the_toggle_moves_the_data_kinds(tmp_path, eve
     root = tmp_path / "project"
     _init(root, every_kind)
     raw = _raw_manifest(root)
-    assert raw["project_format"] == 3
+    assert raw["project_format"] == 4
     assert raw["kinds"] == TWELVE
     assert "track_data_artifacts" not in raw
 
     project_sync.update_settings(every_kind, False)
     assert _raw_manifest(root)["kinds"] == TEN
     assert read_manifest(root).track_data_artifacts is False
-    assert not (root / "tables.yaml").exists() and not (root / "models.yaml").exists()
+    assert not list(root.glob("tables/*")) and not (root / "models.yaml").exists()
     project_sync.update_settings(every_kind, True)
     assert _raw_manifest(root)["kinds"] == TWELVE
     assert read_manifest(root).track_data_artifacts is True
-    assert (root / "tables.yaml").exists() and (root / "models.yaml").exists()
+    assert len(list(root.glob("tables/*.table.yaml"))) == 2 and (root / "models.yaml").exists()
+    assert not (root / "tables.yaml").exists()
 
     untracked = tmp_path / "untracked"
     _init(untracked, every_kind, track=False)
@@ -182,7 +183,7 @@ def test_a_format_1_folder_opens_and_lists_its_kinds_at_the_next_save(tmp_path, 
 
     project_sync.save_version(every_kind, "next save")
     raw = _raw_manifest(root)
-    assert raw["project_format"] == 3
+    assert raw["project_format"] == 4
     assert raw["kinds"] == expected
     assert "track_data_artifacts" not in raw
     assert raw["project_id"] == "p1"
@@ -247,7 +248,7 @@ def test_a_listed_kind_no_entry_knows_keeps_its_files_and_is_reported(tmp_path, 
 
 def _newer(root: Path) -> None:
     data = _raw_manifest(root)
-    data["project_format"] = 4
+    data["project_format"] = 5
     _write_manifest(root, data)
 
 
@@ -284,7 +285,7 @@ def test_a_manifest_this_flowfile_cannot_read_is_refused_with_nothing_changed(tm
     files = _on_disk(root)
     message = _refused(lambda: project_sync.restore_version(every_kind, bad, force=True))
     if spoil is _newer:
-        assert "newer Flowfile" in message and "format 4" in message and "up to 3" in message
+        assert "newer Flowfile" in message and "format 5" in message and "up to 4" in message
     assert git_ops.head_sha(root) == good
     assert _on_disk(root) == files
     assert _db_state(every_kind) == state
@@ -350,13 +351,12 @@ def _flow_text_with(root: Path, uuid: str, name: str, owner: str | None) -> str:
 def test_what_another_owner_holds_is_reported_as_not_applied(tmp_path, every_kind):
     root = tmp_path / "project"
     _init(root, every_kind)
-    tables = yaml.safe_load((root / "tables.yaml").read_text(encoding="utf-8"))
-    view = next(t for t in tables["tables"] if t["name"] == "kinds_view")
-    tables["tables"] += [
-        {**view, "name": "foreign_view", "owner": "alice"},
-        {**view, "name": "own_view", "owner": USERNAME},
-    ]
-    (root / "tables.yaml").write_text(yaml.safe_dump(tables, sort_keys=False), encoding="utf-8")
+    view = yaml.safe_load((root / "tables/KindsCatalog.KindsSchema.kinds_view.table.yaml").read_text(encoding="utf-8"))
+    for name, owner in (("foreign_view", "alice"), ("own_view", USERNAME)):
+        text = yaml.safe_dump({**view, "name": name, "owner": owner}, sort_keys=False)
+        (root / "tables" / f"KindsCatalog.KindsSchema.{name}.table.yaml").write_text(text, encoding="utf-8")
+    legacy = {"tables": [{**view, "name": "foreign_legacy", "owner": "alice"}]}
+    (root / "tables.yaml").write_text(yaml.safe_dump(legacy, sort_keys=False), encoding="utf-8")
     foreign, mine, reserved = (
         "1e5c0f00-0000-4000-8000-000000000001",
         "1e5c0f00-0000-4000-8000-000000000002",
@@ -372,14 +372,15 @@ def test_what_another_owner_holds_is_reported_as_not_applied(tmp_path, every_kin
     assert sorted(result.not_applied) == [
         "flows/@alice/x.flow.yaml",
         "flows/foreign.flow.yaml",
-        "tables.yaml: foreign_view",
+        "tables.yaml: foreign_legacy",
+        "tables/KindsCatalog.KindsSchema.foreign_view.table.yaml",
     ]
     assert result.to_dict()["not_applied"] == sorted(result.not_applied)
     uuids = _flow_uuids(every_kind)
     assert mine in uuids and foreign not in uuids and reserved not in uuids
     with get_db_context() as db:
         names = {t.name for t in db.query(CatalogTable).filter_by(owner_id=every_kind)}
-    assert "own_view" in names and "foreign_view" not in names
+    assert "own_view" in names and not {"foreign_view", "foreign_legacy"} & names
 
     # What another owner holds is never applied, so the save is told to overwrite it.
     project_sync.save_version(every_kind, "a save", overwrite=True)

@@ -30,7 +30,7 @@ SPECS = {
     "namespaces": ("namespaces.yaml", "namespaces", "catalog", "description"),
     "flow": ("flows/flow_b.flow.yaml", None, "flow_uuid", "catalog_name"),
     "schedule": ("schedules/flow_a.yaml", "schedules", "id", "name"),
-    "tables": ("tables.yaml", "tables", "name", "storage_format"),
+    "tables": ("tables/KindsCatalog.KindsSchema.kinds_table.table.yaml", None, "name", "storage_format"),
     "models": ("models.yaml", "models", "version", "serialization_format"),
     "kernels": ("kernels.yaml", "kernels", "id", "name"),
     "visualizations": ("visualizations/kinds_viz.visualization.yaml", None, "viz_uuid", "chart_type"),
@@ -113,12 +113,46 @@ def test_an_objects_own_file_replaces_its_entry_in_the_older_list():
     assert [(c.change, c.label, c.path) for c in kinds.compare(TREE, both)] == [("modified", "from its file", path)]
 
 
+TABLES_FORMAT3_TREE = json.loads(FIXTURE.with_name("every_kind_tree_format3.json").read_text(encoding="utf-8"))
+TABLE_FILE = "tables/KindsCatalog.KindsSchema.kinds_table.table.yaml"
+
+
+def test_a_folder_of_format_3_holds_the_same_objects():
+    """Tables listed in the one root file are the objects their own files hold."""
+    assert "tables.yaml" in TABLES_FORMAT3_TREE and not [p for p in TABLES_FORMAT3_TREE if p.startswith("tables/")]
+    assert kinds.compare(TABLES_FORMAT3_TREE, TREE) == []
+    assert kinds.compare(TREE, TABLES_FORMAT3_TREE) == []
+
+
+def test_a_change_across_the_two_table_layouts_is_one_row():
+    data = yaml.safe_load(TREE[TABLE_FILE])
+    edited = {**TREE, TABLE_FILE: yaml.safe_dump({**data, "storage_format": "parquet"}, sort_keys=False)}
+    rows = kinds.compare(TABLES_FORMAT3_TREE, edited)
+    assert [(c.kind, c.change, c.label) for c in rows] == [("tables", "modified", "KindsCatalog.KindsSchema.kinds_table")]
+    without = {p: t for p, t in TREE.items() if p != TABLE_FILE}
+    assert [(c.kind, c.change) for c in kinds.compare(TABLES_FORMAT3_TREE, without)] == [("tables", "removed")]
+    assert [(c.kind, c.change) for c in kinds.compare(without, TABLES_FORMAT3_TREE)] == [("tables", "added")]
+
+
+def test_a_tables_own_file_replaces_its_entry_in_the_older_list():
+    data = yaml.safe_load(TREE[TABLE_FILE])
+    both = {**TABLES_FORMAT3_TREE, TABLE_FILE: yaml.safe_dump({**data, "description": "from its file"}, sort_keys=False)}
+    assert [(c.change, c.label, c.path) for c in kinds.compare(TREE, both)] == [("modified", "KindsCatalog.KindsSchema.kinds_table", TABLE_FILE)]
+
+
 def test_a_comment_in_a_root_file_is_no_change():
-    tree = {**TREE, "tables.yaml": "# by hand\n" + TREE["tables.yaml"]}
+    tree = {**TREE, "namespaces.yaml": "# by hand\n" + TREE["namespaces.yaml"]}
     assert kinds.compare(TREE, tree) == []
 
 
-@pytest.mark.parametrize("path", ["flows/flow_b.flow.yaml", "connections/database/kinds_db.yaml"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "flows/flow_b.flow.yaml",
+        "connections/database/kinds_db.yaml",
+        "tables/KindsCatalog.KindsSchema.kinds_table.table.yaml",
+    ],
+)
 def test_a_comment_or_key_order_in_a_folder_file_is_no_change(path):
     data = yaml.safe_load(TREE[path])
     reordered = dict(reversed(list(data.items())))
