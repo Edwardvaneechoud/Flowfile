@@ -3,6 +3,7 @@
 import type { AccessInfo } from "./sharing.types";
 import type { NotebookSummary } from "../api/notebook.api";
 import type { FlowParameter } from "./flow.types";
+import type { SemanticModelSummary } from "./semantic.types";
 
 // Namespace (Unity Catalog-style hierarchy)
 
@@ -36,6 +37,7 @@ export interface NamespaceTree extends CatalogNamespace {
   tables: CatalogTable[];
   visualizations: CatalogVisualization[];
   notebooks: NotebookSummary[];
+  semantic_model?: SemanticModelSummary | null;
 }
 
 // System-managed schemas under "General" that users never pick as a store target.

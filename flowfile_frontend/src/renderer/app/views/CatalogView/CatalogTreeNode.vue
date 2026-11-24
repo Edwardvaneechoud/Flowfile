@@ -88,6 +88,23 @@
     <p v-if="reason !== null && node.level === 0" class="ns-unavailable">{{ reason }}</p>
 
     <div v-if="expanded" class="tree-children">
+      <div
+        v-if="showSemanticEntry"
+        class="tree-table semantic-entry"
+        :class="{ selected: selectedSemanticNamespaceId === node.id }"
+        data-testid="semantic-model-entry"
+        @click.stop="$emit('selectSemanticModel', node.id)"
+      >
+        <i class="fa-solid fa-sitemap table-icon"></i>
+        <span class="table-name">Semantic model</span>
+        <span
+          v-if="semanticPending > 0"
+          class="semantic-pending-badge"
+          :title="`${semanticPending} facts waiting for review`"
+          >{{ semanticPending }}</span
+        >
+      </div>
+
       <!-- Child namespaces (schemas) -->
       <div v-for="child in shownChildren" :key="child.id" class="tree-child-wrapper">
         <CatalogTreeNode
@@ -95,12 +112,14 @@
           :selected-flow-id="selectedFlowId"
           :selected-artifact-id="selectedArtifactId"
           :selected-table-id="selectedTableId"
+          :selected-semantic-namespace-id="selectedSemanticNamespaceId"
           :search-query="searchQuery"
           :show-unavailable="showUnavailable"
           :filter-bypass="bypass"
           @select-flow="$emit('selectFlow', $event)"
           @select-artifact="$emit('selectArtifact', $event)"
           @select-table="$emit('selectTable', $event)"
+          @select-semantic-model="$emit('selectSemanticModel', $event)"
           @table-context-menu="$emit('tableContextMenu', $event)"
           @artifact-context-menu="$emit('artifactContextMenu', $event)"
           @flow-context-menu="$emit('flowContextMenu', $event)"
@@ -404,6 +423,7 @@ const props = withDefaults(
     selectedArtifactId: number | null;
     selectedTableId: number | null;
     selectedNamespaceId?: number | null;
+    selectedSemanticNamespaceId?: number | null;
     searchQuery?: string;
     showUnavailable?: boolean;
     // Set when an ancestor namespace matched the search by its own name: this
@@ -412,6 +432,7 @@ const props = withDefaults(
   }>(),
   {
     selectedNamespaceId: null,
+    selectedSemanticNamespaceId: null,
     searchQuery: "",
     showUnavailable: false,
     filterBypass: false,
@@ -423,6 +444,7 @@ const emit = defineEmits([
   "selectArtifact",
   "selectTable",
   "selectNamespace",
+  "selectSemanticModel",
   "tableContextMenu",
   "artifactContextMenu",
   "flowContextMenu",
@@ -463,6 +485,9 @@ const reason = computed(() => unavailableReason(props.node));
 function onTableContextMenu(table: CatalogTable, event: MouseEvent) {
   emit("tableContextMenu", { table, x: event.clientX, y: event.clientY });
 }
+
+const showSemanticEntry = computed(() => !isHub.value && reason.value === null && !searching.value);
+const semanticPending = computed(() => props.node.semantic_model?.pending ?? 0);
 
 const rawQuery = computed(() => normalizeQuery(props.searchQuery));
 const searching = computed(() => rawQuery.value.length > 0);
@@ -872,6 +897,18 @@ const totalFlows = computed(() => {
 .tree-table:hover .flow-actions,
 .tree-table.selected .flow-actions {
   opacity: 1;
+}
+
+.semantic-pending-badge {
+  margin-left: auto;
+  min-width: 18px;
+  padding: 0 var(--spacing-1);
+  border-radius: 9px;
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-align: center;
 }
 
 .tree-table.selected {

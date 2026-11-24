@@ -173,12 +173,14 @@
                 :selected-artifact-id="catalogStore.selectedArtifactId"
                 :selected-table-id="catalogStore.selectedTableId"
                 :selected-namespace-id="catalogStore.selectedNamespaceId"
+                :selected-semantic-namespace-id="catalogStore.selectedSemanticNamespaceId"
                 :search-query="searchQuery"
                 :show-unavailable="showUnavailable"
                 @select-flow="selectFlow($event)"
                 @select-artifact="selectArtifact($event)"
                 @select-table="selectTable($event)"
                 @select-namespace="selectNamespace($event)"
+                @select-semantic-model="selectSemanticModel($event)"
                 @table-context-menu="onTableContextMenu($event)"
                 @artifact-context-menu="onArtifactContextMenu($event)"
                 @flow-context-menu="onFlowContextMenu($event)"
@@ -271,6 +273,11 @@
           @promote-version="handlePromoteArtifactVersion($event)"
           @set-versions-page="catalogStore.setArtifactVersionsPage($event)"
           @versions-changed="refreshArtifactVersions()"
+        />
+        <SemanticModelPanel
+          v-else-if="catalogStore.selectedSemanticNamespaceId !== null"
+          :namespace-id="catalogStore.selectedSemanticNamespaceId"
+          @close="handleCloseDetail"
         />
         <!-- Namespace (catalog) settings view -->
         <NamespaceDetailPanel
@@ -682,6 +689,7 @@ import HubFlowDetailPanel from "./HubFlowDetailPanel.vue";
 import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
 import TableDetailPanel from "./TableDetailPanel.vue";
 import NamespaceDetailPanel from "./NamespaceDetailPanel.vue";
+import SemanticModelPanel from "./SemanticModelPanel.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
 import CreateNamespaceModal from "./CreateNamespaceModal.vue";
@@ -1159,6 +1167,13 @@ function selectNamespace(namespaceId: number) {
   router.push({
     name: "catalog",
     query: { tab: "catalog", namespaceId: String(namespaceId) },
+  });
+}
+
+function selectSemanticModel(namespaceId: number) {
+  router.push({
+    name: "catalog",
+    query: { tab: "catalog", semanticNamespaceId: String(namespaceId) },
   });
 }
 
@@ -1968,6 +1983,7 @@ const SELECTION_QUERY_KEYS = [
   "artifactId",
   "scheduleId",
   "namespaceId",
+  "semanticNamespaceId",
   "runId",
 ] as const;
 
@@ -2061,6 +2077,14 @@ function applyRouteToStore() {
     if (namespaceId !== catalogStore.selectedNamespaceId) catalogStore.selectNamespace(namespaceId);
   } else if (catalogStore.selectedNamespace) {
     catalogStore.clearNamespaceSelection();
+  }
+
+  const semanticNamespaceId = q.semanticNamespaceId ? Number(q.semanticNamespaceId) : null;
+  if (semanticNamespaceId !== null) {
+    if (semanticNamespaceId !== catalogStore.selectedSemanticNamespaceId)
+      catalogStore.selectSemanticModel(semanticNamespaceId);
+  } else if (catalogStore.selectedSemanticNamespaceId !== null) {
+    catalogStore.clearSemanticSelection();
   }
 
   // Handle selections (mutually exclusive: table, artifact, schedule, or flow+run)
