@@ -7,7 +7,10 @@ import type {
   SemanticAskRequest,
   SemanticDraftOut,
   SemanticDraftRequest,
+  SemanticSuggestRequestIn,
+  SemanticSuggestRequestOut,
   SuggestOut,
+  SuggestRequest,
   MetricQueryResult,
   MetricQuerySaveAsFlow,
   MetricQuerySaveAsFlowOut,
@@ -99,8 +102,15 @@ export class SemanticModelApi {
     return response.data;
   }
 
-  static async suggest(namespaceId: number): Promise<SuggestOut> {
-    const response = await axios.post<SuggestOut>(`${base(namespaceId)}/suggest`);
+  static async suggest(namespaceId: number, body?: SuggestRequest): Promise<SuggestOut> {
+    const response = await axios.post<SuggestOut>(`${base(namespaceId)}/suggest`, body);
+    return response.data;
+  }
+
+  static async suggestOnRequest(
+    body: SemanticSuggestRequestIn,
+  ): Promise<SemanticSuggestRequestOut> {
+    const response = await axios.post<SemanticSuggestRequestOut>("/ai/semantic/suggest", body);
     return response.data;
   }
 

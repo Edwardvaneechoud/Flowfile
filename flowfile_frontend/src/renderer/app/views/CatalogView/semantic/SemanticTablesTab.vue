@@ -1,5 +1,17 @@
 <template>
   <div class="tables-tab">
+    <SemanticSuggestMore
+      v-if="model.tables.length > 0"
+      :model="model"
+      :kinds="['description', 'role']"
+      label="Suggest descriptions and roles"
+      ask-label="Ask for specific descriptions…"
+      @review="emit('open-tab', 'review')"
+    >
+      <template #hint>
+        <p class="muted hint">Say what each table and column holds, and how each column is used.</p>
+      </template>
+    </SemanticSuggestMore>
     <p v-if="model.tables.length === 0" class="muted">This schema has no tables yet.</p>
 
     <section
@@ -60,9 +72,11 @@ import type { SemanticModel, SemanticProposal, SemanticTable } from "../../../ty
 import SemanticColumnGrid from "./SemanticColumnGrid.vue";
 import SemanticInlineText from "./SemanticInlineText.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
+import SemanticSuggestMore from "./SemanticSuggestMore.vue";
 import { errorText, needsReview, tablePageLocation } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
+const emit = defineEmits<{ "open-tab": [tab: string] }>();
 
 const store = useSemanticModelStore();
 const router = useRouter();
@@ -193,5 +207,9 @@ const saveTable = (table: SemanticTable, value: string) =>
 .muted {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
+}
+
+.hint {
+  margin: 0;
 }
 </style>

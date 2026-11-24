@@ -12,7 +12,7 @@ the rules and AI apart without parsing.
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 FactStatus = Literal["proposed", "reviewed", "accepted", "rejected", "superseded", "stale", "retracted"]
 SourceKind = Literal["human", "ai", "inferred", "catalog", "import", "system", "other"]
@@ -336,6 +336,15 @@ class SuggestOut(BaseModel):
     stats_message: str | None = None
 
 
+SuggestKind = Literal["join", "metric", "description", "role"]
+
+
+class SuggestIn(BaseModel):
+    """Optional body of ``POST …/semantic-model/suggest``: store only these kinds (absent: every kind)."""
+
+    kinds: list[SuggestKind] | None = None
+
+
 class SemanticDraftIn(BaseModel):
     """``POST /ai/semantic/draft``: words for the rule candidates of ``table_ids`` (default: every table)."""
 
@@ -440,8 +449,70 @@ class SemanticAskOut(BaseModel):
     facts: SemanticAnswerFacts | None = None
 
 
+class SemanticSuggestRequestIn(BaseModel):
+    """``POST /ai/semantic/suggest``: one request in a person's own words, within ``kinds`` when given.
+
+    With ``kinds`` and no ``request`` the AI is asked for more of those kinds than the model holds; one of the two is
+    required.
+    """
+
+    namespace_id: int
+    request: str | None = Field(default=None, max_length=500)
+    kinds: list[SuggestKind] | None = None
+    provider: str | None = Field(default=None, min_length=1)
+    model: str | None = None
+
+    @model_validator(mode="after")
+    def _asks_for_something(self) -> "SemanticSuggestRequestIn":
+        self.request = (self.request or "").strip() or None
+        if self.request is None and not self.kinds:
+            raise ValueError("Give a request, or the kinds of suggestion wanted")
+        return self
+
+
+class SemanticSuggestionProposed(BaseModel):
+    """One suggestion that passed every check and is stored as proposals: ``summary`` says what in one line."""
+
+    kind: SuggestKind
+    summary: str
+    table: str | None = None
+    name: str | None = None
+    fact_ids: list[str] = Field(default_factory=list)
+    group: str | None = None
+
+
+class SemanticSuggestionSkipped(BaseModel):
+    """A suggestion that was not stored, and why (a check's sentence)."""
+
+    what: str
+    why: str
+
+
+class SemanticSuggestRequestOut(BaseModel):
+    """What ``POST /ai/semantic/suggest`` stored. Everything in ``proposed`` waits for review; nothing is live.
+
+    ``nothing_to_suggest`` (with ``why``) when the model said it has nothing for this request. ``degraded`` with a
+    ``reason`` (``timeout``, ``provider_error``, ``invalid_answer``, ``all_refused``) when the call failed or every
+    suggestion was refused. ``attempts`` counts model calls (1 or 2: one repair round).
+    """
+
+    request: str | None = None
+    kinds: list[SuggestKind] | None = None
+    provider: str
+    model: str | None = None
+    proposed: list[SemanticSuggestionProposed] = Field(default_factory=list)
+    skipped: list[SemanticSuggestionSkipped] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    nothing_to_suggest: bool = False
+    why: str | None = None
+    degraded: bool = False
+    reason: str | None = None
+    attempts: int = 0
+    withheld_columns: int = 0
+
+
 class AiNotSetUpOut(BaseModel):
-    """The 409 body of both AI semantic routes when no provider is named, saved or installed locally."""
+    """The 409 body of the AI semantic routes when no provider is named, saved or installed locally."""
 
     error_code: Literal["AI_NOT_SET_UP"] = "AI_NOT_SET_UP"
     message: str

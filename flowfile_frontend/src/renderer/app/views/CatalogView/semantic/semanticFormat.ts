@@ -64,6 +64,9 @@ export const displayValue = (attribute: string, value: unknown): string => {
     const option = ROLE_OPTIONS.find((o) => o.value === value);
     if (option) return option.label;
   }
+  // A metric's formula is stored as {sql}; show the SQL, not the wrapper.
+  const sql = (value as { sql?: unknown } | null)?.sql;
+  if (typeof sql === "string") return sql;
   return valueText(value);
 };
 

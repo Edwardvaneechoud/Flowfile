@@ -1,4 +1,4 @@
-"""``POST /ai/semantic/draft`` and ``POST /ai/semantic/ask``: local-first AI over a catalog semantic model.
+"""``POST /ai/semantic/draft``, ``/ask`` and ``/suggest``: local-first AI over a catalog semantic model.
 
 Mounted under ``/ai`` (``FEATURE_FLAG_AI`` from the parent router). The provider rule is these routes' own, not
 ``node_codegen_routes._resolve_provider`` (whose no-provider path falls through to an Ollama that is usually not
@@ -33,6 +33,10 @@ from flowfile_core.schemas.semantic_schema import (
     SemanticDraftIn,
     SemanticDraftOut,
     SemanticDraftTable,
+    SemanticSuggestionProposed,
+    SemanticSuggestionSkipped,
+    SemanticSuggestRequestIn,
+    SemanticSuggestRequestOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -502,6 +506,118 @@ async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_curre
         out.reason,
     )
     return out
+
+
+@router.post(
+    "/suggest", response_model=SemanticSuggestRequestOut, tags=["ai"], responses={409: {"model": AiNotSetUpOut}}
+)
+async def suggest_on_request(body: SemanticSuggestRequestIn, current_user=Depends(get_current_active_user)):
+    """Specific suggestions for one request (or more of ``kinds``), checked by code and stored as proposals.
+
+    The model sees names, types, roles and descriptions only (a column kept from AI by name and type, no rows, no
+    statistics); every suggestion is matched, compiled, dry-run or measured before it is stored through the AI-bound
+    view, so it waits for review. 404 unknown provider or namespace · 403 not writable · 409 ``AI_NOT_SET_UP`` ·
+    422 neither a request nor kinds · 503 AI off; after provider resolution every outcome is a 200.
+    """
+    from flowfile_core.ai.semantic_suggest import (
+        build_context,
+        infer_kinds,
+        kinds_phrase,
+        store_round,
+        suggest_for_request,
+    )
+    from flowfile_core.catalog.semantic.confidentiality import read_withheld
+    from flowfile_core.database.connection import get_db_context
+
+    def prepare():
+        with get_db_context() as db:
+            provider = resolve_semantic_provider(db, current_user.id, body.provider, body.model)
+            service = _service(db, current_user)
+            ns, _path = service._namespace(body.namespace_id)
+            service._require_writable(ns)
+            snap, model_tables, all_tables = service.suggest_scope(body.namespace_id)
+            withheld = read_withheld(db, [t.table_id for t in all_tables.values()])
+            return provider, build_context(snap, model_tables, all_tables, withheld)
+
+    try:
+        provider, ctx = await _in_thread(prepare)
+    except _NotSetUp as exc:
+        return _not_set_up(exc)
+    _default_source, model = _source(provider)
+    label = _model_label(provider, model)
+    source = f"ai:{provider.name}/{label}" if label else f"ai:{provider.name}"
+    kinds = list(body.kinds) if body.kinds else infer_kinds(body.request)
+    read_as = None if body.kinds or not kinds else f"Read as a request for {kinds_phrase(kinds)} only."
+
+    def store(items, done):
+        with get_db_context() as db:
+            return store_round(
+                _service(db, current_user),
+                body.namespace_id,
+                items,
+                done,
+                kinds,
+                request=body.request,
+                ai_source=source,
+                withheld_for=lambda ids: read_withheld(db, ids),
+            )
+
+    async def apply(items, done):
+        return await _in_thread(store, items, done)
+
+    outcome = await suggest_for_request(provider, ctx, body.request, kinds, user_id=current_user.id, apply=apply)
+    out = SemanticSuggestRequestOut(
+        request=body.request,
+        kinds=kinds,
+        provider=provider.name,
+        model=label,
+        proposed=[
+            SemanticSuggestionProposed(
+                kind=s.kind, summary=s.summary, table=s.table, name=s.name, fact_ids=s.fact_ids, group=s.group
+            )
+            for s in outcome.stored
+        ],
+        skipped=[SemanticSuggestionSkipped(what=r.what, why=r.why) for r in _last_per_what(outcome.skipped)],
+        notes=list(dict.fromkeys(([read_as] if read_as else []) + outcome.notes)),
+        nothing_to_suggest=outcome.nothing,
+        why=outcome.why,
+        attempts=outcome.attempts,
+        withheld_columns=ctx.withheld_columns,
+    )
+    reason = outcome.reason
+    if reason is None and not out.proposed and any(r.retry for r in outcome.skipped):
+        reason = "all_refused"
+    out.degraded, out.reason = reason is not None, reason
+    _audit(
+        current_user.id,
+        "semantic_suggest",
+        provider,
+        "success" if out.proposed or (not out.degraded) else "error",
+        {
+            "namespace_id": body.namespace_id,
+            "request_chars": len(body.request or ""),
+            "kinds": kinds,
+            "attempts": outcome.attempts,
+            "proposed": len(out.proposed),
+            "proposed_kinds": [p.kind for p in out.proposed],
+            "skipped": len(out.skipped),
+            "nothing_to_suggest": out.nothing_to_suggest,
+            "rows_sent_to_model": 0,
+            "statistics_sent": False,
+            "columns_withheld": ctx.withheld_columns,
+        },
+        reason,
+    )
+    return out
+
+
+def _last_per_what(refused: list[Any]) -> list[Any]:
+    """One entry per suggestion, the latest refusal winning (a repaired one refused again keeps its new reason)."""
+    found: dict[str, Any] = {}
+    for r in refused:
+        found.pop(r.what, None)
+        found[r.what] = r
+    return list(found.values())
 
 
 def _answer_sentence(out: SemanticAskOut, answer: Any, menu: list[Any]) -> None:

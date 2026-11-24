@@ -37,6 +37,7 @@ from flowfile_core.schemas.semantic_schema import (
     SemanticModelOut,
     SemanticModelUpdate,
     SemanticSyncOut,
+    SuggestIn,
     SuggestOut,
 )
 
@@ -143,12 +144,17 @@ def sync_semantic_model(namespace_id: int, service: SemanticModelService = Depen
 
 @router.post(f"{_BASE}/suggest", response_model=SuggestOut)
 @_handle
-def suggest_semantic_model(namespace_id: int, service: SemanticModelService = Depends(get_semantic_service)):
+def suggest_semantic_model(
+    namespace_id: int,
+    body: SuggestIn | None = None,
+    service: SemanticModelService = Depends(get_semantic_service),
+):
     """Rule-based proposals from one aggregate query per table (no AI): roles, joins and metrics, queued for review.
 
     A second call adds nothing. Without a reachable worker the rules use names and types, ``stats_available`` false.
+    An optional body ``{"kinds": [...]}`` stores only those kinds; no body stores every kind, as before.
     """
-    return service.suggest(namespace_id)
+    return service.suggest(namespace_id, kinds=body.kinds if body is not None else None)
 
 
 @router.post(f"{_BASE}/query", response_model=MetricQueryResult)

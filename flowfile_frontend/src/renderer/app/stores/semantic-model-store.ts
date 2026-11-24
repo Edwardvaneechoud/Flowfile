@@ -8,6 +8,8 @@ import type {
   MetricQuery,
   SemanticAskOut,
   SemanticDraftOut,
+  SemanticSuggestKind,
+  SemanticSuggestRequestOut,
   SuggestOut,
   SemanticEvent,
   SemanticFact,
@@ -131,7 +133,23 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
       return merged;
     });
 
-  const suggestModel = (): Promise<SuggestOut> => run((id) => SemanticModelApi.suggest(id));
+  const suggestModel = (kinds?: SemanticSuggestKind[]): Promise<SuggestOut> =>
+    run((id) => SemanticModelApi.suggest(id, kinds ? { kinds } : undefined));
+
+  /** A request in the person's words (or more of `kinds`) for the AI; what it stores waits for review. */
+  const suggestOnRequest = (
+    request: string | null,
+    kinds: SemanticSuggestKind[] | null,
+    pick: { provider?: string; model?: string } = {},
+  ): Promise<SemanticSuggestRequestOut> =>
+    run((id) =>
+      SemanticModelApi.suggestOnRequest({
+        namespace_id: id,
+        ...(request ? { request } : {}),
+        ...(kinds ? { kinds } : {}),
+        ...pick,
+      }),
+    );
 
   const draftModel = (
     pick: { provider?: string; model?: string } = {},
@@ -246,6 +264,7 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     review,
     reviewBatch,
     suggestModel,
+    suggestOnRequest,
     draftModel,
     askQuestion,
     sync,

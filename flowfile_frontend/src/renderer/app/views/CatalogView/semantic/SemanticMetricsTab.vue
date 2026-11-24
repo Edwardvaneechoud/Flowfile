@@ -1,9 +1,17 @@
 <template>
   <div class="metrics-tab">
-    <div class="toolbar">
-      <p class="hint">
-        Metrics are named calculations. Ask for one by name and everyone gets the same number.
-      </p>
+    <SemanticSuggestMore
+      :model="model"
+      :kinds="['metric']"
+      label="Suggest metrics"
+      ask-label="Ask for a specific metric…"
+      @review="emit('open-tab', 'review')"
+    >
+      <template #hint>
+        <p class="hint">
+          Metrics are named calculations. Ask for one by name and everyone gets the same number.
+        </p>
+      </template>
       <button
         class="btn btn-primary btn-sm"
         :disabled="model.tables.length === 0"
@@ -11,7 +19,7 @@
       >
         <i class="fa-solid fa-plus"></i> Add metric
       </button>
-    </div>
+    </SemanticSuggestMore>
 
     <p v-if="groups.length === 0" class="empty">No metrics yet.</p>
 
@@ -81,9 +89,11 @@ import { useRouter } from "vue-router";
 import type { SemanticMetric, SemanticModel } from "../../../types/semantic.types";
 import MetricEditorDialog from "./MetricEditorDialog.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
+import SemanticSuggestMore from "./SemanticSuggestMore.vue";
 import { tablePageLocation } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
+const emit = defineEmits<{ "open-tab": [tab: string] }>();
 const router = useRouter();
 
 const showEditor = ref(false);
@@ -105,13 +115,6 @@ function openEditor(metric: SemanticMetric | null) {
 .metrics-tab {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-4);
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: var(--spacing-4);
 }
 

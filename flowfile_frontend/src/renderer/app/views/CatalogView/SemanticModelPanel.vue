@@ -49,6 +49,16 @@
           >
             <i class="fa-solid fa-wand-magic-sparkles"></i> Suggest
           </button>
+          <button
+            v-if="!isEmpty || started"
+            class="btn btn-secondary btn-sm"
+            :class="{ active: showAskBox }"
+            title="Ask the AI for one particular thing, in your own words"
+            data-testid="semantic-suggest-specific"
+            @click="showAskBox = !showAskBox"
+          >
+            <i class="fa-solid fa-comment-dots"></i> Ask for something specific
+          </button>
           <button class="btn btn-secondary btn-sm" :disabled="store.busy" @click="resync">
             <i class="fa-solid fa-rotate"></i> Re-sync
           </button>
@@ -57,6 +67,13 @@
           </button>
         </div>
       </header>
+
+      <SemanticSuggestBox
+        v-if="showAskBox && (!isEmpty || started)"
+        class="ask-box"
+        :model="model"
+        @review="openReview"
+      />
 
       <div class="progress" data-testid="semantic-progress">
         <el-progress
@@ -165,6 +182,7 @@ import SemanticInlineText from "./semantic/SemanticInlineText.vue";
 import SemanticJoinsTab from "./semantic/SemanticJoinsTab.vue";
 import SemanticMetricsTab from "./semantic/SemanticMetricsTab.vue";
 import SemanticReviewTab from "./semantic/SemanticReviewTab.vue";
+import SemanticSuggestBox from "./semantic/SemanticSuggestBox.vue";
 import SemanticTablesTab from "./semantic/SemanticTablesTab.vue";
 import { errorText } from "./semantic/semanticFormat";
 
@@ -192,6 +210,7 @@ const suggesting = ref(false);
 const suggestStep = ref("");
 const suggestNotice = ref("");
 const suggestWarnings = ref<string[]>([]);
+const showAskBox = ref(false);
 const showLocalOffer = computed(() => canOfferLocal.value && !!model.value);
 
 // A later step appends its own entry here (for example an "Ask" tab).
@@ -326,6 +345,11 @@ function start() {
   activeTab.value = "tables";
 }
 
+function openReview() {
+  started.value = true;
+  activeTab.value = "review";
+}
+
 async function saveModel(body: SemanticModelUpdate) {
   try {
     await store.updateModel(body);
@@ -392,6 +416,7 @@ watch(
     activeTab.value = "tables";
     suggestNotice.value = "";
     suggestWarnings.value = [];
+    showAskBox.value = false;
     void store.load(id);
   },
   { immediate: true },
@@ -469,6 +494,15 @@ watch(
   display: flex;
   gap: var(--spacing-2);
   flex-shrink: 0;
+}
+
+.header-actions .btn.active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.ask-box {
+  margin-bottom: var(--spacing-4);
 }
 
 .progress {

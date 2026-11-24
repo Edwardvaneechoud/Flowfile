@@ -384,8 +384,20 @@ class SemanticModelService:
                 self.view.propose_many(props)
         return self.get_model(namespace_id)
 
-    def propose(self, namespace_id: int, proposals: list[Any]) -> list[s.FactOut]:
-        """Check every proposal against the catalog, then store them in one ledger call."""
+    def propose(
+        self,
+        namespace_id: int,
+        proposals: list[Any],
+        *,
+        ai_source: str | None = None,
+        comment: str | None = None,
+    ) -> list[s.FactOut]:
+        """Check every proposal against the catalog, then store them in one ledger call.
+
+        With ``ai_source`` (``ai:<provider>/<model>``) the facts are stated by that actor through a view bound with
+        that ``via``, so glosslayer queues them for review and never lets the AI accept; the checks are the same as
+        for a person's proposal. ``comment`` is added to each fact's rationale (a join keeps its measurement first).
+        """
         from glosslayer.ids import SubjectId
         from glosslayer.ledger import Proposal
         from glosslayer.model import is_structural
@@ -448,9 +460,19 @@ class SemanticModelService:
                         table=t.key,
                     )
                     props += list(metric.proposals())
-            results = self.view.propose_many(props)
+            if comment:
+                for prop in props:
+                    prop.comment = f"{prop.comment} {comment}" if getattr(prop, "comment", None) else comment
+            if ai_source:
+                for prop in props:
+                    prop.confidence = 0.6
+                view = host.view_for(self.user, self.access, via=ai_source)
+                results = view.propose_many(props, source=ai_source)
+            else:
+                view = self.view
+                results = view.propose_many(props)
         facts = list({r.assertion.id: fact_from_assertion(r.assertion) for r in results}.values())
-        annotate(self.view.store, facts)
+        annotate(view.store, facts)
         return [fact_out(f) for f in facts]
 
     def _join_proposals(self, p, ns, path, catalog_path, model_tables, all_tables, schema_of, Relationship) -> list:
@@ -694,12 +716,33 @@ class SemanticModelService:
         sugg.stats = {st.table.table_id: st for st in stats}
         return sugg, model_tables, problem
 
+    def suggest_scope(self, namespace_id: int) -> tuple[ModelSnapshot, dict[int, TableInfo], dict[int, TableInfo]]:
+        """The live model (pending facts included), its own tables and every table of its catalog, by id."""
+        snap = self.snapshot(namespace_id)
+        _ns, _path, _cp, model_tables, all_tables, _schema_of = self._scope(namespace_id)
+        return snap, model_tables, all_tables
+
+    def measure_join(self, from_table: TableInfo, from_columns: list[str], to_table: TableInfo, to_columns: list[str]):
+        """A join's two sides measured as a new join is (``join_check.check_join``), without storing anything."""
+        from flowfile_core.catalog.semantic.join_check import check_join
+
+        return check_join(from_table, list(from_columns), to_table, list(to_columns), self._dry_run)
+
     def _stats_query(self, sql: str) -> Any:
         return self._catalog_service().execute_sql_query(sql, max_rows=1, user_id=self.user_id)
 
-    def suggest(self, namespace_id: int) -> s.SuggestOut:
-        """Rule-based proposals (roles, joins, metrics) stored with an inferred source, so they queue for review."""
+    def suggest(self, namespace_id: int, kinds: list[str] | None = None) -> s.SuggestOut:
+        """Rule-based proposals (roles, joins, metrics) stored with an inferred source, so they queue for review.
+
+        ``kinds`` (``join``, ``metric``, ``description``, ``role``) stores only those; the rules still run whole,
+        since a metric's dimensions come from the joins found. The rules write no descriptions.
+        """
         sugg, model_tables, problem = self.suggest_candidates(namespace_id)
+        if kinds is not None:
+            wanted = set(kinds)
+            sugg.roles = sugg.roles if "role" in wanted else []
+            sugg.joins = sugg.joins if "join" in wanted else []
+            sugg.metrics = sugg.metrics if "metric" in wanted else []
         out = self.store_suggestions(namespace_id, sugg)
         out.tables = len(model_tables)
         out.stats_available = sugg.stats_available and problem is None

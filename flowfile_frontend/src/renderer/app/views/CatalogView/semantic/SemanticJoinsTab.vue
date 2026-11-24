@@ -1,14 +1,22 @@
 <template>
   <div class="joins-tab">
-    <div class="toolbar">
-      <p class="hint">
-        A join connects the many side (from) to the one side (to), so a metric knows how to reach
-        its dimensions.
-      </p>
+    <SemanticSuggestMore
+      :model="model"
+      :kinds="['join']"
+      label="Suggest joins"
+      ask-label="Ask for a specific join…"
+      @review="emit('open-tab', 'review')"
+    >
+      <template #hint>
+        <p class="hint">
+          A join connects the many side (from) to the one side (to), so a metric knows how to reach
+          its dimensions.
+        </p>
+      </template>
       <button class="btn btn-primary btn-sm" @click="showDialog = true">
         <i class="fa-solid fa-plus"></i> Add join
       </button>
-    </div>
+    </SemanticSuggestMore>
 
     <div v-if="edges.length > 0" class="diagram" data-testid="semantic-join-diagram">
       <VueFlow
@@ -101,9 +109,11 @@ import type { JoinCheck, SemanticJoin, SemanticModel } from "../../../types/sema
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
 import SemanticJoinDialog from "./SemanticJoinDialog.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
+import SemanticSuggestMore from "./SemanticSuggestMore.vue";
 import { errorText, tablePageLocation } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
+const emit = defineEmits<{ "open-tab": [tab: string] }>();
 const router = useRouter();
 const store = useSemanticModelStore();
 const showDialog = ref(false);
@@ -265,13 +275,6 @@ const edges = computed<Edge[]>(() =>
 .joins-tab {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-4);
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: var(--spacing-4);
 }
 

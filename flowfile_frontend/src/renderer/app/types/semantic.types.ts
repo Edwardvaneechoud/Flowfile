@@ -298,6 +298,55 @@ export interface SuggestOut {
   stats_message: string | null;
 }
 
+/** What a suggestion can be; the `kinds` scope of both suggest routes. */
+export type SemanticSuggestKind = "join" | "metric" | "description" | "role";
+
+export interface SuggestRequest {
+  kinds?: SemanticSuggestKind[];
+}
+
+/** `POST /ai/semantic/suggest`: a request in the person's own words, or more of `kinds`. */
+export interface SemanticSuggestRequestIn {
+  namespace_id: number;
+  request?: string | null;
+  kinds?: SemanticSuggestKind[] | null;
+  provider?: string | null;
+  model?: string | null;
+}
+
+export interface SemanticSuggestionProposed {
+  kind: SemanticSuggestKind;
+  summary: string;
+  table: string | null;
+  name: string | null;
+  fact_ids: string[];
+  group: string | null;
+}
+
+export interface SemanticSuggestionSkipped {
+  what: string;
+  why: string;
+}
+
+export type SemanticSuggestReason = "timeout" | "provider_error" | "invalid_answer" | "all_refused";
+
+/** What the AI suggest route stored: every `proposed` entry waits for review. */
+export interface SemanticSuggestRequestOut {
+  request: string | null;
+  kinds: SemanticSuggestKind[] | null;
+  provider: string;
+  model: string | null;
+  proposed: SemanticSuggestionProposed[];
+  skipped: SemanticSuggestionSkipped[];
+  notes: string[];
+  nothing_to_suggest: boolean;
+  why: string | null;
+  degraded: boolean;
+  reason: SemanticSuggestReason | string | null;
+  attempts: number;
+  withheld_columns: number;
+}
+
 export interface SemanticDraftRequest {
   namespace_id: number;
   table_ids?: number[];

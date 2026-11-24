@@ -51,6 +51,24 @@ When AI is usable (a provider is configured, or the local model is installed), t
 
 Metric names from the model apply to candidates that are not stored yet; if you ran **Suggest** before AI was available, a later run adds descriptions only.
 
+### Suggest more of one kind
+
+The **Joins**, **Metrics** and **Tables** tabs each have their own button beside their add button: **Suggest joins**, **Suggest metrics** and **Suggest descriptions and roles**. One click runs the rules for that kind only (no AI needed); when AI is usable, the model then looks for what the rules cannot find, such as a join whose column names differ (`orders.customer` to `customers.id`) or a metric beyond a count, sum or average. The tab says what was proposed in one line, for example "Proposed 2 joins. They wait in Review.", or that nothing new was found. New joins and metrics show on the tab as pending straight away.
+
+### Ask for something specific
+
+**Ask for something specific** in the header opens a box where you write what you want in your own words: "a metric for average order value", "describe the orders table", "how are orders and products related?", "mark country and segment as group-by columns". Each tab also has a link (**Ask for a specific join…** and so on) that opens the same box for that kind only, and the **Review** tab offers it when nothing is waiting. This needs AI; there is no rules-only version of it.
+
+The model suggests, Flowfile decides. The model sees the tables' names, column types, roles and descriptions, the joins and the metric names, never a data row; a Confidential or Restricted column is sent by name and type only and is never described. Every suggestion is checked before it is stored:
+
+- Table and column names must exist. A request that names a column no table has ("the discount column") is answered with "nothing to suggest" without asking the model.
+- When the request says what kind it wants ("describe…", "a metric…", "related", "group-by"), other kinds are left out, and so are suggestions about tables the request does not name. "A metric for …" stores one metric, not several variations.
+- A metric must aggregate and use the columns the request names. It may not add up an id column (or a column named after a table, such as `orders.customer`), count with `COUNT(CASE … ELSE 0 END)`, which counts every row, or sum a lookup table that other tables point to. It is then compiled and tried against the data exactly like one you write: a formula that does not run is not stored, and neither is one the model already has.
+- A join is measured like one you add: the right way round it is proposed with the measurement, the wrong way round it is turned around and proposed with a note saying so, and a join that would multiply rows is refused. Its two columns must hold the same kind of value and plausibly the same key, and the one side must not be an amount or a date.
+- A role must be one of the four and fit the column (a date for Date, a number that is not an identifier for Amount); a description must say more than the column's name. The tab buttons only fill in columns that have no role or description yet; a written request may also change one.
+
+What fails goes back to the model once with the reasons; what still fails is listed under "not stored" with its reason. Everything stored waits in **Review**, also on a desktop where your own edits count at once: AI can propose, never accept.
+
 ### The local model
 
 The default writer is the small model that runs on your own computer: nothing leaves it. When no AI is set up and the local model can be installed, the panel shows a card, **Let AI on this computer write the descriptions**, that downloads it in one click with progress; the Ask tab offers the same. Online providers are optional. To use one for this feature, choose a model for the **Semantic model** task in **Settings → AI → Assistant**; the choice is kept in your browser or desktop app. See [AI in semantic models](../../../ai/index.md#ai-in-semantic-models).
@@ -184,7 +202,8 @@ The model suggests a query and Flowfile checks it against the model before anyth
 - A join is followed only from the many side to the one side; Flowfile measures the direction when the join is stored but does not check types of the key columns.
 - Confidentiality keeps column values from AI, not from people with access to the schema.
 - A saved flow cannot read another schema's table, so a query that reaches across schemas can be run but not kept as a flow.
-- Suggested joins stay within one schema.
+- Rule-suggested joins stay within one schema. An AI suggestion may join to a table of another schema only when a join already reaches it.
+- The checks on a specific suggestion catch a wrong table, column, type or direction, not a wrong meaning: a well-formed metric with a misleading name passes and is caught only in Review.
 - Tables whose name contains `::` are left out of the model.
 - Actor names in the history are numeric user ids, stable on one installation only.
 
