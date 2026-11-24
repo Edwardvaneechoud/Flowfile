@@ -123,9 +123,6 @@ build_tauri_mac: clean_dmg_mounts sign_sidecars
 build_tauri_mac_arm: clean_dmg_mounts sign_sidecars
 	$(CD) "$(FRONTEND_DIR)" && npx tauri build --target aarch64-apple-darwin
 
-build_tauri_mac_intel: clean_dmg_mounts sign_sidecars
-	$(CD) "$(FRONTEND_DIR)" && npx tauri build --target x86_64-apple-darwin
-
 build_tauri_linux:
 	$(CD) "$(FRONTEND_DIR)" && npx tauri build --target x86_64-unknown-linux-gnu
 
@@ -507,4 +504,4 @@ bump-version-kernel:
 	@$(MAKE) kernel_manifest
 
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev test_e2e_cloud stop_servers clean_kernels clean_kernel_images rebuild_kernel notebook_kernel_dev clean_test test_coverage stubs check_stubs fl_completions check_fl_completions formula_docs check_formula_docs kernel_manifest check_kernel_manifest check_kernel_data wasm_node_manifest check_wasm_node_manifest check_share_data bump-version check-version bump-version-kernel
+.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev test_e2e_cloud stop_servers clean_kernels clean_kernel_images rebuild_kernel notebook_kernel_dev clean_test test_coverage stubs check_stubs fl_completions check_fl_completions formula_docs check_formula_docs kernel_manifest check_kernel_manifest check_kernel_data wasm_node_manifest check_wasm_node_manifest check_share_data bump-version check-version bump-version-kernel
