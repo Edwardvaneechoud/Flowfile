@@ -69,6 +69,19 @@ function waits(n: number): string {
   return n === 1 ? "It waits in Review." : "They wait in Review.";
 }
 
+/** Why none of the AI's suggestions was stored: off the request's subject, or failed a check. */
+function refusedText(skipped: { why: string }[]): string {
+  const n = skipped.length;
+  if (skipped.every((s) => s.why.startsWith("Not what was asked"))) {
+    return n === 1
+      ? "the AI's suggestion was about something other than what you asked for"
+      : `the AI's ${n} suggestions were about something other than what you asked for`;
+  }
+  return n === 1
+    ? "the AI's suggestion did not pass the checks"
+    : `none of the AI's ${n} suggestions passed the checks`;
+}
+
 /** The one result line of an AI request (and its notes), never claiming anything is live. */
 export function describeAiOutcome(out: SemanticSuggestRequestOut): SuggestOutcome {
   const counts: Partial<Record<SemanticSuggestKind, number>> = {};
@@ -88,6 +101,9 @@ export function describeAiOutcome(out: SemanticSuggestRequestOut): SuggestOutcom
     line = out.why ? `Nothing to suggest: ${out.why}` : "The AI found nothing to suggest for this.";
   } else if (out.degraded) {
     line = REASONS[out.reason ?? ""] ?? "The AI could not make a suggestion.";
+    warn = true;
+  } else if (out.skipped.length > 0) {
+    line = `Nothing was stored: ${refusedText(out.skipped)}.`;
     warn = true;
   } else {
     line = "Nothing new to suggest: the model already holds what the AI found.";
@@ -115,7 +131,10 @@ export function describeScopedOutcome(
   if (aiNote) notes.push(aiNote);
   let warn = false;
   if (ai?.degraded && !ai.proposed.length) {
-    notes.push(`The AI part: ${REASONS[ai.reason ?? ""] ?? "it could not make a suggestion."}`);
+    // The result line already says so when every suggestion was refused.
+    if (ai.reason !== "all_refused") {
+      notes.push(`The AI part: ${REASONS[ai.reason ?? ""] ?? "it could not make a suggestion."}`);
+    }
     warn = true;
   }
   if (ai) notes.push(...ai.notes);
@@ -123,10 +142,14 @@ export function describeScopedOutcome(
     notes.push("Column statistics were not available, so the rules used names and types only.");
   }
   const who = ai ? "the rules and the AI" : "the rules";
-  const line =
-    total > 0
-      ? `Proposed ${countsText(counts)}. ${waits(total)}`
-      : `Nothing new to suggest: every ${kindsText(kinds, true)} ${who} found is already in the model.`;
+  let line: string;
+  if (total > 0) {
+    line = `Proposed ${countsText(counts)}. ${waits(total)}`;
+  } else if (ai && ai.skipped.length > 0) {
+    line = `Nothing new: the rules found no more ${kindsText(kinds)}, and ${refusedText(ai.skipped)}.`;
+  } else {
+    line = `Nothing new to suggest: every ${kindsText(kinds, true)} ${who} found is already in the model.`;
+  }
   return { line, proposed: total, notes, skipped: ai?.skipped ?? [], warn };
 }
 
