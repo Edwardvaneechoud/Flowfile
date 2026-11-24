@@ -338,7 +338,7 @@ def suggest(tables: list[TableStats]) -> Suggestions:
                 dims += [
                     f"{other.table.name}.{c.name}"
                     for c in other.columns
-                    if roles[j.to_table_id].get(c.name) == "category"
+                    if roles[j.to_table_id].get(c.name) == "category" or _row_label(other, c, roles[j.to_table_id])
                 ]
         noun = singular(ts.table.name)
         conf = 0.7 if ts.available else 0.5
@@ -357,24 +357,29 @@ def suggest(tables: list[TableStats]) -> Suggestions:
                 f"Rule: every table gets a row count{evidence}.",
             )
         )
+        lookup_only = any(j.to_table_id == tid for j in out.joins) and not any(
+            j.from_table_id == tid for j in out.joins
+        )
         for c in ts.columns:
             if r.get(c.name) == "amount":
                 w = _words(c.name)
-                out.metrics.append(
-                    MetricCandidate(
-                        tid,
-                        ts.table.name,
-                        f"total_{c.name}",
-                        f"SUM({quote_ident(c.name)})",
-                        f"The sum of {w} over {_words(ts.table.name)}.",
-                        "sum",
-                        time_col,
-                        dims,
-                        conf,
-                        f"Rule: {c.name} is an amount column, so its sum is a candidate metric.",
-                        column=c.name,
+                # a per-row value of a lookup table (a product's price) has no meaningful sum
+                if not lookup_only:
+                    out.metrics.append(
+                        MetricCandidate(
+                            tid,
+                            ts.table.name,
+                            f"total_{c.name}",
+                            f"SUM({quote_ident(c.name)})",
+                            f"The sum of {w} over {_words(ts.table.name)}.",
+                            "sum",
+                            time_col,
+                            dims,
+                            conf,
+                            f"Rule: {c.name} is an amount column, so its sum is a candidate metric.",
+                            column=c.name,
+                        )
                     )
-                )
                 out.metrics.append(
                     MetricCandidate(
                         tid,
@@ -409,6 +414,22 @@ def suggest(tables: list[TableStats]) -> Suggestions:
             )
     _dedupe_metric_names(out.metrics)
     return out
+
+
+_FREE_TEXT_NAME = re.compile(r"(description|comment|note|address|email|url|text|remark|body|message)", re.IGNORECASE)
+
+
+def _row_label(ts: TableStats, c: ColumnStats, roles: dict[str, str]) -> bool:
+    """A text column naming a row of a table on the one side of a join (``products.product_name``), which is a
+    natural thing to group the many side by; it holds one value per row, so it gets no role of its own. Free-text
+    and code-like columns are left out."""
+    return (
+        c.tc == "string"
+        and roles.get(c.name) is None
+        and not _ID_NAME.search(c.name)
+        and not _CODE_NAME.search(c.name)
+        and not _FREE_TEXT_NAME.search(c.name)
+    )
 
 
 def _join_class(tc: str) -> str:
