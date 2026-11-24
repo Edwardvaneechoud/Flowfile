@@ -127,7 +127,9 @@ export const shortTime = (iso: string): string => {
 };
 
 export const errorText = (e: unknown, fallback: string): string => {
-  const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  if (typeof detail === "string") return detail;
+  const data = (e as { response?: { data?: { detail?: unknown; message?: unknown } } })?.response
+    ?.data;
+  if (typeof data?.detail === "string") return data.detail;
+  if (typeof data?.message === "string") return data.message;
   return (e as { message?: string })?.message ?? fallback;
 };

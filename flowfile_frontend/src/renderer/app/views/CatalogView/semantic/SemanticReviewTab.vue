@@ -23,14 +23,6 @@
 
     <div v-if="store.reviewLoading && store.reviewQueue.length === 0" class="muted">Loading…</div>
 
-    <div
-      v-else-if="store.reviewQueue.length === 0 || boxUsed"
-      class="empty-ask"
-      data-testid="review-empty-ask"
-    >
-      <SemanticSuggestBox :model="model" :show-review-link="false" @done="boxUsed = true" />
-    </div>
-
     <ul class="queue">
       <li v-for="item in store.reviewQueue" :key="item.id" class="queue-item">
         <div class="item-main">
@@ -82,7 +74,6 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
 import type {
@@ -93,14 +84,11 @@ import type {
 } from "../../../types/semantic.types";
 import SemanticSourceBadge from "./SemanticSourceBadge.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
-import SemanticSuggestBox from "./SemanticSuggestBox.vue";
 import { attributeLabel, displayValue, errorText } from "./semanticFormat";
 
 defineProps<{ model: SemanticModel }>();
 
 const store = useSemanticModelStore();
-// Keeps the box (and its result line) after its proposals fill the queue.
-const boxUsed = ref(false);
 
 const blockedReason = "Only people who manage this schema can review changes.";
 
@@ -158,8 +146,7 @@ function acceptAll() {
   justify-content: space-between;
 }
 
-.hint,
-.empty-ask {
+.hint {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-2);

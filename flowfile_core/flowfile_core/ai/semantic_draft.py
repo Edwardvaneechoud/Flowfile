@@ -17,6 +17,7 @@ import difflib
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -326,16 +327,25 @@ async def draft_words(
     user_id: int | None,
     share_values: bool,
     withheld: Any = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> list[TableOutcome]:
     """Every table's words, one table at a time (the local model serves one request at a time anyway).
 
     A table ``withheld`` keeps from AI as a whole is not sent; a column it keeps is sent by name and type, and any
-    description the model writes for it is dropped here, so none is ever stored.
+    description the model writes for it is dropped here, so none is ever stored. ``progress(done, total)`` is
+    called as each table starts, for a status line; a failing callback is ignored.
     """
     started = time.monotonic()
     outcomes: dict[int, TableOutcome] = {}
     private_tables: set[int] = set()
-    for chunk in chunks_for(sugg, table_ids, share_values=share_values, withheld=withheld):
+    chunks = list(chunks_for(sugg, table_ids, share_values=share_values, withheld=withheld))
+    total = len({c.table_id for c in chunks})
+    for chunk in chunks:
+        if progress is not None and chunk.table_id not in outcomes:
+            try:
+                progress(len(outcomes) + 1, total)
+            except Exception:  # noqa: BLE001
+                logger.debug("draft progress callback failed", exc_info=True)
         out = outcomes.setdefault(chunk.table_id, TableOutcome(chunk.table_id, chunk.table))
         out.withheld += [n for n in chunk.private if n not in out.withheld]
         if chunk.private_table:

@@ -1,17 +1,20 @@
 """A person's request for specific suggestions, backing ``POST /ai/semantic/suggest``.
 
-The model suggests, the code decides. Sized for Flowfile's small local model (JSON mode only, no grammar, sampling
-at 0.7): one call that sees the model's tables (names, types, roles and short descriptions; a column kept from AI by
-name and type only, no data rows and no statistics), its joins and its metric names, and answers a short list of
-suggestions in one fixed shape (``prompts/semantic_suggest.md``). Each suggestion is then checked by code with the
-checks a person's proposal meets, plus a few the AI's own words need:
+The model reads the request; code checks only what can be checked against the model and the data. Sized for
+Flowfile's small local model (JSON mode only, no grammar, sampling at 0.7): one call that sees the model's tables
+(names, types, roles and short descriptions; a column kept from AI by name and type only, no data rows and no
+statistics), its joins and its metric names, and answers a short list of suggestions in one fixed shape
+(``prompts/semantic_suggest.md``). ``kinds``, when the caller gives them (a tab's button), scope the call. Each
+suggestion is then checked:
 
-* table and column names are matched to the model's (``semantic_draft.match_name``) and unknown ones refused;
-* a metric must aggregate, and is compiled and dry-run through the service's proposal path like a hand-made one;
-* a join is measured (``join_check``): ``ok`` is stored with the measurement, ``reversed`` is swapped by the code and
-  stored the right way round with a note, ``many_to_many`` and ``unchecked`` are refused;
-* a role must be one of the stored values and fit the column's type, a description a sentence that is not the
-  column's name, and nothing is described for a column kept from AI.
+* table, column and metric names are matched to the model's (``semantic_draft.match_name``), unknown ones refused;
+* a metric is compiled and dry-run through the service's proposal path like a hand-made one, and refused when the
+  model already holds its formula and filter;
+* a join's columns are of one type and it is measured (``join_check``): ``ok`` is stored with the measurement,
+  ``reversed`` is swapped by the code and stored the right way round with a note, ``many_to_many`` and
+  ``unchecked`` are refused;
+* a role is one of the four stored values on a column whose type can hold it, a description is a non-empty sentence,
+  synonyms are a non-empty list of words for a column or a metric, and nothing is said about a column kept from AI.
 
 Everything refused goes back to the model once, as one user turn of the refusal sentences; what still fails is
 returned as skipped. What survives is stored through the AI-bound view, so it waits for review. Must not import
@@ -43,25 +46,14 @@ _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "semantic_suggest.m
 
 ROLE_VALUES = ("key", "time", "category", "amount")
 ROLE_LABELS = {"key": "Identifier", "time": "Date", "category": "Group by", "amount": "Amount"}
-_ROLE_WORDS = {
-    "key": "key", "id": "key", "identifier": "key", "primary key": "key", "foreign key": "key",
-    "time": "time", "date": "time", "datetime": "time", "timestamp": "time",
-    "category": "category", "group by": "category", "group-by": "category", "groupby": "category",
-    "group_by": "category", "dimension": "category", "categorical": "category", "label": "category",
-    "amount": "amount", "measure": "amount", "number": "amount", "numeric": "amount", "value": "amount",
-}  # fmt: skip
-_KIND_WORDS = {
-    "metric": "metric", "metrics": "metric", "measure": "metric",
-    "description": "description", "describe": "description", "descriptions": "description",
-    "table_description": "description", "column_description": "description",
-    "join": "join", "joins": "join", "relationship": "join", "relation": "join",
-    "role": "role", "roles": "role", "column_role": "role", "used_as": "role",
-}  # fmt: skip
-_KIND_NOUNS = {"metric": "metrics", "description": "descriptions", "join": "joins", "role": "column roles"}
-_AGGREGATE = re.compile(
-    r"\b(SUM|AVG|COUNT|MIN|MAX|MEDIAN|STDDEV|STDDEV_SAMP|STDDEV_POP|VARIANCE|VAR_SAMP|VAR_POP|MODE|ANY_VALUE)\s*\(",
-    re.IGNORECASE,
-)
+KINDS = ("metric", "description", "join", "role", "synonyms")
+_KIND_NOUNS = {
+    "metric": "metrics",
+    "description": "descriptions",
+    "join": "joins",
+    "role": "column roles",
+    "synonyms": "synonyms",
+}
 
 
 def system_prompt() -> str:
@@ -141,25 +133,6 @@ class MetricView:
 
 
 @dataclass
-class RequestScope:
-    """What a request names: tables (by name or singular) and columns (by exact name), as dataset keys."""
-
-    tables: set[str] = field(default_factory=set)
-    columns: dict[str, set[str]] = field(default_factory=dict)
-
-    @property
-    def named_columns(self) -> set[str]:
-        return {c for cols in self.columns.values() for c in cols}
-
-    def relevant(self, table_key: str) -> bool:
-        """Whether a suggestion on this table answers the request: it names the table or one of its columns, or
-        names no table and no column at all."""
-        if not self.tables and not self.columns:
-            return True
-        return table_key in self.tables or bool(self.columns.get(table_key))
-
-
-@dataclass
 class Context:
     """The model as the request sees it: tables by key, joins and metrics live (pending included)."""
 
@@ -167,7 +140,6 @@ class Context:
     joins: list[JoinView]
     metrics: list[MetricView]
     withheld_columns: int = 0
-    scope: RequestScope | None = None
 
     def by_key(self, key: str) -> TableView | None:
         return next((t for t in self.tables if t.key == key), None)
@@ -250,15 +222,6 @@ def _short(ctx: Context, key: str) -> str:
     return t.name if t is not None else key.rsplit(".", 1)[-1]
 
 
-def _mentioned(table: TableView, words: str) -> bool:
-    from flowfile_core.catalog.semantic.suggest import singular
-
-    names = {table.name.lower(), singular(table.name)}
-    if any(re.search(rf"\b{re.escape(n)}", words) for n in names if n):
-        return True
-    return any(re.search(rf"\b{re.escape(c.name.lower())}\b", words) for c in table.columns)
-
-
 def _table_block(t: TableView, with_descriptions: bool) -> str:
     where = "" if t.in_model else " (another schema; only as the target of a join)"
     lines = [f"## {t.name}{where}"]
@@ -283,9 +246,8 @@ def _table_block(t: TableView, with_descriptions: bool) -> str:
 
 
 def user_message(ctx: Context, request: str | None, kinds: list[str] | None) -> str:
-    """The request, the tables that fit (the ones it names first), the joins and the metric names."""
-    words = (request or "").lower()
-    with_descriptions = not kinds or "description" in kinds or "describ" in words
+    """The request, the tables (the model's own first), the joins and the metric names."""
+    with_descriptions = not kinds or "description" in kinds or "synonyms" in kinds
     if request:
         lines = [f"Request: {request}"]
     else:
@@ -293,7 +255,7 @@ def user_message(ctx: Context, request: str | None, kinds: list[str] | None) -> 
     if kinds:
         lines.append(f"Suggest {kinds_phrase(kinds)} only.")
     lines.append("")
-    ordered = sorted(ctx.tables, key=lambda t: (not t.in_model, not _mentioned(t, words)))
+    ordered = sorted(ctx.tables, key=lambda t: not t.in_model)
     blocks, used, left_out = [], 0, []
     for t in ordered:
         block = _table_block(t, with_descriptions)
@@ -347,14 +309,6 @@ def _reachable_columns(ctx: Context, start: str) -> list[str]:
     return out
 
 
-_SINGLE = re.compile(r"\b(?:a|an|one|the)\s+(?:new\s+|single\s+)?(metric|join)\b")
-
-
-def single_kinds(request: str | None) -> set[str]:
-    """Kinds the request asks one of ("a metric for …", "a join between …")."""
-    return set(_SINGLE.findall((request or "").lower()))
-
-
 @dataclass
 class Reading:
     items: list[dict[str, Any]] = field(default_factory=list)
@@ -387,8 +341,9 @@ def read_suggestions(content: str | None) -> Reading:
 
 
 def _kind_of(item: dict[str, Any]) -> str | None:
-    value = item.get("kind") or item.get("type")
-    return _KIND_WORDS.get(str(value).strip().lower()) if value is not None else None
+    value = item.get("kind")
+    kind = str(value).strip().lower() if value is not None else None
+    return kind if kind in KINDS else None
 
 
 def _text(value: Any) -> str | None:
@@ -437,109 +392,19 @@ def describe_item(item: dict[str, Any]) -> str:
     target = item.get("table") or "?"
     if item.get("column"):
         target = f"{target}.{item.get('column')}"
-    return f"{'description' if kind == 'description' else 'role'} of {target}"
+    elif kind == "synonyms" and item.get("metric"):
+        target = f"metric {item.get('metric')}"
+    return f"{kind if kind in ('description', 'synonyms') else 'role'} of {target}"
 
 
 def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", text.lower())
 
 
-_STOP = {
-    "a", "an", "the", "this", "that", "each", "every", "one", "any", "new", "which", "what", "its", "their", "of",
-    "date", "time", "key", "amount", "text", "number", "id", "by", "to", "for", "per", "and", "or", "with",
-}  # fmt: skip
-_KIND_HINTS = {
-    "join": re.compile(r"\b(joins?|joined|joining|relat\w*|connect\w*|link\w*)\b"),
-    "description": re.compile(r"\b(describ\w*|descriptions?|explain\w*|document\w*)\b"),
-    "role": re.compile(r"\b(roles?|used as|group[- ]?by|identifiers?|mark)\b"),
-    "metric": re.compile(r"\b(metrics?|measures?|kpis?)\b"),
-}
-
-
-def infer_kinds(request: str | None) -> list[str] | None:
-    """The kinds a request names in so many words ("describe …" → descriptions), else ``None`` (any kind)."""
-    words = (request or "").lower()
-    found = [k for k, pattern in _KIND_HINTS.items() if pattern.search(words)]
-    return found or None
-
-
-def _tokens(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9_]+", text.lower()))
-
-
-def scope_request(request: str | None, ctx: Context) -> RequestScope:
-    """The tables and columns ``request`` names; a column whose name is also a table's word counts as the table."""
-    from flowfile_core.catalog.semantic.suggest import singular
-
-    out = RequestScope()
-    if not request:
-        return out
-    tokens = _tokens(request)
-    table_words: set[str] = set()
-    for t in ctx.tables:
-        names = {t.name.lower(), singular(t.name)}
-        table_words |= names
-        if names & tokens:
-            out.tables.add(t.key)
-    for t in ctx.tables:
-        named = {c.name for c in t.columns if c.name.lower() in tokens and c.name.lower() not in table_words}
-        if named:
-            out.columns[t.key] = named
-    return out
-
-
-def missing_named_columns(request: str | None, ctx: Context) -> list[str]:
-    """Columns the request names as such ("the discount column", "column discount") that no table shown has."""
-    from flowfile_core.catalog.semantic.suggest import singular
-
-    if not request:
-        return []
-    text = request.lower()
-    named = re.findall(r"\b([a-z0-9_]+)\s+column\b", text)
-    named += re.findall(r"\bcolumn\s+(?:called\s+|named\s+)?[\"']?([a-z0-9_]+)", text)
-    known = {c.name.lower() for t in ctx.tables for c in t.columns}
-    known |= {t.name.lower() for t in ctx.tables} | {singular(t.name) for t in ctx.tables}
-    return list(dict.fromkeys(w for w in named if w not in _STOP and w not in known))
-
-
-def _aggregate_args(expression: str) -> list[str]:
-    """The text inside each SUM( … ) and AVG( … ) of an expression, parentheses balanced."""
-    out = []
-    for m in re.finditer(r"\b(SUM|AVG)\s*\(", expression, re.IGNORECASE):
-        depth, i = 1, m.end()
-        while i < len(expression) and depth:
-            depth += {"(": 1, ")": -1}.get(expression[i], 0)
-            i += 1
-        out.append(expression[m.end() : i - 1])
-    return out
-
-
 def _identifiers(text: str) -> set[str]:
     """Every identifier of a SQL fragment, lower case, quoted ones unquoted; ``t.c`` gives ``t`` and ``c``."""
     stripped = re.sub(r"'(?:[^']|'')*'", " ", text)
     return {(q or b).lower() for q, b in re.findall(r'"([^"]+)"|\b([A-Za-z_][A-Za-z0-9_]*)\b', stripped)}
-
-
-_COUNT_ELSE_ZERO = re.compile(r"\bCOUNT\s*\(\s*CASE\b.*?\bELSE\s+0\s+END\s*\)", re.IGNORECASE | re.DOTALL)
-
-
-def _is_identifier(col: ColumnView, ctx: Context) -> bool:
-    """A key: used as one, named like an id, or named after a table (``orders.customer`` holds a customer)."""
-    name = col.name.lower()
-    if col.role == "key" or re.search(r"(^id$|_id$|^id_|_key$|_ref$|_uuid$)", name):
-        return True
-    return any(name == _singular(t.name) for t in ctx.tables)
-
-
-def _is_lookup(table: TableView, ctx: Context) -> bool:
-    """Only ever the one side of the model's joins: one row per thing, pointed to from the many side."""
-    to = any(j.to_table == table.key for j in ctx.joins)
-    return to and not any(j.from_table == table.key for j in ctx.joins)
-
-
-def _own_key(table: TableView, column: str) -> bool:
-    name = column.lower()
-    return name in ("id", f"{_singular(table.name)}_id", f"{table.name.lower()}_id")
 
 
 def _aggregate_of(expression: str) -> str | None:
@@ -568,29 +433,6 @@ def check_metric(item: dict[str, Any], ctx: Context) -> Checked | Refused:
     if expression is None:
         return Refused(what, "A metric needs an expression, such as SUM(amount).")
     expression = expression.rstrip(";").strip()
-    if not _AGGREGATE.search(expression):
-        return Refused(
-            what, f"The expression {expression!r} does not aggregate rows; write it with SUM, AVG, COUNT, MIN or MAX."
-        )
-    keys = {c.name.lower() for c in table.columns if _is_identifier(c, ctx)}
-    summed = sorted({w for arg in _aggregate_args(expression) for w in _identifiers(arg)} & keys)
-    if summed:
-        return Refused(
-            what, f"{summed[0]} is an identifier: count it (COUNT or COUNT(DISTINCT …)), never add it up or average it."
-        )
-    if _COUNT_ELSE_ZERO.search(expression):
-        return Refused(
-            what,
-            "COUNT(CASE WHEN … THEN 1 ELSE 0 END) counts every row, the 0s too; "
-            "use SUM(CASE WHEN … THEN 1 ELSE 0 END).",
-        )
-    if _is_lookup(table, ctx) and re.search(r"\bSUM\s*\(", expression, re.IGNORECASE):
-        many = sorted({_short(ctx, j.from_table) for j in ctx.joins if j.to_table == table.key})
-        return Refused(
-            what,
-            f"{table.name} holds one row per {_singular(table.name)} and {', '.join(many)} point to it, so a sum over "
-            f"{table.name} adds up a list, not sales; put the metric on {many[0]} and write {table.name}.<column>.",
-        )
     raw_filter = item.get("filter")
     if raw_filter not in (None, "") and not isinstance(raw_filter, str):
         return Refused(what, "A metric's filter is SQL text, such as status = 'paid', or null.")
@@ -605,19 +447,6 @@ def check_metric(item: dict[str, Any], ctx: Context) -> Checked | Refused:
         found = table.time_columns()
         if len(found) == 1:
             time_column = found[0]
-    scope = ctx.scope
-    if scope is not None and not scope.relevant(table.key):
-        return Refused(what, f"Not what was asked: the request is not about {table.name}.", retry=False)
-    if scope is not None and scope.named_columns:
-        used = _identifiers(f"{expression} {filt or ''}")
-        unused = [(k, c) for k, cols in sorted(scope.columns.items()) for c in sorted(cols) if c.lower() not in used]
-        if unused:
-            where = ", ".join(c if k == table.key else f"{_short(ctx, k)}.{c}" for k, c in unused)
-            return Refused(
-                what,
-                f"The request names {where}, but the expression does not use it. Write {where} in the expression, "
-                f"exactly so; a column of another table is written table.column.",
-            )
     same = next((m for m in ctx.metrics if m.same_formula(table.key, expression, filt)), None)
     if same is not None:
         return Refused(what, f"The model already has this formula as {same.name}.", retry=False)
@@ -645,8 +474,6 @@ def check_description(item: dict[str, Any], ctx: Context) -> Checked | Refused:
         return Refused(
             what, f"Unknown table {item.get('table')!r}; describe one of {ctx.table_names(model_only=True)}."
         )
-    if ctx.scope is not None and not ctx.scope.relevant(table.key):
-        return Refused(what, f"Not what was asked: the request is not about {table.name}.", retry=False)
     text = sentence(item.get("text") or item.get("description"))
     if text is None:
         return Refused(what, "A description needs one sentence of plain text.")
@@ -658,10 +485,6 @@ def check_description(item: dict[str, Any], ctx: Context) -> Checked | Refused:
         col = table.column(column)
         if col.private or table.private:
             return Refused(f"description of {table.name}.{column}", "This column is kept from AI.", retry=False)
-        if _norm(text) in (_norm(column), _norm(column) + _norm(table.name)) or len(_norm(text)) <= len(_norm(column)):
-            return Refused(what, f"The description of {column} only repeats its name; say what the column holds.")
-        if ctx.scope is None and col.description:
-            return Refused(f"description of {table.name}.{column}", "It already has a description.", retry=False)
         if col.description and _norm(col.description) == _norm(text):
             return Refused(what, f"{table.name}.{column} already has this description.", retry=False)
         proposal = FieldProposal(
@@ -671,8 +494,6 @@ def check_description(item: dict[str, Any], ctx: Context) -> Checked | Refused:
     else:
         if table.private:
             return Refused(f"description of {table.name}", "This table is kept from AI.", retry=False)
-        if _norm(text) == _norm(table.name):
-            return Refused(what, f"The description of {table.name} only repeats its name; say what one row is.")
         if table.description and _norm(table.description) == _norm(text):
             return Refused(what, f"{table.name} already has this description.", retry=False)
         proposal = TableProposal(kind="table", table_id=table.table_id, attribute="description", value=text)
@@ -688,14 +509,11 @@ def check_role(item: dict[str, Any], ctx: Context) -> Checked | Refused:
     table = ctx.find_table(item.get("table"), model_only=True)
     if table is None:
         return Refused(what, f"Unknown table {item.get('table')!r}; use one of {ctx.table_names(model_only=True)}.")
-    if ctx.scope is not None and not ctx.scope.relevant(table.key):
-        return Refused(what, f"Not what was asked: the request is not about {table.name}.", retry=False)
     column = match_name(item.get("column"), [c.name for c in table.columns])
     if column is None:
         return Refused(what, f"Table {table.name!r} has no column {item.get('column')!r}.")
-    raw = str(item.get("role") or item.get("used_as") or "").strip().lower()
-    role = _ROLE_WORDS.get(raw)
-    if role is None:
+    role = str(item.get("role") or "").strip().lower()
+    if role not in ROLE_VALUES:
         return Refused(
             what, 'A role is one of "key" (identifier), "time" (date), "category" (group by) or "amount" (a number).'
         )
@@ -705,18 +523,6 @@ def check_role(item: dict[str, Any], ctx: Context) -> Checked | Refused:
         return Refused(what, f"{column} is a {tw} column, so it cannot be used as a date.")
     if role == "amount" and tw not in ("integer", "decimal"):
         return Refused(what, f"{column} is a {tw} column, so it cannot be used as an amount.")
-    if role in ("amount", "time") and _is_identifier(col, ctx) and col.role != "amount":
-        return Refused(what, f"{column} is an identifier, so it is not used as {ROLE_LABELS[role]}.", retry=False)
-    if role == "amount" and col.role == "key":
-        return Refused(
-            what, f"{column} is used as an identifier; an identifier is counted, never added up.", retry=False
-        )
-    if ctx.scope is None and col.role is not None and col.role != role:
-        return Refused(
-            f"role of {table.name}.{column}",
-            f"It already has a role ({ROLE_LABELS.get(col.role, col.role)}).",
-            retry=False,
-        )
     if col.role == role:
         return Refused(f"role of {table.name}.{column}", f"It is already used as {ROLE_LABELS[role]}.", retry=False)
     proposal = FieldProposal(kind="field", table_id=table.table_id, column=column, attribute="role", value=role)
@@ -751,10 +557,6 @@ def check_join_shape(item: dict[str, Any], ctx: Context) -> tuple[TableView, lis
         return Refused(what, "A join needs the same number of columns on both sides.")
     if not (ft.in_model or tt.in_model):
         return Refused(what, f"A join in this model must touch one of its tables: {ctx.table_names(model_only=True)}.")
-    scope = ctx.scope
-    if scope is not None and len(scope.tables) >= 2 and not {ft.key, tt.key} <= scope.tables:
-        asked = " and ".join(sorted(_short(ctx, k) for k in scope.tables))
-        return Refused(what, f"Not what was asked: the request is about {asked}.", retry=False)
     for a, b in zip(fc, tc, strict=True):
         ca, cb = ft.column(a), tt.column(b)
         if _type_word(ca.dtype) != _type_word(cb.dtype):
@@ -763,34 +565,7 @@ def check_join_shape(item: dict[str, Any], ctx: Context) -> tuple[TableView, lis
                 f"{ft.name}.{a} is {_type_word(ca.dtype)} and {tt.name}.{b} is {_type_word(cb.dtype)}; "
                 "joined columns hold the same kind of key.",
             )
-        if not _same_key(a, ft, b, tt):
-            return Refused(
-                what,
-                f"{ft.name}.{a} and {tt.name}.{b} name different things; join on the column of {ft.name} that holds "
-                f"the {_singular(tt.name)} key.",
-            )
     return ft, fc, tt, tc
-
-
-_ID_LIKE = re.compile(r"(^id$|_id$|^id_|_key$|_ref$|_uuid$)", re.IGNORECASE)
-
-
-def _singular(name: str) -> str:
-    from flowfile_core.catalog.semantic.suggest import singular
-
-    return singular(name)
-
-
-def _stem(column: str) -> str:
-    return re.sub(r"_?(id|key|ref|code|uuid|no|nr)$", "", column.lower()) or column.lower()
-
-
-def _same_key(a: str, at: TableView, b: str, bt: TableView) -> bool:
-    """Whether two join columns plausibly hold one key: the same name or stem, or one is named after the other's
-    table (``orders.customer`` → ``customers.id``)."""
-    if a.lower() == b.lower() or _stem(a) == _stem(b):
-        return True
-    return _singular(bt.name) in a.lower() or _singular(at.name) in b.lower()
 
 
 def _join_signature(ft: TableView, fc: list[str], tt: TableView, tc: list[str]) -> tuple:
@@ -826,15 +601,6 @@ def check_join(item: dict[str, Any], ctx: Context, measure: Callable[..., Any]) 
         return Refused(what, found.message)
     elif found.verdict != "ok":
         return Refused(what, f"Not stored: {found.message}", retry=False)
-    elif "one to one" in found.message and all(_own_key(ft, a) for a in fc) and not all(_own_key(tt, b) for b in tc):
-        ft, fc, tt, tc = tt, tc, ft, fc
-        note = f"Turned the one-to-one join round so it goes from {ft.name} to {tt.name}, whose own key it is."
-    for b in tc:
-        cb = tt.column(b)
-        if cb.role in ("amount", "time") and not _ID_LIKE.search(cb.name):
-            return Refused(
-                what, f"{tt.name}.{b} is used as {ROLE_LABELS[cb.role]}, not as a key that identifies a row."
-            )
     if note and _join_signature(ft, fc, tt, tc) in existing:
         return Refused(f"join {ft.name} → {tt.name}", "The model already has this join.", retry=False)
     name = snake_name(item.get("name")) or f"{ft.name}_{tt.name}"
@@ -862,7 +628,7 @@ def check_item(
     kind = _kind_of(item)
     what = describe_item(item)
     if kind is None:
-        return Refused(what, 'Each suggestion needs a "kind": "metric", "description", "join" or "role".')
+        return Refused(what, 'Each suggestion needs a "kind": one of "' + '", "'.join(KINDS) + '".')
     if kinds and kind not in kinds:
         return Refused(what, f"Only {kinds_phrase(kinds)} were asked for.", retry=False)
     if kind == "metric":
@@ -871,7 +637,46 @@ def check_item(
         return check_description(item, ctx)
     if kind == "role":
         return check_role(item, ctx)
+    if kind == "synonyms":
+        return check_synonyms(item, ctx)
     return check_join(item, ctx, measure)
+
+
+MAX_SYNONYMS = 8
+
+
+def check_synonyms(item: dict[str, Any], ctx: Context) -> Checked | Refused:
+    """Other words for a column or a metric, proposed on the ``synonyms`` attribute so they wait in Review."""
+    from flowfile_core.schemas.semantic_schema import FieldProposal, MetricSynonymsProposal
+
+    what = describe_item(item)
+    raw = item.get("words") or item.get("synonyms")
+    words = list(dict.fromkeys(w for w in (_text(x) for x in _columns(raw)) if w))[:MAX_SYNONYMS]
+    if not words:
+        return Refused(what, 'Synonyms need "words": a list of other names, such as ["revenue", "turnover"].')
+    metric_name = item.get("metric")
+    if metric_name not in (None, ""):
+        name = match_name(metric_name, [m.name for m in ctx.metrics])
+        if name is None:
+            return Refused(what, f"Unknown metric {metric_name!r}; the model's metrics are listed above.")
+        metric = next(m for m in ctx.metrics if m.name == name)
+        if metric.private:
+            return Refused(f"synonyms of metric {name}", "This metric reads columns kept from AI.", retry=False)
+        proposal = MetricSynonymsProposal(kind="metric_synonyms", name=name, synonyms=words)
+        return Checked("synonyms", f"synonyms of metric {name}", f"Metric {name} also called: {', '.join(words)}",
+                       proposal, name=name, signature=("synonyms", "metric", name))  # fmt: skip
+    table = ctx.find_table(item.get("table"), model_only=True)
+    if table is None:
+        return Refused(what, f"Unknown table {item.get('table')!r}; use one of {ctx.table_names(model_only=True)}.")
+    column = match_name(item.get("column"), [c.name for c in table.columns])
+    if column is None:
+        return Refused(what, f"Table {table.name!r} has no column {item.get('column')!r}; name a column or a metric.")
+    if table.private or table.column(column).private:
+        return Refused(f"synonyms of {table.name}.{column}", "This column is kept from AI.", retry=False)
+    proposal = FieldProposal(kind="field", table_id=table.table_id, column=column, attribute="synonyms", value=words)
+    return Checked("synonyms", f"synonyms of {table.name}.{column}",
+                   f"{table.name}.{column} also called: {', '.join(words)}", proposal, table=table.name,
+                   signature=("synonyms", table.key, column))  # fmt: skip
 
 
 @dataclass
@@ -912,7 +717,6 @@ def store_round(
     done: set[str],
     kinds: list[str] | None,
     *,
-    request: str | None,
     ai_source: str,
     withheld_for: Callable[[list[int]], Any],
 ) -> RoundResult:
@@ -926,11 +730,8 @@ def store_round(
 
     snap, model_tables, all_tables = service.suggest_scope(namespace_id)
     ctx = build_context(snap, model_tables, all_tables, withheld_for([t.table_id for t in all_tables.values()]))
-    ctx.scope = scope_request(request, ctx) if request else None
     out = RoundResult()
     seen: set[tuple] = set()
-    single = single_kinds(request)
-    stored_kinds = [w.split(" ", 1)[0] for w in done]
     for item in items:
         checked = check_item(item, ctx, kinds, service.measure_join)
         if isinstance(checked, Refused):
@@ -939,9 +740,6 @@ def store_round(
             continue
         key = checked.signature or (checked.what,)
         if checked.what in done or key in seen:
-            continue
-        if checked.kind in single and checked.kind in stored_kinds:
-            out.refused.append(Refused(checked.what, f"Only one {checked.kind} was asked for.", retry=False))
             continue
         seen.add(key)
         comment = "Suggested by AI." + (f" {checked.note}" if checked.note else "")
@@ -953,7 +751,6 @@ def store_round(
         if facts and all(f.status == "accepted" for f in facts):
             out.refused.append(Refused(checked.what, "The model already holds exactly this.", retry=False))
             continue
-        stored_kinds.append(checked.kind)
         if checked.note:
             out.notes.append(checked.note)
         groups = {f.group for f in facts if f.group}
@@ -1003,13 +800,7 @@ async def suggest_for_request(
     user_id: int | None,
     apply: Callable[[list[dict[str, Any]], set[str]], Awaitable[RoundResult]],
 ) -> Outcome:
-    """Ask once, check and store what passes (``apply``), send the refusals back once, and report the rest.
-
-    A request that names a column no table has ("the discount column") is answered here, without a model call.
-    """
-    missing = missing_named_columns(request, ctx)
-    if missing:
-        return Outcome(nothing=True, why=f"No table in this model has a column called {missing[0]!r}.")
+    """Ask once, check and store what passes (``apply``), send the refusals back once, and report the rest."""
     messages = [
         Message(role="system", content=system_prompt()),
         Message(role="user", content=user_message(ctx, request, kinds)),

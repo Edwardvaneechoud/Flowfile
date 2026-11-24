@@ -1,9 +1,9 @@
 """The answer sentence of ``POST /ai/semantic/ask``: what kind of answer a question wants, and the sentence.
 
-The model suggests and the code decides: the intent comes from rules on the question, the model's optional
-``intent`` key only breaking a tie, and the sentence is rendered here from the rows the query returned, so every
-number in it is the query's own and none is written by a model. Nothing here reads the database or calls a model;
-the result rows stay in core. Every function is pure.
+The kind of answer comes from the query the model wrote (its dimensions, grain and order), the model's optional
+``intent`` key deciding when it names a kind that fits that shape; the question's wording is never read here. The
+sentence is rendered from the rows the query returned, so every number in it is the query's own and none is written
+by a model. Nothing here reads the database or calls a model; the result rows stay in core. Every function is pure.
 """
 
 from __future__ import annotations
@@ -27,23 +27,10 @@ TOP_LIMIT = 100
 MAX_LISTED = 6
 MAX_TIED = 3
 
-_TOP = re.compile(
-    r"\b(most|highest|largest|biggest|greatest|best|top|leading|maximum|max|more than any)\b", re.IGNORECASE
-)
-_BOTTOM = re.compile(r"\b(least|lowest|fewest|smallest|worst|bottom|minimum|min)\b", re.IGNORECASE)
-_TOP_N = re.compile(
-    r"\b(?:top|bottom|best|worst|highest|lowest|largest|smallest|biggest)\s+(\d{1,3})\b|\b(\d{1,3})\s+"
-    r"(?:best|worst|highest|lowest|largest|smallest|biggest|most|least)\b",
-    re.IGNORECASE,
-)
-_WHICH = re.compile(r"\b(which|what)\b", re.IGNORECASE)
 _MONTH_NAMES = (
     "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November",
     "December",
 )  # fmt: skip
-_NOT_GROUPED = re.compile(r"^'(.+?)' is not something \S+ can be grouped by")
-_UNCLEAR_VALUE = re.compile(r"^'(.+?)' is a value of .+; not filtered")
-_NOT_A_VALUE = re.compile(r"^Left out \S+ \S+(?: in)? '(.+?)': '.+?' is not a value of")
 
 
 @dataclass
@@ -57,7 +44,7 @@ class Intent:
 
 @dataclass
 class MetricWords:
-    """How a metric is said: its readable name, a plural noun for a row count, the number format, additivity."""
+    """How a metric is said: its readable name, the number format, additivity."""
 
     name: str
     label: str | None = None
@@ -72,21 +59,6 @@ class MetricWords:
         return (self.label or self.name.replace("_", " ")).strip()
 
     @property
-    def noun(self) -> str | None:
-        """``customers`` for ``customer_count`` on the customers table; ``None`` when that is not safe to say."""
-        if self.aggregate != "count" or self.label or not self.table:
-            return None
-        m = re.fullmatch(r"([a-z]+)_count", self.name)
-        table = self.table.rpartition(".")[2].lower()
-        if m is None or table not in (m.group(1), m.group(1) + "s", m.group(1)[:-1] + "ies"):
-            return None
-        return table if table.endswith("s") else _plural(table)
-
-    @property
-    def singular(self) -> str | None:
-        return self.name[: -len("_count")] if self.noun else None
-
-    @property
     def additive(self) -> bool:
         """A sum or a plain count adds up over groups, so a group's share means something; a distinct count does
         not."""
@@ -97,47 +69,85 @@ class MetricWords:
 
 @dataclass
 class Rendered:
+    """``notes`` are the grounding notes the sentence already says (a gap stated in it), left out of the list."""
+
     answer: str | None = None
     facts: SemanticAnswerFacts | None = None
     notes: list[str] = field(default_factory=list)
 
 
-def _plural(word: str) -> str:
-    if word.endswith("y") and not word.endswith(("ay", "ey", "oy", "uy")):
-        return word[:-1] + "ies"
-    if word.endswith(("s", "x", "ch", "sh")):
-        return word + "es"
-    return word + "s"
+@dataclass
+class Gap:
+    """Part of the question the answer cannot cover, found by the grounding (``semantic_ask``).
+
+    ``kind`` is ``group`` (a breakdown the metric cannot give), ``grain`` (over time, with no time column),
+    ``filter`` (a value the column does not hold; ``column`` names it) or ``unclear`` (a value of several
+    columns; ``columns`` names them). ``reason`` finishes the sentence after a colon; ``generic`` when it is the
+    plain "not among the columns it can be grouped by" one, so two such gaps read as one sentence. ``note`` is
+    the note text it was told in.
+    """
+
+    kind: str
+    what: str
+    reason: str = ""
+    generic: bool = False
+    column: str | None = None
+    columns: list[str] = field(default_factory=list)
+    note: str | None = None
 
 
-def decide_intent(question: str, query: MetricQuery | None, hint: Any = None) -> Intent:
-    """Rules on the question first; the model's ``hint`` only decides when the rules cannot.
+def gap_sentences(gaps: list[Gap]) -> str:
+    """What a partial answer leaves out, as sentences that follow the answer ("It is not split by station: …")."""
+    splits = [g for g in gaps if g.kind in ("group", "grain")]
+    out: list[str] = []
+    if len(splits) > 1 and all(g.generic and g.kind == "group" for g in splits):
+        names = _join_or([g.what for g in splits])
+        which = "neither is" if len(splits) == 2 else "none of them is"
+        out.append(f"It is not split by {names}: {which} among the columns this metric can be grouped by.")
+    else:
+        out += [f"It is not split by {g.what}: {g.reason}." for g in splits]
+    for g in gaps:
+        if g.kind == "filter" and g.reason:
+            out.append(f"It is not filtered on {_column_words(g.column or g.what)}: {g.reason}.")
+        elif g.kind == "filter":
+            out.append(f"It is not filtered to {g.what!r}: that is not a value of {_column_words(g.column or '')}.")
+        elif g.kind == "unclear":
+            cols = _join([_column_words(c) for c in g.columns])
+            out.append(f"It is not filtered by {g.what!r}: that is a value of {cols}, so it is unclear which one.")
+    return " ".join(out)
 
-    No dimension and no grain is ``value`` whatever the question says: a superlative over nothing it can group by
-    has one number to give (the grounding already marks such a question partial). A grain without dimensions is
-    ``trend``. A superlative word over dimensions is ``top`` or ``bottom``; both kinds of word, or a "which …"
-    question with neither, take the hint when it is one of those two.
+
+def _join_or(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " or " + parts[-1]
+
+
+def decide_intent(query: MetricQuery | None, hint: Any = None) -> Intent:
+    """The kind of answer from the query's shape; the model's ``hint`` decides when it names a kind that fits.
+
+    No dimension: ``trend`` with a grain, else ``value``. Dimensions with a grain: ``breakdown``. Dimensions with
+    an order on the metric: ``top`` (descending) or ``bottom`` (ascending), naming as many groups as the limit when
+    that is a short list. Any other grouped query: ``breakdown``.
     """
     hint = str(hint).strip().lower() if isinstance(hint, str) else None
     if query is None:
         return Intent()
+    n = query.limit if 1 < query.limit <= MAX_LISTED else 1
+    fits = {
+        "value": not query.dimensions and not query.grain,
+        "trend": bool(query.grain) and not query.dimensions,
+        "top": bool(query.dimensions) and not query.grain,
+        "bottom": bool(query.dimensions) and not query.grain,
+        "breakdown": bool(query.dimensions or query.grain),
+    }
+    if hint in fits and fits[hint]:
+        return Intent(hint, n, explicit_n=n > 1) if hint in ("top", "bottom") else Intent(hint)
     if not query.dimensions:
         return Intent("trend") if query.grain else Intent()
     if query.grain:
         return Intent("breakdown")
-    top, bottom = _TOP.search(question), _BOTTOM.search(question)
-    kind = "breakdown"
-    if top and bottom:
-        kind = hint if hint in ("top", "bottom") else ("top" if top.start() < bottom.start() else "bottom")
-    elif top or bottom:
-        kind = "top" if top else "bottom"
-    elif _WHICH.search(question) and hint in ("top", "bottom"):
-        kind = hint
-    if kind == "breakdown":
-        return Intent("breakdown")
-    m = _TOP_N.search(question)
-    n = int(m.group(1) or m.group(2)) if m else 1
-    return Intent(kind, max(1, min(n, MAX_LISTED)), explicit_n=m is not None and n > 1)
+    if query.order is not None and query.order.field == query.metric:
+        return Intent("top" if query.order.direction == "desc" else "bottom", n, explicit_n=n > 1)
+    return Intent("breakdown")
 
 
 def shape_query(query: MetricQuery, intent: Intent, time_column: str | None) -> MetricQuery:
@@ -255,30 +265,14 @@ def filter_phrase(query: MetricQuery) -> str:
     return out + ("".join(" " + b for b in dated))
 
 
-def uncovered(notes: list[str]) -> list[str]:
-    """What a partial answer leaves out, read from the grounding's notes, as short phrases."""
-    out = []
-    for n in notes:
-        if m := _NOT_GROUPED.match(n):
-            out.append(f"the {m.group(1)} grouping you asked for")
-        elif m := _UNCLEAR_VALUE.match(n):
-            out.append(f"the filter on {m.group(1)!r} (it matches more than one column)")
-        elif m := _NOT_A_VALUE.match(n):
-            out.append(f"the filter on {m.group(1)!r}")
-    return list(dict.fromkeys(out))
-
-
 def _item(label: str, value: float | int | None, words: MetricWords) -> SemanticAnswerItem:
     text = format_number(value, words.format) if value is not None else ""
     return SemanticAnswerItem(label=label, value=value, text=text)
 
 
 def _amount(value: float | int, words: MetricWords) -> str:
-    """``7 customers`` for a row count with a noun, else ``a total amount of 98,058.50``."""
-    text = format_number(value, words.format)
-    if words.noun:
-        return f"{text} {words.noun if value != 1 else words.singular}"
-    return f"a {words.readable} of {text}"
+    """``a total amount of 98,058.50``."""
+    return f"a {words.readable} of {format_number(value, words.format)}"
 
 
 def render(
@@ -289,10 +283,14 @@ def render(
     intent: Intent,
     *,
     partial: bool = False,
-    notes: list[str] | None = None,
+    gaps: list[Gap] | None = None,
 ) -> Rendered:
     """The answer sentence and its facts from ``result`` alone; ``answer`` is ``None`` when the rows cannot be read
-    as an answer (an error, a missing metric column, a value that is not a number)."""
+    as an answer (an error, a missing metric column, a value that is not a number).
+
+    A partial answer puts the answer first and what it leaves out after it, from ``gaps``; the notes of the gaps it
+    states come back in ``Rendered.notes`` so the caller does not list them a second time.
+    """
     if result.error or words.name not in result.columns:
         return Rendered()
     rows = result.rows
@@ -323,8 +321,6 @@ def render(
         facts.value = _item("", v, words) if v is not None else None
         if v is None:
             text = f"The {words.readable}{filter_phrase(query)} has no value."
-        elif words.noun:
-            text = f"There {'is' if v == 1 else 'are'} {_amount(v, words)}{filter_phrase(query)}."
         else:
             text = f"The {words.readable}{filter_phrase(query)} is {format_number(v, words.format)}."
     elif kind == "trend":
@@ -338,13 +334,13 @@ def render(
         text += f" {nulls} {'row has' if nulls == 1 else 'rows have'} no value."
     if truncated:
         text += f" This covers the first {len(rows):,} rows only."
-    if partial:
-        missing = uncovered(notes or [])
-        lead = "Without " + _join(missing) if missing else "This answers only part of the question"
-        if text.startswith(("The ", "There ")):
-            text = text[0].lower() + text[1:]
-        text = f"{lead}: {text}"
-    return Rendered(text[:1].upper() + text[1:], facts)
+    said: list[str] = []
+    if partial and gaps:
+        missing_text = gap_sentences(gaps)
+        if missing_text:
+            text = f"{text} {missing_text}"
+            said = [g.note for g in gaps if g.note]
+    return Rendered(text[:1].upper() + text[1:], facts, said)
 
 
 def _ranked(rows, values, label, words, intent, query, facts) -> str:
@@ -354,10 +350,7 @@ def _ranked(rows, values, label, words, intent, query, facts) -> str:
     top = intent.kind == "top"
     pairs.sort(key=lambda p: p[1], reverse=top)
     facts.groups = None if intent.explicit_n else len(pairs)
-    if words.noun:
-        sup = f"the {'most' if top else 'fewest'} {words.noun}"
-    else:
-        sup = f"the {'highest' if top else 'lowest'} {words.readable}"
+    sup = f"the {'highest' if top else 'lowest'} {words.readable}"
     fmt = words.format
     if intent.explicit_n:
         shown = pairs[: intent.n]
@@ -399,21 +392,20 @@ def _breakdown(rows, values, label, words, query, facts) -> str:
     by = " and ".join(_column_words(d) for d in query.dimensions) or "period"
     if query.grain and query.dimensions:
         by = f"{query.grain} and {by}"
-    head = f"{(words.noun or words.readable).capitalize()} by {by}{filter_phrase(query)}"
+    head = f"{words.readable.capitalize()} by {by}{filter_phrase(query)}"
     fmt = words.format
     if len(pairs) <= MAX_LISTED:
         listed = ", ".join(f"{lb} {format_number(v, fmt) if v is not None else 'no value'}" for lb, v in pairs)
         return f"{head}: {listed}."
     ranked = sorted([p for p in pairs if p[1] is not None], key=lambda p: p[1], reverse=True)
     facts.leaders = [_item(lb, v, words) for lb, v in ranked[:3]]
-    many = _plural(_column_words(query.dimensions[0])) if len(query.dimensions) == 1 and not query.grain else "groups"
     top3 = _join([f"{lb} ({format_number(v, fmt)})" for lb, v in ranked[:3]])
-    return f"{head}, across {len(pairs):,} {many}: the highest are {top3}."
+    return f"{head}, across {len(pairs):,} groups: the highest are {top3}."
 
 
 def _trend(rows, values, label, words, grain, facts) -> str:
     pairs = [(label(r), v) for r, v in zip(rows, values, strict=True) if v is not None]
-    name = f"The number of {words.noun}" if words.noun else words.readable.capitalize()
+    name = words.readable.capitalize()
     unit = grain or "period"
     fmt = words.format
     if not pairs:
@@ -448,6 +440,7 @@ def _trend(rows, values, label, words, grain, facts) -> str:
 
 __all__ = [
     "INTENTS",
+    "Gap",
     "Intent",
     "MetricWords",
     "Rendered",
@@ -455,7 +448,7 @@ __all__ = [
     "filter_phrase",
     "format_number",
     "format_period",
+    "gap_sentences",
     "render",
     "shape_query",
-    "uncovered",
 ]

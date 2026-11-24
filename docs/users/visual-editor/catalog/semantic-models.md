@@ -39,13 +39,17 @@ A fact is **stale** when the catalog changed underneath it, for example a column
 
 ## Suggest a model
 
-A schema with no facts shows **Suggest a model** next to **Describe your tables**; once the model has facts, a **Suggest** button sits in the header. It needs no AI and nothing to configure. Flowfile reads one summary query per table (distinct counts, null counts and, for number and time columns, smallest and largest values) and proposes:
+A schema with no facts shows **Suggest a model** next to **Describe your tables**. Once the model has facts, the header has one **Suggest** button: it opens a box with one field, "What should be suggested? Leave empty for the whole model.", and a **Suggest** button (Enter, or Cmd/Ctrl+Enter, sends it). Left empty, it suggests the whole model as described here; with words in it, it is a [specific request](#ask-for-something-specific). The whole-model suggestion needs no AI and nothing to configure. Flowfile reads one summary query per table (distinct counts, null counts and, for number and time columns, smallest and largest values) and proposes, from types and those statistics only, never from what a column's name seems to mean:
 
-- **Column roles** (`key`, `time`, `category`, `amount`).
-- **Joins**, where a column matches another table's unique key by name and type, each with its evidence, for example "`customer_id` is unique in `customers` (3 of 3 rows) and repeats in `orders`". A schema's **Suggest** proposes joins between its own tables; **Suggest joins** on the catalog's page looks across all its schemas and says how many of its proposals wait there and how many in a schema's Review.
+- **Column roles** (`key`, `time`, `category`, `amount`): a unique integer or text column is a key, a date is a date, a number that repeats is an amount, a boolean or a text column with few distinct values is a group-by column, and a column that points to another table's unique column is a key.
+- **Joins**, where a column has the same name and type as a column that is unique in another table and repeats in its own, each with its evidence, for example "`customer_id` is unique in `customers` (3 of 3 rows) and repeats in `orders`". A schema's **Suggest** proposes joins between its own tables; **Suggest joins** on the catalog's page looks across all its schemas and says how many of its proposals wait there and how many in a schema's Review.
 - **Metrics**: a row count, the sum and average of amount columns and a distinct count of keys, with the time column and allowed dimensions filled in.
 
-Everything lands in the **Review** tab, which opens afterwards, and nothing is live until a person accepts it. Running **Suggest** again adds nothing that the model already holds. If the statistics cannot be read, roles come from names and types only, and the page says so.
+Everything lands in the **Review** tab, which opens afterwards. Running **Suggest** again adds nothing that the model already holds. If the statistics cannot be read, only what a column's type tells (dates, booleans) is proposed, and the page says so.
+
+### While a suggestion runs
+
+A suggestion on the local model can take minutes. While one runs, a status line under the header says so, for example "Suggesting a model… started 2 minutes ago · 3 of 7 tables", and every Suggest button of the model is disabled with a tooltip saying a suggestion is already running. The line is the same in every window and after a page reload. When it ends, the model, the Review queue and the tree's counts reload and the line becomes the result, for example "Proposed 12 column roles, 2 joins and 9 metrics.", with a link to **Review** and a button to dismiss it; a dismissed result is not shown again in that browser tab. A suggestion started from a tab's button or the request box shows its result there instead. Starting a second suggestion for the same model while one runs is refused.
 
 ### With AI
 
@@ -55,28 +59,31 @@ Metric names from the model apply to candidates that are not stored yet; if you 
 
 ### Suggest more of one kind
 
-The **Joins**, **Metrics** and **Tables** tabs each have their own button beside their add button: **Suggest joins**, **Suggest metrics** and **Suggest descriptions and roles**. One click runs the rules for that kind only (no AI needed); when AI is usable, the model then looks for what the rules cannot find, such as a join whose column names differ (`orders.customer` to `customers.id`) or a metric beyond a count, sum or average. The tab says what was proposed in one line, for example "Proposed 2 joins. They wait in Review.", or that nothing new was found. New joins and metrics show on the tab as pending straight away.
+The **Joins**, **Metrics** and **Tables** tabs each have one button beside their add button: **Suggest joins**, **Suggest metrics** and **Suggest descriptions and roles**. One click runs the rules for that kind only (no AI needed); when AI is usable, the model then looks for what the rules cannot find, such as a join whose column names differ (`orders.customer` to `customers.id`) or a metric beyond a count, sum or average. The button's tooltip names the model that will run. The tab says what was proposed in one line, for example "Proposed 2 joins. They wait in Review.", or that nothing new was found. New joins and metrics show on the tab as pending straight away. A request for one particular thing goes through the header's request box.
 
 ### Ask for something specific
 
-**Ask for something specific** in the header opens a box where you write what you want in your own words: "a metric for average order value", "describe the orders table", "how are orders and products related?", "mark country and segment as group-by columns". Each tab also has a link (**Ask for a specific join…** and so on) that opens the same box for that kind only, and the **Review** tab offers it when nothing is waiting. This needs AI; there is no rules-only version of it.
+Write what you want in the header's request box, in your own words: "a metric for average order value", "describe the orders table", "how are orders and products related?", "other words people use for revenue". This needs AI; there is no rules-only version of it. The box shows which model will run it, for example "Uses qwen3.5-2b on this computer · Change"; see [Which model does what](#which-model-does-what).
 
-The model suggests, Flowfile decides. The model sees the tables' names, column types, roles and descriptions, the joins and the metric names, never a data row; a Confidential or Restricted column is sent by name and type only and is never described. Every suggestion is checked before it is stored:
+The model reads the request and Flowfile checks what can be checked against the model and the data. The model sees the tables' names, column types, roles and descriptions, the joins and the metric names, never a data row; a Confidential or Restricted column is sent by name and type only and is never described. Every suggestion is checked before it is stored:
 
-- Table and column names must exist. A request that names a column no table has ("the discount column") is answered with "nothing to suggest" without asking the model.
-- When the request says what kind it wants ("describe…", "a metric…", "related", "group-by"), other kinds are left out, and so are suggestions about tables the request does not name. "A metric for …" stores one metric, not several variations.
-- A metric must aggregate and use the columns the request names. It may not add up an id column (or a column named after a table, such as `orders.customer`), count with `COUNT(CASE … ELSE 0 END)`, which counts every row, or sum a lookup table that other tables point to. It is then compiled and tried against the data exactly like one you write: a formula that does not run is not stored, and neither is one the model already has.
-- A join is measured like one you add: the right way round it is proposed with the measurement, the wrong way round it is turned around and proposed with a note saying so, and a join that would multiply rows is refused. Its two columns must hold the same kind of value and plausibly the same key, and the one side must not be an amount or a date.
-- A role must be one of the four and fit the column (a date for Date, a number that is not an identifier for Amount); a description must say more than the column's name. The tab buttons only fill in columns that have no role or description yet; a written request may also change one.
+- Table, column and metric names must exist, and a suggestion's kind must be one of metric, description, join, role or synonyms.
+- A metric is compiled and tried against the data exactly like one you write: a formula that does not run is not stored, and neither is one whose formula and filter the model already has.
+- A join is measured like one you add: the right way round it is proposed with the measurement, the wrong way round it is turned around and proposed with a note saying so, and a join that would multiply rows, or cannot be measured, is refused. Its two columns must hold the same type of value.
+- A role must be one of the four and fit the column's type (a date for Date, a number for Amount); a description must not be empty; synonyms are a list of other words for a column or a metric.
 
 What fails goes back to the model once with the reasons; what still fails is listed under "not stored" with its reason. Everything stored waits in **Review**, also on a desktop where your own edits count at once: AI can propose, never accept.
 
 ### The local model
 
-The default writer is the small model that runs on your own computer: nothing leaves it. When no AI is set up and the local model can be installed, the panel shows a card, **Let AI on this computer write the descriptions**, that downloads it in one click with progress; the Ask tab offers the same. Online providers are optional. To use one for this feature, choose a model for the **Semantic model** task in **Settings → AI → Assistant**; the choice is kept in your browser or desktop app. See [AI in semantic models](../../../ai/index.md#ai-in-semantic-models).
+The default writer is the small model that runs on your own computer: nothing leaves it. When no AI is set up and the local model can be installed, the panel shows a card, **Let AI on this computer write the descriptions**, that downloads it in one click with progress; the Ask tab offers the same. Online providers are optional. See [AI in semantic models](../../../ai/index.md#ai-in-semantic-models).
+
+### Which model does what
+
+Two choices in **Settings → AI → Assistant** decide which model runs: **Semantic model: questions** (the Ask tab's question box) and **Semantic model: suggestions** (Suggest a model, the tab buttons and the request box). Each can be **Same as main** or a provider and model of its own, and they are independent. The question box and the request box show the model they will use before you send, with a **Change** link that opens the same two selects in place and a link to all AI settings. With no choice of its own, a task uses the local model when it is installed, else your main provider and model. An earlier single **Semantic model** choice serves both until you change one. The choices are kept in your browser or desktop app.
 
 !!! note "Test results"
-    On the 2B local model, a set of twenty test questions on one sample data set was answered correctly in three runs after the checks under [How a question is read](#how-a-question-is-read) were added. That is one data set, not a guarantee; Review shows each fact's source, and every answer shows how it was read.
+    On the 2B local model, a set of twenty test questions on one sample data set was answered fully right in 10 and 8 of 20 (two runs), with 4 and 3 more answers that applied part of the question and said so. The questions are now checked only against the model and the data, not against wording rules, so the model's own reading decides more; earlier versions with wording rules scored higher on this one set. That is one data set, not a guarantee; Review shows each fact's source, and every answer shows how it was read.
 
 ---
 
@@ -90,6 +97,8 @@ The **Tables** tab lists each table of the schema with its columns. Click a tabl
 | **Date** | When it happened. Used for trends over time. |
 | **Group by** | A label to split a number by. |
 | **Amount** | A number to add up or average. |
+
+Under a column's description, **Also called…** holds other words people use for it, separated by commas ("turnover, sales" for `revenue`). The question box shows them to the model beside the column. They start empty; nothing fills them but you, or an AI suggestion you accept.
 
 A status chip appears next to a value only while it still needs a person: proposed and waiting for review, or stale.
 
@@ -136,6 +145,7 @@ Open the **Metrics** tab and click **Add metric**.
 | **Table** | The table the metric counts rows of. A metric belongs to one table. |
 | **Name** | The name people ask for, for example `total_revenue`. Unique within the schema. |
 | **What it means** | A sentence in plain words. |
+| **Also called (optional)** | Other words people use for the metric, separated by commas. The question box shows them to the model. |
 | **Expression** | The aggregate as SQL, for example `SUM(amount)`. A ratio of two aggregates works inside one expression. |
 | **Filter (optional)** | A condition that applies to every use of the metric, for example `status = 'completed'`. |
 | **Time column (optional)** | The column used to group by day, week, month, quarter or year. |
@@ -193,12 +203,13 @@ The SQL is generated from the model. Dimensions and filters are checked against 
 
 ### How a question is read
 
-The model suggests a query and Flowfile checks it against the model before anything runs:
+The model reads the question and writes a query; Flowfile checks it against the model and the data before anything runs, and never judges the question's wording:
 
-- A grouping, filter, date range or time grain is used only when the question names it.
-- A value the question names (a status, a country) becomes a filter even if the model missed it. Flowfile matches it against the distinct values of your category columns, which it reads itself and does not send to the model.
-- Every answer starts with a **Read as: …** line saying how the question was understood, followed by what was added, corrected or left out.
-- When part of the question cannot be applied, for example a breakdown with no matching dimension, that part is left out, the notes say so, and the response is marked partial. Nothing is substituted silently.
+- The model sees each approved metric's name, description, **Also called** words and time column, the columns it may be grouped by and filtered on, and the model's **AI instructions** when they are set (the line under the model's description in the panel header).
+- A grouping must be one the metric may be grouped by, a filter must name one of its columns with a valid operator, and a grain needs a time column. A filter value on a group-by column must be one of that column's values; a value that differs only in case is corrected to the stored spelling. Flowfile reads those values itself and does not send them to the model.
+- Every answer starts with a **Read as: …** line saying which query ran.
+- When part of the model's query cannot be applied, for example a breakdown by a column the metric may not be grouped by, or a filter value the column does not hold, that part is left out and the answer says what is missing after the number: "The average num bikes available is 14.37. It is not split by station: station_id is not among the columns average_num_bikes_available can be grouped by." The answer is marked partial. Nothing is substituted silently.
+- The question box shows the model it will use; Cmd/Ctrl+Enter sends it, as does Enter.
 
 **Keep as a flow** names a flow (**Flow name**, then **Save**) and registers the query in the catalog, so it can be scheduled or opened on the canvas.
 
@@ -219,6 +230,8 @@ The model suggests a query and Flowfile checks it against the model before anyth
 - A saved flow cannot read another schema's table, so a query that reaches across schemas can be run but not kept as a flow.
 - Rule-suggested joins from a schema's model stay within that schema; **Suggest joins** on the catalog's page also proposes joins across its schemas. An AI suggestion may join to a table of another schema only when a join already reaches it.
 - The checks on a specific suggestion catch a wrong table, column, type or direction, not a wrong meaning: a well-formed metric with a misleading name passes and is caught only in Review.
+- The question box applies what the model wrote when it fits the model; it does not check the query against the question's words, so a well-formed query that misreads the question runs. The **Read as** line shows what ran.
+- The running-suggestion status lives in the core process: a core restart forgets a running suggestion's status (what it had already proposed stays in Review), and two core processes on one catalog do not see each other's runs.
 - Tables whose name contains `::` are left out of the model.
 - Actor names in the history are numeric user ids, stable on one installation only.
 

@@ -2,13 +2,17 @@ import { ref } from "vue";
 import { useSemanticModelStore } from "../stores/semantic-model-store";
 import {
   isAiNotSetUp,
+  isSuggestRunning,
   type SemanticSuggestKind,
   type SemanticSuggestRequestOut,
   type SemanticSuggestionSkipped,
   type SuggestCounts,
   type SuggestOut,
 } from "../types/semantic.types";
+import { SUGGEST_BUSY_TEXT, useSemanticActivity } from "./useSemanticActivity";
 import { useSemanticAi } from "./useSemanticAi";
+
+const RELOAD_TEXT = "Reload the page to use this: the app was updated while it was open.";
 
 /** What one suggest press ended in, worded for a person: nothing in it is live yet. */
 export interface SuggestOutcome {
@@ -24,16 +28,17 @@ const NOUNS: Record<SemanticSuggestKind, [string, string]> = {
   metric: ["metric", "metrics"],
   description: ["description", "descriptions"],
   role: ["column role", "column roles"],
+  synonyms: ["set of synonyms", "sets of synonyms"],
 };
 
-const COUNT_KEYS: Record<SemanticSuggestKind, keyof SuggestCounts> = {
+const COUNT_KEYS: Partial<Record<SemanticSuggestKind, keyof SuggestCounts>> = {
   join: "joins",
   metric: "metrics",
   description: "descriptions",
   role: "roles",
 };
 
-const ORDER: SemanticSuggestKind[] = ["metric", "join", "description", "role"];
+const ORDER: SemanticSuggestKind[] = ["metric", "join", "description", "role", "synonyms"];
 
 const REASONS: Record<string, string> = {
   timeout: "The model did not answer in time.",
@@ -124,7 +129,10 @@ export function describeScopedOutcome(
   aiNote: string | null,
 ): SuggestOutcome {
   const counts: Partial<Record<SemanticSuggestKind, number>> = {};
-  for (const k of kinds) counts[k] = rules ? rules.added[COUNT_KEYS[k]] : 0;
+  for (const k of kinds) {
+    const key = COUNT_KEYS[k];
+    counts[k] = rules && key ? rules.added[key] : 0;
+  }
   for (const p of ai?.proposed ?? []) counts[p.kind] = (counts[p.kind] ?? 0) + 1;
   const total = Object.values(counts).reduce((a, b) => a + (b ?? 0), 0);
   const notes: string[] = [];
@@ -153,33 +161,52 @@ export function describeScopedOutcome(
   return { line, proposed: total, notes, skipped: ai?.skipped ?? [], warn };
 }
 
-/** One suggest surface's state: a free-text request to the AI, or a tab's scoped "Suggest …" press. */
+/** One suggest surface's state: the header box's request in words, or a tab's scoped "Suggest …" press. */
 export function useSemanticSuggest() {
   const store = useSemanticModelStore();
   const { aiStore, usable, canOfferLocal, pick } = useSemanticAi();
+  const { busy, track } = useSemanticActivity();
   const running = ref(false);
-  const step = ref("");
   const outcome = ref<SuggestOutcome | null>(null);
   const notSetUp = ref(false);
   const error = ref("");
 
-  function begin(text: string) {
+  function begin() {
     running.value = true;
-    step.value = text;
     outcome.value = null;
     error.value = "";
   }
 
+  /** A store action this page's loaded store may lack: Pinia adds no new actions to a page already open. */
+  function missing(...names: string[]): boolean {
+    const absent = names.some(
+      (n) => typeof (store as unknown as Record<string, unknown>)[n] !== "function",
+    );
+    if (absent) error.value = RELOAD_TEXT;
+    return absent;
+  }
+
+  function failed(e: unknown, fallback: string) {
+    error.value = isSuggestRunning(e) ? SUGGEST_BUSY_TEXT : errorMessage(e, fallback);
+  }
+
   /** The AI alone: there is no rules version of a request in words. */
-  async function ask(request: string, kinds: SemanticSuggestKind[] | null = null): Promise<void> {
+  async function ask(request: string): Promise<void> {
     const text = request.trim();
-    if (!text || running.value) return;
-    begin("Asking the AI, then checking each suggestion against your data…");
+    if (!text || running.value || busy.value) return;
+    begin();
+    if (missing("suggestOnRequest")) {
+      running.value = false;
+      return;
+    }
     try {
-      outcome.value = describeAiOutcome(await store.suggestOnRequest(text, kinds, pick()));
+      const out = await track(() => store.suggestOnRequest(text, null, pick("suggest")), {
+        ownOutcome: true,
+      });
+      outcome.value = describeAiOutcome(out);
     } catch (e) {
       if (isAiNotSetUp(e)) notSetUp.value = true;
-      else error.value = errorMessage(e, "Could not ask for suggestions");
+      else failed(e, "Could not ask for suggestions");
     } finally {
       running.value = false;
     }
@@ -187,25 +214,33 @@ export function useSemanticSuggest() {
 
   /** Rules scoped to `kinds` first (no AI needed), then the AI for what rules cannot find. */
   async function suggestMore(kinds: SemanticSuggestKind[]): Promise<void> {
-    if (running.value) return;
-    begin(`Looking for ${kindsText(kinds)} with the rules…`);
+    if (running.value || busy.value) return;
+    begin();
+    if (missing("suggestModel", "suggestOnRequest")) {
+      running.value = false;
+      return;
+    }
     try {
-      const rules = await store.suggestModel(kinds);
-      let ai: SemanticSuggestRequestOut | null = null;
-      let aiNote: string | null = null;
-      if (usable.value) {
-        step.value = `Asking the AI for more ${kindsText(kinds)} and checking each against your data…`;
-        try {
-          ai = await store.suggestOnRequest(null, kinds, pick());
-        } catch (e) {
-          if (!isAiNotSetUp(e)) throw e;
-          notSetUp.value = true;
-          aiNote = "AI is not set up, so only the rules looked.";
-        }
-      }
-      outcome.value = describeScopedOutcome(kinds, rules, ai, aiNote);
+      outcome.value = await track(
+        async () => {
+          const rules = await store.suggestModel(kinds);
+          let ai: SemanticSuggestRequestOut | null = null;
+          let aiNote: string | null = null;
+          if (usable.value) {
+            try {
+              ai = await store.suggestOnRequest(null, kinds, pick("suggest"));
+            } catch (e) {
+              if (!isAiNotSetUp(e)) throw e;
+              notSetUp.value = true;
+              aiNote = "AI is not set up, so only the rules looked.";
+            }
+          }
+          return describeScopedOutcome(kinds, rules, ai, aiNote);
+        },
+        { ownOutcome: true },
+      );
     } catch (e) {
-      error.value = errorMessage(e, "Could not suggest");
+      failed(e, "Could not suggest");
     } finally {
       running.value = false;
     }
@@ -221,7 +256,7 @@ export function useSemanticSuggest() {
     usable,
     canOfferLocal,
     running,
-    step,
+    busy,
     outcome,
     notSetUp,
     error,

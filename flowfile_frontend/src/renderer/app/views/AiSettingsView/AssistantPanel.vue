@@ -109,8 +109,8 @@
                   size="default"
                   placeholder="Same as main"
                   popper-class="model-select-dropdown"
-                  :model-value="aiStore.surfaceModels[task.surface]?.provider ?? ''"
-                  @change="(value: string) => onTaskProviderChange(task.surface, value)"
+                  :model-value="ownPick(task.surface)?.provider ?? ''"
+                  @change="(value: string) => setTaskProvider(task.surface, value)"
                 >
                   <el-option value="" label="Same as main" />
                   <el-option
@@ -122,14 +122,14 @@
                   />
                 </el-select>
                 <p
-                  v-if="isUnconfigured(aiStore.surfaceModels[task.surface]?.provider ?? null)"
+                  v-if="isUnconfigured(ownPick(task.surface)?.provider ?? null)"
                   class="model-field__sub model-field__sub--warn"
                 >
                   <i class="fa-solid fa-triangle-exclamation"></i>
                   This provider has no API key, so these calls will fail.
                 </p>
               </div>
-              <div v-if="aiStore.surfaceModels[task.surface]" class="model-field">
+              <div v-if="ownPick(task.surface)" class="model-field">
                 <label class="model-field__label" :for="`ai-task-model-${task.surface}`">
                   Model
                 </label>
@@ -138,8 +138,8 @@
                   size="default"
                   placeholder="Provider default"
                   popper-class="model-select-dropdown"
-                  :model-value="aiStore.surfaceModels[task.surface].model ?? ''"
-                  @change="(value: string) => onTaskModelChange(task.surface, value)"
+                  :model-value="ownPick(task.surface)?.model ?? ''"
+                  @change="(value: string) => setTaskModel(task.surface, value)"
                 >
                   <el-option value="" label="Provider default" />
                   <el-option v-for="m in taskModels(task.surface)" :key="m" :value="m" :label="m" />
@@ -296,7 +296,8 @@ import type {
   PersistedAgentSurface,
   PersistedSimpleBuildOutput,
 } from "../../stores/ai-store-persistence";
-import { LOCAL_PROVIDER_ID, LOCAL_PROVIDER_LABEL } from "./localModelApi";
+import { useTaskModels, withSelected } from "../../composables/useTaskModels";
+import { LOCAL_PROVIDER_ID } from "./localModelApi";
 
 const emit = defineEmits<{
   (e: "navigate", tab: string): void;
@@ -348,13 +349,18 @@ const AGENT_VARIANTS: ReadonlyArray<{
   },
 ];
 
-// Keep the currently-selected model as a valid <option> even if it isn't in
-// the provider's curated list (so the select never renders blank).
-const _withSelected = (list: string[], selected: string | null): string[] =>
-  selected && !list.includes(selected) ? [...list, selected] : list;
+const {
+  providerLabel,
+  providerOptions,
+  isUnconfigured,
+  ownPick,
+  taskModels,
+  setTaskProvider,
+  setTaskModel,
+} = useTaskModels();
 
 const mainModels = computed(() =>
-  _withSelected(aiStore.modelsForProvider(aiStore.selectedProvider), aiStore.selectedModel),
+  withSelected(aiStore.modelsForProvider(aiStore.selectedProvider), aiStore.selectedModel),
 );
 
 // When a tier's provider is On-device AI, its model isn't a separate pick — it's
@@ -363,31 +369,6 @@ const isLocalComplex = computed(() => aiStore.selectedProvider === LOCAL_PROVIDE
 const localActiveModelName = computed(
   () => aiStore.localModelStatus?.modelName ?? "the on-device model",
 );
-// Humanize the synthetic ``local`` provider's label (wire id stays "local").
-const providerLabel = (name: string): string =>
-  name === LOCAL_PROVIDER_ID ? LOCAL_PROVIDER_LABEL : name;
-
-// Every provider is listed so the user can see what exists, not just what
-// already has a key; unconfigured ones are greyed out (they would fail at
-// call time) and the hint below the select points at the Providers tab.
-const providerOptions = computed(() =>
-  aiStore.providers.map((p) => ({
-    value: p.provider,
-    label:
-      p.status === "unconfigured"
-        ? `${providerLabel(p.provider)} (not configured)`
-        : p.status === "env_fallback"
-          ? `${providerLabel(p.provider)} (env key)`
-          : providerLabel(p.provider),
-    disabled: p.status === "unconfigured",
-  })),
-);
-
-// A persisted selection can point at a provider whose key was since removed
-// (or never existed on this install); warn instead of silently failing later.
-const isUnconfigured = (name: string | null): boolean =>
-  name !== null &&
-  aiStore.providers.some((p) => p.provider === name && p.status === "unconfigured");
 const mainProviderUnconfigured = computed(() => isUnconfigured(aiStore.selectedProvider));
 
 const onMainProviderChange = (value: string): void => {
@@ -402,9 +383,14 @@ const onMainModelChange = (value: string): void => {
 const TASK_MODELS: ReadonlyArray<{ surface: string; label: string; hint: string }> = [
   { surface: "chart", label: "Charts", hint: "Used when you ask the AI for a chart." },
   {
-    surface: "semantic",
-    label: "Semantic model",
-    hint: "Writes descriptions for a suggested model and answers questions about your metrics.",
+    surface: "semantic_ask",
+    label: "Semantic model: questions",
+    hint: "Answers a question about your data by picking an approved metric.",
+  },
+  {
+    surface: "semantic_suggest",
+    label: "Semantic model: suggestions",
+    hint: "Writes descriptions and proposes metrics, joins and column roles when you press Suggest.",
   },
   {
     surface: "dashboard",
@@ -418,20 +404,6 @@ const TASK_MODELS: ReadonlyArray<{ surface: string; label: string; hint: string 
     hint: "Used for suggestions inside node settings, such as join keys.",
   },
 ];
-
-const taskModels = (surface: string): string[] => {
-  const pick = aiStore.surfaceModels[surface];
-  return _withSelected(aiStore.modelsForProvider(pick?.provider ?? null), pick?.model ?? null);
-};
-
-const onTaskProviderChange = (surface: string, value: string): void => {
-  aiStore.setSurfaceModel(surface, value ? { provider: value, model: null } : null);
-};
-
-const onTaskModelChange = (surface: string, value: string): void => {
-  const pick = aiStore.surfaceModels[surface];
-  if (pick) aiStore.setSurfaceModel(surface, { provider: pick.provider, model: value || null });
-};
 
 const onVerifyChange = (event: Event): void => {
   aiStore.setVerifyPlanCompletion((event.target as HTMLInputElement).checked);

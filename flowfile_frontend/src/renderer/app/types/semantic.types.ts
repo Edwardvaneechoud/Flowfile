@@ -52,6 +52,8 @@ export interface SemanticMetric {
   time_column: string | null;
   dimensions: string[];
   format: string | null;
+  /** Other words for the metric; absent from an older core. */
+  synonyms?: string[];
   status: SemanticFactStatus;
   version: number | null;
   approved_by: string | null;
@@ -175,10 +177,23 @@ export interface MetricProposal {
   time_column?: string | null;
   dimensions?: string[] | null;
   format?: string | null;
+  synonyms?: string[] | null;
   edit?: boolean;
 }
 
-export type SemanticProposal = FieldProposal | TableProposal | JoinProposal | MetricProposal;
+/** Other words for an existing metric, proposed on their own. */
+export interface MetricSynonymsProposal {
+  kind: "metric_synonyms";
+  name: string;
+  synonyms: string[];
+}
+
+export type SemanticProposal =
+  | FieldProposal
+  | TableProposal
+  | JoinProposal
+  | MetricProposal
+  | MetricSynonymsProposal;
 
 export type SemanticReviewActionType = "accept" | "reject" | "retract" | "reopen";
 
@@ -316,7 +331,7 @@ export interface SuggestOut {
 }
 
 /** What a suggestion can be; the `kinds` scope of both suggest routes. */
-export type SemanticSuggestKind = "join" | "metric" | "description" | "role";
+export type SemanticSuggestKind = "join" | "metric" | "description" | "role" | "synonyms";
 
 export interface SuggestRequest {
   kinds?: SemanticSuggestKind[];
@@ -465,3 +480,29 @@ export interface AiNotSetUp {
 export const isAiNotSetUp = (e: unknown): boolean =>
   (e as { response?: { status?: number; data?: { error_code?: string } } })?.response?.data
     ?.error_code === "AI_NOT_SET_UP";
+
+/** One Suggest run (core's `catalog/semantic/activity.py`); running while `finished_at` is absent. */
+export interface SemanticActivity {
+  kind: "suggest" | "draft" | "request";
+  label: string;
+  started_at: string;
+  user_id: number | null;
+  mine: boolean;
+  step: string | null;
+  finished_at?: string | null;
+  ok?: boolean | null;
+  summary?: string | null;
+  error?: string | null;
+  counts?: Record<string, number>;
+}
+
+/** `GET …/semantic-model/activity`: the run going on now and the last finished one. */
+export interface SemanticActivityOut {
+  running: SemanticActivity | null;
+  last: SemanticActivity | null;
+}
+
+/** A Suggest route's 409 while another suggestion runs for the same model (top-level body). */
+export const isSuggestRunning = (e: unknown): boolean =>
+  (e as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code ===
+  "SUGGEST_RUNNING";

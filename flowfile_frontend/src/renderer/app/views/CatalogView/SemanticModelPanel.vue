@@ -37,27 +37,25 @@
             multiline
             @commit="saveModel({ description: $event })"
           />
+          <SemanticInlineText
+            class="ai-instructions"
+            :value="model.ai_instructions ?? ''"
+            placeholder="Add instructions for the AI, such as which metric to prefer"
+            multiline
+            data-testid="semantic-ai-instructions"
+            @commit="saveModel({ ai_instructions: $event })"
+          />
         </div>
         <div class="header-actions">
           <button
             v-if="!isEmpty || started"
             class="btn btn-secondary btn-sm"
-            :disabled="store.busy || suggesting"
-            title="Propose roles, joins and metrics for you to review"
+            :class="{ active: showSuggestBox }"
+            :aria-expanded="showSuggestBox"
             data-testid="semantic-suggest-small"
-            @click="suggest()"
+            @click="showSuggestBox = !showSuggestBox"
           >
             <i class="fa-solid fa-wand-magic-sparkles"></i> Suggest
-          </button>
-          <button
-            v-if="!isEmpty || started"
-            class="btn btn-secondary btn-sm"
-            :class="{ active: showAskBox }"
-            title="Ask the AI for one particular thing, in your own words"
-            data-testid="semantic-suggest-specific"
-            @click="showAskBox = !showAskBox"
-          >
-            <i class="fa-solid fa-comment-dots"></i> Ask for something specific
           </button>
           <button class="btn btn-secondary btn-sm" :disabled="store.busy" @click="resync">
             <i class="fa-solid fa-rotate"></i> Re-sync
@@ -69,9 +67,10 @@
       </header>
 
       <SemanticSuggestBox
-        v-if="showAskBox && (!isEmpty || started)"
+        v-if="showSuggestBox && (!isEmpty || started)"
         class="ask-box"
-        :model="model"
+        :pending="suggesting || store.busy"
+        @suggest-model="suggest()"
         @review="openReview"
       />
 
@@ -95,12 +94,33 @@
         </div>
       </div>
 
-      <p v-if="suggesting" class="suggest-status" role="status" data-testid="suggest-status">
-        <i class="fa-solid fa-spinner fa-spin"></i> {{ suggestStep }}
+      <p v-if="statusText" class="suggest-status" role="status" data-testid="suggest-status">
+        <i class="fa-solid fa-spinner fa-spin"></i> {{ statusText }}
       </p>
-      <div v-else-if="suggestNotice" class="suggest-notice" data-testid="suggest-notice">
-        <p>{{ suggestNotice }}</p>
-        <p v-for="line in suggestWarnings" :key="line" class="suggest-warning">{{ line }}</p>
+      <div
+        v-else-if="activityResult"
+        class="suggest-notice"
+        :class="{ failed: !activityResult.ok }"
+        data-testid="suggest-notice"
+      >
+        <div class="notice-row">
+          <p>
+            {{ activityResult.text }}
+            <a v-if="activityResult.ok" href="#" @click.prevent="openReview">Review</a>
+          </p>
+          <button
+            type="button"
+            class="notice-close"
+            title="Dismiss"
+            data-testid="suggest-notice-dismiss"
+            @click="dismissResult"
+          >
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <template v-if="warningsRun === activity.last?.finished_at">
+          <p v-for="line in suggestWarnings" :key="line" class="suggest-warning">{{ line }}</p>
+        </template>
       </div>
 
       <LocalModelSetupCard
@@ -123,14 +143,18 @@
           <button class="btn btn-secondary" @click="start">
             <i class="fa-solid fa-table"></i> Describe your tables
           </button>
-          <button
-            class="btn btn-primary"
-            :disabled="suggesting"
-            data-testid="semantic-suggest"
-            @click="suggest()"
-          >
-            <i class="fa-solid fa-wand-magic-sparkles"></i> Suggest a model
-          </button>
+          <el-tooltip :content="SUGGEST_BUSY_TEXT" :disabled="!busy" placement="top">
+            <span>
+              <button
+                class="btn btn-primary"
+                :disabled="suggesting || busy"
+                data-testid="semantic-suggest"
+                @click="suggest()"
+              >
+                <i class="fa-solid fa-wand-magic-sparkles"></i> Suggest a model
+              </button>
+            </span>
+          </el-tooltip>
           <slot name="empty-actions" />
         </div>
       </section>
@@ -161,16 +185,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch, type Component } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch, type Component } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import LocalModelSetupCard from "../../components/ai/LocalModelSetupCard.vue";
+import { SUGGEST_BUSY_TEXT, useSemanticActivity } from "../../composables/useSemanticActivity";
 import { useSemanticAi } from "../../composables/useSemanticAi";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useSemanticModelStore } from "../../stores/semantic-model-store";
 import { saveFile } from "../../utils/tableExport";
 import {
   isAiNotSetUp,
+  isSuggestRunning,
   type SemanticDraftOut,
   type SemanticModelUpdate,
   type SuggestOut,
@@ -203,13 +229,26 @@ const model = computed(() => store.model);
 const router = useRouter();
 const { aiStore, usable, canOfferLocal, pick } = useSemanticAi();
 
+const {
+  activity,
+  busy,
+  statusLine,
+  result: activityResult,
+  attach,
+  detach,
+  track,
+  dismiss,
+} = useSemanticActivity();
+
 const activeTab = ref("tables");
 const started = ref(false);
 const suggesting = ref(false);
-const suggestStep = ref("");
-const suggestNotice = ref("");
 const suggestWarnings = ref<string[]>([]);
-const showAskBox = ref(false);
+const warningsRun = ref<string | null>(null);
+const statusText = computed(
+  () => statusLine.value || (suggesting.value ? "Suggesting a model…" : ""),
+);
+const showSuggestBox = ref(false);
 const showLocalOffer = computed(() => canOfferLocal.value && !!model.value);
 
 // A later step appends its own entry here (for example an "Ask" tab).
@@ -306,33 +345,37 @@ function warningsFor(out: SuggestOut | SemanticDraftOut): string[] {
 }
 
 async function suggest(withNewModel = false) {
-  if (suggesting.value) return;
+  if (suggesting.value || busy.value) return;
   suggesting.value = true;
-  suggestNotice.value = "";
   suggestWarnings.value = [];
+  warningsRun.value = null;
   const useAi = usable.value;
   try {
-    suggestStep.value = useAi
-      ? "Reading your tables, proposing roles, joins and metrics, then writing descriptions…"
-      : "Reading your tables and proposing roles, joins and metrics…";
-    let out: SuggestOut | SemanticDraftOut;
-    try {
-      out = useAi ? await store.draftModel(pick()) : await store.suggestModel();
-    } catch (e) {
-      if (!useAi || !isAiNotSetUp(e)) throw e;
-      suggestStep.value = "AI is not set up, so using rules only…";
-      out = await store.suggestModel();
-    }
-    const prefix = withNewModel ? "AI on this computer is ready and wrote the descriptions. " : "";
-    suggestNotice.value = prefix + summarize(out);
-    suggestWarnings.value = warningsFor(out);
+    const out = await track(async (): Promise<SuggestOut | SemanticDraftOut> => {
+      try {
+        return useAi ? await store.draftModel(pick("suggest")) : await store.suggestModel();
+      } catch (e) {
+        if (!useAi || !isAiNotSetUp(e)) throw e;
+        return store.suggestModel();
+      }
+    });
+    const ready = withNewModel ? ["AI on this computer is ready and wrote the descriptions."] : [];
+    suggestWarnings.value = [...ready, ...warningsFor(out)];
+    warningsRun.value = activity.last?.finished_at ?? null;
+    if (!activity.last?.finished_at) ElMessage.success(summarize(out));
     started.value = true;
     activeTab.value = "review";
   } catch (e) {
-    ElMessage.error(errorText(e, "Could not suggest a model"));
+    if (isSuggestRunning(e)) ElMessage.warning(SUGGEST_BUSY_TEXT);
+    else ElMessage.error(errorText(e, "Could not suggest a model"));
   } finally {
     suggesting.value = false;
   }
+}
+
+function dismissResult() {
+  dismiss();
+  suggestWarnings.value = [];
 }
 
 function onLocalInstalled() {
@@ -387,6 +430,8 @@ onMounted(() => {
   void aiStore.loadProviders();
 });
 
+onUnmounted(detach);
+
 watch(
   () => store.pendingAsk,
   (query) => {
@@ -410,13 +455,18 @@ watch(
 
 watch(
   () => props.namespaceId,
-  (id) => {
+  (id, old) => {
     started.value = store.focusTableId !== null;
     activeTab.value = "tables";
-    suggestNotice.value = "";
     suggestWarnings.value = [];
-    showAskBox.value = false;
+    warningsRun.value = null;
+    showSuggestBox.value = false;
     void store.load(id);
+    if (old === undefined) attach(id);
+    else {
+      detach();
+      attach(id);
+    }
   },
   { immediate: true },
 );
@@ -475,6 +525,11 @@ watch(
   font-weight: var(--font-weight-semibold);
 }
 
+.ai-instructions {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
 .mode-chip {
   padding: 0 var(--spacing-2);
   border-radius: 999px;
@@ -528,6 +583,28 @@ watch(
 .suggest-notice p,
 .suggest-status {
   margin: 0;
+}
+
+.notice-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-3);
+}
+
+.notice-close {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.notice-close:hover {
+  color: var(--color-text-primary);
+}
+
+.suggest-notice.failed {
+  color: var(--color-warning-dark);
 }
 
 .suggest-warning {

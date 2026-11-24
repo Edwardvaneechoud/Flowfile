@@ -1,21 +1,26 @@
 import { computed } from "vue";
-import { useAiStore } from "../stores/ai-store";
+import { SEMANTIC_ASK_SURFACE, SEMANTIC_SUGGEST_SURFACE, useTaskModels } from "./useTaskModels";
 
-export const SEMANTIC_SURFACE = "semantic";
+/** ``ask`` answers questions; ``suggest`` writes descriptions and proposes metrics, joins and roles. */
+export type SemanticTask = "ask" | "suggest";
 
-/** Whether AI can answer for the semantic model, and the provider and model the user chose for it. */
+export const SEMANTIC_SURFACES: Record<SemanticTask, string> = {
+  ask: SEMANTIC_ASK_SURFACE,
+  suggest: SEMANTIC_SUGGEST_SURFACE,
+};
+
+/** Whether AI can answer for the semantic model, and the provider and model each of its two tasks runs on. */
 export function useSemanticAi() {
-  const aiStore = useAiStore();
+  const { aiStore, plan } = useTaskModels();
 
   const usable = computed(() => !aiStore.aiDisabled && aiStore.hasConfiguredProvider);
   const canOfferLocal = computed(
     () => !aiStore.aiDisabled && !aiStore.hasConfiguredProvider && aiStore.canSetupLocal,
   );
 
-  function pick(): { provider?: string; model?: string } {
-    if (!aiStore.surfaceModels[SEMANTIC_SURFACE]) return {};
-    const { provider, model } = aiStore.resolveSurface(SEMANTIC_SURFACE);
-    return { ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
+  /** What the request carries: the task's own pick, nothing when the local model serves it, else the main pick. */
+  function pick(task: SemanticTask): { provider?: string; model?: string } {
+    return plan(SEMANTIC_SURFACES[task]).send;
   }
 
   return { aiStore, usable, canOfferLocal, pick };

@@ -62,6 +62,7 @@ class MetricOut(BaseModel):
     time_column: str | None = None
     dimensions: list[str] = Field(default_factory=list)
     format: str | None = None
+    synonyms: list[str] = Field(default_factory=list)
     status: FactStatus
     version: int | None = None
     approved_by: str | None = None
@@ -174,10 +175,22 @@ class MetricProposal(BaseModel):
     time_column: str | None = None
     dimensions: list[str] | None = None
     format: str | None = None
+    synonyms: list[str] | None = None
     edit: bool = False
 
 
-ProposalIn = Annotated[FieldProposal | TableProposal | JoinProposal | MetricProposal, Field(discriminator="kind")]
+class MetricSynonymsProposal(BaseModel):
+    """Other words for an existing metric, proposed on their own (the definition is not proposed again)."""
+
+    kind: Literal["metric_synonyms"]
+    name: str
+    synonyms: list[str]
+
+
+ProposalIn = Annotated[
+    FieldProposal | TableProposal | JoinProposal | MetricProposal | MetricSynonymsProposal,
+    Field(discriminator="kind"),
+]
 
 
 class ProposalsIn(BaseModel):
@@ -358,7 +371,7 @@ class SuggestOut(BaseModel):
     stats_message: str | None = None
 
 
-SuggestKind = Literal["join", "metric", "description", "role"]
+SuggestKind = Literal["join", "metric", "description", "role", "synonyms"]
 
 
 class SuggestIn(BaseModel):
@@ -447,7 +460,9 @@ class SemanticAnswerFacts(BaseModel):
 class SemanticAskOut(BaseModel):
     """``POST /ai/semantic/ask``. ``query`` is what ran (or what the model proposed when it could not run); ``result``
     the rows, which never go back to the model. ``no_metric_fits`` when no accepted metric answers the question
-    (``notes`` then holds the model's reason). ``notes`` also lists every name repaired or dropped at the seam."""
+    (``notes`` then holds the model's reason). ``notes`` also lists what the question asked for that could not be
+    applied (unless ``answer`` already says it) and readings worth checking; what the code removed from the model's
+    padding is counted in the audit log, not listed."""
 
     question: str
     provider: str
@@ -539,6 +554,37 @@ class AiNotSetUpOut(BaseModel):
     error_code: Literal["AI_NOT_SET_UP"] = "AI_NOT_SET_UP"
     message: str
     local_available: bool
+
+
+class SuggestRunningOut(BaseModel):
+    """The 409 body of the three Suggest routes while another suggestion runs for the same namespace."""
+
+    error_code: Literal["SUGGEST_RUNNING"] = "SUGGEST_RUNNING"
+    message: str
+
+
+class SemanticActivity(BaseModel):
+    """One Suggest run (``catalog/semantic/activity.py``): running when ``finished_at`` is absent. ``kind`` is
+    ``suggest`` (rules), ``draft`` (AI descriptions) or ``request`` (specific suggestions); no request text is kept."""
+
+    kind: Literal["suggest", "draft", "request"]
+    label: str
+    started_at: datetime
+    user_id: int | None = None
+    mine: bool = False
+    step: str | None = None
+    finished_at: datetime | None = None
+    ok: bool | None = None
+    summary: str | None = None
+    error: str | None = None
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+class SemanticActivityOut(BaseModel):
+    """``GET …/semantic-model/activity``: the run going on now and the last finished one (kept 30 minutes)."""
+
+    running: SemanticActivity | None = None
+    last: SemanticActivity | None = None
 
 
 class JoinCheckOut(BaseModel):

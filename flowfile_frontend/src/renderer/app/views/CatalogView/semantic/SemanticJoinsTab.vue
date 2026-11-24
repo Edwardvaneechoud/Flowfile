@@ -1,10 +1,8 @@
 <template>
   <div class="joins-tab">
     <SemanticSuggestMore
-      :model="model"
       :kinds="['join']"
       label="Suggest joins"
-      ask-label="Ask for a specific join…"
       @review="emit('open-tab', 'review')"
     >
       <template #hint>

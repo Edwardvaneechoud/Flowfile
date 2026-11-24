@@ -30,17 +30,33 @@
     <div v-for="field in table.fields" :key="field.name" class="grid-row" role="row">
       <span class="col-name" :title="field.name">{{ field.name }}</span>
       <span class="col-type">{{ field.dtype ?? "" }}</span>
-      <div class="cell">
-        <SemanticInlineText
-          :value="factText(field.facts.description)"
-          :disabled="!editable"
-          @commit="saveField(field.name, 'description', $event)"
-        />
-        <SemanticStatusChip
-          v-if="needsReview(field.facts.description)"
-          :status="field.facts.description!.status"
-          :fact="field.facts.description"
-        />
+      <div class="cell cell-stack">
+        <div class="cell">
+          <SemanticInlineText
+            :value="factText(field.facts.description)"
+            :disabled="!editable"
+            @commit="saveField(field.name, 'description', $event)"
+          />
+          <SemanticStatusChip
+            v-if="needsReview(field.facts.description)"
+            :status="field.facts.description!.status"
+            :fact="field.facts.description"
+          />
+        </div>
+        <div class="cell also">
+          <SemanticInlineText
+            :value="wordsOf(field.facts.synonyms?.value)"
+            placeholder="Also called…"
+            :disabled="!editable"
+            data-testid="column-synonyms"
+            @commit="saveField(field.name, 'synonyms', splitWords($event))"
+          />
+          <SemanticStatusChip
+            v-if="needsReview(field.facts.synonyms)"
+            :status="field.facts.synonyms!.status"
+            :fact="field.facts.synonyms"
+          />
+        </div>
       </div>
       <div class="cell">
         <el-select
@@ -118,9 +134,22 @@ const props = withDefaults(defineProps<{ table: SemanticTable; editable?: boolea
 });
 const emit = defineEmits<(e: "propose", proposal: SemanticProposal) => void>();
 
+const wordsOf = (value: unknown): string =>
+  Array.isArray(value) ? value.filter((w) => typeof w === "string").join(", ") : "";
+
+const splitWords = (text: string): string[] =>
+  text
+    .split(",")
+    .map((w) => w.trim())
+    .filter((w, i, all) => w !== "" && all.indexOf(w) === i);
+
 // A cleared value goes as null, which removes the fact; clearing nothing sends nothing.
 const saveField = (column: string, attribute: string, value: unknown) => {
-  const blank = value === undefined || value === null || value === "";
+  const blank =
+    value === undefined ||
+    value === null ||
+    value === "" ||
+    (Array.isArray(value) && !value.length);
   const held = props.table.fields.find((f) => f.name === column)?.facts[attribute];
   if (blank && !held) return;
   emit("propose", {
@@ -138,6 +167,17 @@ const saveField = (column: string, attribute: string, value: unknown) => {
   display: flex;
   flex-direction: column;
   overflow-x: auto;
+}
+
+.cell.cell-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.also {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
 }
 
 .grid-row {

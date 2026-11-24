@@ -1,10 +1,8 @@
 <template>
   <div class="metrics-tab">
     <SemanticSuggestMore
-      :model="model"
       :kinds="['metric']"
       label="Suggest metrics"
-      ask-label="Ask for a specific metric…"
       @review="emit('open-tab', 'review')"
     >
       <template #hint>

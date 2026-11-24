@@ -8,7 +8,7 @@ axios interceptor reads as an expired session.
 from functools import wraps
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user
@@ -20,6 +20,7 @@ from flowfile_core.catalog.exceptions import (
     SemanticNotFoundError,
     SemanticValueError,
 )
+from flowfile_core.catalog.semantic import activity
 from flowfile_core.catalog.semantic.service import SemanticModelService
 from flowfile_core.database.connection import get_db
 from flowfile_core.schemas.semantic_schema import (
@@ -34,12 +35,14 @@ from flowfile_core.schemas.semantic_schema import (
     ReviewAction,
     ReviewItemOut,
     ReviewResultOut,
+    SemanticActivityOut,
     SemanticEventOut,
     SemanticModelOut,
     SemanticModelUpdate,
     SemanticSyncOut,
     SuggestIn,
     SuggestOut,
+    SuggestRunningOut,
 )
 
 router = APIRouter(prefix="/catalog", tags=["catalog"], dependencies=[Depends(get_current_active_user)])
@@ -158,7 +161,12 @@ def sync_semantic_model(namespace_id: int, service: SemanticModelService = Depen
     return service.sync(namespace_id)
 
 
-@router.post(f"{_BASE}/suggest", response_model=SuggestOut)
+def suggest_running(exc: activity.ActivityRunning) -> JSONResponse:
+    """The top-level 409 body every Suggest route answers while another run holds the namespace."""
+    return JSONResponse(status_code=409, content=SuggestRunningOut(message=str(exc)).model_dump())
+
+
+@router.post(f"{_BASE}/suggest", response_model=SuggestOut, responses={409: {"model": SuggestRunningOut}})
 @_handle
 def suggest_semantic_model(
     namespace_id: int,
@@ -168,9 +176,37 @@ def suggest_semantic_model(
     """Rule-based proposals from one aggregate query per table (no AI): roles, joins and metrics, queued for review.
 
     A second call adds nothing. Without a reachable worker the rules use names and types, ``stats_available`` false.
-    An optional body ``{"kinds": [...]}`` stores only those kinds; no body stores every kind, as before.
+    An optional body ``{"kinds": [...]}`` stores only those kinds; no body stores every kind, as before. The run is
+    recorded in ``activity`` (409 ``SUGGEST_RUNNING`` while another runs for this namespace).
     """
-    return service.suggest(namespace_id, kinds=body.kinds if body is not None else None)
+    kinds = body.kinds if body is not None else None
+    ns, _path = service._namespace(namespace_id)
+    service._require_writable(ns)
+    label = activity.label_for("suggest", list(kinds) if kinds else None)
+    try:
+        with activity.tracking(namespace_id, "suggest", label, service.user_id) as run:
+            out = service.suggest(namespace_id, kinds=kinds)
+            counts = activity.counts_of(out.added)
+            run.done(activity.summary_of(counts), counts)
+            return out
+    except activity.ActivityRunning as exc:
+        return suggest_running(exc)
+
+
+@router.get(f"{_BASE}/activity", response_model=SemanticActivityOut)
+@_handle
+def get_semantic_activity(namespace_id: int, service: SemanticModelService = Depends(get_semantic_service)):
+    """The Suggest run going on for this namespace now, and the last finished one; reading rights are enough.
+
+    In-process state: a core restart forgets it. Holds no request text, only the label, step, summary and counts.
+    """
+    service._namespace(namespace_id)
+    running, last = activity.read(namespace_id)
+    viewer = service.user_id
+    return SemanticActivityOut(
+        running=running.as_dict(viewer) if running else None,
+        last=last.as_dict(viewer) if last else None,
+    )
 
 
 @router.post(f"{_BASE}/query", response_model=MetricQueryResult)

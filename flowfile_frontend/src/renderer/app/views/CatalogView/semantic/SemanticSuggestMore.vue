@@ -3,61 +3,59 @@
     <div class="toolbar">
       <div class="toolbar-hint"><slot name="hint" /></div>
       <div class="toolbar-actions">
-        <a
-          href="#"
-          class="ask-link"
-          :data-testid="`suggest-more-ask-${testId}`"
-          @click.prevent="boxOpen = !boxOpen"
-          >{{ boxOpen ? "Hide" : askLabel }}</a
+        <el-tooltip
+          :content="busy ? SUGGEST_BUSY_TEXT : buttonHint"
+          placement="top"
+          :show-after="300"
         >
-        <el-tooltip :content="buttonHint" placement="top" :show-after="300">
-          <button
-            class="btn btn-secondary btn-sm"
-            type="button"
-            :disabled="running"
-            :data-testid="`suggest-more-${testId}`"
-            @click="suggestMore(kinds)"
-          >
-            <i
-              :class="running ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-wand-magic-sparkles'"
-            ></i>
-            {{ label }}
-          </button>
+          <span>
+            <button
+              class="btn btn-secondary btn-sm"
+              type="button"
+              :disabled="running || busy"
+              :data-testid="`suggest-more-${testId}`"
+              @click="suggestMore(kinds)"
+            >
+              <i class="fa-solid fa-wand-magic-sparkles"></i>
+              {{ label }}
+            </button>
+          </span>
         </el-tooltip>
         <slot />
       </div>
     </div>
-    <p v-if="running" class="note" role="status">{{ step }}</p>
-    <p v-else-if="error" class="note warn" role="alert">{{ error }}</p>
-    <SemanticSuggestOutcome v-else-if="outcome" :outcome="outcome" @review="emit('review')" />
-    <SemanticSuggestBox v-if="boxOpen" :model="model" :kinds="kinds" @review="emit('review')" />
+    <p v-if="error && !running" class="note warn" role="alert">{{ error }}</p>
+    <SemanticSuggestOutcome
+      v-else-if="outcome && !running"
+      :outcome="outcome"
+      @review="emit('review')"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
+import { SUGGEST_BUSY_TEXT } from "../../../composables/useSemanticActivity";
 import { useSemanticSuggest } from "../../../composables/useSemanticSuggest";
-import type { SemanticModel, SemanticSuggestKind } from "../../../types/semantic.types";
-import SemanticSuggestBox from "./SemanticSuggestBox.vue";
+import { SEMANTIC_SUGGEST_SURFACE, useTaskModels } from "../../../composables/useTaskModels";
+import type { SemanticSuggestKind } from "../../../types/semantic.types";
 import SemanticSuggestOutcome from "./SemanticSuggestOutcome.vue";
 
 const props = defineProps<{
-  model: SemanticModel;
   kinds: SemanticSuggestKind[];
   label: string;
-  askLabel: string;
 }>();
 const emit = defineEmits<{ review: [] }>();
 
-const { usable, running, step, outcome, error, suggestMore } = useSemanticSuggest();
-const boxOpen = ref(false);
+const { usable, running, busy, outcome, error, suggestMore } = useSemanticSuggest();
+const { describe } = useTaskModels();
 const testId = computed(() => props.kinds.join("-"));
 
-const buttonHint = computed(() =>
-  usable.value
-    ? "The rules look first, then the AI looks for what rules miss."
-    : "The rules look for these from names, types and the data.",
-);
+const buttonHint = computed(() => {
+  if (!usable.value) return "The rules look for these from names, types and the data.";
+  const model = describe(SEMANTIC_SUGGEST_SURFACE);
+  return `The rules look first, then the AI looks for what rules miss.${model ? ` ${model}.` : ""}`;
+});
 </script>
 
 <style scoped>
@@ -83,10 +81,6 @@ const buttonHint = computed(() =>
   align-items: center;
   gap: var(--spacing-2);
   flex-shrink: 0;
-}
-
-.ask-link {
-  font-size: var(--font-size-xs);
 }
 
 .note {

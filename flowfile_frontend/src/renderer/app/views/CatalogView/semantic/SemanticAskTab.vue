@@ -11,6 +11,7 @@
             placeholder="Ask a question about your data"
             :disabled="asking"
             data-testid="ask-question-input"
+            @keydown.enter="onQuestionEnter"
           />
           <button
             class="btn btn-primary"
@@ -24,6 +25,7 @@
             Ask
           </button>
         </form>
+        <TaskModelPicker :surface="SEMANTIC_ASK_SURFACE" label="questions" />
         <p
           v-if="!asking && answerText"
           class="answer-line"
@@ -84,7 +86,7 @@
     </p>
 
     <template v-else>
-      <section class="controls">
+      <section class="controls" @keydown.enter.capture="onControlsEnter">
         <div class="row">
           <label class="field grow">
             <span class="label">Metric</span>
@@ -192,7 +194,7 @@
       <section v-if="result" class="result" data-testid="ask-result">
         <p v-if="answer?.partial" class="pending-note" data-testid="ask-partial">
           <i class="fa-solid fa-triangle-exclamation"></i> This answers only part of the question.
-          See what was left out below.
+          <template v-if="otherNotes.length > 0">See what was left out below.</template>
         </p>
         <div class="provenance" :class="{ warn: resultPending }" data-testid="ask-provenance">
           <i
@@ -291,7 +293,9 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import LocalModelSetupCard from "../../../components/ai/LocalModelSetupCard.vue";
+import TaskModelPicker from "../../../components/ai/TaskModelPicker.vue";
 import { useSemanticAi } from "../../../composables/useSemanticAi";
+import { SEMANTIC_ASK_SURFACE } from "../../../composables/useTaskModels";
 import { SemanticModelApi } from "../../../api/semanticModel.api";
 import { useCatalogStore } from "../../../stores/catalog-store";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
@@ -532,8 +536,25 @@ async function run(query?: MetricQuery) {
 
 /** A run from the controls is the user's own query, so the last AI answer's notes no longer apply. */
 function runManual() {
+  if (!metric.value || running.value) return;
   answer.value = null;
   void run();
+}
+
+const withCommand = (e: KeyboardEvent | Event) =>
+  (e as KeyboardEvent).metaKey || (e as KeyboardEvent).ctrlKey;
+
+function onQuestionEnter(e: KeyboardEvent | Event) {
+  if (!withCommand(e)) return;
+  e.preventDefault();
+  if (!asking.value) void submitQuestion();
+}
+
+function onControlsEnter(e: KeyboardEvent) {
+  if (!withCommand(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  runManual();
 }
 
 /** Sets every control from a query, then runs it, or shows `ready` when the answer came with one. */
@@ -556,11 +577,11 @@ function showResult(query: MetricQuery, res: MetricQueryResult) {
 async function submitQuestion() {
   const text = question.value.trim();
   const id = store.namespaceId;
-  if (!text || id === null) return;
+  if (!text || id === null || asking.value) return;
   asking.value = true;
   answer.value = null;
   try {
-    const out = await store.askQuestion(text, pick());
+    const out = await store.askQuestion(text, pick("ask"));
     answer.value = out;
     if (out.query) await applyQuery(out.query, out.result);
   } catch (e) {

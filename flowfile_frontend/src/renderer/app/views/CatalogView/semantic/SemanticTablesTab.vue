@@ -2,10 +2,8 @@
   <div class="tables-tab">
     <SemanticSuggestMore
       v-if="model.tables.length > 0"
-      :model="model"
       :kinds="['description', 'role']"
       label="Suggest descriptions and roles"
-      ask-label="Ask for specific descriptions…"
       @review="emit('open-tab', 'review')"
     >
       <template #hint>

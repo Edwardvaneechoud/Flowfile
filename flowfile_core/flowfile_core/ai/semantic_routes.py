@@ -147,28 +147,62 @@ def _audit(user_id: int, tool: str, provider: Any, status: str, args: dict[str, 
         logger.warning("semantic AI audit record failed", exc_info=True)
 
 
-@router.post("/draft", response_model=SemanticDraftOut, tags=["ai"], responses={409: {"model": AiNotSetUpOut}})
+_CONFLICTS = {409: {"model": AiNotSetUpOut, "description": "AI_NOT_SET_UP, or SUGGEST_RUNNING (SuggestRunningOut)"}}
+
+
+@router.post("/draft", response_model=SemanticDraftOut, tags=["ai"], responses=_CONFLICTS)
 async def draft_semantic_model(body: SemanticDraftIn, current_user=Depends(get_current_active_user)):
     """Rule candidates plus AI words (descriptions, metric names), stored as proposals that queue for review.
 
-    404 unknown provider or namespace · 403 not writable · 409 ``AI_NOT_SET_UP`` · 503 AI off; the rest is a 200.
+    404 unknown provider or namespace · 403 not writable · 409 ``AI_NOT_SET_UP`` or ``SUGGEST_RUNNING`` · 503 AI off;
+    the rest is a 200. The run is recorded in ``catalog/semantic/activity.py`` with its table-by-table step.
     """
+    from flowfile_core.catalog.semantic import activity
+
+    try:
+        provider = await _in_thread(_writable_provider, current_user, body.namespace_id, body.provider, body.model)
+    except _NotSetUp as exc:
+        return _not_set_up(exc)
+    try:
+        with activity.tracking(body.namespace_id, "draft", "Suggesting a model…", current_user.id) as run:
+            return await _draft(body, current_user, provider, run)
+    except activity.ActivityRunning as exc:
+        return _suggest_running(exc)
+
+
+def _writable_provider(user: Any, namespace_id: int, name: str | None, model: str | None) -> Any:
+    """The provider for this request, after checking the namespace exists and the caller may change it."""
+    from flowfile_core.database.connection import get_db_context
+
+    with get_db_context() as db:
+        provider = resolve_semantic_provider(db, user.id, name, model)
+        service = _service(db, user)
+        ns, _path = service._namespace(namespace_id)
+        service._require_writable(ns)
+        return provider
+
+
+def _suggest_running(exc: Exception) -> JSONResponse:
+    from flowfile_core.routes.catalog_semantic import suggest_running
+
+    return suggest_running(exc)
+
+
+async def _draft(body: SemanticDraftIn, current_user: Any, provider: Any, run: Any) -> SemanticDraftOut:
     from flowfile_core.ai.semantic_draft import draft_words, words_for_store
+    from flowfile_core.catalog.semantic import activity
     from flowfile_core.catalog.semantic.confidentiality import read_withheld
     from flowfile_core.database.connection import get_db_context
 
     def prepare():
         with get_db_context() as db:
-            provider = resolve_semantic_provider(db, current_user.id, body.provider, body.model)
             service = _service(db, current_user)
             sugg, model_tables, problem = service.suggest_candidates(body.namespace_id, body.table_ids)
             withheld = read_withheld(db, body.table_ids or list(model_tables))
-            return provider, sugg, model_tables, problem, withheld
+            return sugg, model_tables, problem, withheld
 
-    try:
-        provider, sugg, model_tables, problem, withheld = await _in_thread(prepare)
-    except _NotSetUp as exc:
-        return _not_set_up(exc)
+    run.step("Reading your tables")
+    sugg, model_tables, problem, withheld = await _in_thread(prepare)
     table_ids = body.table_ids or sorted(model_tables)
     source, model = _source(provider)
     outcomes = await draft_words(
@@ -178,6 +212,7 @@ async def draft_semantic_model(body: SemanticDraftIn, current_user=Depends(get_c
         user_id=current_user.id,
         share_values=send_data_allowed() and sugg.stats_available,
         withheld=withheld,
+        progress=lambda done, total: run.step(f"{done} of {total} tables"),
     )
     words = words_for_store(outcomes)
 
@@ -185,6 +220,7 @@ async def draft_semantic_model(body: SemanticDraftIn, current_user=Depends(get_c
         with get_db_context() as db:
             return _service(db, current_user).store_suggestions(body.namespace_id, sugg, words=words, ai_source=source)
 
+    run.step("Storing the proposals")
     stored = await _in_thread(store)
     tables = [
         SemanticDraftTable(
@@ -233,6 +269,11 @@ async def draft_semantic_model(body: SemanticDraftIn, current_user=Depends(get_c
         },
         reason,
     )
+    counts = activity.counts_of(stored.added)
+    summary = activity.summary_of(counts)
+    if failed:
+        summary += f" The model could not describe {', '.join(t.table for t in failed)}."
+    run.done(summary, counts)
     return out
 
 
@@ -367,11 +408,11 @@ def _withheld_count(snap: Any, withheld: Any) -> int:
     return sum(len(withheld.names(t.table_id, [c.name for c in t.columns])) for t in snap.tables)
 
 
-def _menu(service: Any, namespace_id: int, question: str, db: Any = None) -> tuple[list[Any], int]:
+def _menu(service: Any, namespace_id: int, question: str, db: Any = None) -> tuple[list[Any], int, str | None]:
     """The accepted metrics as menu items, narrowed to ``MAX_MENU`` by glosslayer's keyword search.
 
-    Also answers how many of the model's columns are kept from AI: such a column stays on the menu by name only (no
-    label or synonyms for grounding, no known values read).
+    Also answers how many of the model's columns are kept from AI (such a column stays on the menu by name only: no
+    label or synonyms, no known values read) and the model's accepted ``ai_instructions``, if any.
     """
     from flowfile_core.ai.semantic_ask import MAX_MENU, MenuItem
 
@@ -420,7 +461,9 @@ def _menu(service: Any, namespace_id: int, question: str, db: Any = None) -> tup
                 expression=m.expression if isinstance(m.expression, str) else None,
             )
         )
-    return items, _withheld_count(snap, withheld)
+    told = snap.model_facts.get("ai_instructions")
+    instructions = told.value if told is not None and isinstance(told.value, str) and told.value.strip() else None
+    return items, _withheld_count(snap, withheld), instructions
 
 
 def _kept(snap: Any, table_key: str, field: str, withheld: Any) -> bool:
@@ -441,11 +484,11 @@ async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_curre
     def prepare():
         with get_db_context() as db:
             provider = resolve_semantic_provider(db, current_user.id, body.provider, body.model)
-            menu, withheld = _menu(_service(db, current_user), body.namespace_id, body.question, db)
-            return provider, menu, withheld
+            menu, withheld, instructions = _menu(_service(db, current_user), body.namespace_id, body.question, db)
+            return provider, menu, withheld, instructions
 
     try:
-        provider, menu, withheld_count = await _in_thread(prepare)
+        provider, menu, withheld_count, instructions = await _in_thread(prepare)
     except _NotSetUp as exc:
         return _not_set_up(exc)
     _source_str, model = _source(provider)
@@ -467,7 +510,9 @@ async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_curre
     async def run(query):
         return await asyncio.to_thread(run_query, query)
 
-    answer, attempts, result = await ask(provider, menu, body.question, user_id=current_user.id, run=run)
+    answer, attempts, result = await ask(
+        provider, menu, body.question, user_id=current_user.id, run=run, instructions=instructions
+    )
     out.attempts = attempts
     out.notes += answer.notes
     out.partial = answer.partial
@@ -502,30 +547,28 @@ async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_curre
             "attempts": attempts,
             "intent": out.intent,
             "answered_in_words": out.answer is not None,
+            "dimensions_dropped": answer.dropped.get("dimensions_dropped", 0),
+            "filters_dropped": answer.dropped.get("filters_dropped", 0),
+            "grain_dropped": answer.dropped.get("grain_dropped", 0),
+            "instructions_sent": instructions is not None,
         },
         out.reason,
     )
     return out
 
 
-@router.post(
-    "/suggest", response_model=SemanticSuggestRequestOut, tags=["ai"], responses={409: {"model": AiNotSetUpOut}}
-)
+@router.post("/suggest", response_model=SemanticSuggestRequestOut, tags=["ai"], responses=_CONFLICTS)
 async def suggest_on_request(body: SemanticSuggestRequestIn, current_user=Depends(get_current_active_user)):
     """Specific suggestions for one request (or more of ``kinds``), checked by code and stored as proposals.
 
     The model sees names, types, roles and descriptions only (a column kept from AI by name and type, no rows, no
     statistics); every suggestion is matched, compiled, dry-run or measured before it is stored through the AI-bound
-    view, so it waits for review. 404 unknown provider or namespace · 403 not writable · 409 ``AI_NOT_SET_UP`` ·
-    422 neither a request nor kinds · 503 AI off; after provider resolution every outcome is a 200.
+    view, so it waits for review. 404 unknown provider or namespace · 403 not writable · 409 ``AI_NOT_SET_UP`` or
+    ``SUGGEST_RUNNING`` · 422 neither a request nor kinds · 503 AI off; after provider resolution every outcome is a
+    200. The run is recorded in ``catalog/semantic/activity.py`` without the request's text.
     """
-    from flowfile_core.ai.semantic_suggest import (
-        build_context,
-        infer_kinds,
-        kinds_phrase,
-        store_round,
-        suggest_for_request,
-    )
+    from flowfile_core.ai.semantic_suggest import build_context
+    from flowfile_core.catalog.semantic import activity
     from flowfile_core.catalog.semantic.confidentiality import read_withheld
     from flowfile_core.database.connection import get_db_context
 
@@ -543,11 +586,35 @@ async def suggest_on_request(body: SemanticSuggestRequestIn, current_user=Depend
         provider, ctx = await _in_thread(prepare)
     except _NotSetUp as exc:
         return _not_set_up(exc)
+    label = activity.label_for("request")
+    try:
+        with activity.tracking(body.namespace_id, "request", label, current_user.id) as run:
+            return await _suggest_on_request(body, current_user, provider, ctx, run)
+    except activity.ActivityRunning as exc:
+        return _suggest_running(exc)
+
+
+_KIND_COUNTS = {
+    "metric": "metrics",
+    "join": "joins",
+    "description": "descriptions",
+    "role": "roles",
+    "synonyms": "synonyms",
+}
+
+
+async def _suggest_on_request(
+    body: SemanticSuggestRequestIn, current_user: Any, provider: Any, ctx: Any, run: Any
+) -> SemanticSuggestRequestOut:
+    from flowfile_core.ai.semantic_suggest import store_round, suggest_for_request
+    from flowfile_core.catalog.semantic import activity
+    from flowfile_core.catalog.semantic.confidentiality import read_withheld
+    from flowfile_core.database.connection import get_db_context
+
     _default_source, model = _source(provider)
     label = _model_label(provider, model)
     source = f"ai:{provider.name}/{label}" if label else f"ai:{provider.name}"
-    kinds = list(body.kinds) if body.kinds else infer_kinds(body.request)
-    read_as = None if body.kinds or not kinds else f"Read as a request for {kinds_phrase(kinds)} only."
+    kinds = list(body.kinds) if body.kinds else None
 
     def store(items, done):
         with get_db_context() as db:
@@ -557,14 +624,15 @@ async def suggest_on_request(body: SemanticSuggestRequestIn, current_user=Depend
                 items,
                 done,
                 kinds,
-                request=body.request,
                 ai_source=source,
                 withheld_for=lambda ids: read_withheld(db, ids),
             )
 
     async def apply(items, done):
+        run.step("Storing the suggestions")
         return await _in_thread(store, items, done)
 
+    run.step("Waiting for the AI")
     outcome = await suggest_for_request(provider, ctx, body.request, kinds, user_id=current_user.id, apply=apply)
     out = SemanticSuggestRequestOut(
         request=body.request,
@@ -578,7 +646,7 @@ async def suggest_on_request(body: SemanticSuggestRequestIn, current_user=Depend
             for s in outcome.stored
         ],
         skipped=[SemanticSuggestionSkipped(what=r.what, why=r.why) for r in _last_per_what(outcome.skipped)],
-        notes=list(dict.fromkeys(([read_as] if read_as else []) + outcome.notes)),
+        notes=list(dict.fromkeys(outcome.notes)),
         nothing_to_suggest=outcome.nothing,
         why=outcome.why,
         attempts=outcome.attempts,
@@ -608,6 +676,17 @@ async def suggest_on_request(body: SemanticSuggestRequestIn, current_user=Depend
         },
         reason,
     )
+    counts: dict[str, int] = {}
+    for p in out.proposed:
+        key = _KIND_COUNTS.get(p.kind, p.kind)
+        counts[key] = counts.get(key, 0) + 1
+    if counts:
+        summary = activity.summary_of(counts)
+    elif out.nothing_to_suggest:
+        summary = "The AI found nothing to suggest."
+    else:
+        summary = "Nothing was proposed: no suggestion passed the checks." if out.skipped else "Nothing new to propose."
+    run.done(summary, counts)
     return out
 
 
@@ -641,13 +720,21 @@ def _answer_sentence(out: SemanticAskOut, answer: Any, menu: list[Any]) -> None:
     )
     try:
         rendered = render(
-            out.question, out.query, out.result, words, answer.intent, partial=out.partial, notes=out.notes
+            out.question,
+            out.query,
+            out.result,
+            words,
+            answer.intent,
+            partial=out.partial,
+            gaps=answer.gaps,
         )
     except Exception:  # noqa: BLE001
         logger.warning("semantic answer sentence failed", exc_info=True)
         return
     out.intent = answer.intent.kind
     out.answer, out.facts = rendered.answer, rendered.facts
+    if rendered.answer:
+        out.notes = [n for n in out.notes if n not in rendered.notes]
 
 
 __all__ = ["router", "resolve_semantic_provider"]

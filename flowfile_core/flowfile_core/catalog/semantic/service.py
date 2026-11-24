@@ -182,7 +182,7 @@ def _blank(value: Any) -> bool:
 
 
 # A metric's parts an edit may leave out; the definition itself (``expression``) is always proposed.
-_METRIC_OPTIONAL = ("description", "aggregate", "filter", "time_column", "dimensions", "format")
+_METRIC_OPTIONAL = ("description", "aggregate", "filter", "time_column", "dimensions", "format", "synonyms")
 
 
 def _withdrawals(view: Any, assertions: list[Any]) -> list[tuple[str, Any]]:
@@ -380,6 +380,7 @@ class SemanticModelService:
                     time_column=m.value("time_column"),
                     dimensions=m.value("dimensions") or [],
                     format=m.value("format"),
+                    synonyms=[x for x in (m.value("synonyms") or []) if isinstance(x, str)],
                     status=m.status,
                     version=m.version,
                     approved_by=m.approved_by,
@@ -484,7 +485,7 @@ class SemanticModelService:
                 raise SemanticValueError(f"Table id={table_id} is not part of this semantic model")
             return t
 
-        has_metric = any(p.kind == "metric" for p in proposals)
+        has_metric = any(p.kind in ("metric", "metric_synonyms") for p in proposals)
         existing = self._metric_names(path) if has_metric else {}
         # Live joins, so a metric over a join still waiting for review can be proposed beside it.
         metric_snapshot = self._query_snapshot(namespace_id, preview=True)[1] if has_metric else None
@@ -508,6 +509,17 @@ class SemanticModelService:
                             cleared.append((str(sid), p.attribute))
                         continue
                     props.append(Proposal(str(sid), p.attribute, p.value))
+                elif p.kind == "metric_synonyms":
+                    owner = existing.get(p.name)
+                    if owner is None:
+                        raise SemanticNotFoundError(f"No metric called {p.name!r} in this model")
+                    words = [w.strip() for w in p.synonyms if isinstance(w, str) and w.strip()]
+                    sid = SubjectId.for_metric(p.name, owner)
+                    if not words:
+                        if not ai_source:
+                            cleared.append((str(sid), "synonyms"))
+                        continue
+                    props.append(Proposal(str(sid), "synonyms", list(dict.fromkeys(words))))
                 elif p.kind == "join":
                     join_props = self._join_proposals(
                         p, ns, path, catalog_path, model_tables, all_tables, schema_of, Relationship
@@ -535,6 +547,7 @@ class SemanticModelService:
                         time_column=_clean(p.time_column),
                         dimensions=list(p.dimensions or []),
                         format=_clean(p.format),
+                        synonyms=[w.strip() for w in p.synonyms or [] if isinstance(w, str) and w.strip()],
                         table=t.key,
                     )
                     metric_props = list(metric.proposals())

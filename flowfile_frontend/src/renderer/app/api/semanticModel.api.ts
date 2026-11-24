@@ -6,6 +6,7 @@ import type {
   MetricQuery,
   SemanticAskOut,
   SemanticAskRequest,
+  SemanticActivityOut,
   SemanticDraftOut,
   SemanticDraftRequest,
   SemanticSuggestRequestIn,
@@ -83,6 +84,11 @@ export class SemanticModelApi {
 
   static async sync(namespaceId: number): Promise<SemanticSyncResult> {
     const response = await axios.post<SemanticSyncResult>(`${base(namespaceId)}/sync`);
+    return response.data;
+  }
+
+  static async activity(namespaceId: number): Promise<SemanticActivityOut> {
+    const response = await axios.get<SemanticActivityOut>(`${base(namespaceId)}/activity`);
     return response.data;
   }
 

@@ -29,6 +29,13 @@
       <el-form-item label="What it means">
         <el-input v-model="description" placeholder="Revenue from completed orders, before tax" />
       </el-form-item>
+      <el-form-item label="Also called (optional)">
+        <el-input
+          v-model="synonyms"
+          placeholder="Other words for it, separated by commas"
+          data-testid="metric-synonyms"
+        />
+      </el-form-item>
       <el-form-item label="Expression" :error="expressionError">
         <div class="editor">
           <codemirror
@@ -134,6 +141,7 @@ const expression = ref("");
 const filter = ref("");
 const timeColumn = ref("");
 const format = ref("");
+const synonyms = ref("");
 const dimensions = ref<string[]>([]);
 const saving = ref(false);
 const removing = ref(false);
@@ -258,6 +266,12 @@ function onTableChange() {
   timeColumn.value = "";
 }
 
+const splitWords = (text: string): string[] =>
+  text
+    .split(",")
+    .map((w) => w.trim())
+    .filter((w, i, all) => w !== "" && all.indexOf(w) === i);
+
 function reset() {
   const m = props.metric;
   tableId.value = m?.table_id ?? props.defaultTableId ?? props.model.tables[0]?.table_id ?? null;
@@ -267,6 +281,7 @@ function reset() {
   filter.value = m?.filter ?? "";
   timeColumn.value = m?.time_column ?? "";
   format.value = m?.format ?? "";
+  synonyms.value = (m?.synonyms ?? []).join(", ");
   dimensions.value = [...(m?.dimensions ?? [])];
   error.value = "";
   expressionError.value = "";
@@ -314,6 +329,7 @@ async function save() {
         time_column: timeColumn.value || null,
         dimensions: dimensions.value.length ? dimensions.value : null,
         format: format.value.trim() || null,
+        synonyms: splitWords(synonyms.value),
         edit: !!props.metric,
       },
     ]);

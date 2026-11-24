@@ -2,22 +2,22 @@
 
 Everything here is pure except ``collect_stats``, which runs one aggregate SQL statement per table through the
 catalog SQL path, so the worker computes and only counts and numeric or temporal bounds come back. When the worker
-cannot be reached the rules run on column names and types alone, at a lower confidence, and say so.
+cannot be reached the rules propose only what a column's type alone tells, and say so.
 
-The rules are deliberately plain, so a reviewer can read each candidate's evidence and agree or not:
+The rules read types and statistics, never what a name seems to mean, so a reviewer can read each candidate's
+evidence and agree or not:
 
-* **key**: named like an id, or unique and non-null (integer or string, not named like an amount);
+* **join**: a column of table A with the same name and type class as a column that is unique in table B, and that
+  repeats in A, gives A (many) to B (one); its column in A is then a key;
+* **key**: an integer or text column that is unique and non-null;
 * **time**: a date or datetime column;
-* **amount**: numeric and not a key;
-* **category**: string or boolean, or few distinct values;
-* **join**: a column of table A that matches by name and type class a key that is unique in table B and repeats in
-  A gives A (many) to B (one);
+* **amount**: a numeric column that is not unique and not a key;
+* **category**: a boolean column, or a text column with few distinct values;
 * **metrics** per table: a row count, a sum and an average per amount column, a distinct count per foreign key.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -27,11 +27,6 @@ from flowfile_core.catalog.semantic.snapshot import TableInfo
 
 RULE_SOURCE = "inferred:flowfile-rules"
 CATEGORY_MAX_DISTINCT = 20
-_ID_NAME = re.compile(r"(^id$|_id$|^id_|_key$|^key$|_uuid$|^uuid$)", re.IGNORECASE)
-_CODE_NAME = re.compile(r"(code|sku|email|number|ref|slug|handle|username)", re.IGNORECASE)
-_AMOUNT_NAME = re.compile(
-    r"(amount|price|total|cost|revenue|value|qty|quantity|sum|balance|fee|tax|discount|score|weight)", re.IGNORECASE
-)
 
 
 def type_class(dtype: str | None) -> str:
@@ -220,95 +215,45 @@ class Suggestions:
     stats: dict[int, TableStats] = field(default_factory=dict)
 
 
-def column_role(ts: TableStats, c: ColumnStats) -> tuple[str, float, str] | None:
-    """The role, a confidence and the evidence for one column; ``None`` when no rule fits."""
+def column_role(ts: TableStats, c: ColumnStats, foreign_key: bool = False) -> tuple[str, float, str] | None:
+    """The role, a confidence and the evidence for one column, from its type and statistics; ``None`` when no rule
+    fits. Without statistics only what the type alone tells is proposed (a date, a boolean)."""
     tc = c.tc
     rows = ts.row_count
     if tc == "time":
         return "time", 0.9, f"{c.name} is a {c.dtype} column"
-    unique = ts.unique(c.name)
-    if _ID_NAME.search(c.name):
-        if unique:
-            return "key", 0.9, f"{c.name} is named like an id and is unique and non-null ({c.distinct} of {rows} rows)"
-        return "key", 0.7 if ts.available else 0.5, f"{c.name} is named like an id"
-    if unique and tc == "string" and not _CODE_NAME.search(c.name):
+    if tc == "boolean":
+        return "category", 0.7, f"{c.name} is a boolean column"
+    if foreign_key:
+        return "key", 0.8, f"{c.name} points to a unique column of another table with the same name and type"
+    if not ts.available or c.distinct is None:
         return None
-    if unique and tc in ("integer", "string") and not _AMOUNT_NAME.search(c.name) and (rows or 0) >= 2:
-        return "key", 0.6, f"{c.name} is unique and non-null ({c.distinct} of {rows} rows)"
+    if ts.unique(c.name) and tc in ("integer", "string") and (rows or 0) >= 2:
+        return "key", 0.7, f"{c.name} is unique and non-null ({c.distinct} of {rows} rows)"
     if _numeric(tc):
-        if ts.available and c.distinct is not None and tc == "integer" and c.distinct <= 2:
-            return "category", 0.5, f"{c.name} holds {c.distinct} distinct values"
-        return "amount", 0.7 if ts.available else 0.5, f"{c.name} is numeric ({c.dtype}) and not a key"
-    if tc in ("string", "boolean"):
-        if ts.available and c.distinct is not None:
-            if c.distinct <= CATEGORY_MAX_DISTINCT or (rows and c.distinct <= rows / 2):
-                return "category", 0.8, f"{c.name} is {tc} with {c.distinct} distinct values in {rows} rows"
-            return None
-        return "category", 0.5, f"{c.name} is a {tc} column"
+        return "amount", 0.7, f"{c.name} is numeric ({c.dtype}) and repeats ({c.distinct} distinct in {rows} rows)"
+    if tc == "string" and (c.distinct <= CATEGORY_MAX_DISTINCT or (rows and c.distinct <= rows / 2)):
+        return "category", 0.8, f"{c.name} is text with {c.distinct} distinct values in {rows} rows"
     return None
-
-
-def _primary_key(ts: TableStats, roles: dict[str, str]) -> str | None:
-    """The column most likely to identify a row: ``id`` or ``<table>_id``, else the one unique key."""
-    single = singular(ts.table.name)
-    keys = [n for n, r in roles.items() if r == "key"]
-    for preferred in ("id", f"{single}_id", f"{ts.table.name.lower()}_id"):
-        hit = next((k for k in keys if k.lower() == preferred), None)
-        if hit and ts.unique(hit) is not False:
-            return hit
-    unique = [k for k in keys if ts.unique(k)]
-    return unique[0] if len(unique) == 1 else None
 
 
 def suggest(tables: list[TableStats]) -> Suggestions:
     """Roles, joins and metrics for ``tables`` (one model's tables, with or without statistics)."""
     out = Suggestions(stats_available=any(t.available for t in tables))
-    roles: dict[int, dict[str, str]] = {}
-    for ts in tables:
-        roles[ts.table.table_id] = {}
-        for c in ts.columns:
-            found = column_role(ts, c)
-            if found is None:
-                continue
-            role, conf, why = found
-            roles[ts.table.table_id][c.name] = role
-            out.roles.append(RoleCandidate(ts.table.table_id, c.name, role, conf, f"Rule: {why}."))
-
-    pks = {ts.table.table_id: _primary_key(ts, roles[ts.table.table_id]) for ts in tables}
     fks: dict[int, list[str]] = {ts.table.table_id: [] for ts in tables}
     for a in tables:
         for c in a.columns:
-            if roles[a.table.table_id].get(c.name) != "key" or c.name == pks[a.table.table_id]:
+            if not a.available or a.unique(c.name) is not False:
                 continue
             for b in tables:
-                if b is a:
+                target = b.column(c.name) if b is not a else None
+                if target is None or not b.unique(target.name) or _join_class(target.tc) != _join_class(c.tc):
                     continue
-                pk = pks[b.table.table_id]
-                if pk is None:
-                    continue
-                target_name = pk if pk.lower() == c.name.lower() else None
-                if target_name is None and pk.lower() == "id" and c.name.lower() == f"{singular(b.table.name)}_id":
-                    target_name = pk
-                if target_name is None:
-                    continue
-                target = b.column(target_name)
-                if target is None or _join_class(target.tc) != _join_class(c.tc):
-                    continue
-                if a.unique(c.name):
-                    continue
-                if a.available and b.available:
-                    conf = 0.85
-                    why = (
-                        f"{a.table.name}.{c.name} matches {b.table.name}.{target_name} by name and type; "
-                        f"{target_name} is unique in {b.table.name} ({target.distinct} of {b.row_count} rows) and "
-                        f"repeats in {a.table.name} ({c.distinct} distinct in {a.row_count} rows)"
-                    )
-                else:
-                    conf = 0.55
-                    why = (
-                        f"{a.table.name}.{c.name} matches {b.table.name}.{target_name} by name and type "
-                        "(no statistics, uniqueness not checked)"
-                    )
+                why = (
+                    f"{a.table.name}.{c.name} matches {b.table.name}.{target.name} by name and type; "
+                    f"{target.name} is unique in {b.table.name} ({target.distinct} of {b.row_count} rows) and "
+                    f"repeats in {a.table.name} ({c.distinct} distinct in {a.row_count} rows)"
+                )
                 out.joins.append(
                     JoinCandidate(
                         name=f"{a.table.name}_{b.table.name}",
@@ -317,14 +262,25 @@ def suggest(tables: list[TableStats]) -> Suggestions:
                         from_table=a.table.name,
                         to_table=b.table.name,
                         from_columns=[c.name],
-                        to_columns=[target_name],
+                        to_columns=[target.name],
                         description=f"Each {singular(a.table.name)} belongs to one {singular(b.table.name)}.",
-                        confidence=conf,
+                        confidence=0.85,
                         rationale=f"Rule: {why}.",
                     )
                 )
                 fks[a.table.table_id].append(c.name)
                 break
+
+    roles: dict[int, dict[str, str]] = {}
+    for ts in tables:
+        roles[ts.table.table_id] = {}
+        for c in ts.columns:
+            found = column_role(ts, c, foreign_key=c.name in fks[ts.table.table_id])
+            if found is None:
+                continue
+            role, conf, why = found
+            roles[ts.table.table_id][c.name] = role
+            out.roles.append(RoleCandidate(ts.table.table_id, c.name, role, conf, f"Rule: {why}."))
 
     by_id = {ts.table.table_id: ts for ts in tables}
     for ts in tables:
@@ -338,7 +294,7 @@ def suggest(tables: list[TableStats]) -> Suggestions:
                 dims += [
                     f"{other.table.name}.{c.name}"
                     for c in other.columns
-                    if roles[j.to_table_id].get(c.name) == "category" or _row_label(other, c, roles[j.to_table_id])
+                    if roles[j.to_table_id].get(c.name) == "category"
                 ]
         noun = singular(ts.table.name)
         conf = 0.7 if ts.available else 0.5
@@ -396,14 +352,13 @@ def suggest(tables: list[TableStats]) -> Suggestions:
                     )
                 )
         for fk in fks[tid]:
-            base = re.sub(r"_?(id|key|uuid)$", "", fk, flags=re.IGNORECASE) or fk
             out.metrics.append(
                 MetricCandidate(
                     tid,
                     ts.table.name,
-                    f"{base}_count",
+                    f"distinct_{fk}",
                     f"COUNT(DISTINCT {quote_ident(fk)})",
-                    f"The number of distinct {_words(base)}s with at least one {noun}.",
+                    f"The number of distinct {_words(fk)} values with at least one {noun}.",
                     "count_distinct",
                     time_col,
                     dims,
@@ -414,22 +369,6 @@ def suggest(tables: list[TableStats]) -> Suggestions:
             )
     _dedupe_metric_names(out.metrics)
     return out
-
-
-_FREE_TEXT_NAME = re.compile(r"(description|comment|note|address|email|url|text|remark|body|message)", re.IGNORECASE)
-
-
-def _row_label(ts: TableStats, c: ColumnStats, roles: dict[str, str]) -> bool:
-    """A text column naming a row of a table on the one side of a join (``products.product_name``), which is a
-    natural thing to group the many side by; it holds one value per row, so it gets no role of its own. Free-text
-    and code-like columns are left out."""
-    return (
-        c.tc == "string"
-        and roles.get(c.name) is None
-        and not _ID_NAME.search(c.name)
-        and not _CODE_NAME.search(c.name)
-        and not _FREE_TEXT_NAME.search(c.name)
-    )
 
 
 def _join_class(tc: str) -> str:
