@@ -53,8 +53,8 @@ Metric names from the model apply to candidates that are not stored yet; if you 
 
 The default writer is the small model that runs on your own computer: nothing leaves it. When no AI is set up and the local model can be installed, the panel shows a card, **Let AI on this computer write the descriptions**, that downloads it in one click with progress; the Ask tab offers the same. Online providers are optional. To use one for this feature, choose a model for the **Semantic model** task in **Settings → AI → Assistant**; the choice is kept in your browser or desktop app. See [AI in semantic models](../../../ai/index.md#ai-in-semantic-models).
 
-!!! note "Not yet judged"
-    The AI parts were exercised with stand-in providers and have not yet been run against a real model, so this page makes no claim about the quality of what the model writes or picks. Review shows each fact's source so you can judge it.
+!!! note "Test results"
+    On the 2B local model, a set of twenty test questions on one sample data set was answered correctly in three runs after the checks under [How a question is read](#how-a-question-is-read) were added. That is one data set, not a guarantee; Review shows each fact's source, and every answer shows how it was read.
 
 ---
 
@@ -129,6 +129,15 @@ The **Ask** tab computes a metric from its definition. To do it by hand, choose 
 A metric that is not accepted yet can be run as a preview by anyone who may write to the schema; the result is marked "not approved yet".
 
 The SQL is generated from the model. Dimensions and filters are checked against it and written as escaped values; free SQL comes only from a metric's expression. The query runs through the same path as the [SQL Editor](sql-editor.md), on the worker.
+
+### How a question is read
+
+The model suggests a query and Flowfile checks it against the model before anything runs:
+
+- A grouping, filter, date range or time grain is used only when the question names it.
+- A value the question names (a status, a country) becomes a filter even if the model missed it. Flowfile matches it against the distinct values of your category columns, which it reads itself and does not send to the model.
+- Every answer starts with a **Read as: …** line saying how the question was understood, followed by what was added, corrected or left out.
+- When part of the question cannot be applied, for example a breakdown with no matching dimension, that part is left out, the notes say so, and the response is marked partial. Nothing is substituted silently.
 
 **Keep as a flow** names a flow (**Flow name**, then **Save**) and registers the query in the catalog, so it can be scheduled or opened on the canvas.
 
