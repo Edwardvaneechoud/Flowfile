@@ -123,6 +123,17 @@ The plan and the text run on the **Dashboards** model under Settings → AI → 
 
 ---
 
+## AI in semantic models
+
+A [semantic model](../users/visual-editor/catalog/semantic-models.md) records what a schema's columns, joins and metrics mean. Two things use AI:
+
+- **Draft.** **Suggest** proposes column roles, joins and metrics from rules, with no AI. With AI usable, the model also writes the descriptions and metric names, one small call per table.
+- **Ask.** A question box in the **Ask** tab turns a sentence into a query of one approved metric. The model only picks from the approved metrics and the dimensions listed for them; it never writes SQL.
+
+Both are sized for the small [on-device model](providers.md#on-device-model-no-key-required), which is the default and is offered in the panel when no AI is set up; a configured online provider can be chosen for the task **Semantic model** under Settings → AI → Assistant. AI can propose, only a person can accept: AI facts wait in **Review**. Result rows are never sent to the model, and each draft and answer is recorded in the AI audit log. With **Send data values** off, the draft receives names and types only.
+
+---
+
 ## Diff preview & accept/reject
 
 Cmd+K and the *Staged* / *Single-shot full* agent variants route edits through a `GraphDiff` review:
