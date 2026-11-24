@@ -1,6 +1,6 @@
 """Per-project track_data_artifacts toggle: projection, import/prune, and the DB mirror.
 
-The toggle is all-or-nothing for catalog tables (tables.yaml) + global artifacts (models.yaml),
+The toggle is all-or-nothing for catalog tables (tables/*.table.yaml) + global artifacts (models.yaml),
 stored in project.yaml (source of truth) and mirrored onto the WorkspaceProject row. Default True
 keeps the existing always-track behavior. When off, the two manifests are never written/committed,
 and import leaves those DB resources entirely alone (never pruned).
@@ -103,6 +103,10 @@ def _cleanup(table_name: str, model_name: str, flow_uuid: str) -> None:
         db.commit()
 
 
+def _table_files(root: Path) -> list[Path]:
+    return sorted((root / "tables").glob("*.table.yaml"))
+
+
 def _db_flag(root: Path) -> bool:
     with get_db_context() as db:
         return repository.get_by_path(db, str(root)).track_data_artifacts
@@ -120,7 +124,7 @@ def test_tracking_on_by_default_projects_tables_and_models(tmp_path):
         assert proj.track_data_artifacts is True
         assert read_manifest(root).track_data_artifacts is True
         assert _db_flag(root) is True
-        assert (root / "tables.yaml").exists()
+        assert bool(_table_files(root))
         assert (root / "models.yaml").exists()
     finally:
         _cleanup(table, model, flow_uuid)
@@ -138,7 +142,7 @@ def test_tracking_off_at_init_excludes_tables_and_models(tmp_path):
         assert proj.track_data_artifacts is False
         assert read_manifest(root).track_data_artifacts is False
         assert _db_flag(root) is False
-        assert not (root / "tables.yaml").exists()
+        assert not _table_files(root)
         assert not (root / "models.yaml").exists()
     finally:
         _cleanup(table, model, flow_uuid)
@@ -153,18 +157,18 @@ def test_update_settings_drops_then_recreates_files(tmp_path):
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Toggle Test", OWNER)
-        assert (root / "tables.yaml").exists() and (root / "models.yaml").exists()
+        assert bool(_table_files(root)) and (root / "models.yaml").exists()
 
         project_sync.update_settings(OWNER, False)
         assert read_manifest(root).track_data_artifacts is False
         assert _db_flag(root) is False
-        assert not (root / "tables.yaml").exists()
+        assert not _table_files(root)
         assert not (root / "models.yaml").exists()
 
         project_sync.update_settings(OWNER, True)
         assert read_manifest(root).track_data_artifacts is True
         assert _db_flag(root) is True
-        assert (root / "tables.yaml").exists()
+        assert bool(_table_files(root))
         assert (root / "models.yaml").exists()
     finally:
         _cleanup(table, model, flow_uuid)
@@ -180,7 +184,7 @@ def test_reload_with_tracking_off_leaves_db_tables_and_models(tmp_path):
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Safe Test", OWNER, track_data_artifacts=False)
-        assert not (root / "tables.yaml").exists() and not (root / "models.yaml").exists()
+        assert not _table_files(root) and not (root / "models.yaml").exists()
 
         project_sync.reload_from_disk(OWNER, force=True)  # prune=True
 
@@ -206,7 +210,7 @@ def test_prune_removes_flow_with_artifact_when_tracking_off(tmp_path):
     root = tmp_path / "project"
     try:
         project_sync.init_project(str(root), "Ghost Test", OWNER, track_data_artifacts=False)
-        # Drop the flow from the project files, keeping tracking off (no tables.yaml/models.yaml).
+        # Drop the flow from the project files, keeping tracking off (no table files or models.yaml).
         for p in (root / "flows").glob("*.flow.yaml"):
             if (yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("flow_uuid") == flow_uuid:
                 p.unlink()
@@ -238,17 +242,17 @@ def test_restore_to_tracked_version_readopts_setting(tmp_path):
     _make_artifact(model, _reg_id(flow_uuid))
     root = tmp_path / "project"
     try:
-        # v1: tracking ON — tables.yaml/models.yaml are committed.
+        # v1: tracking ON — table files and models.yaml are committed.
         project_sync.init_project(str(root), "Restore Test", OWNER)
         tracked_sha = git_ops.head_sha(root)
-        assert (root / "tables.yaml").exists() and (root / "models.yaml").exists()
+        assert bool(_table_files(root)) and (root / "models.yaml").exists()
 
         # v2: turn tracking OFF and commit it.
         project_sync.update_settings(OWNER, False)
         project_sync.save_version(OWNER, "Turn off tracking")
         assert _db_flag(root) is False
         assert project_sync.get_active_project(OWNER).track_data_artifacts is False
-        assert not (root / "tables.yaml").exists()
+        assert not _table_files(root)
 
         # Restore back to the tracked version.
         project_sync.restore_version(OWNER, tracked_sha)
@@ -258,7 +262,7 @@ def test_restore_to_tracked_version_readopts_setting(tmp_path):
         assert _db_flag(root) is True
         assert project_sync.get_active_project(OWNER).track_data_artifacts is True
         # The data-artifact manifests are back, too.
-        assert (root / "tables.yaml").exists() and (root / "models.yaml").exists()
+        assert bool(_table_files(root)) and (root / "models.yaml").exists()
     finally:
         _cleanup(table, model, flow_uuid)
 
