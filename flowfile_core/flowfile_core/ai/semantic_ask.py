@@ -21,6 +21,7 @@ from typing import Any
 
 from flowfile_core.ai.json_payload import parse_json_payload
 from flowfile_core.ai.providers.base import Message, Provider
+from flowfile_core.ai.semantic_answer import Intent, decide_intent, shape_query
 from flowfile_core.ai.semantic_draft import call_json, match_name
 from flowfile_core.schemas.semantic_schema import MetricFilter, MetricOrder, MetricQuery
 
@@ -67,6 +68,9 @@ class MenuItem:
     synonyms: list[str] = field(default_factory=list)
     dimension_words: dict[str, list[str]] = field(default_factory=dict)
     known_values: dict[str, list[str]] = field(default_factory=dict)
+    label: str | None = None
+    format: str | None = None
+    expression: str | None = None
 
 
 def menu_text(menu: list[MenuItem], today: date) -> str:
@@ -97,7 +101,7 @@ def user_message(menu: list[MenuItem], question: str, today: date) -> str:
     return (
         f"{menu_text(menu, today)}\n\nQuestion: {question}\n\n"
         'Answer now with the JSON object {"metric": ..., "dimensions": [...], "filters": [...], "grain": ..., '
-        '"order": ..., "limit": ...} or {"no_metric": true, "why": ...}.'
+        '"order": ..., "limit": ..., "intent": ...} or {"no_metric": true, "why": ...}.'
     )
 
 
@@ -111,6 +115,8 @@ class AskAnswer:
     reason: str | None = None
     partial: bool = False
     reading_extra: str | None = None
+    intent_hint: str | None = None
+    intent: Intent | None = None
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -231,6 +237,8 @@ def read_answer(content: str | None, menu: list[MenuItem]) -> AskAnswer:
         limit = 100
     limit = min(max(limit, 1), 10000)
     ans.query = MetricQuery(metric=metric_name, dimensions=dims, filters=filters, grain=grain, order=order, limit=limit)
+    hint = payload.get("intent")
+    ans.intent_hint = hint.strip().lower() if isinstance(hint, str) else None
     return ans
 
 
@@ -719,6 +727,8 @@ def ground(ans: AskAnswer, question: str, menu: list[MenuItem]) -> AskAnswer:
         metric=picked.name, dimensions=dims, filters=filters, grain=grain, order=order, limit=query.limit
     )
     ans.partial = ans.partial or partial
+    ans.intent = decide_intent(question, ans.query, ans.intent_hint)
+    ans.query = shape_query(ans.query, ans.intent, picked.time_column)
     line = reading(ans.query)
     if picked.aggregate == "count" and _WHICH_MOST.search(question) and picked.table:
         line += f" Counted {picked.table.rpartition('.')[2]}, not an amount."

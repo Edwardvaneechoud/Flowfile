@@ -380,6 +380,39 @@ class SemanticAnsweredWith(BaseModel):
     approved_by: str | None = None
 
 
+class SemanticAnswerItem(BaseModel):
+    """One group or period of an answer: its ``label`` (a group's values, a formatted period, ``""`` for a single
+    value), the metric's ``value`` and that value as the sentence shows it (``text``)."""
+
+    label: str
+    value: float | int | None = None
+    text: str = ""
+
+
+class SemanticAnswerFacts(BaseModel):
+    """The facts the answer sentence was rendered from, computed in code from the query's rows (never by a model).
+
+    ``value`` is the single value, or the leading value of a top or bottom answer; ``leaders`` the leading groups
+    (all tied ones); ``runners_up`` the next two; ``groups`` how many groups the rows hold; ``share`` the leader's
+    fraction of the total when the metric adds up; a trend fills ``highest``, ``lowest``, ``latest``, ``previous``,
+    ``change`` (a fraction of the previous period) and ``direction``. ``truncated`` when the rows may not be all.
+    """
+
+    intent: str
+    value: SemanticAnswerItem | None = None
+    leaders: list[SemanticAnswerItem] = Field(default_factory=list)
+    runners_up: list[SemanticAnswerItem] = Field(default_factory=list)
+    groups: int | None = None
+    share: float | None = None
+    highest: SemanticAnswerItem | None = None
+    lowest: SemanticAnswerItem | None = None
+    latest: SemanticAnswerItem | None = None
+    previous: SemanticAnswerItem | None = None
+    change: float | None = None
+    direction: Literal["up", "down", "flat"] | None = None
+    truncated: bool = False
+
+
 class SemanticAskOut(BaseModel):
     """``POST /ai/semantic/ask``. ``query`` is what ran (or what the model proposed when it could not run); ``result``
     the rows, which never go back to the model. ``no_metric_fits`` when no accepted metric answers the question
@@ -399,6 +432,12 @@ class SemanticAskOut(BaseModel):
     partial: bool = False
     """True when the question asked for something the model cannot give (a breakdown it has no dimension for); the
     answer then leaves it out, and ``notes`` says what."""
+    answer: str | None = None
+    """The answer in one or two sentences, rendered in code from ``result``'s rows (``semantic_answer.render``), so
+    no number in it comes from a model; ``None`` when there is no result to read."""
+    intent: str | None = None
+    """What kind of answer the question wants: ``value``, ``top``, ``bottom``, ``trend`` or ``breakdown``."""
+    facts: SemanticAnswerFacts | None = None
 
 
 class AiNotSetUpOut(BaseModel):

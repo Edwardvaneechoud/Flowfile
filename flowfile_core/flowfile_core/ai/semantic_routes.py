@@ -384,6 +384,9 @@ def _menu(service: Any, namespace_id: int, question: str, db: Any = None) -> tup
                 known_values={
                     f: known[ref] for f in dict.fromkeys([*dims, *columns]) if (ref := _ref(snap, m.table, f)) in known
                 },
+                label=m.value("label") if isinstance(m.value("label"), str) and not private_table else None,
+                format=m.value("format") if isinstance(m.value("format"), str) else None,
+                expression=m.expression if isinstance(m.expression, str) else None,
             )
         )
     return items, _withheld_count(snap, withheld)
@@ -449,6 +452,8 @@ async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_curre
         out.answered_with = SemanticAnsweredWith(**result.metric.model_dump())
         if result.error:
             out.degraded, out.reason = True, "query_failed"
+        else:
+            _answer_sentence(out, answer, menu)
     _audit(
         current_user.id,
         "semantic_ask",
@@ -464,10 +469,42 @@ async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_curre
             "rows_sent_to_model": 0,
             "columns_withheld": withheld_count,
             "attempts": attempts,
+            "intent": out.intent,
+            "answered_in_words": out.answer is not None,
         },
         out.reason,
     )
     return out
+
+
+def _answer_sentence(out: SemanticAskOut, answer: Any, menu: list[Any]) -> None:
+    """The answer in words, rendered in core from the result rows (``semantic_answer.render``); no model sees them.
+
+    A failure to render leaves ``answer`` empty and the table answers as before.
+    """
+    from flowfile_core.ai.semantic_answer import MetricWords, render
+
+    item = next((m for m in menu if m.name == out.query.metric), None) if out.query else None
+    if item is None or answer.intent is None:
+        return
+    words = MetricWords(
+        name=item.name,
+        label=item.label,
+        aggregate=item.aggregate,
+        format=item.format,
+        expression=item.expression,
+        table=item.table,
+        time_column=item.time_column,
+    )
+    try:
+        rendered = render(
+            out.question, out.query, out.result, words, answer.intent, partial=out.partial, notes=out.notes
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("semantic answer sentence failed", exc_info=True)
+        return
+    out.intent = answer.intent.kind
+    out.answer, out.facts = rendered.answer, rendered.facts
 
 
 __all__ = ["router", "resolve_semantic_provider"]

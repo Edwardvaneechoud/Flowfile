@@ -26,6 +26,7 @@ Rules:
 - "op" is one of "=", "!=", "<", "<=", ">", ">=", "in", "not in", "between", "is null", "is not null". "in" and "not in" take a list; "between" takes [low, high]; dates are "YYYY-MM-DD" strings.
 - Relative dates ("last year", "this month") are worked out from today's date given below, and filter the metric's time column.
 - "order" is null or {"field": "<a dimension or the metric name>", "direction": "asc" | "desc"}. "top 5" means order by the metric descending with "limit": 5.
+- "intent" is optional: "value" (one number), "top" or "bottom" ("which … has the most / the least", "top 5"), "trend" (over time) or "breakdown" (any other grouped answer). Leave it out when unsure.
 - Output ONLY the JSON object.
 
 ## Examples
@@ -62,6 +63,14 @@ Question: number of loans by month in 2029
 Question: what is the typical late fee
 
 {"metric": "average_fee", "dimensions": [], "filters": [], "grain": null, "order": null, "limit": 100}
+
+Question: which branch has the most loans
+
+{"metric": "loan_count", "dimensions": ["branch"], "filters": [], "grain": null, "order": {"field": "loan_count", "direction": "desc"}, "limit": 100, "intent": "top"}
+
+Question: how did late fees develop per month in 2029
+
+{"metric": "total_fee", "dimensions": [], "filters": [{"field": "lent_on", "op": "between", "value": ["2029-01-01", "2029-12-31"]}], "grain": "month", "order": null, "limit": 100, "intent": "trend"}
 
 Question: what is the average delivery time
 

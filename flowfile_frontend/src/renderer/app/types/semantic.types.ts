@@ -345,6 +345,32 @@ export type SemanticAskReason =
   | "timeout"
   | "provider_error";
 
+export type SemanticAskIntent = "value" | "top" | "bottom" | "trend" | "breakdown";
+
+/** One group or period of an answer, as core computed it from the result rows. */
+export interface SemanticAnswerItem {
+  label: string;
+  value: number | null;
+  text: string;
+}
+
+/** The facts the answer sentence was rendered from (core's `SemanticAnswerFacts`). */
+export interface SemanticAnswerFacts {
+  intent: SemanticAskIntent | string;
+  value: SemanticAnswerItem | null;
+  leaders: SemanticAnswerItem[];
+  runners_up: SemanticAnswerItem[];
+  groups: number | null;
+  share: number | null;
+  highest: SemanticAnswerItem | null;
+  lowest: SemanticAnswerItem | null;
+  latest: SemanticAnswerItem | null;
+  previous: SemanticAnswerItem | null;
+  change: number | null;
+  direction: "up" | "down" | "flat" | null;
+  truncated: boolean;
+}
+
 export interface SemanticAskOut {
   question: string;
   provider: string;
@@ -358,6 +384,10 @@ export interface SemanticAskOut {
   reason: SemanticAskReason | null;
   no_metric_fits: boolean;
   attempts: number;
+  /** The answer in words, rendered by core from the result rows; absent from an older core. */
+  answer?: string | null;
+  intent?: SemanticAskIntent | string | null;
+  facts?: SemanticAnswerFacts | null;
 }
 
 export interface AiNotSetUp {

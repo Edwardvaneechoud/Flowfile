@@ -24,7 +24,22 @@
             Ask
           </button>
         </form>
-        <p v-if="!asking && readAs" class="read-as" data-testid="ask-read-as">{{ readAs }}</p>
+        <p
+          v-if="!asking && answerText"
+          class="answer-line"
+          :class="{ warn: answer?.partial }"
+          data-testid="ask-answer"
+        >
+          {{ answerText }}
+        </p>
+        <p
+          v-if="!asking && readAs"
+          class="read-as"
+          :class="{ explain: !!answerText }"
+          data-testid="ask-read-as"
+        >
+          {{ readAs }}
+        </p>
         <p v-if="examples.length" class="examples">
           Try:
           <a v-for="ex in examples" :key="ex" href="#" @click.prevent="useExample(ex)">{{ ex }}</a>
@@ -338,6 +353,7 @@ const answerModel = computed(() => {
   return a.model ? `${a.model} (${a.provider})` : a.provider;
 });
 
+const answerText = computed(() => answer.value?.answer ?? "");
 const readAs = computed(() => answer.value?.notes.find((n) => n.startsWith("Read as:")) ?? "");
 const otherNotes = computed(() => {
   const notes = answer.value?.notes ?? [];
@@ -695,11 +711,30 @@ defineExpose({ applyQuery });
   color: var(--color-warning-dark);
 }
 
+.answer-line {
+  margin: 0;
+  font-size: var(--font-size-lg, 1.125rem);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+
+.answer-line.warn {
+  padding-left: var(--spacing-3);
+  border-left: 3px solid var(--color-warning-dark);
+}
+
 .read-as {
   margin: 0;
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
+}
+
+.read-as.explain {
+  font-size: var(--font-size-xs);
+  font-weight: normal;
+  color: var(--color-text-secondary);
 }
 
 .note-list {
