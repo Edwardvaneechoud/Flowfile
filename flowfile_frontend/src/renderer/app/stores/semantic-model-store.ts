@@ -4,6 +4,10 @@ import { ref } from "vue";
 import { SemanticModelApi } from "../api/semanticModel.api";
 import { useCatalogStore } from "./catalog-store";
 import type {
+  MetricQuery,
+  SemanticAskOut,
+  SemanticDraftOut,
+  SuggestOut,
   SemanticEvent,
   SemanticFact,
   SemanticModel,
@@ -31,6 +35,8 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
   const historyLoading = ref(false);
   const historyError = ref<string | null>(null);
   const busy = ref(false);
+  // A query another part of the UI wants the Ask tab to set and run; the tab consumes it.
+  const pendingAsk = ref<MetricQuery | null>(null);
 
   let loadToken = 0;
   let historyToken = 0;
@@ -117,6 +123,22 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
       return merged;
     });
 
+  const suggestModel = (): Promise<SuggestOut> => run((id) => SemanticModelApi.suggest(id));
+
+  const draftModel = (
+    pick: { provider?: string; model?: string } = {},
+  ): Promise<SemanticDraftOut> =>
+    run((id) => SemanticModelApi.draft({ namespace_id: id, ...pick }));
+
+  async function askQuestion(
+    question: string,
+    pick: { provider?: string; model?: string } = {},
+  ): Promise<SemanticAskOut> {
+    const id = namespaceId.value;
+    if (id === null) throw new Error("No semantic model is open");
+    return SemanticModelApi.ask({ namespace_id: id, question, ...pick });
+  }
+
   const sync = (): Promise<SemanticSyncResult> => run((id) => SemanticModelApi.sync(id));
 
   async function exportYaml(): Promise<string> {
@@ -144,6 +166,10 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     }
   }
 
+  const requestAsk = (query: MetricQuery) => {
+    pendingAsk.value = query;
+  };
+
   function clear() {
     loadToken++;
     historyToken++;
@@ -152,6 +178,7 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     error.value = null;
     reviewQueue.value = [];
     history.value = [];
+    pendingAsk.value = null;
     loading.value = false;
   }
 
@@ -166,11 +193,16 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     historyLoading,
     historyError,
     busy,
+    pendingAsk,
+    requestAsk,
     load,
     updateModel,
     propose,
     review,
     reviewBatch,
+    suggestModel,
+    draftModel,
+    askQuestion,
     sync,
     exportYaml,
     loadHistory,

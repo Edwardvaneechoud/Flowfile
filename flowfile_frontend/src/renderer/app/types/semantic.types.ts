@@ -207,3 +207,154 @@ export interface SemanticModelSummary {
   pending: number;
   stale: number;
 }
+
+export type MetricFilterOp =
+  | "="
+  | "!="
+  | "<"
+  | "<="
+  | ">"
+  | ">="
+  | "in"
+  | "not in"
+  | "between"
+  | "is null"
+  | "is not null";
+
+export type MetricGrain = "day" | "week" | "month" | "quarter" | "year";
+
+export interface MetricFilter {
+  field: string;
+  op: MetricFilterOp;
+  value?: unknown;
+}
+
+export interface MetricOrder {
+  field: string;
+  direction: "asc" | "desc";
+}
+
+export interface MetricQuery {
+  metric: string;
+  dimensions: string[];
+  filters: MetricFilter[];
+  grain: MetricGrain | null;
+  order: MetricOrder | null;
+  limit: number;
+  preview: boolean;
+}
+
+export interface MetricQueryResult {
+  columns: string[];
+  dtypes: string[];
+  rows: unknown[][];
+  total_rows: number;
+  truncated: boolean;
+  sql: string;
+  metric: {
+    name: string;
+    version: number | null;
+    status: string;
+    approved_by: string | null;
+  };
+  error: string | null;
+}
+
+export interface MetricQuerySaveAsFlow {
+  query: MetricQuery;
+  name: string;
+  namespace_id?: number | null;
+  description?: string | null;
+}
+
+export interface MetricQuerySaveAsFlowOut {
+  flow_id: number;
+  sql: string;
+}
+
+export interface SuggestCounts {
+  roles: number;
+  descriptions: number;
+  joins: number;
+  metrics: number;
+}
+
+export interface SuggestOut {
+  namespace_id: number;
+  tables: number;
+  added: SuggestCounts;
+  skipped: SuggestCounts;
+  stats_available: boolean;
+  stats_message: string | null;
+}
+
+export interface SemanticDraftRequest {
+  namespace_id: number;
+  table_ids?: number[];
+  provider?: string | null;
+  model?: string | null;
+}
+
+export interface SemanticDraftTable {
+  table_id: number;
+  table: string;
+  calls: number;
+  ok: boolean;
+  reason: string | null;
+  message: string | null;
+}
+
+export interface SemanticDraftOut extends SuggestOut {
+  provider: string;
+  model: string | null;
+  table_outcomes: SemanticDraftTable[];
+  degraded: boolean;
+  reason: string | null;
+}
+
+export interface SemanticAskRequest {
+  namespace_id: number;
+  question: string;
+  provider?: string | null;
+  model?: string | null;
+}
+
+export interface SemanticAnsweredWith {
+  name: string;
+  version: number | null;
+  status: string;
+  approved_by: string | null;
+}
+
+export type SemanticAskReason =
+  | "no_accepted_metrics"
+  | "parse_error"
+  | "unknown_metric"
+  | "invalid_query"
+  | "query_failed"
+  | "timeout"
+  | "provider_error";
+
+export interface SemanticAskOut {
+  question: string;
+  provider: string;
+  model: string | null;
+  query: MetricQuery | null;
+  result: MetricQueryResult | null;
+  answered_with: SemanticAnsweredWith | null;
+  notes: string[];
+  degraded: boolean;
+  reason: SemanticAskReason | null;
+  no_metric_fits: boolean;
+  attempts: number;
+}
+
+export interface AiNotSetUp {
+  error_code: "AI_NOT_SET_UP";
+  message: string;
+  local_available: boolean;
+}
+
+export const isAiNotSetUp = (e: unknown): boolean =>
+  (e as { response?: { status?: number; data?: { error_code?: string } } })?.response?.data
+    ?.error_code === "AI_NOT_SET_UP";

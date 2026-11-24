@@ -1,6 +1,15 @@
 // Semantic model API: one function per route of routes/catalog_semantic.py (no trailing slashes)
 import axios from "../services/axios.config";
 import type {
+  MetricQuery,
+  SemanticAskOut,
+  SemanticAskRequest,
+  SemanticDraftOut,
+  SemanticDraftRequest,
+  SuggestOut,
+  MetricQueryResult,
+  MetricQuerySaveAsFlow,
+  MetricQuerySaveAsFlowOut,
   SemanticEvent,
   SemanticFact,
   SemanticModel,
@@ -65,6 +74,37 @@ export class SemanticModelApi {
       responseType: "text",
       transformResponse: (data) => data,
     });
+    return response.data;
+  }
+
+  static async queryMetric(namespaceId: number, query: MetricQuery): Promise<MetricQueryResult> {
+    const response = await axios.post<MetricQueryResult>(`${base(namespaceId)}/query`, query);
+    return response.data;
+  }
+
+  static async saveMetricQueryAsFlow(
+    namespaceId: number,
+    body: MetricQuerySaveAsFlow,
+  ): Promise<MetricQuerySaveAsFlowOut> {
+    const response = await axios.post<MetricQuerySaveAsFlowOut>(
+      `${base(namespaceId)}/query/save-as-flow`,
+      body,
+    );
+    return response.data;
+  }
+
+  static async suggest(namespaceId: number): Promise<SuggestOut> {
+    const response = await axios.post<SuggestOut>(`${base(namespaceId)}/suggest`);
+    return response.data;
+  }
+
+  static async draft(body: SemanticDraftRequest): Promise<SemanticDraftOut> {
+    const response = await axios.post<SemanticDraftOut>("/ai/semantic/draft", body);
+    return response.data;
+  }
+
+  static async ask(body: SemanticAskRequest): Promise<SemanticAskOut> {
+    const response = await axios.post<SemanticAskOut>("/ai/semantic/ask", body);
     return response.data;
   }
 }
