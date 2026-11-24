@@ -716,13 +716,18 @@ class SemanticModelService:
         exprs = {(m.table, (m.expression or "").replace(" ", "").lower()) for m in snap.metrics}
         rule_metrics: list[list[Any]] = []
         ai_metrics: list[list[Any]] = []
+        held_metrics = {(x.table, (x.expression or "").replace(" ", "").lower()): x for x in snap.metrics}
+        word_props: list[Any] = []
         for m in sugg.metrics:
             t = model_tables.get(m.table_id)
+            better = (words.get(m.table_id) or {}).get("metrics", {}).get(m.name)
             if t is None or (t.key, m.expression.replace(" ", "").lower()) in exprs:
                 out.skipped.metrics += 1
+                held_metric = held_metrics.get((t.key, m.expression.replace(" ", "").lower())) if t else None
+                if better and ai_source and held_metric is not None:
+                    word_props += _metric_word_proposals(held_metric, better, m.description, SubjectId, Proposal)
                 continue
             name, description, by_ai = m.name, m.description, False
-            better = (words.get(m.table_id) or {}).get("metrics", {}).get(m.name)
             if better and ai_source:
                 name, description, by_ai = better[0] or m.name, better[1] or m.description, True
             if name in names:
@@ -796,8 +801,12 @@ class SemanticModelService:
                 res = self.view.propose_many(props, source=RULE_SOURCE)
                 out.added.metrics += 1 if created(res) else 0
                 out.skipped.metrics += 0 if created(res) else 1
-            if ai_source and (desc_props or ai_metrics):
+            if ai_source and (desc_props or ai_metrics or word_props):
                 ai_view = host.view_for(self.user, self.access, via=ai_source)
+                if word_props:
+                    res = ai_view.propose_many(word_props, source=ai_source)
+                    out.added.descriptions += created(res)
+                    out.skipped.descriptions += held(res)
                 if desc_props:
                     res = ai_view.propose_many(desc_props, source=ai_source)
                     out.added.descriptions += created(res)
@@ -807,6 +816,37 @@ class SemanticModelService:
                     out.added.metrics += 1 if created(res) else 0
                     out.skipped.metrics += 0 if created(res) else 1
         return out
+
+    def known_values(self, columns: list[tuple[str, str]], cap: int = 50) -> dict[tuple[str, str], list[str]]:
+        """The distinct values of ``(table key, column)`` pairs, read with **one** SQL statement through the catalog
+        SQL path, so the worker computes and the caller's table access applies. A column with more than ``cap``
+        values is left out (it is not a category). Any failure answers ``{}``: the caller carries on without them.
+        """
+        from flowfile_core.catalog.semantic.compiler import quote_ident, sql_literal
+
+        pairs = list(dict.fromkeys(columns))
+        if not pairs:
+            return {}
+        parts = [
+            f"SELECT DISTINCT {sql_literal(str(i))} AS k, CAST({quote_ident(col)} AS VARCHAR) AS v "
+            f"FROM {quote_ident(table)}"
+            for i, (table, col) in enumerate(pairs)
+        ]
+        try:
+            result = self._catalog_service().execute_sql_query(
+                " UNION ALL ".join(parts), max_rows=(cap + 1) * len(pairs), user_id=self.user_id
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("semantic known values could not be read", exc_info=True)
+            return {}
+        if result.error:
+            logger.warning("semantic known values could not be read: %s", result.error)
+            return {}
+        out: dict[tuple[str, str], list[str]] = {}
+        for k, v in result.rows:
+            if v not in (None, ""):
+                out.setdefault(pairs[int(k)], []).append(str(v))
+        return {key: sorted(vals) for key, vals in out.items() if len(vals) <= cap}
 
     def _catalog_service(self) -> CatalogService:
         """The catalog service as the catalog router builds it, so table access is enforced the same way."""
@@ -966,3 +1006,25 @@ def tree_summaries(tree: list[Any]) -> None:
             walk(node.children, node_path)
 
     walk(tree, None)
+
+
+def _metric_word_proposals(held: Any, better: Any, templated: str | None, subject_id: Any, proposal: Any) -> list[Any]:
+    """An AI's name and meaning for a metric the model already holds, as proposals that rename nothing.
+
+    The name becomes a **synonym** (so a question saying "revenue" finds ``total_amount``) and the sentence the
+    description when the metric has none or only the rules' templated one. A pending metric's words join its
+    review group so they are decided with the definition; an accepted metric's queue on their own.
+    """
+    name, meaning = (list(better) + [None, None])[:2]
+    group = None if held.status == "accepted" else held.group
+    subject = str(subject_id.for_metric(held.name, held.table))
+    out = []
+    alias = (name or "").strip().replace("_", " ")
+    synonyms = [x for x in (held.value("synonyms") or []) if isinstance(x, str)]
+    if alias and alias.lower() != held.name.replace("_", " ").lower() and alias not in synonyms:
+        out.append(proposal(subject, "synonyms", [*synonyms, alias], 0.6, [], "Name written by AI.", group=group))
+    current = held.value("description")
+    meaning = (meaning or "").strip()
+    if meaning and (current is None or current == templated) and meaning != current:
+        out.append(proposal(subject, "description", meaning, 0.6, [], "Written by AI.", group=group))
+    return out

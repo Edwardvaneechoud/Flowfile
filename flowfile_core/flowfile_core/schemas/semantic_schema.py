@@ -394,6 +394,9 @@ class SemanticAskOut(BaseModel):
     reason: str | None = None
     no_metric_fits: bool = False
     attempts: int = 0
+    partial: bool = False
+    """True when the question asked for something the model cannot give (a breakdown it has no dimension for); the
+    answer then leaves it out, and ``notes`` says what."""
 
 
 class AiNotSetUpOut(BaseModel):

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -215,6 +216,89 @@ async def draft_semantic_model(body: SemanticDraftIn, current_user=Depends(get_c
     return out
 
 
+def _column_words(snap: Any, table: Any, dimension: str) -> list[str]:
+    """A dimension's label and synonyms as the model holds them, for matching the question's words."""
+    owner, _, column = dimension.rpartition(".")
+    ts = snap.table(owner) if owner else table
+    if ts is None and owner:
+        ts = next((t for t in snap.tables if t.name == owner), None)
+    col = ts.column(column) if ts is not None else None
+    if col is None:
+        return []
+    found = [col.facts["label"].value] if col.facts.get("label") is not None else []
+    syn = col.facts.get("synonyms")
+    found += [x for x in (syn.value if syn is not None else []) or [] if isinstance(x, str)]
+    return [x for x in found if isinstance(x, str)]
+
+
+def _model_label(provider: Any, model: str | None) -> str | None:
+    """The local provider's label is a fixed default; the local manager knows which model actually runs."""
+    from flowfile_core.ai.providers import LOCAL_PROVIDER_ID
+
+    if getattr(provider, "name", None) != LOCAL_PROVIDER_ID:
+        return model
+    try:
+        from flowfile_core.ai.local_model import manager
+
+        return manager.get_selected_model_id() or model
+    except Exception:  # noqa: BLE001
+        return model
+
+
+_KNOWN_TTL = 300.0
+_known_cache: dict[tuple[int | None, int], tuple[float, dict[tuple[str, str], list[str]]]] = {}
+_TEXT_TYPES = ("str", "utf8", "bool", "cat", "enum")
+
+
+def _ref(snap: Any, table_key: str, field: str) -> tuple[str, str] | None:
+    """``(table key, column)`` of a menu field: a bare column of the metric's table, or ``<table>.<column>``."""
+    owner, _, column = field.rpartition(".")
+    if not owner:
+        return table_key, column
+    ts = snap.table(owner)
+    return (ts.key, column) if ts is not None else None
+
+
+def _known_values(service: Any, namespace_id: int, snap: Any, metrics: list[Any]) -> dict[tuple[str, str], list[str]]:
+    """Distinct values of the menu's category columns, for matching the question's words to filter values.
+
+    They stay in core: the ask code matches them against the question and they are never put in the prompt, so no
+    data value reaches the model and ``send_data_allowed()`` is not involved. One SQL statement per namespace,
+    cached for ``_KNOWN_TTL`` seconds in this process per caller (each caller's table access applies); a failed
+    read is an empty map and the ask carries on without it.
+    """
+    import time
+
+    key = (getattr(service, "user_id", None), namespace_id)
+    hit = _known_cache.get(key)
+    if hit is not None and time.monotonic() - hit[0] < _KNOWN_TTL:
+        return hit[1]
+    wanted: list[tuple[str, str]] = []
+    for m in metrics:
+        table = snap.table(m.table)
+        fields = [d for d in (m.value("dimensions") or []) if isinstance(d, str)]
+        fields += [c.name for c in table.columns] if table else []
+        for f in fields:
+            ref = _ref(snap, m.table, f)
+            ts = snap.table(ref[0]) if ref else None
+            col = ts.column(ref[1]) if ts is not None else None
+            if col is None:
+                continue
+            role = col.facts["role"].value if col.facts.get("role") is not None else None
+            if role in ("key", "time", "amount"):
+                continue
+            text = any(t in str(col.dtype or "").lower() for t in _TEXT_TYPES)
+            if role == "category" or (text and f in fields[: len(m.value("dimensions") or [])]):
+                wanted.append(ref)
+    try:
+        found = service.known_values(wanted)
+    except Exception:  # noqa: BLE001
+        logger.warning("semantic known values failed", exc_info=True)
+        found = {}
+    _known_cache[key] = (time.monotonic(), found)
+    return found
+
+
 def _menu(service: Any, namespace_id: int, question: str) -> list[Any]:
     """The accepted metrics as menu items, narrowed to ``MAX_MENU`` by glosslayer's keyword search."""
     from flowfile_core.ai.semantic_ask import MAX_MENU, MenuItem
@@ -233,17 +317,28 @@ def _menu(service: Any, namespace_id: int, question: str) -> list[Any]:
                 continue
         picked = [m for m in metrics if m.name in wanted]
         metrics = (picked or metrics)[:MAX_MENU]
+    known = _known_values(service, namespace_id, snap, metrics)
     items = []
     for m in metrics:
         table = snap.table(m.table)
         columns = [c.name for c in table.columns] if table else []
+        dims = [d for d in (m.value("dimensions") or []) if isinstance(d, str)]
+        column = re.search(r'\(\s*(?:DISTINCT\s+)?"?([A-Za-z_]\w*)"?\s*\)', m.expression or "")
         items.append(
             MenuItem(
                 name=m.name,
                 meaning=m.value("description"),
                 time_column=m.value("time_column"),
-                dimensions=[d for d in (m.value("dimensions") or []) if isinstance(d, str)],
+                dimensions=dims,
                 filter_fields=columns,
+                aggregate=m.value("aggregate"),
+                column=column.group(1) if column else None,
+                table=m.table,
+                synonyms=[x for x in (m.value("synonyms") or []) if isinstance(x, str)],
+                dimension_words={d: _column_words(snap, table, d) for d in dims},
+                known_values={
+                    f: known[ref] for f in dict.fromkeys([*dims, *columns]) if (ref := _ref(snap, m.table, f)) in known
+                },
             )
         )
     return items
@@ -268,7 +363,7 @@ async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_curre
     except _NotSetUp as exc:
         return _not_set_up(exc)
     _source_str, model = _source(provider)
-    out = SemanticAskOut(question=body.question, provider=provider.name, model=model)
+    out = SemanticAskOut(question=body.question, provider=provider.name, model=_model_label(provider, model))
     if not menu:
         out.no_metric_fits, out.degraded, out.reason = True, True, "no_accepted_metrics"
         out.notes.append("This model has no approved metrics yet. Approve one in Review, then ask again.")
@@ -289,6 +384,7 @@ async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_curre
     answer, attempts, result = await ask(provider, menu, body.question, user_id=current_user.id, run=run)
     out.attempts = attempts
     out.notes += answer.notes
+    out.partial = answer.partial
     out.query = answer.query
     if answer.no_metric:
         out.no_metric_fits = True
