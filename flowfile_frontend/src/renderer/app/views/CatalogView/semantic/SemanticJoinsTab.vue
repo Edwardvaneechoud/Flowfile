@@ -47,7 +47,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { VueFlow, type Edge, type Node } from "@vue-flow/core";
+import { MarkerType, Position, VueFlow, type Edge, type Node } from "@vue-flow/core";
 import type { SemanticModel } from "../../../types/semantic.types";
 import SemanticJoinDialog from "./SemanticJoinDialog.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
@@ -64,29 +64,86 @@ const tableNames = computed(() => {
   return [...names];
 });
 
-const nodes = computed<Node[]>(() =>
-  tableNames.value.map((name, i) => ({
-    id: name,
-    label: name,
-    position: { x: (i % 4) * 190, y: Math.floor(i / 4) * 90 },
-    class: "semantic-diagram-node",
-  })),
-);
+/** The table's own name, or `schema.table` when two tables in the diagram share a name. */
+const shortNames = computed(() => {
+  const last = (key: string) => key.split(".").slice(-1)[0];
+  const counts = new Map<string, number>();
+  for (const key of tableNames.value) counts.set(last(key), (counts.get(last(key)) ?? 0) + 1);
+  return new Map(
+    tableNames.value.map((key) => [
+      key,
+      counts.get(last(key)) === 1 ? last(key) : key.split(".").slice(-2).join("."),
+    ]),
+  );
+});
+
+/** Column per table: the many side sits left, what it points at one step right. Capped, so a cycle ends. */
+const columns = computed(() => {
+  const names = tableNames.value;
+  const column = new Map(names.map((n) => [n, 0]));
+  for (let pass = 0; pass < names.length; pass++) {
+    let moved = false;
+    for (const j of props.model.joins) {
+      const next = (column.get(j.from_table) ?? 0) + 1;
+      if (next > (column.get(j.to_table) ?? 0) && next < names.length) {
+        column.set(j.to_table, next);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return column;
+});
+
+const nodes = computed<Node[]>(() => {
+  const rows = new Map<number, number>();
+  return tableNames.value.map((name) => {
+    const col = columns.value.get(name) ?? 0;
+    const row = rows.get(col) ?? 0;
+    rows.set(col, row + 1);
+    return {
+      id: name,
+      label: shortNames.value.get(name) ?? name,
+      position: { x: col * 280, y: row * 80 },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      class: "semantic-diagram-node",
+    };
+  });
+});
 
 const edges = computed<Edge[]>(() =>
   props.model.joins.map((j) => ({
     id: j.key,
     source: j.from_table,
     target: j.to_table,
-    label: j.name,
+    label: "many → one",
+    markerEnd: MarkerType.ArrowClosed,
     animated: j.status !== "accepted",
   })),
 );
 </script>
 
-<style scoped>
+<style>
+/* Unscoped: a scoped import never reaches VueFlow's own elements, and the diagram stays blank. */
 @import "@vue-flow/core/dist/style.css";
+@import "@vue-flow/core/dist/theme-default.css";
 
+.semantic-diagram-node.vue-flow__node-default {
+  width: auto;
+  min-width: 120px;
+  padding: 8px 14px;
+  border: 1px solid var(--color-border-primary, #cbd5e1);
+  border-radius: var(--border-radius-md, 8px);
+  background: var(--color-background-primary, #fff);
+  color: var(--color-text-primary, #1f2937);
+  font-size: var(--font-size-sm, 13px);
+  font-weight: var(--font-weight-semibold, 600);
+  cursor: default;
+}
+</style>
+
+<style scoped>
 .joins-tab {
   display: flex;
   flex-direction: column;
