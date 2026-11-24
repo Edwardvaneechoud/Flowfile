@@ -11,7 +11,6 @@ VERSION = "1.2.3"
 # target -> (bundle subdirectory, asset file name)
 ASSETS = {
     "aarch64-apple-darwin": ("macos", "Flowfile_aarch64.app.tar.gz"),
-    "x86_64-apple-darwin": ("macos", "Flowfile_x64.app.tar.gz"),
     "x86_64-pc-windows-msvc": ("nsis", f"Flowfile_{VERSION}_x64-setup.exe"),
     "x86_64-unknown-linux-gnu": ("deb", f"Flowfile_{VERSION}_amd64.deb"),
 }
@@ -33,14 +32,13 @@ def artifacts_dir(tmp_path):
 
 
 def test_manifest_covers_every_platform(artifacts_dir):
-    """All four platform keys get a url and the stripped signature contents."""
+    """Every platform key gets a url and the stripped signature contents."""
     manifest = build_manifest(VERSION, artifacts_dir)
 
     assert manifest["version"] == VERSION
     assert manifest["pub_date"].endswith("+00:00")
     assert set(manifest["platforms"]) == {
         "darwin-aarch64",
-        "darwin-x86_64",
         "windows-x86_64",
         "linux-x86_64",
     }
@@ -50,7 +48,6 @@ def test_manifest_covers_every_platform(artifacts_dir):
         "signature": "signature-for-Flowfile_aarch64.app.tar.gz",
         "url": f"{base}/Flowfile_aarch64.app.tar.gz",
     }
-    assert manifest["platforms"]["darwin-x86_64"]["url"] == f"{base}/Flowfile_x64.app.tar.gz"
     assert manifest["platforms"]["windows-x86_64"]["url"] == f"{base}/Flowfile_{VERSION}_x64-setup.exe"
     assert manifest["platforms"]["linux-x86_64"]["url"] == f"{base}/Flowfile_{VERSION}_amd64.deb"
     assert manifest["platforms"]["linux-x86_64"]["signature"] == f"signature-for-Flowfile_{VERSION}_amd64.deb"

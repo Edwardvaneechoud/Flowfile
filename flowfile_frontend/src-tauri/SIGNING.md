@@ -46,7 +46,6 @@ must serve a file with this schema (Tauri 2 format):
       "signature": "<contents of Flowfile_aarch64.app.tar.gz.sig>",
       "url": "https://github.com/.../Flowfile_aarch64.app.tar.gz"
     },
-    "darwin-x86_64":  { "signature": "...", "url": "..." },
     "linux-x86_64":   { "signature": "...", "url": "..." },
     "windows-x86_64": { "signature": "...", "url": "..." }
   }
@@ -60,7 +59,6 @@ release when either is missing, ambiguous or empty. The platform → asset map i
 | Platform key | Release asset |
 |---|---|
 | `darwin-aarch64` | `Flowfile_aarch64.app.tar.gz` |
-| `darwin-x86_64` | `Flowfile_x64.app.tar.gz` |
 | `windows-x86_64` | `Flowfile_<version>_x64-setup.exe` |
 | `linux-x86_64` | `Flowfile_<version>_amd64.deb` |
 
