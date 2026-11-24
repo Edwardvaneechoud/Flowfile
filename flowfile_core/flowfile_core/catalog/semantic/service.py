@@ -593,6 +593,11 @@ class SemanticModelService:
             missing = [c for c in cols if not t.has_column(c)]
             if missing:
                 raise SemanticValueError(f"Table {t.name!r} has no column {missing[0]!r}")
+        if ends[0].table_id == ends[1].table_id and list(p.from_columns) == list(p.to_columns):
+            raise SemanticValueError(
+                f"A join of {ends[0].name} to itself needs different columns on each side, such as a parent "
+                f"column pointing at the table's key; the same column on both sides joins every row to itself"
+            )
         from_schema, to_schema = schema_of[ends[0].table_id], schema_of[ends[1].table_id]
         if from_schema == to_schema:
             layer = path if ns.level == 1 else host.namespace_path(self.repo.get_namespace(from_schema), self.db)

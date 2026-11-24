@@ -210,6 +210,7 @@ const columns = computed(() => {
   for (let pass = 0; pass < names.length; pass++) {
     let moved = false;
     for (const j of props.model.joins) {
+      if (j.from_table === j.to_table) continue;
       const next = (column.get(j.from_table) ?? 0) + 1;
       if (next > (column.get(j.to_table) ?? 0) && next < names.length) {
         column.set(j.to_table, next);
@@ -221,6 +222,12 @@ const columns = computed(() => {
   return column;
 });
 
+/** Tables joined to themselves: marked on their box, since a loop edge has nowhere sensible to go. */
+const selfJoined = computed(
+  () =>
+    new Set(props.model.joins.filter((j) => j.from_table === j.to_table).map((j) => j.from_table)),
+);
+
 const nodes = computed<Node[]>(() => {
   const rows = new Map<number, number>();
   return tableNames.value.map((name) => {
@@ -229,7 +236,7 @@ const nodes = computed<Node[]>(() => {
     rows.set(col, row + 1);
     return {
       id: name,
-      label: shortNames.value.get(name) ?? name,
+      label: `${shortNames.value.get(name) ?? name}${selfJoined.value.has(name) ? " ⟲" : ""}`,
       position: { x: col * 280, y: row * 80 },
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
@@ -261,18 +268,20 @@ function onPaneReady(instance: VueFlowStore) {
 watch([() => nodes.value.map((n) => n.id).join("|"), diagramHeight], fitDiagram, { flush: "post" });
 
 const edges = computed<Edge[]>(() =>
-  props.model.joins.map((j) => ({
-    id: j.key,
-    source: j.from_table,
-    target: j.to_table,
-    label: "many → one",
-    markerEnd: isWrong(j)
-      ? { type: MarkerType.ArrowClosed, color: "var(--color-warning-dark)" }
-      : MarkerType.ArrowClosed,
-    animated: j.status !== "accepted",
-    style: isWrong(j) ? { stroke: "var(--color-warning-dark)", strokeWidth: 2 } : undefined,
-    labelStyle: isWrong(j) ? { fill: "var(--color-warning-dark)" } : undefined,
-  })),
+  props.model.joins
+    .filter((j) => j.from_table !== j.to_table)
+    .map((j) => ({
+      id: j.key,
+      source: j.from_table,
+      target: j.to_table,
+      label: "many → one",
+      markerEnd: isWrong(j)
+        ? { type: MarkerType.ArrowClosed, color: "var(--color-warning-dark)" }
+        : MarkerType.ArrowClosed,
+      animated: j.status !== "accepted",
+      style: isWrong(j) ? { stroke: "var(--color-warning-dark)", strokeWidth: 2 } : undefined,
+      labelStyle: isWrong(j) ? { fill: "var(--color-warning-dark)" } : undefined,
+    })),
 );
 </script>
 
