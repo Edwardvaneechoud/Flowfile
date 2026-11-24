@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.ai.chart_profile import TableProfile, profile_table, render_profile
 from flowfile_core.ai.chart_request import MAX_PROMPT_LEN
-from flowfile_core.ai.chart_routes import _profile_warning, _readable_table, answered_by
+from flowfile_core.ai.chart_routes import _readable_table, answered_by, profile_warnings
 from flowfile_core.ai.dashboard_plan import (
     DEFAULT_TIMEOUT_SECONDS,
     MAX_CHECKS,
@@ -44,6 +44,7 @@ from flowfile_core.ai.dashboard_story import (
     StoryChart,
     StoryFailure,
     gather_evidence,
+    keep_private,
     withheld_evidence,
     write_story,
 )
@@ -73,9 +74,7 @@ def _readable_tables(db: Session, user: Any, table_ids: list[int]) -> list[Any]:
 
 async def _profiles(tables: list[Any], user: Any, share_values: bool) -> tuple[list[TableProfile], list[str]]:
     profiles = await asyncio.gather(*(profile_table(t, user, share_values=share_values) for t in tables))
-    warnings = [
-        f'"{p.table_name}": ' + _profile_warning(p.problem or "unknown error") for p in profiles if not p.complete
-    ]
+    warnings = [f'"{p.table_name}": ' + w for p in profiles for w in profile_warnings(p)]
     return list(profiles), warnings
 
 
@@ -162,23 +161,34 @@ async def dashboard_story_route(
 
     by_id = {t.id: t for t in tables}
     keys = dict(zip(by_id, source_keys([t.name for t in tables]), strict=True))
-    if body.send_values and send_data_allowed() and body.charts:
-        evidence = await gather_evidence(tables=by_id, user=current_user, kpis=body.kpis, charts=body.charts)
+    withheld = await asyncio.to_thread(_read_withheld, db, list(by_id))
+    measuring = body.send_values and send_data_allowed() and bool(body.charts)
+    private = keep_private(tables=by_id, withheld=withheld, kpis=body.kpis, charts=body.charts, measuring=measuring)
+    if measuring:
+        evidence = await gather_evidence(tables=by_id, user=current_user, kpis=private.kpis, charts=private.charts)
+        evidence = [*evidence, *private.evidence]
     else:
         evidence = withheld_evidence(body.kpis, body.charts)
     result = await write_story(
         prompt=body.prompt,
         title=body.title,
         kpis=body.kpis,
-        charts=body.charts,
+        charts=private.shown_charts,
         failed=body.failed,
         sources=keys,
         evidence=evidence,
         provider=provider,
         user_id=current_user.id,
+        warnings=private.warnings,
         timeout=body.timeout,
     )
     return answered_by(result, provider)
+
+
+def _read_withheld(db: Session, table_ids: list[int]) -> Any:
+    from flowfile_core.catalog.semantic.confidentiality import read_withheld
+
+    return read_withheld(db, table_ids)
 
 
 __all__ = ["router", "DashboardStoryRequest", "PlanDashboardRequest"]

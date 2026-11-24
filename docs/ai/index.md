@@ -123,6 +123,18 @@ The plan and the text run on the **Dashboards** model under Settings → AI → 
 
 ---
 
+## AI in semantic models
+
+A [semantic model](../users/visual-editor/catalog/semantic-models.md) records what a schema's columns, joins and metrics mean. Three things use AI:
+
+- **Draft.** **Suggest** proposes column roles, joins and metrics from rules, with no AI. With AI usable, the model also writes the descriptions and metric names, one small call per table.
+- **Ask.** A question box in the **Ask** tab turns a sentence into a query of one approved metric. The model only picks from the approved metrics and the dimensions listed for them; it never writes SQL.
+- **Specific suggestions.** **Ask for something specific** (and the **Suggest joins / metrics / descriptions and roles** buttons of each tab) asks the model for exactly what a person writes, such as "a metric for average order value". Flowfile checks every suggestion before storing it: names against the catalog, metrics compiled and tried, joins measured (turned round when reversed, refused when they would multiply rows), and sends what fails back once; see [Ask for something specific](../users/visual-editor/catalog/semantic-models.md#ask-for-something-specific).
+
+All three are sized for the small [on-device model](providers.md#on-device-model-no-key-required), which is the default and is offered in the panel when no AI is set up; a configured online provider can be chosen for the task **Semantic model** under Settings → AI → Assistant. AI can propose, only a person can accept: AI facts wait in **Review**. The model only suggests: Flowfile checks every grouping, filter and time grain against the question and the model, adds a value the question names, and states how the question was read; the distinct values used for matching stay in Flowfile and are not sent to the model. Columns marked Confidential or Restricted in a semantic model are kept from every AI surface that reads catalog tables (the draft and question box, the chart prompt bar, the dashboard builder and its story): the model gets their name and type only, whatever the **Send data values** setting says. Result rows are never sent to the model, and each draft and answer is recorded in the AI audit log. With **Send data values** off, the draft receives names and types only.
+
+---
+
 ## Diff preview & accept/reject
 
 Cmd+K and the *Staged* / *Single-shot full* agent variants route edits through a `GraphDiff` review:

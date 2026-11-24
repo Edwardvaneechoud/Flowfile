@@ -173,12 +173,14 @@
                 :selected-artifact-id="catalogStore.selectedArtifactId"
                 :selected-table-id="catalogStore.selectedTableId"
                 :selected-namespace-id="catalogStore.selectedNamespaceId"
+                :selected-semantic-namespace-id="catalogStore.selectedSemanticNamespaceId"
                 :search-query="searchQuery"
                 :show-unavailable="showUnavailable"
                 @select-flow="selectFlow($event)"
                 @select-artifact="selectArtifact($event)"
                 @select-table="selectTable($event)"
                 @select-namespace="selectNamespace($event)"
+                @select-semantic-model="selectSemanticModel($event)"
                 @table-context-menu="onTableContextMenu($event)"
                 @artifact-context-menu="onArtifactContextMenu($event)"
                 @flow-context-menu="onFlowContextMenu($event)"
@@ -272,11 +274,17 @@
           @set-versions-page="catalogStore.setArtifactVersionsPage($event)"
           @versions-changed="refreshArtifactVersions()"
         />
+        <SemanticModelPanel
+          v-else-if="catalogStore.selectedSemanticNamespaceId !== null"
+          :namespace-id="catalogStore.selectedSemanticNamespaceId"
+          @close="handleCloseDetail"
+        />
         <!-- Namespace (catalog) settings view -->
         <NamespaceDetailPanel
           v-else-if="catalogStore.selectedNamespace"
           :namespace="catalogStore.selectedNamespace"
           @close="handleCloseDetail"
+          @open-semantic-model="selectSemanticModel($event)"
         />
         <!-- Table detail view -->
         <TableDetailPanel
@@ -302,6 +310,7 @@
           @edits-saved="catalogStore.handleTableEdited($event)"
           @restore-version="handleRestoreVersion($event)"
           @create-viz="openCreateViz($event)"
+          @open-semantic-table="selectSemanticModel($event.namespaceId, $event.tableId)"
         />
         <!-- Flow detail view; a hub flow's is the same page with its versions and their Open on it -->
         <FlowDetailPanel
@@ -661,6 +670,7 @@ import { ElCheckbox, ElLoading, ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore, type CatalogItemKind } from "../../stores/catalog-store";
 import { useProjectStore } from "../../stores/project-store";
+import { useSemanticModelStore } from "../../stores/semantic-model-store";
 import { useNotebookStore } from "../../stores/notebook-store";
 import { useSqlEditorStore } from "../../stores/sql-editor-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -682,6 +692,7 @@ import HubFlowDetailPanel from "./HubFlowDetailPanel.vue";
 import ArtifactDetailPanel from "./ArtifactDetailPanel.vue";
 import TableDetailPanel from "./TableDetailPanel.vue";
 import NamespaceDetailPanel from "./NamespaceDetailPanel.vue";
+import SemanticModelPanel from "./SemanticModelPanel.vue";
 import RunDetailPanel from "./RunDetailPanel.vue";
 import StatsPanel from "./StatsPanel.vue";
 import CreateNamespaceModal from "./CreateNamespaceModal.vue";
@@ -756,6 +767,7 @@ const router = useRouter();
 const route = useRoute();
 
 const catalogStore = useCatalogStore();
+const semanticModelStore = useSemanticModelStore();
 const presentation = usePresentationStore();
 const projectStore = useProjectStore();
 const notebookStore = useNotebookStore();
@@ -1159,6 +1171,22 @@ function selectNamespace(namespaceId: number) {
   router.push({
     name: "catalog",
     query: { tab: "catalog", namespaceId: String(namespaceId) },
+  });
+}
+
+/** A catalog (level 0) of this machine's tree: its semantic model lives on the catalog's page. */
+const isCatalogId = (namespaceId: number) =>
+  catalogStore.tree.some((c) => c.id === namespaceId && c.level === 0);
+
+function selectSemanticModel(namespaceId: number, tableId: number | null = null) {
+  if (isCatalogId(namespaceId)) {
+    selectNamespace(namespaceId);
+    return;
+  }
+  semanticModelStore.requestFocusTable(tableId);
+  router.push({
+    name: "catalog",
+    query: { tab: "catalog", semanticNamespaceId: String(namespaceId) },
   });
 }
 
@@ -1968,6 +1996,7 @@ const SELECTION_QUERY_KEYS = [
   "artifactId",
   "scheduleId",
   "namespaceId",
+  "semanticNamespaceId",
   "runId",
 ] as const;
 
@@ -2036,6 +2065,16 @@ function applyRouteToStore() {
     return;
   }
   const q = route.query;
+  // An old address of a catalog's model opens the catalog's page, which now holds it.
+  const oldCatalogModel = q.semanticNamespaceId ? Number(q.semanticNamespaceId) : null;
+  if (oldCatalogModel !== null && isCatalogId(oldCatalogModel)) {
+    const rest = { ...q };
+    delete rest.semanticNamespaceId;
+    rest.tab = "catalog";
+    rest.namespaceId = String(oldCatalogModel);
+    router.replace({ name: "catalog", query: rest });
+    return;
+  }
   const tab = routeTab();
   const flowId = q.flowId ? Number(q.flowId) : null;
   const runId = q.runId ? Number(q.runId) : null;
@@ -2061,6 +2100,14 @@ function applyRouteToStore() {
     if (namespaceId !== catalogStore.selectedNamespaceId) catalogStore.selectNamespace(namespaceId);
   } else if (catalogStore.selectedNamespace) {
     catalogStore.clearNamespaceSelection();
+  }
+
+  const semanticNamespaceId = q.semanticNamespaceId ? Number(q.semanticNamespaceId) : null;
+  if (semanticNamespaceId !== null) {
+    if (semanticNamespaceId !== catalogStore.selectedSemanticNamespaceId)
+      catalogStore.selectSemanticModel(semanticNamespaceId);
+  } else if (catalogStore.selectedSemanticNamespaceId !== null) {
+    catalogStore.clearSemanticSelection();
   }
 
   // Handle selections (mutually exclusive: table, artifact, schedule, or flow+run)

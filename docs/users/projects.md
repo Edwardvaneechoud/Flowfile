@@ -34,13 +34,17 @@ A project folder holds YAML files of your resources:
 | `visualizations/` | One `.visualization.yaml` per saved chart: its spec and its source, a table by name or a SQL query. A chart that belongs to a dashboard names it under `dashboard`, by the dashboard's `dashboard_uuid`. |
 | `dashboards/` | One `.dashboard.yaml` per dashboard: its layout, tabs, tiles and filters. A tile names its chart by the chart's `viz_uuid`, so a dashboard is its file plus the files of the charts it uses. |
 | `secrets.yaml` | The names of the secrets you created on the Secrets page (no values). Secrets a feature keeps for itself, such as an AI provider key, a Kafka connection's password or the GitHub publish token, are not listed. |
-| `namespaces.yaml`, `tables.yaml`, `models.yaml`, `kernels.yaml` | Catalog metadata manifests. `tables.yaml` names a table's producing flow only when that flow is in the project. |
+| `tables/` | One `<catalog>.<schema>.<table>.table.yaml` per catalog table (`sales.raw.orders.table.yaml`). A table's file names its producing flow only when that flow is in the project. |
+| `namespaces.yaml`, `models.yaml`, `kernels.yaml` | Catalog metadata manifests. |
 | `.gitignore` | Guards against committing secrets and local data. |
 
-A chart's or dashboard's file is named after it (`Sales overview` becomes `dashboards/Sales_overview.dashboard.yaml`). Renaming one moves its file; the id inside the file keeps it the same chart or dashboard. Two with the same name get the start of their id added to the file name.
+A chart's, dashboard's or table's file is named after it (`Sales overview` becomes `dashboards/Sales_overview.dashboard.yaml`). Renaming one moves its file; the id inside the file keeps it the same chart or dashboard. Two with the same name get the start of their id added to the file name; two tables whose names differ only in letter case get a short hash of their key added.
 
 !!! note "Folders saved before charts and dashboards had their own files"
     Project format 2 and older kept every chart in one `visualizations.yaml` and every dashboard in one `dashboards.yaml`. Such a folder still opens and reads as unchanged. Its next save writes the files above, removes those two, and sets the format to 3. A Flowfile that reads only format 2 then refuses the folder with "written by a newer Flowfile", so upgrade every machine that opens the project before you save from the new version. Releases from before that check exist do not refuse it and read the folder as holding no charts or dashboards.
+
+!!! note "Folders saved before tables had their own files"
+    Project format 3 and older kept every catalog table in one `tables.yaml`. Such a folder still opens and reads as unchanged. Its next save writes one file per table under `tables/`, removes `tables.yaml`, and sets the format to 4. A Flowfile from before format 4 refuses the folder with "written by a newer Flowfile", so upgrade every machine that opens the project before you save from the new version. With one file per table, two people who change different tables no longer change the same file.
 
 ## What a version holds
 
@@ -48,7 +52,7 @@ A version is a commit of your resources' definitions: what they are and how they
 
 ### Tracking data artifacts
 
-The **track data artifacts** toggle (on by default) adds `tables` and `models` to the `kinds` list in `project.yaml`, or removes them. When on, catalog-table metadata (`tables.yaml`) and global-model metadata (`models.yaml`) are written too. Turn it off to keep a project focused on flows and connections and leave data-artifact metadata out of git entirely. The materialized table data itself is never committed regardless — only its metadata.
+The **track data artifacts** toggle (on by default) adds `tables` and `models` to the `kinds` list in `project.yaml`, or removes them. When on, catalog-table metadata (`tables/`) and global-model metadata (`models.yaml`) are written too. Turn it off to keep a project focused on flows and connections and leave data-artifact metadata out of git entirely. The materialized table data itself is never committed regardless — only its metadata.
 
 ## Working with projects in the app
 

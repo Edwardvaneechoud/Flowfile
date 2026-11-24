@@ -56,6 +56,39 @@ A `catalog_writer` node in virtual mode registers a table that stores no data an
 
 `SqlService.execute_sql_query` resolves every accessible table into a name map (qualified `catalog.schema.table`, `schema.table`, and bare name when unique), materializes referenced virtual tables to IPC files via the worker, then hands the whole query to the worker: a spawned child opens the Delta directories and IPC files in a `pl.SQLContext`, collects at most `max_rows`, and returns rows. **Core never collects** — it ships names and paths. Cloud-backed physical tables are excluded from this path with a clear error (the in-flow `sql_query` node has its own resolution path that handles them). "Save as flow" generates a `catalog_reader`-per-table → `sql_query` flow and registers it.
 
+## Semantic layer
+
+A schema's semantic model (descriptions, joins, metrics, each with a review status and an append-only history) lives in a **glosslayer** ledger inside the catalog database. See [Semantic Models](../users/visual-editor/catalog/semantic-models.md) for the user side.
+
+| Piece | Where | Role |
+|---|---|---|
+| Ledger tables | Alembic `046_semantic_ledger.py` calls `glosslayer.schema.upgrade`; downgrade drops every `gloss_*` table | Same database and engine as the catalog, so SQLite and PostgreSQL both work |
+| Host | `catalog/semantic/host.py` | Builds `Gloss`, the `glosslayer-flowfile` catalog plugin and the embedded syncer once per process; rebuilt when `sharing_enabled()` flips, since the review policy (solo or team) comes from it |
+| Snapshot | `catalog/semantic/snapshot.py` | A view turned into plain dataclasses with status and version; no Pydantic or FastAPI |
+| Service | `catalog/semantic/service.py` | `SemanticModelService(db, user, access)`: read, propose, review, history, sync, export, metric query. Ledger errors become the `Semantic*Error` types in `catalog/exceptions.py` and a refused decision becomes `NotAuthorizedError` |
+| Compiler | `catalog/semantic/compiler.py` | Pure: a snapshot and a `MetricQuery` become SQL, the tables it reads and the metric's version. No database, no glosslayer import |
+| Suggestions | `catalog/semantic/suggest.py`, `SemanticModelService.suggest` / `store_suggestions` | Pure rules for roles, joins (within the model's tables) and metrics over one aggregate query per table through the catalog SQL path; stored as proposals with source `inferred:flowfile-rules`, skipping what the model already holds |
+| AI | `ai/semantic_routes.py` (`POST /ai/semantic/draft`, `/ai/semantic/ask`), `ai/semantic_draft.py`, `ai/semantic_ask.py`, prompts `ai/prompts/semantic_{draft,ask}.md` | Sized for the local model: JSON mode only, one call per table of at most 16 columns, one repair round, names matched against the menu given to the model. AI words are stored through `view_for(..., via="ai:<provider>/<model>")`, so they queue; each draft and answer is written to the AI audit log with `rows_sent_to_model: 0` |
+| Router | `routes/catalog_semantic.py`, mounted under `/catalog` | `/namespaces/{id}/semantic-model` with `proposals`, `review`, `history`, `sync`, `export`, `query` and `query/save-as-flow`; no trailing slashes; JWT only |
+| DTOs | `schemas/semantic_schema.py` | The contract the frontend mirrors |
+
+**Hooks.** `TableService.update_table` and `delete_table`, `NamespaceService.update_namespace` and the catalog writer's table registration call `host.on_table_renamed`, `on_table_deleted`, `on_namespace_renamed` and `on_table_written`. They run **after the catalog commit**: on SQLite a ledger write fails with `database is locked` while a catalog write is uncommitted. They never run inside `apply_transaction`, and they log instead of raising, so a failed hook never fails a catalog change. `sync()` reconciles what a hook missed, and the service syncs on a model read at most once a minute. A rename cannot be recovered by a sync (it looks like a drop and an add), so a failed rename hook logs at error level. The project importer reaches no hook.
+
+**Access.** `host.view_for(user, access)` hands glosslayer path prefixes. A prefix covers everything below it, so a catalog path goes into `read` or `manage` only when every schema under it is in that set. `read` holds the paths of visible namespaces and the keys of individually granted tables; `manage` holds the namespaces the user owns or holds a manage grant on (a public-writable namespace does not count). Reads are per schema, not per table. Where nothing restricts the caller, the view is unrestricted. Accepting is decided by glosslayer's policy from `manage`: solo on a desktop, team review where sharing is on, and an AI actor never accepts.
+
+**Queries.** A metric query compiles against a snapshot of the whole catalog, so joins can cross schemas, and runs through `CatalogService.execute_sql_query`, the SQL path above. Each table is written as one quoted identifier holding its qualified name, the name `resolve_all_queryable_tables` registers. The worker computes; core never collects. A metric proposal is dry-run with a one-row limit before it is stored. `save-as-flow` goes through `SqlService.save_sql_query_as_flow`, which looks up readers in the target schema, so a query that reads another schema's table is refused there.
+
+**Join check.** `catalog/semantic/join_check.py::check_join` measures a join before `propose` stores it: one aggregate statement per side (rows with a key, distinct keys) through `CatalogService.execute_sql_query`, to side first. Verdicts: `ok` (stored with the measurement as rationale), `reversed` and `many_to_many` (422 with an instruction), `unchecked` (empty table, no compute, unreadable table; stored). `POST …/semantic-model/joins/check` re-checks every join of the snapshot. Rule suggestions skip it, since they already prove uniqueness.
+
+**Confidentiality.** `catalog/semantic/confidentiality.py::read_withheld(db, table_ids)` withholds a column when the highest level among the live facts (accepted, proposed or stale) of the column, its semantic type and its table is confidential or restricted. It reads the ledger without the caller's scope, fails closed (every table asked about is withheld) when the ledger raises, and withholds nothing when glosslayer is not installed. It is enforced in `ai/chart_profile.py`, the choke point for chart and dashboard plans, in `ai/dashboard_story.py::keep_private`, and in the semantic draft and ask routes. Anyone adding an AI surface that reads catalog tables must ask `read_withheld` before any value, description or synonym of a column goes into a prompt.
+
+**Ask grounding.** In `ai/semantic_ask.py` the model is a suggester and the code decides: `ground` runs `ground_dimensions`, `ground_filters`, `ground_grain`, `choose_metric` and `ground_values` over the model's answer. A dimension survives only if the question names it (whole words, plural and `_` normalised; labels and synonyms count), a filter only if its value is in the question, a grain only if the question asks over time; a "by …" phrase naming an allowed dimension is added, one naming none sets `SemanticAskOut.partial` and a note, and nothing is substituted. `ground_values` turns known category values the question names into filters; they come from `SemanticModelService.known_values` (one `UNION ALL` through `CatalogService.execute_sql_query`, so the worker computes and the caller's access applies), cached 300 s per user and namespace in `semantic_routes._known_values`, used for matching only and never placed in the prompt. The first note of every answer is `Read as: …`. When extending: never loosen grounding to make a question pass, and never let a repair round substitute one dimension for another.
+
+**Provider rule of the two AI routes.** The provider named in the request, else the local model if installed, else **409** with a top-level body `{"error_code": "AI_NOT_SET_UP", "message", "local_available"}` that the UI turns into an offer. They deliberately do not use `node_codegen_routes._resolve_provider`, whose no-provider path falls through to an Ollama that is usually not running. Per-task model choices live only in the browser, so the frontend sends `provider`/`model`. `POST …/suggest` needs no provider. Statistics reach a model only when `send_data_allowed()`; result rows never do.
+
+!!! warning "The dependency"
+    Every `glosslayer` and `glosslayer_flowfile` import is function-local. `glosslayer` is a dependency in `pyproject.toml`; `glosslayer-flowfile` is not yet published and is not listed there, so without it installed the hooks log a warning and the model routes fail.
+
 ## Schedules and triggers
 
 Schedule rows live in the shared DB, and the embedded scheduler (`flowfile_scheduler/engine.py`) deliberately **imports nothing from core** — it reads mirrored models from `shared/`, polls every 30 s, and coordinates instances through a single-row advisory lock with a 90 s stale-takeover.
@@ -108,6 +141,7 @@ A registered flow can be **published** as an HTTP data endpoint (`routes/flow_ap
 | `sharing_enabled()` reads `FLOWFILE_MODE` from `os.environ` per call | Import-time caching would make docker-mode untestable |
 | optimize/vacuum never bump `updated_at` | Maintenance must not fire table triggers |
 | Table names reject dots | Dots are the SQL qualification separator |
+| Ledger writes only after the catalog commit | A glosslayer write during an uncommitted SQLite catalog write fails with `database is locked` |
 
 ## Extension points
 

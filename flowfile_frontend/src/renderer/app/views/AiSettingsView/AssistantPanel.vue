@@ -402,6 +402,11 @@ const onMainModelChange = (value: string): void => {
 const TASK_MODELS: ReadonlyArray<{ surface: string; label: string; hint: string }> = [
   { surface: "chart", label: "Charts", hint: "Used when you ask the AI for a chart." },
   {
+    surface: "semantic",
+    label: "Semantic model",
+    hint: "Writes descriptions for a suggested model and answers questions about your metrics.",
+  },
+  {
     surface: "dashboard",
     label: "Dashboards",
     hint: "Plans and writes a dashboard page; each chart on it is built by the Charts model.",

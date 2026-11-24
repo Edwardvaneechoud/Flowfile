@@ -1,0 +1,653 @@
+"""``POST /ai/semantic/draft``, ``/ask`` and ``/suggest``: local-first AI over a catalog semantic model.
+
+Mounted under ``/ai`` (``FEATURE_FLAG_AI`` from the parent router). The provider rule is these routes' own, not
+``node_codegen_routes._resolve_provider`` (whose no-provider path falls through to an Ollama that is usually not
+running): the provider the request names, then the local model when it is installed, else a **409** with body
+``{"error_code": "AI_NOT_SET_UP", "message", "local_available"}`` that the UI turns into the one-click local offer.
+A user's per-task model pick lives in the browser (``aiStore.surfaceModels``), which sends it as ``provider`` and
+``model``; the backend stores none. Never 401.
+
+Database work runs in threads on sessions closed before any model call. After resolution every outcome is a 200,
+degraded ones with a ``reason``. Every draft and every answered question is written to the AI audit log with the
+rows sent to the model (always 0: statistics go only when ``send_data_allowed()``, result rows never).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+import uuid
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
+
+from flowfile_core.ai.feature_flag import send_data_allowed
+from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.schemas.semantic_schema import (
+    AiNotSetUpOut,
+    SemanticAnsweredWith,
+    SemanticAskIn,
+    SemanticAskOut,
+    SemanticDraftIn,
+    SemanticDraftOut,
+    SemanticDraftTable,
+    SemanticSuggestionProposed,
+    SemanticSuggestionSkipped,
+    SemanticSuggestRequestIn,
+    SemanticSuggestRequestOut,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/semantic")
+
+_NOT_SET_UP = (
+    "No AI is set up for this. Install the local model (it runs on this computer and nothing leaves it), "
+    "or add a provider in Settings → AI."
+)
+
+
+class _NotSetUp(Exception):
+    def __init__(self, local_available: bool, message: str = _NOT_SET_UP) -> None:
+        super().__init__(message)
+        self.local_available = local_available
+        self.message = message
+
+
+def _local_status() -> tuple[bool, bool]:
+    """``(installed, available)`` for the local model, read from disk only (no server is started)."""
+    try:
+        from flowfile_core.ai.local_model import manager
+
+        return manager.is_installed(), manager.is_available()
+    except Exception:  # noqa: BLE001
+        logger.warning("local model status could not be read", exc_info=True)
+        return False, False
+
+
+def resolve_semantic_provider(db: Any, user_id: int, name: str | None, model: str | None) -> Any:
+    """Named provider → the installed local model → ``_NotSetUp``; an unknown name is a 404."""
+    from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_provider
+    from flowfile_core.ai.node_codegen_routes import _ensure_known_provider
+    from flowfile_core.ai.providers import LOCAL_PROVIDER_ID
+
+    _ensure_known_provider(name)
+    installed, available = _local_status()
+    if name is not None:
+        if name == LOCAL_PROVIDER_ID and not installed:
+            raise _NotSetUp(available, "The local model is not installed yet. " + _NOT_SET_UP)
+        try:
+            return get_configured_provider(db, user_id, name, surface="semantic", model=model)
+        except ProviderNotConfiguredError as exc:
+            raise _NotSetUp(installed or available, f"{exc} {_NOT_SET_UP}") from None
+    if installed:
+        return get_configured_provider(db, user_id, LOCAL_PROVIDER_ID, model=model)
+    raise _NotSetUp(available)
+
+
+def _not_set_up(exc: _NotSetUp) -> JSONResponse:
+    body = AiNotSetUpOut(message=exc.message, local_available=exc.local_available)
+    return JSONResponse(status_code=409, content=body.model_dump())
+
+
+def _service(db: Any, user: Any) -> Any:
+    from flowfile_core.catalog.access import AccessResolver
+    from flowfile_core.catalog.semantic.service import SemanticModelService
+
+    return SemanticModelService(db, user, AccessResolver(db, user))
+
+
+def _http(exc: Exception) -> HTTPException | None:
+    """A catalog or semantic error as the semantic router maps it (403/404/409/422), else ``None``."""
+    from flowfile_core.routes.catalog_semantic import _EXCEPTION_MAP
+
+    for cls, code in _EXCEPTION_MAP:
+        if isinstance(exc, cls):
+            return HTTPException(code, detail=str(exc))
+    return None
+
+
+async def _in_thread(fn, *args):
+    try:
+        return await asyncio.to_thread(fn, *args)
+    except (_NotSetUp, HTTPException):
+        raise
+    except Exception as exc:
+        mapped = _http(exc)
+        if mapped is None:
+            raise
+        raise mapped from None
+
+
+def _source(provider: Any) -> tuple[str, str | None]:
+    model = getattr(provider, "model", None)
+    return f"ai:{provider.name}/{model}" if model else f"ai:{provider.name}", model
+
+
+def _audit(user_id: int, tool: str, provider: Any, status: str, args: dict[str, Any], error: str | None) -> None:
+    """Best-effort audit row; a failure to record is logged, never raised into the answer."""
+    try:
+        from flowfile_core.ai.audit import AuditEvent, record_event
+
+        record_event(
+            AuditEvent(
+                session_id=f"semantic-{uuid.uuid4().hex[:12]}",
+                user_id=user_id,
+                tool_name=tool,
+                result_status=status,
+                tool_args=args,
+                error=error,
+                provider=getattr(provider, "name", None),
+                model=getattr(provider, "model", None),
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("semantic AI audit record failed", exc_info=True)
+
+
+@router.post("/draft", response_model=SemanticDraftOut, tags=["ai"], responses={409: {"model": AiNotSetUpOut}})
+async def draft_semantic_model(body: SemanticDraftIn, current_user=Depends(get_current_active_user)):
+    """Rule candidates plus AI words (descriptions, metric names), stored as proposals that queue for review.
+
+    404 unknown provider or namespace · 403 not writable · 409 ``AI_NOT_SET_UP`` · 503 AI off; the rest is a 200.
+    """
+    from flowfile_core.ai.semantic_draft import draft_words, words_for_store
+    from flowfile_core.catalog.semantic.confidentiality import read_withheld
+    from flowfile_core.database.connection import get_db_context
+
+    def prepare():
+        with get_db_context() as db:
+            provider = resolve_semantic_provider(db, current_user.id, body.provider, body.model)
+            service = _service(db, current_user)
+            sugg, model_tables, problem = service.suggest_candidates(body.namespace_id, body.table_ids)
+            withheld = read_withheld(db, body.table_ids or list(model_tables))
+            return provider, sugg, model_tables, problem, withheld
+
+    try:
+        provider, sugg, model_tables, problem, withheld = await _in_thread(prepare)
+    except _NotSetUp as exc:
+        return _not_set_up(exc)
+    table_ids = body.table_ids or sorted(model_tables)
+    source, model = _source(provider)
+    outcomes = await draft_words(
+        provider,
+        sugg,
+        table_ids,
+        user_id=current_user.id,
+        share_values=send_data_allowed() and sugg.stats_available,
+        withheld=withheld,
+    )
+    words = words_for_store(outcomes)
+
+    def store():
+        with get_db_context() as db:
+            return _service(db, current_user).store_suggestions(body.namespace_id, sugg, words=words, ai_source=source)
+
+    stored = await _in_thread(store)
+    tables = [
+        SemanticDraftTable(
+            table_id=o.table_id,
+            table=o.table,
+            calls=o.calls,
+            ok=o.ok,
+            reason=o.reason,
+            message=o.message,
+            withheld_columns=o.withheld,
+        )
+        for o in outcomes
+    ]
+    failed = [t for t in tables if not t.ok]
+    reason = None
+    if failed:
+        reason = "all_tables_failed" if len(failed) == len(tables) else "some_tables_failed"
+    elif problem:
+        reason = "no_statistics"
+    out = SemanticDraftOut(
+        **stored.model_dump(),
+        provider=provider.name,
+        model=model,
+        table_outcomes=tables,
+        degraded=reason is not None,
+        reason=reason,
+    )
+    out.tables = len(table_ids)
+    out.stats_available = sugg.stats_available and problem is None
+    out.stats_message = problem
+    _audit(
+        current_user.id,
+        "semantic_draft",
+        provider,
+        "success" if not failed else "error",
+        {
+            "namespace_id": body.namespace_id,
+            "tables": [o.table for o in outcomes],
+            "calls": sum(o.calls for o in outcomes),
+            "added": stored.added.model_dump(),
+            "statistics_sent": send_data_allowed() and sugg.stats_available,
+            "rows_sent_to_model": 0,
+            "columns_withheld": sum(len(o.withheld) for o in outcomes),
+            "tables_withheld": sum(1 for o in outcomes if o.reason == "kept_private"),
+            "ai_descriptions_dropped": sum(len(o.words.dropped) for o in outcomes),
+        },
+        reason,
+    )
+    return out
+
+
+def _column_words(snap: Any, table: Any, dimension: str) -> list[str]:
+    """A dimension's label and synonyms as the model holds them, for matching the question's words."""
+    owner, _, column = dimension.rpartition(".")
+    ts = snap.table(owner) if owner else table
+    if ts is None and owner:
+        ts = next((t for t in snap.tables if t.name == owner), None)
+    col = ts.column(column) if ts is not None else None
+    if col is None:
+        return []
+    found = [col.facts["label"].value] if col.facts.get("label") is not None else []
+    syn = col.facts.get("synonyms")
+    found += [x for x in (syn.value if syn is not None else []) or [] if isinstance(x, str)]
+    return [x for x in found if isinstance(x, str)]
+
+
+def _model_label(provider: Any, model: str | None) -> str | None:
+    """The local provider's label is a fixed default; the local manager knows which model actually runs."""
+    from flowfile_core.ai.providers import LOCAL_PROVIDER_ID
+
+    if getattr(provider, "name", None) != LOCAL_PROVIDER_ID:
+        return model
+    try:
+        from flowfile_core.ai.local_model import manager
+
+        return manager.get_selected_model_id() or model
+    except Exception:  # noqa: BLE001
+        return model
+
+
+_KNOWN_TTL = 300.0
+_known_cache: dict[tuple[int | None, int], tuple[float, dict[tuple[str, str], list[str]]]] = {}
+_TEXT_TYPES = ("str", "utf8", "bool", "cat", "enum")
+
+
+def _ref(snap: Any, table_key: str, field: str) -> tuple[str, str] | None:
+    """``(table key, column)`` of a menu field: a bare column of the metric's table, or ``<table>.<column>``."""
+    owner, _, column = field.rpartition(".")
+    if not owner:
+        return table_key, column
+    ts = snap.table(owner)
+    return (ts.key, column) if ts is not None else None
+
+
+def _dimensions(snap: Any, metric: Any) -> list[str]:
+    """What a metric can be grouped by on the menu: its allowed dimensions, else every Group-by column it reaches.
+
+    A metric stored with no allowed dimensions may be broken down by any column of its table or of a table reached
+    many to one (the compiler's rule). Offering all of those would crowd a small model's menu, so the default is the
+    columns the model marks as a category, a joined table's written ``<table>.<column>``. A reached table whose
+    short name another one already took is left out, since that name would not say which.
+    """
+    from flowfile_core.catalog.semantic.compiler import reachable_tables
+
+    stored = [d for d in (metric.value("dimensions") or []) if isinstance(d, str)]
+    if stored:
+        return stored
+    found: list[str] = []
+    names: set[str] = set()
+    for key in reachable_tables(snap, metric.table):
+        ts = snap.table(key)
+        if ts is None or ts.name in names:
+            continue
+        names.add(ts.name)
+        for c in ts.columns:
+            role = c.facts.get("role")
+            if role is not None and role.value == "category":
+                found.append(c.name if key == metric.table else f"{ts.name}.{c.name}")
+    return found
+
+
+def _known_values(
+    service: Any, namespace_id: int, snap: Any, metrics: list[Any], withheld: Any = None
+) -> dict[tuple[str, str], list[str]]:
+    """Distinct values of the menu's category columns, for matching the question's words to filter values.
+
+    They stay in core: the ask code matches them against the question and they are never put in the prompt, so no
+    data value reaches the model and ``send_data_allowed()`` is not involved. One SQL statement per namespace,
+    cached for ``_KNOWN_TTL`` seconds in this process per caller (each caller's table access applies); a failed
+    read is an empty map and the ask carries on without it. A column kept from AI (``withheld``) is never asked for,
+    and is filtered out of a cached answer too, so a level raised since the cache was filled counts at once.
+    """
+    import time
+
+    key = (getattr(service, "user_id", None), namespace_id)
+
+    def kept(ref: tuple[str, str]) -> bool:
+        ts = snap.table(ref[0])
+        return withheld is not None and (ts is None or withheld.blocks(ts.table_id, ref[1]))
+
+    hit = _known_cache.get(key)
+    if hit is not None and time.monotonic() - hit[0] < _KNOWN_TTL:
+        return {ref: vals for ref, vals in hit[1].items() if not kept(ref)}
+    wanted: list[tuple[str, str]] = []
+    for m in metrics:
+        table = snap.table(m.table)
+        dims = _dimensions(snap, m)
+        fields = dims + ([c.name for c in table.columns] if table else [])
+        for f in fields:
+            ref = _ref(snap, m.table, f)
+            ts = snap.table(ref[0]) if ref else None
+            col = ts.column(ref[1]) if ts is not None else None
+            if col is None:
+                continue
+            role = col.facts["role"].value if col.facts.get("role") is not None else None
+            if role in ("key", "time", "amount"):
+                continue
+            text = any(t in str(col.dtype or "").lower() for t in _TEXT_TYPES)
+            if kept(ref):
+                continue
+            if role == "category" or (text and f in dims):
+                wanted.append(ref)
+    try:
+        found = service.known_values(wanted)
+    except Exception:  # noqa: BLE001
+        logger.warning("semantic known values failed", exc_info=True)
+        found = {}
+    _known_cache[key] = (time.monotonic(), found)
+    return found
+
+
+def _withheld_for(db: Any, snap: Any) -> Any:
+    """What the snapshot's tables keep from AI (``confidentiality.read_withheld``)."""
+    from flowfile_core.catalog.semantic.confidentiality import read_withheld
+
+    return read_withheld(db, [t.table_id for t in snap.tables])
+
+
+def _withheld_count(snap: Any, withheld: Any) -> int:
+    return sum(len(withheld.names(t.table_id, [c.name for c in t.columns])) for t in snap.tables)
+
+
+def _menu(service: Any, namespace_id: int, question: str, db: Any = None) -> tuple[list[Any], int]:
+    """The accepted metrics as menu items, narrowed to ``MAX_MENU`` by glosslayer's keyword search.
+
+    Also answers how many of the model's columns are kept from AI: such a column stays on the menu by name only (no
+    label or synonyms for grounding, no known values read).
+    """
+    from flowfile_core.ai.semantic_ask import MAX_MENU, MenuItem
+
+    snap = service.snapshot(namespace_id, accepted_only=True)
+    withheld = _withheld_for(db if db is not None else service.db, snap)
+    metrics = snap.metrics
+    if len(metrics) > MAX_MENU:
+        from glosslayer.ids import SubjectId
+
+        hits = service.view.search(question, kinds=["metric"], limit=MAX_MENU, for_ai=True)
+        wanted = []
+        for h in hits:
+            try:
+                wanted.append(SubjectId.parse(h["subject"]).name)
+            except (KeyError, ValueError):
+                continue
+        picked = [m for m in metrics if m.name in wanted]
+        metrics = (picked or metrics)[:MAX_MENU]
+    known = _known_values(service, namespace_id, snap, metrics, withheld)
+    items = []
+    for m in metrics:
+        table = snap.table(m.table)
+        columns = [c.name for c in table.columns] if table else []
+        dims = _dimensions(snap, m)
+        column = re.search(r'\(\s*(?:DISTINCT\s+)?"?([A-Za-z_]\w*)"?\s*\)', m.expression or "")
+        private_table = table is None or withheld.whole_table(table.table_id)
+        items.append(
+            MenuItem(
+                name=m.name,
+                meaning=None if private_table else m.value("description"),
+                time_column=m.value("time_column"),
+                dimensions=dims,
+                filter_fields=columns,
+                aggregate=m.value("aggregate"),
+                column=column.group(1) if column else None,
+                table=m.table,
+                synonyms=[] if private_table else [x for x in (m.value("synonyms") or []) if isinstance(x, str)],
+                dimension_words={
+                    d: [] if _kept(snap, m.table, d, withheld) else _column_words(snap, table, d) for d in dims
+                },
+                known_values={
+                    f: known[ref] for f in dict.fromkeys([*dims, *columns]) if (ref := _ref(snap, m.table, f)) in known
+                },
+                label=m.value("label") if isinstance(m.value("label"), str) and not private_table else None,
+                format=m.value("format") if isinstance(m.value("format"), str) else None,
+                expression=m.expression if isinstance(m.expression, str) else None,
+            )
+        )
+    return items, _withheld_count(snap, withheld)
+
+
+def _kept(snap: Any, table_key: str, field: str, withheld: Any) -> bool:
+    ref = _ref(snap, table_key, field)
+    ts = snap.table(ref[0]) if ref else None
+    return ts is None or withheld.blocks(ts.table_id, ref[1])
+
+
+@router.post("/ask", response_model=SemanticAskOut, tags=["ai"], responses={409: {"model": AiNotSetUpOut}})
+async def ask_semantic_model(body: SemanticAskIn, current_user=Depends(get_current_active_user)):
+    """A question answered with one accepted metric, run under the caller's rights; rows never reach the model.
+
+    404 unknown provider or namespace · 403 not readable · 409 ``AI_NOT_SET_UP`` · 503 AI off; the rest is a 200.
+    """
+    from flowfile_core.ai.semantic_ask import ask
+    from flowfile_core.database.connection import get_db_context
+
+    def prepare():
+        with get_db_context() as db:
+            provider = resolve_semantic_provider(db, current_user.id, body.provider, body.model)
+            menu, withheld = _menu(_service(db, current_user), body.namespace_id, body.question, db)
+            return provider, menu, withheld
+
+    try:
+        provider, menu, withheld_count = await _in_thread(prepare)
+    except _NotSetUp as exc:
+        return _not_set_up(exc)
+    _source_str, model = _source(provider)
+    out = SemanticAskOut(question=body.question, provider=provider.name, model=_model_label(provider, model))
+    if not menu:
+        out.no_metric_fits, out.degraded, out.reason = True, True, "no_accepted_metrics"
+        out.notes.append("This model has no approved metrics yet. Approve one in Review, then ask again.")
+        return out
+
+    def run_query(query):
+        from flowfile_core.catalog.exceptions import SemanticValueError
+
+        with get_db_context() as db:
+            try:
+                return _service(db, current_user).query_metric(body.namespace_id, query)
+            except SemanticValueError as exc:
+                raise ValueError(str(exc)) from None
+
+    async def run(query):
+        return await asyncio.to_thread(run_query, query)
+
+    answer, attempts, result = await ask(provider, menu, body.question, user_id=current_user.id, run=run)
+    out.attempts = attempts
+    out.notes += answer.notes
+    out.partial = answer.partial
+    out.query = answer.query
+    if answer.no_metric:
+        out.no_metric_fits = True
+        out.notes.append(answer.why or "No approved metric answers this question.")
+    elif result is None:
+        out.degraded, out.reason = True, answer.reason or "invalid_query"
+        out.notes += answer.problems
+    else:
+        out.result = result
+        out.answered_with = SemanticAnsweredWith(**result.metric.model_dump())
+        if result.error:
+            out.degraded, out.reason = True, "query_failed"
+        else:
+            _answer_sentence(out, answer, menu)
+    _audit(
+        current_user.id,
+        "semantic_ask",
+        provider,
+        "success" if out.result is not None and not out.degraded else ("rejected" if out.no_metric_fits else "error"),
+        {
+            "namespace_id": body.namespace_id,
+            "question_chars": len(body.question),
+            "metric": out.answered_with.name if out.answered_with else None,
+            "metric_version": out.answered_with.version if out.answered_with else None,
+            "sql": result.sql if result is not None else None,
+            "rows_returned": len(result.rows) if result is not None else 0,
+            "rows_sent_to_model": 0,
+            "columns_withheld": withheld_count,
+            "attempts": attempts,
+            "intent": out.intent,
+            "answered_in_words": out.answer is not None,
+        },
+        out.reason,
+    )
+    return out
+
+
+@router.post(
+    "/suggest", response_model=SemanticSuggestRequestOut, tags=["ai"], responses={409: {"model": AiNotSetUpOut}}
+)
+async def suggest_on_request(body: SemanticSuggestRequestIn, current_user=Depends(get_current_active_user)):
+    """Specific suggestions for one request (or more of ``kinds``), checked by code and stored as proposals.
+
+    The model sees names, types, roles and descriptions only (a column kept from AI by name and type, no rows, no
+    statistics); every suggestion is matched, compiled, dry-run or measured before it is stored through the AI-bound
+    view, so it waits for review. 404 unknown provider or namespace · 403 not writable · 409 ``AI_NOT_SET_UP`` ·
+    422 neither a request nor kinds · 503 AI off; after provider resolution every outcome is a 200.
+    """
+    from flowfile_core.ai.semantic_suggest import (
+        build_context,
+        infer_kinds,
+        kinds_phrase,
+        store_round,
+        suggest_for_request,
+    )
+    from flowfile_core.catalog.semantic.confidentiality import read_withheld
+    from flowfile_core.database.connection import get_db_context
+
+    def prepare():
+        with get_db_context() as db:
+            provider = resolve_semantic_provider(db, current_user.id, body.provider, body.model)
+            service = _service(db, current_user)
+            ns, _path = service._namespace(body.namespace_id)
+            service._require_writable(ns)
+            snap, model_tables, all_tables = service.suggest_scope(body.namespace_id)
+            withheld = read_withheld(db, [t.table_id for t in all_tables.values()])
+            return provider, build_context(snap, model_tables, all_tables, withheld)
+
+    try:
+        provider, ctx = await _in_thread(prepare)
+    except _NotSetUp as exc:
+        return _not_set_up(exc)
+    _default_source, model = _source(provider)
+    label = _model_label(provider, model)
+    source = f"ai:{provider.name}/{label}" if label else f"ai:{provider.name}"
+    kinds = list(body.kinds) if body.kinds else infer_kinds(body.request)
+    read_as = None if body.kinds or not kinds else f"Read as a request for {kinds_phrase(kinds)} only."
+
+    def store(items, done):
+        with get_db_context() as db:
+            return store_round(
+                _service(db, current_user),
+                body.namespace_id,
+                items,
+                done,
+                kinds,
+                request=body.request,
+                ai_source=source,
+                withheld_for=lambda ids: read_withheld(db, ids),
+            )
+
+    async def apply(items, done):
+        return await _in_thread(store, items, done)
+
+    outcome = await suggest_for_request(provider, ctx, body.request, kinds, user_id=current_user.id, apply=apply)
+    out = SemanticSuggestRequestOut(
+        request=body.request,
+        kinds=kinds,
+        provider=provider.name,
+        model=label,
+        proposed=[
+            SemanticSuggestionProposed(
+                kind=s.kind, summary=s.summary, table=s.table, name=s.name, fact_ids=s.fact_ids, group=s.group
+            )
+            for s in outcome.stored
+        ],
+        skipped=[SemanticSuggestionSkipped(what=r.what, why=r.why) for r in _last_per_what(outcome.skipped)],
+        notes=list(dict.fromkeys(([read_as] if read_as else []) + outcome.notes)),
+        nothing_to_suggest=outcome.nothing,
+        why=outcome.why,
+        attempts=outcome.attempts,
+        withheld_columns=ctx.withheld_columns,
+    )
+    reason = outcome.reason
+    if reason is None and not out.proposed and any(r.retry for r in outcome.skipped):
+        reason = "all_refused"
+    out.degraded, out.reason = reason is not None, reason
+    _audit(
+        current_user.id,
+        "semantic_suggest",
+        provider,
+        "success" if out.proposed or (not out.degraded) else "error",
+        {
+            "namespace_id": body.namespace_id,
+            "request_chars": len(body.request or ""),
+            "kinds": kinds,
+            "attempts": outcome.attempts,
+            "proposed": len(out.proposed),
+            "proposed_kinds": [p.kind for p in out.proposed],
+            "skipped": len(out.skipped),
+            "nothing_to_suggest": out.nothing_to_suggest,
+            "rows_sent_to_model": 0,
+            "statistics_sent": False,
+            "columns_withheld": ctx.withheld_columns,
+        },
+        reason,
+    )
+    return out
+
+
+def _last_per_what(refused: list[Any]) -> list[Any]:
+    """One entry per suggestion, the latest refusal winning (a repaired one refused again keeps its new reason)."""
+    found: dict[str, Any] = {}
+    for r in refused:
+        found.pop(r.what, None)
+        found[r.what] = r
+    return list(found.values())
+
+
+def _answer_sentence(out: SemanticAskOut, answer: Any, menu: list[Any]) -> None:
+    """The answer in words, rendered in core from the result rows (``semantic_answer.render``); no model sees them.
+
+    A failure to render leaves ``answer`` empty and the table answers as before.
+    """
+    from flowfile_core.ai.semantic_answer import MetricWords, render
+
+    item = next((m for m in menu if m.name == out.query.metric), None) if out.query else None
+    if item is None or answer.intent is None:
+        return
+    words = MetricWords(
+        name=item.name,
+        label=item.label,
+        aggregate=item.aggregate,
+        format=item.format,
+        expression=item.expression,
+        table=item.table,
+        time_column=item.time_column,
+    )
+    try:
+        rendered = render(
+            out.question, out.query, out.result, words, answer.intent, partial=out.partial, notes=out.notes
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("semantic answer sentence failed", exc_info=True)
+        return
+    out.intent = answer.intent.kind
+    out.answer, out.facts = rendered.answer, rendered.facts
+
+
+__all__ = ["router", "resolve_semantic_provider"]

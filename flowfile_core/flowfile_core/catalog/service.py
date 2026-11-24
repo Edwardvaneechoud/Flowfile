@@ -560,6 +560,9 @@ class CatalogService:
             bulk_enrich_tables=self._tables.bulk_enrich_tables,
             bulk_enrich_flows=self._flows.bulk_enrich_flows,
         )
+        from flowfile_core.catalog.semantic.service import tree_summaries
+
+        tree_summaries(tree)
         if not self._restricted:
             return tree
         return self._filter_namespace_tree(tree)
