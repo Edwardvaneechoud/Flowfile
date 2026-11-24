@@ -12,10 +12,20 @@
     <!-- Models: pick the provider + model AI features run on. Optionally
          give a task (charts, dashboards, schedules, settings) its own model. -->
     <div class="card mb-3">
-      <div class="card-header">
+      <button
+        type="button"
+        class="card-header card-toggle"
+        :aria-expanded="isOpen('card-models')"
+        data-testid="ai-card-toggle-card-models"
+        @click="toggleGroup('card-models')"
+      >
+        <i
+          class="fa-solid card-toggle__caret"
+          :class="isOpen('card-models') ? 'fa-chevron-down' : 'fa-chevron-right'"
+        ></i>
         <h3 class="card-title">Models</h3>
-      </div>
-      <div class="card-content">
+      </button>
+      <div v-show="isOpen('card-models')" class="card-content">
         <div v-if="!aiStore.hasConfiguredProvider" class="info-box">
           <i class="fa-solid fa-circle-info"></i>
           <div class="info-body">
@@ -105,12 +115,29 @@
               <span role="columnheader">Provider</span>
               <span role="columnheader">Model</span>
             </div>
-            <template v-for="group in TASK_GROUPS" :key="group.name">
+            <template v-for="group in TASK_GROUPS" :key="group.key">
               <div class="task-group" role="row">
-                <span role="cell">{{ group.name }}</span>
+                <button
+                  type="button"
+                  class="task-group__toggle"
+                  role="cell"
+                  :aria-expanded="isOpen(group.key)"
+                  :data-testid="`ai-task-group-${group.key}`"
+                  @click="toggleGroup(group.key)"
+                >
+                  <i
+                    class="fa-solid task-group__caret"
+                    :class="isOpen(group.key) ? 'fa-chevron-down' : 'fa-chevron-right'"
+                  ></i>
+                  <span>{{ group.name }}</span>
+                  <span v-if="!isOpen(group.key)" class="task-group__summary">
+                    {{ groupSummary(group) }}
+                  </span>
+                </button>
               </div>
               <div
                 v-for="task in group.tasks"
+                v-show="isOpen(group.key)"
                 :key="task.surface"
                 class="task-row"
                 role="row"
@@ -176,10 +203,20 @@
     </div>
 
     <div class="card mb-3" data-testid="ai-data-sharing">
-      <div class="card-header">
+      <button
+        type="button"
+        class="card-header card-toggle"
+        :aria-expanded="isOpen('card-data')"
+        data-testid="ai-card-toggle-card-data"
+        @click="toggleGroup('card-data')"
+      >
+        <i
+          class="fa-solid card-toggle__caret"
+          :class="isOpen('card-data') ? 'fa-chevron-down' : 'fa-chevron-right'"
+        ></i>
         <h3 class="card-title">Data sent to the AI</h3>
-      </div>
-      <div class="card-content">
+      </button>
+      <div v-show="isOpen('card-data')" class="card-content">
         <p class="hint-text models-intro">
           The AI always gets names: the table, its columns and their types, plus your prompt. With
           this on it also gets data values: row counts, summary statistics and some of the values,
@@ -210,19 +247,28 @@
       </div>
     </div>
 
-    <!-- Simple build output. Applies to every provider; the on-device model is
-         the one that gains most from the code form. -->
-    <div class="card mb-3">
-      <div class="card-header">
-        <h3 class="card-title">Simple build</h3>
-      </div>
-      <div class="card-content">
+    <!-- How the chat drawer builds flows: Simple build's output and the agent's behaviour. -->
+    <div class="card mb-3" data-testid="ai-flow-building">
+      <button
+        type="button"
+        class="card-header card-toggle"
+        :aria-expanded="isOpen('card-flows')"
+        data-testid="ai-card-toggle-card-flows"
+        @click="toggleGroup('card-flows')"
+      >
+        <i
+          class="fa-solid card-toggle__caret"
+          :class="isOpen('card-flows') ? 'fa-chevron-down' : 'fa-chevron-right'"
+        ></i>
+        <h3 class="card-title">Building flows</h3>
+      </button>
+      <div v-show="isOpen('card-flows')" class="card-content">
+        <h4 class="block-title">Simple build</h4>
         <p class="hint-text models-intro">
           What the model writes when the chat drawer's Simple build generates a flow from one
           message. Flowfile turns either form into nodes for you to add to the canvas; nothing the
           model writes is executed.
         </p>
-        <span class="option-group__label">Output</span>
         <div class="option-list">
           <label v-for="output in SIMPLE_BUILD_OUTPUTS" :key="output.value" class="option">
             <input
@@ -238,16 +284,10 @@
             </span>
           </label>
         </div>
-      </div>
-    </div>
 
-    <!-- Agent behaviour. Used whenever Send dispatches an agent run (Auto-agent
-         or Agent mode), including auto-promotion from chat. -->
-    <div class="card mb-3">
-      <div class="card-header">
-        <h3 class="card-title">Agent</h3>
-      </div>
-      <div class="card-content">
+        <!-- Agent behaviour. Used whenever Send dispatches an agent run (Auto-agent
+             or Agent mode), including auto-promotion from chat. -->
+        <h4 class="block-title block-title--spaced">Agent</h4>
         <p class="hint-text models-intro">
           How the agent plans and executes changes when a message runs as an agent (Auto-agent or
           Agent mode in the chat drawer).
@@ -319,6 +359,7 @@ import type {
   PersistedAgentSurface,
   PersistedSimpleBuildOutput,
 } from "../../stores/ai-store-persistence";
+import { useSectionToggle } from "../../components/common/CollapsibleSection/useSectionToggle";
 import { useTaskModels, withSelected } from "../../composables/useTaskModels";
 import { LOCAL_PROVIDER_ID } from "./localModelApi";
 
@@ -409,8 +450,15 @@ interface TaskModel {
 }
 
 // Tasks that can run on their own model, by where they are used; `surface` goes to `resolveSurface`.
-const TASK_GROUPS: ReadonlyArray<{ name: string; tasks: ReadonlyArray<TaskModel> }> = [
+interface TaskGroup {
+  key: string;
+  name: string;
+  tasks: ReadonlyArray<TaskModel>;
+}
+
+const TASK_GROUPS: ReadonlyArray<TaskGroup> = [
   {
+    key: "flows",
     name: "Flows",
     tasks: [
       {
@@ -422,6 +470,7 @@ const TASK_GROUPS: ReadonlyArray<{ name: string; tasks: ReadonlyArray<TaskModel>
     ],
   },
   {
+    key: "semantic",
     name: "Semantic models",
     tasks: [
       {
@@ -437,6 +486,7 @@ const TASK_GROUPS: ReadonlyArray<{ name: string; tasks: ReadonlyArray<TaskModel>
     ],
   },
   {
+    key: "dashboards",
     name: "Dashboards",
     tasks: [
       { surface: "chart", label: "Charts", hint: "Builds a chart from a description." },
@@ -448,6 +498,21 @@ const TASK_GROUPS: ReadonlyArray<{ name: string; tasks: ReadonlyArray<TaskModel>
     ],
   },
 ];
+
+// Open or folded per card and per task group, remembered in this browser.
+const SECTION_KEYS = ["card-models", "card-data", "card-flows", ...TASK_GROUPS.map((g) => g.key)];
+const groupToggles = new Map(
+  SECTION_KEYS.map((key) => [key, useSectionToggle(`ai-assistant.${key}`, true)]),
+);
+const isOpen = (key: string): boolean => groupToggles.get(key)?.open.value ?? true;
+const toggleGroup = (key: string): void => groupToggles.get(key)?.toggle();
+
+/** A folded group in a few words: how many of its tasks have a model of their own. */
+const groupSummary = (group: TaskGroup): string => {
+  const own = group.tasks.filter((t) => ownPick(t.surface)).length;
+  if (own === 0) return "Same as main";
+  return own === group.tasks.length ? "Own models" : `${own} of ${group.tasks.length} on own model`;
+};
 
 /** What a task on "Same as main" runs on, shown in its Model column. */
 const mainModelText = computed(() => {
@@ -471,6 +536,47 @@ const onVerifyChange = (event: Event): void => {
   display: flex;
   gap: var(--spacing-4);
   flex-wrap: wrap;
+}
+
+.card-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--spacing-2);
+  width: 100%;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-toggle .card-title {
+  margin: 0;
+}
+
+.card-toggle[aria-expanded="false"] {
+  border-bottom: none;
+}
+
+.card-toggle__caret {
+  width: 12px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.block-title {
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.block-title--spaced {
+  margin-top: var(--spacing-5);
+  padding-top: var(--spacing-5);
+  border-top: 1px solid var(--color-border-light);
 }
 
 .task-table {
@@ -499,11 +605,40 @@ const onVerifyChange = (event: Event): void => {
 
 .task-group {
   margin-top: var(--spacing-3);
-  padding: var(--spacing-2) 0 var(--spacing-1);
+  padding-top: var(--spacing-1);
   border-top: 1px solid var(--color-border-light);
+}
+
+.task-group__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  width: 100%;
+  padding: var(--spacing-2) 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
+}
+
+.task-group__toggle:hover .task-group__caret {
+  color: var(--color-text-primary);
+}
+
+.task-group__caret {
+  width: 12px;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.task-group__summary {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  font-weight: normal;
+  color: var(--color-text-tertiary);
 }
 
 .task-name {
