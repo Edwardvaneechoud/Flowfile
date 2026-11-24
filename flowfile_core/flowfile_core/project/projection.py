@@ -8,6 +8,7 @@ useless on another machine).
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import time
@@ -463,16 +464,36 @@ def _table_entry(db: Session, table: CatalogTable) -> dict:
     return entry
 
 
-def tables_manifest_data(db: Session, owner_id: int) -> dict:
-    """tables.yaml mirrors the owner's physical tables and SQL-view virtual tables as
-    definition + schema + a portable data pointer. Flow-produced virtual tables are skipped
-    (their serialized plan isn't portable; re-running the producer flow rebuilds them). Volatile
-    data stats (row/size counts, run id, timestamps) are stripped so a pure data write doesn't
-    churn the file."""
+def _table_stems(keys: list[tuple]) -> dict[tuple, str]:
+    """``{(catalog, schema, name): file stem}``: the cleaned parts joined with dots, so a table without a schema
+    or a namespace has fewer. A part cleaning changed keeps its hash, and a stem another table already took
+    (compared casefolded, or the dots of two names lining up) gets a hash of its whole key, so the stem depends
+    on nothing but the keys."""
+    stems: dict[tuple, str] = {}
+    taken: set[str] = set()
+    for key in sorted(keys, key=lambda k: tuple(p or "" for p in k)):
+        stem = ".".join(unique_stem(p) for p in key if p) or "table"
+        if stem.casefold() in taken:
+            stem = f"{stem}_{hashlib.sha256(json.dumps(key).encode()).hexdigest()[:8]}"
+        taken.add(stem.casefold())
+        stems[key] = stem
+    return stems
+
+
+def export_tables(db: Session, owner_id: int) -> dict[str, str]:
+    """``{path: text}`` of the owner's physical tables and SQL-view virtual tables, one file each as
+    definition + schema + a portable data pointer, the namespace inside the file. Flow-produced virtual tables
+    are skipped (their serialized plan isn't portable; re-running the producer flow rebuilds them). Volatile
+    data stats (row/size counts, run id, timestamps) are stripped so a pure data write doesn't churn the file."""
     rows = db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id).all()
     entries = [_table_entry(db, t) for t in rows if not (t.table_type == "virtual" and not t.sql_query)]
-    entries.sort(key=lambda e: (e["name"], json.dumps(e.get("namespace"), sort_keys=True)))
-    return {"tables": entries}
+
+    def key(entry: dict) -> tuple:
+        namespace = entry.get("namespace") or {}
+        return (namespace.get("catalog"), namespace.get("schema"), entry["name"])
+
+    stems = _table_stems([key(e) for e in entries])
+    return {f"tables/{stems[key(e)]}.table.yaml": dump_yaml(e) for e in entries}
 
 
 # --- models (global artifacts) -----------------------------------------------
