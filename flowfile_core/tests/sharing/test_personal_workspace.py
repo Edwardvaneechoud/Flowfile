@@ -44,6 +44,15 @@ def _new_flow(client, path: Path) -> int:
     return response.json()
 
 
+def _registered(client, path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    made = client.post(
+        "/editor/create_flow/", params={"flow_path": str(path), "register_in_catalog": True, "persist": True}
+    )
+    assert made.status_code == 200, made.text
+    return path
+
+
 class TestRule:
     def test_the_folder_is_named_by_the_user_id_and_made_on_first_use(self, tmp_path, users):
         folder = workspace.workspace_of(users["alice"].id)
@@ -242,6 +251,22 @@ class TestLetterCase:
         listed = workspace.explorer_for(str(tmp_path), uid, None).list_contents(recursive=True, show_hidden=True)
         assert not [entry.path for entry in listed if "workspaces" in str(entry.path).lower()]
         assert not [entry.path for entry in listed if "notebooks" in str(entry.path).lower()]
+
+
+    def test_another_persons_registered_flow_spelled_in_other_letters_is_kept(self, alice, bob):
+        flow = _registered(alice, storage.uploads_directory / "team" / "alices_flow.yaml")
+        before = flow.read_bytes()
+        shouted = flow.parent.with_name("TEAM") / "ALICES_FLOW.YAML"
+        assert shouted.exists()
+        planted = bob.post(
+            "/file_manager/upload",
+            params={"directory": str(shouted.parent)},
+            files={"file": (shouted.name, b"planted: true\n", "text/yaml")},
+        )
+        assert planted.status_code == 403, planted.text
+        for target in (shouted, shouted.parent):
+            assert bob.delete("/files/delete", params={"path": str(target)}).status_code == 403, target
+        assert flow.read_bytes() == before
 
 
 class TestRegisteringAFlow:
@@ -578,7 +603,28 @@ class TestDesktopUnchanged:
     def test_a_desktop_has_no_workspace(self, monkeypatch, tmp_path):
         monkeypatch.setenv("FLOWFILE_MODE", "electron")
         assert workspace.browse_roots(1) == []
-        assert workspace.data_place("/anything/at/all.csv", 1) == os.path.realpath("/anything/at/all.csv")
+        workspace.require_data_paths(1, "/anything/at/all.csv")
+        workspace.require_data_paths(1, "/anything/at/all.csv", write=True)
+
+    @pytest.mark.parametrize("mode", ["electron", "package"])
+    def test_off_a_server_nothing_is_uploaded_into_a_folder_or_downloaded(self, alice, monkeypatch, tmp_path, mode):
+        from flowfile_core.configs import settings
+
+        (tmp_path / ".profile").write_text("mine\n")
+        monkeypatch.setenv("FLOWFILE_MODE", mode)
+        monkeypatch.setattr(settings, "FLOWFILE_MODE", mode)
+        if mode == "electron":
+            alice.headers["Authorization"] = f"Bearer {alice.post('/auth/token').json()['access_token']}"
+        upload = alice.post(
+            "/file_manager/upload",
+            params={"directory": str(tmp_path)},
+            files={"file": (".profile", b"planted\n", "text/plain")},
+        )
+        assert upload.status_code == 403, upload.text
+        assert (tmp_path / ".profile").read_text() == "mine\n"
+        got = alice.get("/files/download", params={"path": str(tmp_path / ".profile")})
+        assert got.status_code == 403 and b"mine" not in got.content
+        assert not (tmp_path / "workspaces").exists(), "no workspace is made off a server"
 
 
 class TestCatalogTableFromAFile:
@@ -672,6 +718,36 @@ class TestUploadAndDownload:
         assert refused.status_code == 403
         assert not (theirs / "planted.csv").exists()
 
+    @pytest.mark.parametrize("name", ["catalog_flow.yaml", "brand_new.yaml"])
+    def test_nothing_is_uploaded_into_the_flows_folder(self, alice, bob, name):
+        flow = _registered(alice, storage.flows_directory / "catalog_flow.yaml")
+        before = flow.read_bytes()
+        for client in (alice, bob):
+            refused = self._upload(client, flow.parent, name=name, body=b"planted: true\n")
+            assert refused.status_code == 403, refused.text
+            assert refused.json()["detail"].endswith("is kept by Flowfile, so nothing is uploaded there.")
+        assert flow.read_bytes() == before
+        assert not (flow.parent / "brand_new.yaml").exists()
+        assert not list(flow.parent.glob(".*.part")), "no half upload is left behind"
+
+    def test_another_persons_registered_flow_in_the_uploads_folder_is_not_replaced(self, alice, bob):
+        flow = _registered(alice, storage.uploads_directory / "alices_flow.yaml")
+        before = flow.read_bytes()
+        refused = self._upload(bob, flow.parent, name=flow.name, body=b"planted: true\n")
+        assert refused.status_code == 403, refused.text
+        assert flow.read_bytes() == before
+        assert self._upload(alice, flow.parent, name=flow.name, body=before).status_code == 200, "it is hers to replace"
+
+    def test_the_canvas_drop_does_not_replace_another_persons_registered_flow(self, alice, bob):
+        flow = _registered(alice, storage.uploads_directory / "alices_flow.json")
+        before = flow.read_bytes()
+        dropped = {"file": (flow.name, b"{}", "application/json")}
+        assert bob.post("/file_manager/upload", files=dropped).status_code == 403
+        assert flow.read_bytes() == before
+        beside = bob.post("/file_manager/upload", params={"unique": True}, files=dropped)
+        assert beside.status_code == 200 and beside.json()["filename"] == "alices_flow (1).json"
+        assert flow.read_bytes() == before
+
     def test_another_persons_file_is_not_downloaded(self, alice, bob):
         private = _alice_file(alice)
         mine = _workspace(bob)
@@ -745,6 +821,33 @@ class TestDelete:
             assert root.is_dir()
         assert (_workspace(bob) / "keep.csv").exists()
 
+    def test_another_persons_registered_flow_is_not_deleted_nor_a_folder_that_holds_one(self, alice, bob):
+        flow = _registered(alice, storage.uploads_directory / "team" / "alices_flow.yaml")
+        (flow.parent / "data.csv").write_text("a\n1\n")
+        for target in (flow, flow.parent):
+            for dry_run in (True, False):
+                refused = self._delete(bob, target, dry_run=dry_run)
+                assert refused.status_code == 403, (target, refused.text)
+                assert "registered flow" in refused.json()["detail"]
+        assert flow.exists() and (flow.parent / "data.csv").exists()
+        assert self._delete(bob, flow.parent / "data.csv").status_code == 200, "a file beside it is still deleted"
+        assert self._delete(alice, flow.parent).status_code == 200, "it is hers to delete"
+        assert not flow.exists()
+
+    def test_a_folder_whose_name_begins_like_the_one_with_a_registered_flow_is_deleted(self, alice, bob):
+        flow = _registered(alice, storage.uploads_directory / "team_flows" / "alices_flow.yaml")
+        (storage.uploads_directory / "team").mkdir()
+        assert self._delete(bob, storage.uploads_directory / "team").status_code == 200
+        assert flow.exists()
+
+    def test_the_old_delete_route_leaves_another_persons_registered_flow(self, alice, bob):
+        flow = _registered(alice, storage.uploads_directory / "alices_flow.json")
+        refused = bob.delete(f"/file_manager/files/{flow.name}")
+        assert refused.status_code == 403, refused.text
+        assert flow.exists()
+        assert alice.delete(f"/file_manager/files/{flow.name}").status_code == 200
+        assert not flow.exists()
+
     def test_the_flows_folder_is_not_deleted_from(self, bob):
         storage.flows_directory.mkdir(parents=True, exist_ok=True)
         flow = storage.flows_directory / "catalog_flow.yaml"
@@ -752,6 +855,26 @@ class TestDelete:
         refused = self._delete(bob, flow)
         assert refused.status_code == 403, refused.text
         assert flow.exists()
+
+    def test_a_link_in_the_flows_folder_and_a_link_outside_are_refused(self, bob, tmp_path):
+        mine = _workspace(bob) / "mine.csv"
+        mine.write_text("a\n1\n")
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "notebooks").mkdir()
+        for link in (storage.flows_directory / "link.csv", tmp_path / "notebooks" / "link.csv"):
+            link.symlink_to(mine)
+            assert self._delete(bob, link).status_code == 403, link
+            assert os.path.lexists(link)
+        assert mine.exists()
+
+    def test_a_link_to_a_folder_left_out_of_shared_is_removed_and_the_folder_kept(self, bob, tmp_path):
+        (tmp_path / "notebooks").mkdir()
+        (tmp_path / "notebooks" / "cells.yaml").write_text("a: 1\n")
+        link = tmp_path / "to_notebooks"
+        link.symlink_to(tmp_path / "notebooks", target_is_directory=True)
+        assert self._delete(bob, link).status_code == 200
+        assert not os.path.lexists(link)
+        assert (tmp_path / "notebooks" / "cells.yaml").exists()
 
     def test_a_path_that_is_not_there_is_a_404(self, bob):
         missing = self._delete(bob, _workspace(bob) / "gone.csv")

@@ -71,6 +71,7 @@ from flowfile_core.flowfile.catalog_helpers import (
     namespace_exists,
     register_flow_in_namespace,
     require_flow_save_permitted,
+    require_registered_flows_manageable,
     resolve_display_name,
     resolve_display_names,
     resolve_source_registration_id,
@@ -244,8 +245,10 @@ async def get_default_path(current_user=Depends(get_current_active_user)) -> str
 
 @router.get("/files/download", tags=["file manager"])
 def download_file(path: str, current_user=Depends(get_current_active_user)) -> FileResponse:
-    """A file of a folder the file browser shows the person, as a download: on a server their workspace or the
-    shared folder, elsewhere the user data folder. A 403 elsewhere, a 400 for a folder, a 404 when it is gone."""
+    """A file of a folder the file browser shows the person on a server, as a download. A 403 for a path outside
+    those folders or any path off a server, a 400 for a folder, a 404 when it is gone."""
+    if not is_server_mode():
+        raise HTTPException(403, "Files are downloaded here on a server only.")
     place = workspace.file_folder(path, current_user.id if current_user else None)
     if place is None:
         raise HTTPException(403, workspace.browse_refusal(path))
@@ -265,14 +268,20 @@ class DeletedPath(BaseModel):
 def delete_path(path: str, dry_run: bool = False, current_user=Depends(get_current_active_user)) -> DeletedPath:
     """Delete a file, or a folder with everything in it, from the person's workspace, the shared folder or the
     uploads and outputs folders on a server (``workspace.delete_place``). ``items`` is how many files and folders
-    went with it; with ``dry_run`` that is only counted. A 403 for a top folder, a path outside those places or
-    any path off a server, a 404 when nothing is there."""
+    went with it; with ``dry_run`` that is only counted. A 403 for a top folder, a path outside those places, the
+    file of a registered flow the person may not manage (or a folder that holds one) or any path off a server, a 404
+    when nothing is there."""
     if not is_server_mode():
         raise HTTPException(403, "Files are deleted here on a server only.")
     try:
-        real, items = workspace.delete_place(path, current_user.id if current_user else None, dry_run=dry_run)
+        real, link = workspace.deletable(path, current_user.id if current_user else None)
+        if not link:
+            require_registered_flows_manageable(real, current_user, "delete another person's registered flow")
+        items = workspace.delete_place(real, link, dry_run=dry_run)
     except workspace.NotYours as err:
         raise HTTPException(403, err.shown) from None
+    except NotAuthorizedError as err:
+        raise HTTPException(403, str(err)) from None
     except FileNotFoundError:
         raise HTTPException(404, "File not found") from None
     except PermissionError:

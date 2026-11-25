@@ -6,6 +6,7 @@ to avoid coupling the handler to the database layer.
 """
 
 import logging
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -17,7 +18,7 @@ from flowfile_core.catalog.exceptions import NotAuthorizedError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowApiEndpoint, FlowRegistration
-from shared.storage_config import flow_path_spellings, storage
+from shared.storage_config import flow_file_key, flow_path_spellings, storage
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,43 @@ def require_flow_save_permitted(flow_path: str | None, namespace_id: int | None,
         refuse_kept_elsewhere(db, namespace_id)
         if namespace_id is not None and resolver.restricted and namespace_id not in resolver.writable_namespace_ids():
             raise NotAuthorizedError(resolver.user_id or -1, "create items in this namespace")
+
+
+def _lies_at(file: Path, target: Path) -> bool:
+    """Whether ``file`` is ``target`` or lies in it: by path, or by file identity where only the letter case differs."""
+    above = Path(*file.parts[: len(target.parts)])
+    if above == target:
+        return True
+    if str(above).casefold() != str(target).casefold():
+        return False
+    try:
+        return os.path.samefile(above, target)
+    except OSError:
+        return False
+
+
+def require_registered_flows_manageable(path: str, requesting_user, action: str) -> None:
+    """Refuse to ``action`` the file or folder at ``path`` while it is, or holds, the file of a registered flow
+    ``requesting_user`` may not manage.
+
+    For a route that replaces or removes files by path. Every registration's resolved path is compared, so a row
+    from before paths were stored resolved is found too.
+
+    Raises:
+        NotAuthorizedError: with ``action`` as what is refused.
+    """
+    if requesting_user is None:
+        return
+    target = Path(flow_file_key(path))
+    with get_db_context() as db:
+        resolver = AccessResolver(db, requesting_user)
+        if not resolver.restricted:
+            return
+        for row in db.query(FlowRegistration.id, FlowRegistration.owner_id, FlowRegistration.flow_path).all():
+            if not _lies_at(Path(flow_file_key(row.flow_path)), target):
+                continue
+            if not resolver.can_manage("flow", row.id, owner_id=row.owner_id):
+                raise NotAuthorizedError(resolver.user_id or -1, action)
 
 
 def register_flow_in_namespace(

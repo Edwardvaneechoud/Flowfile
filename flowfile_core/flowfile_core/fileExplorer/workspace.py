@@ -5,8 +5,8 @@ browser, where they save flows and keep files. Beside it is the shared folder: t
 ``workspaces/``, without the folders the app keeps for itself (``_app_folders``), and without the server's own
 storage, working and secure-storage folders where they lie inside it. A server whose user data folder is the home of
 the account it runs as has no shared folder (``has_shared_folder``): a person there has their workspace and the
-flows, uploads and outputs folders. A desktop and a package install have no workspace: every function here answers
-as if there were one person and one folder, so their behaviour does not change.
+flows, uploads and outputs folders. A desktop and a package install have no workspace: their routes keep the checks
+they always had, and the functions that resolve a person's places are asked on a server only.
 
 What a person may use depends on what for (``Places``). The file browser shows their workspace, the shared folder,
 the flows, uploads and outputs folders and their own project folder. A flow is saved in and opened from the same
@@ -211,9 +211,14 @@ class Places:
     def root_of(self, real: str) -> str | None:
         """The first of the folders that ``real``, a resolved path, lies in."""
         for root in self.roots:
-            if real == root or real.startswith(self._prefixes[root]):
-                if root != self.shared or not self.left_out.holds(real):
-                    return root
+            if real == root:
+                inside = root
+            elif real.startswith(self._prefixes[root]):
+                inside = real
+            else:
+                continue
+            if root != self.shared or not self.left_out.holds(inside):
+                return root
         return None
 
     def holds(self, real: str) -> bool:
@@ -221,9 +226,31 @@ class Places:
         return self.root_of(real) is not None
 
     def place(self, path: str | os.PathLike) -> str | None:
-        """``path`` resolved, when it lies in one of the folders."""
-        real = os.path.realpath(os.path.expanduser(path))
-        return real if self.holds(real) else None
+        """``path`` resolved, when it lies in one of the folders.
+
+        What is answered is the value ``contained_path`` checked, which CodeQL's ``py/path-injection`` takes as a
+        barrier, so a route opens this and never the path it was asked for.
+        """
+        asked = os.path.expanduser(path)
+        for root in self.roots:
+            inside = contained_path(root, asked)
+            if inside is not None and (root != self.shared or not self.left_out.holds(inside)):
+                return inside
+        return None
+
+    def entry(self, path: str | os.PathLike) -> str | None:
+        """Where ``path`` itself is, when that lies in one of the folders: its folder resolved, a link at its end
+        not followed. A link counts by the folder it is in. The same CodeQL barrier as :meth:`place`."""
+        folder, name = os.path.split(os.path.abspath(os.path.expanduser(path)))
+        target = os.path.normpath(os.path.join(os.path.realpath(folder), name))
+        for root in self.roots:
+            if target == root:
+                return root
+            if target.startswith(self._prefixes[root]):
+                kept_by = os.path.dirname(target) if os.path.islink(target) else target
+                if root != self.shared or not self.left_out.holds(kept_by):
+                    return target
+        return None
 
     def holds_match(self, match: str) -> bool:
         """Whether a file a pattern matched lies in one of the folders; its folder is resolved once per folder."""
@@ -281,14 +308,13 @@ def default_folder(user_id: int | None) -> Path:
 
 
 def data_place(path: str, user_id: int | None, write: bool = False) -> str | None:
-    """``path`` resolved, when a flow run for ``user_id`` may read it, or with ``write`` write it; else ``None``.
+    """``path`` resolved, when a flow run for ``user_id`` on a server may read it, or with ``write`` write it; else
+    ``None``.
 
-    On a server that is the person's workspace, the shared folder without the flows folder, and the uploads and
-    outputs folders every flow uses; to read, also the data of the flow templates. ``..``, a symlink and a
-    relative path are resolved first, so none of them leads out. Off a server any path is answered resolved.
+    That is the person's workspace, the shared folder without the flows folder, and the uploads and outputs folders
+    every flow uses; to read, also the data of the flow templates. ``..``, a symlink and a relative path are
+    resolved first, so none of them leads out.
     """
-    if not is_server_mode():
-        return os.path.realpath(os.path.expanduser(path))
     return Places(user_id, "write" if write else "read").place(path)
 
 
@@ -302,12 +328,24 @@ def flow_file_place(path: str, user_id: int | None) -> str | None:
 
 
 def file_folder(path: str, user_id: int | None) -> str | None:
-    """``path`` resolved, when ``user_id`` may browse it: on a server one of their ``browse_roots`` or their own
-    project folder, else the user data folder."""
-    if not is_server_mode():
-        real = os.path.realpath(os.path.expanduser(path))
-        return real if contained_path(storage.user_data_directory, real) is not None else None
+    """``path`` resolved, when ``user_id`` may browse it on a server: one of their ``browse_roots`` or their own
+    project folder."""
     return Places(user_id, "browse").place(path)
+
+
+def upload_folder(path: str, user_id: int | None) -> str:
+    """``path`` resolved, when ``user_id`` may put a file in that folder on a server: their workspace, the shared
+    folder without the flows folder, and the uploads and outputs folders, as a file node writes them.
+
+    Raises:
+        NotYours: with a sentence naming a folder Flowfile keeps, else :func:`browse_refusal`.
+    """
+    place = data_place(path, user_id, write=True)
+    if place is None:
+        if file_folder(path, user_id) is not None:
+            raise NotYours(f'"{path}" is kept by Flowfile, so nothing is uploaded there.')
+        raise NotYours(browse_refusal(path))
+    return place
 
 
 def _places_named() -> str:
@@ -366,28 +404,23 @@ def deletable(path: str, user_id: int | None) -> tuple[str, bool]:
         NotYours: with :func:`browse_refusal`, or a sentence naming a top folder.
         FileNotFoundError: when nothing is at ``path``.
     """
-    asked = os.path.abspath(os.path.expanduser(path))
-    name = os.path.basename(asked)
-    if not name:
-        raise NotYours(f'"{path}" is a top folder and cannot be deleted.')
     places = Places(user_id, "write")
-    target = os.path.join(os.path.realpath(os.path.dirname(asked)), name)
-    link = os.path.islink(target)
-    real = target if link else os.path.realpath(target)
-    if not places.holds(os.path.dirname(target) if link else real):
-        if Places(user_id, "browse").holds(real):
+    target = places.entry(path)
+    if target is None:
+        if Places(user_id, "browse").entry(path) is not None:
             raise NotYours(f'"{path}" is kept by Flowfile and cannot be deleted here.')
         raise NotYours(browse_refusal(path))
     named, identities = _top_folders(user_id, places)
     if not os.path.lexists(target):
         raise FileNotFoundError(path)
+    link = os.path.islink(target)
     if not link:
-        found = os.stat(real)
-        if real in named or target in named or (found.st_dev, found.st_ino) in identities:
+        found = os.stat(target)
+        if target in named or (found.st_dev, found.st_ino) in identities:
             raise NotYours(f'"{path}" is a top folder and cannot be deleted.')
-        if os.path.isdir(real) and not places.holds_all_of(real):
+        if os.path.isdir(target) and not places.holds_all_of(target):
             raise NotYours(f'"{path}" holds files outside {_places_named()}, so it cannot be deleted.')
-    return real, link
+    return target, link
 
 
 def items_in(folder: str) -> int:
@@ -398,10 +431,9 @@ def items_in(folder: str) -> int:
     return count
 
 
-def delete_place(path: str, user_id: int | None, dry_run: bool = False) -> tuple[str, int]:
-    """Delete a file or a folder with what is in it at ``path`` (:func:`deletable`); where it was and how many
-    items went with it. With ``dry_run`` nothing is deleted."""
-    real, link = deletable(path, user_id)
+def delete_place(real: str, link: bool, dry_run: bool = False) -> int:
+    """Delete what :func:`deletable` answered, a folder with what is in it; how many items went with it. With
+    ``dry_run`` nothing is deleted."""
     is_folder = not link and os.path.isdir(real)
     items = items_in(real) if is_folder else 0
     if not dry_run:
@@ -409,7 +441,7 @@ def delete_place(path: str, user_id: int | None, dry_run: bool = False) -> tuple
             shutil.rmtree(real)
         else:
             os.unlink(real)
-    return real, items
+    return items
 
 
 def explorer_for(
