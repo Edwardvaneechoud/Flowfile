@@ -1,7 +1,7 @@
 """Core's twelve project kinds, registered in the order an import applies them.
 
 Each export is a thin call into ``projection``; each ``cap`` is the most files or entries an import accepts.
-Charts and dashboards are one file each; the root list a folder of format 2 or older holds them in stays among
+Charts, dashboards and catalog tables are one file each; the root list an older folder holds them in stays among
 their paths, so it is still read, and a save removes it."""
 
 from __future__ import annotations
@@ -112,20 +112,23 @@ def _per_file_entries(field: str, label_field: str | None = None):
     return entries
 
 
-def _object_entries(list_key: str, field: str, label_field: str = "name"):
-    """Entries of a kind stored one object per file, keyed by ``field``. An older folder's root file gives one
-    per item of its ``list_key`` list instead, which a file with the same key replaces; ``_same_yaml`` then
-    calls an item and its file the same object."""
+def _object_entries(list_key: str, field: str, label_field: str = "name", *, key=None, label=None):
+    """Entries of a kind stored one object per file, keyed by ``field`` (or by ``key(object)``, a tuple for a
+    composite key, with ``label(object)`` as its row). An older folder's root file gives one per item of its
+    ``list_key`` list instead, which a file with the same key replaces; ``_same_yaml`` then calls an item and
+    its file the same object."""
+    key = key or (lambda obj: obj.get(field))
+    label = label or (lambda obj: obj.get(label_field))
 
     def entries(files: dict[str, str]) -> dict:
         out = {}
         for path in sorted(files, key=lambda rel: "/" in rel):
             data = _load(files[path]) or {}
             if "/" in path:
-                out[data.get(field) or path] = Entry(str(data.get(label_field) or path), path, files[path])
+                out[key(data) or path] = Entry(str(label(data) or path), path, files[path])
                 continue
             for item in data.get(list_key) or []:
-                out[item.get(field)] = Entry(str(item.get(label_field)), path, _canonical(item))
+                out[key(item)] = Entry(str(label(item)), path, _canonical(item))
         return out
 
     return entries
@@ -239,15 +242,20 @@ register(
     Kind(
         "tables",
         "catalog tables",
-        ("tables.yaml",),
-        _manifest("tables.yaml", projection.tables_manifest_data),
+        ("tables/*.table.yaml", "tables.yaml"),
+        lambda ctx: projection.export_tables(ctx.db, ctx.owner_id),
         after=("namespaces", "flow"),
         cap=500,
-        entries_key="tables",
         tracked_by_data_flag=True,
-        entries=_list_entries("tables", lambda e: (*_ns(e), e.get("name")), lambda e: _dotted(*_ns(e), e.get("name"))),
+        entries=_object_entries(
+            "tables",
+            "name",
+            key=importer._table_key,
+            label=lambda e: _dotted(*_ns(e), e.get("name")),
+        ),
         delete_label="its data stays on disk",
         delete=importer._delete_tables,
+        same=_same_yaml,
     )
 )
 register(
