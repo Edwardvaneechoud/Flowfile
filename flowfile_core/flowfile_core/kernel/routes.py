@@ -18,7 +18,6 @@ from flowfile_core.kernel.models import (
     FlavourPackage,
     ImageFlavour,
     KernelConfig,
-    KernelDataframeSchemas,
     KernelImageStatus,
     KernelInfo,
     KernelMatchBatchRequest,
@@ -35,6 +34,7 @@ from flowfile_core.lsp.feature_flag import is_lsp_enabled
 from flowfile_core.lsp.models import (
     CompleteResponse,
     DataframeSchemasRequest,
+    DataframeSchemasResponse,
     DiagnosticsResponse,
     HoverResponse,
     LspRequest,
@@ -42,6 +42,17 @@ from flowfile_core.lsp.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class KernelDataframeSchemas(DataframeSchemasResponse):
+    """The kernel's dataframe schemas as core answers them.
+
+    ``answered`` is core's own, so it is not on the mirrored wire model: the kernel replied, so an empty
+    ``namespace_generation`` means it holds no such namespace, where a degraded reply (kernel stopped, timed out,
+    too old) says nothing about it. It is here and not in ``kernel/models.py``, which imports nothing else of core.
+    """
+
+    answered: bool = False
 
 
 async def _get_manager():

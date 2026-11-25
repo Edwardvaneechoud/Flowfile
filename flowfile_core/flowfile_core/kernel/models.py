@@ -4,8 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from flowfile_core.lsp.models import DataframeSchemasResponse
-
 
 class KernelState(str, Enum):
     # In-memory only while create_kernel bakes the image; never persisted.
@@ -316,14 +314,3 @@ class KernelMemoryInfo(BaseModel):
     used_bytes: int = 0
     limit_bytes: int = 0
     usage_percent: float = 0.0
-
-
-class KernelDataframeSchemas(DataframeSchemasResponse):
-    """The kernel's dataframe schemas as core answers them.
-
-    ``answered`` is core's own, so it is not on the mirrored wire model: the kernel replied, so an empty
-    ``namespace_generation`` means it holds no such namespace, where a degraded reply (kernel stopped, timed out,
-    too old) says nothing about it.
-    """
-
-    answered: bool = False
