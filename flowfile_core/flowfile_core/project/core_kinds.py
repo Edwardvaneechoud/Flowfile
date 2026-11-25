@@ -250,7 +250,7 @@ register(
         entries=_object_entries(
             "tables",
             "name",
-            key=lambda e: (*_ns(e), e.get("name")),
+            key=importer._table_key,
             label=lambda e: _dotted(*_ns(e), e.get("name")),
         ),
         delete_label="its data stays on disk",

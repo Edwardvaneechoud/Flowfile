@@ -8,7 +8,7 @@ Download the latest release for your platform:
 
 [**Download the latest installer →**](https://github.com/edwardvaneechoud/Flowfile/releases/latest)
 
-Installers are built for macOS (Apple Silicon and Intel), Windows, and Linux.
+Installers are built for macOS (Apple Silicon), Windows, and Linux. There is no Intel Mac build; on an Intel Mac, install the [Python package](python.md) instead.
 
 ## Installation
 

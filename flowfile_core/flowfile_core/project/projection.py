@@ -464,17 +464,44 @@ def _table_entry(db: Session, table: CatalogTable) -> dict:
     return entry
 
 
+_TABLE_STEM_MAX = 120  # characters, so the path stays well under Windows' 260
+
+
+def _key_digest(key: tuple) -> str:
+    return hashlib.sha256(json.dumps(key).encode()).hexdigest()
+
+
+def _part_stem(part: str) -> str:
+    """One name of a table's key as a stem: as written when it needs no cleaning, else cleaned with a hash of the
+    name, or the hash alone when cleaning leaves nothing (a name in another script)."""
+    base = safe_stem(part, "")
+    if base == part:
+        return base
+    digest = hashlib.sha256(part.encode()).hexdigest()[:8]
+    return f"{base}_{digest}" if base else digest
+
+
+def _plain_table_stem(key: tuple) -> str:
+    """The parts of ``key`` as stems joined with dots, so a table without a schema or a namespace has fewer; one
+    longer than ``_TABLE_STEM_MAX`` is cut and ends with a hash of the whole key."""
+    stem = ".".join(_part_stem(p) for p in key if p) or "table"
+    if len(stem) <= _TABLE_STEM_MAX:
+        return stem
+    return f"{stem[: _TABLE_STEM_MAX - 9].rstrip('._-')}_{_key_digest(key)[:8]}"
+
+
 def _table_stems(keys: list[tuple]) -> dict[tuple, str]:
-    """``{(catalog, schema, name): file stem}``: the cleaned parts joined with dots, so a table without a schema
-    or a namespace has fewer. A part cleaning changed keeps its hash, and a stem another table already took
-    (compared casefolded, or the dots of two names lining up) gets a hash of its whole key, so the stem depends
-    on nothing but the keys."""
+    """``{(catalog, schema, name): file stem}``, which depends on nothing but the keys. A stem another table already
+    took (compared casefolded, or the dots of two names lining up) gets a hash of its whole key, longer until it
+    is free; an all-lowercase stem is named first, so adding ``Orders`` beside ``orders`` renames neither file."""
+    plain = {key: _plain_table_stem(key) for key in keys}
     stems: dict[tuple, str] = {}
     taken: set[str] = set()
-    for key in sorted(keys, key=lambda k: tuple(p or "" for p in k)):
-        stem = ".".join(unique_stem(p) for p in key if p) or "table"
-        if stem.casefold() in taken:
-            stem = f"{stem}_{hashlib.sha256(json.dumps(key).encode()).hexdigest()[:8]}"
+    for key in sorted(plain, key=lambda k: (plain[k] != plain[k].casefold(), tuple(p or "" for p in k))):
+        stem, used = plain[key], 8
+        while stem.casefold() in taken:
+            stem = f"{plain[key]}_{_key_digest(key)[:used]}"
+            used += 4
         taken.add(stem.casefold())
         stems[key] = stem
     return stems
@@ -484,16 +511,19 @@ def export_tables(db: Session, owner_id: int) -> dict[str, str]:
     """``{path: text}`` of the owner's physical tables and SQL-view virtual tables, one file each as
     definition + schema + a portable data pointer, the namespace inside the file. Flow-produced virtual tables
     are skipped (their serialized plan isn't portable; re-running the producer flow rebuilds them). Volatile
-    data stats (row/size counts, run id, timestamps) are stripped so a pure data write doesn't churn the file."""
-    rows = db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id).all()
-    entries = [_table_entry(db, t) for t in rows if not (t.table_type == "virtual" and not t.sql_query)]
-
-    def key(entry: dict) -> tuple:
+    data stats (row/size counts, run id, timestamps) are stripped so a pure data write doesn't churn the file.
+    An import knows a table by its catalog, schema and name, so of tables sharing all three only the oldest row
+    is written."""
+    rows = db.query(CatalogTable).filter(CatalogTable.owner_id == owner_id).order_by(CatalogTable.id).all()
+    by_key: dict[tuple, dict] = {}
+    for table in rows:
+        if table.table_type == "virtual" and not table.sql_query:
+            continue
+        entry = _table_entry(db, table)
         namespace = entry.get("namespace") or {}
-        return (namespace.get("catalog"), namespace.get("schema"), entry["name"])
-
-    stems = _table_stems([key(e) for e in entries])
-    return {f"tables/{stems[key(e)]}.table.yaml": dump_yaml(e) for e in entries}
+        by_key.setdefault((namespace.get("catalog"), namespace.get("schema"), entry["name"]), entry)
+    stems = _table_stems(list(by_key))
+    return {f"tables/{stems[key]}.table.yaml": dump_yaml(entry) for key, entry in by_key.items()}
 
 
 # --- models (global artifacts) -----------------------------------------------

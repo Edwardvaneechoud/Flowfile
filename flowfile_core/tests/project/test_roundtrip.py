@@ -6,6 +6,7 @@ leaks projection side-effects into other tests.
 """
 
 import json
+import re
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -940,6 +941,127 @@ def test_a_format_3_folder_opens_unchanged_and_the_next_save_converts_it(tmp_pat
     finally:
         _delete_tables_by_name(name)
         project_sync.close_project(OWNER)
+
+
+def test_restoring_a_format_3_version_commits_the_folder_at_format_4(tmp_path):
+    from flowfile_core.project import git_ops
+
+    if not git_ops.git_available():
+        pytest.skip("git not available")
+    project_sync.close_project(OWNER)
+    name = f"f3_rst_{uuid4().hex[:6]}"
+    _make_table(name)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Tbl F3 restore", OWNER)
+        _to_format_3_layout(root)
+        older = git_ops.commit_all(root, "as format 3 held it")
+        project_sync.save_version(OWNER, "converted")
+
+        project_sync.restore_version(OWNER, older)
+        head = git_ops.read_tree_at(root, "HEAD")
+        assert yaml.safe_load(head["project.yaml"])["project_format"] == 4
+        assert "tables.yaml" not in head
+        assert any(name in path for path in head if path.startswith("tables/"))
+        assert not git_ops.is_dirty(root)
+    finally:
+        _delete_tables_by_name(name)
+        project_sync.close_project(OWNER)
+
+
+def test_a_recovery_point_of_a_format_3_folder_is_committed_at_format_4(tmp_path):
+    from flowfile_core.project import git_ops
+
+    if not git_ops.git_available():
+        pytest.skip("git not available")
+    project_sync.close_project(OWNER)
+    name, added = f"f3_rec_{uuid4().hex[:6]}", f"f3_new_{uuid4().hex[:6]}"
+    added_dir = None
+    _make_table(name)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Tbl F3 recovery", OWNER)
+        _to_format_3_layout(root)
+        git_ops.commit_all(root, "as format 3 held it")
+        _, added_dir = _make_table(added)
+
+        result = project_sync.reload_from_disk(OWNER, force=True)
+        kept = git_ops.read_tree_at(root, result.recovery_sha)
+        assert yaml.safe_load(kept["project.yaml"])["project_format"] == 4
+        assert "tables.yaml" not in kept
+        assert any(added in path for path in kept if path.startswith("tables/"))
+        # A reload writes no export, so the folder itself stays as the older format left it.
+        assert yaml.safe_load((root / "project.yaml").read_text(encoding="utf-8"))["project_format"] == 3
+    finally:
+        _delete_tables_by_name(name)
+        _delete_tables_by_name(added)
+        if added_dir is not None:
+            shutil.rmtree(added_dir, ignore_errors=True)
+        project_sync.close_project(OWNER)
+
+
+def test_a_table_removed_by_hand_from_a_format_3_tables_yaml_is_an_edit_a_save_refuses(tmp_path):
+    from fastapi import HTTPException
+
+    from flowfile_core.project import git_ops
+    from flowfile_core.project.normalize import write_yaml
+
+    if not git_ops.git_available():
+        pytest.skip("git not available")
+    project_sync.close_project(OWNER)
+    name = f"f3_edit_{uuid4().hex[:6]}"
+    _make_table(name)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Tbl F3 edit", OWNER)
+        _to_format_3_layout(root)
+        git_ops.commit_all(root, "as format 3 held it")
+        listed = yaml.safe_load((root / "tables.yaml").read_text(encoding="utf-8"))["tables"]
+        write_yaml(root / "tables.yaml", {"tables": [t for t in listed if t["name"] != name]})
+
+        assert project_sync.external_edits(OWNER) is True
+        with pytest.raises(HTTPException) as refused:
+            project_sync.save_version(OWNER, "would undo the edit")
+        assert refused.value.status_code == 409
+        assert refused.value.detail["code"] == "FOLDER_EDITED"
+        assert [c["path"] for c in refused.value.detail["changes"]] == ["tables.yaml"]
+        assert (root / "tables.yaml").exists() and not (root / "tables").exists()
+    finally:
+        _delete_tables_by_name(name)
+        project_sync.close_project(OWNER)
+
+
+def test_table_file_names_stay_short_distinct_and_readable():
+    long_key = ("c" * 80, "s" * 80, "t" * 90)
+    upper = (None, None, "X")
+    taken_by_a_name = (None, None, f"x_{projection._key_digest(upper)[:8]}")
+    keys = [long_key, ("sales", None, "Orders"), ("sales", None, "orders"), ("販売", None, "売上")]
+    keys += [upper, (None, None, "x"), taken_by_a_name]
+    stems = projection._table_stems(keys)
+
+    assert len(stems[long_key]) <= projection._TABLE_STEM_MAX
+    assert stems[long_key].endswith(projection._key_digest(long_key)[:8])
+    # The all-lowercase twin keeps the plain name, so adding a capitalised one renames no existing file.
+    assert stems[("sales", None, "orders")] == "sales.orders"
+    assert stems[("sales", None, "Orders")].startswith("sales.Orders_")
+    assert re.fullmatch(r"[0-9a-f]{8}\.[0-9a-f]{8}", stems[("販売", None, "売上")])
+    # A hashed stem another table's name already holds grows its hash instead of sharing the file.
+    assert stems[taken_by_a_name] == taken_by_a_name[2]
+    assert len({stem.casefold() for stem in stems.values()}) == len(keys)
+
+
+def test_tables_sharing_a_catalog_schema_and_name_export_the_oldest_once():
+    name = f"dup_{uuid4().hex[:6]}"
+    _make_sql_view(name, "SELECT 1 AS id")
+    _make_sql_view(name, "SELECT 2 AS id")
+    try:
+        with get_db_context() as db:
+            tree = projection.export_tables(db, OWNER)
+        mine = {path: yaml.safe_load(text) for path, text in tree.items() if yaml.safe_load(text)["name"] == name}
+        assert list(mine) == [f"tables/{name}.table.yaml"]
+        assert mine[f"tables/{name}.table.yaml"]["sql_query"] == "SELECT 1 AS id"
+    finally:
+        _delete_tables_by_name(name)
 
 
 def test_table_round_trips_and_rebuilds_from_schema(tmp_path):

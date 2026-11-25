@@ -32,12 +32,6 @@ Five ways to run Flowfile, from zero-install to a team server. The Python packag
     <strong>macOS</strong>
     <small>Apple Silicon · .dmg</small>
     </a>
-    <a class="ff-install-card" id="ff-dl-mac-intel" href="https://github.com/edwardvaneechoud/Flowfile/releases/latest">
-    <span class="ff-detected-badge">DETECTED</span>
-    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 12.54c-.03-2.5 2.04-3.7 2.13-3.76-1.16-1.7-2.97-1.93-3.61-1.96-1.54-.16-3 .9-3.78.9-.78 0-1.98-.88-3.26-.85-1.68.02-3.22.97-4.08 2.47-1.74 3.02-.44 7.49 1.25 9.94.83 1.2 1.82 2.55 3.12 2.5 1.25-.05 1.72-.8 3.23-.8 1.51 0 1.93.8 3.25.78 1.34-.02 2.19-1.22 3.01-2.43.95-1.39 1.34-2.74 1.36-2.81-.03-.01-2.6-1-2.62-3.98zM14.56 4.6c.69-.83 1.15-1.99 1.02-3.14-.99.04-2.19.66-2.9 1.49-.64.74-1.2 1.92-1.05 3.05 1.1.09 2.24-.56 2.93-1.4z"/></svg>
-    <strong>macOS</strong>
-    <small>Intel · .dmg</small>
-    </a>
     <a class="ff-install-card" id="ff-dl-win" href="https://github.com/edwardvaneechoud/Flowfile/releases/latest">
     <span class="ff-detected-badge">DETECTED</span>
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3V5.5zm0 13 7.5 1.1v-7H3v5.9zM11.5 4.25 21 3v8.5h-9.5v-7.25zm0 15.5L21 21v-8.5h-9.5v7.25z"/></svg>
@@ -92,7 +86,6 @@ Five ways to run Flowfile, from zero-install to a team server. The Python packag
   // to the releases/latest page when the API or a pattern match fails.
   var cards = {
     "ff-dl-mac-arm":  function (n) { return /(aarch64|arm64).*\.dmg$/i.test(n); },
-    "ff-dl-mac-intel":function (n) { return /\.dmg$/i.test(n) && !/(aarch64|arm64)/i.test(n); },
     "ff-dl-win":      function (n) { return /\.(exe|msi)$/i.test(n); },
     "ff-dl-linux":    function (n) { return /\.deb$/i.test(n); }
   };

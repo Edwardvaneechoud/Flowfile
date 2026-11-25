@@ -143,7 +143,7 @@ docker compose up -d
 | `make sign_sidecars` | Sign bundled sidecars for macOS notarization (no-op off macOS or when `APPLE_SIGNING_IDENTITY` unset) |
 | `make build_tauri_app` | Build Tauri desktop app (current host target) |
 | `make build_tauri_win` / `build_tauri_mac` / `build_tauri_linux` | Platform-specific Tauri builds |
-| `make build_tauri_mac_arm` / `build_tauri_mac_intel` | macOS aarch64 / x86_64 Tauri builds |
+| `make build_tauri_mac_arm` | macOS aarch64 Tauri build (no Intel macOS build is made) |
 | `make measure_bundle` | Print sizes of `services_dist/` and `src-tauri/binaries/` |
 | `make test_built_services` | Smoke-test the PyInstaller binaries against `/docs` |
 | `make stubs` | Regenerate flowfile_frame `.pyi` stubs (run after changing FlowFrame/Expr/public API) |
@@ -380,7 +380,7 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 | `docker-publish.yml` | Git tags `v*` (app images + the app-version-tagged `flowfile-kernel-notebook`, version-gated) + push to `main` touching kernel paths (base/ml/lite kernel images, only unpublished versions) + dispatch (`publish_app`/`force_kernel`) | Multi-arch Docker builds (amd64/arm64) → Docker Hub |
 | `documentation.yml` | Push/PR to `main` (`docs/**`, `mkdocs.yml`, `flowfile_frame/**/*.py`) | Build and deploy MkDocs site |
 | `pypi-release.yml` | Git tags `v*` | Build frontend into static, Poetry build, publish to PyPI |
-| `release.yaml` | Git tags `v*` | Build & sign Tauri desktop installers (macOS arm64/intel, Windows, Linux), publish GitHub release |
+| `release.yaml` | Git tags `v*` | Build & sign Tauri desktop installers (macOS arm64, Windows, Linux), publish GitHub release |
 | `npm-publish-wasm.yml` | Git tags `wasm-v*` | Publish `flowfile-editor` WASM package to npm |
 | `claude.yml` | `@claude` mention in issues / PR comments / reviews | Claude Code agent responds on GitHub |
 | `claude-pr-review.yml` | PR opened/synchronize/ready/reopened (skips drafts) | Automated Claude PR review |
