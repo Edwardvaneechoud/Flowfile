@@ -193,13 +193,13 @@ def _manifest_entries(root: Path, kind_name: str) -> list:
     return _applied_entries(rel, entries, _ENTRY_NAME_KEYS[kind_name])
 
 
-def _table_key(entry: dict) -> tuple:
+def _table_key(entry: dict) -> tuple | None:
     namespace = entry.get("namespace") or {}
-    return namespace.get("catalog"), namespace.get("schema"), entry.get("name")
+    name = entry.get("name")
+    return None if name is None else (namespace.get("catalog"), namespace.get("schema"), name)
 
 
-# The kinds stored one object per file, with the list key of the root file an older folder holds them in and
-# what identifies an object: a field, or a function for a composite key.
+# Kinds stored one object per file: (list key of an older folder's root file, field or key function).
 _OBJECT_KINDS = {
     "visualizations": ("visualizations", "viz_uuid"),
     "dashboards": ("dashboards", "dashboard_uuid"),
@@ -208,6 +208,8 @@ _OBJECT_KINDS = {
 
 
 def _object_id(kind_name: str, data: dict):
+    """What identifies an object of a per-file kind: a field of it, or a function's key for a composite one.
+    ``None`` when the object carries none, so it matches no other object."""
     ident = _OBJECT_KINDS[kind_name][1]
     return ident(data) if callable(ident) else data.get(ident)
 
@@ -230,8 +232,9 @@ def _object_entries(root: Path, kind_name: str) -> list:
             listed += _applied_entries(rel, data.get(list_key, []) or [], _ENTRY_NAME_KEYS[kind_name])
         elif _applies(rel, data):
             entries.append(data)
-            held.add(_object_id(kind_name, data))
-    return entries + [e for e in listed if _object_id(kind_name, e) not in held]
+            if (ident := _object_id(kind_name, data)) is not None:
+                held.add(ident)
+    return entries + [e for e in listed if (ident := _object_id(kind_name, e)) is None or ident not in held]
 
 
 def _after_commit(label: str, action, *args, **kwargs) -> None:
@@ -547,7 +550,7 @@ def _resolve_table_path(pointer: dict, root: Path, *, namespace_id: int | None =
     """Rebuild a physical table's data path from its portable pointer. A managed table re-points to
     its dir under catalog_tables_directory (the pointer name is reduced to a single basename and the
     result is asserted to stay under the managed dir — a traversal/absolute name is skip+logged so a
-    crafted tables.yaml can never drive a write outside the managed dir). External paths are
+    crafted table file can never drive a write outside the managed dir). External paths are
     accepted verbatim only when they stay under the user's data roots / the project root, or under
     the object storage the table's catalog is configured with (``namespace_id``), else skip+logged.
     ``None`` when there is no pointer."""
@@ -778,7 +781,7 @@ def _import_visualizations(root: Path, owner_id: int) -> set[str]:
     """Recreate the owner's saved charts from their files; return the kept viz_uuids.
 
     Upserts by viz_uuid. The source table is re-resolved by its portable ``{catalog, schema, name}``
-    (tables.yaml rebuilds physical tables first, so it is normally present); a table-source viz whose
+    (the table files rebuild physical tables first, so it is normally present); a table-source viz whose
     table is still absent keeps its definition with a null source rather than being dropped. The
     PNG thumbnail isn't restored — it re-exports on the next view."""
     kept: set[str] = set()

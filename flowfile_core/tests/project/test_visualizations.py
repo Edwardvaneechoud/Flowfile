@@ -922,6 +922,13 @@ def test_a_file_replaces_its_entry_in_the_older_list_and_the_rest_of_the_list_st
         project_sync.close_project(OWNER)
 
 
+def test_a_chart_with_no_uuid_in_the_older_list_applies_beside_a_file_with_none(tmp_path):
+    write_yaml(tmp_path / "visualizations" / "by-hand.visualization.yaml", {"name": "from a file"})
+    write_yaml(tmp_path / "visualizations.yaml", {"visualizations": [{"name": "from the list"}]})
+    entries = importer._object_entries(tmp_path, "visualizations")
+    assert sorted(e["name"] for e in entries) == ["from a file", "from the list"]
+
+
 def test_a_file_under_another_owners_folder_or_naming_another_owner_is_reported_not_applied(tmp_path):
     project_sync.close_project(OWNER)
     _clear_viz_dashboards()

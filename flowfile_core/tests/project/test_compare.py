@@ -140,6 +140,11 @@ def test_a_tables_own_file_replaces_its_entry_in_the_older_list():
     assert [(c.change, c.label, c.path) for c in kinds.compare(TREE, both)] == [("modified", "KindsCatalog.KindsSchema.kinds_table", TABLE_FILE)]
 
 
+def test_table_files_without_a_name_are_an_object_each():
+    files = {"tables/a.table.yaml": "storage_format: delta\n", "tables/b.table.yaml": "storage_format: delta\n"}
+    assert set(kinds.get("tables").entries(files)) == set(files)
+
+
 def test_a_comment_in_a_root_file_is_no_change():
     tree = {**TREE, "namespaces.yaml": "# by hand\n" + TREE["namespaces.yaml"]}
     assert kinds.compare(TREE, tree) == []

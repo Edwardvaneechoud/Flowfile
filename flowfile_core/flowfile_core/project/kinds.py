@@ -1,6 +1,6 @@
 """The kinds of object a project holds, as one registry.
 
-Each kind names the files it owns as one-level patterns (``flows/*.flow.yaml``, ``tables.yaml``), its label in
+Each kind names the files it owns as one-level patterns (``flows/*.flow.yaml``, ``models.yaml``), its label in
 a change summary, the kinds it comes after, its entry cap and its export, ``export(ctx) -> {path: text}``. What
 used to be listed by hand in several modules (the managed files git stages, the importer's file kinds and caps,
 the change-summary labels, the files a full export writes and sweeps) is derived from here.
