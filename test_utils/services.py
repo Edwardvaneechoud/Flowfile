@@ -214,7 +214,10 @@ def running_services(
         storage = {name: cwd / f"{name}_storage" for name, cwd in cwds.items()}
     else:
         storage = dict.fromkeys(cwds, root / "storage")
-    flows_dir = storage["core"] / "e2e_flows"
+    # A server opens a flow only from its own flow folders or the person's workspace.
+    flows_dir = (
+        Path(base_env["FLOWFILE_USER_DATA_DIR"]) / "flows" if mode == "docker" else storage["core"] / "e2e_flows"
+    )
     for path in (root / "home", flows_dir):
         path.mkdir(parents=True)
     logs = {name: root / f"{name}.log" for name in cwds}
