@@ -317,8 +317,9 @@ class MetricQueryMetric(BaseModel):
 
 
 class MetricQueryResult(BaseModel):
-    """The rows as ``POST /catalog/sql/execute`` answers them, the compiled ``sql`` and the metric's identity. An
-    execution failure comes back in ``error`` (status 200); a query that cannot compile is a 422."""
+    """The rows as ``POST /catalog/sql/execute`` answers them, the compiled ``sql``, the qualified names of the
+    ``tables`` it reads and the metric's identity. An execution failure comes back in ``error`` (status 200); a query
+    that cannot compile is a 422."""
 
     columns: list[str] = Field(default_factory=list)
     dtypes: list[str] = Field(default_factory=list)
@@ -326,6 +327,7 @@ class MetricQueryResult(BaseModel):
     total_rows: int = 0
     truncated: bool = False
     sql: str
+    tables: list[str] = Field(default_factory=list)
     metric: MetricQueryMetric
     error: str | None = None
 

@@ -164,13 +164,20 @@ class SemanticModelService:
         return ns, host.namespace_path(ns, self.db)
 
     def scope(self, namespace_id: int, *, writable: bool = False) -> Scope:
+        """The namespace's scope. A restricted caller's holds the tables of the schemas they may read and the tables
+        granted to them one by one, the read set ``host.view_for`` hands the ledger, so another schema's tables are
+        never listed to them."""
         ns, path = self.namespace(namespace_id, writable=writable)
         catalog = ns if ns.level == 0 else self.repo.get_namespace(ns.parent_id)
         service = CatalogService(self.repo)
+        visible = self.access.visible_namespace_ids() if self._restricted else None
+        granted = self.access.accessible_ids("catalog_table") if self._restricted else set()
         tables: dict[int, TableInfo] = {}
         schema_of: dict[int, int] = {}
         for schema in self.repo.list_child_namespaces(catalog.id):
             for t in service.list_tables(schema.id):
+                if visible is not None and schema.id not in visible and t.id not in granted:
+                    continue
                 if host.is_keyable(t.qualified_name):
                     tables[t.id] = TableInfo(t.id, t.qualified_name, t.name, t.description, tuple(t.schema_columns))
                     schema_of[t.id] = schema.id
@@ -679,7 +686,7 @@ class SemanticModelService:
             answer = {"error": str(exc)}
         except RequestException:
             answer = {"error": "The compute worker could not be reached. Is it running?"}
-        return s.MetricQueryResult(**answer, sql=compiled.sql, metric=metric)
+        return s.MetricQueryResult(**answer, sql=compiled.sql, tables=list(compiled.tables), metric=metric)
 
     def save_metric_query_as_flow(self, namespace_id: int, body: s.MetricQuerySaveAsFlow) -> s.MetricQuerySaveAsFlowOut:
         """Save the compiled query as a flow: one catalog reader per table into a SQL node.
@@ -755,3 +762,31 @@ def tree_summaries(tree: list[Any]) -> None:
             walk(node.children, path)
 
     walk(tree, None)
+
+
+def visible_summaries(tree: list[Any], access: AccessResolver) -> None:
+    """Narrow ``tree_summaries`` to what a restricted caller may read, on their filtered tree.
+
+    A namespace counts everything under its path only when the caller may read that whole path (visible, and for a
+    catalog every schema under it visible too, as ``host.view_for`` hands paths); otherwise it counts the namespaces
+    and tables left under it, so a count never tells of facts the caller cannot open.
+    """
+    from flowfile_core.database.models import CatalogNamespace
+
+    visible = access.visible_namespace_ids()
+    rows = access.db.query(CatalogNamespace.id, CatalogNamespace.parent_id).all()
+    readable = visible - {parent for ns_id, parent in rows if ns_id not in visible}
+
+    def walk(nodes: list[Any]) -> None:
+        for node in nodes:
+            if node.id is None or node.id < 0:
+                continue
+            walk(node.children)
+            if node.semantic_model is None or node.id in readable:
+                continue
+            parts = [x.semantic_model for x in [*node.children, *(node.tables or [])] if x.semantic_model]
+            node.semantic_model = s.SemanticModelSummary(
+                **{k: sum(getattr(p, k) for p in parts) for k in ("accepted", "pending", "stale")}
+            )
+
+    walk(tree)

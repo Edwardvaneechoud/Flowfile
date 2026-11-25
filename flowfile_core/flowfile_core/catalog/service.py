@@ -560,12 +560,14 @@ class CatalogService:
             bulk_enrich_tables=self._tables.bulk_enrich_tables,
             bulk_enrich_flows=self._flows.bulk_enrich_flows,
         )
-        from flowfile_core.catalog.semantic.service import tree_summaries
+        from flowfile_core.catalog.semantic.service import tree_summaries, visible_summaries
 
         tree_summaries(tree)
         if not self._restricted:
             return tree
-        return self._filter_namespace_tree(tree)
+        filtered = self._filter_namespace_tree(tree)
+        visible_summaries(filtered, self.access)
+        return filtered
 
     def _filter_namespace_tree(self, tree: list[NamespaceTree]) -> list[NamespaceTree]:
         """Private-by-default tree: per-namespace items filtered to accessible ones
