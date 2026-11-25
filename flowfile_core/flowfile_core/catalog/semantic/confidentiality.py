@@ -74,7 +74,7 @@ def read_withheld(db: Any, table_ids: Iterable[int]) -> Withheld:
         return Withheld(unreadable=frozenset(ids))
 
     high = [sid for sid, level in levels if level >= Confidentiality.CONFIDENTIAL]
-    types = {sid.name for sid in high if sid.kind is Kind.TYPE}
+    types = {sid.ref for sid in high if sid.kind is Kind.TYPE}
     typed = [sid for sid, a in parsed if a.attribute == "semantic_type" and a.value in types]
     columns: dict[int, set[str]] = {}
     for sid in [*high, *typed]:
