@@ -182,10 +182,12 @@ Who can accept depends on where Flowfile runs. The chip in the header says which
 - **Solo**, on your own desktop: your edits are accepted at once. Facts proposed by AI still queue, because only a person can accept.
 - **Team review**, on a shared server: every change waits for someone who **manages** the schema, that is its owner or a user with a manage grant. Anyone who may write to the schema can propose. Joins that cross schemas are decided by whoever manages the catalog.
 
-A fact proposed by AI can never be accepted by AI. Reading a model needs access to the schema; a schema that a person can see shows the facts about all its tables.
+A fact proposed by AI can never be accepted by AI.
+
+Reading a model follows the catalog. A schema you own or were granted (`use` or `manage`, on it or on its catalog) shows the facts about all its tables. A public schema that you neither own nor were granted shows its own name, description and AI instructions, the tables in it that you own or were granted, and the joins between those; its other tables do not appear, in the model, in Review, in History, in the export or in answers to questions. Facts at the catalog level, such as joins across schemas, show only when you can read every schema of the catalog. In a public schema facts are accepted by its owner, a user with a manage grant or an admin; the built-in public schemas (`General`, `Unnamed Flows`, `Python Editor`) are accepted by an admin.
 
 !!! note "Team review"
-    The team rules follow the catalog's [sharing and grants](../../deployment/sharing.md) and have not been exercised on a live shared server as part of this feature.
+    The team rules follow the catalog's [sharing and grants](../../deployment/sharing.md). They are tested in process, not on a live shared server.
 
 The **History** tab shows the events of one table, column, metric or join: who proposed, accepted, rejected, retracted or reopened it, and when.
 

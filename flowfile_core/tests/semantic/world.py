@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import shutil
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +48,7 @@ class World:
     orders_id: int
     customers_id: int
     paths: tuple[Path, ...]
+    extra: list[tuple[int, Path, str]] = field(default_factory=list)
 
     def key(self, table: str) -> str:
         return f"{self.catalog}.sales.orders" if table == "orders" else f"{self.catalog}.crm.customers"
@@ -62,6 +63,38 @@ class World:
         return f"dataset:{self.key(table)}"
 
 
+def _tables_root() -> Path:
+    """Where the session's worker reads catalog tables by directory name: its own ``catalog_tables`` folder, which in
+    docker mode is not core's (core's sits under the user data directory the sharing fixture points elsewhere)."""
+    root = storage.base_directory / "catalog_tables"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def add_table(world: World, schema_id: int, name: str, df: pl.DataFrame, owner_id: int) -> int:
+    """Another real Delta table in one of the world's schemas, synced into the ledger; dropped with the world."""
+    path = _tables_root() / f"{world.catalog}_{name}"
+    df.write_delta(str(path))
+    with get_db_context() as db:
+        row = CatalogTable(
+            name=name,
+            namespace_id=schema_id,
+            owner_id=owner_id,
+            file_path=str(path),
+            storage_format="delta",
+            schema_json=_schema(df),
+            table_type="physical",
+            row_count=df.height,
+            column_count=df.width,
+        )
+        db.add(row)
+        db.commit()
+        table_id = row.id
+    world.extra.append((table_id, path, f"{world.catalog}.{'sales' if schema_id == world.sales_id else 'crm'}.{name}"))
+    service.maybe_sync(force=True)
+    return table_id
+
+
 def _schema(df: pl.DataFrame) -> str:
     return json.dumps([{"name": n, "dtype": str(t)} for n, t in df.schema.items()])
 
@@ -69,8 +102,7 @@ def _schema(df: pl.DataFrame) -> str:
 def build_world(owner_id: int = 1, *, schema_owner_id: int | None = None) -> World:
     """The catalog, its two schemas and two tables, written as real Delta tables, synced into the ledger."""
     name = f"sem{uuid.uuid4().hex[:10]}"
-    root = storage.catalog_tables_directory
-    root.mkdir(parents=True, exist_ok=True)
+    root = _tables_root()
     paths = (root / f"{name}_orders", root / f"{name}_customers")
     ORDERS.write_delta(str(paths[0]))
     CUSTOMERS.write_delta(str(paths[1]))
@@ -107,14 +139,15 @@ def build_world(owner_id: int = 1, *, schema_owner_id: int | None = None) -> Wor
 def drop_world(world: World) -> None:
     """Delete the world as the catalog does, the ledger told of each table (SQLite reuses the row ids, and a pull sync
     would read a reused id with the same columns as a rename)."""
+    extra_ids = [table_id for table_id, _path, _key in world.extra]
     with get_db_context() as db:
-        db.query(CatalogTable).filter(CatalogTable.id.in_([world.orders_id, world.customers_id])).delete()
+        db.query(CatalogTable).filter(CatalogTable.id.in_([world.orders_id, world.customers_id, *extra_ids])).delete()
         db.query(CatalogNamespace).filter(CatalogNamespace.id.in_([world.sales_id, world.crm_id])).delete()
         db.query(CatalogNamespace).filter(CatalogNamespace.id == world.catalog_id).delete()
         db.commit()
-    for table in ("orders", "customers"):
-        host.on_table_deleted(world.key(table))
-    for path in world.paths:
+    for key in [world.key("orders"), world.key("customers"), *(key for _id, _path, key in world.extra)]:
+        host.on_table_deleted(key)
+    for path in [*world.paths, *(path for _id, path, _key in world.extra)]:
         shutil.rmtree(path, ignore_errors=True)
     reset_process_state()
 

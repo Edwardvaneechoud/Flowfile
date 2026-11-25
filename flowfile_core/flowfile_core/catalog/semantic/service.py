@@ -141,6 +141,7 @@ class SemanticModelService:
         self.access = access
         self.repo = SQLAlchemyCatalogRepository(db)
         self._view = None
+        self._rule: host.ReadRule | None | bool = False
 
     @property
     def view(self) -> Any:
@@ -152,31 +153,82 @@ class SemanticModelService:
     def _restricted(self) -> bool:
         return self.access is not None and self.access.restricted
 
+    @property
+    def rule(self) -> host.ReadRule | None:
+        """What this caller may read (``host.read_rule``); ``None`` reads everything."""
+        if self._rule is False:
+            self._rule = host.read_rule(self.access)
+        return self._rule
+
+    def may_read(self, subject: Any) -> bool:
+        """The one check every reader of this service goes through: may the caller read ``subject``?
+
+        The ledger's read set holds a public schema's whole path (``host.view_for``), so the tables in it the caller
+        may not read are told apart here. A join's ends are read from the ledger.
+        """
+        rule = self.rule
+        if rule is None:
+            return True
+        from glosslayer.ids import Kind, SubjectId
+
+        sid = SubjectId.parse(str(subject))
+        if sid.kind is not Kind.RELATIONSHIP:
+            return rule.subject(sid)
+        ends = [a.value for a in self.view.find(subject=str(sid), attributes=("from", "to"), statuses=LIVE)]
+        return bool(ends) and all(rule.key(end) for end in ends)
+
+    def _held_by_hidden_join(self, subject: str) -> bool:
+        """Whether a join subject already holds facts about a table the caller may not read (its name is taken)."""
+        if self.rule is None or not self.view.find(subject=subject, statuses=LIVE):
+            return False
+        return not self.may_read(subject)
+
+    def _narrowed(self, mv: Any) -> Any:
+        """``mv`` (a ``ModelView``) without the joins and facts of tables the caller may not read."""
+        rule = self.rule
+        if rule is None:
+            return mv
+        from glosslayer.ids import Kind, SubjectId
+
+        ends: dict[str, list[Any]] = {}
+        for f in mv.all_facts:
+            if f.attribute in ("from", "to"):
+                ends.setdefault(f.subject, []).append(f.value)
+        mv.joins = [j for j in mv.joins if rule.join(j.from_table, j.to_table) and self.may_read(j.key)]
+
+        def shown(f: Any) -> bool:
+            sid = SubjectId.parse(f.subject)
+            if sid.kind is Kind.RELATIONSHIP and f.subject in ends:
+                return all(rule.key(end) for end in ends[f.subject])
+            return self.may_read(sid)
+
+        mv.all_facts = [f for f in mv.all_facts if shown(f)]
+        return mv
+
     def namespace(self, namespace_id: int, *, writable: bool = False) -> tuple[Any, str]:
         """The namespace and its path, once the caller may read it (and change it, with ``writable``)."""
         ns = self.repo.get_namespace(namespace_id)
         if ns is None or ns.level not in (0, 1):
             raise NamespaceNotFoundError(namespace_id=namespace_id)
-        if self._restricted and ns.id not in self.access.visible_namespace_ids():
+        if self.rule is not None and ns.id not in self.rule.visible:
             raise NotAuthorizedError(self.user_id or -1, "read this namespace's semantic model")
         if writable and self._restricted and ns.id not in self.access.writable_namespace_ids():
             raise NotAuthorizedError(self.user_id or -1, "change this namespace's semantic model")
         return ns, host.namespace_path(ns, self.db)
 
     def scope(self, namespace_id: int, *, writable: bool = False) -> Scope:
-        """The namespace's scope. A restricted caller's holds the tables of the schemas they may read and the tables
-        granted to them one by one, the read set ``host.view_for`` hands the ledger, so another schema's tables are
-        never listed to them."""
+        """The namespace's scope. A restricted caller's holds only the tables they may read (``host.ReadRule``): those
+        of a schema readable whole and those owned or granted one by one, so a public schema lists them none of its
+        other tables and another schema's tables are never listed to them."""
         ns, path = self.namespace(namespace_id, writable=writable)
         catalog = ns if ns.level == 0 else self.repo.get_namespace(ns.parent_id)
         service = CatalogService(self.repo)
-        visible = self.access.visible_namespace_ids() if self._restricted else None
-        granted = self.access.accessible_ids("catalog_table") if self._restricted else set()
+        rule = self.rule
         tables: dict[int, TableInfo] = {}
         schema_of: dict[int, int] = {}
         for schema in self.repo.list_child_namespaces(catalog.id):
             for t in service.list_tables(schema.id):
-                if visible is not None and schema.id not in visible and t.id not in granted:
+                if rule is not None and not rule.table(t.id):
                     continue
                 if host.is_keyable(t.qualified_name):
                     tables[t.id] = TableInfo(t.id, t.qualified_name, t.name, t.description, tuple(t.schema_columns))
@@ -189,13 +241,14 @@ class SemanticModelService:
         catalog's joins that touch it."""
         in_schema = scope.ns.level == 1 and not whole_catalog
         tables = scope.all_tables if whole_catalog else scope.model_tables
-        return self.view.model_view(
+        mv = self.view.model_view(
             scope.catalog_path if whole_catalog else scope.path,
             tables=sorted(tables.values(), key=lambda t: t.key),
             related=scope.all_tables.values(),
             joins_of=scope.catalog_path if in_schema else None,
             statuses=[ACCEPTED] if accepted_only else LIVE,
         )
+        return self._narrowed(mv)
 
     def snapshot(self, namespace_id: int, *, accepted_only: bool = False) -> tuple[Any, Scope]:
         """The model and the scope it was read in."""
@@ -283,7 +336,7 @@ class SemanticModelService:
         scope = self.scope(namespace_id, writable=True)
         existing: dict[str, Any] = {}
         if any(p.kind in ("metric", "metric_synonyms") for p in proposals):
-            existing = self.view.metric_names(scope.path)
+            existing = {n: sid for n, sid in self.view.metric_names(scope.path).items() if self.may_read(sid)}
             # Live joins, so a metric over a join still waiting for review can be proposed beside it.
             metric_snapshot, _ = self._query_snapshot(namespace_id, preview=True)
         props: list[Any] = []
@@ -378,6 +431,8 @@ class SemanticModelService:
             description=_clean(p.description),
             namespace=self._join_owner(f, t, scope),
         )
+        if self._held_by_hidden_join(str(rel.subject)):
+            raise SemanticConflictError(f"A join called {p.name!r} already exists in this model")
         props = list(rel.proposals())
         for prop in props:
             prop.comment = rationale
@@ -431,7 +486,7 @@ class SemanticModelService:
         scope = self.scope(namespace_id)
         with _ledger_errors(self.user_id):
             entries = self.view.review_queue(scope.path, tables=scope.all_tables.values())
-        return [s.ReviewItemOut.model_validate(e) for e in entries]
+        return [s.ReviewItemOut.model_validate(e) for e in entries if self.may_read(e.subject)]
 
     def review(self, namespace_id: int, action: s.ReviewAction) -> s.ReviewResultOut:
         from glosslayer.ids import path_covers
@@ -453,7 +508,7 @@ class SemanticModelService:
             if not targets:
                 raise SemanticNotFoundError(f"No facts in group {action.group!r}")
             for a in targets:
-                if not path_covers(path, a.scope_path):
+                if not path_covers(path, a.scope_path) or not self.may_read(a.subject):
                     raise SemanticNotFoundError(f"No fact {a.id!r} in this semantic model")
             if action.group and action.action in ("accept", "reject"):
                 decide = view.accept_group if action.action == "accept" else view.reject_group
@@ -493,7 +548,7 @@ class SemanticModelService:
         sid = SubjectId.parse(subject)
         scope = sid.scope_path
         catalog_join = ns.level == 1 and sid.kind is Kind.RELATIONSHIP and scope == path.rsplit(".", 1)[0]
-        if not (path_covers(path, scope) or catalog_join):
+        if not (path_covers(path, scope) or catalog_join) or not self.may_read(sid):
             raise SemanticNotFoundError(f"{subject!r} is not part of this semantic model")
         return sid
 
@@ -541,14 +596,33 @@ class SemanticModelService:
         ]
 
     def sync(self, namespace_id: int) -> s.SemanticSyncOut:
+        """Sync the whole catalog; the report names only the tables the caller may read."""
         self.namespace(namespace_id)
-        return s.SemanticSyncOut.model_validate(maybe_sync(force=True), from_attributes=True)
+        out = s.SemanticSyncOut.model_validate(maybe_sync(force=True), from_attributes=True)
+        rule = self.rule
+        if rule is not None:
+            out.new, out.changed, out.gone = ([k for k in ks if rule.key(k)] for ks in (out.new, out.changed, out.gone))
+            out.moved = {old: new for old, new in out.moved.items() if rule.key(new)}
+        return out
 
     def export(self, namespace_id: int) -> str:
-        """The namespace's accepted model as Ossie YAML."""
+        """The namespace's accepted model as Ossie YAML; a restricted caller's holds only the tables they may read."""
+        from glosslayer.ids import path_covers
+
         _ns, path = self.namespace(namespace_id)
+        rule = self.rule
         with _ledger_errors(self.user_id):
-            return self.view.to_yaml(namespace=path)
+            if rule is None:
+                return self.view.to_yaml(namespace=path)
+            from glosslayer.model import Status
+            from glosslayer.ossie.exporter import build_document
+
+            keys = sorted(k for k in rule.keys if path_covers(path, k))
+            state = self.view.snapshot([Status.ACCEPTED], datasets=keys)
+            state.relationships = {
+                ref: r for ref, r in state.relationships.items() if rule.join(r.attrs.get("from"), r.attrs.get("to"))
+            }
+            return build_document(state, namespace=path, log_seq=self.view.store.last_seq()).to_yaml()
 
     def suggest_candidates(
         self, namespace_id: int, table_ids: list[int] | None = None
@@ -590,9 +664,18 @@ class SemanticModelService:
         ``ai_source`` through a view bound with that ``via``, the rules' own candidates by ``RULE_SOURCE``.
         """
         from glosslayer import rules
+        from glosslayer.ids import SubjectId
 
         scope = self.scope(namespace_id, writable=True)
         tables, by_key = scope.model_tables, {t.key: t for t in scope.all_tables.values()}
+        if self.rule is not None:
+
+            def subject(j: Any) -> str:
+                owner = self._join_owner(by_key[j.from_table], by_key[j.to_table], scope)
+                return str(SubjectId.for_relationship(j.name, owner))
+
+            # a candidate named like a join the caller cannot read would add its facts to that join
+            sugg.joins = [j for j in sugg.joins if not self._held_by_hidden_join(subject(j))]
         with _ledger_errors(self.user_id):
             stored = rules.propose(
                 self.view,
@@ -767,15 +850,15 @@ def tree_summaries(tree: list[Any]) -> None:
 def visible_summaries(tree: list[Any], access: AccessResolver) -> None:
     """Narrow ``tree_summaries`` to what a restricted caller may read, on their filtered tree.
 
-    A namespace counts everything under its path only when the caller may read that whole path (visible, and for a
-    catalog every schema under it visible too, as ``host.view_for`` hands paths); otherwise it counts the namespaces
-    and tables left under it, so a count never tells of facts the caller cannot open.
+    A namespace counts everything under its path only when the caller reads it whole (``host.ReadRule.whole``: a
+    schema they own or were granted, a catalog every schema of which is); a public one, or one kept only as a
+    granted table's breadcrumb, counts the namespaces and tables left under it, so a count never tells of facts the
+    caller cannot open.
     """
-    from flowfile_core.database.models import CatalogNamespace
-
-    visible = access.visible_namespace_ids()
-    rows = access.db.query(CatalogNamespace.id, CatalogNamespace.parent_id).all()
-    readable = visible - {parent for ns_id, parent in rows if ns_id not in visible}
+    rule = host.read_rule(access)
+    readable = rule.whole if rule is not None else None
+    if readable is None:
+        return
 
     def walk(nodes: list[Any]) -> None:
         for node in nodes:

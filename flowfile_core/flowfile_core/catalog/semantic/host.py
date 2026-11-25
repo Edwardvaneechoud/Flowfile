@@ -124,19 +124,98 @@ def table_key(table: Any, db: Any) -> str:
     return f"{namespace_path(ns, db)}.{table.name}" if ns is not None else table.name
 
 
+@dataclass(frozen=True)
+class ReadRule:
+    """What a restricted caller may read of the semantic model; ``read_rule`` builds it, unrestricted callers have none.
+
+    The semantic model follows the catalog. ``whole`` are the schemas readable whole: owned, or granted ``use`` or
+    ``manage`` (a grant on a catalog reaches its schemas), and the catalogs every schema of which is readable whole.
+    ``visible`` adds the namespaces seen only as containers, the public ones: of those the caller reads the
+    namespace's own facts (its name, description and AI instructions, its joins between tables they read) and the
+    tables in ``tables``, nothing else. ``tables`` are the tables readable: those of a schema readable whole and
+    those owned or granted one by one (the catalog's ``accessible_ids("catalog_table")``), ``keys`` their dataset
+    keys, and ``paths`` the namespace paths whose own subjects are read.
+    """
+
+    visible: frozenset[int]
+    whole: frozenset[int]
+    tables: frozenset[int]
+    keys: frozenset[str]
+    paths: frozenset[str]
+
+    def table(self, table_id: int) -> bool:
+        return table_id in self.tables
+
+    def key(self, key: str | None) -> bool:
+        return key in self.keys
+
+    def join(self, from_key: str | None, to_key: str | None) -> bool:
+        return self.key(from_key) and self.key(to_key)
+
+    def subject(self, subject: Any, ends: tuple[str | None, str | None] | None = None) -> bool:
+        """Whether a subject is readable; a join's needs its two ``ends``, a ledger-wide subject (a type) always is."""
+        from glosslayer.ids import Kind, SubjectId
+
+        sid = SubjectId.parse(str(subject))
+        if sid.kind is Kind.TYPE:
+            return True
+        if sid.kind is Kind.RELATIONSHIP:
+            return ends is not None and self.join(*ends)
+        if sid.dataset:
+            return self.key(sid.dataset)
+        return sid.scope_path is None or sid.scope_path in self.paths
+
+
+def read_rule(access: Any) -> ReadRule | None:
+    """The caller's ``ReadRule``; ``None`` when ``access`` is absent or unrestricted (everything is read)."""
+    if access is None or not access.restricted:
+        return None
+    from flowfile_core.database.models import CatalogNamespace, CatalogTable
+
+    db = access.db
+    namespaces = {ns.id: ns for ns in db.query(CatalogNamespace)}
+    children: dict[int, list[int]] = {}
+    for ns in namespaces.values():
+        if ns.parent_id is not None:
+            children.setdefault(ns.parent_id, []).append(ns.id)
+    granted_whole = {ns.id for ns in namespaces.values() if ns.owner_id == access.user_id}
+    granted_whole |= set(access.namespace_permissions())
+    visible = (set(access.visible_namespace_ids()) | granted_whole) & namespaces.keys()
+    schemas = {i for i in granted_whole & namespaces.keys() if namespaces[i].parent_id is not None}
+    catalogs = {
+        i for i in visible if namespaces[i].parent_id is None and all(c in schemas for c in children.get(i, []))
+    }
+    whole = schemas | catalogs
+    paths = {namespace_path(namespaces[i], db) for i in visible if namespaces[i].parent_id is not None or i in whole}
+    granted = access.accessible_ids("catalog_table")
+    tables: dict[int, str] = {}
+    for t in db.query(CatalogTable):
+        if t.namespace_id in whole or t.id in granted:
+            tables[t.id] = table_key(t, db)
+    return ReadRule(
+        frozenset(visible), frozenset(whole), frozenset(tables), frozenset(tables.values()), frozenset(paths)
+    )
+
+
 def view_for(user: Any, access: Any, via: str | None = None) -> Any:
     """The ledger bound to ``user``, with their read and manage paths resolved from the catalog's own grants.
 
-    ``read`` is ``None`` (everything) when ``access`` is absent or unrestricted, else the visible namespaces plus the
-    keys of tables granted one by one. ``manage`` is the namespaces the user owns or holds a ``manage`` grant on;
-    public namespaces are writable for everyone but managed by nobody, so they do not count.
+    ``read`` is ``None`` (everything) when ``access`` is absent or unrestricted, else the ``ReadRule``'s paths (every
+    visible schema, and a catalog read whole) plus the keys of readable tables outside them. A prefix covers
+    everything below it, so a public schema's path also hands the ledger the tables in it the caller may not read:
+    those are left out by ``SemanticModelService`` through the same rule. ``manage`` is the namespaces the user owns
+    or holds a ``manage`` grant on; public namespaces are writable for everyone but managed by nobody, so they do not
+    count.
     """
     embedded = host().embedded
     user_id = getattr(user, "id", None)
-    if access is None or not access.restricted:
+    rule = read_rule(access)
+    if rule is None:
         return embedded.view(user_id=user_id, admin=True, manage=(), read=None, via=via)
 
-    from flowfile_core.database.models import CatalogNamespace, CatalogTable
+    from glosslayer.ids import path_covers
+
+    from flowfile_core.database.models import CatalogNamespace
 
     db = access.db
     namespaces = {ns.id: ns for ns in db.query(CatalogNamespace)}
@@ -147,15 +226,8 @@ def view_for(user: Any, access: Any, via: str | None = None) -> Any:
         kept = sorted((ns_ids & namespaces.keys()) - open_catalogs)
         return [namespace_path(namespaces[i], db) for i in kept]
 
-    read = closed_paths(access.visible_namespace_ids())
-    covered = set(read)
-    table_ids = access.accessible_ids("catalog_table")
-    if table_ids:
-        for table in db.query(CatalogTable).filter(CatalogTable.id.in_(table_ids)):
-            key = table_key(table, db)
-            if key.rpartition(".")[0] not in covered:
-                read.append(key)
-
+    read = sorted(rule.paths)
+    read += sorted(k for k in rule.keys if not any(path_covers(p, k) for p in rule.paths))
     own = {ns.id for ns in namespaces.values() if ns.owner_id == user_id}
     granted = {ns_id for ns_id, perm in access.namespace_permissions().items() if perm == sharing.PERMISSION_MANAGE}
     return embedded.view(
