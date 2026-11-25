@@ -177,12 +177,12 @@ def test_a_package_kind_is_saved_previewed_applied_and_deleted(tmp_path, every_k
 
 def test_a_cycle_and_a_path_clash_are_rejected_and_core_keeps_working(monkeypatch):
     loop = dataclasses.replace(WIDGET, name="loop", paths=("loops/*.yaml",), after=("flow",), before=("namespaces",))
-    ledger = dataclasses.replace(WIDGET, name="ledger", paths=("tables.yaml",), after=(), before=())
+    ledger = dataclasses.replace(WIDGET, name="ledger", paths=("tables/*.table.yaml",), after=(), before=())
     mute = dataclasses.replace(WIDGET, name="mute", paths=("mutes/*.yaml",), after=(), before=(), apply=None)
     _rescan(monkeypatch, loop, ledger, mute)
     rejected = kinds.rejected()
     assert "cycle" in rejected["loop"]
-    assert "'tables.yaml'" in rejected["ledger"]
+    assert "'tables/*.table.yaml'" in rejected["ledger"]
     assert "no apply" in rejected["mute"]
     assert [k.name for k in kinds.ordered()] == TWELVE
 

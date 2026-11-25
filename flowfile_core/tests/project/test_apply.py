@@ -30,7 +30,7 @@ SPECS = {
     "namespaces": ("namespaces.yaml", "namespaces", "catalog", ("description", "changed")),
     "flow": ("flows/flow_a.flow.yaml", None, "flow_uuid", ("flowfile_settings", {"execution_mode": "Performance"})),
     "schedule": ("schedules/flow_a.yaml", "schedules", "id", ("name", "renamed")),
-    "tables": ("tables.yaml", "tables", "name", ("sql_query", "SELECT 2 AS id")),
+    "tables": ("tables/KindsCatalog.KindsSchema.kinds_view.table.yaml", None, "name", ("sql_query", "SELECT 2 AS id")),
     "models": ("models.yaml", "models", "version", ("tags", ["b"])),
     "kernels": ("kernels.yaml", "kernels", "id", ("name", "renamed")),
     "visualizations": ("visualizations/kinds_viz.visualization.yaml", None, "viz_uuid", ("name", "renamed")),
