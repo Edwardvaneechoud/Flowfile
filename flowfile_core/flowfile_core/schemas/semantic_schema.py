@@ -1,14 +1,13 @@
 """Pydantic shapes of a catalog namespace's semantic model (``routes/catalog_semantic.py``, ``ai/semantic_routes.py``).
 
 A model belongs to a schema (namespace level 1) or to a catalog (level 0, the layer holding joins that cross schemas).
-``catalog/semantic/snapshot.py`` builds ``FactOut`` to ``JoinOut`` straight from the ledger and the metric compiler
-reads the same objects the API answers.
+``FactOut`` to ``SemanticTableOut`` are read straight from glosslayer's ``ModelView`` (``from_attributes``).
 """
 
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 FactStatus = Literal["proposed", "reviewed", "accepted", "rejected", "superseded", "stale", "retracted"]
 SourceKind = Literal["human", "ai", "inferred", "catalog", "import", "system", "other"]
@@ -16,7 +15,11 @@ Layer = Literal["schema", "catalog"]
 JoinVerdict = Literal["ok", "reversed", "many_to_many", "unchecked"]
 
 
-class FactOut(BaseModel):
+class _ViewOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FactOut(_ViewOut):
     """One fact: a value for one attribute of one subject. ``source`` is the actor who stated it
     (``human:<user id>``, ``ai:<model>``, ``inferred:<rule>``, ``catalog:flowfile``), ``source_kind`` its first part."""
 
@@ -32,12 +35,9 @@ class FactOut(BaseModel):
     created_by: str
     updated_at: datetime
     group: str | None = None
-    subject: str = Field(default="", exclude=True)
-    accepted_by: str | None = Field(default=None, exclude=True)
-    accepted_at: datetime | None = Field(default=None, exclude=True)
 
 
-class FieldOut(BaseModel):
+class FieldOut(_ViewOut):
     """A column: ``facts`` holds the shown value per attribute (accepted wins, else the newest open one);
     ``pending`` every open fact on the column, the shown ones included."""
 
@@ -46,19 +46,15 @@ class FieldOut(BaseModel):
     facts: dict[str, FactOut] = Field(default_factory=dict)
     pending: list[FactOut] = Field(default_factory=list)
 
-    def value(self, attribute: str) -> Any:
-        f = self.facts.get(attribute)
-        return f.value if f is not None else None
 
-
-class MetricOut(BaseModel):
+class MetricOut(_ViewOut):
     """A table's metric: the accepted definition when there is one, else the newest proposed one. ``pending_group`` is
     the review group of an open edit beside it; ``can_remove`` what glosslayer's policy answers this caller."""
 
     key: str
     name: str
     table: str
-    table_id: int | None = None
+    table_id: int | None = Field(None, validation_alias=AliasChoices("table_id", "table_uid"))
     expression: str | None = None
     description: str | None = None
     aggregate: str | None = None
@@ -69,14 +65,14 @@ class MetricOut(BaseModel):
     synonyms: list[str] = Field(default_factory=list)
     status: FactStatus
     version: int | None = None
-    approved_by: str | None = None
-    approved_at: datetime | None = None
+    approved_by: str | None = Field(None, validation_alias=AliasChoices("approved_by", "accepted_by"))
+    approved_at: datetime | None = Field(None, validation_alias=AliasChoices("approved_at", "accepted_at"))
     group: str | None = None
     pending_group: str | None = None
     can_remove: bool = False
 
 
-class JoinOut(BaseModel):
+class JoinOut(_ViewOut):
     """A join, ``from`` the many side ``to`` the one side. ``layer`` says whether the schema or the catalog owns it;
     a catalog-layer join shown in a schema's model is read-only there."""
 
@@ -84,21 +80,23 @@ class JoinOut(BaseModel):
     name: str
     from_table: str
     to_table: str
-    from_table_id: int | None = None
-    to_table_id: int | None = None
+    from_table_id: int | None = Field(None, validation_alias=AliasChoices("from_table_id", "from_uid"))
+    to_table_id: int | None = Field(None, validation_alias=AliasChoices("to_table_id", "to_uid"))
     from_columns: list[str] = Field(default_factory=list)
     to_columns: list[str] = Field(default_factory=list)
     description: str | None = None
     status: FactStatus
     group: str | None = None
-    layer: Layer
+    layer: Annotated[Layer, BeforeValidator(lambda ns: "schema" if "." in ns else "catalog")] = Field(
+        validation_alias="namespace"
+    )
     can_remove: bool = False
 
 
-class SemanticTableOut(BaseModel):
+class SemanticTableOut(_ViewOut):
     """A catalog table in the model; ``facts`` / ``pending`` are its table-level facts (description, keys, ...)."""
 
-    table_id: int
+    table_id: int = Field(validation_alias=AliasChoices("table_id", "uid"))
     key: str
     name: str
     description: str | None = None
@@ -106,9 +104,6 @@ class SemanticTableOut(BaseModel):
     metrics: list[MetricOut] = Field(default_factory=list)
     facts: dict[str, FactOut] = Field(default_factory=dict)
     pending: list[FactOut] = Field(default_factory=list)
-
-    def column(self, name: str) -> FieldOut | None:
-        return next((c for c in self.fields if c.name == name), None)
 
 
 class SemanticModelSummary(BaseModel):
@@ -229,7 +224,7 @@ class ReviewItemOut(FactOut):
     subject_kind: Literal["model", "dataset", "field", "relationship", "metric", "type"]
     subject_label: str
     table: str | None = None
-    table_id: int | None = None
+    table_id: int | None = Field(None, validation_alias=AliasChoices("table_id", "table_uid"))
     column: str | None = None
     group_facts: list[FactOut] = Field(default_factory=list)
 
@@ -247,7 +242,7 @@ class JoinDependentOut(BaseModel):
 
 
 class JoinCheckOut(BaseModel):
-    """One join measured against the data (``join_check.py``): ``reversed`` when its sides are swapped,
+    """One join measured against the data (``glosslayer.joins``): ``reversed`` when its sides are swapped,
     ``many_to_many`` when both repeat, ``unchecked`` without compute or with an empty or unreadable table."""
 
     key: str
@@ -318,7 +313,7 @@ class MetricQueryMetric(BaseModel):
     name: str
     version: int | None = None
     status: str
-    approved_by: str | None = None
+    approved_by: str | None = Field(None, validation_alias=AliasChoices("approved_by", "accepted_by"))
 
 
 class MetricQueryResult(BaseModel):
@@ -349,7 +344,7 @@ class MetricQuerySaveAsFlowOut(BaseModel):
     sql: str
 
 
-class SuggestCounts(BaseModel):
+class SuggestCounts(_ViewOut):
     roles: int = 0
     descriptions: int = 0
     joins: int = 0

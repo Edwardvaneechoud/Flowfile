@@ -243,11 +243,9 @@ class _Menu:
         from flowfile_core.catalog.semantic.confidentiality import read_withheld
 
         self.snap, _scope = service.snapshot(namespace_id, accepted_only=True)
-        self.withheld = read_withheld(service.db, [t.table_id for t in self.snap.tables])
-        self.withheld_count = sum(
-            len(self.withheld.names(t.table_id, [c.name for c in t.fields])) for t in self.snap.tables
-        )
-        told = self.snap.model_value("ai_instructions")
+        self.withheld = read_withheld(service.db, [t.uid for t in self.snap.tables])
+        self.withheld_count = sum(len(self.withheld.names(t.uid, [c.name for c in t.fields])) for t in self.snap.tables)
+        told = self.snap.value("ai_instructions")
         self.instructions = told if isinstance(told, str) and told.strip() else None
         metrics = self.snap.metrics
         if len(metrics) > MAX_MENU:
@@ -261,7 +259,7 @@ class _Menu:
         self.items = []
         for m in metrics:
             table = self.snap.table(m.table)
-            private = self.withheld.whole_table(table.table_id)
+            private = self.withheld.whole_table(table.uid)
             fields = {f: self.ref(m, f) for f in [*dims[m.key], *(c.name for c in table.fields)]}
             self.items.append(
                 MenuItem(
@@ -275,36 +273,36 @@ class _Menu:
                 )
             )
 
-    def ref(self, m: s.MetricOut, field: str) -> tuple[str, str] | None:
+    def ref(self, m: Any, field: str) -> tuple[str, str] | None:
         """``(table key, column)`` of a menu field: a bare column of the metric's table, or ``<table>.<column>``."""
         owner, _, column = field.rpartition(".")
         t = self.snap.table(owner or m.table)
         return (t.key, column) if t is not None else None
 
-    def column(self, ref: tuple[str, str] | None) -> s.FieldOut | None:
+    def column(self, ref: tuple[str, str] | None) -> Any | None:
         """The column, unless it is unknown or kept from AI."""
         t = self.snap.table(ref[0]) if ref else None
-        return t.column(ref[1]) if t is not None and not self.withheld.blocks(t.table_id, ref[1]) else None
+        return t.column(ref[1]) if t is not None and not self.withheld.blocks(t.uid, ref[1]) else None
 
-    def column_words(self, m: s.MetricOut, dimension: str) -> list[str]:
+    def column_words(self, m: Any, dimension: str) -> list[str]:
         """A dimension's label and synonyms as the model holds them, for matching the question's words."""
         col = self.column(self.ref(m, dimension))
         found = [col.value("label"), *(col.value("synonyms") or [])] if col is not None else []
         return [x for x in found if isinstance(x, str)]
 
-    def dimensions(self, m: s.MetricOut) -> list[str]:
+    def dimensions(self, m: Any) -> list[str]:
         """What a metric can be grouped by on the menu: its allowed dimensions, else every Group-by column it reaches.
 
         A metric stored with no allowed dimensions may be broken down by any column it reaches; offering all of those
         would crowd a small model's menu. A reached table whose short name another one already took is left out, since
         that name would not say which.
         """
-        from flowfile_core.catalog.semantic.compiler import reachable_tables
+        from glosslayer.query import reachable
 
         if m.dimensions:
             return m.dimensions
-        tables: dict[str, s.SemanticTableOut] = {}
-        for t in map(self.snap.table, reachable_tables(self.snap, m.table)):
+        tables: dict[str, Any] = {}
+        for t in map(self.snap.table, reachable(self.snap, m.table)):
             if t is not None:
                 tables.setdefault(t.name, t)
         return [
@@ -315,7 +313,7 @@ class _Menu:
         ]
 
     def known_values(
-        self, service: Any, namespace_id: int, metrics: list[s.MetricOut], dims: dict[str, list[str]]
+        self, service: Any, namespace_id: int, metrics: list[Any], dims: dict[str, list[str]]
     ) -> dict[tuple[str, str], list[str]]:
         """Distinct values of the menu's category columns, for matching the question's words to filter values.
 

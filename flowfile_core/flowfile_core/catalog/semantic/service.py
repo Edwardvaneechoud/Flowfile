@@ -13,9 +13,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -30,28 +30,14 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.semantic import host
-from flowfile_core.catalog.semantic.compiler import (
-    CompiledQuery,
-    compile_metric_query,
-    quote_ident,
-    sql_literal,
-    with_candidate,
-)
-from flowfile_core.catalog.semantic.join_check import JoinCheck, check_join, unchecked
-from flowfile_core.catalog.semantic.snapshot import (
-    ACCEPTED,
-    GROUPED_KINDS,
-    LIVE,
-    ModelSnapshot,
-    TableInfo,
-    build_snapshot,
-    read_facts,
-)
 from flowfile_core.catalog.service import CatalogService
 from flowfile_core.schemas import semantic_schema as s
 
 logger = logging.getLogger(__name__)
 
+ACCEPTED = "accepted"
+LIVE = ("proposed", "reviewed", "stale", ACCEPTED)
+RULE_SOURCE = "inferred:flowfile-rules"
 SYNC_INTERVAL_SECONDS = 60.0
 # A metric's parts an edit may leave out; the definition itself (``expression``) is always proposed.
 _METRIC_OPTIONAL = ("description", "aggregate", "filter", "time_column", "dimensions", "format", "synonyms")
@@ -77,43 +63,6 @@ def maybe_sync(force: bool = False) -> Any:
             return None
         _last_sync = time.monotonic()
         return report
-
-
-def validate_metric(
-    table: TableInfo, p: s.MetricProposal, snapshot: ModelSnapshot, execute: Callable[[str], Any]
-) -> None:
-    """Compile a proposed metric against the snapshot a query uses, and dry-run it (one row) before it is stored.
-
-    A compile failure or an engine error is the ``SemanticValueError`` the author sees. Compute that cannot be reached
-    does not block authoring: the dry-run is skipped and the proposal stored.
-    """
-    from requests import RequestException
-
-    from flowfile_core.flowfile.execution.errors import ComputeError
-
-    candidate = s.MetricOut(
-        key=p.name,
-        name=p.name,
-        table=table.key,
-        table_id=table.table_id,
-        expression=p.expression,
-        filter=_clean(p.filter),
-        time_column=_clean(p.time_column),
-        dimensions=p.dimensions or [],
-        status=ACCEPTED,
-    )
-    try:
-        snap = with_candidate(snapshot, candidate)
-        compiled = compile_metric_query(snap, s.MetricQuery(metric=p.name), metric_tables={table.key})
-    except ValueError as exc:
-        raise SemanticValueError(f"Metric {p.name!r} does not compile: {exc}") from None
-    try:
-        result = execute(compiled.sql)
-    except (ComputeError, RequestException) as exc:
-        logger.warning("Semantic model: metric %r stored without a dry-run, compute unavailable: %s", p.name, exc)
-        return
-    if result.error:
-        raise SemanticValueError(f"Metric {p.name!r} does not run: {result.error}")
 
 
 @contextmanager
@@ -144,35 +93,23 @@ def _words(values: list[str] | None) -> list[str]:
     return [w.strip() for w in values or [] if w.strip()]
 
 
-def _norm(expression: str | None) -> str:
-    return (expression or "").replace(" ", "").lower()
+@dataclass(frozen=True)
+class TableInfo:
+    """What the catalog says about one table: its id, dataset key, name, description and columns (name, dtype)."""
+
+    uid: int
+    key: str
+    name: str
+    description: str | None = None
+    columns: tuple[Any, ...] = ()
+
+    @property
+    def column_names(self) -> list[str]:
+        return [c.name for c in self.columns]
 
 
-def _withdrawals(view: Any, assertions: list[Any]) -> list[tuple[str, Any]]:
-    """How to take each live fact away: ``reject`` an open fact someone else stated, ``retract`` anything else.
-
-    Retracting is withdrawing what is held (a person's own proposal, or an accepted fact); rejecting is a decision
-    on another's proposal, which also keeps the rules and the AI from proposing the same value again.
-    """
-    return [
-        ("retract" if a.status.value == ACCEPTED or view.actor in (a.sources or ()) else "reject", a)
-        for a in assertions
-    ]
-
-
-def _withdraw(view: Any, assertions: list[Any], comment: str) -> list[Any]:
-    """Take every fact in ``assertions`` away in one store transaction; the first refusal undoes them all."""
-    plan = _withdrawals(view, assertions)
-    changed: list[Any] = []
-    with view.store.transaction():
-        for action in ("reject", "retract"):
-            ids = [a.id for act, a in plan if act == action]
-            if ids:
-                done, errors = view.transition_many(action, ids, comment=comment)
-                if errors:
-                    raise errors[0][1]
-                changed += done
-    return changed
+def _facts_out(view: Any, assertions: Iterable[Any]) -> list[s.FactOut]:
+    return [s.FactOut.model_validate(f) for f in view.facts(assertions)]
 
 
 @dataclass
@@ -235,34 +172,32 @@ class SemanticModelService:
         for schema in self.repo.list_child_namespaces(catalog.id):
             for t in service.list_tables(schema.id):
                 if host.is_keyable(t.qualified_name):
-                    columns = tuple((c.name, c.dtype) for c in t.schema_columns)
-                    tables[t.id] = TableInfo(t.id, t.qualified_name, t.name, t.description, columns)
+                    tables[t.id] = TableInfo(t.id, t.qualified_name, t.name, t.description, tuple(t.schema_columns))
                     schema_of[t.id] = schema.id
         own = {i: t for i, t in tables.items() if ns.level == 0 or schema_of[i] == ns.id}
         return Scope(ns, path, catalog, host.namespace_path(catalog, self.db), own, tables, schema_of)
 
-    def _build(self, scope: Scope, *, whole_catalog: bool = False, accepted_only: bool = False) -> ModelSnapshot:
-        ns, path = (scope.catalog, scope.catalog_path) if whole_catalog else (scope.ns, scope.path)
+    def _build(self, scope: Scope, *, whole_catalog: bool = False, accepted_only: bool = False) -> Any:
+        """glosslayer's ``ModelView`` of the scope's namespace, or of its whole catalog; a schema's model shows the
+        catalog's joins that touch it."""
+        in_schema = scope.ns.level == 1 and not whole_catalog
         tables = scope.all_tables if whole_catalog else scope.model_tables
-        return build_snapshot(
-            self.view,
-            namespace_id=ns.id,
-            level=ns.level,
-            path=path,
+        return self.view.model_view(
+            scope.catalog_path if whole_catalog else scope.path,
             tables=sorted(tables.values(), key=lambda t: t.key),
-            catalog_path=scope.catalog_path if ns.level == 1 else None,
-            known_tables={t.key: t.table_id for t in scope.all_tables.values()},
-            accepted_only=accepted_only,
+            related=scope.all_tables.values(),
+            joins_of=scope.catalog_path if in_schema else None,
+            statuses=[ACCEPTED] if accepted_only else LIVE,
         )
 
-    def snapshot(self, namespace_id: int, *, accepted_only: bool = False) -> tuple[ModelSnapshot, Scope]:
+    def snapshot(self, namespace_id: int, *, accepted_only: bool = False) -> tuple[Any, Scope]:
         """The model and the scope it was read in."""
         maybe_sync()
         scope = self.scope(namespace_id)
         with _ledger_errors(self.user_id):
             return self._build(scope, accepted_only=accepted_only), scope
 
-    def _query_snapshot(self, namespace_id: int, preview: bool) -> tuple[ModelSnapshot, Scope]:
+    def _query_snapshot(self, namespace_id: int, preview: bool) -> tuple[Any, Scope]:
         """The snapshot a metric query compiles from: the whole catalog's, so a query can cross schemas.
 
         It holds accepted facts only unless ``preview``, which needs the namespace writable. When the caller cannot
@@ -277,7 +212,6 @@ class SemanticModelService:
         except PermissionDenied:
             with _ledger_errors(self.user_id):
                 snap = self._build(scope, accepted_only=not preview)
-        snap.related_tables = {t.key: t for t in scope.all_tables.values()}
         return snap, scope
 
     def can_manage(self, path: str) -> bool:
@@ -288,38 +222,24 @@ class SemanticModelService:
         attrs = self.view.context.attrs if self.view.context else {}
         return bool(attrs.get("admin")) or any(path_covers(p, path) for p in attrs.get("manage") or ())
 
-    def _mark_removable(self, snap: ModelSnapshot) -> None:
-        """Set ``can_remove`` on each metric and join: whether the policy lets this caller ``remove`` it."""
-        removable = {x.key: x for x in [*snap.metrics, *snap.joins]}
-        ids: dict[str, list[str]] = {}
-        for f in snap.facts:
-            if f.subject in removable:
-                ids.setdefault(f.subject, []).append(f.id)
-        view = self.view
-        try:
-            held = view.store.get_many({i for group in ids.values() for i in group}) if ids else {}
-            for subject, group in ids.items():
-                plan = _withdrawals(view, [held[i] for i in group if i in held])
-                removable[subject].can_remove = all(
-                    view.policy.can(view.actor, act, a, view.context) for act, a in plan
-                )
-        except Exception:  # noqa: BLE001
-            logger.warning("Semantic model: could not tell which facts this caller may remove", exc_info=True)
-
     def get_model(self, namespace_id: int) -> s.SemanticModelOut:
-        snap, _scope = self.snapshot(namespace_id)
-        self._mark_removable(snap)
-        return s.SemanticModelOut(
-            namespace_id=snap.namespace_id,
-            level=snap.level,
-            key=snap.path,
-            **{attr: snap.model_value(attr) for attr in s.SemanticModelUpdate.model_fields},
+        snap, scope = self.snapshot(namespace_id)
+        out = s.SemanticModelOut(
+            namespace_id=scope.ns.id,
+            level=scope.ns.level,
+            key=scope.path,
+            **{attr: snap.value(attr) for attr in s.SemanticModelUpdate.model_fields},
             tables=snap.tables,
             joins=snap.joins,
-            progress=s.SemanticModelSummary(**snap.progress()),
-            can_manage=self.can_manage(snap.path),
+            progress=snap.counts(),
+            can_manage=self.can_manage(scope.path),
             review_mode="team" if host.host().sharing else "solo",
         )
+        removable = [*(m for t in out.tables for m in t.metrics), *out.joins]
+        allowed = self.view.can_withdraw(x.key for x in removable)
+        for x in removable:
+            x.can_remove = allowed.get(x.key, False)
+        return out
 
     def update_model(self, namespace_id: int, body: s.SemanticModelUpdate) -> s.SemanticModelOut:
         from glosslayer.ledger import Proposal
@@ -354,14 +274,14 @@ class SemanticModelService:
         from glosslayer.model import is_structural
 
         scope = self.scope(namespace_id, writable=True)
-        existing: dict[str, str] = {}
+        existing: dict[str, Any] = {}
         if any(p.kind in ("metric", "metric_synonyms") for p in proposals):
-            existing = self._metric_names(scope.path)
+            existing = self.view.metric_names(scope.path)
             # Live joins, so a metric over a join still waiting for review can be proposed beside it.
             metric_snapshot, _ = self._query_snapshot(namespace_id, preview=True)
         props: list[Any] = []
         cleared: list[tuple[str, str]] = []
-        metric_edits: list[tuple[str, set[str]]] = []
+        metric_edits: set[str] = set()
         with _ledger_errors(self.user_id):
             for p in proposals:
                 if p.kind == "join":
@@ -369,19 +289,18 @@ class SemanticModelService:
                     continue
                 if p.kind == "metric":
                     metric = self._checked_metric(p, scope.model_table(p.table_id), existing, metric_snapshot)
-                    metric_props = list(metric.proposals())
                     if p.edit and not ai_source:
-                        metric_edits.append((str(metric.subject), {mp.attribute for mp in metric_props}))
-                    props += metric_props
+                        metric_edits.add(str(metric.subject))
+                    props += metric.proposals()
                     continue
                 if p.kind == "metric_synonyms":
                     if p.name not in existing:
                         raise SemanticNotFoundError(f"No metric called {p.name!r} in this model")
-                    sid, attribute = SubjectId.for_metric(p.name, existing[p.name]), "synonyms"
+                    sid, attribute = existing[p.name], "synonyms"
                     value = list(dict.fromkeys(_words(p.synonyms)))
                 else:
                     t, attribute, value = scope.model_table(p.table_id), p.attribute, _clean(p.value)
-                    if p.kind == "field" and not t.has_column(p.column):
+                    if p.kind == "field" and p.column not in t.column_names:
                         raise SemanticValueError(f"Table {t.name!r} has no column {p.column!r}")
                     sid = SubjectId.for_field(t.key, p.column) if p.kind == "field" else SubjectId.for_dataset(t.key)
                     if is_structural(sid, attribute):
@@ -397,40 +316,25 @@ class SemanticModelService:
                     prop.confidence = 0.6
             view = host.view_for(self.user, self.access, via=ai_source) if ai_source else self.view
             results = view.propose_many(props, source=ai_source) if props else []
-            gone = self._cleared_facts(view, cleared, metric_edits, results)
-            if gone:
-                _withdraw(view, gone, "cleared")
+            view.clear(cleared, comment="cleared")
+            edited = [r for r in results if r.assertion.subject in metric_edits]
+            view.retract_left_out(edited, _METRIC_OPTIONAL, comment="cleared")
         stored = {r.assertion.id: r.assertion for r in results}
-        return read_facts(view.store, stored.values())
+        return _facts_out(view, stored.values())
 
-    @staticmethod
-    def _cleared_facts(
-        view: Any, cleared: list[tuple[str, str]], metric_edits: list[tuple[str, set[str]]], results: list[Any]
-    ) -> list[Any]:
-        """The live facts a person's blank values and accepted metric edits take away (``propose``)."""
-        gone: dict[str, Any] = {}
-        for subject, attribute in cleared:
-            gone.update({a.id: a for a in view.find(subject=subject, attribute=attribute, statuses=list(LIVE))})
-        for subject, kept in metric_edits:
-            mine = [r.assertion for r in results if r.assertion.subject == subject]
-            if mine and all(a.status.value == ACCEPTED for a in mine):
-                for a in view.find(subject=subject, statuses=[ACCEPTED]):
-                    if a.attribute in _METRIC_OPTIONAL and a.attribute not in kept:
-                        gone[a.id] = a
-        return [a for a in gone.values() if not a.redacted]
+    def _checked_metric(self, p: s.MetricProposal, t: TableInfo, existing: dict[str, Any], snapshot: Any) -> Any:
+        from glosslayer.query import check_metric
 
-    def _checked_metric(
-        self, p: s.MetricProposal, t: TableInfo, existing: dict[str, str], snapshot: ModelSnapshot
-    ) -> Any:
         owner = existing.get(p.name)
         if owner is not None and not p.edit:
             raise SemanticConflictError(f"A metric called {p.name!r} already exists in this model")
-        if owner is not None and owner != t.key:
-            raise SemanticConflictError(f"Metric {p.name!r} belongs to {owner}, not {t.key}")
-        if p.time_column and not t.has_column(p.time_column):
+        if owner is not None and owner.dataset != t.key:
+            raise SemanticConflictError(f"Metric {p.name!r} belongs to {owner.scope_path}, not {t.key}")
+        if p.time_column and p.time_column not in t.column_names:
             raise SemanticValueError(f"Table {t.name!r} has no column {p.time_column!r}")
-        validate_metric(t, p, snapshot, self._sql)
-        return self._metric(p, t)
+        metric = self._metric(p, t)
+        check_metric(snapshot, metric, self._rows)
+        return metric
 
     @staticmethod
     def _metric(p: s.MetricProposal, t: TableInfo) -> Any:
@@ -447,15 +351,17 @@ class SemanticModelService:
             table=t.key,
         )
 
-    def _join_proposals(self, p: s.JoinProposal, scope: Scope, rationale: str, confidence: float | None = None) -> list:
-        """A checked join's facts, owned by the schema when both ends are in it, else by the catalog."""
+    def _join_owner(self, f: TableInfo, t: TableInfo, scope: Scope) -> str:
+        """The namespace a join belongs to: the schema when both ends are in it, else the catalog."""
+        from_schema, to_schema = scope.schema_of[f.uid], scope.schema_of[t.uid]
+        if from_schema != to_schema:
+            return scope.catalog_path
+        return host.namespace_path(self.repo.get_namespace(from_schema), self.db)
+
+    def _join_proposals(self, p: s.JoinProposal, scope: Scope, rationale: str) -> list:
         from glosslayer.modeling import Relationship
 
         f, t = self._join_ends(p, scope)
-        from_schema, to_schema = scope.schema_of[f.table_id], scope.schema_of[t.table_id]
-        layer = scope.catalog_path
-        if from_schema == to_schema:
-            layer = host.namespace_path(self.repo.get_namespace(from_schema), self.db)
         rel = Relationship(
             p.name,
             f.key,
@@ -463,38 +369,34 @@ class SemanticModelService:
             from_columns=list(p.from_columns),
             to_columns=list(p.to_columns),
             description=_clean(p.description),
-            namespace=layer,
+            namespace=self._join_owner(f, t, scope),
         )
         props = list(rel.proposals())
         for prop in props:
-            prop.comment, prop.confidence = rationale, confidence
+            prop.comment = rationale
         return props
 
     @staticmethod
     def _join_ends(p: s.JoinProposal, scope: Scope) -> tuple[TableInfo, TableInfo]:
+        from glosslayer import joins
+
         ends = []
         for table_id in (p.from_table_id, p.to_table_id):
             if table_id not in scope.all_tables:
                 raise SemanticValueError(f"Table id={table_id} is not in this catalog; a join cannot cross catalogs")
             ends.append(scope.all_tables[table_id])
-        if scope.ns.level == 1 and not any(t.table_id in scope.model_tables for t in ends):
+        if scope.ns.level == 1 and not any(t.uid in scope.model_tables for t in ends):
             raise SemanticValueError("A join in a schema's model must touch one of its tables")
-        if not p.from_columns or len(p.from_columns) != len(p.to_columns):
-            raise SemanticValueError("A join needs the same number of columns on both sides, at least one")
-        for t, cols in zip(ends, (p.from_columns, p.to_columns), strict=True):
-            missing = [c for c in cols if not t.has_column(c)]
-            if missing:
-                raise SemanticValueError(f"Table {t.name!r} has no column {missing[0]!r}")
-        if ends[0].table_id == ends[1].table_id and p.from_columns == p.to_columns:
-            raise SemanticValueError(
-                f"A join of {ends[0].name} to itself needs different columns on each side, such as a parent "
-                f"column pointing at the table's key; the same column on both sides joins every row to itself"
-            )
-        return ends[0], ends[1]
+        f, t = ends
+        columns, labels = {e.key: e.column_names for e in ends}, {e.key: e.name for e in ends}
+        joins.validate(f.key, p.from_columns, t.key, p.to_columns, columns, labels=labels)
+        return f, t
 
-    def measure_join(self, f: TableInfo, from_columns: list[str], t: TableInfo, to_columns: list[str]) -> JoinCheck:
+    def measure_join(self, f: TableInfo, from_columns: list[str], t: TableInfo, to_columns: list[str]) -> Any:
         """A join's two sides measured against the data, without storing anything."""
-        return check_join(f, from_columns, t, to_columns, self._sql)
+        from glosslayer import joins
+
+        return joins.check(f.key, from_columns, t.key, to_columns, self._rows, labels={f.key: f.name, t.key: t.name})
 
     def _check_new_join(self, p: s.JoinProposal, scope: Scope) -> str:
         """Measure a proposed join's two sides; refuse a reversed or many-to-many one, else answer its evidence."""
@@ -509,71 +411,20 @@ class SemanticModelService:
 
     def check_joins(self, namespace_id: int) -> list[s.JoinCheckOut]:
         """Every join of the model (accepted and pending, both layers) measured the way a new join is."""
+        from glosslayer import joins
+
         snap, scope = self.snapshot(namespace_id)
-        by_key = {t.key: t for t in scope.all_tables.values()}
-        out = []
-        for j in snap.joins:
-            f, t = by_key.get(j.from_table), by_key.get(j.to_table)
-            if f is None or t is None or len(j.from_columns) != len(j.to_columns):
-                found = unchecked("a table or a column of this join is missing")
-            elif not all(map(f.has_column, j.from_columns)) or not all(map(t.has_column, j.to_columns)):
-                found = unchecked("a column of this join is no longer there")
-            else:
-                try:
-                    found = self.measure_join(f, j.from_columns, t, j.to_columns)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Semantic model: checking join %r failed", j.name, exc_info=True)
-                    found = JoinCheck("unchecked", f"Direction not checked: {exc}")
-            out.append(s.JoinCheckOut(key=j.key, name=j.name, verdict=found.verdict, message=found.message))
-        return out
-
-    def _metric_names(self, path: str) -> dict[str, str]:
-        """Live metric names under ``path`` and the dataset each belongs to."""
-        from glosslayer.ids import SubjectId
-
-        names: dict[str, str] = {}
-        for a in self.view.find(namespace=path, kind="metric", statuses=list(LIVE)):
-            sid = SubjectId.parse(a.subject)
-            if sid.name and sid.dataset:
-                names.setdefault(sid.name, sid.dataset)
-        return names
+        tables = scope.all_tables.values()
+        columns, labels = {t.key: t.column_names for t in tables}, {t.key: t.name for t in tables}
+        found = joins.check_all(snap.joins, columns, self._rows, labels=labels)
+        return [s.JoinCheckOut(key=j.key, name=j.name, verdict=c.verdict, message=c.message) for j, c in found]
 
     def review_queue(self, namespace_id: int) -> list[s.ReviewItemOut]:
         """Open facts of the model, one entry per fact, one per group for a join or a metric."""
-        from glosslayer.ids import Kind, SubjectId
-
         scope = self.scope(namespace_id)
-        tables = {t.key: t for t in scope.all_tables.values()}
         with _ledger_errors(self.user_id):
-            facts = read_facts(self.view.store, [a for a in self.view.pending(namespace=scope.path) if not a.redacted])
-        entries: dict[str, list[s.FactOut]] = {}
-        for f in sorted(facts, key=lambda f: f.updated_at):
-            grouped = f.group and f.subject.split(":", 1)[0] in GROUPED_KINDS
-            entries.setdefault(f.group if grouped else f.id, []).append(f)
-        items = []
-        for key, rows in entries.items():
-            head = rows[0]
-            sid = SubjectId.parse(head.subject)
-            table = tables.get(sid.dataset)
-            name = table.name if table else sid.dataset
-            labels = {
-                Kind.FIELD: f"{name}.{sid.name}",
-                Kind.DATASET: name,
-                Kind.MODEL: sid.namespace or "model",
-            }
-            items.append(
-                s.ReviewItemOut(
-                    **head.model_dump(),
-                    subject=head.subject,
-                    subject_kind=sid.kind.value,
-                    subject_label=labels.get(sid.kind, sid.name),
-                    table=sid.dataset,
-                    table_id=table.table_id if table else None,
-                    column=sid.name if sid.kind is Kind.FIELD else None,
-                    group_facts=rows if key != head.id else [],
-                )
-            )
-        return items
+            entries = self.view.review_queue(scope.path, tables=scope.all_tables.values())
+        return [s.ReviewItemOut.model_validate(e) for e in entries]
 
     def review(self, namespace_id: int, action: s.ReviewAction) -> s.ReviewResultOut:
         from glosslayer.ids import path_covers
@@ -605,12 +456,12 @@ class SemanticModelService:
             if errors and not changed:
                 raise errors[0][1]
         return s.ReviewResultOut(
-            changed=read_facts(view.store, changed),
+            changed=_facts_out(view, changed),
             errors=[s.ReviewError(id=aid, message=str(exc)) for aid, exc in errors],
         )
 
     def remove(self, namespace_id: int, action: s.ReviewAction) -> s.ReviewResultOut:
-        """Remove a metric or a join: every live fact of the subject taken away in one transaction (``_withdraw``).
+        """Remove a metric or a join: every live fact of the subject withdrawn in one transaction.
 
         Append-only: the history keeps each fact, so the same name can be proposed again. A policy refusal undoes the
         whole removal and comes back as the policy's sentence (403). A catalog-layer join that touches this schema can
@@ -624,11 +475,8 @@ class SemanticModelService:
             sid = self._subject_in_model(namespace_id, action.subject)
             if sid.kind not in (Kind.METRIC, Kind.RELATIONSHIP):
                 raise SemanticValueError("Only a metric or a join is removed whole; clear a column's value instead")
-            live = [a for a in self.view.find(subject=str(sid), statuses=list(LIVE)) if not a.redacted]
-            if not live:
-                raise SemanticNotFoundError(f"{action.subject!r} holds nothing to remove")
-            changed = _withdraw(self.view, live, action.comment or "removed")
-        return s.ReviewResultOut(changed=read_facts(self.view.store, changed))
+            changed = self.view.withdraw_subject(sid, comment=action.comment or "removed")
+        return s.ReviewResultOut(changed=_facts_out(self.view, changed))
 
     def _subject_in_model(self, namespace_id: int, subject: str) -> Any:
         """``subject`` parsed, when it belongs to this namespace's model (a catalog join touching a schema counts)."""
@@ -645,40 +493,25 @@ class SemanticModelService:
     def join_dependents(self, namespace_id: int, key: str) -> list[s.JoinDependentOut]:
         """The accepted metrics that stop compiling without the join ``key``; nothing is read from the data.
 
-        Each is compiled against the snapshot a query uses, with and without the join: plain (formula and filter), by
-        its time grain, and by each allowed dimension. A metric that may be grouped by any column loses only the joined
-        columns it could have been grouped by, so it is not listed.
+        They are compiled against the snapshot a query uses (``glosslayer.query.dependents``).
         """
+        from glosslayer.query import dependents
+
         live, _ = self.snapshot(namespace_id)
         if not any(j.key == key for j in live.joins):
             raise SemanticNotFoundError(f"No join {key!r} in this semantic model")
         snap, _ = self._query_snapshot(namespace_id, preview=False)
-        without = replace(snap, joins=[j for j in snap.joins if j.key != key])
-        out = []
-        for m in snap.metrics:
-            cases: list[tuple[str, dict[str, Any]]] = [("formula", {})]
-            if m.time_column:
-                cases.append(("time column", {"grain": "month"}))
-            cases += [(f"dimension {d}", {"dimensions": [d]}) for d in m.dimensions]
-            uses, message = [], ""
-            for what, kwargs in cases:
-                query = s.MetricQuery(metric=m.name, **kwargs)
-                try:
-                    compile_metric_query(snap, query, metric_tables={m.table})
-                except ValueError:
-                    continue
-                try:
-                    compile_metric_query(without, query, metric_tables={m.table})
-                except ValueError as exc:
-                    uses.append(what)
-                    message = message or str(exc)
-            if uses:
-                out.append(
-                    s.JoinDependentOut(
-                        metric=m.name, metric_key=m.key, table=m.table, table_id=m.table_id, uses=uses, message=message
-                    )
-                )
-        return out
+        return [
+            s.JoinDependentOut(
+                metric=d.metric.name,
+                metric_key=d.metric.key,
+                table=d.metric.table,
+                table_id=d.metric.table_uid,
+                uses=d.uses,
+                message=d.message,
+            )
+            for d in dependents(snap, key)
+        ]
 
     def history(self, namespace_id: int, subject: str) -> list[s.SemanticEventOut]:
         with _ledger_errors(self.user_id):
@@ -713,23 +546,16 @@ class SemanticModelService:
     def suggest_candidates(
         self, namespace_id: int, table_ids: list[int] | None = None
     ) -> tuple[Any, dict[int, TableInfo], str | None]:
-        """Rule candidates for the model's tables (``suggest.py``), built in memory; nothing is stored here.
+        """Rule candidates for the model's tables (``glosslayer.rules``), built in memory; nothing is stored here.
 
         Returns the ``Suggestions``, the model's tables by id and, when statistics fell back, why.
         """
-        from flowfile_core.catalog.semantic.suggest import collect_stats, suggest
+        from glosslayer import rules
 
         scope = self.scope(namespace_id)
-        keep = set(table_ids or scope.model_tables)
-        if keep - scope.model_tables.keys():
-            scope.model_table(min(keep - scope.model_tables.keys()))
-        stats, problem = collect_stats(sorted(scope.model_tables.values(), key=lambda t: t.key), self._sql)
-        sugg = suggest(stats)
-        sugg.roles = [r for r in sugg.roles if r.table_id in keep]
-        sugg.joins = [j for j in sugg.joins if j.from_table_id in keep or j.to_table_id in keep]
-        sugg.metrics = [m for m in sugg.metrics if m.table_id in keep]
-        sugg.stats = {st.table.table_id: st for st in stats}
-        return sugg, scope.model_tables, problem
+        keys = {scope.model_table(i).key for i in sorted(table_ids or scope.model_tables)}
+        stats, problem = rules.collect_stats(sorted(scope.model_tables.values(), key=lambda t: t.key), self._rows)
+        return rules.suggest(stats).only(tables=keys), scope.model_tables, problem
 
     def suggest(self, namespace_id: int, kinds: list[str] | None = None) -> s.SuggestOut:
         """Rule-based proposals (roles, joins, metrics) stored with an inferred source, so they queue for review.
@@ -737,11 +563,7 @@ class SemanticModelService:
         ``kinds`` stores only those; the rules still run whole, since a metric's dimensions come from the joins found.
         """
         sugg, model_tables, problem = self.suggest_candidates(namespace_id)
-        if kinds is not None:
-            sugg.roles = sugg.roles if "role" in kinds else []
-            sugg.joins = sugg.joins if "join" in kinds else []
-            sugg.metrics = sugg.metrics if "metric" in kinds else []
-        out = self.store_suggestions(namespace_id, sugg)
+        out = self.store_suggestions(namespace_id, sugg.only(kinds=kinds))
         out.tables = len(model_tables)
         out.stats_available = sugg.stats_available and problem is None
         out.stats_message = problem
@@ -755,145 +577,39 @@ class SemanticModelService:
         words: dict[int, dict[str, Any]] | None = None,
         ai_source: str | None = None,
     ) -> s.SuggestOut:
-        """Store ``sugg`` as proposals, skipping what the model already holds; ``words`` are an AI's descriptions.
+        """Store ``sugg`` as proposals, skipping what the model already holds (``glosslayer.rules.propose``).
 
-        Roles and joins keep the rules' inferred source. With ``words`` (per table id: ``description``, ``columns``
-        {column: sentence}, ``metrics`` {rule name: (name, meaning)}) the descriptions and the renamed metrics are
-        stated by ``ai_source`` through a view bound with that ``via``. Each proposal carries its evidence as the
-        rationale (the ledger's comment) and a confidence.
+        ``words`` are an AI's descriptions per table id, as ``rules.Words`` takes them; they are stated by
+        ``ai_source`` through a view bound with that ``via``, the rules' own candidates by ``RULE_SOURCE``.
         """
-        from glosslayer.ids import SubjectId
-        from glosslayer.ledger import Proposal
-
-        from flowfile_core.catalog.semantic.suggest import RULE_SOURCE
+        from glosslayer import rules
 
         scope = self.scope(namespace_id, writable=True)
+        tables, by_key = scope.model_tables, {t.key: t for t in scope.all_tables.values()}
         with _ledger_errors(self.user_id):
-            snap = self._build(scope)
-        words = words or {}
-        out = s.SuggestOut(namespace_id=namespace_id)
-
-        def skip(what: str, n: int = 1) -> None:
-            setattr(out.skipped, what, getattr(out.skipped, what) + n)
-
-        def store(view: Any, source: str, what: str, props: list[Any]) -> None:
-            """One batch; a join or a metric counts as one whatever facts it has."""
-            if not props:
-                return
-            results = view.propose_many(props, source=source)
-            made, total = sum(r.outcome == "created" for r in results), len(results)
-            if what in ("joins", "metrics"):
-                made, total = min(made, 1), 1
-            setattr(out.added, what, getattr(out.added, what) + made)
-            skip(what, total - made)
-
-        by_rules: list[tuple[str, list[Any]]] = []
-        by_ai: list[tuple[str, list[Any]]] = []
-        tables_by_id = {t.table_id: t for t in snap.tables}
-        roles = []
-        for r in sugg.roles:
-            t = tables_by_id.get(r.table_id)
-            col = t.column(r.column) if t else None
-            if col is None or "role" in col.facts:
-                skip("roles")
-                continue
-            sid = SubjectId.for_field(t.key, r.column)
-            roles.append(Proposal(str(sid), "role", r.role, r.confidence, [], r.rationale))
-        by_rules.append(("roles", roles))
-
-        joins = {(j.from_table_id, j.to_table_id, *j.from_columns, *j.to_columns) for j in snap.joins}
-        for j in sugg.joins:
-            gone = not {j.from_table_id, j.to_table_id} <= scope.all_tables.keys()
-            if gone or (j.from_table_id, j.to_table_id, *j.from_columns, *j.to_columns) in joins:
-                skip("joins")
-                continue
-            body = s.JoinProposal(
-                kind="join",
-                name=j.name,
-                from_table_id=j.from_table_id,
-                to_table_id=j.to_table_id,
-                from_columns=j.from_columns,
-                to_columns=j.to_columns,
-                description=j.description,
+            stored = rules.propose(
+                self.view,
+                self._build(scope),
+                sugg,
+                source=RULE_SOURCE,
+                owner=lambda a, b: self._join_owner(by_key[a], by_key[b], scope),
+                words={tables[i].key: rules.Words(**w) for i, w in (words or {}).items() if i in tables},
+                worded_by=(host.view_for(self.user, self.access, via=ai_source), ai_source) if ai_source else None,
             )
-            by_rules.append(("joins", self._join_proposals(body, scope, j.rationale, round(j.confidence, 2))))
-
-        names = self._metric_names(scope.path)
-        held = {(m.table, _norm(m.expression)): m for m in snap.metrics}
-        word_props: list[Any] = []
-        for m in sugg.metrics:
-            t = scope.model_tables.get(m.table_id)
-            if t is None:
-                skip("metrics")
-                continue
-            better = words.get(m.table_id, {}).get("metrics", {}).get(m.name)
-            same = held.get((t.key, _norm(m.expression)))
-            if same is not None:
-                skip("metrics")
-                if better:
-                    word_props += _metric_word_proposals(same, *better, m.description)
-                continue
-            name, description = better or (None, None)
-            name, description, by_whom = name or m.name, description or m.description, by_ai if better else by_rules
-            if name in names:
-                if m.name in names:
-                    skip("metrics")
-                    continue
-                name, description, by_whom = m.name, m.description, by_rules
-            proposal = s.MetricProposal(
-                kind="metric",
-                table_id=t.table_id,
-                name=name,
-                expression=m.expression,
-                description=description,
-                aggregate=m.aggregate,
-                time_column=m.time_column,
-                dimensions=m.dimensions,
-            )
-            names[name] = t.key
-            props = list(self._metric(proposal, t).proposals())
-            for prop in props:
-                prop.comment = m.rationale + (" Name and meaning written by AI." if by_whom is by_ai else "")
-                prop.confidence = round(m.confidence, 2)
-            by_whom.append(("metrics", props))
-
-        descriptions = []
-
-        def describe(sid: Any, held_facts: dict[str, Any], text: str | None) -> bool:
-            if text and "description" not in held_facts:
-                descriptions.append(Proposal(str(sid), "description", text, 0.6, [], "Written by AI."))
-            return bool(text) and "description" in held_facts
-
-        for table_id, w in words.items():
-            t = tables_by_id.get(table_id)
-            if t is None:
-                continue
-            describe(SubjectId.for_dataset(t.key), t.facts, w["description"])
-            for column, text in w["columns"].items():
-                col = t.column(column)
-                if col is not None and describe(SubjectId.for_field(t.key, column), col.facts, text):
-                    skip("descriptions")
-
-        with _ledger_errors(self.user_id):
-            for what, props in by_rules:
-                store(self.view, RULE_SOURCE, what, props)
-            if ai_source and (descriptions or by_ai or word_props):
-                ai_view = host.view_for(self.user, self.access, via=ai_source)
-                for what, props in [("descriptions", word_props), ("descriptions", descriptions), *by_ai]:
-                    store(ai_view, ai_source, what, props)
-        return out
+        return s.SuggestOut(namespace_id=namespace_id, added=stored.added, skipped=stored.skipped)
 
     def known_values(self, columns: list[tuple[str, str]], cap: int = 50) -> dict[tuple[str, str], list[str]]:
         """The distinct values of ``(table key, column)`` pairs, read with **one** SQL statement through the catalog
         SQL path. A column with more than ``cap`` values is left out (it is not a category). Any failure answers
         ``{}``: the caller carries on without them.
         """
+        from glosslayer.dialect import literal, quote
+
         pairs = list(dict.fromkeys(columns))
         if not pairs:
             return {}
         parts = [
-            f"SELECT DISTINCT {sql_literal(str(i))} AS k, CAST({quote_ident(col)} AS VARCHAR) AS v "
-            f"FROM {quote_ident(table)}"
+            f"SELECT DISTINCT {literal(str(i))} AS k, CAST({quote(col)} AS VARCHAR) AS v FROM {quote(table)}"
             for i, (table, col) in enumerate(pairs)
         ]
         try:
@@ -917,13 +633,31 @@ class SemanticModelService:
     def _sql(self, sql: str, max_rows: int = 1) -> Any:
         return self._catalog_service().execute_sql_query(sql, max_rows=max_rows, user_id=self.user_id)
 
+    def _rows(self, sql: str) -> list[list[Any]]:
+        """glosslayer's ``execute``: one statement's rows, with a failure told apart from compute that is not there."""
+        from glosslayer.dialect import EngineUnavailable, QueryFailed
+        from requests import RequestException
+
+        from flowfile_core.flowfile.execution.errors import ComputeError
+
+        try:
+            result = self._sql(sql)
+        except (ComputeError, RequestException) as exc:
+            raise EngineUnavailable(str(exc)) from exc
+        if result.error:
+            raise QueryFailed(result.error)
+        return result.rows
+
     def _compile_query(
         self, namespace_id: int, query: s.MetricQuery, table_names: dict[str, str] | None = None
-    ) -> tuple[CompiledQuery, Scope]:
+    ) -> tuple[Any, Scope]:
+        from glosslayer.query import MetricQuery, compile_query
+
         snap, scope = self._query_snapshot(namespace_id, query.preview)
         keys = {t.key for t in scope.model_tables.values()}
         try:
-            return compile_metric_query(snap, query, metric_tables=keys, table_names=table_names), scope
+            asked = MetricQuery.from_dict(query.model_dump(exclude={"preview"}))
+            return compile_query(snap, asked, tables=keys, table_names=table_names), scope
         except ValueError as exc:
             raise SemanticValueError(str(exc)) from None
 
@@ -963,7 +697,7 @@ class SemanticModelService:
         for key in compiled.tables:
             info = by_key.get(key)
             found = self.repo.get_table_by_name(info.name, target) if info is not None else None
-            if found is None or found.id != info.table_id:
+            if found is None or found.id != info.uid:
                 raise SemanticValueError(
                     f"Saving as a flow reads tables of the flow's schema only; {key!r} is in another schema"
                 )
@@ -1021,22 +755,3 @@ def tree_summaries(tree: list[Any]) -> None:
             walk(node.children, path)
 
     walk(tree, None)
-
-
-def _metric_word_proposals(held: s.MetricOut, name: str | None, meaning: str | None, templated: str) -> list[Any]:
-    """An AI's name and meaning for a metric the model already holds, as proposals that rename nothing.
-
-    The name becomes a **synonym** (so a question saying "revenue" finds ``total_amount``) and the sentence the
-    description when the metric has none or only the rules' templated one. A pending metric's words join its
-    review group so they are decided with the definition; an accepted metric's queue on their own.
-    """
-    from glosslayer.ledger import Proposal
-
-    group = None if held.status == ACCEPTED else held.group
-    out = []
-    alias = (name or "").replace("_", " ")
-    if alias and alias != held.name.replace("_", " ").lower() and alias not in held.synonyms:
-        out.append(Proposal(held.key, "synonyms", [*held.synonyms, alias], 0.6, [], "Name written by AI.", group=group))
-    if meaning and held.description in (None, templated) and meaning != held.description:
-        out.append(Proposal(held.key, "description", meaning, 0.6, [], "Written by AI.", group=group))
-    return out

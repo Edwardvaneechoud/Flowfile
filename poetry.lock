@@ -1900,14 +1900,14 @@ test = ["basedpyright (==1.39.9) ; python_version >= \"3.9\" and sys_platform !=
 
 [[package]]
 name = "glosslayer"
-version = "0.1.0"
+version = "0.2.0"
 description = "A catalog-agnostic semantic layer: track, review, visualize and serve Apache Ossie semantic models."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "glosslayer-0.1.0-py3-none-any.whl", hash = "sha256:7074a24290f819acf2c7097541fa9c593c0261b282612b8ff842be06715b4234"},
-    {file = "glosslayer-0.1.0.tar.gz", hash = "sha256:b6d72207c6562f65bc6e2fb6275e08cac7c55f61844d9d4558c6e584250f9261"},
+    {file = "glosslayer-0.2.0-py3-none-any.whl", hash = "sha256:cc316c4e3e8028a96f8ee78217098edf66f7e468c7c4b8c5f1799f75e40d5ad2"},
+    {file = "glosslayer-0.2.0.tar.gz", hash = "sha256:7f0a0d1c5e4512b4ee9f4784f4ca5e5974ccb080b4a5c6aa44535a910be7e923"},
 ]
 
 [package.dependencies]
@@ -1922,6 +1922,21 @@ mcp = ["mcp (>=1.22)"]
 postgres = ["psycopg[binary] (>=3.1)"]
 server = ["fastapi (>=0.110)", "uvicorn (>=0.29)"]
 validate = ["jsonschema (>=4.18)"]
+
+[[package]]
+name = "glosslayer-flowfile"
+version = "0.2.0"
+description = "Gloss plugin for the Flowfile catalog: catalog seam plus lineage-based proposals."
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "glosslayer_flowfile-0.2.0-py3-none-any.whl", hash = "sha256:14c6ddb3bdcf1d5c45f80e108d539e4331caef147c60f1eeb6c2f809333fa09f"},
+    {file = "glosslayer_flowfile-0.2.0.tar.gz", hash = "sha256:5840ee2a5e5b3f32d439365e90ee02c05d14f4bc39749c842936d45406c05e0e"},
+]
+
+[package.dependencies]
+glosslayer = ">=0.2.0,<0.3"
 
 [[package]]
 name = "google-analytics-data"
@@ -7116,4 +7131,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "c3f57ce2e04ff1359705a98fbfc8c5418b041368c100d6f9c99ce162499e0c66"
+content-hash = "8735652be8144402f66ad5ae896b7bcb27b3e8bd260103f4fb7326252bbfd7ca"

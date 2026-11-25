@@ -1,7 +1,7 @@
 """Words for a semantic model's rule candidates, backing ``POST /ai/semantic/draft``, and what the three semantic AI
 surfaces share (the JSON call, the repair turn, matching names).
 
-The rules (``catalog/semantic/suggest.py``) decide what the model holds; the model only writes words: one sentence per
+The rules (``glosslayer.rules``) decide what the model holds; the model only writes words: one sentence per
 table, one per column and a better name and meaning per metric candidate. Sized for Flowfile's small local model (JSON
 mode only, no grammar, sampling at 0.7): one small call per table, wider tables split, one repair round. Names are
 matched to the ones asked for at the seam, and a call that stays unusable leaves that table with its rule-based
@@ -24,7 +24,6 @@ from pydantic import Field
 from flowfile_core.ai.chart_request import _call
 from flowfile_core.ai.json_payload import parse_json_payload
 from flowfile_core.ai.providers.base import Message, Provider
-from flowfile_core.catalog.semantic.suggest import type_class
 from flowfile_core.schemas.semantic_schema import SemanticDraftTable
 
 logger = logging.getLogger(__name__)
@@ -136,16 +135,17 @@ def chunks_for(sugg: Any, table_ids: list[int], *, share_values: bool, withheld:
 
     A column ``withheld`` keeps from AI is listed by name and type with ``PRIVATE_MARK`` and nothing else.
     """
-    roles = {(r.table_id, r.column): r.role for r in sugg.roles}
+    roles = {(r.table, r.column): r.role for r in sugg.roles}
+    by_id = {ts.table.uid: ts for ts in sugg.stats.values()}
     out: list[Chunk] = []
     for tid in table_ids:
-        ts = sugg.stats.get(tid)
+        ts = by_id.get(tid)
         if ts is None:
             continue
         lines = []
         for c in ts.columns:
-            word = type_class(c.dtype).replace("numeric", "decimal").replace("string", "text")
-            role = roles.get((tid, c.name))
+            word = c.tc.replace("numeric", "decimal").replace("string", "text")
+            role = roles.get((ts.key, c.name))
             if withheld.blocks(tid, c.name):
                 text = f"{c.name} ({word}, {PRIVATE_MARK})"
             else:
@@ -155,12 +155,12 @@ def chunks_for(sugg: Any, table_ids: list[int], *, share_values: bool, withheld:
                 if share_values and c.min is not None and c.max is not None:
                     text += f" values from {str(c.min)[:24]} to {str(c.max)[:24]}"
             lines.append((c.name, text))
-        metrics = [(m.name, m.expression) for m in sugg.metrics if m.table_id == tid]
+        metrics = [(m.name, m.expression) for m in sugg.metrics if m.table == ts.key]
         groups = [lines[i : i + MAX_COLUMNS] for i in range(0, len(lines), MAX_COLUMNS)] or [[]]
         for i, group in enumerate(groups):
             private = withheld.names(tid, [n for n, _ in group])
             first = metrics if i == 0 else []
-            out.append(Chunk(tid, ts.table.name, i + 1, len(groups), ts.row_count, group, first, private))
+            out.append(Chunk(tid, ts.name, i + 1, len(groups), ts.row_count, group, first, private))
     return out
 
 

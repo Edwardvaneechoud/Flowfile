@@ -16,7 +16,6 @@ from typing import Any
 from flowfile_core.catalog.semantic.activity import listed
 from flowfile_core.schemas.semantic_schema import (
     MetricOrder,
-    MetricOut,
     MetricQuery,
     MetricQueryResult,
     SemanticAnswerFacts,
@@ -204,9 +203,7 @@ def _item(label: str, value: float | int | None, fmt: str | None) -> SemanticAns
     return SemanticAnswerItem(label=label, value=value, text=format_number(value, fmt) if value is not None else "")
 
 
-def render(
-    query: MetricQuery, result: MetricQueryResult, metric: MetricOut, intent: Intent, gaps: list[Gap]
-) -> Rendered:
+def render(query: MetricQuery, result: MetricQueryResult, metric: Any, intent: Intent, gaps: list[Gap]) -> Rendered:
     """The answer sentence and its facts from ``result`` alone; ``answer`` is ``None`` when the rows cannot be read
     as an answer (an error, a missing metric column, a value that is not a number).
 
@@ -264,9 +261,7 @@ def _by(query: MetricQuery) -> str:
     return f"{query.grain} and {by}" if query.grain and query.dimensions else by
 
 
-def _ranked(
-    pairs: list[tuple[str, Any]], name: str, metric: MetricOut, intent: Intent, facts: SemanticAnswerFacts
-) -> str:
+def _ranked(pairs: list[tuple[str, Any]], name: str, metric: Any, intent: Intent, facts: SemanticAnswerFacts) -> str:
     if not pairs:
         return f"No group has a {name}."
     top, fmt = intent.kind == "top", metric.format

@@ -37,10 +37,8 @@ from flowfile_core.ai.semantic_draft import (
 )
 from flowfile_core.catalog.exceptions import SemanticConflictError, SemanticValueError
 from flowfile_core.catalog.semantic.activity import listed
-from flowfile_core.catalog.semantic.compiler import reachable_tables
 from flowfile_core.catalog.semantic.confidentiality import Withheld, read_withheld
-from flowfile_core.catalog.semantic.snapshot import ACCEPTED, ModelSnapshot, TableInfo
-from flowfile_core.catalog.semantic.suggest import type_class
+from flowfile_core.catalog.semantic.service import ACCEPTED, TableInfo
 from flowfile_core.schemas import semantic_schema as s
 
 logger = logging.getLogger(__name__)
@@ -67,6 +65,8 @@ def kinds_phrase(kinds: list[str]) -> str:
 
 
 def _type_word(dtype: str | None) -> str:
+    from glosslayer.rules import type_class
+
     tc = type_class(dtype)
     return {"numeric": "decimal", "string": "text", "time": "date"}.get(tc, tc)
 
@@ -95,23 +95,25 @@ class Refuse(Exception):
 class Context:
     """The live model (pending facts included) with the tables of other schemas its joins reach (``others``)."""
 
-    snap: ModelSnapshot
+    snap: Any
     infos: dict[int, TableInfo]
     withheld: Withheld
-    others: list[s.SemanticTableOut]
+    others: list[Any]
 
     @classmethod
     def read(cls, service: Any, namespace_id: int) -> Context:
+        from glosslayer.modelview import FieldView, TableView
+
         snap, scope = service.snapshot(namespace_id)
         by_key = {info.key: info for info in scope.all_tables.values()}
         ends = dict.fromkeys(key for j in snap.joins for key in (j.from_table, j.to_table))
         own = {t.key for t in snap.tables}
         others = [
-            s.SemanticTableOut(
-                table_id=info.table_id,
+            TableView(
+                uid=info.uid,
                 key=info.key,
                 name=info.name,
-                fields=[s.FieldOut(name=n, dtype=d) for n, d in info.columns],
+                fields=[FieldView(name=c.name, dtype=c.dtype) for c in info.columns],
             )
             for key in ends
             if key not in own and (info := by_key.get(key)) is not None
@@ -119,27 +121,27 @@ class Context:
         return cls(snap, scope.all_tables, read_withheld(service.db, scope.all_tables), others)
 
     @property
-    def tables(self) -> list[s.SemanticTableOut]:
+    def tables(self) -> list[Any]:
         return [*self.snap.tables, *self.others]
 
     @property
     def withheld_columns(self) -> int:
-        return sum(len(self.withheld.names(t.table_id, [c.name for c in t.fields])) for t in self.tables)
+        return sum(len(self.withheld.names(t.uid, [c.name for c in t.fields])) for t in self.tables)
 
-    def private(self, t: s.SemanticTableOut, column: str | None = None) -> bool:
-        return self.withheld.whole_table(t.table_id) if column is None else self.withheld.blocks(t.table_id, column)
+    def private(self, t: Any, column: str | None = None) -> bool:
+        return self.withheld.whole_table(t.uid) if column is None else self.withheld.blocks(t.uid, column)
 
-    def private_metric(self, m: s.MetricOut) -> bool:
+    def private_metric(self, m: Any) -> bool:
         owner = self.snap.table(m.table)
         hidden = {c.name.lower() for t in self.tables for c in t.fields if self.private(t, c.name)}
         sql = re.sub(r"'(?:[^']|'')*'", " ", f"{m.expression or ''} {m.filter or ''}")
         named = {(q or b).lower() for q, b in re.findall(r'"([^"]+)"|\b([A-Za-z_][A-Za-z0-9_]*)\b', sql)}
         return owner is None or self.private(owner) or bool(named & hidden)
 
-    def table_names(self, tables: list[s.SemanticTableOut] | None = None) -> str:
+    def table_names(self, tables: list[Any] | None = None) -> str:
         return ", ".join(t.name for t in (self.snap.tables if tables is None else tables))
 
-    def find_table(self, name: Any, *, anywhere: bool = False) -> s.SemanticTableOut | None:
+    def find_table(self, name: Any, *, anywhere: bool = False) -> Any | None:
         """A table named by its short name or key: the model's own tables first, then the others shown."""
         for pool in (self.snap.tables, self.others if anywhere else []):
             for attr in ("name", "key"):
@@ -148,7 +150,7 @@ class Context:
                     return next(t for t in pool if getattr(t, attr) == found)
         return None
 
-    def need_table(self, item: dict[str, Any], what: str, hint: str = "use one of") -> s.SemanticTableOut:
+    def need_table(self, item: dict[str, Any], what: str, hint: str = "use one of") -> Any:
         t = self.find_table(item.get("table"))
         if t is None:
             raise Refuse(what, f"Unknown table {item.get('table')!r}; {hint} {self.table_names()}.")
@@ -156,19 +158,21 @@ class Context:
 
     def reachable_columns(self, start: str) -> list[str]:
         """``table.column`` of every table the joins reach from ``start``; columns kept from AI left out."""
+        from glosslayer.query import reachable
+
         by_key = {t.key: t for t in self.tables}
-        reached = [by_key[key] for key in reachable_tables(self.snap, start)[1:] if key in by_key]
+        reached = [by_key[key] for key in reachable(self.snap, start)[1:] if key in by_key]
         return [f"{t.name}.{c.name}" for t in reached for c in t.fields if not self.private(t, c.name)]
 
 
-def need_column(t: s.SemanticTableOut, raw: Any, what: str, end: str = ".") -> s.FieldOut:
+def need_column(t: Any, raw: Any, what: str, end: str = ".") -> Any:
     name = match_name(raw, [c.name for c in t.fields])
     if name is None:
         raise Refuse(what, f"Table {t.name!r} has no column {raw!r}{end}")
     return t.column(name)
 
 
-def _table_block(ctx: Context, t: s.SemanticTableOut, with_descriptions: bool) -> str:
+def _table_block(ctx: Context, t: Any, with_descriptions: bool) -> str:
     lines = [f"## {t.name}" + ("" if t in ctx.snap.tables else " (another schema; only as the target of a join)")]
     if ctx.private(t):
         lines.append(f"(this table is {PRIVATE_MARK})")
@@ -332,7 +336,7 @@ def check_metric(item: dict[str, Any], ctx: Context, what: str) -> Checked:
             raise Refuse(what, f"The model already has this formula as {m.name}.", retry=False)
     proposal = s.MetricProposal(
         kind="metric",
-        table_id=table.table_id,
+        table_id=table.uid,
         name=name,
         expression=expression,
         description=sentence(item.get("description")),
@@ -344,8 +348,8 @@ def check_metric(item: dict[str, Any], ctx: Context, what: str) -> Checked:
     return Checked(f"metric {name}", summary, proposal, table.name, name, signature=formula)
 
 
-def _field_proposal(t: s.SemanticTableOut, column: str, attribute: str, value: Any) -> s.FieldProposal:
-    return s.FieldProposal(kind="field", table_id=t.table_id, column=column, attribute=attribute, value=value)
+def _field_proposal(t: Any, column: str, attribute: str, value: Any) -> s.FieldProposal:
+    return s.FieldProposal(kind="field", table_id=t.uid, column=column, attribute=attribute, value=value)
 
 
 def check_description(item: dict[str, Any], ctx: Context, what: str) -> Checked:
@@ -355,7 +359,7 @@ def check_description(item: dict[str, Any], ctx: Context, what: str) -> Checked:
         raise Refuse(what, "A description needs one sentence of plain text.")
     if item.get("column") in (None, ""):
         target, noun, held, private = t.name, "table", t.description, ctx.private(t)
-        proposal = s.TableProposal(kind="table", table_id=t.table_id, attribute="description", value=text)
+        proposal = s.TableProposal(kind="table", table_id=t.uid, attribute="description", value=text)
     else:
         col = need_column(t, item["column"], what)
         target, noun, held = f"{t.name}.{col.name}", "column", col.value("description")
@@ -414,7 +418,7 @@ def check_synonyms(item: dict[str, Any], ctx: Context, what: str) -> Checked:
     return Checked(label, f"{t.name}.{col.name} {also}", proposal, t.name, signature=(label, t.key))
 
 
-def _join_end(item: dict[str, Any], side: str, ctx: Context, what: str) -> tuple[s.SemanticTableOut, list[s.FieldOut]]:
+def _join_end(item: dict[str, Any], side: str, ctx: Context, what: str) -> tuple[Any, list[Any]]:
     table = ctx.find_table(item.get(f"{side}_table"), anywhere=True)
     if table is None:
         names = ctx.table_names(ctx.tables)
@@ -445,7 +449,7 @@ def check_join(item: dict[str, Any], ctx: Context, what: str, measure: Callable[
     held = [(j.from_table, j.to_table, j.from_columns, j.to_columns) for j in ctx.snap.joins]
     if (ft.key, tt.key, fc, tc) in held or (tt.key, ft.key, tc, fc) in held:
         raise Refuse(f"join {ft.name} → {tt.name}", "The model already has this join.", retry=False)
-    found = measure(ctx.infos[ft.table_id], fc, ctx.infos[tt.table_id], tc)
+    found = measure(ctx.infos[ft.uid], fc, ctx.infos[tt.uid], tc)
     note = None
     if found.verdict == "reversed":
         ft, fc, tt, tc = tt, tc, ft, fc
@@ -461,8 +465,8 @@ def check_join(item: dict[str, Any], ctx: Context, what: str, measure: Callable[
     proposal = s.JoinProposal(
         kind="join",
         name=name,
-        from_table_id=ft.table_id,
-        to_table_id=tt.table_id,
+        from_table_id=ft.uid,
+        to_table_id=tt.uid,
         from_columns=fc,
         to_columns=tc,
         description=sentence(item.get("description")),

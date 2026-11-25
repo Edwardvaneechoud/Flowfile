@@ -23,7 +23,7 @@ from flowfile_core.ai.json_payload import parse_json_payload
 from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.semantic_answer import Gap, Intent, decide_intent, shape_query
 from flowfile_core.ai.semantic_draft import call_json, match_name, repair_turn, system_prompt
-from flowfile_core.schemas.semantic_schema import FilterOp, Grain, MetricFilter, MetricOrder, MetricOut, MetricQuery
+from flowfile_core.schemas.semantic_schema import FilterOp, Grain, MetricFilter, MetricOrder, MetricQuery
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ GRAINS = get_args(Grain)
 class MenuItem:
     """One accepted metric as the model sees it: its meaning, synonyms, time column and the columns it allows."""
 
-    metric: MetricOut
+    metric: Any
     meaning: str | None
     synonyms: list[str]
     dimensions: list[str]
