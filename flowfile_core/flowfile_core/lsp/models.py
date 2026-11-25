@@ -85,11 +85,7 @@ class DataframeSchema(BaseModel):
 
 
 class DataframeSchemasResponse(BaseModel):
-    """``answered`` is core's own: the kernel replied, so an empty ``namespace_generation`` means it holds no such
-    namespace, where a degraded reply (kernel stopped, timed out, too old) says nothing about it."""
-
     namespace_generation: str = ""
     revision: int = 0
     state: str = "unavailable"
     dataframes: list[DataframeSchema] = []
-    answered: bool = False

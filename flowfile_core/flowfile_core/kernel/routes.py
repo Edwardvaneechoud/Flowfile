@@ -18,6 +18,7 @@ from flowfile_core.kernel.models import (
     FlavourPackage,
     ImageFlavour,
     KernelConfig,
+    KernelDataframeSchemas,
     KernelImageStatus,
     KernelInfo,
     KernelMatchBatchRequest,
@@ -34,7 +35,6 @@ from flowfile_core.lsp.feature_flag import is_lsp_enabled
 from flowfile_core.lsp.models import (
     CompleteResponse,
     DataframeSchemasRequest,
-    DataframeSchemasResponse,
     DiagnosticsResponse,
     HoverResponse,
     LspRequest,
@@ -510,14 +510,14 @@ async def lsp_diagnostics(kernel_id: str, request: LspRequest, current_user=Depe
     return DiagnosticsResponse(**(await _lsp_forward(kernel_id, "diagnostics", request, current_user) or {}))
 
 
-@router.post("/{kernel_id}/lsp/dataframe_schemas", response_model=DataframeSchemasResponse)
+@router.post("/{kernel_id}/lsp/dataframe_schemas", response_model=KernelDataframeSchemas)
 async def lsp_dataframe_schemas(
     kernel_id: str,
     request: DataframeSchemasRequest,
     current_user=Depends(get_current_active_user),
 ):
     answer = await _lsp_forward(kernel_id, "dataframe_schemas", request, current_user) or {}
-    return DataframeSchemasResponse(**answer, answered=bool(answer))
+    return KernelDataframeSchemas(**answer, answered=bool(answer))
 
 
 @router.get("/{kernel_id}/display_outputs")
