@@ -73,6 +73,15 @@
           </div>
         </DeltaTableStatusLine>
 
+        <div
+          v-if="outsideLine"
+          class="status-line status-warn"
+          data-testid="catalog-writer-outside-note"
+        >
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>{{ outsideLine }}</span>
+        </div>
+
         <!-- Tabs: Physical Write vs Virtual Table -->
         <el-tabs v-model="activeTab" class="writer-tabs" @tab-change="handleTabChange">
           <el-tab-pane label="Write to Catalog" name="physical">
@@ -89,10 +98,6 @@
                     :title="outsideRefusal(outsideCatalog, m.value) ?? undefined"
                   />
                 </el-select>
-                <div v-if="outsideFallbackNote" class="status-line status-warn">
-                  <i class="fa-solid fa-triangle-exclamation"></i>
-                  <span>{{ outsideFallbackNote }}</span>
-                </div>
               </div>
 
               <div v-if="needsMergeKeys" class="catalog-field">
@@ -112,7 +117,9 @@
                   multiple
                   filterable
                   placeholder="Select partition columns"
-                  :disabled="outsideCatalog !== null"
+                  :disabled="
+                    outsideCatalog !== null && !nodeData.catalog_write_settings.partition_by.length
+                  "
                   :title="outsideRefusal(outsideCatalog, 'partition_by') ?? undefined"
                 >
                   <el-option
@@ -220,7 +227,7 @@
                     <el-checkbox
                       v-model="nodeData.catalog_write_settings.track_changes"
                       size="small"
-                      :disabled="trackChangesDisabledReason !== null"
+                      :disabled="trackChangesDisabledReason !== null && !outsideTrackChangesSaved"
                     >
                       Track changes
                     </el-checkbox>
@@ -325,7 +332,12 @@ import * as writeModes from "../../../../../utils/deltaWriteModes";
 import { CollapsibleSection, DeltaTableStatusLine, MergeKeysSelect } from "../../../../common";
 import type { CatalogTable, NamespaceTree } from "../../../../../types/catalog.types";
 import ExternalCatalogBadge from "../../../../../views/CatalogView/ExternalCatalogBadge.vue";
-import { outsideCatalogNode, outsideFallback, outsideRefusal } from "./outsideTarget";
+import {
+  outsideCatalogNode,
+  outsideFallback,
+  outsideRefusal,
+  outsideSavedRefusal,
+} from "./outsideTarget";
 import {
   DEFAULT_SCD2_SETTINGS,
   type CatalogWriteMode,
@@ -415,9 +427,14 @@ const virtualTabTitle = computed(() => {
   return outsideRefusal(outsideCatalog.value, "virtual") ?? undefined;
 });
 
+// Opening the drawer changes no setting: a saved choice the target refuses stays, with core's sentence.
 watch(outsideCatalog, (catalog) => {
-  if (catalog) applyOutsideFallback(false);
-  else outsideFallbackNote.value = null;
+  if (!catalog) outsideFallbackNote.value = null;
+});
+const outsideLine = computed(() => {
+  const settings = nodeData.value?.catalog_write_settings;
+  if (!settings) return null;
+  return outsideFallbackNote.value ?? outsideSavedRefusal(outsideCatalog.value, settings);
 });
 
 // A schema this machine cannot use shows only when the node points at it; a read-only one greyed.
@@ -438,23 +455,23 @@ async function onNamespaceChange(id: number | null) {
   const match = catalogNamespaces.value.find((ns) => ns.id === id) ?? null;
   Object.assign(settings, namespaceChoice(match));
   if (match?.source === "hub") await leaveLocalOnlyModes();
-  else if (outsideCatalog.value) await applyOutsideFallback(true);
+  else await applyOutsideFallback();
 }
 
-// Fall back to what a catalog kept elsewhere takes, and say so; ``prompt`` offers to drop a dead SCD2 output edge.
-async function applyOutsideFallback(prompt: boolean) {
+// On a person's pick, fall back to what a catalog kept elsewhere takes, say so, and offer to drop a dead SCD2 edge.
+async function applyOutsideFallback() {
   const settings = nodeData.value?.catalog_write_settings;
-  const catalog = outsideCatalog.value;
-  if (!settings || !catalog) return;
-  const { patch, note } = outsideFallback(catalog, settings);
+  if (!settings) return;
+  const { patch, note } = outsideFallback(outsideCatalog.value, settings);
+  // Each pick says only what it changed, so an earlier catalog's note goes.
+  outsideFallbackNote.value = note;
   if (!note) return;
   Object.assign(settings, patch);
   if (patch.write_mode) {
     activeTab.value = "physical";
     physicalWriteMode.value = "overwrite";
   }
-  outsideFallbackNote.value = note;
-  if (prompt && patch.write_mode) await handleWriteModeChange("overwrite");
+  if (patch.write_mode) await handleWriteModeChange("overwrite");
 }
 
 // A hub target takes no virtual table, SCD2 write or change tracking, so a saved node always validates.
@@ -571,6 +588,11 @@ const trackChangesDisabledReason = computed(
     writeModes.trackChangesDisabledReason(physicalWriteMode.value, {
       virtual: activeTab.value === "virtual",
     }),
+);
+
+// A saved tick a target kept elsewhere refuses can be unticked, never ticked again.
+const outsideTrackChangesSaved = computed(
+  () => outsideCatalog.value !== null && !!nodeData.value?.catalog_write_settings.track_changes,
 );
 
 const canPartition = computed(() => writeModes.canPartition(physicalWriteMode.value));

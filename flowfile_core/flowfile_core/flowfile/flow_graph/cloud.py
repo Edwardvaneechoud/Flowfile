@@ -75,6 +75,11 @@ def _iceberg_table_ref(settings: CloudStorageSettings, user_id: int | None, *, w
             return table_ref_for_run(db, catalog.catalog, settings.resource_path, user_id, writes=writes)
     token = None
     if catalog.token_secret:
+        if run_secrets.is_provider_secret(user_id, catalog.token_secret):
+            raise ValueError(
+                f"A secret your hub keeps, {catalog.token_secret!r}, cannot sign in to an Iceberg catalog yet; store"
+                " the token as a secret of your own in this Flowfile."
+            )
         token = run_secrets.encrypted_secret(user_id, catalog.token_secret)
         if token is None:
             raise ValueError(f"No stored secret is named {catalog.token_secret!r} for the catalog's token.")

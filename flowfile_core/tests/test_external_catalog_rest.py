@@ -660,3 +660,119 @@ def test_a_run_of_a_flow_that_does_not_own_its_registration_keeps_the_id_and_lin
     finally:
         with get_db_context() as db:
             SQLAlchemyCatalogRepository(db).delete_flow(other_id)
+
+
+def _secret_of(namespace_id: int) -> tuple[str, int]:
+    """The catalog's sign-in secret: its name and id."""
+    with get_db_context() as db:
+        row = db.query(ExternalCatalog).filter_by(namespace_id=namespace_id).one()
+        return db.get(Secret, row.secret_id).name, row.secret_id
+
+
+def _ref_token(namespace_id: int) -> str | None:
+    """The sign-in ``table_ref_for_run`` would put in a run's ``IcebergTableRef`` for one of the catalog's tables."""
+    from flowfile_core.catalog.services.external_catalogs import table_ref_for_run
+
+    with get_db_context() as db:
+        name = db.get(CatalogNamespace, namespace_id).name
+        return table_ref_for_run(db, name, "any_schema.any_table", None, writes=False).token
+
+
+
+def _sign_in_again(namespace_id: int) -> str:
+    with get_db_context() as db:
+        name = db.get(CatalogNamespace, namespace_id).name
+    return f"Flowfile no longer holds the sign-in for {name}; enter it again with Edit on the catalog."
+
+
+def test_a_catalogs_sign_in_is_not_deleted_as_a_secret_and_the_secrets_list_shows_it(api, polaris):
+    from fastapi import HTTPException
+
+    from flowfile_core.secret_manager.secret_manager import delete_secret
+
+    name, secret_id = _secret_of(polaris)
+    with get_db_context() as db:
+        catalog = db.get(CatalogNamespace, polaris).name
+    said = (
+        f"This secret is the sign-in of the catalog {catalog}; change the sign-in on the catalog or remove the "
+        "catalog from Flowfile instead."
+    )
+
+    listed = [secret["name"] for secret in api.call("GET", "/secrets/secrets").json()]
+    refused = api.call("DELETE", f"/secrets/secrets/{name}")
+    with get_db_context() as db, pytest.raises(HTTPException) as direct:
+        delete_secret(db, name, 1)
+
+    assert name in listed
+    assert (refused.status_code, refused.json()["detail"]) == (400, said)
+    assert (direct.value.status_code, direct.value.detail) == (400, said)
+    assert _secret_of(polaris) == (name, secret_id)
+
+
+def test_a_sign_in_id_another_secret_took_is_never_sent_overwritten_or_deleted(api, principal, polaris):
+    """An install that deleted the sign-in before deleting one was refused holds a dangling id, which SQLite gives to
+    the next secret stored: that secret is no sign-in of the catalog, so nothing of it is sent, changed or removed."""
+    from flowfile_core.catalog.services.external_catalogs import sign_in_name
+
+    name, secret_id = _secret_of(polaris)
+    with get_db_context() as db:
+        db.delete(db.get(Secret, secret_id))
+        db.commit()
+    stored = api.call("POST", "/secrets/secrets", json={"name": f"mine_{uuid.uuid4().hex[:6]}", "value": "not-it"})
+    other_id = stored.json()["id"]
+    if other_id != secret_id:
+        api.call("DELETE", f"/secrets/secrets/{stored.json()['name']}")
+        pytest.skip("this catalog database gave the next secret a new id, so no id is left dangling to take")
+    with get_db_context() as db:
+        other_ciphertext = db.get(Secret, other_id).encrypted_value
+    said = _sign_in_again(polaris)
+    test_body = {
+        "uri": SIGNED,
+        "warehouse": fixtures.SIGNED_WAREHOUSE,
+        "sign_in": "client_credentials",
+        "client_id": principal.client_id,
+        "scope": fixtures.SIGNED_SCOPE,
+        "namespace_id": polaris,
+    }
+
+    with pytest.raises(ValueError) as refused:
+        _ref_token(polaris)
+    synced = _sync(api, polaris)
+    tested = api.call("POST", "/catalog/external/test", json=test_body)
+    rescoped = api.call("PUT", f"/catalog/external/{polaris}", json={"scope": fixtures.SIGNED_SCOPE})
+    resigned = api.call("PUT", f"/catalog/external/{polaris}", json={"client_secret": principal.client_secret})
+    with get_db_context() as db:
+        row = db.query(ExternalCatalog).filter_by(namespace_id=polaris).one()
+        fresh = db.get(Secret, row.secret_id)
+        fresh_id, fresh_name, fresh_ciphertext = fresh.id, fresh.name, fresh.encrypted_value
+        catalog = db.get(CatalogNamespace, polaris).name
+        unchanged = db.get(Secret, other_id).encrypted_value == other_ciphertext
+    sent_now = _ref_token(polaris) == fresh_ciphertext
+    removed = api.call("DELETE", f"/catalog/external/{polaris}")
+    with get_db_context() as db:
+        survived = db.get(Secret, other_id) is not None
+        fresh_gone = db.get(Secret, fresh_id) is None
+        if survived:
+            db.delete(db.get(Secret, other_id))
+            db.commit()
+
+    assert str(refused.value) == said and synced["error"] == said
+    assert (tested.status_code, tested.json()["ok"], tested.json()["message"]) == (200, False, said)
+    assert (rescoped.status_code, rescoped.json()["detail"]) == (422, said)
+    assert resigned.status_code == 200, resigned.json().get("detail")
+    assert fresh_id != other_id and fresh_name == sign_in_name(catalog) and name == fresh_name
+    assert unchanged is True and sent_now is True
+    assert removed.status_code == 204 and survived and fresh_gone
+    assert _leaks(principal, api.answers) == []
+
+
+def test_a_renamed_catalog_keeps_its_sign_in(api, polaris):
+    name, secret_id = _secret_of(polaris)
+    renamed = api.call("PUT", f"/catalog/namespaces/{polaris}", json={"name": f"renamed_{uuid.uuid4().hex[:6]}"})
+
+    synced = _sync(api, polaris)
+    refused = api.call("DELETE", f"/secrets/secrets/{name}")
+
+    assert renamed.status_code == 200, renamed.text
+    assert synced["error"] is None
+    assert refused.status_code == 400 and _secret_of(polaris) == (name, secret_id)

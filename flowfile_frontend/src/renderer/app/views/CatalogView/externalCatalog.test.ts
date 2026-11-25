@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { ExternalCatalogInfo, NamespaceTree } from "../../types";
 import * as externalCatalog from "./externalCatalog";
 import {
+  answerStillShown,
+  catalogAfterSave,
   changedLines,
   emptyExternalForm,
   externalFormError,
@@ -75,6 +77,65 @@ describe("externalFormError", () => {
     );
     expect(needsSignInAgain({ ...edit, sign_in: "token" }, stored)).toBe(true);
     expect(needsSignInAgain({ ...edit, sign_in: "none" }, stored)).toBe(false);
+  });
+});
+
+describe("the catalog's panel after Edit then Save", () => {
+  const moved: ExternalCatalogInfo = {
+    ...stored,
+    uri: "http://127.0.0.1:18181/catalog",
+    warehouse: "open",
+    sign_in: "none",
+    client_id: null,
+    scope: null,
+  };
+  const saved = catalogNode({ description: "moved", external: moved, children: [] });
+
+  it("holds what was saved, even when the reloaded tree still holds the old row", () => {
+    const shown = catalogNode({ children: [catalogNode({ id: 8, level: 1, parent_id: 7 })] });
+    const after = catalogAfterSave(shown, shown, saved);
+    expect(after.external).toEqual(moved);
+    expect(after.description).toBe("moved");
+    expect(after.children.map((s) => s.id)).toEqual([8]);
+    expect(catalogAfterSave(null, shown, saved).external).toEqual(moved);
+  });
+
+  it("opens the next edit on what was saved, so a second save without changes changes nothing", () => {
+    const shown = catalogNode();
+    const body = externalPayload(formFromCatalog(catalogAfterSave(shown, shown, saved)), true);
+    expect(body).toEqual({
+      uri: moved.uri,
+      warehouse: "open",
+      sign_in: "none",
+      description: "moved",
+      client_id: null,
+      scope: null,
+      token_endpoint: null,
+    });
+  });
+});
+
+describe("an answer the panel asked for", () => {
+  it("lands only while the panel still shows the catalog it was asked for", () => {
+    expect(answerStillShown(7, 7, 7)).toBe(true);
+    // The person picked a table meanwhile, which clears the catalog's selection.
+    expect(answerStillShown(7, null, 7)).toBe(false);
+    // The panel now shows another catalog.
+    expect(answerStillShown(7, 9, 9)).toBe(false);
+    expect(answerStillShown(7, 7, 9)).toBe(false);
+  });
+
+  it("is what the panel's sync, Test and save check before they show an answer", () => {
+    const panel = readFileSync(new URL("./NamespaceDetailPanel.vue", import.meta.url), "utf8");
+    const body = (name: string) => {
+      const from = panel.slice(panel.indexOf(`function ${name}(`));
+      return from.slice(0, from.indexOf("\n}\n"));
+    };
+    expect(panel).toMatch(/const stillShown = \(id: number\) =>\s+answerStillShown\(/);
+    for (const name of ["refresh", "testStored", "onExternalSaved"]) {
+      expect(body(name)).toContain("stillShown(");
+    }
+    expect(panel).toContain('@saved="onExternalSaved"');
   });
 });
 

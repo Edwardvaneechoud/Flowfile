@@ -294,6 +294,11 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
             db_models.ResourceGrant.resource_type == resource_type,
             db_models.ResourceGrant.resource_id.in_(resource_ids),
         ).delete(synchronize_session=False)
+        if spec.model is db_models.Secret:
+            # A catalog kept elsewhere signed in with one keeps its row; it is entered again, never another's id.
+            db.query(db_models.ExternalCatalog).filter(db_models.ExternalCatalog.secret_id.in_(resource_ids)).update(
+                {db_models.ExternalCatalog.secret_id: None}, synchronize_session=False
+            )
         db.query(spec.model).filter(spec.model.id.in_(resource_ids)).delete(synchronize_session=False)
     sharing.delete_memberships_for_user(db, user_id)
 

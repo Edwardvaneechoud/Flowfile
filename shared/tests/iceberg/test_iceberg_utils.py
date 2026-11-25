@@ -203,17 +203,93 @@ def test_a_version_3_table_is_refused_by_its_format_version(tmp_path):
     refuse_unwritable(_table(tmp_path))
 
 
-def test_unsigned_64_bit_columns_are_refused_before_a_table_is_created():
+def test_unsigned_columns_get_the_smallest_signed_type_that_holds_them_nested_ones_too():
     from shared.iceberg_utils import creatable_schema
 
-    with pytest.raises(ValueError, match="Column n is UInt64, which no Iceberg type holds in full; cast it first."):
-        creatable_schema({"id": pl.Int64(), "n": pl.UInt64()})
+    index = pl.get_index_type()
+    given = {"u8": pl.UInt8(), "u16": pl.UInt16(), "u32": pl.UInt32(), "u64": pl.UInt64(), "idx": index,
+             "names": pl.List(pl.UInt16()), "pair": pl.Struct({"n": pl.UInt64(), "s": pl.String()}),
+             "grid": pl.Array(pl.UInt16(), (2, 3))}
+    assert creatable_schema(given) == {
+        "u8": pl.Int32(), "u16": pl.Int32(), "u32": pl.Int64(), "u64": pl.Int64(), "idx": pl.Int64(),
+        "names": pl.List(pl.Int32()), "pair": pl.Struct({"n": pl.Int64(), "s": pl.String()}),
+        "grid": pl.Array(pl.Int32(), (2, 3)),
+    }
 
 
-def test_32_bit_unsigned_columns_are_widened():
+def test_a_multi_dimensional_array_keeps_its_shape():
     from shared.iceberg_utils import creatable_schema
 
-    assert creatable_schema({"id": pl.UInt32(), "name": pl.String()}) == {"id": pl.Int64(), "name": pl.String()}
+    assert creatable_schema({"grid": pl.Array(pl.Int64, (2, 3))}) == {"grid": pl.Array(pl.Int64, (2, 3))}
+    assert creatable_schema({"cube": pl.Array(pl.UInt8, (2, 3, 4))}) == {"cube": pl.Array(pl.Int32, (2, 3, 4))}
+    assert creatable_schema({"ids": pl.List(pl.UInt32)}) == {"ids": pl.List(pl.Int64)}
+
+
+def test_a_duration_named_by_its_class_inside_a_list_is_refused_too():
+    from shared.iceberg_utils import creatable_schema
+
+    with pytest.raises(ValueError, match="^Column spans is a List holding a Duration, which an Iceberg table"):
+        creatable_schema({"spans": pl.List(pl.Duration)})
+
+
+UNCHANGED = {
+    "i8": pl.Int8(), "i16": pl.Int16(), "i32": pl.Int32(), "i64": pl.Int64(), "f32": pl.Float32(),
+    "f64": pl.Float64(), "s": pl.String(), "b": pl.Boolean(), "bin": pl.Binary(), "d": pl.Date(),
+    "dec": pl.Decimal(10, 2), "cat": pl.Categorical(), "enum": pl.Enum(["a", "b"]), "t": pl.Time(),
+    "us": pl.Datetime("us"), "ms_utc": pl.Datetime("ms", "UTC"),
+    "list": pl.List(pl.List(pl.Int16())), "arr": pl.Array(pl.Float64(), (2, 3)),
+    "nested": pl.Struct({"a": pl.List(pl.Struct({"x": pl.Int64(), "y": pl.String()})), "b": pl.Array(pl.Int8(), 4)}),
+}
+
+
+def test_a_type_that_needs_no_conversion_comes_out_exactly_as_it_went_in():
+    from shared.iceberg_utils import creatable_schema
+
+    made = creatable_schema(UNCHANGED)
+    assert {name: (dtype, made[name]) for name, dtype in UNCHANGED.items() if made[name] != dtype} == {}
+    assert [str(dtype) for dtype in made.values()] == [str(dtype) for dtype in UNCHANGED.values()]
+
+
+def test_a_zone_other_than_utc_becomes_utc_nanoseconds_become_microseconds_and_a_time_stays_a_time():
+    from shared.iceberg_utils import _creatable_arrow_schema, creatable_schema
+
+    given = {"at": pl.Time(), "when": pl.Datetime("us", "Europe/Amsterdam"), "utc": pl.Datetime("ms", "UTC"),
+             "ns": pl.Datetime("ns"), "ns_zone": pl.Datetime("ns", "Europe/Amsterdam"),
+             "ns_list": pl.List(pl.Datetime("ns"))}
+    assert creatable_schema(given) == {
+        "at": pl.Time(), "when": pl.Datetime("us", "UTC"), "utc": pl.Datetime("ms", "UTC"),
+        "ns": pl.Datetime("us"), "ns_zone": pl.Datetime("us", "UTC"), "ns_list": pl.List(pl.Datetime("us")),
+    }
+    arrow = _creatable_arrow_schema({"at": pl.Time(), "times": pl.List(pl.Time())})
+    assert [str(field.type) for field in arrow] == ["time64[us]", "large_list<item: time64[us]>"]
+
+
+def test_a_plan_of_a_table_with_no_columns_reads_no_column_for_its_height():
+    from shared.iceberg_utils import _narrowest_column
+
+    assert _narrowest_column(pl.Schema()) is None
+    assert _narrowest_column(pl.Schema({"s": pl.String(), "n": pl.Int8()})) == "n"
+    assert _narrowest_column(pl.Schema({"s": pl.String()})) == "s"
+
+
+@pytest.mark.parametrize(("dtype", "sentence"), [
+    (pl.Duration("ms"), 'Column c is a Duration, which an Iceberg table cannot hold; cast it to a number in the unit'
+                        ' you mean, such as pl.col("c").dt.total_microseconds().'),
+    (pl.Array(pl.Duration(), (2, 2)), "Column c is an Array holding a Duration, which an Iceberg table cannot hold;"
+                                      " cast the durations in it to a number in the unit you mean."),
+    (pl.Struct({"d": pl.Duration()}), "Column c is a Struct holding a Duration, which an Iceberg table cannot hold;"
+                                      " cast the durations in it to a number in the unit you mean."),
+    (pl.Null(), "Column c has no type (every value is null), so a new Iceberg table cannot be made with it; cast it to"
+                " the type it should have, such as pl.String."),
+    (pl.List(pl.Null()), "Column c is a List holding values with no type (every value is null), so a new Iceberg table"
+                         " cannot be made with it; cast it to the type it should have."),
+])
+def test_a_type_no_iceberg_table_holds_is_refused_before_a_table_is_created(dtype, sentence):
+    from shared.iceberg_utils import creatable_schema
+
+    with pytest.raises(ValueError) as refused:
+        creatable_schema({"id": pl.Int64(), "c": dtype})
+    assert str(refused.value) == sentence
 
 
 def test_a_catalog_that_never_answers_fails_within_the_timeout(monkeypatch):

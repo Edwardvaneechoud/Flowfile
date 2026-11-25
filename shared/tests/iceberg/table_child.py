@@ -130,6 +130,12 @@ def collect_plan(payload: dict) -> dict:
     return {**answer, "notes": notes, "aws_env": _aws_env()}
 
 
+def collect_count(payload: dict) -> dict:
+    """The one value of a plan another process built that counts rows, such as ``scan.with_row_index().select(pl.len())``."""
+    plan = pl.LazyFrame.deserialize(io.BytesIO(base64.b64decode(payload["plan"])))
+    return {"count": int(plan.collect().item()), "aws_env": _aws_env()}
+
+
 def schema_ref(payload: dict) -> dict:
     schema = table_schema(IcebergTableRef(**payload["ref"]))
     return {"schema": {name: str(dtype) for name, dtype in schema.items()}, "aws_env": _aws_env()}
@@ -144,7 +150,14 @@ def write_ref(payload: dict) -> dict:
     return {"rows": rows, "id_sum": id_sum, "notes": notes, "aws_env": _aws_env()}
 
 
-OPS = {"read": read, "write": write, "collect_plan": collect_plan, "schema_ref": schema_ref, "write_ref": write_ref}
+OPS = {
+    "read": read,
+    "write": write,
+    "collect_plan": collect_plan,
+    "collect_count": collect_count,
+    "schema_ref": schema_ref,
+    "write_ref": write_ref,
+}
 
 
 def main() -> None:

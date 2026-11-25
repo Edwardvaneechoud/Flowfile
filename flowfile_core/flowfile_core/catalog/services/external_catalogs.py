@@ -63,6 +63,9 @@ KIND = "iceberg_rest"
 
 _SIGN_IN_AGAIN = "Enter the sign-in again to change where it is sent."
 
+SIGN_IN_SUFFIX = "__catalog_sign_in"
+"""The end of the name a catalog's sign-in secret is stored under, after the catalog's name when it was stored."""
+
 _CONNECTION_FIELDS = ("uri", "warehouse", "sign_in", "client_id", "scope", "token_endpoint")
 
 _TABLE_LISTS: dict[tuple[int, str], tuple[float, datetime, list[str]]] = {}
@@ -120,9 +123,52 @@ def _sent_to(source: ExternalCatalogConnection | ExternalCatalog) -> tuple:
     return source.uri, source.token_endpoint, source.sign_in
 
 
+def sign_in_name(catalog_name: str) -> str:
+    """The name ``create`` and ``update`` store a catalog's sign-in secret under."""
+    return f"{catalog_name}{SIGN_IN_SUFFIX}"
+
+
+def sign_in_again(catalog_name: str) -> str:
+    """The one sentence for a catalog whose sign-in Flowfile no longer holds."""
+    return f"Flowfile no longer holds the sign-in for {catalog_name}; enter it again with Edit on the catalog."
+
+
+def own_sign_in(db: Session, row: ExternalCatalog) -> Secret | None:
+    """The secret ``row.secret_id`` names when it is this catalog's own sign-in; else ``None``.
+
+    Nothing enforces the foreign key and SQLite gives a deleted row's id to the next row stored, so the id of a sign-in
+    deleted elsewhere can name another secret, of anyone. Every read of a catalog's secret goes through here, and a
+    row that fails is treated as no stored sign-in: its value is never sent, overwritten or deleted. The catalog's own
+    belongs to the catalog's owner and is named ``sign_in_name`` of the catalog; a catalog renamed since keeps the name
+    it was stored under, so a name with that ending is its own too while no other catalog's row names the secret.
+    """
+    if row.secret_id is None:
+        return None
+    secret = db.get(Secret, row.secret_id)
+    namespace = db.get(CatalogNamespace, row.namespace_id)
+    if secret is None or namespace is None or secret.user_id != namespace.owner_id:
+        return None
+    if secret.name == sign_in_name(namespace.name):
+        return secret
+    if not (secret.name or "").endswith(SIGN_IN_SUFFIX):
+        return None
+    shared = db.query(ExternalCatalog).filter(ExternalCatalog.secret_id == secret.id, ExternalCatalog.id != row.id)
+    return None if shared.first() is not None else secret
+
+
+def catalog_signed_in_with(db: Session, secret: Secret) -> str | None:
+    """The name of the catalog kept elsewhere whose own sign-in ``secret`` is, or ``None``."""
+    for row in db.query(ExternalCatalog).filter(ExternalCatalog.secret_id == secret.id).all():
+        if own_sign_in(db, row) is secret:
+            return db.get(CatalogNamespace, row.namespace_id).name
+    return None
+
+
 def _catalog_ref(db: Session, row: ExternalCatalog) -> IcebergCatalogRef:
-    """The stored catalog, its sign-in as its secret's ciphertext."""
-    secret = db.get(Secret, row.secret_id) if row.secret_id is not None else None
+    """The stored catalog, its sign-in as its secret's ciphertext; refused when it signs in and has none of its own."""
+    secret = own_sign_in(db, row)
+    if secret is None and row.sign_in != "none":
+        raise ValueError(sign_in_again(db.get(CatalogNamespace, row.namespace_id).name))
     return IcebergCatalogRef(row.uri, row.warehouse, secret.encrypted_value if secret is not None else None)
 
 
@@ -152,7 +198,7 @@ class ExternalCatalogService:
         return IcebergCatalogRef(connection.uri, connection.warehouse, token)
 
     def _secret_row(self, row: ExternalCatalog) -> Secret | None:
-        return self._db.get(Secret, row.secret_id) if row.secret_id is not None else None
+        return own_sign_in(self._db, row)
 
     def _stored_ref(self, row: ExternalCatalog) -> IcebergCatalogRef:
         _decrypting()
@@ -208,11 +254,14 @@ class ExternalCatalogService:
         secret = body.sign_in_secret()
         namespace_id = getattr(body, "namespace_id", None)
         if secret is None and namespace_id is not None and body.sign_in != "none":
-            _, row = self._row(namespace_id)
+            namespace, row = self._row(namespace_id)
             if _sent_to(body) != _sent_to(row):
                 return ExternalCatalogTestResult(ok=False, message=_SIGN_IN_AGAIN)
+            stored = self._secret_row(row)
+            if stored is None:
+                return ExternalCatalogTestResult(ok=False, message=sign_in_again(namespace.name))
             secret = self._stored_secret(row)
-            user_id = self._secret_row(row).user_id
+            user_id = stored.user_id
         if body.sign_in != "none" and secret is None:
             return ExternalCatalogTestResult(ok=False, message="Enter the sign-in to test it.")
         return self._try(self._ref(body, _sign_in_text(body, secret), user_id))
@@ -232,9 +281,7 @@ class ExternalCatalogService:
         made: dict = {}
         try:
             if text is not None:
-                made["secret"] = store_secret(
-                    self._db, SecretInput(name=f"{body.name}__catalog_sign_in", value=text), owner_id
-                )
+                made["secret"] = store_secret(self._db, SecretInput(name=sign_in_name(body.name), value=text), owner_id)
             namespace = CatalogNamespace(
                 name=body.name, level=0, description=body.description, owner_id=owner_id, kept_elsewhere=True
             )
@@ -280,9 +327,11 @@ class ExternalCatalogService:
         moved = _sent_to(connection) != _sent_to(row)
         if moved and new_secret is None and connection.sign_in != "none":
             raise ValueError(_SIGN_IN_AGAIN)
+        stored = self._secret_row(row)
+        if given and new_secret is None and connection.sign_in != "none" and stored is None:
+            raise ValueError(sign_in_again(namespace.name))
         secret = new_secret if new_secret is not None else self._stored_secret(row)
         text = _sign_in_text(connection, secret)
-        stored = self._secret_row(row)
         if given:
             tried = self._try(self._ref(connection, text, stored.user_id if stored else namespace.owner_id))
             if not tried.ok:
@@ -291,13 +340,13 @@ class ExternalCatalogService:
             stored.encrypted_value = encrypt_secret(text, stored.user_id)
         elif text is not None:
             stored = store_secret(
-                self._db, SecretInput(name=f"{namespace.name}__catalog_sign_in", value=text), namespace.owner_id
+                self._db, SecretInput(name=sign_in_name(namespace.name), value=text), namespace.owner_id
             )
             row.secret_id = stored.id
         dropped = stored if text is None else None
         for name, value in _connection_of(connection).items():
             setattr(row, name, value)
-        if dropped is not None:
+        if text is None:
             row.secret_id = None
         if "description" in body.model_fields_set:
             namespace.description = body.description

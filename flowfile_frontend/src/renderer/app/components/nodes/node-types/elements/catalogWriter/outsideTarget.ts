@@ -86,6 +86,23 @@ export function outsideRefusal(catalog: string | null, what: Refusable): string 
   return `${takes(catalog)}; ${label} is not available there.`;
 }
 
+/**
+ * Core's sentence for the first saved choice a target kept elsewhere refuses (the mode, then Track changes, then
+ * Partition by, as core checks them), which Run would be refused with; null when it takes them all. The drawer shows
+ * it on a saved node instead of changing the setting, so the screen and the node never disagree.
+ */
+export function outsideSavedRefusal(
+  catalog: string | null,
+  settings: Pick<CatalogWriteSettings, "write_mode" | "track_changes" | "partition_by">,
+): string | null {
+  if (catalog === null) return null;
+  if (!outsideAllows(catalog, settings.write_mode))
+    return outsideRefusal(catalog, settings.write_mode);
+  if (settings.track_changes) return outsideRefusal(catalog, "track_changes");
+  if (settings.partition_by?.length) return outsideRefusal(catalog, "partition_by");
+  return null;
+}
+
 export interface OutsideFallback {
   /** The fields to set so the node takes only what the catalog allows; empty when nothing needs to change. */
   patch: Partial<CatalogWriteSettings>;

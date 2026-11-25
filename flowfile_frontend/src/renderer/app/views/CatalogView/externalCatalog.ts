@@ -279,6 +279,28 @@ export function outsideCatalogExplainer(
   ];
 }
 
+/**
+ * The catalog the panel shows once an edit was saved: the reloaded tree's row (else the one shown) with the save's own
+ * answer for what the edit changes, so the next edit opens on what was saved even when the reload failed.
+ */
+export function catalogAfterSave(
+  fromTree: NamespaceTree | null,
+  shown: NamespaceTree,
+  saved: Pick<NamespaceTree, "description" | "external">,
+): NamespaceTree {
+  const row = fromTree ?? shown;
+  return { ...row, description: saved.description, external: saved.external ?? row.external };
+}
+
+/** Whether a panel's answer still belongs on screen: the catalog it was asked for is the one selected and shown. */
+export function answerStillShown(
+  askedFor: number,
+  selectedId: number | null,
+  shownId: number,
+): boolean {
+  return selectedId === askedFor && shownId === askedFor;
+}
+
 /** How long ago the schemas were last brought in line, as the panel says it. */
 export function syncedLine(external: ExternalCatalogInfo, now: Date = new Date()): string {
   if (!external.synced_at) return "Not yet";

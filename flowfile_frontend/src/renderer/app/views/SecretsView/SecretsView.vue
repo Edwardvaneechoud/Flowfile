@@ -275,6 +275,7 @@
 import { ref, onMounted } from "vue";
 import type { Secret, SecretInput } from "./secretTypes";
 import { useSecretManager } from "./useSecretManager";
+import { deleteErrorMessage } from "./secretErrors";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
@@ -356,7 +357,7 @@ const handleDeleteSecret = async () => {
     cancelDelete(); // Close modal and clear state
     alert(`Secret "${nameToDelete}" deleted successfully.`);
   } catch (error) {
-    alert("Failed to delete secret. Please try again.");
+    alert(deleteErrorMessage(error));
     cancelDelete();
   } finally {
     isDeleting.value = false;

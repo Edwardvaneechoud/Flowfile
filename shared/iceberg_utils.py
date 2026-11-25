@@ -76,6 +76,10 @@ def storage_properties(table: Table) -> dict[str, str]:
     also holds the catalog's address, its token or client secret and an auth manager object. Only ``s3.*`` entries
     (less ``s3.signer.*``, which name the catalog) and ``client.region`` are kept, as strings. This cannot tell keys
     the catalog answered from ``s3.*`` settings the catalog client was given: load the catalog without any.
+
+    A table loaded through ``_catalog`` holds none of the table's own properties here: PyIceberg merges them under the
+    catalog's answer, so an ``s3.*`` property written on the table would otherwise name the storage traffic's host
+    whenever the catalog does not answer that key. A table loaded by another client still carries them.
     """
     return {
         key: str(value)
@@ -106,12 +110,17 @@ def scan_table(
 ) -> pl.LazyFrame:
     """A lazy scan of the table, opened from its metadata file with the handed-over keys and no catalog.
 
-    Polars translates the ``s3.*`` names to its object store's options itself, and uses the same properties to read
-    the metadata file. Build the scan in the process that runs it: a serialized Iceberg scan carries its keys.
+    Polars translates the ``s3.*`` names to its object store's options itself. The metadata file is opened here with
+    those properties alone: opened from its location, PyIceberg and Polars put the table's own metadata properties over
+    them for the manifests, so a property written on the table would name their storage host. Build the scan in the
+    process that runs it: a scan of a table object does not serialize, and one of a location carries its keys.
     """
-    return pl.scan_iceberg(
-        access.metadata_location, storage_options=access.storage_properties, reader_override=reader_override
-    )
+    from pyiceberg.io import load_file_io
+    from pyiceberg.table import StaticTable
+
+    table = StaticTable.from_metadata(access.metadata_location, properties=access.storage_properties)
+    table.io = load_file_io(access.storage_properties, location=access.metadata_location)
+    return pl.scan_iceberg(table, storage_options=access.storage_properties, reader_override=reader_override)
 
 
 def write_table(table: Table, frame: pl.LazyFrame, mode: Literal["append", "overwrite"]) -> None:
@@ -271,6 +280,10 @@ def _catalog(
     Every request to it gives up after ``timeout``, else ``CATALOG_TIMEOUT``: a catalog that never answers would
     otherwise hold a run before its first node, where a cancel does not reach. With a client id and secret the
     catalog is asked for a token here, when it is built.
+
+    A table it loads or creates reads and writes its files with the catalog's configuration and the load's answer
+    (``config`` and ``storage-credentials``) only: PyIceberg also merges the table's own metadata properties in, under
+    the answer, so a property written on the table could point the signed storage traffic at another host.
     """
     from pyiceberg.catalog.rest import RestCatalog
 
@@ -281,6 +294,21 @@ def _catalog(
             limit = timeout or CATALOG_TIMEOUT
             session.send = lambda request, **kw: send(request, **{**kw, "timeout": kw.get("timeout") or limit})
             return session
+
+        def _answered_io(self, response):
+            location = response.metadata_location
+            credentials = self._resolve_storage_credentials(response.storage_credentials, location)
+            return self._load_file_io({**response.config, **credentials}, location)
+
+        def _response_to_table(self, identifier_tuple, table_response):
+            table = super()._response_to_table(identifier_tuple, table_response)
+            table.io = self._answered_io(table_response)
+            return table
+
+        def _response_to_staged_table(self, identifier_tuple, table_response):
+            table = super()._response_to_staged_table(identifier_tuple, table_response)
+            table.io = self._answered_io(table_response)
+            return table
 
     return _TimedRestCatalog("flowfile", **catalog_properties(ref, keys=keys))
 
@@ -513,6 +541,15 @@ def _equality_deletes(table: str, exc: BaseException) -> ValueError | None:
     return None
 
 
+def _narrowest_column(schema: pl.Schema) -> str | None:
+    """The column a plan that uses none of the table's columns reads for its height: a fixed-width one when any.
+
+    ``None`` for a table with no columns, whose height Polars cannot read: such a scan yields no rows.
+    """
+    fixed = (name for name, dtype in schema.items() if dtype.is_numeric() or dtype.is_temporal() or dtype == pl.Boolean)
+    return next(fixed, next(iter(schema), None))
+
+
 @dataclass(frozen=True)
 class _TableScan:
     """The source of a ``scan_iceberg_table`` plan: the ref and the run's ids, and nothing that could hold a key.
@@ -568,14 +605,26 @@ class _TableScan:
         n_rows: int | None,
         batch_size: int | None,
     ) -> Iterator[pl.DataFrame]:
+        """The table's rows as Polars asked for them; an empty projection (a count, a row index) still has their height.
+
+        Polars' reader yields frames of no rows for a projection of no columns, so one column is read for the height
+        and dropped from each batch; a table with no columns yields none.
+        """
         frame = scan_table(access, reader_override=reader)
+        counted = with_columns == []
+        if counted:
+            column = _narrowest_column(frame.collect_schema())
+            if column is None:
+                return
+            with_columns = [column]
         if with_columns is not None:
             frame = frame.select(with_columns)
         if predicate is not None:
             frame = frame.filter(predicate)
         if n_rows is not None:
             frame = frame.head(n_rows)
-        yield from frame.collect_batches(chunk_size=batch_size)
+        for batch in frame.collect_batches(chunk_size=batch_size):
+            yield batch.drop(batch.columns) if counted else batch
 
 
 def scan_iceberg_table(
@@ -601,17 +650,118 @@ def scan_iceberg_table(
     )
 
 
-def creatable_schema(schema: Mapping[str, pl.DataType]) -> dict[str, pl.DataType]:
-    """The columns a new table gets for a frame of ``schema``: ``UInt32`` widened to ``Int64``, ``UInt64`` refused.
+def _instance(dtype: pl.DataType) -> pl.DataType:
+    """``dtype`` as an instance: a nested type may name its inner type by the class (``pl.List(pl.UInt8)``)."""
+    return dtype() if isinstance(dtype, type) else dtype
 
-    Iceberg has no unsigned integers, and PyIceberg would map both to a signed type of the same width.
+
+def _types_in(dtype: pl.DataType) -> Iterator[pl.DataType]:
+    """``dtype`` and every type nested in it, outermost first, each as an instance."""
+    dtype = _instance(dtype)
+    yield dtype
+    if isinstance(dtype, pl.List | pl.Array):
+        yield from _types_in(dtype.inner)
+    elif isinstance(dtype, pl.Struct):
+        for inner in dtype.fields:
+            yield from _types_in(inner.dtype)
+
+
+def _refuse_unholdable(schema: Mapping[str, pl.DataType], *, creating: bool = False) -> None:
+    """Refuse a column no Iceberg table holds, in one sentence naming it.
+
+    A ``Duration`` has no Iceberg type. A ``Null`` column gives a new table no type to make, so it is refused only
+    when ``creating``; an existing table's column gives it one. Nanoseconds are not refused: they are stored in
+    microseconds, as the catalog's own Delta tables store them (``creatable_schema``).
     """
-    columns: dict[str, pl.DataType] = {}
     for name, dtype in schema.items():
-        if dtype == pl.UInt64:
-            raise ValueError(f"Column {name} is UInt64, which no Iceberg type holds in full; cast it first.")
-        columns[name] = pl.Int64() if dtype == pl.UInt32 else dtype
-    return columns
+        inside = list(_types_in(dtype))
+        outer = type(dtype).__name__
+        holder = f"{'an' if outer[0] in 'AEIOU' else 'a'} {outer} holding " if len(inside) > 1 else ""
+        if any(isinstance(inner, pl.Duration) for inner in inside):
+            fix = "the durations in it" if holder else "it"
+            example = "" if holder else f', such as pl.col("{name}").dt.total_microseconds()'
+            raise ValueError(
+                f"Column {name} is {holder}a Duration, which an Iceberg table cannot hold; cast {fix} to a number in"
+                f" the unit you mean{example}."
+            )
+        if creating and any(isinstance(inner, pl.Null) for inner in inside):
+            example = "" if holder else ", such as pl.String"
+            kind = f"is {holder}values with" if holder else "has"
+            raise ValueError(
+                f"Column {name} {kind} no type (every value is null), so a new Iceberg table cannot be made with it;"
+                f" cast it to the type it should have{example}."
+            )
+
+
+def _converted(dtype: pl.DataType) -> bool:
+    """Whether a new table's column for ``dtype`` is another type: unsigned, nanoseconds, a zone not UTC."""
+    if isinstance(dtype, pl.UInt8 | pl.UInt16 | pl.UInt32 | pl.UInt64):
+        return True
+    return isinstance(dtype, pl.Datetime) and (dtype.time_unit == "ns" or dtype.time_zone not in (None, "UTC"))
+
+
+def _creatable_type(dtype: pl.DataType) -> pl.DataType:
+    """The type a new table's column gets for ``dtype``; ``dtype`` itself, untouched, when nothing in it converts.
+
+    An ``Array`` is rebuilt from its first dimension (``size``): its ``inner`` is already the array of the others.
+    """
+    if not any(_converted(inner) for inner in _types_in(dtype)):
+        return dtype
+    dtype = _instance(dtype)
+    if isinstance(dtype, pl.UInt8 | pl.UInt16):
+        return pl.Int32()
+    if isinstance(dtype, pl.UInt32 | pl.UInt64):
+        return pl.Int64()
+    if isinstance(dtype, pl.Datetime):
+        return pl.Datetime("us" if dtype.time_unit == "ns" else dtype.time_unit, "UTC" if dtype.time_zone else None)
+    if isinstance(dtype, pl.List):
+        return pl.List(_creatable_type(dtype.inner))
+    if isinstance(dtype, pl.Array):
+        return pl.Array(_creatable_type(dtype.inner), dtype.size)
+    return pl.Struct([pl.Field(inner.name, _creatable_type(inner.dtype)) for inner in dtype.fields])
+
+
+def creatable_schema(schema: Mapping[str, pl.DataType]) -> dict[str, pl.DataType]:
+    """The columns a new table gets for a frame of ``schema``, nested ones included; what cannot be held is refused.
+
+    Iceberg has no unsigned integers: ``UInt8`` and ``UInt16`` become ``int`` (``Int32``), ``UInt32`` and ``UInt64``
+    ``long`` (``Int64``), the smallest signed types that hold every value, except ``UInt64``, which the write casts
+    strictly so a value above a long's largest is refused (``_overflow``). A ``Datetime`` in a zone other than UTC
+    becomes a UTC one, the same instants as Iceberg's ``timestamptz`` keeps them.
+
+    Times and datetimes are stored in microseconds, by design: Iceberg version 2 has nothing finer, and the catalog's
+    own Delta tables store a nanosecond ``Datetime`` in microseconds too. A nanosecond ``Datetime`` column is made a
+    microsecond one, and the write's cast drops the nanoseconds, as a write into an existing table's ``timestamp``
+    column always did; a ``Time`` stays a ``Time``, the arrow schema handed to PyIceberg naming it in microseconds
+    (``_iceberg_arrow_type``), and Polars' writer drops what is finer.
+    """
+    _refuse_unholdable(schema, creating=True)
+    return {name: _creatable_type(dtype) for name, dtype in schema.items()}
+
+
+def _iceberg_arrow_type(arrow_type):
+    """``arrow_type`` with each nanosecond time made a microsecond one, Iceberg's ``time``, which PyIceberg takes."""
+    import pyarrow as pa
+
+    if pa.types.is_time64(arrow_type) and arrow_type.unit == "ns":
+        return pa.time64("us")
+    if pa.types.is_large_list(arrow_type):
+        return pa.large_list(arrow_type.value_field.with_type(_iceberg_arrow_type(arrow_type.value_type)))
+    if pa.types.is_list(arrow_type):
+        return pa.list_(arrow_type.value_field.with_type(_iceberg_arrow_type(arrow_type.value_type)))
+    if pa.types.is_fixed_size_list(arrow_type):
+        field_ = arrow_type.value_field
+        return pa.list_(field_.with_type(_iceberg_arrow_type(field_.type)), arrow_type.list_size)
+    if pa.types.is_struct(arrow_type):
+        return pa.struct([inner.with_type(_iceberg_arrow_type(inner.type)) for inner in arrow_type])
+    return arrow_type
+
+
+def _creatable_arrow_schema(schema: Mapping[str, pl.DataType]):
+    import pyarrow as pa
+
+    empty = pl.DataFrame(schema=creatable_schema(schema)).to_arrow(compat_level=pl.CompatLevel.oldest())
+    return pa.schema([column.with_type(_iceberg_arrow_type(column.type)) for column in empty.schema])
 
 
 def _load_or_create(ref: IcebergTableRef, frame: pl.LazyFrame) -> Table:
@@ -624,8 +774,7 @@ def _load_or_create(ref: IcebergTableRef, frame: pl.LazyFrame) -> Table:
     namespace = ref.table.rsplit(".", 1)[0]
     if not catalog.namespace_exists(namespace):
         raise ValueError(f"The catalog has no namespace {namespace}; create it there first.")
-    empty = pl.DataFrame(schema=creatable_schema(frame.collect_schema()))
-    catalog.create_table(ref.table, schema=empty.to_arrow(compat_level=pl.CompatLevel.oldest()).schema)
+    catalog.create_table(ref.table, schema=_creatable_arrow_schema(frame.collect_schema()))
     return catalog.load_table(ref.table)
 
 
@@ -668,6 +817,10 @@ def _sink(table: Table, frame: pl.LazyFrame, mode: Literal["append", "overwrite"
     except Exception as exc:
         cause = _without_sign_in((str(exc).splitlines() or [type(exc).__name__])[0], table)
         name = ".".join(table.name())
+        overflow = _overflow(exc, table, frame.collect_schema())
+        if overflow is not None:
+            left = _left_behind(table, before)
+            raise ValueError(overflow + ("" if left == " It left no files under data/." else left)) from None
         if _sign_in_refused(exc):
             raise RuntimeError(
                 f"The write to {name} did not commit: the catalog refused the sign-in when the write finished, most"
@@ -680,6 +833,66 @@ def _sink(table: Table, frame: pl.LazyFrame, mode: Literal["append", "overwrite"
                 " removing anything."
             ) from exc
         raise RuntimeError(f"The write to {name} did not commit ({cause}).{_left_behind(table, before)}") from exc
+
+
+_CAST_FAILED = re.compile(r"conversion from `([^`]+)` to `([^`]+)` failed in column '(.*?)' for \d+ out of")
+
+
+def _iceberg_type_name(table: Table, column: str) -> str | None:
+    """The Iceberg type of the table's column as the Iceberg spec names it (``long``, ``timestamp``), if it has one."""
+    try:
+        return str(table.schema().find_field(column).field_type)
+    except ValueError:
+        return None
+
+
+def _named_column(name: str, schema: Mapping[str, pl.DataType]) -> bool:
+    """Whether the name a cast error gives is surely the frame's column: top-level, not nested, and no field's name.
+
+    Polars names a struct's field, not its column, when a value inside a struct does not fit.
+    """
+    fields = {
+        inner_field.name
+        for dtype in schema.values()
+        for inner in _types_in(dtype)
+        if isinstance(inner, pl.Struct)
+        for inner_field in inner.fields
+    }
+    return name in schema and len(list(_types_in(schema[name]))) == 1 and name not in fields
+
+
+def _overflow(exc: BaseException, table: Table, schema: Mapping[str, pl.DataType]) -> str | None:
+    """The sentence for a value the strict cast to the table's type refused, ``None`` for any other error.
+
+    The cast's own text names Polars' short type names and the values; the sentence names the column and, only for an
+    integer column, the range it went outside. Any other column (text, a float) is said to hold values the table's
+    column cannot hold, as numbers when that column is numeric. When the name Polars gives may not be a column of the
+    frame (``_named_column``: a struct's field), the sentence names none.
+    """
+    found = next((match for link in _chain(exc) if (match := _CAST_FAILED.search(str(link)))), None)
+    if found is None:
+        return None
+    source, target, column = found.groups()
+    name = ".".join(table.name())
+    if not _named_column(column, schema):
+        return f"A value in the data does not fit its column in the table, so the write to {name} did not commit."
+    kind = _iceberg_type_name(table, column)
+    integer = re.fullmatch(r"[ui]\d+", source) is not None
+    if integer and target == "i64":
+        held = (
+            "a value above 9223372036854775807, the largest an Iceberg long holds"
+            if source.startswith("u")
+            else "a value outside what an Iceberg long holds"
+        )
+    elif integer and target == "i32":
+        held = "a value outside -2147483648 to 2147483647, what an Iceberg int holds"
+    elif kind is None:
+        held = "values its column in the table cannot hold"
+    elif re.fullmatch(r"[uif]\d+|decimal.*", target) and not integer:
+        held = f"values that are not numbers an Iceberg {kind} holds"
+    else:
+        held = f"values an Iceberg {kind} column cannot hold"
+    return f"Column {column} holds {held}, so the write to {name} did not commit."
 
 
 def _left_behind(table: Table, before: set[str] | None) -> str:
@@ -737,9 +950,11 @@ def write_iceberg_table(
     The catalog is asked for the table and its keys here, in the process that writes. A missing table is created
     first and stays, empty, if a check then fails; no data file is written before every check passed: the table is
     writable, the keys are usable and have time left, and the frame has the table's column names. The frame is cast
-    to the table's own types (strictly: a value that does not fit fails the write), and the table's columns and
-    partitioning are never changed.
+    to the table's own types (strictly: a value that does not fit fails the write, in one sentence naming its column),
+    and the table's columns and partitioning are never changed. A Duration, which no Iceberg table holds, is
+    refused with the same sentence whether the table exists or not (``_refuse_unholdable``).
     """
+    _refuse_unholdable(frame.collect_schema())
     table = _load_or_create(ref, frame)
     refuse_unwritable(table)
     properties = _handed_out_keys(table)

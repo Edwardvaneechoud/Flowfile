@@ -9,6 +9,7 @@ import {
   outsideCatalogName,
   outsideFallback,
   outsideRefusal,
+  outsideSavedRefusal,
 } from "./outsideTarget";
 import * as outsideTarget from "./outsideTarget";
 
@@ -169,6 +170,77 @@ describe("modes and options for a target kept elsewhere", () => {
       patch: {},
       note: null,
     });
+  });
+});
+
+describe("a saved writer whose target is kept elsewhere", () => {
+  const refused = (label: string) =>
+    `polaris keeps this table. Flowfile can Append to it or Overwrite it; ${label} is not available there.`;
+
+  it("is told what Run would refuse in core's sentence, the mode first, as core checks", () => {
+    expect(
+      outsideSavedRefusal("polaris", {
+        write_mode: "upsert",
+        track_changes: true,
+        partition_by: ["grp"],
+      }),
+    ).toBe(refused("Upsert"));
+    expect(outsideSavedRefusal("polaris", { ...base, write_mode: "virtual" })).toBe(
+      refused("Virtual Table"),
+    );
+    expect(
+      outsideSavedRefusal("polaris", {
+        ...base,
+        write_mode: "append",
+        track_changes: true,
+        partition_by: ["grp"],
+      }),
+    ).toBe(refused("Track changes"));
+    expect(outsideSavedRefusal("polaris", { ...base, partition_by: ["grp"] })).toBe(
+      refused("Partition by"),
+    );
+  });
+
+  it("is told nothing when its settings are taken, or its target is an ordinary one", () => {
+    expect(outsideSavedRefusal("polaris", base)).toBeNull();
+    expect(outsideSavedRefusal("polaris", { ...base, write_mode: "append" })).toBeNull();
+    expect(
+      outsideSavedRefusal(null, { write_mode: "upsert", track_changes: true, partition_by: ["a"] }),
+    ).toBeNull();
+  });
+
+  it("says nothing after a pick that changes nothing, so an earlier catalog's note goes", () => {
+    const saved = { ...base, write_mode: "upsert" as CatalogWriteMode, merge_keys: ["id"] };
+    const onA = outsideFallback("polaris", saved);
+    expect(onA.note).toMatch(/^polaris keeps this table\./);
+    const afterA = { ...saved, ...onA.patch };
+    expect(outsideFallback("lakekeeper", afterA)).toEqual({ patch: {}, note: null });
+    expect(outsideFallback(null, afterA)).toEqual({ patch: {}, note: null });
+    // The drawer takes each pick's note as it is, and every non-hub pick asks for one.
+    const drawer = readFileSync(new URL("./CatalogWriter.vue", import.meta.url), "utf8");
+    const script = drawer.slice(drawer.indexOf("<script"));
+    const apply = script.slice(script.indexOf("async function applyOutsideFallback"));
+    const body = apply.slice(0, apply.indexOf("\n}\n"));
+    const setsNote = body.indexOf("outsideFallbackNote.value = note;");
+    expect(setsNote).toBeGreaterThan(-1);
+    expect(setsNote).toBeLessThan(body.indexOf("if (!note) return;"));
+    expect(body).not.toContain("!catalog) return");
+    const onPick = script.slice(script.indexOf("async function onNamespaceChange"));
+    expect(onPick.slice(0, onPick.indexOf("\n}\n"))).toContain(
+      "else await applyOutsideFallback();",
+    );
+  });
+
+  it("keeps its saved settings when the drawer opens: only a person's pick of the schema changes them", () => {
+    const drawer = readFileSync(new URL("./CatalogWriter.vue", import.meta.url), "utf8");
+    const script = drawer.slice(drawer.indexOf("<script"));
+    const watcher = script.slice(script.indexOf("watch(outsideCatalog"));
+    expect(watcher.slice(0, watcher.indexOf("});"))).not.toContain("applyOutsideFallback");
+    const calls = script.match(/applyOutsideFallback\(/g) ?? [];
+    // The definition and the one call in onNamespaceChange.
+    expect(calls).toHaveLength(2);
+    const onPick = script.slice(script.indexOf("async function onNamespaceChange"));
+    expect(onPick.slice(0, onPick.indexOf("\n}\n"))).toContain("applyOutsideFallback(");
   });
 });
 

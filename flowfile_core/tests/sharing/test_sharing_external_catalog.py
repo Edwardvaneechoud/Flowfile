@@ -747,3 +747,110 @@ def test_the_snapshot_is_checked_as_the_person_it_is_for(users, client_for, pola
     assert str(refused.value) == f"You have no access to {name}.{schema}; ask its owner to share it."
     assert asked == []
     assert _snapshots(row_id) == []
+
+
+def _sign_in_of(catalog_id: int) -> tuple[str | None, int | None]:
+    """The catalog's sign-in secret as its row names it: the secret's name (``None`` when no row has the id) and id."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import ExternalCatalog, Secret
+
+    with get_db_context() as db:
+        row = db.query(ExternalCatalog).filter_by(namespace_id=catalog_id).one()
+        secret = db.get(Secret, row.secret_id) if row.secret_id is not None else None
+        return (secret.name if secret is not None else None), row.secret_id
+
+
+def _ciphertext(secret_id: int) -> str | None:
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import Secret
+
+    with get_db_context() as db:
+        secret = db.get(Secret, secret_id)
+        return secret.encrypted_value if secret is not None else None
+
+
+def _ref_token(catalog_name: str) -> str | None:
+    from flowfile_core.catalog.services.external_catalogs import table_ref_for_run
+    from flowfile_core.database.connection import get_db_context
+
+    with get_db_context() as db:
+        return table_ref_for_run(db, catalog_name, "any_schema.any_table", None, writes=False).token
+
+
+
+def _sign_in_again(catalog_name: str) -> str:
+    return f"Flowfile no longer holds the sign-in for {catalog_name}; enter it again with Edit on the catalog."
+
+
+@pytest.mark.iceberg_rest
+def test_another_persons_secret_on_a_dangling_sign_in_id_is_never_sent_overwritten_or_deleted(
+    users, client_for, polaris, principal
+):
+    """The catalog's sign-in deleted before that was refused leaves its id to the next secret anyone stores: Bob's,
+    even named as the catalog's sign-in is, belongs to no catalog of the administrator's."""
+    from flowfile_core.catalog.services.external_catalogs import sign_in_name
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import Secret
+
+    catalog_id, _ = polaris
+    admin, bob = client_for("admin"), client_for("bob")
+    catalog = _catalog_name(client_for, catalog_id)
+    _, secret_id = _sign_in_of(catalog_id)
+    with get_db_context() as db:
+        db.delete(db.get(Secret, secret_id))
+        db.commit()
+    stored = bob.post("/secrets/secrets", json={"name": sign_in_name(catalog), "value": "bobs-value"})
+    bobs_id = stored.json()["id"]
+    if bobs_id != secret_id:
+        pytest.skip("this catalog database gave the next secret a new id, so no id is left dangling to take")
+    bobs = _ciphertext(bobs_id)
+
+    with pytest.raises(ValueError) as refused:
+        _ref_token(catalog)
+    edited = admin.put(f"/catalog/external/{catalog_id}", json={"client_secret": principal.client_secret})
+    unchanged = _ciphertext(bobs_id) == bobs
+    _, new_id = _sign_in_of(catalog_id)
+    removed = admin.delete(f"/catalog/external/{catalog_id}")
+    survived = _ciphertext(bobs_id) is not None
+    bob_deletes = bob.delete(f"/secrets/secrets/{sign_in_name(catalog)}")
+
+    assert str(refused.value) == _sign_in_again(catalog)
+    assert edited.status_code == 200, edited.json().get("detail")
+    assert new_id != bobs_id and unchanged is True
+    assert removed.status_code == 204 and survived
+    assert bob_deletes.status_code == 204
+
+
+@pytest.mark.iceberg_rest
+def test_deleting_the_owners_account_leaves_the_catalog_needing_its_sign_in_and_no_other_secret_takes_its_place(
+    users, client_for, principal
+):
+    from flowfile_core.catalog import SQLAlchemyCatalogRepository
+    from flowfile_core.catalog.services.external_catalogs import ExternalCatalogService
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import Secret
+    from flowfile_core.schemas.catalog_schema import ExternalCatalogCreate
+
+    name = f"alices_{uuid.uuid4().hex[:6]}"
+    with get_db_context() as db:
+        catalog_id = ExternalCatalogService(SQLAlchemyCatalogRepository(db)).create(
+            ExternalCatalogCreate(**_body(principal, name)), users["alice"].id
+        ).id
+    try:
+        _, secret_id = _sign_in_of(catalog_id)
+        removed = client_for("admin").delete(f"/auth/users/{users['alice'].id}")
+        after_removal = _sign_in_of(catalog_id)
+        with get_db_context() as db:
+            alices_secret = db.get(Secret, secret_id)
+        stored = client_for("bob").post("/secrets/secrets", json={"name": "bobs_own", "value": "bobs-value"})
+
+        with pytest.raises(ValueError) as refused:
+            _ref_token(name)
+
+        assert removed.status_code == 200
+        assert alices_secret is None and after_removal == (None, None)
+        assert stored.status_code == 200 and _sign_in_of(catalog_id) == (None, None)
+        assert str(refused.value) == _sign_in_again(name)
+    finally:
+        with get_db_context() as db:
+            ExternalCatalogService(SQLAlchemyCatalogRepository(db)).delete(catalog_id)

@@ -520,3 +520,22 @@ def test_an_unknown_catalog_name_fails_the_node_with_the_sentence():
     (step,) = [step for step in run.node_step_result if step.node_id == 1]
     assert not step.success
     assert "No catalog named 'no_such_catalog' is kept elsewhere in Flowfile's catalog." in (step.error or "")
+
+
+@pytest.mark.parametrize("execution_mode", ["Development", "Performance"])
+def test_record_id_then_record_count_counts_the_tables_rows(rest_catalog, orders, execution_location, execution_mode):
+    """Record Count after Record ID uses none of the table's columns; the read still has the table's height."""
+    graph = create_graph(execution_mode=execution_mode, execution_location=execution_location)
+    _add_reader(graph, orders)
+    add_node_promise_on_type(graph, "record_id", 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_record_id(input_schema.NodeRecordId(
+        flow_id=graph.flow_id, node_id=2, record_id_input=transform_schema.RecordIdInput(),
+    ))
+    add_node_promise_on_type(graph, "record_count", 3)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    graph.add_record_count(input_schema.NodeRecordCount(flow_id=graph.flow_id, node_id=3))
+
+    handle_run_info(graph.run_graph())
+
+    assert graph.get_node(3).get_resulting_data().collect().to_dicts() == [{"number_of_records": 1000}]
