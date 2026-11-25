@@ -263,9 +263,18 @@
 
         <div class="line keep">
           <template v-if="!keeping">
-            <button class="btn btn-secondary btn-sm" @click="keeping = true">
-              <i class="fa-solid fa-diagram-project"></i> Keep as a flow
-            </button>
+            <el-tooltip :content="keepBlocked" :disabled="!keepBlocked" placement="top">
+              <span>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="!!keepBlocked"
+                  data-testid="ask-keep-as-flow"
+                  @click="keeping = true"
+                >
+                  <i class="fa-solid fa-diagram-project"></i> Keep as a flow
+                </button>
+              </span>
+            </el-tooltip>
           </template>
           <template v-else>
             <el-input v-model="flowName" class="flow-name" placeholder="Flow name" />
@@ -312,7 +321,7 @@ import {
 import { formatCellValue } from "../../../utils/cellFormat";
 import { copyTextEverywhere } from "../../../utils/clipboardUtils";
 import { reachableTables, tableColumns } from "./metricReach";
-import { shortName } from "./semanticFormat";
+import { shortName, tableOutsideSchema } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
 const emit = defineEmits<{ "open-tab": [tab: string] }>();
@@ -380,6 +389,13 @@ const saving = ref(false);
 const saveError = ref("");
 const savedFlowId = ref<number | null>(null);
 const lastQuery = ref<MetricQuery | null>(null);
+const keepBlocked = computed(() => {
+  if (props.model.level !== 1) return "";
+  const other = tableOutsideSchema(result.value?.tables, props.model.key);
+  return other
+    ? `A flow reads the tables of ${shortName(props.model.key)} only; this query also reads ${shortName(other)}.`
+    : "";
+});
 
 const metrics = computed(() => props.model.tables.flatMap((t) => t.metrics));
 const acceptedMetrics = computed(() => metrics.value.filter((m) => m.status === "accepted"));

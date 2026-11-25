@@ -237,6 +237,8 @@ export interface MetricQueryResult {
   total_rows: number;
   truncated: boolean;
   sql: string;
+  /** The qualified names of the tables the query reads; absent from an older core. */
+  tables?: string[];
   metric: {
     name: string;
     version: number | null;

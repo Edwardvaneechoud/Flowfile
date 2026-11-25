@@ -229,8 +229,9 @@
 // The on-device model as one row in the Providers list. It sits beside the
 // cloud providers because it *is* a provider (the same "On-device AI" the
 // model pickers offer); Manage expands the catalog and context settings.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
+import { useLocalModelInstall } from "../../composables/useLocalModelInstall";
 import { useAiStore } from "../../stores/ai-store";
 import { AiDisabledError } from "./api";
 import {
@@ -241,9 +242,8 @@ import {
   setLocalCtxSize,
   startLocalModel,
   stopLocalModel,
-  streamLocalModelInstall,
 } from "./localModelApi";
-import type { LocalModelEntry, LocalModelStatus } from "./localModelApi";
+import type { LocalModelEntry } from "./localModelApi";
 
 // Single source of truth: the ai-store owns local status (so the Assistant
 // tab's pickers and this row never disagree). This is a read-only mirror;
@@ -252,13 +252,8 @@ import type { LocalModelEntry, LocalModelStatus } from "./localModelApi";
 const aiStore = useAiStore();
 const status = computed(() => aiStore.localModelStatus);
 const localLoading = ref(true);
-const localBusy = ref(false);
+const opBusy = ref(false);
 const localError = ref<string | null>(null);
-const installing = ref(false);
-const installPhase = ref("");
-const installPct = ref<number | null>(null);
-// Which model is mid-install, so the progress bar can name it.
-const installingModelId = ref<string | null>(null);
 const expanded = ref(false);
 // Editable copy of the context-window size; synced from status on each load
 // and applied via handleSetCtxSize.
@@ -282,33 +277,26 @@ const badgeClass = computed((): string => {
   return st.running ? "badge--configured" : "badge--env_fallback";
 });
 
-const installingModelName = computed(() => {
-  const id = installingModelId.value;
-  if (!id || !status.value) return "";
-  return status.value.models.find((m) => m.id === id)?.name ?? "";
+const {
+  installing,
+  installPct,
+  phaseLabel: installPhaseLabel,
+  installingModel,
+  downloadLabel,
+  install,
+  installModel,
+  attach: attachToRunningInstall,
+} = useLocalModelInstall(() => undefined, {
+  onFinished: (error) => {
+    if (error) ElMessage.error(`Install failed: ${error}`);
+    else ElMessage.success("Model installed");
+  },
+  refresh: () => loadLocalModel(),
 });
-
-// "~1960 MB" → "2.0 GB", "~1100 MB" → "1.1 GB", small values stay in MB.
-const formatDownloadMb = (mb: number | null | undefined): string => {
-  if (!mb || mb <= 0) return "";
-  return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`;
-};
-
-const installingModel = computed(
-  () => status.value?.models.find((m) => m.id === installingModelId.value) ?? null,
-);
-
-// The model the one-click setup installs: the backend's selected default
-// (Qwen3.5 4B) before anything is installed. Never a legacy entry.
-const recommendedModel = computed(
-  () =>
-    status.value?.models.find((m) => m.id === status.value?.selectedModelId && !m.legacy) ??
-    status.value?.models.find((m) => !m.legacy) ??
-    null,
-);
-const recommendedDownloadLabel = computed(
-  () => formatDownloadMb(recommendedModel.value?.approxDownloadMb) || "small download",
-);
+// An install keeps every action of the row waiting, as any other operation does.
+const localBusy = computed(() => opBusy.value || installing.value);
+const installingModelName = computed(() => installingModel.value?.name ?? "");
+const recommendedDownloadLabel = computed(() => downloadLabel.value || "small download");
 
 // Per-model badge: running > selected > installed > not installed. Only the
 // selected model can be "running" (one server at a time).
@@ -329,25 +317,6 @@ const modelBadgeClass = (m: LocalModelEntry): string => {
   return "badge--unconfigured";
 };
 
-const installPhaseLabel = computed(() => {
-  switch (installPhase.value) {
-    case "downloading_binary":
-      return "Downloading runtime…";
-    case "extracting":
-      return "Extracting…";
-    case "downloading_model": {
-      const size = formatDownloadMb(installingModel.value?.approxDownloadMb);
-      return size ? `Downloading model (~${size})…` : "Downloading model…";
-    }
-    case "verifying":
-      return "Verifying…";
-    case "done":
-      return "Done";
-    default:
-      return "Installing…";
-  }
-});
-
 // Mirror the backend's ctx size into the editable input whenever status
 // changes (load, select, install, apply) so the field always reflects truth.
 watch(
@@ -362,72 +331,15 @@ const handleSetCtxSize = async () => {
   if (!st) return;
   const want = Math.round(Number(ctxSizeInput.value));
   if (!Number.isFinite(want) || want === st.ctxSize) return;
-  localBusy.value = true;
+  opBusy.value = true;
   try {
     aiStore.applyLocalModelStatus(await setLocalCtxSize(want));
     ElMessage.success("Context window updated");
   } catch (error) {
     ElMessage.error((error as Error).message || "Failed to update context window");
   } finally {
-    localBusy.value = false;
+    opBusy.value = false;
   }
-};
-
-// The download runs in the backend process, so a page reload mid-install
-// loses only the progress stream, not the install. When status says one is
-// still active, show its progress and poll until it ends, then finish the
-// way a stream-attached install would (status refresh + toast).
-const INSTALL_POLL_MS = 1000;
-let installPollTimer: ReturnType<typeof setTimeout> | null = null;
-
-const stopInstallPolling = (): void => {
-  if (installPollTimer !== null) {
-    clearTimeout(installPollTimer);
-    installPollTimer = null;
-  }
-};
-
-const applyInstallProgress = (st: LocalModelStatus): void => {
-  const inst = st.install;
-  if (!inst?.active) return;
-  installingModelId.value = inst.modelId;
-  installPhase.value = inst.phase;
-  installPct.value =
-    typeof inst.received === "number" && typeof inst.total === "number" && inst.total > 0
-      ? Math.min(100, Math.round((inst.received / inst.total) * 100))
-      : null;
-};
-
-const attachToRunningInstall = (st: LocalModelStatus | null): void => {
-  if (!st?.install?.active || installing.value) return;
-  installing.value = true;
-  localBusy.value = true;
-  applyInstallProgress(st);
-  const poll = async (): Promise<void> => {
-    let latest: LocalModelStatus;
-    try {
-      latest = await fetchLocalModelStatus();
-    } catch {
-      installPollTimer = setTimeout(poll, INSTALL_POLL_MS);
-      return;
-    }
-    aiStore.applyLocalModelStatus(latest);
-    if (latest.install?.active) {
-      applyInstallProgress(latest);
-      installPollTimer = setTimeout(poll, INSTALL_POLL_MS);
-      return;
-    }
-    installPollTimer = null;
-    installing.value = false;
-    localBusy.value = false;
-    installingModelId.value = null;
-    if (latest.install?.error) {
-      ElMessage.error(`Install failed: ${latest.install.error}`);
-    } else {
-      ElMessage.success("Model installed");
-    }
-  };
-  installPollTimer = setTimeout(poll, INSTALL_POLL_MS);
 };
 
 const loadLocalModel = async () => {
@@ -455,103 +367,55 @@ const loadLocalModel = async () => {
   }
 };
 
-// One-click onboarding: install the recommended default. Manage is there if
-// the user wants a different size.
-const handleLocalSetup = async () => {
-  const id = recommendedModel.value?.id ?? status.value?.selectedModelId;
-  if (!id) return;
-  await handleLocalInstall(id);
-};
-
-const handleLocalInstall = async (modelId: string) => {
-  if (status.value?.install?.active) {
-    attachToRunningInstall(status.value);
-    return;
-  }
-  installing.value = true;
-  localBusy.value = true;
-  installingModelId.value = modelId;
-  installPhase.value = "";
-  installPct.value = null;
-  let failed: string | null = null;
-  try {
-    await streamLocalModelInstall(
-      {
-        onProgress: (ev) => {
-          installPhase.value = ev.phase;
-          if (typeof ev.received === "number" && typeof ev.total === "number" && ev.total > 0) {
-            installPct.value = Math.min(100, Math.round((ev.received / ev.total) * 100));
-          } else {
-            installPct.value = null;
-          }
-        },
-        onError: (msg) => {
-          failed = msg;
-        },
-      },
-      undefined,
-      modelId,
-    );
-  } catch (error) {
-    failed = (error as Error).message || "Install failed";
-  } finally {
-    installing.value = false;
-    localBusy.value = false;
-    installingModelId.value = null;
-    await loadLocalModel();
-  }
-  if (failed) {
-    ElMessage.error(`Install failed: ${failed}`);
-  } else {
-    ElMessage.success("Model installed");
-  }
-};
+// One-click onboarding installs the recommended default; Manage installs any other size.
+const handleLocalSetup = () => install();
+const handleLocalInstall = (modelId: string) => installModel(modelId);
 
 const handleLocalSelect = async (modelId: string) => {
-  localBusy.value = true;
+  opBusy.value = true;
   try {
     aiStore.applyLocalModelStatus(await selectLocalModel(modelId));
     ElMessage.success("Model selected");
   } catch (error) {
     ElMessage.error((error as Error).message || "Failed to select model");
   } finally {
-    localBusy.value = false;
+    opBusy.value = false;
   }
 };
 
 const handleLocalStart = async () => {
-  localBusy.value = true;
+  opBusy.value = true;
   try {
     aiStore.applyLocalModelStatus(await startLocalModel());
     ElMessage.success("On-device AI started");
   } catch (error) {
     ElMessage.error((error as Error).message || "Failed to start on-device AI");
   } finally {
-    localBusy.value = false;
+    opBusy.value = false;
   }
 };
 
 const handleLocalStop = async () => {
-  localBusy.value = true;
+  opBusy.value = true;
   try {
     aiStore.applyLocalModelStatus(await stopLocalModel());
     ElMessage.success("On-device AI stopped");
   } catch {
     ElMessage.error("Failed to stop on-device AI");
   } finally {
-    localBusy.value = false;
+    opBusy.value = false;
   }
 };
 
 const handleLocalDelete = async (modelId: string) => {
-  localBusy.value = true;
+  opBusy.value = true;
   try {
     aiStore.applyLocalModelStatus(await deleteLocalModel(modelId));
     ElMessage.success("Model removed");
   } catch {
     ElMessage.error("Failed to remove model");
   } finally {
-    localBusy.value = false;
+    opBusy.value = false;
   }
 };
 
@@ -565,8 +429,6 @@ onMounted(() => {
     attachToRunningInstall(status.value);
   }
 });
-
-onBeforeUnmount(stopInstallPolling);
 </script>
 
 <style scoped>

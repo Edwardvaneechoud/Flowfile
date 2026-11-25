@@ -107,6 +107,14 @@ export const splitWords = (text: string): string[] => [
 /** A table's own name: the last part of its key. */
 export const shortName = (key: string): string => key.slice(key.lastIndexOf(".") + 1);
 
+/**
+ * The first table a query reads from outside the schema `schemaKey` (`catalog.schema`), else null. Keep as a flow reads
+ * the tables of one schema only (core refuses the rest), so such a query cannot be kept.
+ */
+export function tableOutsideSchema(tables: string[] | undefined, schemaKey: string): string | null {
+  return (tables ?? []).find((key) => !key.startsWith(`${schemaKey}.`)) ?? null;
+}
+
 /** Say that a stored proposal waits for a person; nothing when all of it was accepted at once. */
 export function notePending(facts: SemanticFact[], text = "Proposed. It waits in the Review tab.") {
   const waits = facts.some((f) => f.status !== "accepted");

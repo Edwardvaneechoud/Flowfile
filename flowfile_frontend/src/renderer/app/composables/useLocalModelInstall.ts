@@ -18,8 +18,15 @@ const pctOf = (received?: number | null, total?: number | null): number | null =
     ? Math.min(100, Math.round((received / total) * 100))
     : null;
 
+interface InstallOptions {
+  /** Called once an install ends, attached or streamed, with its error or null. */
+  onFinished?: (error: string | null) => void;
+  /** Re-reads the status after a streamed install; the default fetches it into the AI store. */
+  refresh?: () => Promise<void>;
+}
+
 /** Install, progress and re-attach logic for the on-device model, writing through the AI store. */
-export function useLocalModelInstall(onInstalled: () => void) {
+export function useLocalModelInstall(onInstalled: () => void, options: InstallOptions = {}) {
   const aiStore = useAiStore();
   const status = computed(() => aiStore.localModelStatus);
   const loading = ref(false);
@@ -60,6 +67,7 @@ export function useLocalModelInstall(onInstalled: () => void) {
     installingModelId.value = null;
     installError.value = error;
     if (!error && installed.value) onInstalled();
+    options.onFinished?.(error);
   };
 
   const applyProgress = (st: LocalModelStatus): void => {
@@ -109,12 +117,13 @@ export function useLocalModelInstall(onInstalled: () => void) {
     }
   };
 
-  const install = async (): Promise<void> => {
+  /** Installs ``modelId``, by default the recommended model. */
+  const installModel = async (modelId?: string): Promise<void> => {
     if (status.value?.install?.active) {
       attach(status.value);
       return;
     }
-    const id = recommendedModel.value?.id ?? status.value?.selectedModelId;
+    const id = modelId ?? recommendedModel.value?.id ?? status.value?.selectedModelId;
     if (!id || installing.value) return;
     installing.value = true;
     installError.value = null;
@@ -140,12 +149,16 @@ export function useLocalModelInstall(onInstalled: () => void) {
       failed = (error as Error).message || "Install failed";
     }
     try {
-      aiStore.applyLocalModelStatus(await fetchLocalModelStatus());
+      if (options.refresh) await options.refresh();
+      else aiStore.applyLocalModelStatus(await fetchLocalModelStatus());
     } catch {
       /* the stream result below still decides success */
     }
     finish(failed);
   };
+
+  /** Installs the recommended model; safe to bind to a click, whose event it ignores. */
+  const install = (): Promise<void> => installModel();
 
   onBeforeUnmount(() => {
     disposed = true;
@@ -160,8 +173,12 @@ export function useLocalModelInstall(onInstalled: () => void) {
     installError,
     phaseLabel,
     installed,
+    installingModel,
+    recommendedModel,
     downloadLabel,
     load,
     install,
+    installModel,
+    attach,
   };
 }
