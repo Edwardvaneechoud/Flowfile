@@ -5,8 +5,8 @@ fact that can set it (``glosslayer.visibility.above``: its own, its semantic typ
 waiting for review). A table above it keeps all of its columns.
 
 The ledger is read without the caller's scope (the question is what must not leave), on core's engine and without the
-Flowfile plugin, and nothing is cached. Without ``glosslayer`` nothing is withheld; a ledger that cannot be read keeps
-every table asked about (fail closed). Every ``glosslayer`` import is function-local.
+Flowfile plugin, and nothing is cached. A ledger that cannot be read, or a missing ``glosslayer``, keeps every
+table asked about (fail closed). Every ``glosslayer`` import is function-local.
 """
 
 from __future__ import annotations
@@ -52,7 +52,8 @@ def read_withheld(db: Any, table_ids: Iterable[int]) -> Withheld:
         from glosslayer.store import SQLStore
         from glosslayer.visibility import above
     except ImportError:
-        return Withheld()
+        logger.warning("glosslayer is not installed; keeping tables %s from AI", ids)
+        return Withheld(unreadable=frozenset(ids))
     from flowfile_core.catalog.semantic import host
     from flowfile_core.database.connection import engine
     from flowfile_core.database.models import CatalogTable
