@@ -2,9 +2,8 @@
 import { computed, ref, watch, type Ref } from "vue";
 import { SemanticModelApi } from "../api/semanticModel.api";
 import { useCatalogStore } from "../stores/catalog-store";
-import { semanticErrorMessage } from "../stores/semantic-model-store";
 import type { ColumnSchema } from "../types";
-import type { SemanticProposal, SemanticTable } from "../types/semantic.types";
+import type { SemanticFact, SemanticProposal, SemanticTable } from "../types/semantic.types";
 
 interface TableRef {
   id: number;
@@ -56,19 +55,14 @@ export function useTableSemantics(table: Ref<TableRef>) {
     return { ...e, fields: fields.length ? fields : e.fields };
   });
 
-  /** Propose facts, reload this table's data and the tree's counts; resolves true when all were accepted. */
-  async function propose(proposals: SemanticProposal[]): Promise<boolean> {
+  /** Propose facts, then reload this table's data and the tree's counts. */
+  async function propose(proposals: SemanticProposal[]): Promise<SemanticFact[]> {
     const mine = ++token;
-    const namespaceId = table.value.namespace_id as number;
-    try {
-      const facts = await SemanticModelApi.propose(namespaceId, proposals);
-      const [found] = await Promise.all([fetchEntry(), useCatalogStore().loadTree()]);
-      if (mine === token) entry.value = found;
-      return facts.every((f) => f.status === "accepted");
-    } catch (e) {
-      throw new Error(semanticErrorMessage(e, "Could not save the change"));
-    }
+    const facts = await SemanticModelApi.propose(table.value.namespace_id as number, proposals);
+    const [found] = await Promise.all([fetchEntry(), useCatalogStore().loadTree()]);
+    if (mine === token) entry.value = found;
+    return facts;
   }
 
-  return { semanticTable, propose, reload: load };
+  return { semanticTable, propose };
 }

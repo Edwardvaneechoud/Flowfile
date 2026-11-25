@@ -4,137 +4,66 @@ import type {
   JoinCheck,
   JoinDependent,
   MetricQuery,
-  SemanticAskOut,
-  SemanticAskRequest,
-  SemanticActivityOut,
-  SemanticDraftOut,
-  SemanticDraftRequest,
-  SemanticSuggestRequestIn,
-  SemanticSuggestRequestOut,
-  SuggestOut,
-  SuggestRequest,
   MetricQueryResult,
-  MetricQuerySaveAsFlow,
-  MetricQuerySaveAsFlowOut,
+  SemanticActivityOut,
+  SemanticAskOut,
+  SemanticDraftOut,
   SemanticEvent,
   SemanticFact,
   SemanticModel,
+  SemanticModelPick,
   SemanticModelUpdate,
   SemanticProposal,
   SemanticReviewAction,
   SemanticReviewItem,
   SemanticReviewResult,
+  SemanticSuggestKind,
+  SemanticSuggestRequestOut,
   SemanticSyncResult,
+  SuggestOut,
 } from "../types/semantic.types";
 
-const base = (namespaceId: number) => `/catalog/namespaces/${namespaceId}/semantic-model`;
+const url = (id: number, path = "") => `/catalog/namespaces/${id}/semantic-model${path}`;
 
-export class SemanticModelApi {
-  static async get(namespaceId: number): Promise<SemanticModel> {
-    const response = await axios.get<SemanticModel>(base(namespaceId));
-    return response.data;
-  }
+const get = async <T>(path: string, config?: object): Promise<T> =>
+  (await axios.get<T>(path, config)).data;
 
-  static async update(namespaceId: number, body: SemanticModelUpdate): Promise<SemanticModel> {
-    const response = await axios.put<SemanticModel>(base(namespaceId), body);
-    return response.data;
-  }
+const post = async <T>(path: string, body?: unknown): Promise<T> =>
+  (await axios.post<T>(path, body)).data;
 
-  static async propose(
-    namespaceId: number,
-    proposals: SemanticProposal[],
-  ): Promise<SemanticFact[]> {
-    const response = await axios.post<SemanticFact[]>(`${base(namespaceId)}/proposals`, {
-      proposals,
-    });
-    return response.data;
-  }
-
-  static async checkJoins(namespaceId: number): Promise<JoinCheck[]> {
-    const response = await axios.post<JoinCheck[]>(`${base(namespaceId)}/joins/check`);
-    return response.data;
-  }
-
-  static async joinDependents(namespaceId: number, key: string): Promise<JoinDependent[]> {
-    const response = await axios.get<JoinDependent[]>(`${base(namespaceId)}/joins/dependents`, {
-      params: { key },
-    });
-    return response.data;
-  }
-
-  static async getReviewQueue(namespaceId: number): Promise<SemanticReviewItem[]> {
-    const response = await axios.get<SemanticReviewItem[]>(`${base(namespaceId)}/review`);
-    return response.data;
-  }
-
-  static async review(
-    namespaceId: number,
-    action: SemanticReviewAction,
-  ): Promise<SemanticReviewResult> {
-    const response = await axios.post<SemanticReviewResult>(`${base(namespaceId)}/review`, action);
-    return response.data;
-  }
-
-  static async getHistory(namespaceId: number, subject: string): Promise<SemanticEvent[]> {
-    const response = await axios.get<SemanticEvent[]>(`${base(namespaceId)}/history`, {
-      params: { subject },
-    });
-    return response.data;
-  }
-
-  static async sync(namespaceId: number): Promise<SemanticSyncResult> {
-    const response = await axios.post<SemanticSyncResult>(`${base(namespaceId)}/sync`);
-    return response.data;
-  }
-
-  static async activity(namespaceId: number): Promise<SemanticActivityOut> {
-    const response = await axios.get<SemanticActivityOut>(`${base(namespaceId)}/activity`);
-    return response.data;
-  }
-
-  static async exportYaml(namespaceId: number): Promise<string> {
-    const response = await axios.get<string>(`${base(namespaceId)}/export`, {
+export const SemanticModelApi = {
+  get: (id: number) => get<SemanticModel>(url(id)),
+  update: async (id: number, body: SemanticModelUpdate) =>
+    (await axios.put<SemanticModel>(url(id), body)).data,
+  propose: (id: number, proposals: SemanticProposal[]) =>
+    post<SemanticFact[]>(url(id, "/proposals"), { proposals }),
+  checkJoins: (id: number) => post<JoinCheck[]>(url(id, "/joins/check")),
+  joinDependents: (id: number, key: string) =>
+    get<JoinDependent[]>(url(id, "/joins/dependents"), { params: { key } }),
+  getReviewQueue: (id: number) => get<SemanticReviewItem[]>(url(id, "/review")),
+  review: (id: number, action: SemanticReviewAction) =>
+    post<SemanticReviewResult>(url(id, "/review"), action),
+  getHistory: (id: number, subject: string) =>
+    get<SemanticEvent[]>(url(id, "/history"), { params: { subject } }),
+  sync: (id: number) => post<SemanticSyncResult>(url(id, "/sync")),
+  activity: (id: number) => get<SemanticActivityOut>(url(id, "/activity")),
+  exportYaml: (id: number) =>
+    get<string>(url(id, "/export"), {
       responseType: "text",
-      transformResponse: (data) => data,
-    });
-    return response.data;
-  }
-
-  static async queryMetric(namespaceId: number, query: MetricQuery): Promise<MetricQueryResult> {
-    const response = await axios.post<MetricQueryResult>(`${base(namespaceId)}/query`, query);
-    return response.data;
-  }
-
-  static async saveMetricQueryAsFlow(
-    namespaceId: number,
-    body: MetricQuerySaveAsFlow,
-  ): Promise<MetricQuerySaveAsFlowOut> {
-    const response = await axios.post<MetricQuerySaveAsFlowOut>(
-      `${base(namespaceId)}/query/save-as-flow`,
-      body,
-    );
-    return response.data;
-  }
-
-  static async suggest(namespaceId: number, body?: SuggestRequest): Promise<SuggestOut> {
-    const response = await axios.post<SuggestOut>(`${base(namespaceId)}/suggest`, body);
-    return response.data;
-  }
-
-  static async suggestOnRequest(
-    body: SemanticSuggestRequestIn,
-  ): Promise<SemanticSuggestRequestOut> {
-    const response = await axios.post<SemanticSuggestRequestOut>("/ai/semantic/suggest", body);
-    return response.data;
-  }
-
-  static async draft(body: SemanticDraftRequest): Promise<SemanticDraftOut> {
-    const response = await axios.post<SemanticDraftOut>("/ai/semantic/draft", body);
-    return response.data;
-  }
-
-  static async ask(body: SemanticAskRequest): Promise<SemanticAskOut> {
-    const response = await axios.post<SemanticAskOut>("/ai/semantic/ask", body);
-    return response.data;
-  }
-}
+      transformResponse: (data: string) => data,
+    }),
+  queryMetric: (id: number, query: MetricQuery) =>
+    post<MetricQueryResult>(url(id, "/query"), query),
+  saveMetricQueryAsFlow: (id: number, query: MetricQuery, name: string) =>
+    post<{ flow_id: number }>(url(id, "/query/save-as-flow"), { query, name }),
+  suggest: (id: number, kinds?: SemanticSuggestKind[]) =>
+    post<SuggestOut>(url(id, "/suggest"), kinds && { kinds }),
+  suggestOnRequest: (
+    id: number,
+    body: SemanticModelPick & { request?: string; kinds?: SemanticSuggestKind[] },
+  ) => post<SemanticSuggestRequestOut>("/ai/semantic/suggest", { namespace_id: id, ...body }),
+  draft: (id: number, pick: SemanticModelPick) =>
+    post<SemanticDraftOut>("/ai/semantic/draft", { namespace_id: id, ...pick }),
+  ask: (id: number, question: string, pick: SemanticModelPick) =>
+    post<SemanticAskOut>("/ai/semantic/ask", { namespace_id: id, question, ...pick }),
+};

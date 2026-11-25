@@ -1,5 +1,5 @@
 <template>
-  <div class="tables-tab">
+  <div class="stack">
     <SemanticSuggestMore
       v-if="model.tables.length > 0"
       :kinds="['description', 'role']"
@@ -7,7 +7,7 @@
       @review="emit('open-tab', 'review')"
     >
       <template #hint>
-        <p class="muted hint">Say what each table and column holds, and how each column is used.</p>
+        <p class="hint muted">Say what each table and column holds, and how each column is used.</p>
       </template>
     </SemanticSuggestMore>
     <p v-if="model.tables.length === 0" class="muted">This schema has no tables yet.</p>
@@ -16,11 +16,11 @@
       v-for="table in model.tables"
       :id="`semantic-table-${table.table_id}`"
       :key="table.table_id"
-      class="table-card"
+      class="box table-card"
       :class="{ focused: focusedId === table.table_id }"
     >
-      <header class="table-head">
-        <button class="collapse-btn" type="button" @click="toggle(table.table_id)">
+      <header class="line">
+        <button class="icon-btn collapse-btn" type="button" @click="toggle(table.table_id)">
           <i
             :class="
               isOpen(table.table_id) ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'
@@ -29,11 +29,7 @@
         </button>
         <i class="fa-solid fa-table table-icon"></i>
         <h3 class="table-name">{{ table.name }}</h3>
-        <SemanticStatusChip
-          v-if="needsReview(table.facts.description)"
-          :status="table.facts.description!.status"
-          :fact="table.facts.description"
-        />
+        <SemanticStatusChip :fact="table.facts.description" />
         <span class="table-count">{{ table.fields.length }} columns</span>
         <el-tooltip content="Open table" placement="top" :show-after="300">
           <button
@@ -66,12 +62,17 @@ import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
-import type { SemanticModel, SemanticProposal, SemanticTable } from "../../../types/semantic.types";
+import {
+  errorText,
+  type SemanticModel,
+  type SemanticProposal,
+  type SemanticTable,
+} from "../../../types/semantic.types";
 import SemanticColumnGrid from "./SemanticColumnGrid.vue";
 import SemanticInlineText from "./SemanticInlineText.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
 import SemanticSuggestMore from "./SemanticSuggestMore.vue";
-import { errorText, needsReview, tablePageLocation } from "./semanticFormat";
+import { notePending, tablePageLocation } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
 const emit = defineEmits<{ "open-tab": [tab: string] }>();
@@ -85,7 +86,7 @@ let focusTimer: ReturnType<typeof setTimeout> | undefined;
 async function focusRequested() {
   const id = store.focusTableId;
   if (id === null) return;
-  store.requestFocusTable(null);
+  store.focusTableId = null;
   if (!props.model.tables.some((t) => t.table_id === id)) return;
   if (closed.value.has(id)) toggle(id);
   focusedId.value = id;
@@ -111,10 +112,7 @@ const toggle = (id: number) => {
 
 async function send(proposal: SemanticProposal) {
   try {
-    const facts = await store.propose([proposal]);
-    if (facts.some((f) => f.status !== "accepted")) {
-      ElMessage.info("Proposed. It waits in the Review tab.");
-    }
+    notePending(await store.propose([proposal]));
   } catch (e) {
     ElMessage.error(errorText(e, "Could not save the change"));
   }
@@ -124,32 +122,15 @@ const saveTable = (table: SemanticTable, value: string) =>
   send({ kind: "table", table_id: table.table_id, attribute: "description", value });
 </script>
 
+<style scoped src="./semantic.css"></style>
+
 <style scoped>
-.tables-tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-4);
-}
-
-.table-card {
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  padding: var(--spacing-3) var(--spacing-4);
-}
-
-.table-head {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-}
-
 .collapse-btn {
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
   width: 20px;
+}
+
+.collapse-btn:hover {
+  color: var(--color-text-muted);
 }
 
 .table-icon {
@@ -165,25 +146,6 @@ const saveTable = (table: SemanticTable, value: string) =>
 .table-card.focused {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px var(--color-primary-light, rgba(59, 130, 246, 0.25));
-}
-
-.open-table-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: var(--border-radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font-size: var(--font-size-xs);
-}
-
-.open-table-btn:hover {
-  background: var(--color-background-tertiary);
-  color: var(--color-primary);
 }
 
 .table-name {
@@ -205,9 +167,5 @@ const saveTable = (table: SemanticTable, value: string) =>
 .muted {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
-}
-
-.hint {
-  margin: 0;
 }
 </style>

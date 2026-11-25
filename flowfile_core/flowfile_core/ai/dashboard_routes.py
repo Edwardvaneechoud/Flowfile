@@ -51,6 +51,7 @@ from flowfile_core.ai.dashboard_story import (
 from flowfile_core.ai.feature_flag import send_data_allowed
 from flowfile_core.ai.node_codegen_routes import _ensure_known_provider, _resolve_provider
 from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.catalog.semantic.confidentiality import read_withheld
 from flowfile_core.database.connection import get_db
 
 router = APIRouter()
@@ -161,7 +162,7 @@ async def dashboard_story_route(
 
     by_id = {t.id: t for t in tables}
     keys = dict(zip(by_id, source_keys([t.name for t in tables]), strict=True))
-    withheld = await asyncio.to_thread(_read_withheld, db, list(by_id))
+    withheld = await asyncio.to_thread(read_withheld, db, list(by_id))
     measuring = body.send_values and send_data_allowed() and bool(body.charts)
     private = keep_private(tables=by_id, withheld=withheld, kpis=body.kpis, charts=body.charts, measuring=measuring)
     if measuring:
@@ -183,12 +184,6 @@ async def dashboard_story_route(
         timeout=body.timeout,
     )
     return answered_by(result, provider)
-
-
-def _read_withheld(db: Session, table_ids: list[int]) -> Any:
-    from flowfile_core.catalog.semantic.confidentiality import read_withheld
-
-    return read_withheld(db, table_ids)
 
 
 __all__ = ["router", "DashboardStoryRequest", "PlanDashboardRequest"]

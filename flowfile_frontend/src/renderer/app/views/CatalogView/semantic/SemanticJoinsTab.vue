@@ -1,5 +1,5 @@
 <template>
-  <div class="joins-tab">
+  <div class="stack">
     <SemanticSuggestMore
       :kinds="['join']"
       label="Suggest joins"
@@ -39,42 +39,22 @@
       />
     </div>
 
-    <p v-if="model.joins.length === 0" class="empty">No joins yet.</p>
-    <ul v-else class="join-list">
-      <SemanticJoinRow
-        v-for="join in model.joins"
-        :key="join.key"
-        :join="join"
-        :check="checkOf(join)"
-      >
-        <template #actions>
-          <button
-            v-if="join.can_remove"
-            type="button"
-            class="btn btn-ghost btn-danger btn-sm remove-btn"
-            data-testid="semantic-join-remove"
-            :disabled="removing !== null"
-            @click="removeJoin(join)"
-          >
-            <i class="fa-solid fa-trash"></i>
-            {{ removing === join.key ? "Removing…" : "Remove" }}
-          </button>
-        </template>
-        <template #check-actions>
-          <button
-            v-if="canFix(join)"
-            type="button"
-            class="btn btn-secondary btn-sm"
-            data-testid="semantic-join-fix"
-            :disabled="fixing !== null"
-            @click="fixDirection(join)"
-          >
-            <i class="fa-solid fa-right-left"></i>
-            {{ fixing === join.key ? "Fixing…" : "Fix direction" }}
-          </button>
-        </template>
-      </SemanticJoinRow>
-    </ul>
+    <p v-if="model.joins.length === 0" class="hint">No joins yet.</p>
+    <SemanticJoinList v-else :joins="model.joins" :namespace-id="model.namespace_id">
+      <template #check-actions="{ join }">
+        <button
+          v-if="canFix(join)"
+          type="button"
+          class="btn btn-secondary btn-sm"
+          data-testid="semantic-join-fix"
+          :disabled="fixing !== null"
+          @click="fixDirection(join)"
+        >
+          <i class="fa-solid fa-right-left"></i>
+          {{ fixing === join.key ? "Fixing…" : "Fix direction" }}
+        </button>
+      </template>
+    </SemanticJoinList>
 
     <SemanticJoinDialog v-model="showDialog" :namespace-id="model.namespace_id" />
   </div>
@@ -91,47 +71,27 @@ import {
   type Node,
   type VueFlowStore,
 } from "@vue-flow/core";
-import type { JoinCheck, SemanticJoin, SemanticModel } from "../../../types/semantic.types";
+import { errorText, type SemanticJoin, type SemanticModel } from "../../../types/semantic.types";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
 import SemanticJoinDialog from "./SemanticJoinDialog.vue";
-import SemanticJoinRow from "./SemanticJoinRow.vue";
+import SemanticJoinList from "./SemanticJoinList.vue";
 import SemanticSuggestMore from "./SemanticSuggestMore.vue";
-import { errorText } from "./semanticFormat";
-import { confirmRemoveJoin } from "./semanticRemoval";
+import { notePending, shortName } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
 const emit = defineEmits<{ "open-tab": [tab: string] }>();
 const store = useSemanticModelStore();
 const showDialog = ref(false);
 const fixing = ref<string | null>(null);
-const removing = ref<string | null>(null);
 
-// Re-measure when the tab opens and whenever a join's ends, columns or status change.
-const joinsSignature = computed(() =>
-  JSON.stringify([
-    props.model.namespace_id,
-    props.model.joins.map((j) => [
-      j.key,
-      j.from_table,
-      j.to_table,
-      j.from_columns,
-      j.to_columns,
-      j.status,
-    ]),
-  ]),
-);
-watch(joinsSignature, () => void store.checkJoins(), { immediate: true });
+const verdictOf = (join: SemanticJoin) => store.joinChecks[join.key]?.verdict;
 
-const checkOf = (join: SemanticJoin): JoinCheck | undefined => store.joinChecks[join.key];
-
-const isWrong = (join: SemanticJoin) => {
-  const verdict = checkOf(join)?.verdict;
-  return verdict === "reversed" || verdict === "many_to_many";
-};
+const isWrong = (join: SemanticJoin) =>
+  ["reversed", "many_to_many"].includes(verdictOf(join) ?? "");
 
 /** A reversed, accepted join this model owns can be re-proposed under its name with the sides swapped. */
 const canFix = (join: SemanticJoin) =>
-  checkOf(join)?.verdict === "reversed" &&
+  verdictOf(join) === "reversed" &&
   join.status === "accepted" &&
   join.from_table_id !== null &&
   join.to_table_id !== null &&
@@ -152,13 +112,11 @@ async function fixDirection(join: SemanticJoin) {
         description: join.description,
       },
     ]);
-    if (facts.some((f) => f.status !== "accepted")) {
-      ElMessage.info(
-        "Proposed with its sides swapped. It replaces this join once accepted in Review.",
-      );
-    } else {
-      ElMessage.success("Direction fixed.");
-    }
+    const waits = notePending(
+      facts,
+      "Proposed with its sides swapped. It replaces this join once accepted in Review.",
+    );
+    if (!waits) ElMessage.success("Direction fixed.");
   } catch (e) {
     ElMessage.error(errorText(e, "Could not fix the direction"));
   } finally {
@@ -166,40 +124,15 @@ async function fixDirection(join: SemanticJoin) {
   }
 }
 
-async function removeJoin(join: SemanticJoin) {
-  if (!(await confirmRemoveJoin(props.model.namespace_id, join))) return;
-  removing.value = join.key;
-  try {
-    await store.removeSubject(join.key);
-    ElMessage.success(`Removed ${join.name}.`);
-  } catch (e) {
-    ElMessage.error(errorText(e, "Could not remove the join"));
-  } finally {
-    removing.value = null;
-  }
-}
-
-const tableNames = computed(() => {
-  const names = new Set<string>();
-  for (const j of props.model.joins) {
-    names.add(j.from_table);
-    names.add(j.to_table);
-  }
-  return [...names];
-});
+const tableNames = computed(() => [
+  ...new Set(props.model.joins.flatMap((j) => [j.from_table, j.to_table])),
+]);
 
 /** The table's own name, or `schema.table` when two tables in the diagram share a name. */
-const shortNames = computed(() => {
-  const last = (key: string) => key.split(".").slice(-1)[0];
-  const counts = new Map<string, number>();
-  for (const key of tableNames.value) counts.set(last(key), (counts.get(last(key)) ?? 0) + 1);
-  return new Map(
-    tableNames.value.map((key) => [
-      key,
-      counts.get(last(key)) === 1 ? last(key) : key.split(".").slice(-2).join("."),
-    ]),
-  );
-});
+const labelOf = (key: string) => {
+  const unique = tableNames.value.filter((k) => shortName(k) === shortName(key)).length === 1;
+  return unique ? shortName(key) : key.split(".").slice(-2).join(".");
+};
 
 /** Column per table: the many side sits left, what it points at one step right. Capped, so a cycle ends. */
 const columns = computed(() => {
@@ -220,11 +153,9 @@ const columns = computed(() => {
   return column;
 });
 
-/** Tables joined to themselves: marked on their box, since a loop edge has nowhere sensible to go. */
-const selfJoined = computed(
-  () =>
-    new Set(props.model.joins.filter((j) => j.from_table === j.to_table).map((j) => j.from_table)),
-);
+// A table joined to itself is marked on its box, since a loop edge has nowhere sensible to go.
+const selfJoined = (key: string) =>
+  props.model.joins.some((j) => j.from_table === key && j.to_table === key);
 
 const nodes = computed<Node[]>(() => {
   const rows = new Map<number, number>();
@@ -234,7 +165,7 @@ const nodes = computed<Node[]>(() => {
     rows.set(col, row + 1);
     return {
       id: name,
-      label: `${shortNames.value.get(name) ?? name}${selfJoined.value.has(name) ? " ⟲" : ""}`,
+      label: `${labelOf(name)}${selfJoined(name) ? " ⟲" : ""}`,
       position: { x: col * 280, y: row * 80 },
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
@@ -268,18 +199,19 @@ watch([() => nodes.value.map((n) => n.id).join("|"), diagramHeight], fitDiagram,
 const edges = computed<Edge[]>(() =>
   props.model.joins
     .filter((j) => j.from_table !== j.to_table)
-    .map((j) => ({
-      id: j.key,
-      source: j.from_table,
-      target: j.to_table,
-      label: "many → one",
-      markerEnd: isWrong(j)
-        ? { type: MarkerType.ArrowClosed, color: "var(--color-warning-dark)" }
-        : MarkerType.ArrowClosed,
-      animated: j.status !== "accepted",
-      style: isWrong(j) ? { stroke: "var(--color-warning-dark)", strokeWidth: 2 } : undefined,
-      labelStyle: isWrong(j) ? { fill: "var(--color-warning-dark)" } : undefined,
-    })),
+    .map((j) => {
+      const color = isWrong(j) ? "var(--color-warning-dark)" : undefined;
+      return {
+        id: j.key,
+        source: j.from_table,
+        target: j.to_table,
+        label: "many → one",
+        markerEnd: color ? { type: MarkerType.ArrowClosed, color } : MarkerType.ArrowClosed,
+        animated: j.status !== "accepted",
+        style: color && { stroke: color, strokeWidth: 2 },
+        labelStyle: color && { fill: color },
+      };
+    }),
 );
 </script>
 
@@ -302,36 +234,12 @@ const edges = computed<Edge[]>(() =>
 }
 </style>
 
+<style scoped src="./semantic.css"></style>
+
 <style scoped>
-.joins-tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-4);
-}
-
-.hint,
-.empty {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-}
-
 .diagram {
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   background: var(--color-background-secondary);
-}
-
-.join-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.remove-btn {
-  white-space: nowrap;
 }
 </style>

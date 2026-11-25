@@ -64,7 +64,7 @@ A schema's semantic model (descriptions, joins, metrics, each with a review stat
 |---|---|---|
 | Ledger tables | Alembic `046_semantic_ledger.py` calls `glosslayer.schema.upgrade`; downgrade drops every `gloss_*` table | Same database and engine as the catalog, so SQLite and PostgreSQL both work |
 | Host | `catalog/semantic/host.py` | Builds `Gloss`, the `glosslayer-flowfile` catalog plugin and the embedded syncer once per process; rebuilt when `sharing_enabled()` flips, since the review policy (solo or team) comes from it |
-| Snapshot | `catalog/semantic/snapshot.py` | A view turned into plain dataclasses with status and version; no Pydantic or FastAPI |
+| Snapshot | `catalog/semantic/snapshot.py` | A view read into the API's own shapes (`schemas/semantic_schema.py`) with status and version; the compiler reads the same objects |
 | Service | `catalog/semantic/service.py` | `SemanticModelService(db, user, access)`: read, propose, review, history, sync, export, metric query. Ledger errors become the `Semantic*Error` types in `catalog/exceptions.py` and a refused decision becomes `NotAuthorizedError` |
 | Compiler | `catalog/semantic/compiler.py` | Pure: a snapshot and a `MetricQuery` become SQL, the tables it reads and the metric's version. No database, no glosslayer import |
 | Suggestions | `catalog/semantic/suggest.py`, `SemanticModelService.suggest` / `store_suggestions` | Pure rules for roles, joins (within the model's tables) and metrics over one aggregate query per table through the catalog SQL path; stored as proposals with source `inferred:flowfile-rules`, skipping what the model already holds |

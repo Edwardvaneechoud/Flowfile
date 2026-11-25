@@ -1,7 +1,7 @@
 <template>
-  <div class="review-tab">
+  <div class="stack">
     <div class="toolbar">
-      <p class="hint">
+      <p>
         <template v-if="store.reviewQueue.length === 0">Nothing is waiting for review.</template>
         <template v-else>
           {{ store.reviewQueue.length }} item{{ store.reviewQueue.length === 1 ? "" : "s" }} waiting
@@ -21,16 +21,19 @@
       </el-tooltip>
     </div>
 
-    <div v-if="store.reviewLoading && store.reviewQueue.length === 0" class="muted">Loading…</div>
+    <div v-if="store.reviewLoading && store.reviewQueue.length === 0" class="hint">Loading…</div>
 
-    <ul class="queue">
-      <li v-for="item in store.reviewQueue" :key="item.id" class="queue-item">
+    <ul class="list">
+      <li v-for="item in store.reviewQueue" :key="item.id" class="box queue-item">
         <div class="item-main">
-          <div class="item-title">
+          <div class="line item-title">
             <i :class="KIND_ICONS[item.subject_kind]"></i>
-            <span class="item-label">{{ item.subject_label }}</span>
+            <span class="name">{{ item.subject_label }}</span>
             <span class="item-kind">{{ item.subject_kind }}</span>
-            <SemanticSourceBadge :kind="item.source_kind" :source="item.source" />
+            <span class="source-badge" :class="`kind-${item.source_kind}`" :title="item.source">
+              <i :class="SOURCES[item.source_kind].icon"></i>
+              {{ SOURCES[item.source_kind].label }}
+            </span>
             <span v-if="item.confidence !== null" class="confidence">
               {{ Math.round(item.confidence * 100) }}% confident
             </span>
@@ -45,25 +48,21 @@
           <p v-if="item.rationale" class="rationale">{{ item.rationale }}</p>
         </div>
         <div class="item-actions">
-          <el-tooltip :content="blockedReason" :disabled="model.can_manage" placement="top">
+          <el-tooltip
+            v-for="action in ACTIONS"
+            :key="action.name"
+            :content="blockedReason"
+            :disabled="model.can_manage"
+            placement="top"
+          >
             <span>
               <button
-                class="btn btn-secondary btn-sm"
+                class="btn btn-sm"
+                :class="action.style"
                 :disabled="!model.can_manage || store.busy"
-                @click="decide(item, 'reject')"
+                @click="run([actionFor(item, action.name)], `${action.label}ed`)"
               >
-                Reject
-              </button>
-            </span>
-          </el-tooltip>
-          <el-tooltip :content="blockedReason" :disabled="model.can_manage" placement="top">
-            <span>
-              <button
-                class="btn btn-primary btn-sm"
-                :disabled="!model.can_manage || store.busy"
-                @click="decide(item, 'accept')"
-              >
-                Accept
+                {{ action.label }}
               </button>
             </span>
           </el-tooltip>
@@ -76,15 +75,15 @@
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
-import type {
-  SemanticFact,
-  SemanticModel,
-  SemanticReviewAction,
-  SemanticReviewItem,
+import {
+  errorText,
+  type SemanticFact,
+  type SemanticModel,
+  type SemanticReviewAction,
+  type SemanticReviewItem,
 } from "../../../types/semantic.types";
-import SemanticSourceBadge from "./SemanticSourceBadge.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
-import { attributeLabel, displayValue, errorText } from "./semanticFormat";
+import { SOURCES, attributeLabel, displayValue } from "./semanticFormat";
 
 defineProps<{ model: SemanticModel }>();
 
@@ -100,6 +99,11 @@ const KIND_ICONS: Record<SemanticReviewItem["subject_kind"], string> = {
   metric: "fa-solid fa-chart-line",
   type: "fa-solid fa-tag",
 };
+
+const ACTIONS = [
+  { name: "reject", label: "Reject", style: "btn-secondary" },
+  { name: "accept", label: "Accept", style: "btn-primary" },
+] as const;
 
 const factsOf = (item: SemanticReviewItem): SemanticFact[] =>
   item.group_facts.length > 0 ? item.group_facts : [item];
@@ -117,9 +121,6 @@ async function run(actions: SemanticReviewAction[], done: string) {
   }
 }
 
-const decide = (item: SemanticReviewItem, action: "accept" | "reject") =>
-  run([actionFor(item, action)], action === "accept" ? "Accepted" : "Rejected");
-
 function acceptAll() {
   const groups = new Set<string>();
   const ids: string[] = [];
@@ -133,48 +134,13 @@ function acceptAll() {
 }
 </script>
 
+<style scoped src="./semantic.css"></style>
+
 <style scoped>
-.review-tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-4);
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.hint {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2);
-}
-
-.muted {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-}
-
-.queue {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
 .queue-item {
   display: flex;
   justify-content: space-between;
   gap: var(--spacing-4);
-  padding: var(--spacing-3) var(--spacing-4);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
 }
 
 .item-main {
@@ -182,20 +148,31 @@ function acceptAll() {
 }
 
 .item-title {
-  display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: var(--spacing-2);
-}
-
-.item-label {
-  font-weight: var(--font-weight-semibold);
 }
 
 .item-kind,
 .confidence {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+}
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: 0 var(--spacing-2);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-light);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.kind-ai {
+  color: var(--color-primary);
 }
 
 .facts {

@@ -1,18 +1,12 @@
-"""The glosslayer ledger embedded in core: one per process, on core's own engine.
-
-The ledger's tables live in the catalog database (migration 046). ``host()`` builds ``Gloss`` + ``FlowfileCatalog`` +
-``Embedded`` lazily and rebuilds them when ``sharing_enabled()`` flips, because the review policy (solo on a
-desktop, team review where sharing is on) is chosen from it and ``FLOWFILE_MODE`` is read live.
+"""The glosslayer ledger embedded in core: one per process, on core's own engine (migration 046's tables).
 
 Dataset keys are a table's qualified ``catalog.schema.table`` name; namespace paths are ``catalog`` or
-``catalog.schema``. Access is handed to glosslayer as path prefixes (``view_for``). A prefix covers everything under
-it, so a catalog's path is only handed over when every schema under it is in the same set: otherwise reading or
-deciding the catalog-level layer would also open the schemas the person may not see.
+``catalog.schema``. Access is handed to glosslayer as path prefixes (``view_for``), and a prefix covers everything under
+it, so a catalog's path is only handed over when every schema under it is in the same set.
 
 The catalog hooks run after the catalog change is committed (a glosslayer write while another session holds an
-uncommitted SQLite write waits for the lock and fails) and never inside ``apply_transaction``, whose connection holds
-the write lock until it ends; ``sync()`` reconciles whatever a hook missed, except renames, which a pull sync can only
-see as drop + add, so a failed rename is logged as an error.
+uncommitted SQLite write waits for the lock and fails) and never inside ``apply_transaction``; ``sync()`` reconciles
+whatever a hook missed, except renames, which a pull sync can only see as drop + add, so a failed rename is an error.
 
 Every ``glosslayer`` / ``glosslayer_flowfile`` import is function-local, so core imports without them.
 """
@@ -21,6 +15,8 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,31 +43,31 @@ class _Host:
 class _CatalogPort:
     """The slice of ``CatalogService`` the plugin calls, each call on a short session of its own.
 
-    ``access`` is ``None`` so the plugin takes the listing as the whole local catalog. Tables whose key glosslayer
-    cannot hold (a ``::`` in a name) are left out, since one of them would abort the whole sync.
+    Tables whose key glosslayer cannot hold (a ``::`` in a name) are left out, since one would abort the whole sync.
     """
 
     access = None
 
-    def list_tables(self) -> list[Any]:
+    @staticmethod
+    @contextmanager
+    def _service() -> Iterator[Any]:
         from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
         from flowfile_core.catalog.service import CatalogService
         from flowfile_core.database.connection import get_db_context
 
         with get_db_context() as db:
-            tables = CatalogService(SQLAlchemyCatalogRepository(db)).list_tables()
-        return [t for t in tables if _keyable(t.qualified_name)]
+            yield CatalogService(SQLAlchemyCatalogRepository(db))
+
+    def list_tables(self) -> list[Any]:
+        with self._service() as service:
+            return [t for t in service.list_tables() if is_keyable(t.qualified_name)]
 
     def update_table(self, table_id: int, description: str | None = None) -> Any:
-        from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-        from flowfile_core.catalog.service import CatalogService
-        from flowfile_core.database.connection import get_db_context
-
-        with get_db_context() as db:
-            return CatalogService(SQLAlchemyCatalogRepository(db)).update_table(table_id, description=description)
+        with self._service() as service:
+            return service.update_table(table_id, description=description)
 
 
-def _keyable(key: str | None) -> bool:
+def is_keyable(key: str | None) -> bool:
     """Whether glosslayer can hold ``key`` as a dataset key; ``False`` (logged once) when it cannot."""
     try:
         from glosslayer.ids import SubjectId
@@ -111,84 +107,20 @@ def host() -> _Host:
         return _host
 
 
-def reset() -> None:
-    """Drop the process-wide ledger (tests, or after the database was swapped)."""
-    global _host
-    with _lock:
-        if _host is not None:
-            _host.embedded.close()
-        _host = None
-        _unkeyable_logged.clear()
-
-
-def _namespace_rows(db) -> dict[int, tuple[str, int | None, int]]:
-    from flowfile_core.database.models import CatalogNamespace
-
-    rows = db.query(CatalogNamespace.id, CatalogNamespace.name, CatalogNamespace.parent_id, CatalogNamespace.level)
-    return {ns_id: (name, parent_id, level) for ns_id, name, parent_id, level in rows}
-
-
-def _path_of(ns_id: int, rows: dict[int, tuple[str, int | None, int]]) -> str | None:
-    row = rows.get(ns_id)
-    if row is None:
-        return None
-    name, parent_id, _level = row
-    if parent_id is None:
-        return name
-    parent = _path_of(parent_id, rows)
-    return f"{parent}.{name}" if parent else name
-
-
-def namespace_path(namespace: Any, db=None) -> str:
+def namespace_path(namespace: Any, db: Any) -> str:
     """A namespace's dotted path: ``catalog`` for a catalog, ``catalog.schema`` for a schema."""
-    if namespace.parent_id is None:
-        return namespace.name
-    if db is None:
-        from flowfile_core.database.connection import get_db_context
-
-        with get_db_context() as session:
-            return namespace_path(namespace, session)
     from flowfile_core.database.models import CatalogNamespace
 
-    parent = db.get(CatalogNamespace, namespace.parent_id)
+    parent = db.get(CatalogNamespace, namespace.parent_id) if namespace.parent_id is not None else None
     return f"{namespace_path(parent, db)}.{namespace.name}" if parent is not None else namespace.name
 
 
-def table_key(table: Any, db=None) -> str:
-    """A table's dataset key: the plugin's ``table_key`` for a ``CatalogTableOut``, the qualified name for a row."""
-    if getattr(table, "qualified_name", None):
-        from glosslayer_flowfile import table_key as plugin_table_key
-
-        return plugin_table_key(table)
-    if table.namespace_id is None:
-        return table.name
-    if db is None:
-        from flowfile_core.database.connection import get_db_context
-
-        with get_db_context() as session:
-            return table_key(table, session)
+def table_key(table: Any, db: Any) -> str:
+    """A ``CatalogTable`` row's dataset key (its qualified name)."""
     from flowfile_core.database.models import CatalogNamespace
 
-    ns = db.get(CatalogNamespace, table.namespace_id)
+    ns = db.get(CatalogNamespace, table.namespace_id) if table.namespace_id is not None else None
     return f"{namespace_path(ns, db)}.{table.name}" if ns is not None else table.name
-
-
-def _closed_paths(ns_ids: set[int], rows: dict[int, tuple[str, int | None, int]]) -> list[str]:
-    """Paths of ``ns_ids``; a catalog only when every schema under it is in the set too."""
-    children: dict[int, list[int]] = {}
-    for ns_id, (_name, parent_id, _level) in rows.items():
-        if parent_id is not None:
-            children.setdefault(parent_id, []).append(ns_id)
-    paths = []
-    for ns_id in sorted(ns_ids):
-        if ns_id not in rows:
-            continue
-        if rows[ns_id][1] is None and not all(c in ns_ids for c in children.get(ns_id, ())):
-            continue
-        path = _path_of(ns_id, rows)
-        if path:
-            paths.append(path)
-    return paths
 
 
 def view_for(user: Any, access: Any, via: str | None = None) -> Any:
@@ -200,35 +132,37 @@ def view_for(user: Any, access: Any, via: str | None = None) -> Any:
     """
     embedded = host().embedded
     user_id = getattr(user, "id", None)
-    restricted = access is not None and access.restricted
-    if not restricted:
+    if access is None or not access.restricted:
         return embedded.view(user_id=user_id, admin=True, manage=(), read=None, via=via)
 
     from flowfile_core.database.models import CatalogNamespace, CatalogTable
 
     db = access.db
-    rows = _namespace_rows(db)
-    visible = access.visible_namespace_ids()
-    read = _closed_paths(visible, rows)
-    covered = set(read)
+    namespaces = {ns.id: ns for ns in db.query(CatalogNamespace)}
 
+    def closed_paths(ns_ids: set[int]) -> list[str]:
+        """Paths of ``ns_ids``; a catalog only when every schema under it is in the set too."""
+        open_catalogs = {ns.parent_id for ns in namespaces.values() if ns.id not in ns_ids}
+        kept = sorted((ns_ids & namespaces.keys()) - open_catalogs)
+        return [namespace_path(namespaces[i], db) for i in kept]
+
+    read = closed_paths(access.visible_namespace_ids())
+    covered = set(read)
     table_ids = access.accessible_ids("catalog_table")
     if table_ids:
-        tables = db.query(CatalogTable.id, CatalogTable.name, CatalogTable.namespace_id).filter(
-            CatalogTable.id.in_(table_ids)
-        )
-        for _tid, name, ns_id in tables:
-            ns_path = _path_of(ns_id, rows) if ns_id is not None else None
-            if ns_path is not None and ns_path in covered:
-                continue
-            read.append(f"{ns_path}.{name}" if ns_path else name)
+        for table in db.query(CatalogTable).filter(CatalogTable.id.in_(table_ids)):
+            key = table_key(table, db)
+            if key.rpartition(".")[0] not in covered:
+                read.append(key)
 
-    own = {r[0] for r in db.query(CatalogNamespace.id).filter(CatalogNamespace.owner_id == user_id)}
+    own = {ns.id for ns in namespaces.values() if ns.owner_id == user_id}
     granted = {ns_id for ns_id, perm in access.namespace_permissions().items() if perm == sharing.PERMISSION_MANAGE}
-    manage = _closed_paths(own | granted, rows)
-
     return embedded.view(
-        user_id=user_id, admin=bool(getattr(user, "is_admin", False)), manage=manage, read=read, via=via
+        user_id=user_id,
+        admin=bool(getattr(user, "is_admin", False)),
+        manage=closed_paths(own | granted),
+        read=read,
+        via=via,
     )
 
 
@@ -246,65 +180,59 @@ def _in_apply_transaction() -> bool:
     return _apply_connection.get() is not None
 
 
-def on_table_written(key: str) -> None:
-    """After a table was created or overwritten: re-read it so new and dropped columns reach the ledger."""
-    if _in_apply_transaction() or not _keyable(key):
-        return
+@contextmanager
+def _hook(level: int, what: str, *args: Any) -> Iterator[_Host]:
+    """The ledger under the lock for a catalog hook; a failure is logged, never raised into the catalog change."""
     try:
         with _lock:
-            h = host()
-            h.catalog.tables(refresh=True)
-            h.embedded.table_written(key)
+            yield host()
     except Exception:
-        logger.warning("Semantic ledger: could not record the write of %s", key, exc_info=True)
+        logger.log(level, f"Semantic ledger: could not {what}", *args, exc_info=True)
+
+
+def on_table_written(key: str) -> None:
+    """After a table was created or overwritten: re-read it so new and dropped columns reach the ledger."""
+    if _in_apply_transaction() or not is_keyable(key):
+        return
+    with _hook(logging.WARNING, "record the write of %s", key) as h:
+        h.catalog.tables(refresh=True)
+        h.embedded.table_written(key)
+
+
+def _rename_is_lost(old: str, new: str) -> bool:
+    if _in_apply_transaction():
+        logger.error("Semantic ledger: rename %s -> %s made inside a project apply is not recorded", old, new)
+        return True
+    return False
 
 
 def on_table_renamed(old_key: str, new_key: str) -> None:
     """After a table was renamed or moved: its facts follow it. A lost rename cannot be recovered by a sync."""
-    if old_key == new_key:
+    if old_key == new_key or _rename_is_lost(old_key, new_key):
         return
-    if _in_apply_transaction():
-        logger.error("Semantic ledger: rename %s -> %s made inside a project apply is not recorded", old_key, new_key)
-        return
-    if not _keyable(new_key):
+    if not is_keyable(new_key):
         logger.error("Semantic ledger: %s was renamed to %s, which cannot be a key; its facts stay", old_key, new_key)
         return
-    try:
-        with _lock:
-            host().embedded.table_renamed(old_key, new_key)
-    except Exception:
-        logger.error("Semantic ledger: could not move the facts of %s to %s", old_key, new_key, exc_info=True)
+    with _hook(logging.ERROR, "move the facts of %s to %s", old_key, new_key) as h:
+        h.embedded.table_renamed(old_key, new_key)
 
 
 def on_namespace_renamed(old_path: str, new_path: str, table_keys: list[tuple[str, str]]) -> None:
     """After a catalog or schema was renamed: everything under its path follows, then each table's record."""
-    if old_path == new_path:
+    if old_path == new_path or _rename_is_lost(old_path, new_path):
         return
-    if _in_apply_transaction():
-        logger.error("Semantic ledger: rename %s -> %s made inside a project apply is not recorded", old_path, new_path)
-        return
-    try:
-        with _lock:
-            h = host()
-            try:
-                h.gloss.rekey_namespace(old_path, new_path, actor=CATALOG_ACTOR, comment="renamed in the catalog")
-            except KeyError:
-                pass  # nothing was recorded under the old path
-            for old_key, new_key in table_keys:
-                if _keyable(new_key):
-                    h.embedded.table_renamed(old_key, new_key)
-    except Exception:
-        logger.error("Semantic ledger: could not move %s to %s", old_path, new_path, exc_info=True)
+    with _hook(logging.ERROR, "move %s to %s", old_path, new_path) as h:
+        with suppress(KeyError):  # nothing was recorded under the old path
+            h.gloss.rekey_namespace(old_path, new_path, actor=CATALOG_ACTOR, comment="renamed in the catalog")
+        for old_key, new_key in table_keys:
+            if is_keyable(new_key):
+                h.embedded.table_renamed(old_key, new_key)
 
 
 def on_table_deleted(key: str) -> None:
     """After a table was deleted: its facts are marked stale (kept, never removed)."""
-    if _in_apply_transaction() or not _keyable(key):
+    if _in_apply_transaction() or not is_keyable(key):
         return
-    try:
-        with _lock:
-            h = host()
-            h.catalog.tables(refresh=True)
-            h.embedded.table_deleted(key)
-    except Exception:
-        logger.warning("Semantic ledger: could not retire the facts of %s", key, exc_info=True)
+    with _hook(logging.WARNING, "retire the facts of %s", key) as h:
+        h.catalog.tables(refresh=True)
+        h.embedded.table_deleted(key)

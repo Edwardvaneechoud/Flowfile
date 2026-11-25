@@ -97,15 +97,14 @@ def _profile_warning(problem: str) -> str:
 def without_private_filters(chart: Any, profile: TableProfile) -> tuple[Any, list[str]]:
     """``chart`` (a chart request as sent) without its filters on columns kept from AI, whose values they carry."""
     kept = {c.name for c in profile.columns if c.private}
-    if not kept or not isinstance(chart, dict) or not isinstance(chart.get("filters"), list):
+    filters = chart.get("filters") if isinstance(chart, dict) else None
+    if not kept or not isinstance(filters, list):
         return chart, []
-    filters = chart["filters"]
-    keep = [f for f in filters if not (isinstance(f, dict) and f.get("field") in kept)]
-    if len(keep) == len(filters):
+    dropped = [f for f in filters if isinstance(f, dict) and f.get("field") in kept]
+    if not dropped:
         return chart, []
-    dropped = sorted({f["field"] for f in filters if isinstance(f, dict) and f.get("field") in kept})
-    names = ", ".join(f'"{n}"' for n in dropped)
-    return {**chart, "filters": keep or None}, [
+    names = ", ".join(f'"{n}"' for n in sorted({f["field"] for f in dropped}))
+    return {**chart, "filters": [f for f in filters if f not in dropped] or None}, [
         f"The current chart's filters on {names} were not sent to the model: the column is kept from AI."
     ]
 

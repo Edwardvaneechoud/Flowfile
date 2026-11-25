@@ -46,7 +46,7 @@
         </el-form-item>
       </div>
       <el-form-item label="Matching columns">
-        <div v-for="(pair, i) in pairs" :key="i" class="pair">
+        <div v-for="(pair, i) in pairs" :key="i" class="line pair">
           <el-select v-model="pair.from" filterable placeholder="From column" :disabled="!fromId">
             <el-option v-for="c in columnsOf(fromId)" :key="c" :label="c" :value="c" />
           </el-select>
@@ -57,7 +57,7 @@
           <button
             v-if="pairs.length > 1"
             type="button"
-            class="pair-remove"
+            class="icon-btn pair-remove"
             title="Remove"
             @click="pairs.splice(i, 1)"
           >
@@ -73,7 +73,7 @@
       </el-form-item>
     </el-form>
 
-    <div v-if="error" class="form-error" role="alert">
+    <div v-if="error" class="error form-error" role="alert">
       <p>{{ error }}</p>
       <button
         v-if="reversed"
@@ -98,27 +98,23 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { ElMessage } from "element-plus";
 import { useCatalogStore } from "../../../stores/catalog-store";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
-import type { SemanticFact, SemanticProposal } from "../../../types/semantic.types";
-import { errorText } from "./semanticFormat";
+import { errorText } from "../../../types/semantic.types";
+import { notePending } from "./semanticFormat";
 
 const props = defineProps<{
   modelValue: boolean;
   namespaceId: number;
-  /** Where the join goes; the open model panel's store by default. */
-  propose?: (proposals: SemanticProposal[]) => Promise<SemanticFact[]>;
   /** Said when the join waits for review. */
   pendingNote?: string;
 }>();
-const emit = defineEmits<(e: "update:modelValue", value: boolean) => void>();
+const emit = defineEmits<{
+  (e: "update:modelValue", value: boolean): void;
+  (e: "added", name: string, fromId: number, toId: number): void;
+}>();
 
-interface Pair {
-  from: string;
-  to: string;
-}
-const emptyPair = (): Pair => ({ from: "", to: "" });
+const emptyPair = () => ({ from: "", to: "" });
 
 const catalogStore = useCatalogStore();
 const store = useSemanticModelStore();
@@ -126,7 +122,7 @@ const store = useSemanticModelStore();
 const name = ref("");
 const fromId = ref<number | null>(null);
 const toId = ref<number | null>(null);
-const pairs = ref<Pair[]>([emptyPair()]);
+const pairs = ref([emptyPair()]);
 const description = ref("");
 const saving = ref(false);
 const error = ref("");
@@ -157,8 +153,7 @@ const valid = computed(
 );
 
 // Core's refusal of a join whose sides are the wrong way round starts with this sentence.
-const REVERSED_MARK = "wrong way round";
-const reversed = computed(() => error.value.includes(REVERSED_MARK));
+const reversed = computed(() => error.value.includes("wrong way round"));
 
 function swapSides() {
   [fromId.value, toId.value] = [toId.value, fromId.value];
@@ -185,8 +180,7 @@ async function save() {
   saving.value = true;
   error.value = "";
   try {
-    const send = props.propose ?? store.propose;
-    const facts = await send([
+    const facts = await store.propose([
       {
         kind: "join",
         name: name.value.trim(),
@@ -197,9 +191,8 @@ async function save() {
         description: description.value.trim() || null,
       },
     ]);
-    if (facts.some((f) => f.status !== "accepted")) {
-      ElMessage.info(props.pendingNote ?? "Proposed. It waits in the Review tab.");
-    }
+    emit("added", name.value.trim(), fromId.value, toId.value);
+    notePending(facts, props.pendingNote);
     emit("update:modelValue", false);
   } catch (e) {
     error.value = errorText(e, "Could not add the join");
@@ -208,6 +201,8 @@ async function save() {
   }
 }
 </script>
+
+<style scoped src="./semantic.css"></style>
 
 <style scoped>
 .convention {
@@ -226,22 +221,13 @@ async function save() {
 }
 
 .pair {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
   width: 100%;
   margin-bottom: var(--spacing-2);
 }
 
-.pair-arrow {
+.pair-arrow,
+.pair-remove:hover {
   color: var(--color-text-muted);
-}
-
-.pair-remove {
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
 }
 
 .form-error {
@@ -249,8 +235,6 @@ async function save() {
   flex-direction: column;
   align-items: flex-start;
   gap: var(--spacing-2);
-  color: var(--color-danger);
-  font-size: var(--font-size-sm);
 }
 
 .form-error p {

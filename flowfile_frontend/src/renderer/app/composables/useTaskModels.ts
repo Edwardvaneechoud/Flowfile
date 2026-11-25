@@ -1,6 +1,6 @@
 import { computed } from "vue";
 import { useAiStore } from "../stores/ai-store";
-import type { SurfaceModel } from "../stores/ai-store-persistence";
+import type { SemanticModelPick } from "../types/semantic.types";
 import { LOCAL_PROVIDER_ID, LOCAL_PROVIDER_LABEL } from "../views/AiSettingsView/localModelApi";
 
 export const SEMANTIC_ASK_SURFACE = "semantic_ask";
@@ -8,18 +8,12 @@ export const SEMANTIC_SUGGEST_SURFACE = "semantic_suggest";
 
 // The semantic routes run the local model when no provider is named, so these tasks fall back to it first.
 const LOCAL_FIRST = new Set([SEMANTIC_ASK_SURFACE, SEMANTIC_SUGGEST_SURFACE]);
-// The backend's per-provider model preset is keyed by its own surface name.
-const PRESET_KEY: Record<string, string> = {
-  [SEMANTIC_ASK_SURFACE]: "semantic",
-  [SEMANTIC_SUGGEST_SURFACE]: "semantic",
-};
-
-/** Which provider and model a task runs on, why, and what a semantic request sends for it. */
-export interface TaskModelPlan {
+/** Which provider and model a task runs on, and what a semantic request sends for it. */
+interface TaskModelPlan {
   provider: string | null;
   model: string | null;
-  source: "task" | "local" | "main" | "none";
-  send: { provider?: string; model?: string };
+  follows?: boolean;
+  send: SemanticModelPick;
 }
 
 /** Keep the selected model as a valid option even when the provider's list does not offer it. */
@@ -51,21 +45,7 @@ export function useTaskModels() {
     name !== null &&
     aiStore.providers.some((p) => p.provider === name && p.status === "unconfigured");
 
-  /** A page loaded before the split may still hold the one ``semantic`` pick; it serves both tasks. */
-  function ownPick(surface: string): SurfaceModel | null {
-    const own = aiStore.surfaceModels[surface];
-    if (own) return own;
-    return LOCAL_FIRST.has(surface) ? (aiStore.surfaceModels.semantic ?? null) : null;
-  }
-
-  function splitLegacy(): void {
-    const legacy = aiStore.surfaceModels.semantic;
-    if (!legacy) return;
-    for (const surface of LOCAL_FIRST) {
-      if (!aiStore.surfaceModels[surface]) aiStore.setSurfaceModel(surface, legacy);
-    }
-    aiStore.setSurfaceModel("semantic", null);
-  }
+  const ownPick = (surface: string) => aiStore.surfaceModels[surface] ?? null;
 
   const taskModels = (surface: string): string[] => {
     const pick = ownPick(surface);
@@ -73,12 +53,10 @@ export function useTaskModels() {
   };
 
   function setTaskProvider(surface: string, value: string): void {
-    splitLegacy();
     aiStore.setSurfaceModel(surface, value ? { provider: value, model: null } : null);
   }
 
   function setTaskModel(surface: string, value: string): void {
-    splitLegacy();
     const pick = aiStore.surfaceModels[surface];
     if (pick) aiStore.setSurfaceModel(surface, { provider: pick.provider, model: value || null });
   }
@@ -87,7 +65,8 @@ export function useTaskModels() {
     if (provider === LOCAL_PROVIDER_ID) return aiStore.localModelStatus?.selectedModelId ?? model;
     if (model) return model;
     const meta = aiStore.providers.find((p) => p.provider === provider);
-    const preset = meta?.surfaces?.[PRESET_KEY[surface] ?? surface];
+    // The backend keeps one model preset per provider for both semantic tasks.
+    const preset = meta?.surfaces?.[LOCAL_FIRST.has(surface) ? "semantic" : surface];
     return preset ?? meta?.credential?.defaultModel ?? meta?.defaultModel ?? null;
   }
 
@@ -98,7 +77,6 @@ export function useTaskModels() {
       return {
         provider: own.provider,
         model: modelName(own.provider, own.model, surface),
-        source: "task",
         send: { provider: own.provider, ...(own.model ? { model: own.model } : {}) },
       };
     }
@@ -106,17 +84,16 @@ export function useTaskModels() {
       return {
         provider: LOCAL_PROVIDER_ID,
         model: modelName(LOCAL_PROVIDER_ID, null, surface),
-        source: "local",
         send: {},
       };
     }
     const main = aiStore.selectedProvider;
-    if (!main) return { provider: null, model: null, source: "none", send: {} };
+    if (!main) return { provider: null, model: null, send: {} };
     const model = aiStore.selectedModel;
     return {
       provider: main,
       model: model ? modelName(main, model, surface) : null,
-      source: "main",
+      follows: true,
       send: { provider: main, ...(model ? { model } : {}) },
     };
   }
@@ -129,7 +106,7 @@ export function useTaskModels() {
       return p.model ? `Uses ${p.model} on this computer` : "Uses the model on this computer";
     }
     if (!p.model) {
-      return p.source === "main"
+      return p.follows
         ? "Uses your main AI model"
         : `Uses the default model of ${providerLabel(p.provider)}`;
     }

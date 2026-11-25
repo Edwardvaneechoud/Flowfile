@@ -661,10 +661,9 @@ import type {
   CatalogTablePreview,
   CdcCursor,
   DeltaTableHistory,
-  NamespaceTree,
   TableCdcStatus,
 } from "../../types";
-import type { SemanticProposal } from "../../types/semantic.types";
+import { errorText, type SemanticProposal } from "../../types/semantic.types";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { pendingLabel } from "../../utils/catalogCdc";
@@ -677,6 +676,7 @@ import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { isHubRow } from "./hubRows";
 import SemanticColumnGrid from "./semantic/SemanticColumnGrid.vue";
+import { notePending } from "./semantic/semanticFormat";
 import { useTableSemantics } from "../../composables/useTableSemantics";
 import { recallHistoryRows, rememberHistoryRows } from "./tableHistoryRows";
 
@@ -717,18 +717,10 @@ const isHub = computed(() => isHubRow(props.table));
 
 const catalogStore = useCatalogStore();
 
-function findTreeTable(nodes: NamespaceTree[], id: number): CatalogTable | null {
-  for (const node of nodes) {
-    const hit = (node.tables ?? []).find((t) => t.id === id) ?? findTreeTable(node.children, id);
-    if (hit) return hit;
-  }
-  return null;
-}
-
 const semanticLink = computed(() => {
   const namespaceId = props.table.namespace_id;
   if (isHub.value || namespaceId === null || namespaceId === undefined) return null;
-  const m = findTreeTable(catalogStore.tree, props.table.id)?.semantic_model;
+  const m = catalogStore.findTableInTree(props.table.id)?.semantic_model;
   const pending = m?.pending ?? 0;
   return { namespaceId, facts: m ? m.accepted + m.pending + m.stale : 0, pending };
 });
@@ -744,11 +736,9 @@ const { semanticTable, propose: proposeFacts } = useTableSemantics(computed(() =
 
 async function saveProposal(proposal: SemanticProposal) {
   try {
-    if (!(await proposeFacts([proposal]))) {
-      ElMessage.info("Proposed. It waits in the Review tab.");
-    }
+    notePending(await proposeFacts([proposal]));
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : "Could not save the change");
+    ElMessage.error(errorText(e, "Could not save the change"));
   }
 }
 

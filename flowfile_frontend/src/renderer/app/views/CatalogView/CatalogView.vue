@@ -1183,7 +1183,7 @@ function selectSemanticModel(namespaceId: number, tableId: number | null = null)
     selectNamespace(namespaceId);
     return;
   }
-  semanticModelStore.requestFocusTable(tableId);
+  semanticModelStore.focusTableId = tableId;
   router.push({
     name: "catalog",
     query: { tab: "catalog", semanticNamespaceId: String(namespaceId) },

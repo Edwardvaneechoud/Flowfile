@@ -1,5 +1,5 @@
 <template>
-  <div class="metrics-tab">
+  <div class="stack">
     <SemanticSuggestMore
       :kinds="['metric']"
       label="Suggest metrics"
@@ -19,29 +19,34 @@
       </button>
     </SemanticSuggestMore>
 
-    <p v-if="groups.length === 0" class="empty">No metrics yet.</p>
+    <p v-if="tables.length === 0" class="hint">No metrics yet.</p>
 
-    <section v-for="group in groups" :key="group.table.table_id" class="metric-group">
+    <section v-for="table in tables" :key="table.table_id">
       <h3 class="group-title">
-        <i class="fa-solid fa-table"></i> {{ group.table.name }}
+        <i class="fa-solid fa-table"></i> {{ table.name }}
         <el-tooltip content="Open table" placement="top" :show-after="300">
           <button
             class="open-table-btn"
             type="button"
             aria-label="Open table"
-            @click="router.push(tablePageLocation(group.table.table_id))"
+            @click="router.push(tablePageLocation(table.table_id))"
           >
             <i class="fa-solid fa-arrow-up-right-from-square"></i>
           </button>
         </el-tooltip>
       </h3>
       <div class="cards">
-        <article v-for="metric in group.metrics" :key="metric.key" class="metric-card">
-          <header class="card-head">
-            <span class="metric-name">{{ metric.name }}</span>
+        <article v-for="metric in table.metrics" :key="metric.key" class="box">
+          <header class="line">
+            <span class="name">{{ metric.name }}</span>
             <SemanticStatusChip :status="metric.status" />
             <span v-if="metric.version" class="version">v{{ metric.version }}</span>
-            <button class="icon-btn" type="button" title="Edit metric" @click="openEditor(metric)">
+            <button
+              class="icon-btn edit-btn"
+              type="button"
+              title="Edit metric"
+              @click="openEditor(metric)"
+            >
               <i class="fa-solid fa-pen"></i>
             </button>
             <button
@@ -61,8 +66,8 @@
               ></i>
             </button>
           </header>
-          <p v-if="metric.description" class="metric-desc">{{ metric.description }}</p>
-          <pre class="expression">{{ metric.expression }}</pre>
+          <p v-if="metric.description" class="hint metric-desc">{{ metric.description }}</p>
+          <pre class="code expression">{{ metric.expression }}</pre>
           <dl class="meta">
             <template v-if="metric.filter">
               <dt>Filter</dt>
@@ -81,7 +86,7 @@
               <dd>{{ metric.approved_by }}</dd>
             </template>
           </dl>
-          <p v-if="metric.pending_group" class="pending-note">
+          <p v-if="metric.pending_group" class="note warn pending-note">
             <i class="fa-solid fa-clock"></i> A change is waiting in the Review tab.
           </p>
         </article>
@@ -100,42 +105,22 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
 import type { SemanticMetric, SemanticModel } from "../../../types/semantic.types";
 import MetricEditorDialog from "./MetricEditorDialog.vue";
 import SemanticStatusChip from "./SemanticStatusChip.vue";
 import SemanticSuggestMore from "./SemanticSuggestMore.vue";
-import { useSemanticModelStore } from "../../../stores/semantic-model-store";
-import { errorText, tablePageLocation } from "./semanticFormat";
-import { confirmRemoveMetric } from "./semanticRemoval";
+import { tablePageLocation } from "./semanticFormat";
+import { useSemanticRemoval } from "./semanticRemoval";
 
 const props = defineProps<{ model: SemanticModel }>();
 const emit = defineEmits<{ "open-tab": [tab: string] }>();
 const router = useRouter();
 
-const store = useSemanticModelStore();
+const { removing, removeMetric } = useSemanticRemoval();
 const showEditor = ref(false);
 const editing = ref<SemanticMetric | null>(null);
-const removing = ref<string | null>(null);
 
-const groups = computed(() =>
-  props.model.tables
-    .filter((t) => t.metrics.length > 0)
-    .map((t) => ({ table: t, metrics: t.metrics })),
-);
-
-async function removeMetric(metric: SemanticMetric) {
-  if (!(await confirmRemoveMetric(metric))) return;
-  removing.value = metric.key;
-  try {
-    await store.removeSubject(metric.key);
-    ElMessage.success(`Removed ${metric.name}.`);
-  } catch (e) {
-    ElMessage.error(errorText(e, "Could not remove the metric"));
-  } finally {
-    removing.value = null;
-  }
-}
+const tables = computed(() => props.model.tables.filter((t) => t.metrics.length > 0));
 
 function openEditor(metric: SemanticMetric | null) {
   editing.value = metric;
@@ -143,48 +128,13 @@ function openEditor(metric: SemanticMetric | null) {
 }
 </script>
 
+<style scoped src="./semantic.css"></style>
+
 <style scoped>
-.metrics-tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-4);
-}
-
-.hint,
-.empty {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-}
-
 .open-table-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 22px;
   height: 22px;
   margin-left: var(--spacing-1);
-  border: none;
-  border-radius: var(--border-radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font-size: var(--font-size-xs);
-  vertical-align: middle;
-}
-
-.open-table-btn:hover {
-  background: var(--color-background-tertiary);
-  color: var(--color-primary);
-}
-
-.group-title {
-  margin: 0 0 var(--spacing-2);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .cards {
@@ -193,63 +143,21 @@ function openEditor(metric: SemanticMetric | null) {
   gap: var(--spacing-3);
 }
 
-.metric-card {
-  padding: var(--spacing-3) var(--spacing-4);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-}
-
-.card-head {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-}
-
-.metric-name {
-  font-weight: var(--font-weight-semibold);
-}
-
 .version {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
 
-.icon-btn {
+.edit-btn {
   margin-left: auto;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-.icon-btn:hover {
-  color: var(--color-primary);
-}
-
-.icon-btn + .icon-btn {
-  margin-left: 0;
-}
-
-.icon-btn-danger:hover {
-  color: var(--color-danger);
 }
 
 .metric-desc {
-  margin: var(--spacing-1) 0 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  margin-top: var(--spacing-1);
 }
 
 .expression {
   margin: var(--spacing-2) 0;
-  padding: var(--spacing-2) var(--spacing-3);
-  border-radius: var(--border-radius-sm);
-  background: var(--color-background-secondary);
-  font-family: var(--font-family-mono, monospace);
-  font-size: var(--font-size-xs);
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .meta {
@@ -269,8 +177,6 @@ function openEditor(metric: SemanticMetric | null) {
 }
 
 .pending-note {
-  margin: var(--spacing-2) 0 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-warning-dark);
+  margin-top: var(--spacing-2);
 }
 </style>

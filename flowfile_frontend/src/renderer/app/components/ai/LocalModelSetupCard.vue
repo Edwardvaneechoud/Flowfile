@@ -1,72 +1,41 @@
 <template>
-  <div
-    v-if="visible"
-    class="local-setup-card"
-    :class="{ 'local-setup-card--compact': compact }"
-    data-testid="local-model-setup-card"
-  >
-    <template v-if="loading && !status">
-      <span class="local-setup-card__muted">Checking this computer…</span>
-    </template>
+  <div v-if="visible" class="local-setup-card" data-testid="local-model-setup-card">
+    <span v-if="!status" class="local-setup-card__muted">Checking this computer…</span>
 
-    <template v-else-if="!available">
-      <span class="local-setup-card__muted">
-        On-device AI is not available on this operating system.
-      </span>
-    </template>
-
-    <template v-else-if="installing">
-      <div class="local-setup-card__progress">
-        <div class="local-setup-card__label">
-          <span>{{ phaseLabel }}</span>
-          <span v-if="installPct !== null">{{ installPct }}%</span>
-        </div>
-        <div class="local-setup-card__track">
-          <div
-            class="local-setup-card__bar"
-            :class="{ 'is-indeterminate': installPct === null }"
-            :style="installPct !== null ? { width: installPct + '%' } : undefined"
-          ></div>
-        </div>
+    <div v-else-if="installing" class="local-setup-card__progress">
+      <div class="local-setup-card__label">
+        <span>{{ phaseLabel }}</span>
+        <span v-if="installPct !== null">{{ installPct }}%</span>
       </div>
-    </template>
+      <div class="local-setup-card__track">
+        <div
+          class="local-setup-card__bar"
+          :class="{ 'is-indeterminate': installPct === null }"
+          :style="installPct !== null ? { width: installPct + '%' } : undefined"
+        ></div>
+      </div>
+    </div>
 
-    <template v-else-if="installed">
-      <span class="local-setup-card__ready">
-        <i class="fa-solid fa-circle-check"></i>
-        AI on this computer is ready
-      </span>
-    </template>
+    <span v-else-if="installed" class="local-setup-card__ready">
+      <i class="fa-solid fa-circle-check"></i>
+      AI on this computer is ready
+    </span>
 
     <template v-else>
       <div class="local-setup-card__text">
-        <div class="local-setup-card__title">{{ title ?? "Use AI on this computer" }}</div>
-        <div v-if="!compact" class="local-setup-card__desc">
-          {{ description ?? defaultDescription }}
-        </div>
+        <div class="local-setup-card__title">{{ title }}</div>
         <div v-if="installError" class="local-setup-card__error" role="alert">
           Install failed: {{ installError }}
         </div>
-        <button
-          v-if="!compact"
-          type="button"
-          class="local-setup-card__link"
-          @click="emit('open-settings')"
-        >
-          Use an online provider instead
-        </button>
       </div>
       <div class="local-setup-card__actions">
-        <button type="button" class="local-setup-card__btn" @click="install()">
+        <button type="button" class="local-setup-card__btn" @click="install">
           <i class="fa-solid fa-download"></i>
-          <span>{{ installError ? "Retry" : buttonLabel }}</span>
+          <span>{{
+            installError ? "Retry" : downloadLabel ? `Install (${downloadLabel})` : "Install"
+          }}</span>
         </button>
-        <button
-          v-if="compact"
-          type="button"
-          class="local-setup-card__link"
-          @click="emit('open-settings')"
-        >
+        <button type="button" class="local-setup-card__link" @click="emit('open-settings')">
           Use an online provider instead
         </button>
       </div>
@@ -78,20 +47,8 @@
 import { computed, onMounted } from "vue";
 import { useLocalModelInstall } from "../../composables/useLocalModelInstall";
 
-const props = withDefaults(
-  defineProps<{
-    compact?: boolean;
-    title?: string;
-    description?: string;
-    showUnavailable?: boolean;
-  }>(),
-  { compact: false, title: undefined, description: undefined, showUnavailable: false },
-);
-
-const emit = defineEmits<{
-  (e: "installed"): void;
-  (e: "open-settings"): void;
-}>();
+defineProps<{ title: string }>();
+const emit = defineEmits<{ (e: "installed"): void; (e: "open-settings"): void }>();
 
 const {
   status,
@@ -100,50 +57,27 @@ const {
   installPct,
   installError,
   phaseLabel,
-  available,
   installed,
   downloadLabel,
   load,
   install,
-} = useLocalModelInstall({ onInstalled: () => emit("installed") });
+} = useLocalModelInstall(() => emit("installed"));
 
-const visible = computed(() => {
-  if (loading.value && !status.value) return true;
-  if (!status.value) return false;
-  return available.value || props.showUnavailable;
-});
+const visible = computed(() => (status.value ? status.value.available === true : loading.value));
 
-const defaultDescription = computed(
-  () =>
-    "It runs on this computer and nothing leaves it." +
-    (downloadLabel.value ? ` One-time download of about ${downloadLabel.value}.` : ""),
-);
-
-const buttonLabel = computed(() =>
-  downloadLabel.value ? `Install (${downloadLabel.value})` : "Install",
-);
-
-onMounted(() => {
-  void load();
-});
+onMounted(load);
 </script>
 
 <style scoped>
 .local-setup-card {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--spacing-3);
-  padding: var(--spacing-4);
+  padding: var(--spacing-2) var(--spacing-3);
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   background-color: var(--color-background-secondary);
-}
-
-.local-setup-card--compact {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-2) var(--spacing-3);
 }
 
 .local-setup-card__title {
@@ -151,7 +85,6 @@ onMounted(() => {
   color: var(--color-text-primary);
 }
 
-.local-setup-card__desc,
 .local-setup-card__muted {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);

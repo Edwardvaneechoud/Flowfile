@@ -71,7 +71,7 @@
         class="ask-box"
         :pending="suggesting || store.busy"
         @suggest-model="suggest()"
-        @review="openReview"
+        @review="openTab('review')"
       />
 
       <div class="progress" data-testid="semantic-progress">
@@ -82,14 +82,8 @@
           status="success"
         />
         <div class="progress-legend">
-          <span
-            ><strong>{{ model.progress.accepted }}</strong> accepted</span
-          >
-          <span
-            ><strong>{{ model.progress.pending }}</strong> pending</span
-          >
-          <span
-            ><strong>{{ model.progress.stale }}</strong> stale</span
+          <span v-for="count in PROGRESS" :key="count"
+            ><strong>{{ model.progress[count] }}</strong> {{ count }}</span
           >
         </div>
       </div>
@@ -106,11 +100,11 @@
         <div class="notice-row">
           <p>
             {{ activityResult.text }}
-            <a v-if="activityResult.ok" href="#" @click.prevent="openReview">Review</a>
+            <a v-if="activityResult.ok" href="#" @click.prevent="openTab('review')">Review</a>
           </p>
           <button
             type="button"
-            class="notice-close"
+            class="icon-btn"
             title="Dismiss"
             data-testid="suggest-notice-dismiss"
             @click="dismissResult"
@@ -119,16 +113,15 @@
           </button>
         </div>
         <template v-if="warningsRun === activity.last?.finished_at">
-          <p v-for="line in suggestWarnings" :key="line" class="suggest-warning">{{ line }}</p>
+          <p v-for="line in suggestWarnings" :key="line" class="note suggest-warning">{{ line }}</p>
         </template>
       </div>
 
       <LocalModelSetupCard
-        v-if="showLocalOffer"
-        compact
+        v-if="canOfferLocal"
         class="local-offer"
         title="Let AI on this computer write the descriptions"
-        @installed="onLocalInstalled"
+        @installed="suggest(true)"
         @open-settings="router.push({ name: 'ai' })"
       />
 
@@ -140,7 +133,7 @@
           reviewed before it counts, so you always know who said what.
         </p>
         <div class="empty-actions">
-          <button class="btn btn-secondary" @click="start">
+          <button class="btn btn-secondary" @click="openTab('tables')">
             <i class="fa-solid fa-table"></i> Describe your tables
           </button>
           <el-tooltip :content="SUGGEST_BUSY_TEXT" :disabled="!busy" placement="top">
@@ -155,7 +148,6 @@
               </button>
             </span>
           </el-tooltip>
-          <slot name="empty-actions" />
         </div>
       </section>
 
@@ -191,10 +183,13 @@ import { ElMessage } from "element-plus";
 import LocalModelSetupCard from "../../components/ai/LocalModelSetupCard.vue";
 import { SUGGEST_BUSY_TEXT, useSemanticActivity } from "../../composables/useSemanticActivity";
 import { useSemanticAi } from "../../composables/useSemanticAi";
+import { countsText, ruleCounts } from "../../composables/useSemanticSuggest";
+import { SEMANTIC_SUGGEST_SURFACE } from "../../composables/useTaskModels";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useSemanticModelStore } from "../../stores/semantic-model-store";
 import { saveFile } from "../../utils/tableExport";
 import {
+  errorText,
   isAiNotSetUp,
   isSuggestRunning,
   type SemanticDraftOut,
@@ -209,7 +204,6 @@ import SemanticMetricsTab from "./semantic/SemanticMetricsTab.vue";
 import SemanticReviewTab from "./semantic/SemanticReviewTab.vue";
 import SemanticSuggestBox from "./semantic/SemanticSuggestBox.vue";
 import SemanticTablesTab from "./semantic/SemanticTablesTab.vue";
-import { errorText } from "./semantic/semanticFormat";
 
 const props = defineProps<{ namespaceId: number }>();
 const emit = defineEmits<{ close: [] }>();
@@ -221,6 +215,8 @@ interface SemanticTabDef {
   component: Component;
   count?: number;
 }
+
+const PROGRESS = ["accepted", "pending", "stale"] as const;
 
 const store = useSemanticModelStore();
 const catalogStore = useCatalogStore();
@@ -249,9 +245,7 @@ const statusText = computed(
   () => statusLine.value || (suggesting.value ? "Suggesting a model…" : ""),
 );
 const showSuggestBox = ref(false);
-const showLocalOffer = computed(() => canOfferLocal.value && !!model.value);
 
-// A later step appends its own entry here (for example an "Ask" tab).
 const tabs = computed<SemanticTabDef[]>(() => [
   { key: "tables", label: "Tables", icon: "fa-solid fa-table", component: SemanticTablesTab },
   { key: "ask", label: "Ask", icon: "fa-solid fa-circle-question", component: SemanticAskTab },
@@ -285,23 +279,21 @@ const displayName = computed(
   () => model.value?.name || catalogStore.getNamespaceName(props.namespaceId) || "Semantic model",
 );
 
-const isEmpty = computed(() => {
-  const m = model.value;
-  if (!m) return false;
-  const p = m.progress;
-  return (
-    p.accepted + p.pending + p.stale === 0 &&
-    m.joins.length === 0 &&
-    m.tables.every((t) => t.metrics.length === 0)
-  );
-});
+const total = computed(() =>
+  PROGRESS.reduce((sum, count) => sum + (model.value?.progress[count] ?? 0), 0),
+);
 
-const percentAccepted = computed(() => {
-  const p = model.value?.progress;
-  if (!p) return 0;
-  const total = p.accepted + p.pending + p.stale;
-  return total === 0 ? 0 : Math.round((p.accepted / total) * 100);
-});
+const isEmpty = computed(
+  () =>
+    !!model.value &&
+    total.value === 0 &&
+    model.value.joins.length === 0 &&
+    model.value.tables.every((t) => t.metrics.length === 0),
+);
+
+const percentAccepted = computed(
+  () => total.value && Math.round(((model.value?.progress.accepted ?? 0) / total.value) * 100),
+);
 
 const modeHint = computed(() =>
   model.value?.review_mode === "team"
@@ -309,23 +301,11 @@ const modeHint = computed(() =>
     : "You are the only person here, so your changes count right away.",
 );
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-
-function summarize(out: SuggestOut | SemanticDraftOut): string {
-  const parts = [
-    out.added.roles && plural(out.added.roles, "column role"),
-    out.added.joins && plural(out.added.joins, "join"),
-    out.added.metrics && plural(out.added.metrics, "metric"),
-    out.added.descriptions && plural(out.added.descriptions, "description"),
-  ].filter(Boolean) as string[];
-  if (parts.length === 0) {
-    return "Nothing new to propose: the model already holds every suggestion.";
-  }
-  const list =
-    parts.length === 1
-      ? parts[0]
-      : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
-  return `Proposed ${list}.`;
+function summarize(out: SuggestOut): string {
+  const found = countsText(ruleCounts(out));
+  return found
+    ? `Proposed ${found}.`
+    : "Nothing new to propose: the model already holds every suggestion.";
 }
 
 function warningsFor(out: SuggestOut | SemanticDraftOut): string[] {
@@ -353,18 +333,17 @@ async function suggest(withNewModel = false) {
   try {
     const out = await track(async (): Promise<SuggestOut | SemanticDraftOut> => {
       try {
-        return useAi ? await store.draftModel(pick("suggest")) : await store.suggestModel();
+        if (useAi) return await store.draftModel(pick(SEMANTIC_SUGGEST_SURFACE));
       } catch (e) {
-        if (!useAi || !isAiNotSetUp(e)) throw e;
-        return store.suggestModel();
+        if (!isAiNotSetUp(e)) throw e;
       }
+      return store.suggestModel();
     });
     const ready = withNewModel ? ["AI on this computer is ready and wrote the descriptions."] : [];
     suggestWarnings.value = [...ready, ...warningsFor(out)];
     warningsRun.value = activity.last?.finished_at ?? null;
     if (!activity.last?.finished_at) ElMessage.success(summarize(out));
-    started.value = true;
-    activeTab.value = "review";
+    openTab("review");
   } catch (e) {
     if (isSuggestRunning(e)) ElMessage.warning(SUGGEST_BUSY_TEXT);
     else ElMessage.error(errorText(e, "Could not suggest a model"));
@@ -378,18 +357,9 @@ function dismissResult() {
   suggestWarnings.value = [];
 }
 
-function onLocalInstalled() {
-  void suggest(true);
-}
-
-function start() {
+function openTab(tab: string) {
   started.value = true;
-  activeTab.value = "tables";
-}
-
-function openReview() {
-  started.value = true;
-  activeTab.value = "review";
+  activeTab.value = tab;
 }
 
 async function saveModel(body: SemanticModelUpdate) {
@@ -433,22 +403,9 @@ onMounted(() => {
 onUnmounted(detach);
 
 watch(
-  () => store.pendingAsk,
-  (query) => {
-    if (query) {
-      started.value = true;
-      activeTab.value = "ask";
-    }
-  },
-);
-
-watch(
   () => store.focusTableId,
   (id) => {
-    if (id !== null) {
-      started.value = true;
-      activeTab.value = "tables";
-    }
+    if (id !== null) openTab("tables");
   },
   { immediate: true },
 );
@@ -462,15 +419,14 @@ watch(
     warningsRun.value = null;
     showSuggestBox.value = false;
     void store.load(id);
-    if (old === undefined) attach(id);
-    else {
-      detach();
-      attach(id);
-    }
+    if (old !== undefined) detach();
+    attach(id);
   },
   { immediate: true },
 );
 </script>
+
+<style scoped src="./semantic/semantic.css"></style>
 
 <style scoped>
 .semantic-panel {
@@ -516,8 +472,6 @@ watch(
 
 .title-edit {
   flex: 0 1 auto;
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
 }
 
 .title-edit :deep(.inline-display) {
@@ -592,25 +546,12 @@ watch(
   gap: var(--spacing-3);
 }
 
-.notice-close {
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-.notice-close:hover {
+.notice-row .icon-btn:hover {
   color: var(--color-text-primary);
 }
 
 .suggest-notice.failed {
   color: var(--color-warning-dark);
-}
-
-.suggest-warning {
-  margin-top: var(--spacing-1);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
 }
 
 .local-offer {

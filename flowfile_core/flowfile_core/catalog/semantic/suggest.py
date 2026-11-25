@@ -1,24 +1,14 @@
 """Rule-based suggestions for a semantic model: column roles, joins and metrics, with no model involved.
 
-Everything here is pure except ``collect_stats``, which runs one aggregate SQL statement per table through the
-catalog SQL path, so the worker computes and only counts and numeric or temporal bounds come back. When the worker
-cannot be reached the rules propose only what a column's type alone tells, and say so.
-
-The rules read types and statistics, never what a name seems to mean, so a reviewer can read each candidate's
-evidence and agree or not:
-
-* **join**: a column of table A with the same name and type class as a column that is unique in table B, and that
-  repeats in A, gives A (many) to B (one); its column in A is then a key;
-* **key**: an integer or text column that is unique and non-null;
-* **time**: a date or datetime column;
-* **amount**: a numeric column that is not unique and not a key;
-* **category**: a boolean column, or a text column with few distinct values;
-* **metrics** per table: a row count, a sum and an average per amount column, a distinct count per foreign key.
+Everything here is pure except ``collect_stats``, which runs one aggregate SQL statement per table through the catalog
+SQL path. The rules read types and statistics, never what a name seems to mean, so a reviewer can read each
+candidate's evidence and agree or not (``column_role`` and ``suggest`` state them); without a worker they propose only
+what a column's type alone tells.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,22 +17,19 @@ from flowfile_core.catalog.semantic.snapshot import TableInfo
 
 RULE_SOURCE = "inferred:flowfile-rules"
 CATEGORY_MAX_DISTINCT = 20
+_TYPE_PREFIXES = {
+    "integer": ("int", "uint"),
+    "numeric": ("float", "decimal"),
+    "time": ("date",),
+    "string": ("str", "utf8", "categorical", "enum"),
+    "boolean": ("bool",),
+}
 
 
 def type_class(dtype: str | None) -> str:
     """``numeric``, ``integer``, ``time``, ``string``, ``boolean`` or ``other`` for a Polars dtype string."""
     d = (dtype or "").lower()
-    if d.startswith(("int", "uint")):
-        return "integer"
-    if d.startswith(("float", "decimal")):
-        return "numeric"
-    if d.startswith(("date", "datetime")):
-        return "time"
-    if d.startswith(("str", "utf8", "categorical", "enum")):
-        return "string"
-    if d.startswith("bool"):
-        return "boolean"
-    return "other"
+    return next((name for name, prefixes in _TYPE_PREFIXES.items() if d.startswith(prefixes)), "other")
 
 
 def _numeric(tc: str) -> bool:
@@ -104,38 +91,10 @@ def stats_sql(table: TableInfo) -> str:
         col = quote_ident(name)
         parts.append(f'COUNT(DISTINCT {col}) AS "d{i}"')
         parts.append(f'COUNT(*) - COUNT({col}) AS "n{i}"')
-        if _numeric(type_class(dtype)) or type_class(dtype) == "time":
+        if type_class(dtype) in ("integer", "numeric", "time"):
             parts.append(f'MIN({col}) AS "lo{i}"')
             parts.append(f'MAX({col}) AS "hi{i}"')
     return f"SELECT {', '.join(parts)} FROM {quote_ident(table.key)}"
-
-
-def names_only(table: TableInfo) -> TableStats:
-    return TableStats(table=table, columns=[ColumnStats(n, d) for n, d in table.columns])
-
-
-def parse_stats(table: TableInfo, columns: list[str], row: list[Any]) -> TableStats:
-    values = dict(zip(columns, row, strict=False))
-    out = TableStats(table=table, row_count=_int(values.get("__rows")), available=True)
-    for i, (name, dtype) in enumerate(table.columns):
-        out.columns.append(
-            ColumnStats(
-                name,
-                dtype,
-                distinct=_int(values.get(f"d{i}")),
-                nulls=_int(values.get(f"n{i}")),
-                min=values.get(f"lo{i}"),
-                max=values.get(f"hi{i}"),
-            )
-        )
-    return out
-
-
-def _int(value: Any) -> int | None:
-    try:
-        return int(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None
 
 
 def collect_stats(tables: Iterable[TableInfo], execute: Callable[[str], Any]) -> tuple[list[TableStats], str | None]:
@@ -150,21 +109,24 @@ def collect_stats(tables: Iterable[TableInfo], execute: Callable[[str], Any]) ->
     problem: str | None = None
     unreachable = False
     for t in tables:
+        ts = TableStats(t, columns=[ColumnStats(n, d) for n, d in t.columns])
+        out.append(ts)
         if unreachable or not t.columns:
-            out.append(names_only(t))
             continue
         try:
             result = execute(stats_sql(t))
         except ComputeError as exc:
             unreachable = True
             problem = f"Statistics were not available (compute unreachable: {exc}); rules used names and types only."
-            out.append(names_only(t))
             continue
         if result.error or not result.rows:
             problem = problem or f"Statistics for {t.name!r} failed ({result.error}); its rules used names and types."
-            out.append(names_only(t))
             continue
-        out.append(parse_stats(t, result.columns, result.rows[0]))
+        values = dict(zip(result.columns, result.rows[0], strict=False))
+        ts.available, ts.row_count = True, values.get("__rows")
+        for i, c in enumerate(ts.columns):
+            c.distinct, c.nulls = values.get(f"d{i}"), values.get(f"n{i}")
+            c.min, c.max = values.get(f"lo{i}"), values.get(f"hi{i}")
     return out, problem
 
 
@@ -182,8 +144,6 @@ class JoinCandidate:
     name: str
     from_table_id: int
     to_table_id: int
-    from_table: str
-    to_table: str
     from_columns: list[str]
     to_columns: list[str]
     description: str
@@ -203,7 +163,6 @@ class MetricCandidate:
     dimensions: list[str]
     confidence: float
     rationale: str
-    column: str | None = None
 
 
 @dataclass
@@ -259,8 +218,6 @@ def suggest(tables: list[TableStats]) -> Suggestions:
                         name=f"{a.table.name}_{b.table.name}",
                         from_table_id=a.table.table_id,
                         to_table_id=b.table.table_id,
-                        from_table=a.table.name,
-                        to_table=b.table.name,
                         from_columns=[c.name],
                         to_columns=[target.name],
                         description=f"Each {singular(a.table.name)} belongs to one {singular(b.table.name)}.",
@@ -284,7 +241,7 @@ def suggest(tables: list[TableStats]) -> Suggestions:
 
     by_id = {ts.table.table_id: ts for ts in tables}
     for ts in tables:
-        tid = ts.table.table_id
+        tid, table = ts.table.table_id, ts.table.name
         r = roles[tid]
         time_col = next((c.name for c in ts.columns if r.get(c.name) == "time"), None)
         dims = [c.name for c in ts.columns if r.get(c.name) == "category"]
@@ -296,79 +253,38 @@ def suggest(tables: list[TableStats]) -> Suggestions:
                     for c in other.columns
                     if roles[j.to_table_id].get(c.name) == "category"
                 ]
-        noun = singular(ts.table.name)
-        conf = 0.7 if ts.available else 0.5
-        evidence = f" ({ts.row_count} rows)" if ts.row_count is not None else ""
-        out.metrics.append(
-            MetricCandidate(
-                tid,
-                ts.table.name,
-                f"{noun}_count",
-                "COUNT(*)",
-                f"The number of {_words(ts.table.name)}.",
-                "count",
-                time_col,
-                dims,
-                conf,
-                f"Rule: every table gets a row count{evidence}.",
-            )
-        )
-        lookup_only = any(j.to_table_id == tid for j in out.joins) and not any(
-            j.from_table_id == tid for j in out.joins
-        )
-        for c in ts.columns:
-            if r.get(c.name) == "amount":
-                w = _words(c.name)
-                # a per-row value of a lookup table (a product's price) has no meaningful sum
-                if not lookup_only:
-                    out.metrics.append(
-                        MetricCandidate(
-                            tid,
-                            ts.table.name,
-                            f"total_{c.name}",
-                            f"SUM({quote_ident(c.name)})",
-                            f"The sum of {w} over {_words(ts.table.name)}.",
-                            "sum",
-                            time_col,
-                            dims,
-                            conf,
-                            f"Rule: {c.name} is an amount column, so its sum is a candidate metric.",
-                            column=c.name,
-                        )
-                    )
-                out.metrics.append(
-                    MetricCandidate(
-                        tid,
-                        ts.table.name,
-                        f"average_{c.name}",
-                        f"AVG({quote_ident(c.name)})",
-                        f"The average {w} per {noun}.",
-                        "avg",
-                        time_col,
-                        dims,
-                        conf * 0.9,
-                        f"Rule: {c.name} is an amount column, so its average is a candidate metric.",
-                        column=c.name,
-                    )
-                )
-        for fk in fks[tid]:
+        lookup_only = tid in {j.to_table_id for j in out.joins} - {j.from_table_id for j in out.joins}
+        for name, sql, description, aggregate, why, weight in _metric_rules(ts, r, fks[tid], lookup_only):
+            confidence = (0.7 if ts.available else 0.5) * weight
             out.metrics.append(
                 MetricCandidate(
-                    tid,
-                    ts.table.name,
-                    f"distinct_{fk}",
-                    f"COUNT(DISTINCT {quote_ident(fk)})",
-                    f"The number of distinct {_words(fk)} values with at least one {noun}.",
-                    "count_distinct",
-                    time_col,
-                    dims,
-                    conf,
-                    f"Rule: {fk} is a foreign key, so its distinct count is a candidate metric.",
-                    column=fk,
+                    tid, table, name, sql, description, aggregate, time_col, dims, confidence, f"Rule: {why}."
                 )
             )
     _dedupe_metric_names(out.metrics)
     return out
+
+
+def _metric_rules(
+    ts: TableStats, roles: dict[str, str], fks: list[str], lookup_only: bool
+) -> Iterator[tuple[str, str, str, str, str, float]]:
+    """Name, SQL, description, aggregate, evidence and weight of each metric one table is a candidate for."""
+    noun, rows_of = singular(ts.table.name), _words(ts.table.name)
+    evidence = f" ({ts.row_count} rows)" if ts.row_count is not None else ""
+    why = f"every table gets a row count{evidence}"
+    yield f"{noun}_count", "COUNT(*)", f"The number of {rows_of}.", "count", why, 1
+    for name in (c.name for c in ts.columns if roles.get(c.name) == "amount"):
+        col, words = quote_ident(name), _words(name)
+        # a per-row value of a lookup table (a product's price) has no meaningful sum
+        if not lookup_only:
+            why = f"{name} is an amount column, so its sum is a candidate metric"
+            yield f"total_{name}", f"SUM({col})", f"The sum of {words} over {rows_of}.", "sum", why, 1
+        why = f"{name} is an amount column, so its average is a candidate metric"
+        yield f"average_{name}", f"AVG({col})", f"The average {words} per {noun}.", "avg", why, 0.9
+    for fk in fks:
+        description = f"The number of distinct {_words(fk)} values with at least one {noun}."
+        why = f"{fk} is a foreign key, so its distinct count is a candidate metric"
+        yield f"distinct_{fk}", f"COUNT(DISTINCT {quote_ident(fk)})", description, "count_distinct", why, 1
 
 
 def _join_class(tc: str) -> str:
@@ -384,22 +300,3 @@ def _dedupe_metric_names(metrics: list[MetricCandidate]) -> None:
     for m in metrics:
         if counts[m.name] > 1 and m.aggregate != "count":
             m.name = f"{singular(m.table)}_{m.name}"
-
-
-__all__ = [
-    "RULE_SOURCE",
-    "ColumnStats",
-    "JoinCandidate",
-    "MetricCandidate",
-    "RoleCandidate",
-    "Suggestions",
-    "TableStats",
-    "collect_stats",
-    "column_role",
-    "names_only",
-    "parse_stats",
-    "singular",
-    "stats_sql",
-    "suggest",
-    "type_class",
-]

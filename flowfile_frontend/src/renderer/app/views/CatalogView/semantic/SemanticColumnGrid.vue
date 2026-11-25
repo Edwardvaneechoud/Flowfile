@@ -4,21 +4,10 @@
       <span>Column</span>
       <span>Type</span>
       <span>Description</span>
-      <span class="head-with-info">
-        Used as
+      <span v-for="choice in CHOICES" :key="choice.attribute" class="head-with-info">
+        {{ choice.title }}
         <el-tooltip
-          :content="ROLE_HELP"
-          placement="top"
-          :show-after="200"
-          popper-class="semantic-help-tooltip"
-        >
-          <span class="head-info" tabindex="0"><i class="fa-solid fa-circle-info"></i></span>
-        </el-tooltip>
-      </span>
-      <span class="head-with-info">
-        Confidentiality
-        <el-tooltip
-          :content="CONFIDENTIALITY_HELP"
+          :content="choice.help"
           placement="top"
           :show-after="200"
           popper-class="semantic-help-tooltip"
@@ -37,11 +26,7 @@
             :disabled="!editable"
             @commit="saveField(field.name, 'description', $event)"
           />
-          <SemanticStatusChip
-            v-if="needsReview(field.facts.description)"
-            :status="field.facts.description!.status"
-            :fact="field.facts.description"
-          />
+          <SemanticStatusChip :fact="field.facts.description" />
         </div>
         <div class="cell also">
           <SemanticInlineText
@@ -51,66 +36,31 @@
             data-testid="column-synonyms"
             @commit="saveField(field.name, 'synonyms', splitWords($event))"
           />
-          <SemanticStatusChip
-            v-if="needsReview(field.facts.synonyms)"
-            :status="field.facts.synonyms!.status"
-            :fact="field.facts.synonyms"
-          />
+          <SemanticStatusChip :fact="field.facts.synonyms" />
         </div>
       </div>
-      <div class="cell">
+      <div v-for="choice in CHOICES" :key="choice.attribute" class="cell">
         <el-select
-          :model-value="factText(field.facts.role) || undefined"
+          :model-value="factText(field.facts[choice.attribute]) || undefined"
           size="small"
           placeholder="Not set"
           clearable
           :disabled="!editable"
           :fit-input-width="false"
-          @update:model-value="saveField(field.name, 'role', $event)"
+          @update:model-value="saveField(field.name, choice.attribute, $event)"
         >
           <el-option
-            v-for="r in ROLE_OPTIONS"
-            :key="r.value"
-            :label="r.label"
-            :value="r.value"
+            v-for="o in choice.options"
+            :key="o.value"
+            :label="o.label"
+            :value="o.value"
             class="role-option"
           >
-            <span class="role-label">{{ r.label }}</span>
-            <span class="role-hint">{{ r.hint }}</span>
+            <span class="role-label">{{ o.label }}</span>
+            <span class="role-hint">{{ o.hint }}</span>
           </el-option>
         </el-select>
-        <SemanticStatusChip
-          v-if="needsReview(field.facts.role)"
-          :status="field.facts.role!.status"
-          :fact="field.facts.role"
-        />
-      </div>
-      <div class="cell">
-        <el-select
-          :model-value="factText(field.facts.confidentiality) || undefined"
-          size="small"
-          placeholder="Not set"
-          clearable
-          :disabled="!editable"
-          :fit-input-width="false"
-          @update:model-value="saveField(field.name, 'confidentiality', $event)"
-        >
-          <el-option
-            v-for="c in CONFIDENTIALITY_OPTIONS"
-            :key="c.value"
-            :label="c.label"
-            :value="c.value"
-            class="role-option"
-          >
-            <span class="role-label">{{ c.label }}</span>
-            <span class="role-hint">{{ c.hint }}</span>
-          </el-option>
-        </el-select>
-        <SemanticStatusChip
-          v-if="needsReview(field.facts.confidentiality)"
-          :status="field.facts.confidentiality!.status"
-          :fact="field.facts.confidentiality"
-        />
+        <SemanticStatusChip :fact="field.facts[choice.attribute]" />
       </div>
     </div>
   </div>
@@ -126,7 +76,7 @@ import {
   ROLE_HELP,
   ROLE_OPTIONS,
   factText,
-  needsReview,
+  splitWords,
 } from "./semanticFormat";
 
 const props = withDefaults(defineProps<{ table: SemanticTable; editable?: boolean }>(), {
@@ -137,19 +87,19 @@ const emit = defineEmits<(e: "propose", proposal: SemanticProposal) => void>();
 const wordsOf = (value: unknown): string =>
   Array.isArray(value) ? value.filter((w) => typeof w === "string").join(", ") : "";
 
-const splitWords = (text: string): string[] =>
-  text
-    .split(",")
-    .map((w) => w.trim())
-    .filter((w, i, all) => w !== "" && all.indexOf(w) === i);
+const CHOICES = [
+  { attribute: "role", title: "Used as", help: ROLE_HELP, options: ROLE_OPTIONS },
+  {
+    attribute: "confidentiality",
+    title: "Confidentiality",
+    help: CONFIDENTIALITY_HELP,
+    options: CONFIDENTIALITY_OPTIONS,
+  },
+];
 
 // A cleared value goes as null, which removes the fact; clearing nothing sends nothing.
 const saveField = (column: string, attribute: string, value: unknown) => {
-  const blank =
-    value === undefined ||
-    value === null ||
-    value === "" ||
-    (Array.isArray(value) && !value.length);
+  const blank = !value || (value as string | string[]).length === 0;
   const held = props.table.fields.find((f) => f.name === column)?.facts[attribute];
   if (blank && !held) return;
   emit("propose", {

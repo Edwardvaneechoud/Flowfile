@@ -1,18 +1,17 @@
 import { ref } from "vue";
 import { useSemanticModelStore } from "../stores/semantic-model-store";
 import {
+  errorText,
   isAiNotSetUp,
   isSuggestRunning,
   type SemanticSuggestKind,
   type SemanticSuggestRequestOut,
   type SemanticSuggestionSkipped,
-  type SuggestCounts,
   type SuggestOut,
 } from "../types/semantic.types";
 import { SUGGEST_BUSY_TEXT, useSemanticActivity } from "./useSemanticActivity";
 import { useSemanticAi } from "./useSemanticAi";
-
-const RELOAD_TEXT = "Reload the page to use this: the app was updated while it was open.";
+import { SEMANTIC_SUGGEST_SURFACE } from "./useTaskModels";
 
 /** What one suggest press ended in, worded for a person: nothing in it is live yet. */
 export interface SuggestOutcome {
@@ -23,22 +22,24 @@ export interface SuggestOutcome {
   warn: boolean;
 }
 
+type Counts = Partial<Record<SemanticSuggestKind, number>>;
+
 const NOUNS: Record<SemanticSuggestKind, [string, string]> = {
-  join: ["join", "joins"],
   metric: ["metric", "metrics"],
+  join: ["join", "joins"],
   description: ["description", "descriptions"],
   role: ["column role", "column roles"],
   synonyms: ["set of synonyms", "sets of synonyms"],
 };
+const ORDER = Object.keys(NOUNS) as SemanticSuggestKind[];
 
-const COUNT_KEYS: Partial<Record<SemanticSuggestKind, keyof SuggestCounts>> = {
-  join: "joins",
-  metric: "metrics",
-  description: "descriptions",
-  role: "roles",
-};
-
-const ORDER: SemanticSuggestKind[] = ["metric", "join", "description", "role", "synonyms"];
+/** The rules' counts under the kinds' own names. */
+export const ruleCounts = ({ added }: SuggestOut): Counts => ({
+  metric: added.metrics,
+  join: added.joins,
+  description: added.descriptions,
+  role: added.roles,
+});
 
 const REASONS: Record<string, string> = {
   timeout: "The model did not answer in time.",
@@ -47,28 +48,28 @@ const REASONS: Record<string, string> = {
   all_refused: "Nothing was proposed: every suggestion failed its checks.",
 };
 
-const listOf = (parts: string[]) =>
+const listOf = (parts: string[], last = "and") =>
   parts.length <= 1
     ? (parts[0] ?? "")
-    : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+    : `${parts.slice(0, -1).join(", ")} ${last} ${parts[parts.length - 1]}`;
 
 /** "2 joins and 1 metric" from counts per kind; empty when all are zero. */
-export function countsText(counts: Partial<Record<SemanticSuggestKind, number>>): string {
-  return listOf(
-    ORDER.filter((k) => (counts[k] ?? 0) > 0).map((k) => {
-      const n = counts[k] ?? 0;
-      return `${n} ${NOUNS[k][n === 1 ? 0 : 1]}`;
-    }),
+export const countsText = (counts: Counts): string =>
+  listOf(
+    ORDER.filter((k) => counts[k]).map((k) => `${counts[k]} ${NOUNS[k][counts[k] === 1 ? 0 : 1]}`),
   );
-}
 
 /** "joins", "metrics", "descriptions or column roles": what a scoped press looks for. */
-export function kindsText(kinds: SemanticSuggestKind[] | null | undefined, single = false): string {
-  const list = (kinds && kinds.length ? kinds : ORDER).map((k) => NOUNS[k][single ? 0 : 1]);
-  return list.length <= 1
-    ? (list[0] ?? "")
-    : `${list.slice(0, -1).join(", ")} or ${list[list.length - 1]}`;
-}
+const kindsText = (kinds: SemanticSuggestKind[], single = false): string =>
+  listOf(
+    kinds.map((k) => NOUNS[k][single ? 0 : 1]),
+    "or",
+  );
+
+const tally = (counts: Counts, proposed: { kind: SemanticSuggestKind }[]): Counts => {
+  for (const p of proposed) counts[p.kind] = (counts[p.kind] ?? 0) + 1;
+  return counts;
+};
 
 function waits(n: number): string {
   return n === 1 ? "It waits in Review." : "They wait in Review.";
@@ -88,9 +89,7 @@ function refusedText(skipped: { why: string }[]): string {
 }
 
 /** The one result line of an AI request (and its notes), never claiming anything is live. */
-export function describeAiOutcome(out: SemanticSuggestRequestOut): SuggestOutcome {
-  const counts: Partial<Record<SemanticSuggestKind, number>> = {};
-  for (const p of out.proposed) counts[p.kind] = (counts[p.kind] ?? 0) + 1;
+function describeAiOutcome(out: SemanticSuggestRequestOut): SuggestOutcome {
   const named = out.proposed
     .filter((p) => p.name && (p.kind === "metric" || p.kind === "join"))
     .map((p) => p.name as string)
@@ -101,7 +100,7 @@ export function describeAiOutcome(out: SemanticSuggestRequestOut): SuggestOutcom
   if (out.proposed.length > 0) {
     const names =
       named.length && named.length === out.proposed.length ? `: ${named.join(", ")}` : "";
-    line = `Proposed ${countsText(counts)}${names}. ${waits(out.proposed.length)}`;
+    line = `Proposed ${countsText(tally({}, out.proposed))}${names}. ${waits(out.proposed.length)}`;
   } else if (out.nothing_to_suggest) {
     line = out.why ? `Nothing to suggest: ${out.why}` : "The AI found nothing to suggest for this.";
   } else if (out.degraded) {
@@ -122,19 +121,18 @@ export function describeAiOutcome(out: SemanticSuggestRequestOut): SuggestOutcom
 }
 
 /** The result of a tab's "Suggest …" press: the rules' part plus, when it ran, the AI's. */
-export function describeScopedOutcome(
+function describeScopedOutcome(
   kinds: SemanticSuggestKind[],
-  rules: SuggestOut | null,
+  rules: SuggestOut,
   ai: SemanticSuggestRequestOut | null,
   aiNote: string | null,
 ): SuggestOutcome {
-  const counts: Partial<Record<SemanticSuggestKind, number>> = {};
-  for (const k of kinds) {
-    const key = COUNT_KEYS[k];
-    counts[k] = rules && key ? rules.added[key] : 0;
-  }
-  for (const p of ai?.proposed ?? []) counts[p.kind] = (counts[p.kind] ?? 0) + 1;
-  const total = Object.values(counts).reduce((a, b) => a + (b ?? 0), 0);
+  const found = ruleCounts(rules);
+  const counts = tally(
+    Object.fromEntries(kinds.map((k) => [k, found[k] ?? 0])),
+    ai?.proposed ?? [],
+  );
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
   const notes: string[] = [];
   if (aiNote) notes.push(aiNote);
   let warn = false;
@@ -146,7 +144,7 @@ export function describeScopedOutcome(
     warn = true;
   }
   if (ai) notes.push(...ai.notes);
-  if (rules && !rules.stats_available) {
+  if (!rules.stats_available) {
     notes.push("Column statistics were not available, so the rules used names and types only.");
   }
   const who = ai ? "the rules and the AI" : "the rules";
@@ -164,7 +162,7 @@ export function describeScopedOutcome(
 /** One suggest surface's state: the header box's request in words, or a tab's scoped "Suggest …" press. */
 export function useSemanticSuggest() {
   const store = useSemanticModelStore();
-  const { aiStore, usable, canOfferLocal, pick } = useSemanticAi();
+  const { aiStore, usable, pick } = useSemanticAi();
   const { busy, track } = useSemanticActivity();
   const running = ref(false);
   const outcome = ref<SuggestOutcome | null>(null);
@@ -177,17 +175,8 @@ export function useSemanticSuggest() {
     error.value = "";
   }
 
-  /** A store action this page's loaded store may lack: Pinia adds no new actions to a page already open. */
-  function missing(...names: string[]): boolean {
-    const absent = names.some(
-      (n) => typeof (store as unknown as Record<string, unknown>)[n] !== "function",
-    );
-    if (absent) error.value = RELOAD_TEXT;
-    return absent;
-  }
-
   function failed(e: unknown, fallback: string) {
-    error.value = isSuggestRunning(e) ? SUGGEST_BUSY_TEXT : errorMessage(e, fallback);
+    error.value = isSuggestRunning(e) ? SUGGEST_BUSY_TEXT : errorText(e, fallback);
   }
 
   /** The AI alone: there is no rules version of a request in words. */
@@ -195,14 +184,13 @@ export function useSemanticSuggest() {
     const text = request.trim();
     if (!text || running.value || busy.value) return;
     begin();
-    if (missing("suggestOnRequest")) {
-      running.value = false;
-      return;
-    }
     try {
-      const out = await track(() => store.suggestOnRequest(text, null, pick("suggest")), {
-        ownOutcome: true,
-      });
+      const out = await track(
+        () => store.suggestOnRequest({ request: text }, pick(SEMANTIC_SUGGEST_SURFACE)),
+        {
+          ownOutcome: true,
+        },
+      );
       outcome.value = describeAiOutcome(out);
     } catch (e) {
       if (isAiNotSetUp(e)) notSetUp.value = true;
@@ -216,10 +204,6 @@ export function useSemanticSuggest() {
   async function suggestMore(kinds: SemanticSuggestKind[]): Promise<void> {
     if (running.value || busy.value) return;
     begin();
-    if (missing("suggestModel", "suggestOnRequest")) {
-      running.value = false;
-      return;
-    }
     try {
       outcome.value = await track(
         async () => {
@@ -228,7 +212,7 @@ export function useSemanticSuggest() {
           let aiNote: string | null = null;
           if (usable.value) {
             try {
-              ai = await store.suggestOnRequest(null, kinds, pick("suggest"));
+              ai = await store.suggestOnRequest({ kinds }, pick(SEMANTIC_SUGGEST_SURFACE));
             } catch (e) {
               if (!isAiNotSetUp(e)) throw e;
               notSetUp.value = true;
@@ -251,24 +235,5 @@ export function useSemanticSuggest() {
     error.value = "";
   }
 
-  return {
-    aiStore,
-    usable,
-    canOfferLocal,
-    running,
-    busy,
-    outcome,
-    notSetUp,
-    error,
-    ask,
-    suggestMore,
-    clear,
-  };
-}
-
-function errorMessage(e: unknown, fallback: string): string {
-  const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail) && detail[0] && typeof detail[0].msg === "string") return detail[0].msg;
-  return (e as { message?: string })?.message ?? fallback;
+  return { aiStore, usable, running, busy, outcome, notSetUp, error, ask, suggestMore, clear };
 }

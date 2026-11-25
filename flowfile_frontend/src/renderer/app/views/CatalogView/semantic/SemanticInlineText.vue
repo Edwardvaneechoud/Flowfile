@@ -1,5 +1,5 @@
 <template>
-  <div class="inline-text" :class="{ editing, disabled }">
+  <div class="inline-text">
     <el-input
       v-if="editing"
       ref="inputRef"
@@ -9,7 +9,7 @@
       :autosize="multiline ? { minRows: 1, maxRows: 5 } : undefined"
       :placeholder="placeholder"
       @keydown.enter.exact.prevent="commit"
-      @keydown.esc="cancel"
+      @keydown.esc="editing = false"
       @blur="commit"
     />
     <button
@@ -57,10 +57,6 @@ function commit() {
   editing.value = false;
   const next = draft.value.trim();
   if (next !== props.value.trim()) emit("commit", next);
-}
-
-function cancel() {
-  editing.value = false;
 }
 </script>
 

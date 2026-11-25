@@ -1,34 +1,29 @@
 """A question → one query of an accepted metric, backing ``POST /ai/semantic/ask``.
 
-The model sees a short menu of the **accepted** model only (at most ``MAX_MENU`` metrics, narrowed with
-glosslayer's keyword search when there are more): each metric's name, description, synonyms and time column, the
-columns it may be grouped by and filtered on, the model's own instructions when it has them, and today's date. It
-answers a ``MetricQuery``-shaped object or ``{"no_metric": true, "why": …}``. The model reads the language; the
-model's facts are the only knowledge. Free SQL never comes from the model.
+The model sees a short menu of the **accepted** model only (``semantic_routes._menu``), the model's own instructions
+and today's date, and answers a ``MetricQuery``-shaped object or ``{"no_metric": true, "why": …}``. The model reads the
+language; the model's facts are the only knowledge. Free SQL never comes from the model.
 
-Code checks only what can be checked against the menu and the data: the metric is on the menu (exact, else the
-closest name, noted); each dimension is one the metric may be grouped by and each filter names a column of the
-metric with a valid operator (a table prefix added or dropped is matched); a filter value on a column with known
-values is one of them (a case-insensitive exact match corrects it); a grain needs a time column and is one of the
-five; the limit is within bounds. What is dropped is noted, kept as a ``Gap`` for the answer sentence, and makes
-the answer ``partial``. The question's wording is never judged here. One repair round sends the refusals back,
-except dimensions: a dimension sent back would be swapped for another silently. Known values and the rows a query
-returns stay in core and never reach the model. Must not import ``litellm``.
+Code checks only what can be checked against the menu and the data: the metric, its dimensions, each filter's column,
+operator and (where the column's values are known) value, the grain, the limit. What is dropped is noted, kept as a
+``Gap`` for the answer sentence, and makes the answer ``partial``. The question's wording is never judged here. One
+repair round sends the refusals back, except dimensions: one sent back would be swapped for another silently. Known
+values and the rows a query returns never reach the model. Must not import ``litellm``.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date
-from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from flowfile_core.ai.json_payload import parse_json_payload
 from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.semantic_answer import Gap, Intent, decide_intent, shape_query
-from flowfile_core.ai.semantic_draft import call_json, match_name
-from flowfile_core.schemas.semantic_schema import MetricFilter, MetricOrder, MetricQuery
+from flowfile_core.ai.semantic_draft import call_json, match_name, repair_turn, system_prompt
+from flowfile_core.schemas.semantic_schema import FilterOp, Grain, MetricFilter, MetricOrder, MetricOut, MetricQuery
 
 logger = logging.getLogger(__name__)
 
@@ -37,82 +32,68 @@ MAX_DIMENSIONS_SHOWN = 12
 MAX_FILTER_FIELDS_SHOWN = 16
 MAX_TOKENS = 500
 MAX_INSTRUCTIONS_CHARS = 1200
-_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "semantic_ask.md"
-
-OPS = ("=", "!=", "<", "<=", ">", ">=", "in", "not in", "between", "is null", "is not null")
-GRAINS = ("day", "week", "month", "quarter", "year")
-
-
-def system_prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8")
+OPS = get_args(FilterOp)
+GRAINS = get_args(Grain)
 
 
 @dataclass
 class MenuItem:
     """One accepted metric as the model sees it: its meaning, synonyms, time column and the columns it allows."""
 
-    name: str
+    metric: MetricOut
     meaning: str | None
-    time_column: str | None
+    synonyms: list[str]
     dimensions: list[str]
-    filter_fields: list[str] = field(default_factory=list)
-    aggregate: str | None = None
-    column: str | None = None
-    table: str | None = None
-    synonyms: list[str] = field(default_factory=list)
-    dimension_words: dict[str, list[str]] = field(default_factory=dict)
-    known_values: dict[str, list[str]] = field(default_factory=dict)
-    label: str | None = None
-    format: str | None = None
-    expression: str | None = None
+    columns: list[str]
+    dimension_words: dict[str, list[str]]
+    known_values: dict[str, list[str]]
+
+    @property
+    def name(self) -> str:
+        return self.metric.name
+
+    @property
+    def filter_fields(self) -> list[str]:
+        time_column = [self.metric.time_column] if self.metric.time_column else []
+        return list(dict.fromkeys([*self.dimensions, *self.columns, *time_column]))
 
 
-def _grouped(menu: list[MenuItem], columns: Any) -> dict[tuple[str, ...], list[str]]:
-    groups: dict[tuple[str, ...], list[str]] = {}
-    for m in menu:
-        cols = tuple(columns(m))
-        if cols:
-            groups.setdefault(cols, []).append(m.name)
-    return groups
-
-
-def menu_text(menu: list[MenuItem], today: date) -> str:
+def menu_text(menu: list[MenuItem]) -> str:
     """The metrics, then the columns to group by and to filter on, each listed once per set of metrics."""
-    lines = [f"Today: {today.isoformat()}", "Metrics:"]
+    lines = [f"Today: {date.today().isoformat()}", "Metrics:"]
     for m in menu:
         bits = [m.meaning or "No description."]
         if m.synonyms:
             bits.append("Also called: " + ", ".join(m.synonyms[:4]) + ".")
-        if m.time_column:
-            bits.append(f"Time column: {m.time_column}.")
+        if m.metric.time_column:
+            bits.append(f"Time column: {m.metric.time_column}.")
         lines.append(f"- {m.name}: " + " ".join(bits))
 
     def written(m: MenuItem, d: str) -> str:
         also = [w for w in m.dimension_words.get(d, []) if w and w != d][:3]
         return f"{d} (also: {', '.join(also)})" if also else d
 
-    lines.append("")
-    lines.append("Columns to group by (use one ONLY when the question asks to break the answer down by it):")
-    groups = _grouped(menu, lambda m: [written(m, d) for d in m.dimensions[:MAX_DIMENSIONS_SHOWN]])
-    if not groups:
-        lines.append("- none")
-    for dims, names in groups.items():
-        lines.append(f"- for {', '.join(names)}: {', '.join(dims)}")
-    lines.append("")
-    lines.append("Columns to filter on:")
-    fields = _grouped(menu, lambda m: _filter_fields(m)[:MAX_FILTER_FIELDS_SHOWN])
-    if not fields:
-        lines.append("- none")
-    for cols, names in fields.items():
-        lines.append(f"- for {', '.join(names)}: {', '.join(cols)}")
+    def section(title: str, columns: Callable[[MenuItem], list[str]]) -> None:
+        groups: dict[tuple[str, ...], list[str]] = {}
+        for m in menu:
+            groups.setdefault(tuple(columns(m)), []).append(m.name)
+        groups.pop((), None)
+        lines.extend(["", title])
+        lines.extend([f"- for {', '.join(names)}: {', '.join(cols)}" for cols, names in groups.items()] or ["- none"])
+
+    section(
+        "Columns to group by (use one ONLY when the question asks to break the answer down by it):",
+        lambda m: [written(m, d) for d in m.dimensions[:MAX_DIMENSIONS_SHOWN]],
+    )
+    section("Columns to filter on:", lambda m: m.filter_fields[:MAX_FILTER_FIELDS_SHOWN])
     return "\n".join(lines)
 
 
-def user_message(menu: list[MenuItem], question: str, today: date, instructions: str | None = None) -> str:
+def user_message(menu: list[MenuItem], question: str, instructions: str | None) -> str:
     owner = (instructions or "").strip()[:MAX_INSTRUCTIONS_CHARS]
     told = f"Instructions from the model's owner:\n{owner}\n\n" if owner else ""
     return (
-        f"{menu_text(menu, today)}\n\n{told}Question: {question}\n\n"
+        f"{menu_text(menu)}\n\n{told}Question: {question}\n\n"
         'Answer now with the JSON object {"metric": ..., "dimensions": [...], "filters": [...], "grain": ..., '
         '"order": ..., "limit": ..., "intent": ...} or {"no_metric": true, "why": ...}.'
     )
@@ -127,15 +108,13 @@ class AskAnswer:
     notes: list[str] = field(default_factory=list)
     reason: str | None = None
     partial: bool = False
-    intent_hint: str | None = None
     intent: Intent | None = None
     dropped: dict[str, int] = field(default_factory=dict)
     gaps: list[Gap] = field(default_factory=list)
 
     def drop(self, gap: Gap, counter: str, problem: str | None = None) -> None:
         """Something the model asked for that code did not apply: noted, a gap, partial, counted for the audit."""
-        if gap.note:
-            self.notes.append(gap.note)
+        self.notes.append(gap.note)
         self.gaps.append(gap)
         self.partial = True
         self.dropped[counter] = self.dropped.get(counter, 0) + 1
@@ -147,12 +126,6 @@ def _as_list(value: Any) -> list[Any]:
     if value is None or value == "":
         return []
     return value if isinstance(value, list) else [value]
-
-
-def _filter_fields(item: MenuItem) -> list[str]:
-    return list(
-        dict.fromkeys([*item.dimensions, *item.filter_fields, *([item.time_column] if item.time_column else [])])
-    )
 
 
 def _field(name: Any, choices: list[str], notes: list[str]) -> str | None:
@@ -168,14 +141,13 @@ def _field(name: Any, choices: list[str], notes: list[str]) -> str | None:
 
 
 def _known(item: MenuItem, fld: str, value: Any) -> tuple[Any, bool]:
-    """``(value, ok)``: a value of a column with known values, corrected to the stored spelling when it differs
-    only in case; ``ok`` false when the column holds no such value. Columns without known values pass as given."""
+    """``(value, ok)``: corrected to the stored spelling when it differs only in case; ``ok`` false when the column
+    holds no such value. Columns without known values pass as given."""
     values = item.known_values.get(fld)
     if values is None or value is None:
         return value, True
-    by_lower = {str(v).lower(): v for v in values}
-    hit = by_lower.get(str(value).lower())
-    return (hit, True) if hit is not None else (value, False)
+    hit = {v.lower(): v for v in values}.get(str(value).lower())
+    return (value, False) if hit is None else (hit, True)
 
 
 def read_answer(content: str | None, menu: list[MenuItem]) -> AskAnswer:
@@ -204,22 +176,24 @@ def read_answer(content: str | None, menu: list[MenuItem]) -> AskAnswer:
         )
         return ans
     item = next(m for m in menu if m.name == metric_name)
+    time_column = item.metric.time_column
+
+    def no_split(what: Any, reason: str, counter: str, problem: str | None = None) -> None:
+        ans.drop(Gap("split", str(what), f"Not split by {what}: {reason}.", reason), counter, problem)
 
     dims: list[str] = []
     for d in _as_list(payload.get("dimensions")):
         found = _field(d, item.dimensions, ans.notes)
         if found is None:
-            note = f"Not split by {d}: it is not among the columns {metric_name} can be grouped by."
-            ans.drop(Gap("group", str(d), f"it is not among the columns {metric_name} can be grouped by", note=note),
-                     "dimensions_dropped")  # fmt: skip
+            no_split(d, f"it is not among the columns {metric_name} can be grouped by", "dimensions_dropped")
         elif found not in dims:
             dims.append(found)
 
-    fields = _filter_fields(item)
+    fields = item.filter_fields
     filters: list[MetricFilter] = []
 
     def refuse(fld: str, reason: str, problem: str) -> None:
-        gap = Gap("filter", fld, reason, column=fld, note=f"Not filtered on {fld}: {reason}.")
+        gap = Gap("filter", fld, f"Not filtered on {fld}: {reason}.", reason, fld)
         ans.drop(gap, "filters_dropped", problem)
 
     raw_filters = payload.get("filters")
@@ -232,8 +206,12 @@ def read_answer(content: str | None, menu: list[MenuItem]) -> AskAnswer:
         op = str(f.get("op") or f.get("operator") or "=").strip().lower()
         value = f.get("value")
         if fld is None:
-            refuse(str(raw_field), f"{metric_name} has no such column",
-                   f"{raw_field!r} is not a column of {metric_name}. Use one of: {', '.join(fields)}.")  # fmt: skip
+            one_of = ", ".join(fields)
+            refuse(
+                str(raw_field),
+                f"{metric_name} has no such column",
+                f"{raw_field!r} is not a column of {metric_name}. Use one of: {one_of}.",
+            )
             continue
         if op not in OPS:
             refuse(
@@ -265,7 +243,7 @@ def read_answer(content: str | None, menu: list[MenuItem]) -> AskAnswer:
                 (kept if ok else bad).append(fixed)
             for v in bad:
                 note = f"Not filtered to {v!r}: it is not a value of {fld}."
-                ans.drop(Gap("filter", str(v), column=fld, note=note), "filters_dropped")
+                ans.drop(Gap("filter", str(v), note, column=fld), "filters_dropped")
             if not kept:
                 continue
             value = kept if isinstance(value, list) else kept[0]
@@ -274,13 +252,11 @@ def read_answer(content: str | None, menu: list[MenuItem]) -> AskAnswer:
     grain = payload.get("grain")
     grain = str(grain).strip().lower() if grain not in (None, "", False) else None
     if grain is not None and grain not in GRAINS:
-        note = f"Not split by {grain}: a grain is one of {', '.join(GRAINS)}."
-        ans.drop(Gap("grain", grain, f"a grain is one of {', '.join(GRAINS)}", note=note), "grain_dropped",
-                 f"The grain must be one of: {', '.join(GRAINS)}, or null.")  # fmt: skip
+        one_of = ", ".join(GRAINS)
+        no_split(grain, f"a grain is one of {one_of}", "grain_dropped", f"The grain must be one of: {one_of}, or null.")
         grain = None
-    elif grain is not None and not item.time_column:
-        note = f"Not split by {grain}: {metric_name} has no time column."
-        ans.drop(Gap("grain", grain, f"{metric_name} has no time column", note=note), "grain_dropped")
+    elif grain is not None and not time_column:
+        no_split(grain, f"{metric_name} has no time column", "grain_dropped")
         grain = None
 
     order = None
@@ -288,7 +264,7 @@ def read_answer(content: str | None, menu: list[MenuItem]) -> AskAnswer:
     if isinstance(raw_order, str):
         raw_order = {"field": raw_order}
     if isinstance(raw_order, dict):
-        outputs = [*dims, metric_name] + ([f"{item.time_column.rpartition('.')[2]}_{grain}"] if grain else [])
+        outputs = [*dims, metric_name] + ([f"{time_column.rpartition('.')[2]}_{grain}"] if grain else [])
         target = match_name(raw_order.get("field"), outputs, ans.notes)
         direction = str(raw_order.get("direction") or "asc").lower()
         if target is None or direction not in ("asc", "desc"):
@@ -303,7 +279,9 @@ def read_answer(content: str | None, menu: list[MenuItem]) -> AskAnswer:
     limit = min(max(limit, 1), 10000)
     ans.query = MetricQuery(metric=metric_name, dimensions=dims, filters=filters, grain=grain, order=order, limit=limit)
     hint = payload.get("intent")
-    ans.intent_hint = hint.strip().lower() if isinstance(hint, str) else None
+    ans.intent = decide_intent(ans.query, hint.strip().lower() if isinstance(hint, str) else None)
+    ans.query = shape_query(ans.query, ans.intent, time_column)
+    ans.notes.insert(0, reading(ans.query))
     return ans
 
 
@@ -319,45 +297,31 @@ def reading(query: MetricQuery) -> str:
     return "Read as: " + ", ".join(bits) + "."
 
 
-def ground(ans: AskAnswer, menu: list[MenuItem]) -> AskAnswer:
-    """The answer's kind and the query ordered as it reads; the "Read as" line first among the notes."""
-    if ans.query is None:
-        return ans
-    item = next(m for m in menu if m.name == ans.query.metric)
-    ans.intent = decide_intent(ans.query, ans.intent_hint)
-    ans.query = shape_query(ans.query, ans.intent, item.time_column)
-    ans.notes.insert(0, reading(ans.query))
-    return ans
-
-
 async def ask(
     provider: Provider,
     menu: list[MenuItem],
     question: str,
     *,
     user_id: int | None,
-    today: date | None = None,
-    run: Any = None,
+    run: Callable[[MetricQuery], Awaitable[Any]],
     instructions: str | None = None,
 ) -> tuple[AskAnswer, int, Any]:
     """``(answer, attempts, run_result)``. ``run`` is an async compile-and-run; its ``ValueError`` is fed back once."""
-    today = today or date.today()
     messages = [
-        Message(role="system", content=system_prompt()),
-        Message(role="user", content=user_message(menu, question, today, instructions)),
+        Message(role="system", content=system_prompt("semantic_ask")),
+        Message(role="user", content=user_message(menu, question, instructions)),
     ]
-    attempts = 0
     ans = AskAnswer()
-    for attempt in range(2):
-        attempts += 1
-        content, err, msg = await call_json(provider, messages, user_id=user_id, max_tokens=MAX_TOKENS)
+    for attempt in (1, 2):
+        content, err, msg = await call_json(
+            provider=provider, messages=messages, user_id=user_id, max_tokens=MAX_TOKENS
+        )
         if err is not None:
             ans.reason, ans.problems = err, [msg or err]
-            return ans, attempts, None
-        ans = ground(read_answer(content, menu), menu)
+            return ans, attempt, None
+        ans = read_answer(content, menu)
         result = None
-        last = attempt == 1
-        if ans.query is not None and (not ans.problems or last) and run is not None:
+        if ans.query is not None and (not ans.problems or attempt == 2):
             # on the last attempt, run what survived the checks; the dropped parts are in the notes
             ans.problems = []
             try:
@@ -366,29 +330,9 @@ async def ask(
                 ans.reason = "invalid_query"
                 ans.problems.append(f"That query does not compile: {exc}")
         if ans.no_metric or (ans.query is not None and not ans.problems):
-            return ans, attempts, result
-        if attempt == 1:
-            return ans, attempts, None
-        logger.info("semantic ask answer refused, retrying: %s", ans.problems)
-        messages = [
-            *messages,
-            Message(role="assistant", content=content or ""),
-            Message(role="user", content="\n".join(ans.problems) + "\n\nAnswer again with the whole JSON object."),
-        ]
-    raise AssertionError("unreachable")  # pragma: no cover
-
-
-__all__ = [
-    "GRAINS",
-    "MAX_MENU",
-    "OPS",
-    "AskAnswer",
-    "MenuItem",
-    "ask",
-    "ground",
-    "menu_text",
-    "read_answer",
-    "reading",
-    "system_prompt",
-    "user_message",
-]
+            return ans, attempt, result
+        logger.info("semantic ask answer refused: %s", ans.problems)
+        messages = repair_turn(
+            messages, content, "\n".join(ans.problems) + "\n\nAnswer again with the whole JSON object."
+        )
+    return ans, attempt, None

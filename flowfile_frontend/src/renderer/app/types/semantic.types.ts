@@ -1,4 +1,5 @@
-// Mirrors flowfile_core/schemas/semantic_schema.py
+// The parts of flowfile_core/schemas/semantic_schema.py the app reads
+import { detailOf } from "../utils/apiDetail";
 
 export type SemanticFactStatus =
   | "proposed"
@@ -84,21 +85,15 @@ export interface SemanticJoin {
 /** An accepted metric that stops working without a join (GET …/semantic-model/joins/dependents). */
 export interface JoinDependent {
   metric: string;
-  metric_key: string;
-  table: string;
-  table_id: number | null;
   /** "formula", "time column" or "dimension <name>". */
   uses: string[];
-  message: string;
 }
 
 /** A join measured against the data (POST …/semantic-model/joins/check). */
-export type JoinCheckVerdict = "ok" | "reversed" | "many_to_many" | "unchecked";
-
 export interface JoinCheck {
   key: string;
   name: string;
-  verdict: JoinCheckVerdict;
+  verdict: "ok" | "reversed" | "many_to_many" | "unchecked";
   message: string;
 }
 
@@ -113,13 +108,12 @@ export interface SemanticTable {
   pending: SemanticFact[];
 }
 
-export interface SemanticProgress {
+/** Fact counts of a model, a schema or a table. */
+export interface SemanticModelSummary {
   accepted: number;
   pending: number;
   stale: number;
 }
-
-export type SemanticReviewMode = "solo" | "team";
 
 export interface SemanticModel {
   namespace_id: number;
@@ -130,80 +124,47 @@ export interface SemanticModel {
   ai_instructions: string | null;
   tables: SemanticTable[];
   joins: SemanticJoin[];
-  progress: SemanticProgress;
+  progress: SemanticModelSummary;
   can_manage: boolean;
-  review_mode: SemanticReviewMode;
+  review_mode: "solo" | "team";
 }
 
-export interface SemanticModelUpdate {
-  name?: string | null;
-  description?: string | null;
-  ai_instructions?: string | null;
-}
-
-export interface FieldProposal {
-  kind: "field";
-  table_id: number;
-  column: string;
-  attribute: string;
-  value: unknown;
-}
-
-export interface TableProposal {
-  kind: "table";
-  table_id: number;
-  attribute: string;
-  value: unknown;
-}
-
-export interface JoinProposal {
-  kind: "join";
-  name: string;
-  from_table_id: number;
-  to_table_id: number;
-  from_columns: string[];
-  to_columns: string[];
-  description?: string | null;
-}
-
-export interface MetricProposal {
-  kind: "metric";
-  table_id: number;
-  name: string;
-  expression: string;
-  description?: string | null;
-  aggregate?: string | null;
-  filter?: string | null;
-  time_column?: string | null;
-  dimensions?: string[] | null;
-  format?: string | null;
-  synonyms?: string[] | null;
-  edit?: boolean;
-}
-
-/** Other words for an existing metric, proposed on their own. */
-export interface MetricSynonymsProposal {
-  kind: "metric_synonyms";
-  name: string;
-  synonyms: string[];
-}
+export type SemanticModelUpdate = Partial<
+  Pick<SemanticModel, "name" | "description" | "ai_instructions">
+>;
 
 export type SemanticProposal =
-  | FieldProposal
-  | TableProposal
-  | JoinProposal
-  | MetricProposal
-  | MetricSynonymsProposal;
-
-export type SemanticReviewActionType = "accept" | "reject" | "retract" | "reopen";
+  | { kind: "field"; table_id: number; column: string; attribute: string; value: unknown }
+  | { kind: "table"; table_id: number; attribute: string; value: unknown }
+  | {
+      kind: "join";
+      name: string;
+      from_table_id: number;
+      to_table_id: number;
+      from_columns: string[];
+      to_columns: string[];
+      description?: string | null;
+    }
+  | {
+      kind: "metric";
+      table_id: number;
+      name: string;
+      expression: string;
+      description?: string | null;
+      filter?: string | null;
+      time_column?: string | null;
+      dimensions?: string[] | null;
+      format?: string | null;
+      synonyms?: string[] | null;
+      edit?: boolean;
+    };
 
 export interface SemanticReviewAction {
-  action: SemanticReviewActionType;
+  action: "accept" | "reject" | "retract" | "reopen";
   ids?: string[] | null;
   group?: string | null;
   /** With "retract": remove a whole metric or join by its key. */
   subject?: string | null;
-  comment?: string | null;
 }
 
 export interface SemanticReviewResult {
@@ -244,12 +205,6 @@ export interface SemanticSyncResult {
   staled: number;
 }
 
-export interface SemanticModelSummary {
-  accepted: number;
-  pending: number;
-  stale: number;
-}
-
 export type MetricFilterOp =
   | "="
   | "!="
@@ -265,23 +220,12 @@ export type MetricFilterOp =
 
 export type MetricGrain = "day" | "week" | "month" | "quarter" | "year";
 
-export interface MetricFilter {
-  field: string;
-  op: MetricFilterOp;
-  value?: unknown;
-}
-
-export interface MetricOrder {
-  field: string;
-  direction: "asc" | "desc";
-}
-
 export interface MetricQuery {
   metric: string;
   dimensions: string[];
-  filters: MetricFilter[];
+  filters: { field: string; op: MetricFilterOp; value?: unknown }[];
   grain: MetricGrain | null;
-  order: MetricOrder | null;
+  order: { field: string; direction: "asc" | "desc" } | null;
   limit: number;
   preview: boolean;
 }
@@ -300,18 +244,6 @@ export interface MetricQueryResult {
     approved_by: string | null;
   };
   error: string | null;
-}
-
-export interface MetricQuerySaveAsFlow {
-  query: MetricQuery;
-  name: string;
-  namespace_id?: number | null;
-  description?: string | null;
-}
-
-export interface MetricQuerySaveAsFlowOut {
-  flow_id: number;
-  sql: string;
 }
 
 export interface SuggestCounts {
@@ -333,17 +265,10 @@ export interface SuggestOut {
 /** What a suggestion can be; the `kinds` scope of both suggest routes. */
 export type SemanticSuggestKind = "join" | "metric" | "description" | "role" | "synonyms";
 
-export interface SuggestRequest {
-  kinds?: SemanticSuggestKind[];
-}
-
-/** `POST /ai/semantic/suggest`: a request in the person's own words, or more of `kinds`. */
-export interface SemanticSuggestRequestIn {
-  namespace_id: number;
-  request?: string | null;
-  kinds?: SemanticSuggestKind[] | null;
-  provider?: string | null;
-  model?: string | null;
+/** The provider and model a request names; neither lets core choose. */
+export interface SemanticModelPick {
+  provider?: string;
+  model?: string;
 }
 
 export interface SemanticSuggestionProposed {
@@ -360,8 +285,6 @@ export interface SemanticSuggestionSkipped {
   why: string;
 }
 
-export type SemanticSuggestReason = "timeout" | "provider_error" | "invalid_answer" | "all_refused";
-
 /** What the AI suggest route stored: every `proposed` entry waits for review. */
 export interface SemanticSuggestRequestOut {
   request: string | null;
@@ -374,47 +297,17 @@ export interface SemanticSuggestRequestOut {
   nothing_to_suggest: boolean;
   why: string | null;
   degraded: boolean;
-  reason: SemanticSuggestReason | string | null;
+  reason: string | null;
   attempts: number;
   withheld_columns: number;
-}
-
-export interface SemanticDraftRequest {
-  namespace_id: number;
-  table_ids?: number[];
-  provider?: string | null;
-  model?: string | null;
-}
-
-export interface SemanticDraftTable {
-  table_id: number;
-  table: string;
-  calls: number;
-  ok: boolean;
-  reason: string | null;
-  message: string | null;
 }
 
 export interface SemanticDraftOut extends SuggestOut {
   provider: string;
   model: string | null;
-  table_outcomes: SemanticDraftTable[];
+  table_outcomes: { table: string; ok: boolean }[];
   degraded: boolean;
   reason: string | null;
-}
-
-export interface SemanticAskRequest {
-  namespace_id: number;
-  question: string;
-  provider?: string | null;
-  model?: string | null;
-}
-
-export interface SemanticAnsweredWith {
-  name: string;
-  version: number | null;
-  status: string;
-  approved_by: string | null;
 }
 
 export type SemanticAskReason =
@@ -426,39 +319,12 @@ export type SemanticAskReason =
   | "timeout"
   | "provider_error";
 
-export type SemanticAskIntent = "value" | "top" | "bottom" | "trend" | "breakdown";
-
-/** One group or period of an answer, as core computed it from the result rows. */
-export interface SemanticAnswerItem {
-  label: string;
-  value: number | null;
-  text: string;
-}
-
-/** The facts the answer sentence was rendered from (core's `SemanticAnswerFacts`). */
-export interface SemanticAnswerFacts {
-  intent: SemanticAskIntent | string;
-  value: SemanticAnswerItem | null;
-  leaders: SemanticAnswerItem[];
-  runners_up: SemanticAnswerItem[];
-  groups: number | null;
-  share: number | null;
-  highest: SemanticAnswerItem | null;
-  lowest: SemanticAnswerItem | null;
-  latest: SemanticAnswerItem | null;
-  previous: SemanticAnswerItem | null;
-  change: number | null;
-  direction: "up" | "down" | "flat" | null;
-  truncated: boolean;
-}
-
 export interface SemanticAskOut {
   question: string;
   provider: string;
   model: string | null;
   query: MetricQuery | null;
   result: MetricQueryResult | null;
-  answered_with: SemanticAnsweredWith | null;
   notes: string[];
   partial?: boolean;
   degraded: boolean;
@@ -467,19 +333,25 @@ export interface SemanticAskOut {
   attempts: number;
   /** The answer in words, rendered by core from the result rows; absent from an older core. */
   answer?: string | null;
-  intent?: SemanticAskIntent | string | null;
-  facts?: SemanticAnswerFacts | null;
 }
 
-export interface AiNotSetUp {
-  error_code: "AI_NOT_SET_UP";
-  message: string;
-  local_available: boolean;
-}
+const codeOf = (e: unknown): string | undefined =>
+  (e as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code;
 
-export const isAiNotSetUp = (e: unknown): boolean =>
-  (e as { response?: { status?: number; data?: { error_code?: string } } })?.response?.data
-    ?.error_code === "AI_NOT_SET_UP";
+export const isAiNotSetUp = (e: unknown): boolean => codeOf(e) === "AI_NOT_SET_UP";
+
+/** A Suggest route's 409 while another suggestion runs for the same model. */
+export const isSuggestRunning = (e: unknown): boolean => codeOf(e) === "SUGGEST_RUNNING";
+
+/** What a failed request says: its detail, a typed error's own message, else the error's. */
+export const errorText = (e: unknown, fallback: string): string => {
+  const { response, message } = (e ?? {}) as {
+    response?: { data?: { message?: unknown } };
+    message?: string;
+  };
+  const own = response?.data?.message;
+  return detailOf(e, typeof own === "string" ? own : (message ?? fallback));
+};
 
 /** One Suggest run (core's `catalog/semantic/activity.py`); running while `finished_at` is absent. */
 export interface SemanticActivity {
@@ -501,8 +373,3 @@ export interface SemanticActivityOut {
   running: SemanticActivity | null;
   last: SemanticActivity | null;
 }
-
-/** A Suggest route's 409 while another suggestion runs for the same model (top-level body). */
-export const isSuggestRunning = (e: unknown): boolean =>
-  (e as { response?: { data?: { error_code?: string } } })?.response?.data?.error_code ===
-  "SUGGEST_RUNNING";

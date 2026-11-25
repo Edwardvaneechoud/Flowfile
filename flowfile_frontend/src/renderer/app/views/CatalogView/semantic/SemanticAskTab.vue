@@ -1,17 +1,16 @@
 <template>
-  <div class="ask-tab">
-    <slot name="question" />
-
-    <section class="question" data-testid="ask-question">
+  <div class="stack">
+    <section class="box form-box" data-testid="ask-question">
       <template v-if="aiReady">
-        <form class="question-row" @submit.prevent="submitQuestion">
+        <form class="input-row" @submit.prevent="submitQuestion">
           <el-input
             v-model="question"
-            class="question-input"
+            class="grow"
             placeholder="Ask a question about your data"
             :disabled="asking"
             data-testid="ask-question-input"
-            @keydown.enter="onQuestionEnter"
+            @keydown.meta.enter.prevent="submitQuestion"
+            @keydown.ctrl.enter.prevent="submitQuestion"
           />
           <button
             class="btn btn-primary"
@@ -27,66 +26,68 @@
         </form>
         <TaskModelPicker :surface="SEMANTIC_ASK_SURFACE" label="questions" />
         <p
-          v-if="!asking && answerText"
+          v-if="!asking && answer?.answer"
           class="answer-line"
-          :class="{ warn: answer?.partial }"
+          :class="{ 'warn-bar': answer?.partial }"
           data-testid="ask-answer"
         >
-          {{ answerText }}
+          {{ answer.answer }}
         </p>
         <p
           v-if="!asking && readAs"
-          class="read-as"
-          :class="{ explain: !!answerText }"
+          :class="answer?.answer ? 'note' : 'read-as'"
           data-testid="ask-read-as"
         >
           {{ readAs }}
         </p>
-        <p v-if="examples.length" class="examples">
+        <p v-if="examples.length" class="note examples">
           Try:
           <a v-for="ex in examples" :key="ex" href="#" @click.prevent="useExample(ex)">{{ ex }}</a>
         </p>
-        <p v-if="asking" class="q-note" role="status">Reading your approved metrics…</p>
+        <p v-if="asking" class="note" role="status">Reading your approved metrics…</p>
         <template v-else-if="answer">
-          <p v-if="answer.no_metric_fits" class="q-note" data-testid="ask-no-metric">
+          <p v-if="answer.no_metric_fits" class="note" data-testid="ask-no-metric">
             No approved metric answers this.
             <a href="#" @click.prevent="emit('open-tab', 'metrics')"
               >Propose one in the Metrics tab.</a
             >
           </p>
-          <p v-else-if="answer.degraded" class="q-note warn" data-testid="ask-degraded">
+          <p v-else-if="answer.degraded" class="note warn" data-testid="ask-degraded">
             {{ degradedText(answer.reason) }} The controls below still work.
           </p>
           <ul
             v-if="otherNotes.length"
-            class="note-list"
-            :class="{ warn: answer.partial }"
+            class="note note-list"
+            :class="{ 'warn-bar': answer.partial }"
             data-testid="ask-notes"
           >
             <li v-for="n in otherNotes" :key="n">{{ n }}</li>
           </ul>
-          <p v-if="answer.query" class="q-note">Answered by {{ answerModel }}.</p>
+          <p v-if="answer.query" class="note">Answered by {{ answerModel }}.</p>
         </template>
       </template>
       <template v-else>
         <LocalModelSetupCard
           v-if="canOfferLocal || notSetUp"
-          compact
           title="Let AI on this computer answer questions"
           @installed="notSetUp = false"
           @open-settings="router.push({ name: 'ai' })"
         />
-        <p class="q-note">Questions need AI. The controls below work without it.</p>
+        <p class="note">Questions need AI. The controls below work without it.</p>
       </template>
     </section>
 
-    <p v-if="metrics.length === 0" class="empty" data-testid="ask-empty">
+    <p v-if="metrics.length === 0" class="hint" data-testid="ask-empty">
       A metric has to exist before you can ask for a number.
       <a href="#" @click.prevent="emit('open-tab', 'metrics')">Add one in the Metrics tab.</a>
     </p>
 
     <template v-else>
-      <section class="controls" @keydown.enter.capture="onControlsEnter">
+      <section
+        class="box form-box controls"
+        @keydown.meta.enter.capture.prevent.stop="runManual"
+        @keydown.ctrl.enter.capture.prevent.stop="runManual"
+      >
         <div class="row">
           <label class="field grow">
             <span class="label">Metric</span>
@@ -124,12 +125,7 @@
               placeholder="No grouping"
               :disabled="!metric"
             >
-              <el-option
-                v-for="d in dimensionOptions"
-                :key="d.value"
-                :label="d.label"
-                :value="d.value"
-              />
+              <el-option v-for="d in dimensionOptions" :key="d" :label="d" :value="d" />
             </el-select>
           </label>
           <label v-if="metric?.time_column" class="field">
@@ -140,21 +136,16 @@
           </label>
         </div>
 
-        <p v-if="isPending" class="pending-note">
+        <p v-if="isPending" class="note warn">
           <i class="fa-solid fa-clock"></i> {{ metricName }} is not approved yet. The answer is a
           preview.
         </p>
 
         <div class="filters">
           <span class="label">Filters</span>
-          <div v-for="(f, i) in filters" :key="i" class="filter-row">
+          <div v-for="(f, i) in filters" :key="i" class="line filter-row">
             <el-select v-model="f.field" filterable class="f-field" placeholder="Field">
-              <el-option
-                v-for="d in dimensionOptions"
-                :key="d.value"
-                :label="d.label"
-                :value="d.value"
-              />
+              <el-option v-for="d in dimensionOptions" :key="d" :label="d" :value="d" />
             </el-select>
             <el-select v-model="f.op" class="f-op">
               <el-option v-for="o in OPS" :key="o.op" :label="o.label" :value="o.op" />
@@ -166,11 +157,20 @@
                 <el-input v-model="f.value2" class="f-value" />
               </template>
             </template>
-            <button type="button" class="icon-btn" title="Remove" @click="filters.splice(i, 1)">
+            <button
+              type="button"
+              class="icon-btn icon-btn-danger"
+              title="Remove"
+              @click="filters.splice(i, 1)"
+            >
               <i class="fa-solid fa-xmark"></i>
             </button>
           </div>
-          <button type="button" class="btn btn-secondary btn-sm" @click="addFilter">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            @click="filters.push({ ...EMPTY_FILTER })"
+          >
             <i class="fa-solid fa-plus"></i> Add filter
           </button>
         </div>
@@ -180,7 +180,7 @@
             class="btn btn-primary"
             :disabled="!metric || running"
             data-testid="ask-run"
-            @click="runManual()"
+            @click="runManual"
           >
             <i :class="running ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-play'"></i> Run
           </button>
@@ -192,11 +192,11 @@
       </p>
 
       <section v-if="result" class="result" data-testid="ask-result">
-        <p v-if="answer?.partial" class="pending-note" data-testid="ask-partial">
+        <p v-if="answer?.partial" class="note warn" data-testid="ask-partial">
           <i class="fa-solid fa-triangle-exclamation"></i> This answers only part of the question.
           <template v-if="otherNotes.length > 0">See what was left out below.</template>
         </p>
-        <div class="provenance" :class="{ warn: resultPending }" data-testid="ask-provenance">
+        <div class="line provenance" :class="{ warn: resultPending }" data-testid="ask-provenance">
           <i
             :class="resultPending ? 'fa-solid fa-triangle-exclamation' : 'fa-solid fa-circle-check'"
           ></i>
@@ -245,23 +245,23 @@
               </tbody>
             </table>
           </div>
-          <p class="count">
+          <p class="note count">
             {{ result.total_rows.toLocaleString() }} rows
             <span v-if="result.truncated">(showing {{ result.rows.length.toLocaleString() }})</span>
           </p>
         </template>
 
-        <div class="sql-block">
+        <div class="line sql-block">
           <button type="button" class="sql-toggle" @click="showSql = !showSql">
             <i :class="showSql ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-right'"></i> SQL
           </button>
           <button v-if="showSql" type="button" class="btn btn-secondary btn-sm" @click="copySql">
             <i class="fa-regular fa-copy"></i> Copy
           </button>
-          <pre v-if="showSql" class="sql">{{ result.sql }}</pre>
+          <pre v-if="showSql" class="code sql">{{ result.sql }}</pre>
         </div>
 
-        <div class="keep">
+        <div class="line keep">
           <template v-if="!keeping">
             <button class="btn btn-secondary btn-sm" @click="keeping = true">
               <i class="fa-solid fa-diagram-project"></i> Keep as a flow
@@ -289,7 +289,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import LocalModelSetupCard from "../../../components/ai/LocalModelSetupCard.vue";
@@ -297,22 +297,22 @@ import TaskModelPicker from "../../../components/ai/TaskModelPicker.vue";
 import { useSemanticAi } from "../../../composables/useSemanticAi";
 import { SEMANTIC_ASK_SURFACE } from "../../../composables/useTaskModels";
 import { SemanticModelApi } from "../../../api/semanticModel.api";
-import { useCatalogStore } from "../../../stores/catalog-store";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
 import {
+  errorText,
   isAiNotSetUp,
+  type MetricFilterOp,
+  type MetricGrain,
+  type MetricQuery,
+  type MetricQueryResult,
   type SemanticAskOut,
   type SemanticAskReason,
+  type SemanticModel,
 } from "../../../types/semantic.types";
-import type {
-  MetricFilterOp,
-  MetricGrain,
-  MetricQuery,
-  MetricQueryResult,
-  SemanticMetric,
-  SemanticModel,
-} from "../../../types/semantic.types";
-import { errorText } from "./semanticFormat";
+import { formatCellValue } from "../../../utils/cellFormat";
+import { copyTextEverywhere } from "../../../utils/clipboardUtils";
+import { reachableTables, tableColumns } from "./metricReach";
+import { shortName } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
 const emit = defineEmits<{ "open-tab": [tab: string] }>();
@@ -332,16 +332,7 @@ const OPS: { op: MetricFilterOp; label: string }[] = [
   { op: "is not null", label: "is not empty" },
 ];
 
-interface FilterRow {
-  field: string;
-  op: MetricFilterOp;
-  value: string;
-  value2: string;
-}
-interface DimensionOption {
-  value: string;
-  label: string;
-}
+const EMPTY_FILTER = { field: "", op: "=" as MetricFilterOp, value: "", value2: "" };
 
 const router = useRouter();
 const { usable, canOfferLocal, pick } = useSemanticAi();
@@ -356,13 +347,8 @@ const answerModel = computed(() => {
   return a.model ? `${a.model} (${a.provider})` : a.provider;
 });
 
-const answerText = computed(() => answer.value?.answer ?? "");
 const readAs = computed(() => answer.value?.notes.find((n) => n.startsWith("Read as:")) ?? "");
-const otherNotes = computed(() => {
-  const notes = answer.value?.notes ?? [];
-  const i = notes.findIndex((n) => n.startsWith("Read as:"));
-  return i < 0 ? notes : notes.filter((_, j) => j !== i);
-});
+const otherNotes = computed(() => (answer.value?.notes ?? []).filter((n) => n !== readAs.value));
 
 const DEGRADED_TEXT: Record<SemanticAskReason, string> = {
   no_accepted_metrics: "There are no approved metrics yet, so there is nothing to answer with.",
@@ -377,16 +363,15 @@ const degradedText = (reason: SemanticAskReason | null) =>
   (reason && DEGRADED_TEXT[reason]) || "Could not answer this question.";
 
 const store = useSemanticModelStore();
-const catalogStore = useCatalogStore();
 
 const metricName = ref("");
 const dimensions = ref<string[]>([]);
 const grain = ref<MetricGrain | null>(null);
-const filters = ref<FilterRow[]>([]);
+const filters = ref<(typeof EMPTY_FILTER)[]>([]);
 const preview = ref(false);
 const running = ref(false);
 const result = ref<MetricQueryResult | null>(null);
-const resultPending = ref(false);
+const resultPending = computed(() => result.value?.metric.status !== "accepted");
 const failure = ref("");
 const showSql = ref(false);
 const keeping = ref(false);
@@ -401,76 +386,31 @@ const acceptedMetrics = computed(() => metrics.value.filter((m) => m.status === 
 const pendingMetrics = computed(() => metrics.value.filter((m) => m.status !== "accepted"));
 const examples = computed(() => {
   const [first, second] = acceptedMetrics.value;
-  const list: string[] = [];
-  if (first) list.push(`What is the ${first.name.replace(/_/g, " ")}?`);
-  if (first?.dimensions.length) {
-    list.push(`${first.name.replace(/_/g, " ")} by ${first.dimensions[0].replace(/_/g, " ")}`);
-  }
-  if (second) list.push(`What is the ${second.name.replace(/_/g, " ")}?`);
-  return list.slice(0, 3);
+  const words = (name: string) => name.replace(/_/g, " ");
+  const list = first ? [`What is the ${words(first.name)}?`] : [];
+  if (first?.dimensions.length) list.push(`${words(first.name)} by ${words(first.dimensions[0])}`);
+  if (second) list.push(`What is the ${words(second.name)}?`);
+  return list;
 });
 const metric = computed(() => metrics.value.find((m) => m.name === metricName.value) ?? null);
 const isPending = computed(() => !!metric.value && metric.value.status !== "accepted");
 
-const short = (key: string) => key.slice(key.lastIndexOf(".") + 1);
-
-const treeColumns = computed(() => {
-  const map = new Map<string, string[]>();
-  for (const catalog of catalogStore.tree) {
-    for (const schema of catalog.children) {
-      for (const t of schema.tables ?? []) {
-        map.set(
-          `${catalog.name}.${schema.name}.${t.name}`,
-          (t.schema_columns ?? []).map((c) => c.name),
-        );
-      }
-    }
-  }
-  return map;
-});
-
-function columnsOfTable(key: string): string[] {
-  const t = props.model.tables.find((x) => x.key === key || x.name === key);
-  if (t) return t.fields.map((f) => f.name);
-  return treeColumns.value.get(key) ?? [];
-}
-
-function reachable(from: string, allowPending: boolean): string[] {
-  const seen = [from];
-  for (let i = 0; i < seen.length; i++) {
-    for (const j of props.model.joins) {
-      if (j.from_table !== seen[i] || seen.includes(j.to_table)) continue;
-      if (j.status !== "accepted" && !allowPending) continue;
-      if (j.status === "rejected" || j.status === "retracted" || j.status === "superseded")
-        continue;
-      seen.push(j.to_table);
-    }
-  }
-  return seen;
-}
-
-const dimensionOptions = computed<DimensionOption[]>(() => {
+const dimensionOptions = computed<string[]>(() => {
   const m = metric.value;
   if (!m) return [];
-  if (m.dimensions.length) return m.dimensions.map((d) => ({ value: d, label: d }));
+  if (m.dimensions.length) return m.dimensions;
   const base =
     props.model.tables.find((t) => t.key === m.table || t.name === m.table)?.key ?? m.table;
-  const options: DimensionOption[] = [];
-  for (const key of reachable(base, isPending.value || preview.value)) {
-    for (const column of columnsOfTable(key)) {
-      const label = `${short(key)}.${column}`;
-      options.push({ value: key === base ? column : label, label: key === base ? column : label });
-    }
-  }
-  return options;
+  const reached = reachableTables(base, props.model.joins, isPending.value || preview.value);
+  return reached.flatMap((key) =>
+    tableColumns(props.model, key).map((c) =>
+      key === base ? c.name : `${shortName(key)}.${c.name}`,
+    ),
+  );
 });
 
 const needsValue = (op: MetricFilterOp) => op !== "is null" && op !== "is not null";
 const valueHint = (op: MetricFilterOp) => (op === "in" || op === "not in" ? "a, b, c" : "Value");
-
-function addFilter() {
-  filters.value.push({ field: "", op: "=", value: "", value2: "" });
-}
 
 function onMetric() {
   preview.value = isPending.value;
@@ -484,6 +424,12 @@ const scalar = (text: string): string | number => {
   return t !== "" && !Number.isNaN(Number(t)) ? Number(t) : t;
 };
 
+const splitList = (text: string) =>
+  text
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => v !== "");
+
 function buildQuery(): MetricQuery {
   return {
     metric: metricName.value,
@@ -493,15 +439,7 @@ function buildQuery(): MetricQuery {
       .map((f) => {
         if (!needsValue(f.op)) return { field: f.field, op: f.op };
         if (f.op === "in" || f.op === "not in")
-          return {
-            field: f.field,
-            op: f.op,
-            value: f.value
-              .split(",")
-              .map((v) => v.trim())
-              .filter((v) => v !== "")
-              .map(scalar),
-          };
+          return { field: f.field, op: f.op, value: splitList(f.value).map(scalar) };
         if (f.op === "between")
           return { field: f.field, op: f.op, value: [scalar(f.value), scalar(f.value2)] };
         return { field: f.field, op: f.op, value: scalar(f.value) };
@@ -513,20 +451,23 @@ function buildQuery(): MetricQuery {
   };
 }
 
-async function run(query?: MetricQuery) {
-  const body = query ?? buildQuery();
+function showResult(query: MetricQuery, res: MetricQueryResult) {
+  failure.value = "";
+  savedFlowId.value = null;
+  saveError.value = "";
+  result.value = res;
+  lastQuery.value = query;
+  if (!flowName.value) flowName.value = `${query.metric} query`;
+}
+
+async function run(query = buildQuery()) {
   const id = store.namespaceId;
   if (id === null) return;
   running.value = true;
   failure.value = "";
   result.value = null;
-  savedFlowId.value = null;
-  saveError.value = "";
   try {
-    result.value = await SemanticModelApi.queryMetric(id, body);
-    lastQuery.value = body;
-    resultPending.value = result.value.metric.status !== "accepted";
-    if (!flowName.value) flowName.value = `${body.metric} query`;
+    showResult(query, await SemanticModelApi.queryMetric(id, query));
   } catch (e) {
     failure.value = errorText(e, "Could not run the query");
   } finally {
@@ -541,49 +482,19 @@ function runManual() {
   void run();
 }
 
-const withCommand = (e: KeyboardEvent | Event) =>
-  (e as KeyboardEvent).metaKey || (e as KeyboardEvent).ctrlKey;
-
-function onQuestionEnter(e: KeyboardEvent | Event) {
-  if (!withCommand(e)) return;
-  e.preventDefault();
-  if (!asking.value) void submitQuestion();
-}
-
-function onControlsEnter(e: KeyboardEvent) {
-  if (!withCommand(e)) return;
-  e.preventDefault();
-  e.stopPropagation();
-  runManual();
-}
-
-/** Sets every control from a query, then runs it, or shows `ready` when the answer came with one. */
-async function applyQuery(query: MetricQuery, ready?: MetricQueryResult | null) {
-  setControls(query);
-  if (ready) showResult(query, ready);
-  else await run(query);
-}
-
-function showResult(query: MetricQuery, res: MetricQueryResult) {
-  failure.value = "";
-  savedFlowId.value = null;
-  saveError.value = "";
-  result.value = res;
-  lastQuery.value = query;
-  resultPending.value = res.metric.status !== "accepted";
-  if (!flowName.value) flowName.value = `${query.metric} query`;
-}
-
 async function submitQuestion() {
   const text = question.value.trim();
-  const id = store.namespaceId;
-  if (!text || id === null || asking.value) return;
+  if (!text || asking.value) return;
   asking.value = true;
   answer.value = null;
   try {
-    const out = await store.askQuestion(text, pick("ask"));
+    const out = await store.askQuestion(text, pick(SEMANTIC_ASK_SURFACE));
     answer.value = out;
-    if (out.query) await applyQuery(out.query, out.result);
+    if (out.query) {
+      setControls(out.query);
+      if (out.result) showResult(out.query, out.result);
+      else await run(out.query);
+    }
   } catch (e) {
     if (isAiNotSetUp(e)) notSetUp.value = true;
     else ElMessage.error(errorText(e, "Could not answer the question"));
@@ -618,16 +529,6 @@ function setControls(query: MetricQuery) {
   });
 }
 
-function consumePending() {
-  const q = store.pendingAsk;
-  if (!q) return;
-  store.pendingAsk = null;
-  void applyQuery(q);
-}
-
-onMounted(consumePending);
-watch(() => store.pendingAsk, consumePending);
-
 function formatNumber(value: number, format: string): string {
   const decimals = format.includes(".") ? (format.split(".")[1].match(/[0#]/g)?.length ?? 0) : 0;
   const percent = format.includes("%");
@@ -644,21 +545,16 @@ function formatNumber(value: number, format: string): string {
 }
 
 function cellText(cell: unknown, column: string): string {
-  if (cell === null || cell === undefined) return "";
-  const m: SemanticMetric | null = metric.value;
+  const m = metric.value;
   if (m?.format && column === result.value?.metric.name && typeof cell === "number") {
     return formatNumber(cell, m.format);
   }
-  return typeof cell === "number" ? cell.toLocaleString() : String(cell);
+  return typeof cell === "number" ? cell.toLocaleString() : formatCellValue(cell);
 }
 
 async function copySql() {
-  try {
-    await navigator.clipboard.writeText(result.value?.sql ?? "");
-    ElMessage.success("SQL copied");
-  } catch {
-    ElMessage.error("Could not copy");
-  }
+  if (await copyTextEverywhere(result.value?.sql ?? "")) ElMessage.success("SQL copied");
+  else ElMessage.error("Could not copy");
 }
 
 async function keepAsFlow() {
@@ -668,10 +564,11 @@ async function keepAsFlow() {
   saveError.value = "";
   savedFlowId.value = null;
   try {
-    const out = await SemanticModelApi.saveMetricQueryAsFlow(id, {
-      query: lastQuery.value,
-      name: flowName.value.trim(),
-    });
+    const out = await SemanticModelApi.saveMetricQueryAsFlow(
+      id,
+      lastQuery.value,
+      flowName.value.trim(),
+    );
     savedFlowId.value = out.flow_id;
     keeping.value = false;
   } catch (e) {
@@ -680,55 +577,13 @@ async function keepAsFlow() {
     saving.value = false;
   }
 }
-
-defineExpose({ applyQuery });
 </script>
 
+<style scoped src="./semantic.css"></style>
+
 <style scoped>
-.ask-tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-4);
-}
-
-.empty {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-}
-
-.question {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2);
-  padding: var(--spacing-4);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-}
-
-.question-row {
-  display: flex;
-  gap: var(--spacing-2);
-}
-
-.question-input {
-  flex: 1;
-}
-
-.examples,
-.q-note {
-  margin: 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
 .examples a {
   margin-left: var(--spacing-2);
-}
-
-.q-note.warn {
-  color: var(--color-warning-dark);
 }
 
 .answer-line {
@@ -739,46 +594,23 @@ defineExpose({ applyQuery });
   color: var(--color-text-primary);
 }
 
-.answer-line.warn {
-  padding-left: var(--spacing-3);
-  border-left: 3px solid var(--color-warning-dark);
-}
-
 .read-as {
   margin: 0;
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-}
-
-.read-as.explain {
-  font-size: var(--font-size-xs);
-  font-weight: normal;
-  color: var(--color-text-secondary);
 }
 
 .note-list {
-  margin: 0;
-  padding: 0 0 0 var(--spacing-4);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  padding-left: var(--spacing-4);
 }
 
-.note-list.warn {
+.note-list.warn-bar {
   padding-left: var(--spacing-3);
-  border-left: 3px solid var(--color-warning-dark);
   list-style-position: inside;
-  color: var(--color-warning-dark);
 }
 
 .controls {
-  display: flex;
-  flex-direction: column;
   gap: var(--spacing-3);
-  padding: var(--spacing-4);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
 }
 
 .row {
@@ -794,10 +626,6 @@ defineExpose({ applyQuery });
   min-width: 160px;
 }
 
-.grow {
-  flex: 1;
-}
-
 .grow2 {
   flex: 2;
 }
@@ -809,12 +637,6 @@ defineExpose({ applyQuery });
   letter-spacing: 0.05em;
 }
 
-.pending-note {
-  margin: 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-warning-dark);
-}
-
 .filters {
   display: flex;
   flex-direction: column;
@@ -822,10 +644,9 @@ defineExpose({ applyQuery });
   gap: var(--spacing-2);
 }
 
-.filter-row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
+.filter-row,
+.sql-block,
+.keep {
   flex-wrap: wrap;
 }
 
@@ -844,17 +665,6 @@ defineExpose({ applyQuery });
 .and {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
-}
-
-.icon-btn {
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-.icon-btn:hover {
-  color: var(--color-danger, var(--color-primary));
 }
 
 .run-row {
@@ -879,9 +689,6 @@ defineExpose({ applyQuery });
 }
 
 .provenance {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
   padding: var(--spacing-3) var(--spacing-4);
   border-radius: var(--border-radius-md);
   background: var(--color-background-secondary);
@@ -891,7 +698,6 @@ defineExpose({ applyQuery });
 
 .provenance.warn {
   border-left-color: var(--color-warning-dark);
-  color: var(--color-warning-dark);
 }
 
 .grid-wrap {
@@ -926,21 +732,9 @@ defineExpose({ applyQuery });
   font-variant-numeric: tabular-nums;
 }
 
-.none {
-  color: var(--color-text-muted);
-}
-
+.none,
 .count {
-  margin: 0;
-  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
-}
-
-.sql-block {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spacing-2);
 }
 
 .sql-toggle {
@@ -953,21 +747,6 @@ defineExpose({ applyQuery });
 
 .sql {
   flex-basis: 100%;
-  margin: 0;
-  padding: var(--spacing-2) var(--spacing-3);
-  border-radius: var(--border-radius-sm);
-  background: var(--color-background-secondary);
-  font-family: var(--font-family-mono, monospace);
-  font-size: var(--font-size-xs);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.keep {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spacing-2);
 }
 
 .flow-name {

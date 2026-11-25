@@ -100,13 +100,18 @@ export function useSemanticActivity() {
     const text = last.ok
       ? (last.summary ?? "The suggestion finished.")
       : `The suggestion failed${last.error ? `: ${last.error}` : "."}`;
-    return { text, ok: !!last.ok, mine: last.mine };
+    return { text, ok: !!last.ok };
   });
 
   /** Follow `namespaceId` while a component that shows the status is mounted; pair with `detach`. */
   function attach(namespaceId: number): void {
     attached++;
-    open(namespaceId);
+    if (state.namespaceId !== namespaceId) {
+      state.namespaceId = namespaceId;
+      state.running = null;
+      state.last = null;
+    }
+    void refresh();
   }
 
   function detach(): void {
@@ -115,15 +120,6 @@ export function useSemanticActivity() {
       clearTimeout(timer);
       timer = null;
     }
-  }
-
-  function open(namespaceId: number): void {
-    if (state.namespaceId !== namespaceId) {
-      state.namespaceId = namespaceId;
-      state.running = null;
-      state.last = null;
-    }
-    void refresh();
   }
 
   /** Run a suggest request from this page, reading the status while it goes on. A surface that shows its own
@@ -150,8 +146,6 @@ export function useSemanticActivity() {
     result,
     attach,
     detach,
-    open,
-    refresh,
     track,
     dismiss: dismissLast,
   };

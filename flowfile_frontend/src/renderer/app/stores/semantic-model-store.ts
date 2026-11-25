@@ -1,31 +1,21 @@
-// Semantic model store: the model of the selected schema or catalog, its review queue and history
+// Semantic model store: the model of the selected schema or catalog and its review queue
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { SemanticModelApi } from "../api/semanticModel.api";
+import { errorText } from "../types/semantic.types";
 import { useCatalogStore } from "./catalog-store";
 import type {
   JoinCheck,
-  MetricQuery,
-  SemanticAskOut,
-  SemanticDraftOut,
-  SemanticSuggestKind,
-  SemanticSuggestRequestOut,
-  SuggestOut,
-  SemanticEvent,
   SemanticFact,
   SemanticModel,
+  SemanticModelPick,
   SemanticModelUpdate,
   SemanticProposal,
   SemanticReviewAction,
   SemanticReviewItem,
   SemanticReviewResult,
-  SemanticSyncResult,
+  SemanticSuggestKind,
 } from "../types/semantic.types";
-
-export const semanticErrorMessage = (e: any, fallback: string): string => {
-  const detail = e?.response?.data?.detail;
-  return typeof detail === "string" ? detail : (e?.message ?? fallback);
-};
 
 export const useSemanticModelStore = defineStore("semanticModel", () => {
   const namespaceId = ref<number | null>(null);
@@ -34,12 +24,7 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
   const error = ref<string | null>(null);
   const reviewQueue = ref<SemanticReviewItem[]>([]);
   const reviewLoading = ref(false);
-  const history = ref<SemanticEvent[]>([]);
-  const historyLoading = ref(false);
-  const historyError = ref<string | null>(null);
   const busy = ref(false);
-  // A query another part of the UI wants the Ask tab to set and run; the tab consumes it.
-  const pendingAsk = ref<MetricQuery | null>(null);
   // A table another part of the UI wants the Tables tab to open; the tab consumes it.
   const focusTableId = ref<number | null>(null);
   // Each join measured against the data, by join key; filled by checkJoins, empty until it answers.
@@ -48,7 +33,6 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
   let loadToken = 0;
   let joinCheckRunning = false;
   let joinCheckAgain = false;
-  let historyToken = 0;
 
   async function refreshReview() {
     const id = namespaceId.value;
@@ -57,8 +41,8 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     try {
       const items = await SemanticModelApi.getReviewQueue(id);
       if (namespaceId.value === id) reviewQueue.value = items;
-    } catch (e: any) {
-      if (namespaceId.value === id) error.value = semanticErrorMessage(e, "Could not load review");
+    } catch (e) {
+      if (namespaceId.value === id) error.value = errorText(e, "Could not load review");
     } finally {
       reviewLoading.value = false;
     }
@@ -69,7 +53,6 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     if (namespaceId.value !== id) {
       model.value = null;
       reviewQueue.value = [];
-      history.value = [];
       joinChecks.value = {};
     }
     namespaceId.value = id;
@@ -80,10 +63,10 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
       if (token !== loadToken) return;
       model.value = loaded;
       await refreshReview();
-    } catch (e: any) {
+    } catch (e) {
       if (token !== loadToken) return;
       model.value = null;
-      error.value = semanticErrorMessage(e, "Could not load the semantic model");
+      error.value = errorText(e, "Could not load the semantic model");
     } finally {
       if (token === loadToken) loading.value = false;
     }
@@ -101,9 +84,13 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     if (namespaceId.value === id) model.value = loaded;
   }
 
+  function openId(): number {
+    if (namespaceId.value === null) throw new Error("No semantic model is open");
+    return namespaceId.value;
+  }
+
   async function run<T>(work: (id: number) => Promise<T>): Promise<T> {
-    const id = namespaceId.value;
-    if (id === null) throw new Error("No semantic model is open");
+    const id = openId();
     busy.value = true;
     try {
       const result = await work(id);
@@ -119,11 +106,8 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
   const propose = (proposals: SemanticProposal[]): Promise<SemanticFact[]> =>
     run((id) => SemanticModelApi.propose(id, proposals));
 
-  const review = (action: SemanticReviewAction): Promise<SemanticReviewResult> =>
-    run((id) => SemanticModelApi.review(id, action));
-
   /** Remove a whole metric or join by its key; the history keeps it. */
-  const removeSubject = (subject: string): Promise<SemanticReviewResult> =>
+  const removeSubject = (subject: string) =>
     run((id) => SemanticModelApi.review(id, { action: "retract", subject }));
 
   const reviewBatch = (actions: SemanticReviewAction[]): Promise<SemanticReviewResult> =>
@@ -137,64 +121,23 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
       return merged;
     });
 
-  const suggestModel = (kinds?: SemanticSuggestKind[]): Promise<SuggestOut> =>
-    run((id) => SemanticModelApi.suggest(id, kinds ? { kinds } : undefined));
+  const suggestModel = (kinds?: SemanticSuggestKind[]) =>
+    run((id) => SemanticModelApi.suggest(id, kinds));
 
   /** A request in the person's words (or more of `kinds`) for the AI; what it stores waits for review. */
   const suggestOnRequest = (
-    request: string | null,
-    kinds: SemanticSuggestKind[] | null,
-    pick: { provider?: string; model?: string } = {},
-  ): Promise<SemanticSuggestRequestOut> =>
-    run((id) =>
-      SemanticModelApi.suggestOnRequest({
-        namespace_id: id,
-        ...(request ? { request } : {}),
-        ...(kinds ? { kinds } : {}),
-        ...pick,
-      }),
-    );
+    scope: { request?: string; kinds?: SemanticSuggestKind[] },
+    pick: SemanticModelPick,
+  ) => run((id) => SemanticModelApi.suggestOnRequest(id, { ...scope, ...pick }));
 
-  const draftModel = (
-    pick: { provider?: string; model?: string } = {},
-  ): Promise<SemanticDraftOut> =>
-    run((id) => SemanticModelApi.draft({ namespace_id: id, ...pick }));
+  const draftModel = (pick: SemanticModelPick) => run((id) => SemanticModelApi.draft(id, pick));
 
-  async function askQuestion(
-    question: string,
-    pick: { provider?: string; model?: string } = {},
-  ): Promise<SemanticAskOut> {
-    const id = namespaceId.value;
-    if (id === null) throw new Error("No semantic model is open");
-    return SemanticModelApi.ask({ namespace_id: id, question, ...pick });
-  }
+  const sync = () => run((id) => SemanticModelApi.sync(id));
 
-  const sync = (): Promise<SemanticSyncResult> => run((id) => SemanticModelApi.sync(id));
+  const askQuestion = async (question: string, pick: SemanticModelPick) =>
+    SemanticModelApi.ask(openId(), question, pick);
 
-  async function exportYaml(): Promise<string> {
-    const id = namespaceId.value;
-    if (id === null) throw new Error("No semantic model is open");
-    return SemanticModelApi.exportYaml(id);
-  }
-
-  async function loadHistory(subject: string) {
-    const id = namespaceId.value;
-    if (id === null) return;
-    const token = ++historyToken;
-    historyLoading.value = true;
-    historyError.value = null;
-    try {
-      const events = await SemanticModelApi.getHistory(id, subject);
-      if (token === historyToken) history.value = events;
-    } catch (e: any) {
-      if (token === historyToken) {
-        history.value = [];
-        historyError.value = semanticErrorMessage(e, "Could not load history");
-      }
-    } finally {
-      if (token === historyToken) historyLoading.value = false;
-    }
-  }
+  const exportYaml = async () => SemanticModelApi.exportYaml(openId());
 
   /** Measure the model's joins; one request at a time, a call made meanwhile runs once after it, failures are
    * silent (the list then shows no warnings). */
@@ -223,28 +166,6 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     }
   }
 
-  const requestAsk = (query: MetricQuery) => {
-    pendingAsk.value = query;
-  };
-
-  const requestFocusTable = (tableId: number | null) => {
-    focusTableId.value = tableId;
-  };
-
-  function clear() {
-    loadToken++;
-    historyToken++;
-    namespaceId.value = null;
-    model.value = null;
-    error.value = null;
-    reviewQueue.value = [];
-    history.value = [];
-    pendingAsk.value = null;
-    focusTableId.value = null;
-    joinChecks.value = {};
-    loading.value = false;
-  }
-
   return {
     namespaceId,
     model,
@@ -252,20 +173,13 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     error,
     reviewQueue,
     reviewLoading,
-    history,
-    historyLoading,
-    historyError,
     busy,
-    pendingAsk,
-    requestAsk,
     focusTableId,
-    requestFocusTable,
     joinChecks,
     checkJoins,
     load,
     updateModel,
     propose,
-    review,
     removeSubject,
     reviewBatch,
     suggestModel,
@@ -274,7 +188,5 @@ export const useSemanticModelStore = defineStore("semanticModel", () => {
     askQuestion,
     sync,
     exportYaml,
-    loadHistory,
-    clear,
   };
 });

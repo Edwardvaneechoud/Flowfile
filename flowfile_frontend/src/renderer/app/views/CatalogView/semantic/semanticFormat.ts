@@ -1,3 +1,4 @@
+import { ElMessage } from "element-plus";
 import type {
   SemanticFact,
   SemanticFactStatus,
@@ -10,38 +11,27 @@ export const tablePageLocation = (tableId: number) => ({
   query: { tab: "catalog", tableId: String(tableId) },
 });
 
-export type ChipState = "accepted" | "pending" | "stale";
-
-export const COLUMN_ROLES = ["key", "time", "category", "amount"] as const;
-export const CONFIDENTIALITY_LEVELS = ["public", "internal", "confidential", "restricted"] as const;
-
-/** What a column is used for when a number is asked for; `value` is what the ledger stores. */
-export const ROLE_OPTIONS: { value: (typeof COLUMN_ROLES)[number]; label: string; hint: string }[] =
-  [
-    { value: "key", label: "Identifier", hint: "Tells rows apart. Counted, never added up." },
-    { value: "time", label: "Date", hint: "When it happened. Used for trends over time." },
-    { value: "category", label: "Group by", hint: "A label to split a number by." },
-    { value: "amount", label: "Amount", hint: "A number to add up or average." },
-  ];
-
-/** What each level means for AI; `value` is what the ledger stores. People see every level. */
-export const CONFIDENTIALITY_OPTIONS: {
-  value: (typeof CONFIDENTIALITY_LEVELS)[number];
+/** What a column can be set to: `value` is what the ledger stores, `hint` what it means. */
+interface Option {
+  value: string;
   label: string;
   hint: string;
-}[] = [
+}
+
+export const ROLE_OPTIONS: Option[] = [
+  { value: "key", label: "Identifier", hint: "Tells rows apart. Counted, never added up." },
+  { value: "time", label: "Date", hint: "When it happened. Used for trends over time." },
+  { value: "category", label: "Group by", hint: "A label to split a number by." },
+  { value: "amount", label: "Amount", hint: "A number to add up or average." },
+];
+
+// People see every level; the hint says what AI sees.
+const KEPT = "Kept from AI: it sees the name and type only.";
+export const CONFIDENTIALITY_OPTIONS: Option[] = [
   { value: "public", label: "Public", hint: "AI may read it." },
   { value: "internal", label: "Internal", hint: "AI may read it." },
-  {
-    value: "confidential",
-    label: "Confidential",
-    hint: "Kept from AI: it sees the name and type only.",
-  },
-  {
-    value: "restricted",
-    label: "Restricted",
-    hint: "Kept from AI: it sees the name and type only.",
-  },
+  { value: "confidential", label: "Confidential", hint: KEPT },
+  { value: "restricted", label: "Restricted", hint: KEPT },
 ];
 
 export const CONFIDENTIALITY_HELP =
@@ -53,10 +43,8 @@ export const ROLE_HELP =
   "How this column is used when you ask for a number: an identifier is counted, " +
   "an amount is added up, a date gives a trend, and a group-by column splits the result.";
 
-const ATTRIBUTE_LABELS: Record<string, string> = { role: "used as" };
-
 export const attributeLabel = (attribute: string): string =>
-  ATTRIBUTE_LABELS[attribute] ?? attribute;
+  attribute === "role" ? "used as" : attribute;
 
 /** A fact's value as a person reads it: a role by its label, anything else as text. */
 export const displayValue = (attribute: string, value: unknown): string => {
@@ -70,38 +58,23 @@ export const displayValue = (attribute: string, value: unknown): string => {
   return valueText(value);
 };
 
-/** True for a fact that still needs a person: proposed or stale. An accepted fact shows no chip. */
-export const needsReview = (fact: SemanticFact | undefined): boolean => {
-  if (!fact) return false;
-  const state = chipState(fact.status);
-  return state === "pending" || state === "stale";
-};
-
-export const chipState = (status: SemanticFactStatus): ChipState | null => {
-  if (status === "accepted") return "accepted";
+export const chipState = (status: SemanticFactStatus): "accepted" | "pending" | "stale" | null => {
   if (status === "proposed" || status === "reviewed") return "pending";
-  if (status === "stale") return "stale";
-  return null;
+  return status === "accepted" || status === "stale" ? status : null;
 };
 
-export const SOURCE_LABELS: Record<SemanticSourceKind, string> = {
-  human: "Person",
-  ai: "AI",
-  inferred: "Rules",
-  catalog: "Catalog",
-  import: "Import",
-  system: "System",
-  other: "Other",
-};
+/** Whether a fact, join or metric still needs a person: proposed or stale. */
+export const needsReview = (of: { status: SemanticFactStatus } | undefined): boolean =>
+  !!of && ["pending", "stale"].includes(chipState(of.status) ?? "");
 
-export const SOURCE_ICONS: Record<SemanticSourceKind, string> = {
-  human: "fa-solid fa-user",
-  ai: "fa-solid fa-wand-magic-sparkles",
-  inferred: "fa-solid fa-gears",
-  catalog: "fa-solid fa-database",
-  import: "fa-solid fa-file-import",
-  system: "fa-solid fa-microchip",
-  other: "fa-solid fa-circle-question",
+export const SOURCES: Record<SemanticSourceKind, { label: string; icon: string }> = {
+  human: { label: "Person", icon: "fa-solid fa-user" },
+  ai: { label: "AI", icon: "fa-solid fa-wand-magic-sparkles" },
+  inferred: { label: "Rules", icon: "fa-solid fa-gears" },
+  catalog: { label: "Catalog", icon: "fa-solid fa-database" },
+  import: { label: "Import", icon: "fa-solid fa-file-import" },
+  system: { label: "System", icon: "fa-solid fa-microchip" },
+  other: { label: "Other", icon: "fa-solid fa-circle-question" },
 };
 
 export const valueText = (value: unknown): string => {
@@ -115,21 +88,28 @@ export const factText = (fact: SemanticFact | undefined): string => valueText(fa
 
 /** One sentence on who stated a fact that is waiting for review, for a tooltip. */
 export const sourceHint = (fact: SemanticFact): string => {
-  const parts = [`Proposed by ${SOURCE_LABELS[fact.source_kind].toLowerCase()}`];
+  const parts = [`Proposed by ${SOURCES[fact.source_kind].label.toLowerCase()}`];
   if (fact.confidence !== null) parts.push(`${Math.round(fact.confidence * 100)}% confident`);
   if (fact.rationale) parts.push(fact.rationale);
   return parts.join(" · ");
 };
 
-export const shortTime = (iso: string): string => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-};
+/** The words of a comma-separated list, each once. */
+export const splitWords = (text: string): string[] => [
+  ...new Set(
+    text
+      .split(",")
+      .map((w) => w.trim())
+      .filter(Boolean),
+  ),
+];
 
-export const errorText = (e: unknown, fallback: string): string => {
-  const data = (e as { response?: { data?: { detail?: unknown; message?: unknown } } })?.response
-    ?.data;
-  if (typeof data?.detail === "string") return data.detail;
-  if (typeof data?.message === "string") return data.message;
-  return (e as { message?: string })?.message ?? fallback;
-};
+/** A table's own name: the last part of its key. */
+export const shortName = (key: string): string => key.slice(key.lastIndexOf(".") + 1);
+
+/** Say that a stored proposal waits for a person; nothing when all of it was accepted at once. */
+export function notePending(facts: SemanticFact[], text = "Proposed. It waits in the Review tab.") {
+  const waits = facts.some((f) => f.status !== "accepted");
+  if (waits) ElMessage.info(text);
+  return waits;
+}

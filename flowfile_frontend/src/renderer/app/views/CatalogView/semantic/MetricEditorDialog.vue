@@ -7,7 +7,7 @@
     @update:model-value="emit('update:modelValue', $event)"
     @open="reset"
   >
-    <p class="intro">
+    <p class="hint intro">
       A metric is a named calculation, such as total revenue, that everyone computes the same way.
     </p>
     <el-form label-position="top" @submit.prevent>
@@ -47,10 +47,10 @@
             :style="{ minHeight: '60px' }"
           />
         </div>
-        <p v-if="usableLine" class="usable">{{ usableLine }}</p>
+        <p v-if="usableLine" class="note usable">{{ usableLine }}</p>
       </el-form-item>
       <el-form-item label="Filter (optional)" :error="filterError">
-        <div class="editor one-line">
+        <div class="editor">
           <codemirror
             v-model="filter"
             placeholder="status = 'completed'"
@@ -80,27 +80,33 @@
         >
           <el-option v-for="c in dimensionChoices" :key="c" :label="c" :value="c" />
         </el-select>
-        <p class="usable">Leave empty to let this metric be grouped by any column it can reach.</p>
+        <p class="note usable">
+          Leave empty to let this metric be grouped by any column it can reach.
+        </p>
       </el-form-item>
     </el-form>
 
-    <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+    <p v-if="error" class="error" role="alert">{{ error }}</p>
 
     <template #footer>
-      <div class="footer">
+      <div class="line">
         <button
           v-if="metric && metric.can_remove"
           class="btn btn-ghost btn-danger"
           data-testid="semantic-metric-remove"
-          :disabled="saving || removing"
+          :disabled="saving || removing !== null"
           @click="remove"
         >
           <i class="fa-solid fa-trash"></i>
           {{ removing ? "Removing…" : "Remove metric" }}
         </button>
-        <span class="footer-gap"></span>
+        <span class="grow"></span>
         <button class="btn btn-secondary" @click="emit('update:modelValue', false)">Cancel</button>
-        <button class="btn btn-primary" :disabled="!valid || saving || removing" @click="save">
+        <button
+          class="btn btn-primary"
+          :disabled="!valid || saving || removing !== null"
+          @click="save"
+        >
           {{ saving ? "Saving…" : metric ? "Save changes" : "Add metric" }}
         </button>
       </div>
@@ -110,18 +116,16 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { ElMessage } from "element-plus";
 import { Codemirror } from "vue-codemirror";
 import type { Completion } from "@codemirror/autocomplete";
 import type { SQLNamespace } from "@codemirror/lang-sql";
 import { EditorState, type Extension } from "@codemirror/state";
-import { useCatalogStore } from "../../../stores/catalog-store";
 import { useSemanticModelStore } from "../../../stores/semantic-model-store";
-import type { SemanticMetric, SemanticModel } from "../../../types/semantic.types";
+import { errorText, type SemanticMetric, type SemanticModel } from "../../../types/semantic.types";
 import { sqlEditorExtensions, sqlFunctionCompletions } from "../sqlCompletion";
-import { reachLine, reachableTables } from "./metricReach";
-import { errorText } from "./semanticFormat";
-import { confirmRemoveMetric } from "./semanticRemoval";
+import { reachLine, reachableTables, tableColumns } from "./metricReach";
+import { notePending, shortName, splitWords } from "./semanticFormat";
+import { useSemanticRemoval } from "./semanticRemoval";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -132,7 +136,6 @@ const props = defineProps<{
 const emit = defineEmits<(e: "update:modelValue", value: boolean) => void>();
 
 const store = useSemanticModelStore();
-const catalogStore = useCatalogStore();
 
 const tableId = ref<number | null>(null);
 const name = ref("");
@@ -144,10 +147,10 @@ const format = ref("");
 const synonyms = ref("");
 const dimensions = ref<string[]>([]);
 const saving = ref(false);
-const removing = ref(false);
 const error = ref("");
 const expressionError = ref("");
 const filterError = ref("");
+const { removing, removeMetric } = useSemanticRemoval((message) => (error.value = message));
 
 const baseTable = computed(() => props.model.tables.find((t) => t.table_id === tableId.value));
 
@@ -163,75 +166,42 @@ const reached = computed(() =>
     : [],
 );
 
-const treeColumns = computed(() => {
-  const map = new Map<string, Completion[]>();
-  for (const catalog of catalogStore.tree) {
-    for (const schema of catalog.children) {
-      for (const t of schema.tables ?? []) {
-        const key = t.qualified_name ?? `${catalog.name}.${schema.name}.${t.name}`;
-        map.set(
-          key,
-          (t.schema_columns ?? []).map((c) => ({
-            label: c.name,
-            type: "property",
-            detail: c.dtype,
-          })),
-        );
-      }
-    }
-  }
-  return map;
-});
+const columnsOf = (key: string): Completion[] =>
+  tableColumns(props.model, key).map((c) => ({
+    label: c.name,
+    type: "property",
+    detail: [c.dtype, c.meaning].filter((x) => typeof x === "string" && x).join(" · ") || undefined,
+  }));
 
-function columnsOf(key: string): Completion[] {
-  const t = props.model.tables.find((x) => x.key === key);
-  if (!t) return treeColumns.value.get(key) ?? [];
-  return t.fields.map((f) => {
-    const meaning = f.facts.description?.value;
-    const detail = [f.dtype, typeof meaning === "string" ? meaning : ""]
-      .filter(Boolean)
-      .join(" · ");
-    return { label: f.name, type: "property", detail: detail || undefined };
-  });
-}
-
-const shortName = (key: string) => key.slice(key.lastIndexOf(".") + 1);
+// Two reachable tables can share a short name; a column of either then needs its schema.
+const isAmbiguous = (key: string) =>
+  reached.value.filter((k) => shortName(k) === shortName(key)).length > 1;
 
 /** The base table's columns, then `table.column` for each joined table whose short name is its own. */
 const dimensionChoices = computed(() => {
-  const [, ...joined] = reached.value;
-  const shorts = reached.value.map(shortName);
-  const choices = [...columns.value];
-  for (const key of joined) {
-    const short = shortName(key);
-    if (shorts.filter((s) => s === short).length > 1) continue;
-    for (const c of columnsOf(key)) choices.push(`${short}.${c.label}`);
-  }
-  return [...new Set([...choices, ...dimensions.value])];
+  const joined = reached.value.slice(1).filter((key) => !isAmbiguous(key));
+  return [
+    ...new Set([
+      ...columns.value,
+      ...joined.flatMap((key) => columnsOf(key).map((c) => `${shortName(key)}.${c.label}`)),
+      ...dimensions.value,
+    ]),
+  ];
 });
 
 /** Each reachable table by its short name, or under its schema when two share one. */
 const completionSchema = computed<SQLNamespace>(() => {
   const schema: Record<string, SQLNamespace> = {};
-  const counts = new Map<string, number>();
-  for (const key of reached.value)
-    counts.set(shortName(key), (counts.get(shortName(key)) ?? 0) + 1);
   for (const key of reached.value) {
     const short = shortName(key);
-    if ((counts.get(short) ?? 0) === 1) {
-      schema[short] = columnsOf(key);
-      continue;
-    }
-    const parts = key.split(".");
-    const schemaName = parts[parts.length - 2] ?? short;
-    const holder = (schema[schemaName] ?? {}) as Record<string, SQLNamespace>;
-    holder[short] = columnsOf(key);
-    schema[schemaName] = holder;
+    const parent = isAmbiguous(key) ? (key.split(".").slice(-2, -1)[0] ?? short) : null;
+    if (parent === null) schema[short] = columnsOf(key);
+    else schema[parent] = { ...(schema[parent] as object), [short]: columnsOf(key) };
   }
   return schema;
 });
 
-const languageExtensions = computed<Extension[]>(() => [
+const expressionExtensions = computed<Extension[]>(() => [
   ...sqlEditorExtensions(
     completionSchema.value,
     baseTable.value ? shortName(baseTable.value.key) : undefined,
@@ -245,8 +215,7 @@ const oneLine = EditorState.transactionFilter.of((tr) => {
   return { changes: { from: 0, to: tr.startState.doc.length, insert: text } };
 });
 
-const expressionExtensions = computed<Extension[]>(() => languageExtensions.value);
-const filterExtensions = computed<Extension[]>(() => [...languageExtensions.value, oneLine]);
+const filterExtensions = computed<Extension[]>(() => [...expressionExtensions.value, oneLine]);
 
 const usableLine = computed(() => reachLine(reached.value));
 
@@ -254,23 +223,18 @@ const valid = computed(
   () => tableId.value !== null && name.value.trim() !== "" && expression.value.trim() !== "",
 );
 
+function clearErrors() {
+  error.value = expressionError.value = filterError.value = "";
+}
+
 watch(expression, () => (expressionError.value = ""));
 watch(filter, () => (filterError.value = ""));
-watch(tableId, () => {
-  expressionError.value = "";
-  filterError.value = "";
-});
+watch(tableId, () => (expressionError.value = filterError.value = ""));
 
 function onTableChange() {
   dimensions.value = [];
   timeColumn.value = "";
 }
-
-const splitWords = (text: string): string[] =>
-  text
-    .split(",")
-    .map((w) => w.trim())
-    .filter((w, i, all) => w !== "" && all.indexOf(w) === i);
 
 function reset() {
   const m = props.metric;
@@ -283,9 +247,7 @@ function reset() {
   format.value = m?.format ?? "";
   synonyms.value = (m?.synonyms ?? []).join(", ");
   dimensions.value = [...(m?.dimensions ?? [])];
-  error.value = "";
-  expressionError.value = "";
-  filterError.value = "";
+  clearErrors();
 }
 
 /** Puts a refusal under the field it names ("… in the filter)"), else in the dialog's error line. */
@@ -296,27 +258,14 @@ function showRefusal(message: string) {
 }
 
 async function remove() {
-  const metric = props.metric;
-  if (!metric || !(await confirmRemoveMetric(metric))) return;
-  removing.value = true;
   error.value = "";
-  try {
-    await store.removeSubject(metric.key);
-    ElMessage.success(`Removed ${metric.name}.`);
-    emit("update:modelValue", false);
-  } catch (e) {
-    error.value = errorText(e, "Could not remove the metric");
-  } finally {
-    removing.value = false;
-  }
+  if (props.metric && (await removeMetric(props.metric))) emit("update:modelValue", false);
 }
 
 async function save() {
   if (!valid.value || tableId.value === null) return;
   saving.value = true;
-  error.value = "";
-  expressionError.value = "";
-  filterError.value = "";
+  clearErrors();
   try {
     const facts = await store.propose([
       {
@@ -333,9 +282,7 @@ async function save() {
         edit: !!props.metric,
       },
     ]);
-    if (facts.some((f) => f.status !== "accepted")) {
-      ElMessage.info("Proposed. It waits in the Review tab.");
-    }
+    notePending(facts);
     emit("update:modelValue", false);
   } catch (e) {
     showRefusal(errorText(e, "Could not save the metric"));
@@ -345,11 +292,11 @@ async function save() {
 }
 </script>
 
+<style scoped src="./semantic.css"></style>
+
 <style scoped>
 .intro {
-  margin: 0 0 var(--spacing-4);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-4);
 }
 
 .row {
@@ -365,8 +312,7 @@ async function save() {
 }
 
 .usable {
-  margin: var(--spacing-1) 0 0;
-  font-size: var(--font-size-xs);
+  margin-top: var(--spacing-1);
   line-height: 1.4;
   color: var(--color-text-muted);
 }
@@ -376,21 +322,5 @@ async function save() {
   position: static;
   padding-top: var(--spacing-1);
   line-height: 1.4;
-}
-
-.footer {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-}
-
-.footer-gap {
-  flex: 1;
-}
-
-.form-error {
-  margin: 0;
-  color: var(--color-danger);
-  font-size: var(--font-size-sm);
 }
 </style>

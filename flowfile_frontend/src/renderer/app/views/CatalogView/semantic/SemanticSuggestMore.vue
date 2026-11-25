@@ -2,7 +2,7 @@
   <div class="suggest-more">
     <div class="toolbar">
       <div class="toolbar-hint"><slot name="hint" /></div>
-      <div class="toolbar-actions">
+      <div class="line toolbar-actions">
         <el-tooltip
           :content="busy ? SUGGEST_BUSY_TEXT : buttonHint"
           placement="top"
@@ -13,7 +13,7 @@
               class="btn btn-secondary btn-sm"
               type="button"
               :disabled="running || busy"
-              :data-testid="`suggest-more-${testId}`"
+              :data-testid="`suggest-more-${kinds.join('-')}`"
               @click="suggestMore(kinds)"
             >
               <i class="fa-solid fa-wand-magic-sparkles"></i>
@@ -41,7 +41,7 @@ import { SEMANTIC_SUGGEST_SURFACE, useTaskModels } from "../../../composables/us
 import type { SemanticSuggestKind } from "../../../types/semantic.types";
 import SemanticSuggestOutcome from "./SemanticSuggestOutcome.vue";
 
-const props = defineProps<{
+defineProps<{
   kinds: SemanticSuggestKind[];
   label: string;
 }>();
@@ -49,7 +49,6 @@ const emit = defineEmits<{ review: [] }>();
 
 const { usable, running, busy, outcome, error, suggestMore } = useSemanticSuggest();
 const { describe } = useTaskModels();
-const testId = computed(() => props.kinds.join("-"));
 
 const buttonHint = computed(() => {
   if (!usable.value) return "The rules look for these from names, types and the data.";
@@ -58,6 +57,8 @@ const buttonHint = computed(() => {
 });
 </script>
 
+<style scoped src="./semantic.css"></style>
+
 <style scoped>
 .suggest-more {
   display: flex;
@@ -65,31 +66,11 @@ const buttonHint = computed(() => {
   gap: var(--spacing-2);
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-4);
-}
-
 .toolbar-hint {
   min-width: 0;
 }
 
 .toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
   flex-shrink: 0;
-}
-
-.note {
-  margin: 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-.note.warn {
-  color: var(--color-warning-dark);
 }
 </style>

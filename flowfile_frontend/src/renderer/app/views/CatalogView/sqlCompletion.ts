@@ -23,42 +23,17 @@ export function sqlEditorExtensions(schema: SQLNamespace, defaultTable?: string)
   return [sql({ schema, defaultTable, upperCaseKeywords: true }), oneDark];
 }
 
-const fn = (label: string, detail: string): Completion => ({
-  label,
-  type: "function",
-  detail,
-  apply: `${label}(`,
-});
+const AGGREGATES = "SUM COUNT AVG MIN MAX MEDIAN STDDEV VARIANCE FIRST LAST";
+const SCALARS =
+  "COALESCE NULLIF ABS ROUND FLOOR CEIL LOWER UPPER LENGTH CONCAT SUBSTR DATE_TRUNC DATE_PART CAST";
 
-/** Aggregate and scalar functions Polars SQL runs, offered where an expression is written. */
-export const SQL_FUNCTIONS: Completion[] = [
-  fn("SUM", "aggregate"),
-  fn("COUNT", "aggregate"),
-  fn("AVG", "aggregate"),
-  fn("MIN", "aggregate"),
-  fn("MAX", "aggregate"),
-  fn("MEDIAN", "aggregate"),
-  fn("STDDEV", "aggregate"),
-  fn("VARIANCE", "aggregate"),
-  fn("FIRST", "aggregate"),
-  fn("LAST", "aggregate"),
-  fn("COALESCE", "scalar"),
-  fn("NULLIF", "scalar"),
-  fn("ABS", "scalar"),
-  fn("ROUND", "scalar"),
-  fn("FLOOR", "scalar"),
-  fn("CEIL", "scalar"),
-  fn("LOWER", "scalar"),
-  fn("UPPER", "scalar"),
-  fn("LENGTH", "scalar"),
-  fn("CONCAT", "scalar"),
-  fn("SUBSTR", "scalar"),
-  fn("DATE_TRUNC", "scalar"),
-  fn("DATE_PART", "scalar"),
-  fn("CAST", "scalar"),
-];
+const functions = (labels: string, detail: string): Completion[] =>
+  labels.split(" ").map((label) => ({ label, type: "function", detail, apply: `${label}(` }));
 
-/** Completions for `SQL_FUNCTIONS`, added beside the language's own keyword and schema sources. */
+/** The functions Polars SQL runs, offered beside the language's own keyword and schema sources. */
 export const sqlFunctionCompletions: Extension = StandardSQL.language.data.of({
-  autocomplete: completeFromList(SQL_FUNCTIONS),
+  autocomplete: completeFromList([
+    ...functions(AGGREGATES, "aggregate"),
+    ...functions(SCALARS, "scalar"),
+  ]),
 });

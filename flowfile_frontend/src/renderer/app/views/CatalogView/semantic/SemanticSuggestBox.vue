@@ -1,14 +1,15 @@
 <template>
-  <section class="suggest-box" data-testid="suggest-box">
-    <form class="suggest-row" @submit.prevent="submit">
+  <section class="box form-box" data-testid="suggest-box">
+    <form class="input-row" @submit.prevent="submit">
       <el-input
         v-model="request"
-        class="suggest-input"
+        class="grow"
         placeholder="What should be suggested? Leave empty for the whole model."
         :disabled="running"
         maxlength="500"
         data-testid="suggest-box-input"
-        @keydown.enter="onEnter"
+        @keydown.meta.enter.prevent="submit"
+        @keydown.ctrl.enter.prevent="submit"
       />
       <el-tooltip :content="SUGGEST_BUSY_TEXT" :disabled="!busy" placement="top">
         <span>
@@ -27,7 +28,6 @@
     <TaskModelPicker :surface="SEMANTIC_SUGGEST_SURFACE" label="suggestions" />
     <template v-if="notSetUp">
       <LocalModelSetupCard
-        compact
         title="Let AI on this computer make specific suggestions"
         @installed="onInstalled"
         @open-settings="router.push({ name: 'ai' })"
@@ -75,46 +75,10 @@ async function submit() {
   await ask(request.value);
 }
 
-function onEnter(e: KeyboardEvent | Event) {
-  const key = e as KeyboardEvent;
-  if (!key.metaKey && !key.ctrlKey) return;
-  key.preventDefault();
-  void submit();
-}
-
 function onInstalled() {
   notSetUp.value = false;
   void aiStore.loadProviders();
 }
 </script>
 
-<style scoped>
-.suggest-box {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-2);
-  padding: var(--spacing-4);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-}
-
-.suggest-row {
-  display: flex;
-  gap: var(--spacing-2);
-}
-
-.suggest-input {
-  flex: 1;
-}
-
-.note {
-  margin: 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-.note.warn {
-  color: var(--color-warning-dark);
-}
-</style>
+<style scoped src="./semantic.css"></style>

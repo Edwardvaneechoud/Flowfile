@@ -1,6 +1,6 @@
 <template>
-  <div class="history-tab">
-    <div class="toolbar">
+  <div class="stack">
+    <div class="picker">
       <el-select
         v-model="subject"
         filterable
@@ -13,25 +13,25 @@
       </el-select>
     </div>
 
-    <p v-if="!subject" class="muted">Pick something to see how it changed and who changed it.</p>
-    <p v-else-if="store.historyLoading" class="muted">Loading…</p>
-    <p v-else-if="store.historyError" class="error" role="alert">{{ store.historyError }}</p>
-    <p v-else-if="store.history.length === 0" class="muted">No events yet.</p>
+    <p v-if="!subject" class="hint">Pick something to see how it changed and who changed it.</p>
+    <p v-else-if="loading" class="hint">Loading…</p>
+    <p v-else-if="error" class="error" role="alert">{{ error }}</p>
+    <p v-else-if="events.length === 0" class="hint">No events yet.</p>
 
     <ol v-else class="timeline">
-      <li v-for="event in store.history" :key="event.id" class="event">
+      <li v-for="event in events" :key="event.id" class="event">
         <span class="dot"></span>
         <div class="event-body">
           <div class="event-line">
             <strong>{{ EVENT_LABELS[event.type] ?? event.type }}</strong>
             <span v-if="event.attribute" class="attr">{{ event.attribute }}</span>
             <span class="actor">by {{ event.actor }}</span>
-            <time class="when">{{ shortTime(event.ts) }}</time>
+            <time class="when">{{ new Date(event.ts).toLocaleString() }}</time>
           </div>
           <p v-if="event.value !== null && event.value !== undefined" class="event-value">
             {{ valueText(event.value) }}
           </p>
-          <p v-if="event.comment" class="event-comment">{{ event.comment }}</p>
+          <p v-if="event.comment" class="note event-comment">{{ event.comment }}</p>
         </div>
       </li>
     </ol>
@@ -40,13 +40,15 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { useSemanticModelStore } from "../../../stores/semantic-model-store";
-import type { SemanticModel } from "../../../types/semantic.types";
-import { shortTime, valueText } from "./semanticFormat";
+import { SemanticModelApi } from "../../../api/semanticModel.api";
+import { errorText, type SemanticEvent, type SemanticModel } from "../../../types/semantic.types";
+import { valueText } from "./semanticFormat";
 
 const props = defineProps<{ model: SemanticModel }>();
-const store = useSemanticModelStore();
 const subject = ref("");
+const events = ref<SemanticEvent[]>([]);
+const loading = ref(false);
+const error = ref("");
 
 const EVENT_LABELS: Record<string, string> = {
   proposed: "Proposed",
@@ -79,31 +81,28 @@ const options = computed(() => {
   return groups.filter((g) => g.items.length > 0);
 });
 
-const load = () => store.loadHistory(subject.value);
+async function load() {
+  const picked = subject.value;
+  loading.value = true;
+  error.value = "";
+  events.value = [];
+  try {
+    const found = await SemanticModelApi.getHistory(props.model.namespace_id, picked);
+    if (picked === subject.value) events.value = found;
+  } catch (e) {
+    if (picked === subject.value) error.value = errorText(e, "Could not load history");
+  } finally {
+    if (picked === subject.value) loading.value = false;
+  }
+}
 </script>
 
-<style scoped>
-.history-tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-4);
-}
+<style scoped src="./semantic.css"></style>
 
-.toolbar .el-select {
+<style scoped>
+.picker .el-select {
   width: 360px;
   max-width: 100%;
-}
-
-.muted {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-}
-
-.error {
-  margin: 0;
-  color: var(--color-danger);
-  font-size: var(--font-size-sm);
 }
 
 .timeline {
@@ -150,9 +149,7 @@ const load = () => store.loadHistory(subject.value);
 }
 
 .event-comment {
-  margin: var(--spacing-1) 0 0;
-  font-size: var(--font-size-xs);
+  margin-top: var(--spacing-1);
   font-style: italic;
-  color: var(--color-text-secondary);
 }
 </style>

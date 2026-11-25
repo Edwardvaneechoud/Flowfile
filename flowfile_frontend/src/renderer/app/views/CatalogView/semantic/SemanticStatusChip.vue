@@ -1,18 +1,26 @@
 <template>
-  <el-tooltip :content="tooltip" :disabled="!tooltip" placement="top" :show-after="300">
-    <span v-if="state" class="status-chip" :class="`is-${state}`">{{ label }}</span>
+  <el-tooltip
+    v-if="shown"
+    :content="tooltip"
+    :disabled="!tooltip"
+    placement="top"
+    :show-after="300"
+  >
+    <span class="status-chip" :class="`is-${state}`">{{ state }}</span>
   </el-tooltip>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
 import type { SemanticFact, SemanticFactStatus } from "../../../types/semantic.types";
-import { chipState, sourceHint } from "./semanticFormat";
+import { chipState, needsReview, sourceHint } from "./semanticFormat";
 
-const props = defineProps<{ status: SemanticFactStatus; fact?: SemanticFact }>();
+/** The state of a `status`, or of a `fact` while it still needs a person. */
+const props = defineProps<{ status?: SemanticFactStatus; fact?: SemanticFact }>();
 
-const state = computed(() => chipState(props.status));
-const label = computed(() => state.value ?? "");
+const status = computed(() => props.status ?? props.fact?.status);
+const state = computed(() => status.value && chipState(status.value));
+const shown = computed(() => (props.status ? !!state.value : needsReview(props.fact)));
 const tooltip = computed(() => {
   if (state.value === "pending" && props.fact) return sourceHint(props.fact);
   if (state.value === "stale")

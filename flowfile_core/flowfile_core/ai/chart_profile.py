@@ -153,7 +153,7 @@ def _base_profile(table: Any) -> TableProfile:
 
 def private_columns(table: Any) -> tuple[tuple[str, ...], Literal["columns", "table", "unreadable"] | None]:
     """The table's columns kept from AI, and why: some ``columns``, the whole ``table``, or an ``unreadable`` ledger."""
-    from flowfile_core.catalog.semantic.confidentiality import read_withheld
+    from flowfile_core.catalog.semantic.confidentiality import Withheld, read_withheld
     from flowfile_core.database.connection import get_db_context
 
     try:
@@ -161,12 +161,10 @@ def private_columns(table: Any) -> tuple[tuple[str, ...], Literal["columns", "ta
             withheld = read_withheld(db, [table.id])
     except Exception:  # noqa: BLE001
         logger.warning("confidentiality of table %s could not be read", table.id, exc_info=True)
-        return tuple(c.name for c in (table.schema_columns or [])), "unreadable"
+        withheld = Withheld(unreadable=frozenset([table.id]))
     names = tuple(withheld.names(table.id, [c.name for c in (table.schema_columns or [])]))
-    if table.id in withheld.unreadable:
-        return names, "unreadable"
-    if table.id in withheld.tables:
-        return names, "table"
+    if withheld.whole_table(table.id):
+        return names, "unreadable" if table.id in withheld.unreadable else "table"
     return names, "columns" if names else None
 
 

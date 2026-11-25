@@ -1,12 +1,8 @@
-"""Pydantic shapes of a catalog namespace's semantic model (``routes/catalog_semantic.py``).
+"""Pydantic shapes of a catalog namespace's semantic model (``routes/catalog_semantic.py``, ``ai/semantic_routes.py``).
 
-A model belongs to a schema (namespace level 1) or to a catalog (level 0, the layer holding joins that cross
-schemas). Every value shown is a fact from the glosslayer ledger with its own review status, so most shapes carry a
-``FactOut`` or a ``status``.
-
-``FactOut.source`` is the actor string that stated the fact (``human:<user id>``, ``ai:<model>``,
-``inferred:<rule>``, ``catalog:flowfile``); ``source_kind`` is its part before the colon, so the UI tells a person,
-the rules and AI apart without parsing.
+A model belongs to a schema (namespace level 1) or to a catalog (level 0, the layer holding joins that cross schemas).
+``catalog/semantic/snapshot.py`` builds ``FactOut`` to ``JoinOut`` straight from the ledger and the metric compiler
+reads the same objects the API answers.
 """
 
 from datetime import datetime
@@ -16,10 +12,13 @@ from pydantic import BaseModel, Field, model_validator
 
 FactStatus = Literal["proposed", "reviewed", "accepted", "rejected", "superseded", "stale", "retracted"]
 SourceKind = Literal["human", "ai", "inferred", "catalog", "import", "system", "other"]
+Layer = Literal["schema", "catalog"]
+JoinVerdict = Literal["ok", "reversed", "many_to_many", "unchecked"]
 
 
 class FactOut(BaseModel):
-    """One fact: a value for one attribute of one subject, with its review state and who stated it."""
+    """One fact: a value for one attribute of one subject. ``source`` is the actor who stated it
+    (``human:<user id>``, ``ai:<model>``, ``inferred:<rule>``, ``catalog:flowfile``), ``source_kind`` its first part."""
 
     id: str
     attribute: str
@@ -33,6 +32,9 @@ class FactOut(BaseModel):
     created_by: str
     updated_at: datetime
     group: str | None = None
+    subject: str = Field(default="", exclude=True)
+    accepted_by: str | None = Field(default=None, exclude=True)
+    accepted_at: datetime | None = Field(default=None, exclude=True)
 
 
 class FieldOut(BaseModel):
@@ -44,12 +46,14 @@ class FieldOut(BaseModel):
     facts: dict[str, FactOut] = Field(default_factory=dict)
     pending: list[FactOut] = Field(default_factory=list)
 
+    def value(self, attribute: str) -> Any:
+        f = self.facts.get(attribute)
+        return f.value if f is not None else None
+
 
 class MetricOut(BaseModel):
-    """A table's metric. The accepted definition when there is one, else the newest proposed one.
-
-    ``pending_group`` is the review group of an open edit beside an accepted definition.
-    """
+    """A table's metric: the accepted definition when there is one, else the newest proposed one. ``pending_group`` is
+    the review group of an open edit beside it; ``can_remove`` what glosslayer's policy answers this caller."""
 
     key: str
     name: str
@@ -70,7 +74,6 @@ class MetricOut(BaseModel):
     group: str | None = None
     pending_group: str | None = None
     can_remove: bool = False
-    """Whether glosslayer's policy lets the caller remove this metric (``ReviewAction.subject``)."""
 
 
 class JoinOut(BaseModel):
@@ -88,9 +91,8 @@ class JoinOut(BaseModel):
     description: str | None = None
     status: FactStatus
     group: str | None = None
-    layer: Literal["schema", "catalog"]
+    layer: Layer
     can_remove: bool = False
-    """Whether glosslayer's policy lets the caller remove this join (``ReviewAction.subject``)."""
 
 
 class SemanticTableOut(BaseModel):
@@ -105,27 +107,16 @@ class SemanticTableOut(BaseModel):
     facts: dict[str, FactOut] = Field(default_factory=dict)
     pending: list[FactOut] = Field(default_factory=list)
 
+    def column(self, name: str) -> FieldOut | None:
+        return next((c for c in self.fields if c.name == name), None)
 
-class SemanticProgress(BaseModel):
+
+class SemanticModelSummary(BaseModel):
     """Counts of facts; facts the catalog itself accepted (column types and the like) are not counted."""
 
     accepted: int = 0
     pending: int = 0
     stale: int = 0
-
-
-class SemanticModelOut(BaseModel):
-    namespace_id: int
-    level: int
-    key: str
-    name: str | None = None
-    description: str | None = None
-    ai_instructions: str | None = None
-    tables: list[SemanticTableOut] = Field(default_factory=list)
-    joins: list[JoinOut] = Field(default_factory=list)
-    progress: SemanticProgress = Field(default_factory=SemanticProgress)
-    can_manage: bool = False
-    review_mode: Literal["solo", "team"] = "solo"
 
 
 class SemanticModelUpdate(BaseModel):
@@ -134,6 +125,17 @@ class SemanticModelUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     ai_instructions: str | None = None
+
+
+class SemanticModelOut(SemanticModelUpdate):
+    namespace_id: int
+    level: int
+    key: str
+    tables: list[SemanticTableOut] = Field(default_factory=list)
+    joins: list[JoinOut] = Field(default_factory=list)
+    progress: SemanticModelSummary = Field(default_factory=SemanticModelSummary)
+    can_manage: bool = False
+    review_mode: Literal["solo", "team"] = "solo"
 
 
 class FieldProposal(BaseModel):
@@ -162,8 +164,7 @@ class JoinProposal(BaseModel):
 
 
 class MetricProposal(BaseModel):
-    """A metric definition, proposed as one review group. ``edit`` must be true to propose a new definition of a
-    metric that already exists in the model."""
+    """A metric definition, proposed as one review group; ``edit`` to propose a new definition of an existing one."""
 
     kind: Literal["metric"]
     table_id: int
@@ -200,9 +201,7 @@ class ProposalsIn(BaseModel):
 class ReviewAction(BaseModel):
     """Decide facts by ``ids`` or one whole ``group``; a join's or metric's group is always decided as a unit.
 
-    ``subject`` (a metric's or join's key, with ``action: "retract"``) removes it whole: every live fact of the
-    subject, whichever groups they came in, is retracted, or rejected when it is an open proposal someone else made.
-    Nothing is deleted; the history keeps every fact.
+    ``subject`` (a metric's or join's key, with ``retract``) removes it whole, as ``SemanticModelService.remove`` says.
     """
 
     action: Literal["accept", "reject", "retract", "reopen"]
@@ -236,14 +235,24 @@ class ReviewItemOut(FactOut):
 
 
 class JoinDependentOut(BaseModel):
-    """An accepted metric that stops compiling once a join is removed: what of it needs the join, and the error."""
+    """An accepted metric that stops compiling once a join is removed, and the error. ``uses`` is what of it needs the
+    join: ``formula`` (its expression or stored filter), ``time column`` or ``dimension <name>``."""
 
     metric: str
     metric_key: str
     table: str
     table_id: int | None = None
     uses: list[str] = Field(default_factory=list)
-    """``formula`` (its expression or stored filter), ``time column`` or ``dimension <name>``."""
+    message: str
+
+
+class JoinCheckOut(BaseModel):
+    """One join measured against the data (``join_check.py``): ``reversed`` when its sides are swapped,
+    ``many_to_many`` when both repeat, ``unchecked`` without compute or with an empty or unreadable table."""
+
+    key: str
+    name: str
+    verdict: JoinVerdict
     message: str
 
 
@@ -270,14 +279,6 @@ class SemanticSyncOut(BaseModel):
     staled: int = 0
 
 
-class SemanticModelSummary(BaseModel):
-    """The tree badge's counts for one namespace (everything at or under its path)."""
-
-    accepted: int = 0
-    pending: int = 0
-    stale: int = 0
-
-
 FilterOp = Literal["=", "!=", "<", "<=", ">", ">=", "in", "not in", "between", "is null", "is not null"]
 Grain = Literal["day", "week", "month", "quarter", "year"]
 
@@ -292,8 +293,7 @@ class MetricFilter(BaseModel):
 
 
 class MetricOrder(BaseModel):
-    """``field`` is one of the query's dimensions as written (a grain column is ``<time_column>_<grain>``) or the
-    metric's name."""
+    """``field``: one of the query's dimensions as written, ``<time_column>_<grain>``, or the metric's name."""
 
     field: str
     direction: Literal["asc", "desc"] = "asc"
@@ -317,15 +317,13 @@ class MetricQuery(BaseModel):
 class MetricQueryMetric(BaseModel):
     name: str
     version: int | None = None
-    status: FactStatus | str
+    status: str
     approved_by: str | None = None
 
 
 class MetricQueryResult(BaseModel):
-    """The rows as ``POST /catalog/sql/execute`` answers them, plus the compiled ``sql`` and the metric's identity.
-
-    An execution failure comes back in ``error`` (status 200); a query that cannot compile is a 422.
-    """
+    """The rows as ``POST /catalog/sql/execute`` answers them, the compiled ``sql`` and the metric's identity. An
+    execution failure comes back in ``error`` (status 200); a query that cannot compile is a 422."""
 
     columns: list[str] = Field(default_factory=list)
     dtypes: list[str] = Field(default_factory=list)
@@ -359,9 +357,8 @@ class SuggestCounts(BaseModel):
 
 
 class SuggestOut(BaseModel):
-    """What ``POST …/semantic-model/suggest`` (and the AI draft) stored. ``added`` are new proposals; ``skipped`` the
-    candidates the model already holds (accepted, pending or once rejected). ``stats_available`` is false when the
-    worker could not be reached and the rules ran on names and types alone; ``stats_message`` says why."""
+    """What the rules (and the AI draft) stored: ``added`` are new proposals, ``skipped`` the candidates the model
+    already holds (accepted, pending or once rejected). ``stats_message`` says why statistics were not available."""
 
     namespace_id: int
     tables: int = 0
@@ -380,17 +377,23 @@ class SuggestIn(BaseModel):
     kinds: list[SuggestKind] | None = None
 
 
-class SemanticDraftIn(BaseModel):
-    """``POST /ai/semantic/draft``: words for the rule candidates of ``table_ids`` (default: every table)."""
+class _AiRequest(BaseModel):
+    """The AI routes' common body; without a ``provider`` the local model is used."""
 
     namespace_id: int
-    table_ids: list[int] | None = None
     provider: str | None = Field(default=None, min_length=1)
     model: str | None = None
 
 
+class SemanticDraftIn(_AiRequest):
+    """``POST /ai/semantic/draft``: words for the rule candidates of ``table_ids`` (default: every table)."""
+
+    table_ids: list[int] | None = None
+
+
 class SemanticDraftTable(BaseModel):
-    """One table's call(s): ``ok`` with the words stored, or ``degraded`` with the ``reason`` it fell back on."""
+    """One table's call(s): ``ok`` with the words stored, or the ``reason`` it fell back on. ``withheld_columns`` are
+    kept from AI: sent by name and type only, never described by the model."""
 
     table_id: int
     table: str
@@ -399,7 +402,6 @@ class SemanticDraftTable(BaseModel):
     reason: str | None = None
     message: str | None = None
     withheld_columns: list[str] = Field(default_factory=list)
-    """Columns kept from AI (confidential or restricted): sent by name and type only, never described by the model."""
 
 
 class SemanticDraftOut(SuggestOut):
@@ -410,18 +412,8 @@ class SemanticDraftOut(SuggestOut):
     reason: str | None = None
 
 
-class SemanticAskIn(BaseModel):
-    namespace_id: int
+class SemanticAskIn(_AiRequest):
     question: str = Field(min_length=1, max_length=1000)
-    provider: str | None = Field(default=None, min_length=1)
-    model: str | None = None
-
-
-class SemanticAnsweredWith(BaseModel):
-    name: str
-    version: int | None = None
-    status: str
-    approved_by: str | None = None
 
 
 class SemanticAnswerItem(BaseModel):
@@ -434,12 +426,11 @@ class SemanticAnswerItem(BaseModel):
 
 
 class SemanticAnswerFacts(BaseModel):
-    """The facts the answer sentence was rendered from, computed in code from the query's rows (never by a model).
+    """The facts the answer sentence was rendered from, computed from the query's rows (never by a model).
 
-    ``value`` is the single value, or the leading value of a top or bottom answer; ``leaders`` the leading groups
-    (all tied ones); ``runners_up`` the next two; ``groups`` how many groups the rows hold; ``share`` the leader's
-    fraction of the total when the metric adds up; a trend fills ``highest``, ``lowest``, ``latest``, ``previous``,
-    ``change`` (a fraction of the previous period) and ``direction``. ``truncated`` when the rows may not be all.
+    ``value`` is the single value, or the leading value of a top or bottom answer; ``leaders`` the leading groups (all
+    tied ones); ``share`` the leader's fraction of the total when the metric adds up; ``change`` a trend's fraction of
+    the previous period. ``truncated`` when the rows may not be all.
     """
 
     intent: str
@@ -458,46 +449,33 @@ class SemanticAnswerFacts(BaseModel):
 
 
 class SemanticAskOut(BaseModel):
-    """``POST /ai/semantic/ask``. ``query`` is what ran (or what the model proposed when it could not run); ``result``
-    the rows, which never go back to the model. ``no_metric_fits`` when no accepted metric answers the question
-    (``notes`` then holds the model's reason). ``notes`` also lists what the question asked for that could not be
-    applied (unless ``answer`` already says it) and readings worth checking; what the code removed from the model's
-    padding is counted in the audit log, not listed."""
+    """``POST /ai/semantic/ask``. ``query`` is what ran (or what the model proposed when it could not run); ``notes``
+    what the question asked for that could not be applied and readings worth checking; ``partial`` when the answer
+    leaves part of the question out; ``answer`` and ``facts`` are rendered in code from ``result``'s rows."""
 
     question: str
     provider: str
     model: str | None = None
     query: MetricQuery | None = None
     result: MetricQueryResult | None = None
-    answered_with: SemanticAnsweredWith | None = None
+    answered_with: MetricQueryMetric | None = None
     notes: list[str] = Field(default_factory=list)
     degraded: bool = False
     reason: str | None = None
     no_metric_fits: bool = False
     attempts: int = 0
     partial: bool = False
-    """True when the question asked for something the model cannot give (a breakdown it has no dimension for); the
-    answer then leaves it out, and ``notes`` says what."""
     answer: str | None = None
-    """The answer in one or two sentences, rendered in code from ``result``'s rows (``semantic_answer.render``), so
-    no number in it comes from a model; ``None`` when there is no result to read."""
     intent: str | None = None
-    """What kind of answer the question wants: ``value``, ``top``, ``bottom``, ``trend`` or ``breakdown``."""
     facts: SemanticAnswerFacts | None = None
 
 
-class SemanticSuggestRequestIn(BaseModel):
-    """``POST /ai/semantic/suggest``: one request in a person's own words, within ``kinds`` when given.
+class SemanticSuggestRequestIn(_AiRequest):
+    """``POST /ai/semantic/suggest``: one request in a person's own words, within ``kinds`` when given; with ``kinds``
+    alone the AI is asked for more of those kinds than the model holds."""
 
-    With ``kinds`` and no ``request`` the AI is asked for more of those kinds than the model holds; one of the two is
-    required.
-    """
-
-    namespace_id: int
     request: str | None = Field(default=None, max_length=500)
     kinds: list[SuggestKind] | None = None
-    provider: str | None = Field(default=None, min_length=1)
-    model: str | None = None
 
     @model_validator(mode="after")
     def _asks_for_something(self) -> "SemanticSuggestRequestIn":
@@ -516,21 +494,22 @@ class SemanticSuggestionProposed(BaseModel):
     name: str | None = None
     fact_ids: list[str] = Field(default_factory=list)
     group: str | None = None
+    what: str = Field(default="", exclude=True)
 
 
 class SemanticSuggestionSkipped(BaseModel):
-    """A suggestion that was not stored, and why (a check's sentence)."""
+    """A suggestion that was not stored, and why (a check's sentence); ``retry`` when it goes back to the model."""
 
     what: str
     why: str
+    retry: bool = Field(default=True, exclude=True)
 
 
 class SemanticSuggestRequestOut(BaseModel):
-    """What ``POST /ai/semantic/suggest`` stored. Everything in ``proposed`` waits for review; nothing is live.
+    """What ``POST /ai/semantic/suggest`` stored; everything in ``proposed`` waits for review.
 
-    ``nothing_to_suggest`` (with ``why``) when the model said it has nothing for this request. ``degraded`` with a
-    ``reason`` (``timeout``, ``provider_error``, ``invalid_answer``, ``all_refused``) when the call failed or every
-    suggestion was refused. ``attempts`` counts model calls (1 or 2: one repair round).
+    ``degraded`` with a ``reason`` (``timeout``, ``provider_error``, ``invalid_answer``, ``all_refused``) when the call
+    failed or every suggestion was refused. ``attempts`` counts model calls (1 or 2: one repair round).
     """
 
     request: str | None = None
@@ -564,7 +543,7 @@ class SuggestRunningOut(BaseModel):
 
 
 class SemanticActivity(BaseModel):
-    """One Suggest run (``catalog/semantic/activity.py``): running when ``finished_at`` is absent. ``kind`` is
+    """One Suggest run (``catalog/semantic/activity.py``): running while ``finished_at`` is absent. ``kind`` is
     ``suggest`` (rules), ``draft`` (AI descriptions) or ``request`` (specific suggestions); no request text is kept."""
 
     kind: Literal["suggest", "draft", "request"]
@@ -585,14 +564,3 @@ class SemanticActivityOut(BaseModel):
 
     running: SemanticActivity | None = None
     last: SemanticActivity | None = None
-
-
-class JoinCheckOut(BaseModel):
-    """One join of the model measured against the data: ``ok`` (the to side holds one row per key), ``reversed``
-    (the to side repeats and the from side is unique: the sides are swapped), ``many_to_many`` (both repeat, so the
-    join would multiply rows) or ``unchecked`` (no compute, an empty or unreadable table); ``message`` says which."""
-
-    key: str
-    name: str
-    verdict: Literal["ok", "reversed", "many_to_many", "unchecked"]
-    message: str

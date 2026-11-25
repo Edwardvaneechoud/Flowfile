@@ -8,7 +8,7 @@ import {
 
 const INSTALL_POLL_MS = 1000;
 
-export const formatDownloadMb = (mb: number | null | undefined): string => {
+const formatDownloadMb = (mb: number | null | undefined): string => {
   if (!mb || mb <= 0) return "";
   return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`;
 };
@@ -18,16 +18,11 @@ const pctOf = (received?: number | null, total?: number | null): number | null =
     ? Math.min(100, Math.round((received / total) * 100))
     : null;
 
-export interface LocalModelInstallOptions {
-  onInstalled?: () => void;
-}
-
 /** Install, progress and re-attach logic for the on-device model, writing through the AI store. */
-export function useLocalModelInstall(options: LocalModelInstallOptions = {}) {
+export function useLocalModelInstall(onInstalled: () => void) {
   const aiStore = useAiStore();
   const status = computed(() => aiStore.localModelStatus);
   const loading = ref(false);
-  const loadError = ref<string | null>(null);
   const installing = ref(false);
   const installPhase = ref("");
   const installPct = ref<number | null>(null);
@@ -43,43 +38,28 @@ export function useLocalModelInstall(options: LocalModelInstallOptions = {}) {
       null,
   );
   const downloadLabel = computed(() => formatDownloadMb(recommendedModel.value?.approxDownloadMb));
-  const available = computed(() => status.value?.available === true);
   const installed = computed(() => status.value?.anyModelInstalled === true);
   const installingModel = computed(
     () => status.value?.models.find((m) => m.id === installingModelId.value) ?? null,
   );
 
   const phaseLabel = computed(() => {
-    switch (installPhase.value) {
-      case "downloading_binary":
-        return "Downloading runtime…";
-      case "extracting":
-        return "Extracting…";
-      case "downloading_model": {
-        const size = formatDownloadMb(installingModel.value?.approxDownloadMb);
-        return size ? `Downloading model (~${size})…` : "Downloading model…";
-      }
-      case "verifying":
-        return "Verifying…";
-      case "done":
-        return "Done";
-      default:
-        return "Installing…";
-    }
+    const size = formatDownloadMb(installingModel.value?.approxDownloadMb);
+    const labels: Record<string, string> = {
+      downloading_binary: "Downloading runtime…",
+      extracting: "Extracting…",
+      downloading_model: size ? `Downloading model (~${size})…` : "Downloading model…",
+      verifying: "Verifying…",
+      done: "Done",
+    };
+    return labels[installPhase.value] ?? "Installing…";
   });
-
-  const stopPolling = (): void => {
-    if (pollTimer !== null) {
-      clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-  };
 
   const finish = (error: string | null): void => {
     installing.value = false;
     installingModelId.value = null;
     installError.value = error;
-    if (!error && installed.value) options.onInstalled?.();
+    if (!error && installed.value) onInstalled();
   };
 
   const applyProgress = (st: LocalModelStatus): void => {
@@ -118,25 +98,23 @@ export function useLocalModelInstall(options: LocalModelInstallOptions = {}) {
 
   const load = async (): Promise<void> => {
     loading.value = true;
-    loadError.value = null;
     try {
       const st = await fetchLocalModelStatus();
       aiStore.applyLocalModelStatus(st);
       attach(st);
-    } catch (error) {
+    } catch {
       aiStore.applyLocalModelStatus(null);
-      loadError.value = (error as Error)?.message || "Couldn't reach the on-device AI service.";
     } finally {
       loading.value = false;
     }
   };
 
-  const install = async (modelId?: string): Promise<void> => {
+  const install = async (): Promise<void> => {
     if (status.value?.install?.active) {
       attach(status.value);
       return;
     }
-    const id = modelId ?? recommendedModel.value?.id ?? status.value?.selectedModelId;
+    const id = recommendedModel.value?.id ?? status.value?.selectedModelId;
     if (!id || installing.value) return;
     installing.value = true;
     installError.value = null;
@@ -171,21 +149,17 @@ export function useLocalModelInstall(options: LocalModelInstallOptions = {}) {
 
   onBeforeUnmount(() => {
     disposed = true;
-    stopPolling();
+    if (pollTimer !== null) clearTimeout(pollTimer);
   });
 
   return {
     status,
     loading,
-    loadError,
     installing,
-    installPhase,
     installPct,
     installError,
     phaseLabel,
-    available,
     installed,
-    recommendedModel,
     downloadLabel,
     load,
     install,
