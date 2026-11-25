@@ -908,15 +908,25 @@ def list_tables(
     kernel_owner: int | None = Depends(kernel_owner_id),
     current_user=Depends(get_user_or_internal_service),
     service: CatalogService = Depends(get_catalog_service),
+    db: Session = Depends(get_db),
 ):
     """List catalog tables, optionally filtered by namespace.
 
     Accepts the kernel's internal token so ``flowfile_ctx.list_catalog_tables``
     can enumerate available tables. A negative ``namespace_id`` is a namespace
-    of a remote catalog of the kernel's owner.
+    of a remote catalog of the kernel's owner. For a kernel, a schema kept
+    elsewhere lists the tables its catalog has now (``external_catalogs.schema_tables``,
+    as the kernel's owner; a refusal is a 422 with its sentence).
     """
     if kernel_owner is not None and namespace_id is not None and namespace_id < 0:
         return table_sources.kernel_tables(kernel_owner, namespace_id)
+    if kernel_owner is not None and namespace_id is not None:
+        try:
+            elsewhere = external_catalogs.schema_tables(db, namespace_id, kernel_owner)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        if elsewhere is not None:
+            return elsewhere
     return service.list_tables(namespace_id=namespace_id, user_id=current_user.id)
 
 

@@ -187,8 +187,8 @@ def _import_flow(client: httpx.Client) -> int:
         tmp_path = f.name
 
     try:
-        # Place inside /app (the container's WORKDIR) so it passes path validation
-        dest_path = "/app/kernel_test_flow.json"
+        # One of the folders a server opens flows from, in the volume the teardown removes
+        dest_path = "/app/internal_storage/temp/flows/kernel_test_flow.json"
         cp_result = subprocess.run(
             ["docker", "cp", tmp_path, f"{container_id}:{dest_path}"],
             capture_output=True,

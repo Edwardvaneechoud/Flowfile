@@ -161,7 +161,8 @@ def kernel_of():
 
 
 def _runtime_transport(client: TestClient, between=None):
-    """The catalog-cell lookup of ``kernel_runtime/catalog_lookup.py`` for ``catalog_table``, over ``client``.
+    """The catalog-cell lookup of ``kernel_runtime/catalog_lookup.py`` for ``catalog_table``, the namespaces and
+    ``tables``, over ``client``.
 
     A resolve's 404 is ``None`` and then a ``LookupError``; any other refusal is ``raise_for_status``'s
     ``httpx.HTTPStatusError``, as ``flowfile_client._resolve_catalog_table`` raises it. Each call runs in a fresh
@@ -169,8 +170,23 @@ def _runtime_transport(client: TestClient, between=None):
     the materialize, for what changes in that moment.
     """
 
+    def get(path: str, **params) -> Any:
+        resp = client.get(f"/catalog/{path}", params={k: v for k, v in params.items() if v is not None})
+        resp.raise_for_status()
+        return resp.json()
+
+    def namespaces(parent_id=None) -> list[dict]:
+        return [{key: row[key] for key in ("id", "name", "parent_id")} for row in get("namespaces", parent_id=parent_id)]
+
     def ask(payload: dict[str, Any]) -> dict[str, Any]:
         kind, args = payload["kind"], payload.get("args", {})
+        if kind == "namespaces":
+            return {"result": namespaces(args.get("parent_id"))}
+        if kind == "namespace_by_name":
+            rows = namespaces(args.get("parent_id"))
+            return {"result": next((row for row in rows if row["name"] == args["name"]), None)}
+        if kind == "tables":
+            return {"result": get("tables", namespace_id=args["namespace_id"])}
         if kind != "catalog_table":
             raise NotImplementedError(f"Catalog-cell metadata lookup {kind!r} is not supported")
         reference = args.get("catalog_full_table_name") or args.get("catalog_table_name")
@@ -227,6 +243,88 @@ def test_a_catalog_cell_reads_an_outside_table(kernel_of, polaris, kernel_db_ope
         height = ff.read_catalog_table("orders", namespace_full_name=polaris).collect().height
 
     assert height == 1000
+    assert kernel_db_opens == []
+
+
+def test_a_catalog_cell_lists_an_outside_schemas_tables_as_the_other_catalog_has_them(
+    kernel_of, polaris, signed, kernel_db_opens
+):
+    import pyarrow as pa
+
+    import flowfile as ff
+
+    catalog, schema = polaris.split(".", 1)
+    kernel = kernel_of(1)
+
+    def cell(listing):
+        with _catalog_cell(kernel):
+            return [t.qualified_name for t in listing()]
+
+    first = cell(lambda: ff.get_catalog(catalog).get_schema(schema).list_tables())
+    signed.create_table(f"{schema}.later", schema=pa.schema([("id", pa.int64())]))
+    second = cell(lambda: ff.get_catalog(catalog).get_schema(schema).list_tables())
+    flat = cell(lambda: ff.get_catalog(catalog).list_tables())
+
+    assert first == [f"{polaris}.orders"]
+    assert second == [f"{polaris}.later", f"{polaris}.orders"]
+    assert set(second) <= set(flat)
+    assert kernel_db_opens == []
+
+
+def _says_no_status_line(message: str) -> bool:
+    return not any(text in message for text in ("422", "Client error", "Unprocessable", "/catalog/tables"))
+
+
+def test_a_catalog_cell_listing_a_schema_it_has_no_use_on_raises_the_access_sentence(
+    kernel_of, polaris, kernel_db_opens, monkeypatch
+):
+    """The catalog and its schema are public, so the stranger sees them, and Use is still not theirs."""
+    import flowfile as ff
+
+    catalog, schema = polaris.split(".", 1)
+    with get_db_context() as db:
+        catalog_row = db.query(CatalogNamespace).filter_by(name=catalog, parent_id=None).one()
+        catalog_row.is_public = True
+        db.query(CatalogNamespace).filter_by(parent_id=catalog_row.id, name=schema).one().is_public = True
+        user = User(username=f"cell_stranger_{uuid.uuid4().hex[:6]}", email=f"{uuid.uuid4().hex[:8]}@example.invalid",
+                    hashed_password="not-a-login", disabled=False, is_admin=False)
+        db.add(user)
+        db.commit()
+        stranger_id = user.id
+    try:
+        monkeypatch.setenv("FLOWFILE_MODE", "docker")
+        monkeypatch.setenv("JWT_SECRET_KEY", secrets.token_urlsafe(48))
+        with _catalog_cell(kernel_of(stranger_id)), pytest.raises(ValueError) as refused:
+            ff.get_catalog(catalog).get_schema(schema).list_tables()
+    finally:
+        with get_db_context() as db:
+            db.delete(db.get(User, stranger_id))
+            db.commit()
+
+    assert str(refused.value) == f"You have no access to {polaris}; ask its owner to share it."
+    assert _says_no_status_line(str(refused.value))
+    assert kernel_db_opens == []
+
+
+def test_a_catalog_cell_listing_a_catalog_that_cannot_be_reached_raises_its_sentence(
+    kernel_of, polaris, kernel_db_opens
+):
+    import flowfile as ff
+    from flowfile_core.database.models import ExternalCatalog
+    from tests.conftest import closed_url
+
+    catalog, schema = polaris.split(".", 1)
+    closed = f"{closed_url()}/api/catalog"
+    with get_db_context() as db:
+        catalog_id = db.query(CatalogNamespace).filter_by(name=catalog, parent_id=None).one().id
+        db.query(ExternalCatalog).filter_by(namespace_id=catalog_id).one().uri = closed
+        db.commit()
+
+    with _catalog_cell(kernel_of(1)), pytest.raises(ValueError) as refused:
+        ff.get_catalog(catalog).get_schema(schema).list_tables()
+
+    assert str(refused.value) == f"No catalog answers at {closed}."
+    assert _says_no_status_line(str(refused.value))
     assert kernel_db_opens == []
 
 

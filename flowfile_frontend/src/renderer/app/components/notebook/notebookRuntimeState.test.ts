@@ -13,6 +13,8 @@ import {
   invalidateFrom,
   isBatchActive,
   markDownstreamStale,
+  namespaceGeneration,
+  noteNamespace,
   onExecutionSettled,
   onSessionEpoch,
   runExecutionBatch,
@@ -282,6 +284,56 @@ describe("notebookRuntimeState: session epoch", () => {
     invalidateFrom(owner, [py("a")], 0, "code-changed");
     clearResults(owner);
     expect(cellRuntime(owner, "a")).toMatchObject({ submittedRevision: null, staleReason: null });
+  });
+});
+
+describe("notebookRuntimeState: kernel namespace", () => {
+  const run = (owner: string, cellId: string, generation: string) =>
+    settleExecution(beginExecution(owner, cellId), { namespace_generation: generation });
+
+  it("the same namespace, or the first one heard of, marks nothing", () => {
+    const owner = newOwner();
+    withResult(owner, "a");
+    noteNamespace(owner, "g1");
+    noteNamespace(owner, "g1");
+    expect(namespaceGeneration(owner)).toBe("g1");
+    expect(cellRuntime(owner, "a")!.staleReason).toBeNull();
+  });
+
+  it("another namespace, or none, marks every result and only results", () => {
+    const owner = newOwner();
+    run(owner, "a", "g1");
+    bumpSourceRevision(owner, "never-run");
+    noteNamespace(owner, null);
+    expect(namespaceGeneration(owner)).toBeNull();
+    expect(cellRuntime(owner, "a")!.staleReason).toBe("previous-session");
+    expect(cellRuntime(owner, "never-run")!.staleReason).toBeNull();
+  });
+
+  it("a run in a new namespace keeps its own result current and marks the others", () => {
+    const owner = newOwner();
+    run(owner, "a", "g1");
+    run(owner, "b", "g1");
+    expect(run(owner, "b", "g2")).toBe("apply");
+    expect(cellRuntime(owner, "a")!.staleReason).toBe("previous-session");
+    expect(cellRuntime(owner, "b")!.staleReason).toBeNull();
+    expect(run(owner, "a", "g2")).toBe("apply");
+    expect(cellRuntime(owner, "a")!.staleReason).toBeNull();
+  });
+
+  it("a kernel that stamps no generation marks nothing", () => {
+    const owner = newOwner();
+    run(owner, "a", "g1");
+    withResult(owner, "b");
+    expect(namespaceGeneration(owner)).toBe("g1");
+    expect(cellRuntime(owner, "a")!.staleReason).toBeNull();
+  });
+
+  it("an epoch bump forgets the namespace", () => {
+    const owner = newOwner();
+    run(owner, "a", "g1");
+    bumpSessionEpoch(owner);
+    expect(namespaceGeneration(owner)).toBeNull();
   });
 });
 

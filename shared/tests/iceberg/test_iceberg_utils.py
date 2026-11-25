@@ -13,7 +13,8 @@ from shared.iceberg_utils import storage_properties, table_access, write_table
 
 
 def _table(tmp_path, **catalog_properties):
-    warehouse = (tmp_path / "warehouse").as_uri()
+    # PyIceberg reads file:///C:/x as the path /C:/x, so the drive goes where a URI has its host
+    warehouse = f"file://{(tmp_path / 'warehouse').as_posix()}"
     catalog = SqlCatalog("local", uri=f"sqlite:///{tmp_path}/catalog.db", warehouse=warehouse, **catalog_properties)
     catalog.create_namespace_if_not_exists("ns")
     if not catalog.table_exists("ns.t"):

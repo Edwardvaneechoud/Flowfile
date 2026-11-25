@@ -30,7 +30,6 @@ from flowfile_core.catalog.exceptions import (
     DashboardNotFoundError,
     FlowHasArtifactsError,
     FlowNotFoundError,
-    KeptElsewhereError,
     NamespaceNotFoundError,
     NotAuthorizedError,
     NotebookNotFoundError,
@@ -46,7 +45,7 @@ from flowfile_core.catalog.serializers import (
     format_pyarrow_preview,
 )
 from flowfile_core.catalog.services.engagement import FlowEngagementService
-from flowfile_core.catalog.services.external_catalogs import ExternalCatalogService
+from flowfile_core.catalog.services.external_catalogs import ExternalCatalogService, refuse_kept_elsewhere
 from flowfile_core.catalog.services.flows import FlowRegistrationService
 from flowfile_core.catalog.services.namespaces import STORAGE_UNSET, NamespaceService
 from flowfile_core.catalog.services.notebooks import NotebookService
@@ -182,7 +181,7 @@ class CatalogService:
         # None (internal callers, electron mode, tests) is unrestricted; routes/catalog.py sets one per request.
         self.access = access
         self._namespaces = NamespaceService(repo)
-        self._external = ExternalCatalogService(repo, self._namespaces)
+        self._external = ExternalCatalogService(repo)
         self._flows = FlowRegistrationService(repo, self._namespaces)
         self._runs = FlowRunService(repo, access=access)
         self._engagement = FlowEngagementService(repo, self._flows)
@@ -232,10 +231,7 @@ class CatalogService:
         """Creating/moving items requires write access to the target namespace:
         public, owned, or manage-granted. A use-level grant is read-only. Nothing is
         saved into a namespace another catalog keeps, whoever asks."""
-        if namespace_id is not None:
-            namespace = self.repo.get_namespace(namespace_id)
-            if namespace is not None and namespace.kept_elsewhere:
-                raise KeptElsewhereError(namespace.name, "save anything into it")
+        refuse_kept_elsewhere(self.repo._db, namespace_id)
         if self._restricted and namespace_id is not None and namespace_id not in self.access.writable_namespace_ids():
             raise NotAuthorizedError(self.access.user_id or -1, "create items in this namespace")
 

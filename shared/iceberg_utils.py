@@ -26,6 +26,7 @@ import re
 import time
 import warnings
 from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -262,10 +263,6 @@ def catalog_properties(ref: IcebergTableRef | IcebergCatalogRef, *, keys: bool =
     return properties
 
 
-def _timeout() -> tuple[float, float]:
-    return CATALOG_TIMEOUT
-
-
 def _catalog(
     ref: IcebergTableRef | IcebergCatalogRef, *, keys: bool = True, timeout: tuple[float, float] | None = None
 ):
@@ -281,7 +278,7 @@ def _catalog(
         def _create_session(self):
             session = super()._create_session()
             send = session.send
-            limit = timeout or _timeout()
+            limit = timeout or CATALOG_TIMEOUT
             session.send = lambda request, **kw: send(request, **{**kw, "timeout": kw.get("timeout") or limit})
             return session
 
@@ -359,19 +356,34 @@ def _refusal(exc: BaseException, ref: IcebergTableRef | IcebergCatalogRef) -> Va
     return ValueError(sentence or f"The catalog at {ref.catalog_uri} could not be asked ({type(exc).__name__}).")
 
 
-def load_table(ref: IcebergTableRef) -> Table:
-    """The table loaded from its catalog, which hands out the keys to its files with it."""
+@contextmanager
+def _asking(
+    ref: IcebergTableRef | IcebergCatalogRef, missing: str | None = None, *, running: bool = False
+) -> Iterator[None]:
+    """Raise what the catalog refuses in the block as a ``ValueError`` with one sentence.
+
+    ``missing`` names what the block asks for, said when the catalog has no such thing. An error with no sentence is
+    raised as it is while a flow runs (``running``), and otherwise named by its class only.
+    """
     from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
 
     try:
-        return _catalog(ref).load_table(ref.table)
-    except (NoSuchTableError, NoSuchNamespaceError):
-        raise ValueError(f"The catalog at {ref.catalog_uri} has no table {ref.table}.") from None
+        yield
     except Exception as exc:
+        if missing is not None and isinstance(exc, NoSuchTableError | NoSuchNamespaceError):
+            raise ValueError(f"The catalog at {ref.catalog_uri} has no {missing}.") from None
+        if not running:
+            raise _refusal(exc, ref) from None
         sentence = explain_catalog_error(exc, ref)
         if sentence is None:
             raise
         raise ValueError(sentence) from None
+
+
+def load_table(ref: IcebergTableRef) -> Table:
+    """The table loaded from its catalog, which hands out the keys to its files with it."""
+    with _asking(ref, f"table {ref.table}", running=True):
+        return _catalog(ref).load_table(ref.table)
 
 
 def list_schemas(ref: IcebergCatalogRef) -> tuple[list[str], int]:
@@ -381,11 +393,9 @@ def list_schemas(ref: IcebergCatalogRef) -> tuple[list[str], int]:
     nested ones are counted one call per shown namespace; a catalog that refuses that call adds nothing to the count.
     No storage key is asked for. A refusal is a ``ValueError`` with one sentence.
     """
-    try:
+    with _asking(ref):
         catalog = _catalog(ref, keys=False, timeout=INTERACTIVE_TIMEOUT)
         names = catalog.list_namespaces()
-    except Exception as exc:
-        raise _refusal(exc, ref) from None
     shown = sorted(name[0] for name in names if len(name) == 1 and "." not in name[0])
     left_out = len(names) - len(shown)
     for name in shown:
@@ -398,14 +408,8 @@ def list_schemas(ref: IcebergCatalogRef) -> tuple[list[str], int]:
 
 def list_table_names(ref: IcebergCatalogRef, schema: str) -> list[str]:
     """The names of the tables in one namespace, sorted, as the catalog lists them now; no storage key asked for."""
-    from pyiceberg.exceptions import NoSuchNamespaceError
-
-    try:
+    with _asking(ref, f"schema {schema}"):
         identifiers = _catalog(ref, keys=False, timeout=INTERACTIVE_TIMEOUT).list_tables(schema)
-    except NoSuchNamespaceError:
-        raise ValueError(f"The catalog at {ref.catalog_uri} has no schema {schema}.") from None
-    except Exception as exc:
-        raise _refusal(exc, ref) from None
     return sorted(identifier[-1] for identifier in identifiers)
 
 
@@ -416,14 +420,8 @@ def describe_table(ref: IcebergTableRef) -> IcebergTableDescription:
     snapshots only the current one's commit time and operation (``append``, ``overwrite``, ``delete``, ``replace``) and
     their number are read; no count comes from a snapshot summary, since a summary's row count is wrong after deletes.
     """
-    from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
-
-    try:
+    with _asking(ref, f"table {ref.table}"):
         table = _catalog(ref, keys=False, timeout=INTERACTIVE_TIMEOUT).load_table(ref.table)
-    except (NoSuchTableError, NoSuchNamespaceError):
-        raise ValueError(f"The catalog at {ref.catalog_uri} has no table {ref.table}.") from None
-    except Exception as exc:
-        raise _refusal(exc, ref) from None
     schema = table.schema()
     columns = dict(pl.from_arrow(schema.as_arrow().empty_table()).schema)
     partitioned = dict.fromkeys(schema.find_column_name(part.source_id) for part in table.spec().fields)
@@ -619,16 +617,10 @@ def creatable_schema(schema: Mapping[str, pl.DataType]) -> dict[str, pl.DataType
 def _load_or_create(ref: IcebergTableRef, frame: pl.LazyFrame) -> Table:
     from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
 
-    try:
+    with _asking(ref, running=True):
         catalog = _catalog(ref)
-        return catalog.load_table(ref.table)
-    except (NoSuchTableError, NoSuchNamespaceError):
-        pass
-    except Exception as exc:
-        sentence = explain_catalog_error(exc, ref)
-        if sentence is None:
-            raise
-        raise ValueError(sentence) from None
+        with suppress(NoSuchTableError, NoSuchNamespaceError):
+            return catalog.load_table(ref.table)
     namespace = ref.table.rsplit(".", 1)[0]
     if not catalog.namespace_exists(namespace):
         raise ValueError(f"The catalog has no namespace {namespace}; create it there first.")

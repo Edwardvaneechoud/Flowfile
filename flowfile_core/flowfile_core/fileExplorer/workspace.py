@@ -412,18 +412,6 @@ def delete_place(path: str, user_id: int | None, dry_run: bool = False) -> tuple
     return real, items
 
 
-def refusal_in(error: BaseException) -> str | None:
-    """The sentence of the ``NotYours`` somewhere in ``error``'s chain; else ``None``."""
-    seen: set[int] = set()
-    current: BaseException | None = error
-    while current is not None and id(current) not in seen:
-        if isinstance(current, NotYours):
-            return current.shown
-        seen.add(id(current))
-        current = current.__cause__ or current.__context__
-    return None
-
-
 def explorer_for(
     directory: str | Path, user_id: int | None, desktop_root: str | Path | None, use: Use = "browse"
 ) -> SecureFileExplorer:

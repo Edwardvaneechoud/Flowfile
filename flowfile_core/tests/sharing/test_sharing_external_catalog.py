@@ -512,6 +512,147 @@ def test_a_kernel_whose_owner_has_no_use_gets_the_access_sentence_and_the_other_
         assert db.query(CatalogTable).filter_by(namespace_id=schema_id, name="orders").count() == 0
 
 
+@pytest.mark.iceberg_rest
+def test_a_kernel_lists_an_outside_schemas_tables_only_with_use_and_without_it_the_other_catalog_is_asked_nothing(
+    users, client_for, polaris, seeded, team, grant_factory, kernel_of, monkeypatch
+):
+    """Listing names is no read: someone with Use lists them on a shared server too; a stranger gets the access
+    sentence before the other catalog is asked anything, and their own sign-in's listing is what it was."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogTable
+    from flowfile_core.notebook import lookup
+    from shared import iceberg_utils
+
+    catalog_id, _ = polaris
+    schema, schema_id = seeded
+    name = _catalog_name(client_for, catalog_id)
+    grant_factory("catalog_namespace", catalog_id, team, permission="use", granted_by=users["admin"].id)
+    asked: list[object] = []
+    build = iceberg_utils._catalog
+
+    def recording(*args, **kwargs):
+        asked.append(kwargs.get("keys"))
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(iceberg_utils, "_catalog", recording)
+    params = {"namespace_id": schema_id}
+
+    carol = kernel_of(users["carol"].id).get("/catalog/tables", params=params)
+    with pytest.raises(ValueError) as refused:
+        lookup.answer("tables", params, users["carol"].id)
+    carol_person = client_for("carol").get("/catalog/tables", params=params)
+
+    said = f"You have no access to {name}.{schema}; ask its owner to share it."
+    assert (carol.status_code, carol.json()["detail"]) == (422, said)
+    assert str(refused.value) == said
+    assert (carol_person.status_code, carol_person.json()) == (200, [])
+    assert asked == []
+    with get_db_context() as db:
+        assert db.query(CatalogTable).filter_by(namespace_id=schema_id, name="orders").count() == 0
+
+    bob = kernel_of(users["bob"].id).get("/catalog/tables", params=params)
+
+    assert bob.status_code == 200, bob.text
+    assert [row["qualified_name"] for row in bob.json()] == [f"{name}.{schema}.orders"]
+    assert asked == [False]
+
+
+@pytest.mark.iceberg_rest
+def test_a_second_catalog_renamed_onto_a_shared_ones_name_lists_nothing_for_someone_without_use_on_it(
+    users, client_for, polaris, seeded, principal, team, grant_factory, kernel_of, monkeypatch
+):
+    """Two catalogs kept elsewhere can carry one name (a catalog renamed onto a taken name): Use is checked on the
+    catalog whose schema is listed, not on the first one of that name the person may reach."""
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogNamespace, CatalogTable
+    from flowfile_core.notebook import lookup
+    from shared import iceberg_utils
+
+    catalog_id, _ = polaris
+    schema, schema_id = seeded
+    name = _catalog_name(client_for, catalog_id)
+    grant_factory("catalog_namespace", schema_id, team, permission="use", granted_by=users["admin"].id)
+    admin = client_for("admin")
+    added = admin.post("/catalog/external", json=_body(principal, f"other_{uuid.uuid4().hex[:6]}"))
+    assert added.status_code == 201, added.json().get("detail")
+    other_id = added.json()["id"]
+    try:
+        renamed = admin.put(f"/catalog/namespaces/{other_id}", json={"name": name})
+        assert renamed.status_code == 200, renamed.text
+        with get_db_context() as db:
+            other_schema = db.query(CatalogNamespace).filter_by(parent_id=other_id, name=schema).one().id
+        asked: list[object] = []
+        build = iceberg_utils._catalog
+
+        def recording(*args, **kwargs):
+            asked.append(kwargs.get("keys"))
+            return build(*args, **kwargs)
+
+        monkeypatch.setattr(iceberg_utils, "_catalog", recording)
+        bob = kernel_of(users["bob"].id)
+
+        listed = bob.get("/catalog/tables", params={"namespace_id": other_schema})
+        with pytest.raises(ValueError) as refused:
+            lookup.answer("tables", {"namespace_id": other_schema}, users["bob"].id)
+
+        said = f"You have no access to {name}.{schema}; ask its owner to share it."
+        assert (listed.status_code, listed.json().get("detail")) == (422, said)
+        assert str(refused.value) == said
+        assert asked == []
+        with get_db_context() as db:
+            assert db.query(CatalogTable).filter_by(namespace_id=other_schema).count() == 0
+
+        shared = bob.get("/catalog/tables", params={"namespace_id": schema_id})
+        assert shared.status_code == 200, shared.text
+        assert [row["qualified_name"] for row in shared.json()] == [f"{name}.{schema}.orders"]
+    finally:
+        admin.delete(f"/catalog/external/{other_id}")
+
+
+@pytest.mark.iceberg_rest
+def test_a_listing_names_the_same_reader_and_writer_flows_as_the_tables_panel_for_someone_with_use(
+    users, client_for, polaris, seeded, team, grant_factory, kernel_of, tmp_path
+):
+    """Both name an administrator's flow that reads and writes the table to someone with Use on the schema who has no
+    access to that flow: the listing shows no more and no less than the panel."""
+    from flowfile_core.catalog import SQLAlchemyCatalogRepository
+    from flowfile_core.catalog.services.external_catalogs import OutsideTable, ensure_table_row
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogTable, FlowRegistration
+
+    catalog_id, _ = polaris
+    schema, schema_id = seeded
+    name = _catalog_name(client_for, catalog_id)
+    grant_factory("catalog_namespace", catalog_id, team, permission="use", granted_by=users["admin"].id)
+    flow_name = f"admins_flow_{uuid.uuid4().hex[:6]}"
+    with get_db_context() as db:
+        flow = FlowRegistration(name=flow_name, flow_path=str(tmp_path / f"{flow_name}.yaml"), owner_id=users["admin"].id)
+        db.add(flow)
+        db.commit()
+        flow_id = flow.id
+        row = ensure_table_row(db, OutsideTable(name, schema, "orders", schema_id), written_by=flow_id)
+        SQLAlchemyCatalogRepository(db).replace_read_links(flow_id, [row.id])
+        db.commit()
+    try:
+        panel = client_for("bob").get(
+            f"/catalog/external/{catalog_id}/schemas/{schema_id}/table", params={"name": "orders"}
+        )
+        listed = kernel_of(users["bob"].id).get("/catalog/tables", params={"namespace_id": schema_id})
+
+        assert (panel.status_code, listed.status_code) == (200, 200), (panel.text, listed.text)
+        (entry,) = [table for table in listed.json() if table["name"] == "orders"]
+        named = {"id": flow_id, "name": flow_name}
+        assert panel.json()["read_by_flows"] == entry["read_by_flows"] == [named]
+        assert panel.json()["written_by"] == named
+        assert (entry["source_registration_id"], entry["source_registration_name"]) == (flow_id, flow_name)
+    finally:
+        with get_db_context() as db:
+            for table in db.query(CatalogTable).filter_by(source_registration_id=flow_id).all():
+                table.source_registration_id = None
+            db.commit()
+            SQLAlchemyCatalogRepository(db).delete_flow(flow_id)
+
+
 SHARED_SERVER = "On a shared server {} is read in a flow, not in this notebook."
 
 

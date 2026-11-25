@@ -516,7 +516,8 @@ async def lsp_dataframe_schemas(
     request: DataframeSchemasRequest,
     current_user=Depends(get_current_active_user),
 ):
-    return DataframeSchemasResponse(**(await _lsp_forward(kernel_id, "dataframe_schemas", request, current_user) or {}))
+    answer = await _lsp_forward(kernel_id, "dataframe_schemas", request, current_user) or {}
+    return DataframeSchemasResponse(**answer, answered=bool(answer))
 
 
 @router.get("/{kernel_id}/display_outputs")

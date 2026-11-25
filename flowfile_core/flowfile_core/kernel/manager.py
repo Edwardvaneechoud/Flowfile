@@ -3,6 +3,7 @@ import functools
 import json
 import logging
 import os
+import posixpath
 import re
 import socket
 import tempfile
@@ -742,7 +743,9 @@ class KernelManager:
             if inner.startswith(".."):
                 continue
             folder.mkdir(parents=True, exist_ok=True)
-            source = self._catalog_volume if inner == "." else os.path.join(self._catalog_volume, inner)
+            source = (
+                self._catalog_volume if inner == "." else posixpath.join(self._catalog_volume, Path(inner).as_posix())
+            )
             mounts.append(docker.types.Mount(target=str(folder), source=source, type="bind", read_only=False))
         return mounts
 

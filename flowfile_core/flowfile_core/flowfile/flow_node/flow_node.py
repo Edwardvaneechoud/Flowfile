@@ -1239,7 +1239,7 @@ class FlowNode:
 
         Without it the refusal reads as a node with no columns. Other errors are left as they are.
         """
-        sentence = registry.refusal(error) or workspace.refusal_in(error)
+        sentence = registry.refusal(error) or registry.refusal(error, workspace.NotYours)
         if sentence is None:
             return
         self._prediction_refused = self._schema_prediction_blocked = self.results.warnings = sentence

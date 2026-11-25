@@ -15,6 +15,13 @@ from flowfile_core.catalog.delta_utils import (
 )
 from flowfile_core.catalog.exceptions import TableExistsError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.services.external_catalogs import (
+    ensure_table_row,
+    forget_schema_tables,
+    outside_write_target,
+    refuse_outside_write,
+    table_ref_for_run,
+)
 from flowfile_core.catalog.storage_backend import (
     _catalog_table_dir_name,
     _is_cloud_uri,
@@ -641,27 +648,8 @@ PICK_REMOTE_SCHEMA = "No schema on the hub is picked for this table; pick one yo
 
 def _outside_target(settings: input_schema.CatalogWriteSettings):
     """The table a writer names in a schema kept elsewhere (``external_catalogs.OutsideTable``), or ``None``."""
-    from flowfile_core.catalog.services.external_catalogs import outside_write_target
-
     with get_db_context() as db:
-        return outside_write_target(
-            db, settings.namespace_full_name, settings.table_name, settings.namespace_id, source=settings.source
-        )
-
-
-def _refuse_outside_write(outside, settings: input_schema.CatalogWriteSettings) -> None:
-    """Raise the sentence ``external_catalogs.outside_write_refusal`` words for a choice it refuses."""
-    from flowfile_core.catalog.services.external_catalogs import outside_write_refusal
-
-    refusal = outside_write_refusal(
-        outside.catalog,
-        table=outside.table,
-        write_mode=settings.write_mode,
-        track_changes=settings.track_changes,
-        partition_by=settings.partition_by,
-    )
-    if refusal is not None:
-        raise ValueError(refusal)
+        return outside_write_target(db, settings)
 
 
 def _refuse_unresolved_schema(settings: input_schema.CatalogWriteSettings) -> None:
@@ -685,14 +673,8 @@ def _handle_outside_table_write(
     catalog for its keys. After the commit the schema's kept table names are dropped and the table gets its lineage
     row naming the flow as its writer; a failure there is logged, since the data is already in.
     """
-    from flowfile_core.catalog.services.external_catalogs import (
-        ensure_table_row,
-        forget_schema_tables,
-        table_ref_for_run,
-    )
-
     settings = node_catalog_writer.catalog_write_settings
-    _refuse_outside_write(outside, settings)
+    refuse_outside_write(outside, settings)
     with get_db_context() as db:
         table = table_ref_for_run(
             db, outside.catalog, f"{outside.schema}.{outside.table}", node_catalog_writer.user_id, writes=True
@@ -719,9 +701,7 @@ def _handle_virtual_table_write(
 ) -> FlowDataEngine:
     """Handle virtual-mode catalog write: register a virtual table without materializing data."""
     settings = node_catalog_writer.catalog_write_settings
-    outside = _outside_target(settings)
-    if outside is not None:
-        _refuse_outside_write(outside, settings)
+    refuse_outside_write(_outside_target(settings), settings)
     _refuse_unresolved_schema(settings)
     reg_id = graph._flow_settings.source_registration_id
     if not reg_id:

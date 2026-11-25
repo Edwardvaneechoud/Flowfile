@@ -209,8 +209,15 @@ def test_an_error_that_is_not_the_catalogs_has_no_sentence():
     assert explain_catalog_error(ZeroDivisionError(), _signed_ref()) is None
 
 
+def _sql_catalog(tmp_path) -> SqlCatalog:
+    """A SQLite catalog in ``tmp_path``. PyIceberg reads ``file:///C:/x`` as the path ``/C:/x``, so the drive goes
+    where a URI has its host."""
+    warehouse = f"file://{(tmp_path / 'wh').as_posix()}"
+    return SqlCatalog("local", uri=f"sqlite:///{tmp_path}/catalog.db", warehouse=warehouse)
+
+
 def test_the_columns_from_a_tables_description_equal_the_scans(tmp_path, monkeypatch):
-    catalog = SqlCatalog("local", uri=f"sqlite:///{tmp_path}/catalog.db", warehouse=(tmp_path / "wh").as_uri())
+    catalog = _sql_catalog(tmp_path)
     catalog.create_namespace("ns")
     schema = pa.schema(
         [
@@ -238,7 +245,7 @@ def test_the_columns_from_a_tables_description_equal_the_scans(tmp_path, monkeyp
 
 
 def test_a_commit_the_catalog_refused_for_its_sign_in_is_said_not_to_have_committed(tmp_path, monkeypatch):
-    catalog = SqlCatalog("local", uri=f"sqlite:///{tmp_path}/catalog.db", warehouse=(tmp_path / "wh").as_uri())
+    catalog = _sql_catalog(tmp_path)
     catalog.create_namespace("ns")
     table = catalog.create_table("ns.t", schema=pa.schema([("id", pa.int64())]))
     refusal = _raised(

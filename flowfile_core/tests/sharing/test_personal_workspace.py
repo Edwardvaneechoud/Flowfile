@@ -381,6 +381,7 @@ class TestAServerInTheAccountsHome:
         monkeypatch.setenv("FLOWFILE_MODE", "server")
         monkeypatch.setattr(settings, "FLOWFILE_MODE", "server")
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         monkeypatch.setattr(storage, "_base_dir", tmp_path / ".flowfile")
         (tmp_path / ".ssh").mkdir()
         (tmp_path / ".ssh" / "id_rsa").write_text("PRIVATE KEY")

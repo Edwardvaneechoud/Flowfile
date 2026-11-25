@@ -1,7 +1,6 @@
 """Local file sources and sinks, the generic external source, and their schema callbacks."""
 
 from collections.abc import Callable
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -125,20 +124,25 @@ def get_xlsx_schema_callback(
 
     def schema_callback():
         workspace.require_data_paths(workspace.running_person(user_id), file_path)
-        return read()
+        return get_xlsx_schema(
+            engine=engine,
+            file_path=file_path,
+            sheet_name=sheet_name,
+            start_row=start_row,
+            start_column=start_column,
+            end_row=end_row,
+            end_column=end_column,
+            has_headers=has_headers,
+        )
 
-    read = partial(
-        get_xlsx_schema,
-        engine=engine,
-        file_path=file_path,
-        sheet_name=sheet_name,
-        start_row=start_row,
-        start_column=start_column,
-        end_row=end_row,
-        end_column=end_column,
-        has_headers=has_headers,
-    )
     return schema_callback
+
+
+def _require_readable(received_file: input_schema.ReceivedTable, user_id: int | None) -> None:
+    """Refuse a reader's file, folder or pattern the person may not read (``workspace.require_data_paths``)."""
+    workspace.require_data_paths(
+        workspace.running_person(user_id), received_file.abs_file_path, expand_glob=True, shown=received_file.path
+    )
 
 
 def get_directory_schema_callback(received_file: input_schema.ReceivedTable, user_id: int | None = None):
@@ -152,9 +156,7 @@ def get_directory_schema_callback(received_file: input_schema.ReceivedTable, use
     """
 
     def schema_callback():
-        workspace.require_data_paths(
-            workspace.running_person(user_id), received_file.abs_file_path, expand_glob=True, shown=received_file.path
-        )
+        _require_readable(received_file, user_id)
         matches = expand_glob_pattern(received_file.abs_file_path)
         if not matches:
             return []
@@ -480,12 +482,7 @@ class FileIoBuildersMixin(GraphMixinBase):
 
         def _func():
             input_file.received_file.set_absolute_filepath()
-            workspace.require_data_paths(
-                workspace.running_person(input_file.user_id),
-                input_file.received_file.abs_file_path,
-                expand_glob=True,
-                shown=input_file.received_file.path,
-            )
+            _require_readable(input_file.received_file, input_file.user_id)
             if input_file.received_file.file_type in ("parquet", "ipc", "ndjson") or (
                 input_file.received_file.file_type == "csv"
                 and is_utf8_encoding(input_file.received_file.table_settings.encoding)
@@ -553,24 +550,14 @@ class FileIoBuildersMixin(GraphMixinBase):
                 elif input_file.received_file.file_type in ("csv", "json", "parquet", "ipc", "ndjson"):
 
                     def schema_callback():
-                        workspace.require_data_paths(
-                            workspace.running_person(input_file.user_id),
-                            input_file.received_file.abs_file_path,
-                            expand_glob=True,
-                            shown=input_file.received_file.path,
-                        )
+                        _require_readable(input_file.received_file, input_file.user_id)
                         input_data = FlowDataEngine.create_from_path(input_file.received_file)
                         return input_data.schema
 
                 elif input_file.received_file.file_type in ("avro", "ipc_stream"):
 
                     def schema_callback():
-                        workspace.require_data_paths(
-                            workspace.running_person(input_file.user_id),
-                            input_file.received_file.abs_file_path,
-                            expand_glob=True,
-                            shown=input_file.received_file.path,
-                        )
+                        _require_readable(input_file.received_file, input_file.user_id)
                         return pl_schema_to_flowfile_columns(create_funcs.probe_eager_schema(input_file.received_file))
 
                 elif input_file.received_file.file_type in ("xlsx", "excel"):

@@ -83,7 +83,13 @@ def test_bridge_dataframe_schemas_degrades(client: TestClient):
     settings.FLOWFILE_LSP_ENABLED.set(True)
     resp = client.post("/kernels/no-such-kernel/lsp/dataframe_schemas", json={"flow_id": -1})
     assert resp.status_code == 200
-    assert resp.json() == {"namespace_generation": "", "revision": 0, "state": "unavailable", "dataframes": []}
+    assert resp.json() == {
+        "namespace_generation": "",
+        "revision": 0,
+        "state": "unavailable",
+        "dataframes": [],
+        "answered": False,
+    }
 
 
 def test_admin_flag_get_and_set(client: TestClient):

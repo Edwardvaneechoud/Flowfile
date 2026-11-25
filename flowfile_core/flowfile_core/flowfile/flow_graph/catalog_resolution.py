@@ -11,7 +11,15 @@ import polars as pl
 from flowfile_core.auth import sharing
 from flowfile_core.catalog import CatalogService, table_sources
 from flowfile_core.catalog.delta_utils import is_delta_table
+from flowfile_core.catalog.exceptions import KeptElsewhereError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.services.external_catalogs import (
+    ensure_table_row,
+    outside_reader_table,
+    outside_table,
+    refuse_kept_elsewhere,
+    table_ref_for_run,
+)
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.catalog.text_utils import is_table_reference
 from flowfile_core.configs import logger
@@ -106,11 +114,8 @@ def _authorize_catalog_write(db, user_id: int | None, *, existing, namespace_id:
     ``_require_namespace_writable`` (the write then lands in the seeded public
     default namespace).
     """
-    from flowfile_core.catalog.exceptions import KeptElsewhereError
-    from flowfile_core.catalog.services.external_catalogs import refuse_kept_elsewhere
-
     try:
-        refuse_kept_elsewhere(db, namespace_id, "save anything into it")
+        refuse_kept_elsewhere(db, namespace_id)
     except KeptElsewhereError as exc:
         raise PermissionError(str(exc)) from None
     if user_id is None or not sharing.sharing_enabled():
@@ -318,7 +323,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
 
             table_record = None
             if not node_catalog_reader.catalog_table_id:
-                outside = _outside_table_of(db, node_catalog_reader)
+                outside = outside_reader_table(db, node_catalog_reader)
                 if outside is not None:
                     return _outside_table_info(db, node_catalog_reader.user_id, outside)
             if node_catalog_reader.catalog_table_id:
@@ -401,19 +406,6 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     )
 
 
-def _outside_table_of(db, settings: "input_schema.NodeCatalogReader"):
-    """The table a reader names in a catalog kept elsewhere (``external_catalogs.OutsideTable``), or ``None``."""
-    from flowfile_core.catalog.services.external_catalogs import outside_table
-
-    return outside_table(
-        db,
-        settings.catalog_full_table_name,
-        settings.catalog_table_name,
-        settings.catalog_namespace_id,
-        source=settings.source,
-    )
-
-
 def _outside_table_info(db, user_id: int | None, outside) -> CatalogTableInfo:
     """A reader's resolution of a table kept elsewhere: its reference, and whether ``user_id`` has Use on its schema."""
     return CatalogTableInfo(
@@ -433,8 +425,6 @@ def _outside_table_ref(reference: str, user_id: int | None):
 
     Raises the sentence ``external_catalogs.table_ref_for_run`` words when the catalog is gone or not shared.
     """
-    from flowfile_core.catalog.services.external_catalogs import table_ref_for_run
-
     catalog, table = reference.split(".", 1)
     with get_db_context() as db:
         return table_ref_for_run(db, catalog, table, user_id, writes=False)
@@ -458,8 +448,6 @@ def _record_outside_table(reference: str) -> None:
     The row is lineage only (``external_catalogs.ensure_table_row``), so a failure to write it is logged and never
     fails the read.
     """
-    from flowfile_core.catalog.services.external_catalogs import ensure_table_row, outside_table
-
     try:
         with get_db_context() as db:
             ensure_table_row(db, outside_table(db, reference, None, None, source="local"))

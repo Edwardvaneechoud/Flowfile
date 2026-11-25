@@ -39,9 +39,11 @@ from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.exceptions import (
     FlowExistsError,
     FlowNotFoundError,
+    KeptElsewhereError,
     NamespaceNotFoundError,
     NotAuthorizedError,
 )
+from flowfile_core.catalog.services import external_catalogs
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, is_electron_mode, is_server_mode
@@ -2037,14 +2039,11 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
     with the run's own sentence whether or not the target changed, after the access check when it changed. A
     ``namespace_full_name`` that resolves nowhere with no ``namespace_id`` is refused with the run's sentence too.
     A writer on the hub names a schema of the hub, never refused as kept elsewhere or as missing here."""
-    from flowfile_core.catalog.services.external_catalogs import outside_write_target
     from flowfile_core.flowfile.flow_graph.catalog_resolution import unresolved_schema_refusal
 
     settings = node.catalog_write_settings
     with get_db_context() as db:
-        outside = outside_write_target(
-            db, settings.namespace_full_name, settings.table_name, settings.namespace_id, source=settings.source
-        )
+        outside = external_catalogs.outside_write_target(db, settings)
     existing_node = flow.get_node(node.node_id)
     existing_settings = getattr(existing_node, "setting_input", None)
     current = getattr(existing_settings, "catalog_write_settings", None)
@@ -2093,28 +2092,17 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
 def _outside_write_access_refusal(db, current_user, outside) -> str:
     """The run's sentence for someone who may read the schema kept elsewhere; the generic one for anyone else, so
     nobody learns of a schema they cannot read."""
-    from flowfile_core.catalog.services.external_catalogs import read_only_refusal
-
     if sharing.can_use(db, current_user, "catalog_namespace", outside.namespace_id):
-        return read_only_refusal(f"{outside.catalog}.{outside.schema}")
+        return external_catalogs.read_only_refusal(f"{outside.catalog}.{outside.schema}")
     return "You do not have write access to the selected catalog namespace"
 
 
 def _refuse_outside_choice(outside, settings: input_schema.CatalogWriteSettings) -> None:
     """422 with the run's sentence for a choice a schema kept elsewhere refuses; nothing for any other target."""
-    from flowfile_core.catalog.services.external_catalogs import outside_write_refusal
-
-    if outside is None:
-        return
-    refusal = outside_write_refusal(
-        outside.catalog,
-        table=outside.table,
-        write_mode=settings.write_mode,
-        track_changes=settings.track_changes,
-        partition_by=settings.partition_by,
-    )
-    if refusal is not None:
-        raise HTTPException(status_code=422, detail=refusal)
+    try:
+        external_catalogs.refuse_outside_write(outside, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 def _validate_catalog_namespace_writable_for_user(namespace_id: int | None, current_user, detail: str) -> None:
@@ -2131,11 +2119,8 @@ def _validate_catalog_namespace_writable_for_user(namespace_id: int | None, curr
 
 def _refuse_kept_elsewhere(db, namespace_id: int | None) -> None:
     """422 for a target namespace another catalog keeps: nothing is saved into it."""
-    from flowfile_core.catalog.exceptions import KeptElsewhereError
-    from flowfile_core.catalog.services.external_catalogs import refuse_kept_elsewhere
-
     try:
-        refuse_kept_elsewhere(db, namespace_id, "save anything into it")
+        external_catalogs.refuse_kept_elsewhere(db, namespace_id)
     except KeptElsewhereError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
 

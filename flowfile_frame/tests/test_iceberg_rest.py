@@ -165,3 +165,45 @@ def test_write_catalog_table_writes_a_table_of_a_catalog_kept_elsewhere_and_read
     assert run.success, [step.error for step in run.node_step_result if not step.success]
     assert (back.height, sorted(back["grp"].unique().to_list())) == (100, [3])
     assert signed.load_table(f"{schema}.orders_grp3_frame").scan().to_arrow().num_rows == 100
+
+
+def _qualified(tables) -> list[str]:
+    return [table.qualified_name for table in tables]
+
+
+@pytest.mark.iceberg_rest
+def test_list_tables_lists_a_schema_kept_elsewhere_as_its_catalog_has_it_now(polaris):
+    import pyarrow as pa
+
+    name, schema, signed = polaris
+    first = _qualified(ff.get_catalog(name).get_schema(schema).list_tables())
+    signed.create_table(f"{schema}.later_frame", schema=pa.schema([("id", pa.int64())]))
+
+    second = _qualified(ff.get_catalog(name).get_schema(schema).list_tables())
+    flat = _qualified(ff.get_catalog(name).list_tables())
+
+    assert f"{name}.{schema}.orders" in first and f"{name}.{schema}.later_frame" not in first
+    assert f"{name}.{schema}.later_frame" in second
+    assert set(second) <= set(flat)
+    assert {table.table_type for table in ff.get_catalog(name).get_schema(schema).list_tables()} == {"virtual"}
+
+
+@pytest.mark.iceberg_rest
+def test_a_kernel_sessions_list_tables_is_core_s_answer_for_the_session_user(polaris):
+    from flowfile_core.notebook import lookup
+    from flowfile_frame import _metadata
+
+    name, schema, _ = polaris
+    asked: list[str] = []
+
+    def transport(payload):
+        asked.append(payload["kind"])
+        return {"result": lookup.answer(payload["kind"], payload["args"], 1)}
+
+    with _metadata.installed(1, transport):
+        in_session = ff.get_catalog(name).get_schema(schema).list_tables()
+
+    assert "tables" in asked
+    assert [(t.id, t.qualified_name) for t in in_session] == [
+        (t.id, t.qualified_name) for t in ff.get_catalog(name).get_schema(schema).list_tables()
+    ]

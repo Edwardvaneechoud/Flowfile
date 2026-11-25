@@ -32,17 +32,11 @@ yaml.add_representer(list, represent_list_json)
 
 def _kept_elsewhere_table_ids(db, readers) -> set[int]:
     """The lineage rows of the tables kept elsewhere that ``readers`` name, as each reader names its table."""
-    from flowfile_core.catalog.services.external_catalogs import outside_table, table_row
+    from flowfile_core.catalog.services.external_catalogs import outside_reader_table, table_row
 
     found = set()
     for setting in readers:
-        outside = outside_table(
-            db,
-            setting.catalog_full_table_name,
-            setting.catalog_table_name,
-            setting.catalog_namespace_id,
-            source=setting.source,
-        )
+        outside = outside_reader_table(db, setting)
         row = table_row(db, outside.namespace_id, outside.table) if outside is not None else None
         if row is not None:
             found.add(row.id)

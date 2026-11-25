@@ -530,6 +530,39 @@ def test_a_catalog_page_cell_reads_an_outside_table_through_a_view_and_sees_anot
     assert found == {place: [] for place in places}
 
 
+def test_a_catalog_page_cell_and_a_flow_session_cell_list_an_outside_schemas_tables(
+    open_as, start_kernel, client_as, polaris, page_orders
+):
+    """``ff.get_catalog(...).get_schema(...).list_tables()`` in a catalog page's cell (the runtime's lookup over
+    ``GET /catalog/tables``) and in a flow's session (core's ``tables`` lookup), on one kernel: both list the table
+    the other catalog has, which Flowfile's catalog keeps no listed row of."""
+    import flowfile as ff
+    from flowfile_core.kernel.models import ExecuteRequest
+
+    catalog, schema = page_orders.split(".", 1)
+    kernel_id = start_kernel(NOTEBOOK_OWNER_ID)
+    listing = (
+        f"print('tables', [t.qualified_name for t in ff.get_catalog({catalog!r}).get_schema({schema!r}).list_tables()])"
+    )
+    expected = f"tables ['{page_orders}.orders']"
+
+    page = start_kernel.manager.execute_sync(
+        kernel_id,
+        ExecuteRequest(code=f"import flowfile as ff\n{listing}", flow_id=-123, node_id=1, interactive=True),
+    )
+    assert page.success, (page.error, page.stderr)
+    assert expected in page.stdout, page.stdout
+
+    flow = open_as(ff.from_dict({"id": [1]}).flow_graph)
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": flow.flow_id, "kernel_id": kernel_id}
+    opened = client.post("/notebook/session/open", json=key)
+    assert opened.status_code == 200, opened.text
+    in_session = _execute(client, key, "cell-list", listing)
+    assert in_session["success"], in_session.get("error")
+    assert expected in in_session["stdout"], in_session["stdout"]
+
+
 WRITE_SENTENCE = (
     "A catalog table is not written from this notebook with ff.write_catalog_table: a table of Flowfile's own is "
     "written with flowfile_ctx.write_catalog_table(frame.collect(), ...), and a table kept by another catalog is "

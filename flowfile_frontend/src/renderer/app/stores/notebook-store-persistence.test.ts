@@ -58,6 +58,19 @@ describe("notebook persistence round-trip", () => {
     expect(loaded.openNotebooks[0].dirty).toBe(true);
   });
 
+  it("keeps the tab's kernel session and drops one that could be a real flow's", () => {
+    const load = (sessionFlowId: unknown) => {
+      const state = sample();
+      const tab = { ...state.openNotebooks[0], sessionFlowId };
+      const storage = makeStorage({
+        [PERSISTENCE_KEY]: JSON.stringify({ ...state, openNotebooks: [tab] }),
+      });
+      return loadPersistedNotebooks(storage).openNotebooks[0].sessionFlowId;
+    };
+    expect(load(-1_554_680_250)).toBe(-1_554_680_250);
+    for (const bad of [7, 0, -1.5, "-3", null, undefined]) expect(load(bad)).toBeUndefined();
+  });
+
   it("returns empty state when nothing is stored", () => {
     expect(loadPersistedNotebooks(makeStorage())).toEqual({ openNotebooks: [], activeTabId: null });
   });

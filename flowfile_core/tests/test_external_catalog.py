@@ -187,7 +187,8 @@ def _save(route: str, ids: dict, tmp_path) -> object:
     "route",
     ["create schema", "register flow", "register table", "create virtual table", "create notebook", "save chart"],
 )
-def test_nothing_can_be_saved_into_a_schema_kept_elsewhere(kept, route, tmp_path):
+def test_nothing_can_be_saved_into_a_schema_kept_elsewhere(kept, route, tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
     response = _save(route, kept, tmp_path)
 
     assert response.status_code == 422, response.text

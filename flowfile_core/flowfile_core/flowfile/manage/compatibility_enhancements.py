@@ -375,6 +375,15 @@ def ensure_execution_location(node: input_schema.NodeBase):
         object.__setattr__(node, "__dict__", {**node.__dict__, "execution_location": "auto"})
 
 
+def ensure_user_id(node: input_schema.NodeBase):
+    """Give a node pickled before nodes carried a user a ``user_id`` of ``None``, the NodeBase default.
+
+    A data source reads it on every wiring, and opening a flow stamps its owner only on a node that has the field.
+    """
+    if "user_id" not in node.__dict__:
+        object.__setattr__(node, "__dict__", {**node.__dict__, "user_id": None})
+
+
 def ensure_compatibility_node_sample(node_sample: input_schema.NodeSample):
     """Add the sampling fields to nodes pickled before random sampling existed.
 
@@ -426,22 +435,29 @@ def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
 
 
 def ensure_compatibility_node_cloud_storage_writer(node_writer: input_schema.NodeCloudStorageWriter):
-    """Ensure CloudStorageWriteSettings pickled before partition_by and the Delta merge fields existed has them."""
+    """Ensure CloudStorageWriteSettings pickled before partition_by, the Delta merge fields and the Iceberg catalog
+    existed has them."""
     settings = getattr(node_writer, "cloud_storage_settings", None)
     if settings is None:
         return
-    defaults = {"partition_by": None, "merge_keys": [], "track_changes": False}
+    defaults = {"partition_by": None, "merge_keys": [], "track_changes": False, "iceberg_catalog": None}
     missing = {k: v for k, v in defaults.items() if k not in settings.__dict__}
     if missing:
         object.__setattr__(settings, "__dict__", {**settings.__dict__, **missing})
 
 
 def ensure_compatibility_node_cloud_storage_reader(node_reader: input_schema.NodeCloudStorageReader):
-    """Ensure CloudStorageReadSettings pickled before the change-feed fields existed has them."""
+    """Ensure CloudStorageReadSettings pickled before the change-feed fields and Iceberg catalog existed has them."""
     settings = getattr(node_reader, "cloud_storage_settings", None)
     if settings is None:
         return
-    defaults = {"cdc_mode": "off", "cdc_from_version": None, "cdc_from_timestamp": None, "cdc_include_preimage": False}
+    defaults = {
+        "cdc_mode": "off",
+        "cdc_from_version": None,
+        "cdc_from_timestamp": None,
+        "cdc_include_preimage": False,
+        "iceberg_catalog": None,
+    }
     missing = {k: v for k, v in defaults.items() if k not in settings.__dict__}
     if missing:
         object.__setattr__(settings, "__dict__", {**settings.__dict__, **missing})
@@ -525,6 +541,7 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
     - NodePolarsCode (depending_on_ids, dataclass -> BaseModel)
     - Node descriptions
     - Node execution locations ("auto")
+    - Node user ids (None)
     """
     flow_storage_obj = ensure_flow_settings(flow_storage_obj, flow_path)
     for _id, node_information in flow_storage_obj.data.items():
@@ -562,6 +579,7 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_sample(setting_input)
         ensure_description(setting_input)
         ensure_execution_location(setting_input)
+        ensure_user_id(setting_input)
 
     return flow_storage_obj
 
