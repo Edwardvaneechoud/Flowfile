@@ -917,7 +917,7 @@ class SemanticModelService:
     def _sql(self, sql: str, max_rows: int = 1) -> Any:
         return self._catalog_service().execute_sql_query(sql, max_rows=max_rows, user_id=self.user_id)
 
-    def _compile(
+    def _compile_query(
         self, namespace_id: int, query: s.MetricQuery, table_names: dict[str, str] | None = None
     ) -> tuple[CompiledQuery, Scope]:
         snap, scope = self._query_snapshot(namespace_id, query.preview)
@@ -937,7 +937,7 @@ class SemanticModelService:
 
         from flowfile_core.flowfile.execution.errors import ComputeError
 
-        compiled, _scope = self._compile(namespace_id, query)
+        compiled, _scope = self._compile_query(namespace_id, query)
         metric = s.MetricQueryMetric.model_validate(compiled.metric, from_attributes=True)
         try:
             answer = self._sql(compiled.sql, max_rows=query.limit).model_dump()
@@ -954,7 +954,7 @@ class SemanticModelService:
         time with those names. ``save_sql_query_as_flow`` finds each reader's table by name in the flow's schema,
         so every table the query reads must live in that schema.
         """
-        compiled, scope = self._compile(namespace_id, body.query)
+        compiled, scope = self._compile_query(namespace_id, body.query)
         target = body.namespace_id if body.namespace_id is not None else (scope.ns.id if scope.ns.level == 1 else None)
         if target is None:
             raise SemanticValueError("Choose the schema to save the flow in")
@@ -969,7 +969,7 @@ class SemanticModelService:
                 )
             names.append(info.name)
         renamed = {key: f"input_{i + 1}" for i, key in enumerate(compiled.tables)}
-        for_flow, _scope = self._compile(namespace_id, body.query, table_names=renamed)
+        for_flow, _scope = self._compile_query(namespace_id, body.query, table_names=renamed)
         flow_id = self._catalog_service().save_sql_query_as_flow(
             query=for_flow.sql,
             name=body.name,

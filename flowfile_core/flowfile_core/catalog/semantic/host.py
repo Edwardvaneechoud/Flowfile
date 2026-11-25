@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import Any
@@ -30,6 +30,7 @@ CATALOG_ACTOR = f"catalog:{CATALOG_NAME}"
 _lock = threading.RLock()
 _host: _Host | None = None
 _unkeyable_logged: set[str] = set()
+_missing_logged = False
 
 
 @dataclass
@@ -180,12 +181,19 @@ def _in_apply_transaction() -> bool:
     return _apply_connection.get() is not None
 
 
-@contextmanager
-def _hook(level: int, what: str, *args: Any) -> Iterator[_Host]:
-    """The ledger under the lock for a catalog hook; a failure is logged, never raised into the catalog change."""
+def _record(level: int, what: str, args: tuple, change: Callable[[_Host], None]) -> None:
+    """Run ``change`` on the ledger under the lock; a failure is logged, never raised into the catalog change.
+
+    An install without the ledger's packages records nothing: that is said once, not on every catalog change.
+    """
+    global _missing_logged
     try:
         with _lock:
-            yield host()
+            change(host())
+    except ImportError as exc:
+        if not _missing_logged:
+            _missing_logged = True
+            logger.warning("Semantic ledger: not installed (%s); catalog changes are not recorded", exc)
     except Exception:
         logger.log(level, f"Semantic ledger: could not {what}", *args, exc_info=True)
 
@@ -194,9 +202,12 @@ def on_table_written(key: str) -> None:
     """After a table was created or overwritten: re-read it so new and dropped columns reach the ledger."""
     if _in_apply_transaction() or not is_keyable(key):
         return
-    with _hook(logging.WARNING, "record the write of %s", key) as h:
+
+    def change(h: _Host) -> None:
         h.catalog.tables(refresh=True)
         h.embedded.table_written(key)
+
+    _record(logging.WARNING, "record the write of %s", (key,), change)
 
 
 def _rename_is_lost(old: str, new: str) -> bool:
@@ -213,26 +224,35 @@ def on_table_renamed(old_key: str, new_key: str) -> None:
     if not is_keyable(new_key):
         logger.error("Semantic ledger: %s was renamed to %s, which cannot be a key; its facts stay", old_key, new_key)
         return
-    with _hook(logging.ERROR, "move the facts of %s to %s", old_key, new_key) as h:
+
+    def change(h: _Host) -> None:
         h.embedded.table_renamed(old_key, new_key)
+
+    _record(logging.ERROR, "move the facts of %s to %s", (old_key, new_key), change)
 
 
 def on_namespace_renamed(old_path: str, new_path: str, table_keys: list[tuple[str, str]]) -> None:
     """After a catalog or schema was renamed: everything under its path follows, then each table's record."""
     if old_path == new_path or _rename_is_lost(old_path, new_path):
         return
-    with _hook(logging.ERROR, "move %s to %s", old_path, new_path) as h:
+
+    def change(h: _Host) -> None:
         with suppress(KeyError):  # nothing was recorded under the old path
             h.gloss.rekey_namespace(old_path, new_path, actor=CATALOG_ACTOR, comment="renamed in the catalog")
         for old_key, new_key in table_keys:
             if is_keyable(new_key):
                 h.embedded.table_renamed(old_key, new_key)
 
+    _record(logging.ERROR, "move %s to %s", (old_path, new_path), change)
+
 
 def on_table_deleted(key: str) -> None:
     """After a table was deleted: its facts are marked stale (kept, never removed)."""
     if _in_apply_transaction() or not is_keyable(key):
         return
-    with _hook(logging.WARNING, "retire the facts of %s", key) as h:
+
+    def change(h: _Host) -> None:
         h.catalog.tables(refresh=True)
         h.embedded.table_deleted(key)
+
+    _record(logging.WARNING, "retire the facts of %s", (key,), change)
