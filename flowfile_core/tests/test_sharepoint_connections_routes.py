@@ -1196,6 +1196,24 @@ def test_read_sharepoint_in_python_without_worker_service(
     }[write_output]
 
 
+def test_sharepoint_delta_reader_rejects_cached_results():
+    from pydantic import ValidationError
+
+    from flowfile_core.schemas.input_schema import NodeSharePointReader
+
+    with pytest.raises(ValidationError, match="Incremental SharePoint reads require .* no caching"):
+        NodeSharePointReader(
+            flow_id=116,
+            node_id=1,
+            user_id=1,
+            connection_id=1,
+            drive_id="test-drive",
+            file_path="reports/sales.csv",
+            delta_generation=0,
+            cache_results=True,
+        )
+
+
 @pytest.mark.parametrize(
     "extension",
     ["csv", "csv-no-range", "csv-glob", "xlsx", "xlsx-preview", "parquet", "parquet-no-range", "json", "json-no-range",
