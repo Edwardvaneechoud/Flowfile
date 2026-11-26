@@ -12,7 +12,6 @@ DEFAULT_REPO = "Edwardvaneechoud/Flowfile"
 def _asset_names(version: str) -> dict[str, str]:
     return {
         "darwin-aarch64": "Flowfile_aarch64.app.tar.gz",
-        "darwin-x86_64": "Flowfile_x64.app.tar.gz",
         "windows-x86_64": f"Flowfile_{version}_x64-setup.exe",
         "linux-x86_64": f"Flowfile_{version}_amd64.deb",
     }

@@ -314,13 +314,13 @@ def test_data_artifact_kinds_leave_the_tree_when_not_tracked(tmp_path, every_kin
 
     root = tmp_path / "project"
     _project_all(root, every_kind)
-    assert (root / "tables.yaml").exists() and (root / "models.yaml").exists()
+    assert (root / "tables").is_dir() and (root / "models.yaml").exists()
     with get_db_context() as db:
         untracked = frozenset(k.name for k in kinds.registered()) - {"tables", "models"}
         tree = kinds.snapshot(kinds.ExportContext(db=db, owner_id=every_kind, kinds=untracked))
-    assert "tables.yaml" not in tree and "models.yaml" not in tree
+    assert not [p for p in tree if p.startswith("tables/")] and "models.yaml" not in tree
     kinds.write_tree(root, tree)
-    assert not (root / "tables.yaml").exists() and not (root / "models.yaml").exists()
+    assert not list(root.glob("tables/*")) and not (root / "models.yaml").exists()
     assert _on_disk(root) == tree
 
 
@@ -371,6 +371,7 @@ def test_derived_values_are_what_they_were():
         ":(glob)connections/sharepoint/*.yaml",
         ":(glob)flows/*.flow.yaml",
         ":(glob)schedules/*.yaml",
+        ":(glob)tables/*.table.yaml",
         ":(glob)visualizations/*.visualization.yaml",
         ":(glob)dashboards/*.dashboard.yaml",
         ":(glob)notebooks/*.notebook.yaml",
@@ -384,6 +385,7 @@ def test_derived_values_are_what_they_were():
         "notebooks/eda.notebook.yaml": (("notebook", "eda"), "notebook"),
         "secrets.yaml": (("secrets", "secrets"), "secrets"),
         "namespaces.yaml": (("namespaces", "namespaces"), "namespaces"),
+        "tables/sales.raw.orders.table.yaml": (("catalog tables", "sales.raw.orders"), "tables"),
         "tables.yaml": (("catalog tables", "tables"), "tables"),
         "models.yaml": (("models", "models"), "models"),
         "kernels.yaml": (("kernels", "kernels"), "kernels"),

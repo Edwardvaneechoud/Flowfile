@@ -222,7 +222,7 @@ class TestConfineProjectRootElectron:
 
 
 class TestH4ManagedPointerSanitization:
-    """H4 — tables.yaml managed pointer name with traversal/absolute path must not escape."""
+    """H4 — a table's managed pointer name with traversal/absolute path must not escape."""
 
     def test_traversal_name_reduced_to_basename(self, tmp_path):
         # Finding H4: pre-fix used pointer["name"] verbatim; post-fix uses Path(name).name (basename).
@@ -273,8 +273,9 @@ class TestH4ManagedPointerSanitization:
         cat_dir = os.path.realpath(str(storage.catalog_tables_directory))
         assert os.path.realpath(result).startswith(cat_dir)
 
-    def test_import_with_traversal_table_creates_nothing_outside_managed_dir(self, tmp_path):
-        # Finding H4: full import path — crafted tables.yaml must not create dirs outside managed.
+    @pytest.mark.parametrize("layout", ["one file per table", "older root tables.yaml"])
+    def test_import_with_traversal_table_creates_nothing_outside_managed_dir(self, tmp_path, layout):
+        # Finding H4: full import path — a crafted table file must not create dirs outside managed.
         from flowfile_core.project.importer import import_project
         from shared.storage_config import storage
 
@@ -284,7 +285,7 @@ class TestH4ManagedPointerSanitization:
         write_manifest(root, manifest)
 
         escape_target = str(tmp_path / "escaped_write")
-        # Craft a tables.yaml with a managed pointer whose name would traverse to escape_target.
+        # Craft a table entry (in either layout) with a managed pointer whose name would traverse to escape_target.
         # The actual traversal vector: pointer["name"] = "../../<something>" from catalog_tables_dir.
         cat_dir = storage.catalog_tables_directory
         # Compute relative path from cat_dir to escape_target.
@@ -293,15 +294,17 @@ class TestH4ManagedPointerSanitization:
         except ValueError:
             rel = "../../escape_test"
 
-        write_yaml(tables_manifest_path(root), {
-            "tables": [{
-                "name": "evil_table",
-                "table_type": "physical",
-                "pointer": {"type": "managed", "name": rel},
-                "schema": [{"name": "id", "dtype": "Int64"}],
-                "storage_format": "delta",
-            }]
-        })
+        entry = {
+            "name": "evil_table",
+            "table_type": "physical",
+            "pointer": {"type": "managed", "name": rel},
+            "schema": [{"name": "id", "dtype": "Int64"}],
+            "storage_format": "delta",
+        }
+        if layout == "one file per table":
+            write_yaml(root / "tables" / "evil_table.table.yaml", entry)
+        else:
+            write_yaml(tables_manifest_path(root), {"tables": [entry]})
 
         import_project(root, 1)
         # The escape target must NOT have been created by the import.

@@ -9,7 +9,7 @@ import yaml
 
 from flowfile_core.project.normalize import write_yaml
 
-PROJECT_FORMAT = 3
+PROJECT_FORMAT = 4
 MANIFEST_NAME = "project.yaml"
 
 _GITIGNORE = """\

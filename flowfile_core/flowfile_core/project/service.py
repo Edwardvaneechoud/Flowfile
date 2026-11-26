@@ -139,8 +139,19 @@ def _snapshot(root: Path, owner_id: int, listed=None) -> dict[str, str]:
         return kinds.snapshot(ctx)
 
 
+def _stamp_current_format(root: Path) -> None:
+    """Raise the folder's ``project.yaml`` to the current format, keeping its kinds: an export is written in the
+    current layout, so the folder must not tell an older Flowfile it can read it."""
+    m = read_manifest(root)
+    if m is not None and m.project_format != PROJECT_FORMAT:
+        m.project_format = PROJECT_FORMAT
+        write_manifest(root, m)
+
+
 def write_export(root: Path, owner_id: int) -> None:
-    """Write the export of the kinds the folder lists into ``root``, removing the owned files it does not hold."""
+    """Write the export of the kinds the folder lists into ``root``, removing the owned files it does not hold, with
+    ``project.yaml`` in the current format."""
+    _stamp_current_format(root)
     kinds.write_tree(root, _snapshot(root, owner_id))
 
 
@@ -166,6 +177,26 @@ def _plan_changes(root: Path, owner_id: int, sha: str | None) -> list[kinds.Chan
 
 def _removed(changes: list[kinds.Change]) -> list[kinds.Change]:
     return [c for c in changes if c.change == "removed"]
+
+
+def _paths_at_head(root: Path, removed: list[kinds.Change]) -> set[str]:
+    """The files that held the ``removed`` objects in the last version. A removal names the export's file, while the
+    edit that removed the object can be in another, such as the root list an older folder keeps a kind in; a kind
+    whose files there do not split into objects gives all of them."""
+    if not removed:
+        return set()
+    head = git_ops.read_tree_at(root, "HEAD")
+    paths: set[str] = set()
+    for name in {c.kind for c in removed}:
+        kind = kinds.get(name)
+        files = {rel: text for rel, text in head.items() if (owned := kinds.kind_for_path(rel)) and owned[0] is kind}
+        try:
+            entries = kind.entries(files)
+        except Exception:
+            paths |= set(files)
+            continue
+        paths |= {entries[c.key].path for c in removed if c.kind == name and c.key in entries}
+    return paths
 
 
 def _change_rows(changes: list[kinds.Change]) -> list[dict]:
@@ -307,7 +338,8 @@ class ProjectSyncService:
         if not rows:
             return []
         try:
-            changed = {c.path for c in _plan_changes(proj.root, proj.owner_id, None)}
+            plan = _plan_changes(proj.root, proj.owner_id, None)
+            changed = {c.path for c in plan} | _paths_at_head(proj.root, _removed(plan))
         except (OSError, ValueError, yaml.YAMLError):
             return rows
         return [r for r in rows if r["path"] in changed]
@@ -938,7 +970,7 @@ class ProjectSyncService:
 
     def update_settings(self, user_id: int, track_data_artifacts: bool) -> bool:
         """Flip the track-data-artifacts toggle: add or remove the data kinds in project.yaml's ``kinds``, update
-        the DB mirror, then re-project so tables.yaml / models.yaml are dropped (off) or regenerated (on)."""
+        the DB mirror, then re-project so the table files and models.yaml are dropped (off) or regenerated (on)."""
         proj = self.get_active_project(user_id)
         if proj is None:
             raise NoActiveProjectError("No active project")

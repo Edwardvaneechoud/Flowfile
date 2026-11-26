@@ -19,8 +19,6 @@ jobs:
         include:
           - platform: macos-15
             target: aarch64-apple-darwin
-          - platform: macos-15-intel
-            target: x86_64-apple-darwin
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
           - platform: ubuntu-22.04
@@ -151,19 +149,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: npx tauri build --target ${{ matrix.target }} ${{ matrix.tauri_args }}
 
-      # Tauri names the macOS updater bundle `Flowfile.app.tar.gz(.sig)` with NO
-      # architecture in the filename, so the arm64 and x86_64 builds produce
-      # identically-named files that collide as GitHub release assets (the
-      # symptom is a misleading 404 from action-gh-release on the 2nd upload).
-      # Rename them per-arch; the signature signs the archive *contents*, not the
-      # filename, so renaming is safe.
-      - name: Disambiguate macOS updater artifacts per arch
+      # Tauri names the macOS updater bundle `Flowfile.app.tar.gz(.sig)` with no
+      # architecture; the published asset name (and latest.json) carries it.
+      # The signature signs the archive contents, not the filename.
+      - name: Name macOS updater artifacts by arch
         if: startsWith(matrix.platform, 'macos')
         working-directory: flowfile_frontend/src-tauri/target/${{ matrix.target }}/release/bundle/macos
         run: |
           case "${{ matrix.target }}" in
             aarch64-apple-darwin) arch=aarch64 ;;
-            x86_64-apple-darwin)  arch=x64 ;;
             *) echo "unexpected target ${{ matrix.target }}"; exit 1 ;;
           esac
           for ext in "" ".sig"; do
