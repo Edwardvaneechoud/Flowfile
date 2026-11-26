@@ -68,7 +68,8 @@ class CodeBuildersMixin(GraphMixinBase):
         On a multi-user server (``is_server_mode``) neither happens: the sandbox cannot hold code that means to leave
         it, so the code runs on the kernel of the person the node is stamped with (``kernel.polars_code``), whatever
         the flag says. Its columns are then known only once it has run, as for any kernel node, and no prediction
-        runs it.
+        runs it. Core checks the code against the sandbox's rules first, without running it, so code a server
+        refuses (a saved plan load among it) fails with the sandbox's message and reaches no kernel.
 
         Args:
             node_polars_code: The settings for the Polars code node.
@@ -78,10 +79,12 @@ class CodeBuildersMixin(GraphMixinBase):
             node = self.get_node(node_polars_code.node_id)
             if node.results.resulting_data is not None:
                 return FlowDataEngine.create_from_schema(node.node_schema.result_schema or [])
+            code = node_polars_code.polars_code_input.polars_code
+            polars_code_parser.validate_code(code)
             return self._execute_on_kernel(
                 node_id=node_polars_code.node_id,
                 kernel_id=owner_kernel(node_polars_code.user_id, root().get_kernel_manager),
-                code=kernel_script(node_polars_code.polars_code_input.polars_code),
+                code=kernel_script(code),
                 output_names=["main"],
                 flow_data_engine=flowfile_tables,
                 named_inputs=False,

@@ -348,6 +348,38 @@ class TestOnAServer:
         assert [column.name for column in graph.get_node(2).get_predicted_schema(force=True)] == ["answered"]
         assert len(kernel_calls) == 1
 
+    def test_code_the_sandbox_refuses_reaches_no_kernel(self, on_a_server, kernel_calls):
+        graph = make_graph(91448, execution_location="local")
+        add_manual_input(graph, 1, [{"a": 1}])
+        _add_polars_code(graph, 2, "import os\noutput_df = input_df", [1])
+
+        run_info = graph.run_graph()
+
+        errors = {result.node_id: result.error for result in run_info.node_step_result if not result.success}
+        assert "Import statements are not allowed" in errors[2]
+        assert kernel_calls == []
+
+    def test_a_server_run_leaves_a_later_desktop_run_the_workers_operation(self, monkeypatch):
+        """Core keeps a backend's capabilities, so what a server-mode run read must still fit a desktop run."""
+        monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: _Kernels())
+        with monkeypatch.context() as server:
+            server.setenv("FLOWFILE_MODE", "docker")
+            server.setattr(
+                FlowGraph, "_execute_on_kernel", lambda self, **kwargs: FlowDataEngine(pl.LazyFrame({"answered": [1]}))
+            )
+            on_the_server = make_graph(91446, execution_location="local")
+            add_manual_input(on_the_server, 1, [{"a": 1}])
+            _add_polars_code(on_the_server, 2, ADD_ONE, [1])
+            assert on_the_server.run_graph().success is True
+
+        on_a_desktop = make_graph(91447, execution_location="local")
+        add_manual_input(on_a_desktop, 1, [{"a": 1}])
+        _add_polars_code(on_a_desktop, 2, ADD_ONE, [1])
+        run_info = on_a_desktop.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        assert on_a_desktop.get_node(2).get_resulting_data().collect().to_dicts() == [{"a": 1, "b": 2}]
+
     def test_a_step_without_an_owner_fails_with_the_reason(self, on_a_server, monkeypatch):
         monkeypatch.setattr(flow_graph_module, "get_kernel_manager", _Kernels)
         graph = make_graph(91445, execution_location="local")

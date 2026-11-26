@@ -120,15 +120,12 @@ def test_capabilities_name_the_operations_this_worker_runs(route_client, path):
 @pytest.mark.worker
 @both_routes
 @pytest.mark.parametrize("mode", ["docker", "server"])
-def test_a_server_worker_declares_no_polars_code(route_client, path, mode, monkeypatch):
-    """Its route stays, so an older core gets the refusal; the capability goes, so a core is refused at placement."""
+def test_a_server_worker_declares_what_a_desktop_worker_declares(route_client, path, mode, monkeypatch):
+    """Core keeps a backend's capabilities for the life of the process, so they never depend on the mode."""
+    on_a_desktop = declared(route_client, path).operations
     monkeypatch.setenv("FLOWFILE_MODE", mode)
 
-    operations = declared(route_client, path).operations
-
-    assert "polars_code" not in operations
-    assert len(operations) == 18
-    assert "/v1/ops/polars_code" in main.app.openapi()["paths"]
+    assert declared(route_client, path).operations == on_a_desktop
 
 
 @pytest.mark.worker
