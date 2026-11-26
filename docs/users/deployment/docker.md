@@ -151,6 +151,8 @@ A flow you run in the designer computes on the worker container. A scheduled run
 | `WORKER_HOST` | Worker hostname | `flowfile-worker` |
 | `CORE_HOST` | Core hostname | `flowfile-core` |
 | `FLOWFILE_KERNEL_IMAGE` | Override the base kernel image for Python-script nodes | Registry default (unset ⇒ the tag in `kernel/images.py`) |
+| `FLOWFILE_POLARS_CODE_KERNEL_CPU` | CPU cores of the kernel Flowfile creates for each person's Polars code ([where it runs](where-flows-run.md)). Read when the kernel is created; a kernel that already exists keeps its size. | `2` |
+| `FLOWFILE_POLARS_CODE_KERNEL_MEMORY_GB` | Memory in GB of that kernel, read at the same moment. | `4` |
 | `FLOWFILE_TELEMETRY` | Disables usage telemetry for the whole deployment when set to `0`/`false`/`no`/`off`. Other values have no effect; users still have to opt in. | `0` in the bundled compose |
 | `FLOWFILE_TELEMETRY_ENDPOINT` | Send telemetry to a different collector URL. Unset or empty means the default `https://events.flowfile.app/events`. Blanking it does not disable telemetry. | Empty in the bundled compose ⇒ the built-in collector |
 

@@ -5,14 +5,23 @@ import asyncio
 
 import polars as pl
 import pytest
+from fastapi.testclient import TestClient
 
+from flowfile_core import main
 from flowfile_core.flowfile import flow_graph as flow_graph_module
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_graph.builders import code as code_builders
 from flowfile_core.flowfile.flow_node.requirements import requirements_for
-from flowfile_core.kernel.models import MANAGED_KERNEL_PREFIX, ImageFlavour, is_managed_kernel, managed_kernel_id
+from flowfile_core.kernel import routes as kernel_routes
+from flowfile_core.kernel.models import (
+    MANAGED_KERNEL_PREFIX,
+    ImageFlavour,
+    KernelInfo,
+    is_managed_kernel,
+    managed_kernel_id,
+)
 from flowfile_core.kernel.polars_code import CPU_VARIABLE, MEMORY_VARIABLE, kernel_script, owner_kernel
 from flowfile_core.schemas import input_schema, transform_schema
 from shared.polars_code_parser import IN_PROCESS_REFUSED_MESSAGE
@@ -238,6 +247,48 @@ class TestOwnerKernel:
 
         with pytest.raises(RuntimeError, match="Docker is not available: Cannot connect to the Docker daemon"):
             owner_kernel(OWNER, no_docker)
+
+
+class TestReservedIds:
+    """``POST /kernels/`` leaves the ids of the kernels Flowfile creates itself alone."""
+
+    @pytest.fixture
+    def client(self) -> TestClient:
+        with TestClient(main.app) as signing_in:
+            token = signing_in.post("/auth/token").json()["access_token"]
+        client = TestClient(main.app)
+        client.headers = {"Authorization": f"Bearer {token}"}
+        return client
+
+    @pytest.fixture
+    def asked(self, monkeypatch) -> list[str]:
+        """The ids the kernel manager was asked to create."""
+        asked: list[str] = []
+
+        class _Manager:
+            async def create_kernel(self, config, user_id: int) -> KernelInfo:
+                asked.append(config.id)
+                return KernelInfo(id=config.id, name=config.name)
+
+        async def manager() -> _Manager:
+            return _Manager()
+
+        monkeypatch.setattr(kernel_routes, "_get_manager", manager)
+        return asked
+
+    @pytest.mark.parametrize("kernel_id", ["polars-code-7", "Polars-Code-7", "POLARS-CODE-anything"])
+    def test_an_id_in_the_reserved_namespace_is_refused(self, client, asked, kernel_id):
+        response = client.post("/kernels/", json={"id": kernel_id, "name": "Mine"})
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == kernel_routes.RESERVED_ID_MESSAGE
+        assert asked == []
+
+    def test_any_other_id_reaches_the_manager(self, client, asked):
+        response = client.post("/kernels/", json={"id": "my-polars-code-7", "name": "Mine"})
+
+        assert response.status_code == 200
+        assert asked == ["my-polars-code-7"]
 
 
 @pytest.fixture(params=["docker", "server"])
