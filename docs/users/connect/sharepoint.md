@@ -88,6 +88,8 @@ In **Write to SharePoint**, select **SharePoint list (append items)**, use a sav
 
 Each run appends new items; there is no update, overwrite, or deduplication. If Graph rejects a request partway through, Flowfile reports how many items Graph confirmed. Check the list before retrying to avoid duplicates. Opening or previewing the writer does not append items.
 
+**Avoid overlapping runs of the same flow when appending to a SharePoint list.** Two runs can read from the same incremental checkpoint and append the same rows before either run advances it. Let the first run finish before starting another.
+
 ## Import a SharePoint connection with a project
 
 Projects that include the `sharepoint_connection` kind can export app-only connections you own. The YAML under `connections/sharepoint/` contains a `${secret:<name>}` reference instead of the credential. Before importing, supply the client secret or certificate PEM through Flowfile's [project secret configuration](../projects.md), then apply the project. Without a credential or a matching local connection, the reader or writer stays unbound. You can supply the credential and apply again; Flowfile restores the connection using its project identity without changing the selected file, worksheet, or list.
