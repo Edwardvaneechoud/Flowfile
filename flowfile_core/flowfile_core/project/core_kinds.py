@@ -203,7 +203,7 @@ register(
         lambda ctx: projection.export_connections(ctx.db, ctx.owner_id, "sharepoint"),
         after=("secrets",),
         cap=200,
-        entries=_per_file_entries("connection_name"),
+        entries=_per_file_entries("connection_uuid", label_field="connection_name"),
         same=_same_yaml,
     )
 )

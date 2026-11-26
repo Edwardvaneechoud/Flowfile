@@ -1,14 +1,18 @@
 <template>
-  <GenericNodeSettings
-    v-if="settings"
-    v-model="settings"
-    @update:model-value="handleGenericSettingsUpdate"
-    @request-save="saveSettings"
+  <component
+    :is="settingsWrapper"
+    v-if="manageOnly || settings"
+    v-bind="!manageOnly && settings ? { modelValue: settings } : {}"
+    v-on="
+      manageOnly
+        ? {}
+        : { 'update:modelValue': handleGenericSettingsUpdate, 'request-save': saveSettings }
+    "
   >
     <el-form-item label="Saved connection">
       <div class="connection-row">
         <el-select
-          v-model="settings.connection_id"
+          v-model="selectedConnectionId"
           :loading="loading"
           placeholder="Select a connection"
         >
@@ -40,179 +44,185 @@
       </div>
     </el-form-item>
     <p v-if="loadError" role="alert">Could not load saved SharePoint connections.</p>
-    <p v-else-if="!loading && settings.connection_id && !selectedConnection" role="alert">
+    <p v-else-if="!loading && selectedConnectionId && !selectedConnection" role="alert">
       The saved SharePoint connection is unavailable. Select another connection to run this node.
     </p>
     <p v-else-if="!loading && !connections.length">
       No saved SharePoint connections are available.
     </p>
-    <el-form-item label="Source">
-      <el-radio-group :model-value="listMode" @change="changeSource">
-        <el-radio-button :value="false">Document library file</el-radio-button>
-        <el-radio-button :value="true">SharePoint list</el-radio-button>
-      </el-radio-group>
-    </el-form-item>
-    <fieldset class="browse-section" :disabled="!selectedConnection">
-      <legend>Browse SharePoint</legend>
-      <el-form-item label="Site URL">
-        <el-input
-          v-model="siteUrl"
-          placeholder="https://example.sharepoint.com/sites/Finance"
-          @input="resetBrowse"
-        />
+    <template v-if="!manageOnly && settings">
+      <el-form-item label="Source">
+        <el-radio-group :model-value="listMode" @change="changeSource">
+          <el-radio-button :value="false">Document library file</el-radio-button>
+          <el-radio-button :value="true">SharePoint list</el-radio-button>
+        </el-radio-group>
       </el-form-item>
-      <template v-if="listMode">
-        <el-button :disabled="!siteUrl.trim() || browsing" @click="loadLists">Find lists</el-button>
-        <el-form-item v-if="lists.length || listDraft.list_id" label="List">
-          <el-select :model-value="listDraft.list_id" @change="chooseList">
+      <fieldset class="browse-section" :disabled="!selectedConnection">
+        <legend>Browse SharePoint</legend>
+        <el-form-item label="Site URL">
+          <el-input
+            v-model="siteUrl"
+            placeholder="https://example.sharepoint.com/sites/Finance"
+            @input="resetBrowse"
+          />
+        </el-form-item>
+        <template v-if="listMode">
+          <el-button :disabled="!siteUrl.trim() || browsing" @click="loadLists"
+            >Find lists</el-button
+          >
+          <el-form-item v-if="lists.length || listDraft.list_id" label="List">
+            <el-select :model-value="listDraft.list_id" @change="chooseList">
+              <el-option
+                v-for="item in listOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </el-select>
+            <el-button v-if="listDraft.list_id" :disabled="browsing" @click="loadColumns"
+              >Refresh columns</el-button
+            >
+          </el-form-item>
+          <el-form-item v-if="listDraft.list_id" label="Columns">
+            <el-select v-model="listDraft.columns" multiple filterable :multiple-limit="100">
+              <el-option
+                v-for="item in columnOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="OData filter (optional)">
+            <el-input
+              v-model="listDraft.odata_filter"
+              maxlength="2048"
+              placeholder="fields/Quantity gt 0"
+            />
+          </el-form-item>
+        </template>
+        <el-button
+          v-else
+          :disabled="!settings.connection_id || !siteUrl.trim()"
+          @click="loadLibraries()"
+        >
+          Find libraries
+        </el-button>
+        <template v-if="!listMode && selectedConnection">
+          <el-form-item
+            v-if="selectedConnection.auth_method !== 'delegated'"
+            label="Microsoft Entra user object ID"
+          >
+            <el-input v-model="oneDriveUser" @input="resetBrowse" />
+          </el-form-item>
+          <el-button
+            :disabled="
+              browsing || (selectedConnection.auth_method !== 'delegated' && !oneDriveUser.trim())
+            "
+            @click="loadLibraries(true)"
+            >Find OneDrive for Business</el-button
+          >
+        </template>
+        <el-form-item v-if="libraries.length" label="Drive">
+          <el-select v-model="browseDrive" placeholder="Choose a library" @change="openLibrary">
             <el-option
-              v-for="item in listOptions"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
+              v-for="library in libraries"
+              :key="library.id"
+              :label="library.name"
+              :value="library.id"
             />
           </el-select>
-          <el-button v-if="listDraft.list_id" :disabled="browsing" @click="loadColumns"
-            >Refresh columns</el-button
+        </el-form-item>
+        <div v-if="browseDrive">
+          <el-button
+            :disabled="!folders.length || browsing"
+            @click="loadFolder(folders.slice(0, -1))"
+            >Up one folder</el-button
+          >
+          <span>{{ folders.map(({ name }) => name).join(" / ") || "Library root" }}</span>
+          <ul>
+            <li v-for="entry in entries" :key="entry.id">
+              <el-button link :disabled="browsing" @click="pickEntry(entry)"
+                >{{ entry.name }}{{ entry.is_folder ? "/" : "" }}</el-button
+              >
+            </li>
+          </ul>
+        </div>
+        <p v-if="browsing" role="status">Loading SharePoint…</p>
+        <p v-if="browseMessage" role="status">{{ browseMessage }}</p>
+      </fieldset>
+      <template v-if="!listMode">
+        <el-form-item label="File path or glob">
+          <el-input v-model="settings.file_path" placeholder="reports/sales.xlsx" />
+          <small>Use * or ? in the filename only, for example reports/sales-*.csv.</small>
+        </el-form-item>
+        <el-form-item v-if="/\.csv$/i.test(settings.file_path?.trim() ?? '')" label="CSV delimiter">
+          <el-input
+            :model-value="settings.csv_delimiter ?? ','"
+            maxlength="1"
+            @update:model-value="settings.csv_delimiter = $event || ','"
+          />
+        </el-form-item>
+        <el-form-item v-if="supportsDelta" label="Incremental read">
+          <el-checkbox
+            :model-value="settings.delta_generation != null"
+            @change="setDeltaEnabled($event === true)"
+          >
+            Only download when Microsoft Graph reports a change
+          </el-checkbox>
+          <small
+            >Save the flow first. The first run reads the whole file; an unchanged file returns zero
+            rows.</small
+          >
+          <el-button
+            v-if="settings.delta_generation != null"
+            link
+            type="primary"
+            @click="setDeltaEnabled(true)"
+            >Reset checkpoint on save</el-button
           >
         </el-form-item>
-        <el-form-item v-if="listDraft.list_id" label="Columns">
-          <el-select v-model="listDraft.columns" multiple filterable :multiple-limit="100">
-            <el-option
-              v-for="item in columnOptions"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="OData filter (optional)">
-          <el-input
-            v-model="listDraft.odata_filter"
-            maxlength="2048"
-            placeholder="fields/Quantity gt 0"
+        <el-form-item v-if="isExcel" label="Sheet name">
+          <DropDown
+            :key="sheetRequest"
+            :model-value="settings.sheet_name ?? ''"
+            label="Sheet name"
+            placeholder="First sheet (default)"
+            :column-options="sheetNames"
+            :is-loading="loadingSheets"
+            @update:model-value="settings.sheet_name = $event || null"
           />
+          <el-button
+            v-if="!isGlob"
+            :disabled="!settings.connection_id || !validDrive || loadingSheets"
+            @click="loadSheets"
+          >
+            Refresh File Metadata
+          </el-button>
+          <span v-if="fileMetadata">{{ fileMetadata.file_path }}</span>
+          <span v-if="fileMetadata && !sheetNames.length" role="status">
+            File metadata does not list worksheets. A successful run populates the sheet choices.
+          </span>
+          <span v-if="missingSheet" role="status">
+            The selected worksheet is missing. Enter an existing sheet name or clear Sheet name to
+            use the first sheet.
+          </span>
         </el-form-item>
+        <details class="advanced-settings">
+          <summary>Advanced connection settings</summary>
+          <el-form-item label="Drive ID">
+            <el-input v-model="settings.drive_id" />
+          </el-form-item>
+          <el-button
+            :disabled="!settings.connection_id || !validDrive || busy"
+            @click="testConnection"
+          >
+            Test connection
+          </el-button>
+        </details>
       </template>
-      <el-button
-        v-else
-        :disabled="!settings.connection_id || !siteUrl.trim()"
-        @click="loadLibraries()"
-      >
-        Find libraries
-      </el-button>
-      <template v-if="!listMode && selectedConnection">
-        <el-form-item
-          v-if="selectedConnection.auth_method !== 'delegated'"
-          label="Microsoft Entra user object ID"
-        >
-          <el-input v-model="oneDriveUser" @input="resetBrowse" />
-        </el-form-item>
-        <el-button
-          :disabled="
-            browsing || (selectedConnection.auth_method !== 'delegated' && !oneDriveUser.trim())
-          "
-          @click="loadLibraries(true)"
-          >Find OneDrive for Business</el-button
-        >
-      </template>
-      <el-form-item v-if="libraries.length" label="Drive">
-        <el-select v-model="browseDrive" placeholder="Choose a library" @change="openLibrary">
-          <el-option
-            v-for="library in libraries"
-            :key="library.id"
-            :label="library.name"
-            :value="library.id"
-          />
-        </el-select>
-      </el-form-item>
-      <div v-if="browseDrive">
-        <el-button :disabled="!folders.length || browsing" @click="loadFolder(folders.slice(0, -1))"
-          >Up one folder</el-button
-        >
-        <span>{{ folders.map(({ name }) => name).join(" / ") || "Library root" }}</span>
-        <ul>
-          <li v-for="entry in entries" :key="entry.id">
-            <el-button link :disabled="browsing" @click="pickEntry(entry)"
-              >{{ entry.name }}{{ entry.is_folder ? "/" : "" }}</el-button
-            >
-          </li>
-        </ul>
-      </div>
-      <p v-if="browsing" role="status">Loading SharePoint…</p>
-      <p v-if="browseMessage" role="status">{{ browseMessage }}</p>
-    </fieldset>
-    <template v-if="!listMode">
-      <el-form-item label="File path or glob">
-        <el-input v-model="settings.file_path" placeholder="reports/sales.xlsx" />
-        <small>Use * or ? in the filename only, for example reports/sales-*.csv.</small>
-      </el-form-item>
-      <el-form-item v-if="/\.csv$/i.test(settings.file_path?.trim() ?? '')" label="CSV delimiter">
-        <el-input
-          :model-value="settings.csv_delimiter ?? ','"
-          maxlength="1"
-          @update:model-value="settings.csv_delimiter = $event || ','"
-        />
-      </el-form-item>
-      <el-form-item v-if="supportsDelta" label="Incremental read">
-        <el-checkbox
-          :model-value="settings.delta_generation != null"
-          @change="setDeltaEnabled($event === true)"
-        >
-          Only download when Microsoft Graph reports a change
-        </el-checkbox>
-        <small
-          >Save the flow first. The first run reads the whole file; an unchanged file returns zero
-          rows.</small
-        >
-        <el-button
-          v-if="settings.delta_generation != null"
-          link
-          type="primary"
-          @click="setDeltaEnabled(true)"
-          >Reset checkpoint on save</el-button
-        >
-      </el-form-item>
-      <el-form-item v-if="isExcel" label="Sheet name">
-        <DropDown
-          :key="sheetRequest"
-          :model-value="settings.sheet_name ?? ''"
-          label="Sheet name"
-          placeholder="First sheet (default)"
-          :column-options="sheetNames"
-          :is-loading="loadingSheets"
-          @update:model-value="settings.sheet_name = $event || null"
-        />
-        <el-button
-          v-if="!isGlob"
-          :disabled="!settings.connection_id || !validDrive || loadingSheets"
-          @click="loadSheets"
-        >
-          Refresh File Metadata
-        </el-button>
-        <span v-if="fileMetadata">{{ fileMetadata.file_path }}</span>
-        <span v-if="fileMetadata && !sheetNames.length" role="status">
-          File metadata does not list worksheets. A successful run populates the sheet choices.
-        </span>
-        <span v-if="missingSheet" role="status">
-          The selected worksheet is missing. Enter an existing sheet name or clear Sheet name to use
-          the first sheet.
-        </span>
-      </el-form-item>
-      <details class="advanced-settings">
-        <summary>Advanced connection settings</summary>
-        <el-form-item label="Drive ID">
-          <el-input v-model="settings.drive_id" />
-        </el-form-item>
-        <el-button
-          :disabled="!settings.connection_id || !validDrive || busy"
-          @click="testConnection"
-        >
-          Test connection
-        </el-button>
-      </details>
     </template>
-  </GenericNodeSettings>
+  </component>
   <el-dialog
     v-model="showEdit"
     title="Edit SharePoint connection"
@@ -262,10 +272,10 @@
         <el-form-item label="Connection name"
           ><el-input v-model="connectionName" :disabled="deviceDraftLocked"
         /></el-form-item>
-        <el-form-item label="Tenant ID"
+        <el-form-item label="Tenant ID" :error="guidError(tenantId)"
           ><el-input v-model="tenantId" :disabled="deviceDraftLocked"
         /></el-form-item>
-        <el-form-item label="Application (client) ID"
+        <el-form-item label="Application (client) ID" :error="guidError(clientId)"
           ><el-input v-model="clientId" :disabled="deviceDraftLocked"
         /></el-form-item>
         <el-form-item label="Authentication">
@@ -333,7 +343,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch, type Component } from "vue";
 import { isAxiosError } from "axios";
 import { ElMessage, ElMessageBox } from "element-plus";
 import DropDown from "../../../baseNode/page_objects/dropDown.vue";
@@ -364,21 +374,34 @@ interface SavedConnection {
   auth_method: string;
 }
 
+const props = defineProps<{ manageOnly?: boolean }>();
+// Standalone management renders a native section, not a node settings form.
+const settingsWrapper = computed<string | Component>(() =>
+  props.manageOnly ? "section" : GenericNodeSettings,
+);
 const store = useNodeStore();
 const settings = ref<SharePointSettings | null>(null);
+const managedId = ref<number | null>(null);
+const selectedConnectionId = computed({
+  get: () => (props.manageOnly ? managedId.value : (settings.value?.connection_id ?? null)),
+  set: (value: number | null) => {
+    if (props.manageOnly) managedId.value = value;
+    else if (settings.value) settings.value.connection_id = value;
+  },
+});
 const connections = ref<SavedConnection[]>([]);
 const canShare = !authService.isInDesktopMode();
 const shareTarget = ref<SavedConnection | null>(null);
 const selectedOwnedConnection = computed(() =>
   connections.value.find(
     (connection) =>
-      connection.id === settings.value?.connection_id &&
+      connection.id === selectedConnectionId.value &&
       connection.is_owner &&
       connection.auth_method !== "delegated",
   ),
 );
 const selectedConnection = computed(() =>
-  connections.value.find(({ id }) => id === settings.value?.connection_id),
+  connections.value.find(({ id }) => id === selectedConnectionId.value),
 );
 const selectedManageableConnection = computed(() =>
   selectedConnection.value?.can_manage ? selectedConnection.value : null,
@@ -434,7 +457,8 @@ async function deleteConnection() {
   try {
     await axios.delete(`/sharepoint_connections/${target.id}`);
     connections.value = connections.value.filter(({ id }) => id !== target.id);
-    if (settings.value?.connection_id === target.id) resetBrowse();
+    if (props.manageOnly) managedId.value = null;
+    else if (settings.value?.connection_id === target.id) resetBrowse();
     ElMessage.success("SharePoint connection deleted.");
   } catch {
     ElMessage.error("Could not delete the SharePoint connection.");
@@ -451,7 +475,7 @@ const reconnectTarget = ref<SavedConnection | null>(null);
 const selectedDelegatedConnection = computed(() =>
   connections.value.find(
     (connection) =>
-      connection.id === settings.value?.connection_id &&
+      connection.id === selectedConnectionId.value &&
       connection.is_owner &&
       connection.auth_method === "delegated",
   ),
@@ -496,12 +520,15 @@ async function loadCertificate(event: Event) {
 }
 const defaultSiteUrl = ref("");
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+const normalizeGuid = (value: string) => value.trim().replace(/^\{(.*)\}$/, "$1");
+const guidError = (value: string) =>
+  value.trim() && !uuid.test(normalizeGuid(value)) ? "Enter a valid GUID." : "";
 const canCreate = computed(() =>
   Boolean(
     connectionName.value.trim() &&
     (authMethod.value === "delegated" || clientSecret.value) &&
-    uuid.test(tenantId.value.trim()) &&
-    uuid.test(clientId.value.trim()),
+    uuid.test(normalizeGuid(tenantId.value)) &&
+    uuid.test(normalizeGuid(clientId.value)),
   ),
 );
 const validDrive = computed(() => {
@@ -834,13 +861,13 @@ function clearConnectionDraft() {
 async function createConnection() {
   const draft = settings.value;
   const reconnect = reconnectTarget.value;
-  if (!draft || (!canCreate.value && !reconnect) || busy.value) return;
+  if ((!draft && !props.manageOnly) || (!canCreate.value && !reconnect) || busy.value) return;
   busy.value = true;
   try {
     const target = {
       connection_name: connectionName.value.trim(),
-      tenant_id: tenantId.value.trim(),
-      client_id: clientId.value.trim(),
+      tenant_id: normalizeGuid(tenantId.value),
+      client_id: normalizeGuid(clientId.value),
       default_site_url: defaultSiteUrl.value.trim() || null,
     };
     let data: SavedConnection;
@@ -907,7 +934,8 @@ async function createConnection() {
       );
     } else {
       connections.value = [...connections.value, data];
-      if (settings.value === draft) draft.connection_id = data.id;
+      if (props.manageOnly) managedId.value = data.id;
+      else if (draft && settings.value === draft) draft.connection_id = data.id;
     }
     devicePrompt.value = null;
     showCreate.value = false;
@@ -1030,6 +1058,10 @@ async function loadNodeData(nodeId: number) {
     .catch(() => {
       /* Manual site entry remains available. */
     });
+  await loadConnections();
+}
+
+async function loadConnections() {
   loading.value = true;
   loadError.value = false;
   try {
@@ -1041,6 +1073,10 @@ async function loadNodeData(nodeId: number) {
     loading.value = false;
   }
 }
+
+onMounted(() => {
+  if (props.manageOnly) void loadConnections();
+});
 
 defineExpose({ loadNodeData, pushNodeData, saveSettings });
 </script>

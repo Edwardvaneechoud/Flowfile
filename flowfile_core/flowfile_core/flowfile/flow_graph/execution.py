@@ -1713,6 +1713,12 @@ class ExecutionMixin(GraphMixinBase):
                 run_nodes = self.nodes if selected is None else [n for n in self.nodes if n.node_id in selected]
                 self._refresh_catalog_reader_freshness(run_nodes)
                 self._refresh_read_source_freshness(run_nodes)
+                for node in run_nodes:
+                    if (
+                        node.node_type == "sharepoint_reader"
+                        and getattr(node.setting_input, "delta_generation", None) is not None
+                    ):
+                        node.invalidate_cache()
 
                 params: dict[str, ParamValue] = typed_parameter_values(self.flow_settings.parameters)
                 # Parameter gates route before the run (dead sides deliberately skipped); formula gates at execution.

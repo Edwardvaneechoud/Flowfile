@@ -587,8 +587,9 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "data — those need their own connectors / 'external_source'."
     ),
     "sharepoint_reader": (
-        "Read CSV, XLSX, Parquet, or JSON from a SharePoint document library using a saved connection. "
-        "This source node has no upstream input and does not read SharePoint Lists."
+        "Read CSV, XLSX, XLS, Parquet, or JSON from a SharePoint document library, or read a SharePoint list, "
+        "using a saved connection. This source node has no upstream input. Library paths support wildcards; "
+        "incremental reads are available for individual CSV, JSON, and Parquet files."
     ),
     "sharepoint_writer": (
         "Write upstream rows to a file in a SharePoint document library or append them to a SharePoint list "
@@ -1201,8 +1202,10 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "may be sampled."
     ),
     "sharepoint_reader": (
-        "Select a saved SharePoint connection and file. For CSV, set the delimiter if needed; "
-        "for XLSX, optionally enter a sheet name (defaults to the first sheet)."
+        "Select a saved SharePoint connection, then choose a document-library file or a SharePoint list. "
+        "For files, use * or ? in the path to match multiple files. Set the CSV delimiter if needed. "
+        "For XLSX or XLS, optionally enter a sheet name (defaults to the first sheet). "
+        "Enable incremental reads only for a single CSV, JSON, or Parquet file without wildcards."
     ),
     "sharepoint_writer": (
         "Select a saved SharePoint connection. For a document library, choose an output path, format "

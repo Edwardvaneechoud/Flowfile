@@ -203,6 +203,55 @@ def test_sharepoint_project_rebinds_after_credential_provisioning(tmp_path, monk
         placeholder = placeholder_name(yaml.safe_load(exported)["credential"])
         assert placeholder is not None
         before = _snapshot(root)
+        # An export without a portable UUID must use the matching local node,
+        # not the numeric connection ID supplied by the portable file.
+        portable_path = next(file for file in (root / "flows").glob("*.yaml")
+                             if yaml.safe_load(file.read_text()).get("flow_uuid") == flow_uuid)
+        portable_text = portable_path.read_text()
+        portable = yaml.safe_load(portable_text)
+        for node in portable["nodes"]:
+            node["setting_input"].pop("sharepoint_connection_uuid", None)
+            node["setting_input"]["connection_id"] = original_id + 999
+        from git import Repo
+
+        from flowfile_core.project import git_ops
+
+        git_ops.init(root)
+        assert git_ops.commit_all(root, "Initial SharePoint settings")
+        project_sync.open_project(str(root), OWNER)
+        try:
+            portable_path.write_text(yaml.safe_dump(portable))
+            assert not project_sync.reload_from_disk(OWNER, force=True).incomplete
+            assert all(
+                node["setting_input"]["connection_id"] == original_id
+                for node in yaml.safe_load(path.read_text())["nodes"]
+            )
+            portable_sha = git_ops.commit_all(root, "Portable SharePoint settings")
+            assert portable_sha
+            portable_path.write_text(portable_text)
+            git_ops.commit_all(root, "SharePoint settings with UUIDs")
+            assert not project_sync.restore_version(OWNER, portable_sha, force=True).incomplete
+            assert all(
+                node["setting_input"]["connection_id"] == original_id
+                for node in yaml.safe_load(path.read_text())["nodes"]
+            )
+            remote = tmp_path / "sharepoint-remote"
+            Repo.clone_from(str(root), str(remote))
+            (remote / portable_path.relative_to(root)).write_text(yaml.safe_dump(portable))
+            remote_sha = git_ops.commit_all(remote, "Remote portable SharePoint settings")
+            assert remote_sha
+            Repo(str(root)).create_remote("origin", str(remote))
+            pulled = project_sync.pull(OWNER, force=True)
+            assert pulled.state == "fast_forward" and pulled.sha == remote_sha
+            assert pulled.result is not None and not pulled.result.incomplete
+            assert all(
+                node["setting_input"]["connection_id"] == original_id
+                for node in yaml.safe_load(path.read_text())["nodes"]
+            )
+        finally:
+            project_sync.close_project(OWNER)
+        portable_path.write_text(portable_text)
+
         with get_db_context() as db:
             db.delete(db.get(SharePointConnection, original_id))
             db.flush()

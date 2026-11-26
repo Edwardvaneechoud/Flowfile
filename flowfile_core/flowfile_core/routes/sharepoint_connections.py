@@ -323,6 +323,13 @@ def poll_device_sign_in(flow_id: str, current_user=Depends(get_current_active_us
         if now < flow.next_poll:
             return {"status": "pending", "interval": flow.interval}
         flow.next_poll = float("inf")
+    def retry_pending():
+        with _device_lock:
+            if _device_flows.get(flow_id) is not flow or flow.expires <= monotonic():
+                raise HTTPException(404, "Sign-in expired. Start again.")
+            flow.next_poll = monotonic() + flow.interval
+            return {"status": "pending", "interval": flow.interval}
+
     target = flow.target
     try:
         with _http_client() as client:
@@ -337,6 +344,8 @@ def poll_device_sign_in(flow_id: str, current_user=Depends(get_current_active_us
                     "device_code": flow.code,
                 },
             )
+        if response.status_code == 429 or response.status_code >= 500:
+            return retry_pending()
         data = response.json()
         if not isinstance(data, dict):
             raise ValueError
@@ -354,7 +363,9 @@ def poll_device_sign_in(flow_id: str, current_user=Depends(get_current_active_us
             flow.refresh_token = refresh_token
             flow.excel_column_preview = target.excel_column_preview and has_excel_preview_scope(data.get("scope"))
             flow.code = ""
-    except (SharePointReadError, ValueError, TypeError):
+    except SharePointReadError:
+        return retry_pending()
+    except (ValueError, TypeError):
         with _device_lock:
             _discard_device_flow_locked(flow_id)
         raise HTTPException(422, "Microsoft sign-in did not complete. Start again.") from None

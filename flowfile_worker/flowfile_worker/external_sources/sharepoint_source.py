@@ -4,6 +4,7 @@ import csv
 import json
 import re
 from base64 import b64encode
+from codecs import getincrementaldecoder
 from fnmatch import fnmatchcase
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -335,7 +336,7 @@ def _preview_csv(client: httpx.Client, token: str, drive_id: str, parts: list[st
             limit_message="SharePoint CSV schema unavailable until run.",
         )
         # Keep only complete records, including when the cap cuts a multiline field.
-        stream = StringIO(sample.decode("utf-8-sig"), newline="")
+        stream = StringIO(getincrementaldecoder("utf-8-sig")().decode(sample, final=False), newline="")
         rows = csv.reader(stream, strict=True, delimiter=delimiter)
         next(rows)
         next(rows)
@@ -386,7 +387,7 @@ def _preview_json(client: httpx.Client, token: str, drive_id: str, parts: list[s
             trim_partial_line=False,
             limit_message="SharePoint JSON schema unavailable until run.",
         )
-        text = sample.decode("utf-8").lstrip(" \t\r\n")
+        text = getincrementaldecoder("utf-8")().decode(sample, final=False).lstrip(" \t\r\n")
         if not text.startswith("["):
             return pl.DataFrame()
         decoder = json.JSONDecoder()

@@ -356,6 +356,16 @@ function useFolder() {
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: settings,
+  toSavePayload(draft) {
+    if (!listMode.value) return draft;
+    const payload: Partial<Destination> = { ...draft, conflict_mode: "error" };
+    delete payload.drive_id;
+    delete payload.file_path;
+    delete payload.format;
+    delete payload.sheet_name;
+    delete payload.write_when_empty;
+    return payload;
+  },
   onBeforeSave() {
     const draft = settings.value;
     if (!draft || !connections.value.some(({ id }) => id === draft.connection_id)) {
@@ -384,13 +394,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
         )
           throw Error();
         draft.list_target = { ...listTarget.value, column_mapping: value };
-        const listDraft = draft as Partial<Destination>;
-        delete listDraft.drive_id;
-        delete listDraft.file_path;
-        delete listDraft.format;
-        delete draft.sheet_name;
-        delete draft.write_when_empty;
-        draft.conflict_mode = "error";
         return true;
       } catch {
         ElMessage.error(

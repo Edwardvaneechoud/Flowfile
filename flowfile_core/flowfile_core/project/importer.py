@@ -22,6 +22,7 @@ from functools import partial
 from pathlib import Path
 
 import yaml
+from fastapi import HTTPException
 from pydantic import SecretStr, ValidationError
 from sqlalchemy.exc import IntegrityError
 
@@ -1076,22 +1077,35 @@ def _runtime_flow_text(path: Path, data: dict) -> str:
     return dump_yaml(data)
 
 
-def _bind_project_sharepoint_nodes(db, data: dict, owner_id: int) -> None:
+def _bind_project_sharepoint_nodes(db, data: dict, owner_id: int, local: dict | None = None) -> None:
+    from flowfile_core.routes.sharepoint_connections import _resolve_connection
+
+    local_nodes = {(node.get("id"), node.get("type")): node for node in ((local or {}).get("nodes") or []) if isinstance(node, dict)}
     for node in data.get("nodes") or []:
         if node.get("type") not in {"sharepoint_reader", "sharepoint_writer"} or not isinstance(
             settings := node.get("setting_input"), dict
         ):
             continue
         identity = settings.get("sharepoint_connection_uuid")
-        settings["connection_id"] = None  # a numeric ID from another installation is never trusted
-        if not isinstance(identity, str):
-            continue
-        connection = db.query(SharePointConnection).filter(
-            SharePointConnection.user_id == owner_id, SharePointConnection.connection_uuid == identity,
-            SharePointConnection.auth_method.in_(("client_secret", "certificate")),
-        ).one_or_none()
-        if connection is not None:
-            settings["connection_id"] = connection.id
+        settings["connection_id"] = None  # never trust a numeric ID from the incoming project
+        if isinstance(identity, str):
+            connection = db.query(SharePointConnection).filter(
+                SharePointConnection.user_id == owner_id, SharePointConnection.connection_uuid == identity,
+                SharePointConnection.auth_method.in_(("client_secret", "certificate")),
+            ).one_or_none()
+            if connection is not None:
+                settings["connection_id"] = connection.id
+        elif type(node.get("id")) is int:
+            previous = local_nodes.get((node["id"], node["type"]), {}).get("setting_input")
+            local_id = previous.get("connection_id") if isinstance(previous, dict) else None
+            if type(local_id) is not int:
+                continue
+            try:
+                connection, _ = _resolve_connection(db, owner_id, local_id)
+            except HTTPException:
+                continue  # revoked access or unavailable credentials
+            if node["type"] != "sharepoint_writer" or connection.auth_method != "delegated":
+                settings["connection_id"] = connection.id
 
 
 def _import_flow(data: dict, owner_id: int) -> str | None:
@@ -1113,7 +1127,6 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
     # lock and mints a fresh one instead of colliding on the identical runtime_path.
     with _flow_uuid_lock(flow_uuid):
         with get_db_context() as db:
-            _bind_project_sharepoint_nodes(db, data, owner_id)
             existing = repository.owned_or_none(db, FlowRegistration, "owner_id", owner_id, flow_uuid=flow_uuid)
             # A flow_uuid owned by another user (or just registered by a concurrent importer) must never
             # resolve to that on-disk file/registration: mint a fresh uuid and write a brand-new flow
@@ -1134,6 +1147,16 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
                     # On a multi-user server the import never writes outside the flow folders; the flow is skipped.
                     logger.warning("Project import: flow %s not written — %s", flow_uuid, exc)
                     return None
+            local = None
+            if existing is not None and any(
+                node.get("type") in {"sharepoint_reader", "sharepoint_writer"} for node in data.get("nodes") or []
+            ):
+                try:
+                    previous = _read_yaml(runtime_path)
+                    local = previous if isinstance(previous, dict) else None
+                except (OSError, yaml.YAMLError, ImportTooLargeError):
+                    logger.warning("Could not read prior settings for flow %s", flow_uuid)
+            _bind_project_sharepoint_nodes(db, data, owner_id, local)
         _stage_file(runtime_path, _runtime_flow_text(runtime_path, data), f"write the flow file of {catalog_name!r}")
         # Load (with owner_id so cloud connections resolve) but don't open an editor session: project
         # import must not auto-open flows on the canvas. The user opens a flow explicitly via /import_flow/.

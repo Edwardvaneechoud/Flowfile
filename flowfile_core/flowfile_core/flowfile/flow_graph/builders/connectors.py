@@ -1,6 +1,7 @@
 """Connection-backed sources and sinks fetched on the worker: database, Kafka, Google Analytics, REST."""
 
 import threading
+from dataclasses import replace
 
 from fastapi.exceptions import HTTPException
 
@@ -36,6 +37,7 @@ from flowfile_core.flowfile.flow_graph._root import root
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
 from flowfile_core.flowfile.flow_node.flow_node import (
     FlowNode,
+    run_operation,
 )
 from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
@@ -632,6 +634,11 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 wire.delta_state = SharePointDeltaState.model_validate_json(previous) if previous is not None else None
             backend = current_context(self).backend
             read = SharePointReadPayload(flow_id=settings.flow_id, node_id=settings.node_id, settings=wire)
+            if schema_only:
+                ref = run_operation(
+                    backend, OperationKind.sharepoint_read, op_payload(replace(read, job_id=f"{read.job_id}-schema"))
+                ).refs["result"]
+                return backend, ref, scope, previous
             result = node.run_op(backend, OperationKind.sharepoint_read, op_payload(read), job_id=read.job_id)
             return backend, result, scope, previous
 
@@ -647,8 +654,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
             fetched = fetch(schema_only=True)
             if fetched is None:
                 return []
-            backend, result, _, _ = fetched
-            ref = result.refs["result"]
+            backend, ref, _, _ = fetched
             try:
                 return ref.schema
             finally:

@@ -88,6 +88,31 @@ def test_project_sharepoint_binding_does_not_use_another_owners_connection(saved
         assert settings["connection_id"] is None
 
 
+@pytest.mark.parametrize("delegated", [False, True])
+def test_project_sharepoint_binding_retains_only_usable_local_settings(saved_connection, monkeypatch, delegated):
+    from contextlib import contextmanager
+
+    from flowfile_core.auth import sharing
+    from flowfile_core.project.importer import _bind_project_sharepoint_nodes
+
+    with contextmanager(app.dependency_overrides[get_db])() as db:
+        connection = db.get(SharePointConnection, saved_connection)
+        if delegated:
+            connection.auth_method = "delegated"
+        monkeypatch.setattr(sharing, "browser_sign_in_allowed", lambda: True)
+        local = {"nodes": [{"id": 1, "type": "sharepoint_reader", "setting_input": {
+            "connection_id": saved_connection,
+        }}]}
+        settings = {"connection_id": 9999}
+        incoming = {"nodes": [{"id": 1, "type": "sharepoint_reader", "setting_input": settings}]}
+        _bind_project_sharepoint_nodes(db, incoming, connection.user_id, local)
+        assert settings["connection_id"] == saved_connection
+        _bind_project_sharepoint_nodes(db, incoming, connection.user_id)
+        assert settings["connection_id"] is None
+        _bind_project_sharepoint_nodes(db, incoming, connection.user_id + 1, local)
+        assert settings["connection_id"] is None
+
+
 def test_sqlite_upgrade_preserves_saved_connections_and_does_not_reuse_ids(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'catalog.db'}")
     table = SharePointConnection.__table__
@@ -596,6 +621,9 @@ def test_delegated_sign_in_keeps_tokens_server_side(saved_connection, monkeypatc
 
     monkeypatch.setenv("FLOWFILE_MODE", "electron")
     refresh_revoked = False
+    transient_statuses = iter([None, 429, 503])
+    clock = [100.0]
+    monkeypatch.setattr(sharepoint_connections, "monotonic", lambda: clock[0])
 
     def microsoft(req):
         fields = parse_qs(req.content.decode())
@@ -614,6 +642,11 @@ def test_delegated_sign_in_keeps_tokens_server_side(saved_connection, monkeypatc
             )
         if fields["grant_type"] == ["urn:ietf:params:oauth:grant-type:device_code"]:
             assert fields["device_code"] == ["private-device-code"]
+            failure = next(transient_statuses, 200)
+            if failure is None:
+                raise httpx.ReadTimeout("timed out", request=req)
+            if failure != 200:
+                return httpx.Response(failure)
             return httpx.Response(200, json={"refresh_token": "private-refresh", "access_token": "private-access"})
         assert fields["grant_type"] == ["refresh_token"]
         assert fields["refresh_token"] == ["private-refresh"]
@@ -642,6 +675,10 @@ def test_delegated_sign_in_keeps_tokens_server_side(saved_connection, monkeypatc
     monkeypatch.setitem(app.dependency_overrides, get_current_active_user, lambda: SimpleNamespace(id=2))
     assert client.post(poll).status_code == 404
     monkeypatch.setitem(app.dependency_overrides, get_current_active_user, owner)
+    for _ in range(3):
+        assert client.post(poll).json() == {"status": "pending", "interval": 5}
+        assert client.post(poll).json() == {"status": "pending", "interval": 5}
+        clock[0] += 5
     finished = client.post(poll)
     assert finished.is_success, finished.text
     assert "private-" not in finished.text
@@ -1162,7 +1199,7 @@ def test_read_sharepoint_in_python_without_worker_service(
 @pytest.mark.parametrize(
     "extension",
     ["csv", "csv-no-range", "csv-glob", "xlsx", "xlsx-preview", "parquet", "parquet-no-range", "json", "json-no-range",
-     "list", "list-write", "csv-delta", "xls"],
+     "list", "list-write", "csv-delta", "csv-delta-development", "xls"],
 )
 def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypatch, caplog, extension):
     import base64
@@ -1190,7 +1227,8 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
     from flowfile_worker.main import app as worker_app
     from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 
-    delta_read = extension == "csv-delta"
+    execution_mode = "Development" if extension == "csv-delta-development" else "Performance"
+    delta_read = extension in {"csv-delta", "csv-delta-development"}
     list_write = extension == "list-write"
     if delta_read:
         from flowfile_core.database.models import FlowRegistration, SharePointDeltaCursor
@@ -1430,7 +1468,10 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
             handler = FlowfileHandler()
             monkeypatch.setattr(routes, "flow_file_handler", handler)
             handler.register_flow(
-                FlowSettings(flow_id=116, name="SharePoint HTTP", path=".", execution_location="remote"), user_id=1
+                FlowSettings(
+                    flow_id=116, name="SharePoint HTTP", path=".", execution_location="remote",
+                    execution_mode=execution_mode,
+                ), user_id=1
             )
             graph = handler.get_flow(116)
             assert graph is not None
@@ -1562,6 +1603,18 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
                     )
             else:
                 assert len(downloads) == 1
+            if extension in {"csv", "parquet"} and not (ignores_range or ignores_tail or glob_read or delta_read):
+                from flowfile_core.flowfile.execution.protocol import JobHandle
+
+                running_job = JobHandle(graph.execution_context.backend.id, "in-flight-read")
+                cancelled = []
+                with monkeypatch.context() as patch:
+                    patch.setattr(node, "_submit_in_flight", running_job)
+                    patch.setattr(type(graph.execution_context.backend), "cancel", lambda self, job: cancelled.append(job))
+                    assert [column.name for column in node.get_predicted_schema(force=True)] == ["sku", "quantity"]
+                    node.cancel()
+                    assert cancelled == [running_job]
+                assert data.data_frame.collect().to_dicts() == expected
             if delta_read:
                 assert delta_tokens == ["latest"]
                 graph.run_graph()

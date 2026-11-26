@@ -313,6 +313,8 @@ def _sharepoint_target():
 
 
 def test_sharepoint_group_grant_allows_use_but_not_credential_access(users, client_for, team):
+    from flowfile_core.project.importer import _bind_project_sharepoint_nodes
+
     alice, bob, carol = (client_for(name) for name in ("alice", "bob", "carol"))
     secret = f"synthetic-sharepoint-{uuid4()}"
     target = _sharepoint_target()
@@ -358,6 +360,13 @@ def test_sharepoint_group_grant_allows_use_but_not_credential_access(users, clie
                         build_write_settings(db, writer)
                     assert denied.value.status_code == 404
 
+        local = {"nodes": [{"id": 2, "type": "sharepoint_writer", "setting_input": {"connection_id": connection_id}}]}
+        incoming_settings = {"connection_id": 9999}
+        incoming = {"nodes": [{"id": 2, "type": "sharepoint_writer", "setting_input": incoming_settings}]}
+        with get_db_context() as db:
+            _bind_project_sharepoint_nodes(db, incoming, users["bob"].id, local)
+            assert incoming_settings["connection_id"] == connection_id
+
         denied = alice.post("/shares", json={
             "resource_type": "secret", "resource_id": secret_id, "group_id": team, "permission": "use",
         })
@@ -370,6 +379,9 @@ def test_sharepoint_group_grant_allows_use_but_not_credential_access(users, clie
 
         assert alice.delete(f"/shares/{grant['id']}").status_code in (200, 204)
         assert bob.get("/sharepoint_connections").json() == []
+        with get_db_context() as db:
+            _bind_project_sharepoint_nodes(db, incoming, users["bob"].id, local)
+            assert incoming_settings["connection_id"] is None
     finally:
         assert alice.delete(path).status_code == 204
 

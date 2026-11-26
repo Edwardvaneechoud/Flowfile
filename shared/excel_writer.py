@@ -288,7 +288,9 @@ def append_excel_rows(df: pl.DataFrame, path: str, sheet_name: str | None = None
             if (len(tables) != 1 or tables[0].totalsRowCount or tables[0].totalsRowShown
                     or tables[0].headerRowCount != 1
                     or range_boundaries(tables[0].ref) != (1, 1, frame.width, ws.max_row)):
-                raise ExcelAppendError("Append rows requires a single Excel table covering the data, with no totals row.")
+                raise ExcelAppendError(
+                    "Append rows requires a single Excel table covering the data, with no totals row."
+                )
             table = tables[0]
 
     for row in frame.iter_rows():

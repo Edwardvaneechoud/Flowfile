@@ -160,7 +160,9 @@ def write_file(
                 raise SharePointReadError(str(exc)) from None
             except (pl.exceptions.PolarsError, OSError, TypeError, ValueError, ImportError,
                     BadZipFile, InvalidFileException, XlsxWriterException, KeyError):
-                raise SharePointReadError("SharePoint Excel output could not be serialized. Check the workbook and sheet name.") from None
+                raise SharePointReadError(
+                    "SharePoint Excel output could not be serialized. Check the workbook and sheet name."
+                ) from None
         behavior = CONFLICT_BEHAVIOR[conflict_mode] if not edit_workbook else (
             "replace" if "If-Match" in headers else "fail"
         )

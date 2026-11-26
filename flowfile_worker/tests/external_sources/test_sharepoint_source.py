@@ -222,3 +222,16 @@ def test_token_failure_does_not_echo_upstream_details():
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
         with pytest.raises(SharePointReadError, match=r"^Microsoft token request failed \(HTTP 401\)\.$"):
             read_file(client, TENANT, "test-client", "test-secret", "drive", "data.csv")
+
+
+@pytest.mark.parametrize("extension", ["csv", "json"])
+def test_preview_keeps_schema_when_sample_ends_mid_character(monkeypatch, extension):
+    from flowfile_worker.external_sources import sharepoint_source
+
+    prefix = b"sku,quantity\nA,2\n" if extension == "csv" else b'[{"sku":"A","quantity":2},{"sku":"'
+    sample = prefix + "é".encode()[:1]
+    monkeypatch.setattr(sharepoint_source, "download_file", lambda *args, **kwargs: sample)
+    preview = sharepoint_source._preview_csv if extension == "csv" else sharepoint_source._preview_json
+    args = (",",) if extension == "csv" else ()
+    with httpx.Client() as client:
+        assert preview(client, "fixture", "drive", [f"sales.{extension}"], *args).columns == ["sku", "quantity"]

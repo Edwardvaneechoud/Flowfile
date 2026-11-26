@@ -9,6 +9,7 @@ export const CONNECTION_TYPE_KEYS = [
   "cloud",
   "kafka",
   "google_analytics",
+  "sharepoint",
   "secrets",
 ] as const;
 
@@ -54,6 +55,14 @@ export const connectionTypes: ConnectionType[] = [
     icon: "fa-solid fa-chart-line",
     description: "Read GA4 reports via a service-account key or OAuth sign-in",
     sidebarKey: "menu.connectionsGoogleAnalytics",
+    countUnit: "connection",
+  },
+  {
+    key: "sharepoint",
+    label: "SharePoint",
+    icon: "fa-solid fa-folder-tree",
+    description: "Manage connections to SharePoint lists and document libraries",
+    sidebarKey: "menu.connectionsSharePoint",
     countUnit: "connection",
   },
   {
