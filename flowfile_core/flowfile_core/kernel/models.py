@@ -4,6 +4,19 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+MANAGED_KERNEL_PREFIX = "polars-code-"
+"""Ids under this prefix are kernels Flowfile creates itself, one per person, for Polars Code on a server."""
+
+
+def managed_kernel_id(user_id: int) -> str:
+    """The id of the kernel Flowfile manages for *user_id*."""
+    return f"{MANAGED_KERNEL_PREFIX}{user_id}"
+
+
+def is_managed_kernel(kernel_id: str) -> bool:
+    """Whether *kernel_id* is in the reserved namespace, compared without case so no spelling of it can be claimed."""
+    return kernel_id.lower().startswith(MANAGED_KERNEL_PREFIX)
+
 
 class KernelState(str, Enum):
     # In-memory only while create_kernel bakes the image; never persisted.

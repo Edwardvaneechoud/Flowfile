@@ -393,6 +393,10 @@ class KernelSimManager:
     def to_kernel_path(self, local_path):
         return local_path
 
+    def exchange_dirs(self, kernel_id, flow_id, node_id):
+        base = Path(self.shared_volume_path, str(flow_id), str(node_id))
+        return str(base / "inputs"), str(base / "outputs")
+
     def _as_owner(self, call, *args):
         from fastapi import HTTPException
 

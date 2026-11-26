@@ -5,12 +5,14 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from flowfile_core.flowfile import flow_graph as flow_graph_module
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.kernel.execution import _assert_safe_name, write_inputs_to_parquet
 from flowfile_core.kernel.manager import KernelManager, ordered_input_files
-from flowfile_core.kernel.models import ExecuteRequest
+from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult
+from tests.flowfile.execution.graph_helpers import add_manual_input, add_promise, connect, make_graph
 
 
 def _local_manager(shared_volume: Path) -> KernelManager:
@@ -19,6 +21,24 @@ def _local_manager(shared_volume: Path) -> KernelManager:
     mgr._shared_volume = str(shared_volume)
     mgr._catalog_tables_dir = "/__catalog_tables_unused__"
     mgr._kernel_volume = None
+    return mgr
+
+
+class _AnsweringManager(KernelManager):
+    """A local-volume manager whose kernel answers every cell with success and no output, keeping the requests."""
+
+    def execute_sync(self, kernel_id, request, flow_logger=None, cancel_event=None):
+        self.requests.append(request)
+        return ExecuteResult(success=True)
+
+
+def _answering_manager(shared_volume: Path) -> _AnsweringManager:
+    mgr = _AnsweringManager.__new__(_AnsweringManager)
+    mgr._shared_volume = str(shared_volume)
+    mgr._catalog_tables_dir = "/__catalog_tables_unused__"
+    mgr._kernel_volume = None
+    mgr._docker_network = None
+    mgr.requests = []
     return mgr
 
 
@@ -126,3 +146,51 @@ class TestReservedMainName:
         result = write_inputs_to_parquet(tables, _local_manager(tmp_path), str(input_dir), 1, 2)
 
         assert result == {"main": ["/shared/1/2/inputs/main_0.parquet", "/shared/1/2/inputs/main_1.parquet"]}
+
+
+class TestExchangeDirs:
+    def test_a_nodes_folders_are_under_the_shared_folder(self, tmp_path: Path):
+        inputs, outputs = _local_manager(tmp_path).exchange_dirs("k1", 1, 2)
+
+        assert Path(inputs) == tmp_path / "1" / "2" / "inputs"
+        assert Path(outputs) == tmp_path / "1" / "2" / "outputs"
+
+
+class TestPositionalInputs:
+    """``_execute_on_kernel(named_inputs=False)``: inputs by position only, whatever their sources are called."""
+
+    TABLES = (FlowDataEngine(pl.LazyFrame({"a": [1]})), FlowDataEngine(pl.LazyFrame({"b": [2]})))
+
+    def _run(self, flow_id: int, manager: KernelManager, monkeypatch, **kwargs):
+        """Kernel node 3 over two sources, the first with the reference ``main``."""
+        graph = make_graph(flow_id, execution_location="local")
+        add_manual_input(graph, 1, [{"a": 1}], node_reference="main")
+        add_manual_input(graph, 2, [{"b": 2}])
+        add_promise(graph, 3, "python_script")
+        connect(graph, 1, 3)
+        connect(graph, 2, 3)
+        monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: manager)
+        return graph._execute_on_kernel(
+            node_id=3, kernel_id="k1", code="", output_names=["main"], flow_data_engine=self.TABLES, **kwargs
+        )
+
+    def test_a_source_called_main_is_refused_when_inputs_are_named(self, tmp_path: Path, in_core, monkeypatch):
+        manager = _answering_manager(tmp_path)
+
+        with pytest.raises(ValueError, match="'main' is reserved"):
+            self._run(91431, manager, monkeypatch)
+
+        assert manager.requests == []
+
+    def test_positional_inputs_go_under_main_in_wiring_order(self, tmp_path: Path, in_core, monkeypatch):
+        manager = _answering_manager(tmp_path)
+
+        self._run(91432, manager, monkeypatch, named_inputs=False)
+
+        (request,) = manager.requests
+        assert request.input_paths == {
+            "main": ["/shared/91432/3/inputs/main_0.parquet", "/shared/91432/3/inputs/main_1.parquet"]
+        }
+        assert request.output_dir == "/shared/91432/3/outputs"
+        written = [tmp_path / "91432" / "3" / "inputs" / f"main_{i}.parquet" for i in range(2)]
+        assert [pl.read_parquet(path).columns for path in written] == [["a"], ["b"]]
