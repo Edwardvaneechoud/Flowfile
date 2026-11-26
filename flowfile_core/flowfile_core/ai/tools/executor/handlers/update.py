@@ -262,6 +262,7 @@ def _handle_update_node_settings(
                     output_names=_resolve_output_names(node_type, new_settings),
                     cache=dry_run_cache,
                     upstream_schemas=upstream_schemas,
+                    node_type=node_type,
                 )
             except Exception as exc:
                 logger.warning("dry-run failed for %s/%s on update: %s", node_type, node_id, exc)

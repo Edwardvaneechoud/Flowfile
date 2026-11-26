@@ -71,6 +71,7 @@ from shared.compute_protocol import (
     schema_to_wire,
 )
 from shared.kafka.models import KafkaReadSettings
+from shared.storage_config import is_server_mode
 from shared.wire_model import WireModel
 
 SAMPLE_ROWS_CAP = 10_000
@@ -575,12 +576,14 @@ def worker_capabilities() -> Capabilities:
     It reads and writes object storage and ``https``, plus ``file`` while ``FLOWFILE_WORKER_LOCAL_FILES`` is ``1`` (a
     worker on core's host). It also reads ``http``, since a Read node's child fetches its URL itself; nothing writes to
     one. A node that joined an issuer with keys of its own declares ``credential_resolution: vended``: besides its
-    own master key it opens what the issuer seals to it (``sealed.can_open``).
+    own master key it opens what the issuer seals to it (``sealed.can_open``). On a multi-user server it leaves
+    ``polars_code`` out, which ``funcs.polars_code`` refuses there, so a core that asks for it is refused at placement.
     """
     schemes = CLOUD_SCHEMES | {"https"}
     if os.environ.get("FLOWFILE_WORKER_LOCAL_FILES") == "1":
         schemes |= {"file"}
-    update: dict[str, Any] = {"operations": OPERATIONS, "read_schemes": schemes | {"http"}, "write_schemes": schemes}
+    operations = OPERATIONS - {"polars_code"} if is_server_mode() else OPERATIONS
+    update: dict[str, Any] = {"operations": operations, "read_schemes": schemes | {"http"}, "write_schemes": schemes}
     from shared import sealed
 
     if sealed.can_open():

@@ -119,6 +119,20 @@ def test_capabilities_name_the_operations_this_worker_runs(route_client, path):
 
 @pytest.mark.worker
 @both_routes
+@pytest.mark.parametrize("mode", ["docker", "server"])
+def test_a_server_worker_declares_no_polars_code(route_client, path, mode, monkeypatch):
+    """Its route stays, so an older core gets the refusal; the capability goes, so a core is refused at placement."""
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
+
+    operations = declared(route_client, path).operations
+
+    assert "polars_code" not in operations
+    assert len(operations) == 18
+    assert "/v1/ops/polars_code" in main.app.openapi()["paths"]
+
+
+@pytest.mark.worker
+@both_routes
 def test_every_v1_operation_route_is_among_the_operations(route_client, path):
     routed = {p.removeprefix("/v1/ops/") for p in main.app.openapi()["paths"] if p.startswith("/v1/ops/")}
 
