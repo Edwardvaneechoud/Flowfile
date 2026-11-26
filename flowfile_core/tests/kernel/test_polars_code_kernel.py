@@ -24,7 +24,7 @@ from flowfile_core.kernel.models import (
 )
 from flowfile_core.kernel.polars_code import CPU_VARIABLE, MEMORY_VARIABLE, kernel_script, owner_kernel
 from flowfile_core.schemas import input_schema, transform_schema
-from shared.polars_code_parser import IN_PROCESS_REFUSED_MESSAGE
+from shared.polars_code_parser import IN_PROCESS_REFUSED_MESSAGE, PLAN_LOAD_REFUSED_MESSAGE
 from tests.conftest import protocol_states
 from tests.flowfile.execution.graph_helpers import (
     add_manual_input,
@@ -37,6 +37,7 @@ from tests.flowfile.execution.graph_helpers import (
 
 OWNER = 7
 ADD_ONE = "output_df = input_df.with_columns((pl.col('a') + 1).alias('b'))"
+PLAN_LOAD = "output_df = pl.LazyFrame.deserialize(BytesIO(base64.b64decode('')))"
 
 protocol = protocol_states()
 
@@ -452,6 +453,22 @@ class TestOnAServer:
 
         errors = {result.node_id: result.error for result in run_info.node_step_result if not result.success}
         assert "Import statements are not allowed" in errors[2]
+        assert kernel_calls == []
+
+    def test_a_plan_load_is_refused_before_a_kernel_is_looked_up(self, on_a_server, kernel_calls, monkeypatch):
+        """A kernel's environment has no ``FLOWFILE_MODE``, so its sandbox takes a plan load: core's check, made
+        before any kernel is found, created or called, is what refuses one on a server."""
+        looked_up: list[tuple] = []
+        monkeypatch.setattr(code_builders, "owner_kernel", lambda *args: looked_up.append(args) or "polars-code-7")
+        graph = make_graph(91451, execution_location="local")
+        add_manual_input(graph, 1, [{"a": 1}])
+        _add_polars_code(graph, 2, PLAN_LOAD, [1])
+
+        run_info = graph.run_graph()
+
+        errors = {result.node_id: result.error for result in run_info.node_step_result if not result.success}
+        assert PLAN_LOAD_REFUSED_MESSAGE in errors[2]
+        assert looked_up == []
         assert kernel_calls == []
 
     def test_a_server_run_leaves_a_later_desktop_run_the_workers_operation(self, monkeypatch):
