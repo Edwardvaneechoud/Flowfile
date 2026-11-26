@@ -230,7 +230,12 @@ def test_sharepoint_project_rebinds_after_credential_provisioning(tmp_path, monk
             assert portable_sha
             portable_path.write_text(portable_text)
             git_ops.commit_all(root, "SharePoint settings with UUIDs")
+            # A malformed entry in the old runtime file must not block restore.
+            runtime = yaml.safe_load(path.read_text())
+            runtime["nodes"].append({**runtime["nodes"][0], "id": [1]})
+            path.write_text(yaml.safe_dump(runtime))
             assert not project_sync.restore_version(OWNER, portable_sha, force=True).incomplete
+            assert len(yaml.safe_load(path.read_text())["nodes"]) == len(portable["nodes"])
             assert all(
                 node["setting_input"]["connection_id"] == original_id
                 for node in yaml.safe_load(path.read_text())["nodes"]

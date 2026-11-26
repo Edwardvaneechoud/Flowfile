@@ -1080,7 +1080,12 @@ def _runtime_flow_text(path: Path, data: dict) -> str:
 def _bind_project_sharepoint_nodes(db, data: dict, owner_id: int, local: dict | None = None) -> None:
     from flowfile_core.routes.sharepoint_connections import _resolve_connection
 
-    local_nodes = {(node.get("id"), node.get("type")): node for node in ((local or {}).get("nodes") or []) if isinstance(node, dict)}
+    previous_nodes = (local or {}).get("nodes")
+    local_nodes = {}
+    if isinstance(previous_nodes, list):
+        for node in previous_nodes:
+            if isinstance(node, dict) and type(node.get("id")) is int and isinstance(node.get("type"), str):
+                local_nodes[node["id"], node["type"]] = node
     for node in data.get("nodes") or []:
         if node.get("type") not in {"sharepoint_reader", "sharepoint_writer"} or not isinstance(
             settings := node.get("setting_input"), dict
