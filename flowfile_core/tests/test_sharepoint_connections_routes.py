@@ -1217,7 +1217,7 @@ def test_sharepoint_delta_reader_rejects_cached_results():
 @pytest.mark.parametrize(
     "extension",
     ["csv", "csv-no-range", "csv-glob", "xlsx", "xlsx-preview", "parquet", "parquet-no-range", "json", "json-no-range",
-     "list", "list-write", "csv-delta", "csv-delta-development", "xls"],
+     "list", "list-write", "csv-delta", "csv-delta-development", "csv-delta-list", "csv-delta-list-development", "xls"],
 )
 def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypatch, caplog, extension):
     import base64
@@ -1245,8 +1245,9 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
     from flowfile_worker.main import app as worker_app
     from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 
-    execution_mode = "Development" if extension == "csv-delta-development" else "Performance"
-    delta_read = extension in {"csv-delta", "csv-delta-development"}
+    execution_mode = "Development" if extension.endswith("-development") else "Performance"
+    delta_read = extension.startswith("csv-delta")
+    delta_list = extension.startswith("csv-delta-list")
     list_write = extension == "list-write"
     if delta_read:
         from flowfile_core.database.models import FlowRegistration, SharePointDeltaCursor
@@ -1316,6 +1317,7 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
     delta_changes = []
     delta_file_exists = True
     delta_sink_statuses = []
+    delta_list_posts = []
 
     def microsoft(request):
         if request.url.host == "login.microsoftonline.com":
@@ -1347,11 +1349,11 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
                     status = 403 if not delta_sink_statuses else 201
                     delta_sink_statuses.append(status)
                     return httpx.Response(status, json={"id": "delta-output"})
-            if list_write and request.method == "GET" and request.url.path.endswith("/columns"):
+            if (list_write or delta_list) and request.method == "GET" and request.url.path.endswith("/columns"):
                 return httpx.Response(200, json={"value": [{"name": "Title", "text": {}}]})
-            if list_write and request.method == "POST":
+            if (list_write or delta_list) and request.method == "POST":
                 assert request.url.path == "/v1.0/sites/example.sharepoint.com,site,web/lists/list-id/items"
-                downloads.append(json.loads(request.content))
+                (delta_list_posts if delta_list else downloads).append(json.loads(request.content))
                 return httpx.Response(201, json={"id": "created"})
             if excel_preview and "/workbook/" in request.url.path:
                 worksheets = "/v1.0/drives/test-drive/root:/sales.xlsx:/workbook/worksheets"
@@ -1578,6 +1580,16 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
                 response = TestClient(app).get("/node", params={"flow_id": 116, "node_id": 3})
                 assert response.status_code == 200, response.text
                 assert not downloads
+            if delta_list:
+                from flowfile_core.flowfile.flow_graph.connections import add_connection
+                from flowfile_core.schemas.input_schema import NodeConnection
+
+                graph.add_sharepoint_writer(NodeSharePointWriter(
+                    flow_id=116, node_id=3, depending_on_id=1, user_id=1, connection_id=saved_connection,
+                    list_target={"site_id": "example.sharepoint.com,site,web", "list_id": "list-id",
+                                 "column_mapping": {"sku": "Title"}},
+                ))
+                add_connection(graph, NodeConnection.create_from_simple_input(1, 3))
             with status_dict_lock:
                 previous_jobs = set(status_dict)
             result = graph.run_graph()
@@ -1635,13 +1647,21 @@ def test_sharepoint_graph_reads_file_over_worker_http(saved_connection, monkeypa
                 assert data.data_frame.collect().to_dicts() == expected
             if delta_read:
                 assert delta_tokens == ["latest"]
-                graph.run_graph()
+                assert all(step.success for step in graph.run_graph().node_step_result)
                 empty = node.get_resulting_data().data_frame.collect()
                 assert empty.is_empty()
                 assert empty.schema.names() == ["sku", "quantity"]
                 assert delta_tokens == ["latest", "next-1"] and len(downloads) == 1
                 delta_changes.append({"id": "sales-item"})
                 content = b"sku;quantity\nC;7\n"
+                if delta_list:
+                    assert delta_list_posts == [{"fields": {"Title": row["sku"]}} for row in expected]
+                    assert all(step.success for step in graph.run_graph().node_step_result)
+                    assert node.get_resulting_data().data_frame.collect().to_dicts() == [{"sku": "C", "quantity": 7}]
+                    assert delta_list_posts == [{"fields": {"Title": row["sku"]}} for row in expected] + [
+                        {"fields": {"Title": "C"}},
+                    ]
+                    return
                 graph.run_graph(commit_sources=False)
                 assert node.get_resulting_data().data_frame.collect().to_dicts() == [{"sku": "C", "quantity": 7}]
                 execute_stages = graph._execute_stages

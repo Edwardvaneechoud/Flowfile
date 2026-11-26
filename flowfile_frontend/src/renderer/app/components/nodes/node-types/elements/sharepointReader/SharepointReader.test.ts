@@ -5,8 +5,10 @@ import SharepointReader from "./SharepointReader.vue";
 
 const post = vi.hoisted(() => vi.fn(async () => ({ data: { id: 1 } as Record<string, unknown> })));
 const get = vi.hoisted(() => vi.fn(async (_url: string) => ({ data: [] as unknown[] })));
+const updateSettings = vi.hoisted(() => vi.fn());
+
 vi.mock("../../../baseNode/genericNodeSettings.vue", () => ({
-  default: { template: "<div><slot /></div>" },
+  default: { template: `<div><slot /><button @click="$emit('request-save')">Apply</button></div>` },
 }));
 vi.mock("../../../baseNode/page_objects/dropDown.vue", () => ({
   default: { template: "<div />" },
@@ -17,9 +19,11 @@ vi.mock("../../../../../services/auth.service", () => ({
 }));
 vi.mock("../../../../../services/axios.config", () => ({ default: { post, get } }));
 vi.mock("../../../../../stores/node-store", () => ({
-  useNodeStore: () => ({ getNodeData: async () => null }),
+  useNodeStore: () => ({ getNodeData: async () => null, updateSettings }),
 }));
-vi.mock("../../../../../composables/useNodeSettings", () => ({ useNodeSettings: () => ({}) }));
+vi.mock("../../../../../stores/editor-store", () => ({
+  useEditorStore: () => ({ disarmRefusedSave: vi.fn() }),
+}));
 vi.mock("element-plus", () => ({
   ElMessage: { success: vi.fn(), error: vi.fn() },
   ElMessageBox: {},
@@ -27,7 +31,7 @@ vi.mock("element-plus", () => ({
 
 // Vue exposes unwrapped setup bindings internally, but omits them from its public types.
 type FormState = {
-  settings: { connection_id?: number };
+  settings: { connection_id?: number; cache_results?: boolean };
   showCreate: boolean;
   authMethod: string;
   clientSecret: string;
@@ -51,12 +55,14 @@ function mountReader(manageOnly = false) {
     "select",
     "option",
     "input",
-    "checkbox",
     "alert",
     "switch",
   ]) {
     app.component(`el-${name}`, { template: "<div><slot /><slot name='footer' /></div>" });
   }
+  app.component("el-checkbox", {
+    template: `<label><input type="checkbox" @change="$emit('change', $event.target.checked)" /><slot /></label>`,
+  });
   app.component("el-button", { template: "<button><slot /></button>" });
   app.component("el-form-item", {
     props: ["label", "error"],
@@ -126,4 +132,31 @@ it("creates a connection without node settings and loads it in the node drawer",
   drawerForm.selectedConnectionId = saved.id;
   expect(drawerForm.settings.connection_id).toBe(saved.id);
   expect(drawerForm.selectedConnection).toEqual(saved);
+});
+
+
+it("saves incremental reads with Cache Results off when applied to a cached reader", async () => {
+  updateSettings.mockClear();
+  get.mockImplementation(async (url) => ({
+    data: url === "/sharepoint_connections" ? [{ id: 1, connection_name: "Sales" }] : [],
+  }));
+  const { host, view } = mountReader();
+  await (view as ComponentPublicInstance & { loadNodeData: (id: number) => Promise<void> }).loadNodeData(1);
+  const form = formState(view);
+  form.selectedConnectionId = 1;
+  Object.assign(form.settings, { drive_id: "drive", file_path: "sales.csv", cache_results: true });
+  await nextTick();
+
+  const incremental = host.querySelector<HTMLInputElement>('[data-label="Incremental read"] input')!;
+  incremental.checked = true;
+  incremental.dispatchEvent(new Event("change"));
+  expect(form.settings.cache_results).toBe(true);
+  const apply = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Apply")!;
+  apply.click();
+
+  await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+  expect(updateSettings.mock.calls[0][0].value).toMatchObject({
+    cache_results: false,
+    delta_generation: expect.any(Number),
+  });
 });

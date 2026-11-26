@@ -4,7 +4,7 @@ Use the **Read from SharePoint** node to read CSV (`.csv`), Excel (`.xls` and `.
 
 ## Before you connect
 
-SharePoint reads and writes require the versioned worker compute protocol. Keep `FLOWFILE_COMPUTE_PROTOCOL` enabled and update Core and worker together to compatible versions. The legacy worker API does not support these nodes.
+SharePoint nodes require a protocol v3 worker build that includes the SharePoint operations. If you manage the deployment, keep `FLOWFILE_COMPUTE_PROTOCOL` enabled. Older v3 workers can still run flows that don't use SharePoint; the legacy worker API cannot run SharePoint nodes.
 
 Flowfile uses a saved app-only connection with a tenant ID, application (client) ID, and either a client secret or certificate. This connection is separate from your Flowfile login. For setup on the Microsoft side, follow Microsoft Learn:
 
@@ -14,11 +14,13 @@ Flowfile uses a saved app-only connection with a tenant ID, application (client)
 
 ## Connect and pick a file in Flowfile
 
-1. Add a **Read from SharePoint** node and open its settings. Create a saved connection by entering a connection name, **Tenant ID**, **Application (client) ID**, and an authentication method, or select an existing connection. For **Certificate**, select a PEM file containing the certificate and its matching unencrypted RSA private key; register only the public certificate in Entra.
+Create or manage a saved connection on the **Connections** page under **SharePoint**. You can also create one from the reader's settings. For an app-only connection, have your **Tenant ID**, **Application (client) ID**, and client secret or certificate ready. Ask your Microsoft 365 administrator for access to the target site if you don't manage its permissions. For **Certificate**, select a PEM file containing the certificate and its matching unencrypted RSA private key; register only the public certificate in Entra. For desktop read-only access, see [Microsoft sign-in](#microsoft-sign-in-desktop-only).
+
+1. Add a **Read from SharePoint** node, open its settings, and select your saved connection.
 2. Under **Browse SharePoint**, enter the **Site URL** and click **Find libraries**. Choose a **Document library**, navigate to a folder, and select a file. The picker fills in **Drive ID** and **File path**. You can also enter them manually: open **Advanced connection settings** for the drive ID. The file path is relative to the library root.
 3. Under **Advanced connection settings**, click **Test connection** to check access to the drive. This does not read the selected file.
 4. For Excel, leave **Sheet name** blank to read the first sheet, or enter a sheet name directly. A successful run populates the worksheet choices. **Refresh File Metadata** checks the selected file without downloading it or discovering new worksheet names. If a saved worksheet is missing, enter an existing name or clear the field, then apply and run again. Flowfile never changes the selection for you.
-5. Click **Apply**, then run the flow to read the file.
+5. Click **Apply**, then run the flow. Select the reader and check that its output contains the rows you expect before connecting a writer.
 
 To read several files, enter a pattern such as `reports/sales-*.csv` in **File path or glob**. Use `*` or `?` in the filename only, with a fixed extension. Flowfile checks only the specified folder and appends matching files in filename order. The files must have the same columns in the same order and with the same types. A pattern can read up to 32 files. For Excel patterns, enter a sheet name that exists in every matching workbook, or leave it blank to read the first sheet from each. Worksheet choices after a successful run are limited to names common to all those workbooks.
 
@@ -52,7 +54,11 @@ Click **Find OneDrive for Business** instead of **Find libraries** in the file r
 
 ## Read a file only when it changes
 
-For an exact CSV, JSON, or Parquet path, enable **Incremental read**, click **Apply**, and save/register the flow. Full reads remain the default. The first incremental run downloads the entire file. After that, an update downloads the whole changed file, not just changed rows. An unchanged or deleted file returns zero rows with the last known schema; it does not skip downstream nodes. Use a connection that can query Microsoft Graph delta for the selected drive.
+Choose a single CSV, JSON, or Parquet file (no wildcards). Enable **Incremental read**, click **Apply**, and save the flow so it is registered. The connection must be able to query Microsoft Graph delta for the selected drive. Full reads remain the default. Incremental reads require **Cache Results** to be off; applying the incremental setting turns it off.
+
+The first run reads the whole file. In both **Development** and **Performance** mode, an unchanged file returns zero rows without another download. A deleted file also returns zero rows. Downstream nodes can still run; a SharePoint List writer creates no items from empty input.
+
+If the file changes, Flowfile reads the **whole updated file**, not just new rows. If you append it to a List or Excel sheet, rows already written can be duplicated. Filter out previously written rows before appending, or use a replacement write where appropriate.
 
 Flowfile stores the checkpoint separately from the flow. It advances after the reader and its downstream nodes complete without failure or error-driven skips. A canceled run does not advance it. Deliberately gated-off outputs count as complete, and failures in unrelated branches do not block this reader's checkpoint. If Graph expires the checkpoint, the run fails instead of silently downloading the file again. Use **Reset checkpoint on save** and **Apply** to make the next run read the full file. Design downstream writes to tolerate retries: a failed or canceled run may already have made some writes.
 
