@@ -580,6 +580,12 @@ class KernelManager:
     def shared_volume_path(self) -> str:
         return self._shared_volume
 
+    def exchange_dirs(self, kernel_id: str, flow_id: int, node_id: int) -> tuple[str, str]:
+        """The folders a node exchanges data with *kernel_id* through, as core's paths: where its inputs are written
+        and where the kernel writes its outputs. Every kernel uses the shared folder."""
+        base = os.path.join(self._shared_volume, str(flow_id), str(node_id))
+        return os.path.join(base, "inputs"), os.path.join(base, "outputs")
+
     # Docker-in-Docker helpers
 
     def _detect_docker_network(self) -> str | None:

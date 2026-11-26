@@ -45,6 +45,8 @@ Administrators set the size under **Warm worker pool** on the **Default worker**
 
 A named worker that cannot be reached fails the run; the run does not fall back to its own process. `worker`, the default worker, is the one at `FLOWFILE_WORKER_URL` (else `WORKER_HOST` and `FLOWFILE_WORKER_PORT`) in the run's own environment, so naming it needs a worker the run's process can reach.
 
+**On a multi-user server, Polars code runs on a kernel.** With `FLOWFILE_MODE` set to `docker` or `server`, the code of a **Polars code** node runs in a Docker [kernel](../visual-editor/kernels.md) that belongs to the person the flow runs for, and in no server process: the worker writes the node's inputs as Parquet, the kernel runs the code, and the next node reads the Parquet the kernel wrote. Flowfile creates that kernel on the person's first run, with 2 CPU and 4 GB unless `FLOWFILE_POLARS_CODE_KERNEL_CPU` or `FLOWFILE_POLARS_CODE_KERNEL_MEMORY_GB` in core's environment name another size. Such a server needs Docker for this node, and when a run is placed the node is a kernel node ([Before a run starts](#before-a-run-starts)). The server's worker runs Polars code for no core: a flow on a desktop that is placed on it fails at that node with `On a multi-user server Polars Code runs on a kernel, never in a server process.` [Polars code](../visual-editor/nodes/transform.md#polars-code) lists what changes for the code itself.
+
 ## What happens when a flow runs
 
 ![What happens when a flow runs: the editor sends Run; 1, core places every node and checks what each needs; 2, on its first use of a worker, core sends versions and test plans and the worker answers what it runs, reads and writes; 3, for each node in order, core sends the node's plan, the worker runs it in a child process and answers a result handle, columns and preview rows; 4, core sends the run report and previews to the editor while the results stay on the worker.](../../assets/images/concepts/flow-run-sequence.svg)
@@ -105,7 +107,7 @@ The common reasons:
 |---|---|
 | `it reads local files` (or `writes`) | A local path, or a file uploaded through the File Manager, on a worker that does not see core's files. Use object storage or a URL, or a worker marked **Sees this server's files**. |
 | `namespace "<name>" is on local disk, not object storage` | A catalog whose tables live on core's disk, on a worker on another host. |
-| `it runs on a notebook kernel, which reads its inputs from core's disk` | A **Python Script** node, or a custom node that runs on a kernel, on a worker on another host. |
+| `it runs on a kernel, which reads its inputs from core's disk` | A **Python Script** node, a custom node that runs on a kernel, or on a multi-user server a **Polars code** node, on a worker on another host. |
 | `it needs <plugin> (not installed)`, `(version <x>, core has <y>)` or `(fails to load)` | The worker lacks a plugin the node uses, has another version, or cannot load it. The Backends page shows the details. |
 | `its plan may carry a Python function, which this backend cannot run` | A formula node on a worker where core's Python functions do not run, because its Python differs from core's. |
 | `Backend "<id>" does not match core (…)` | The worker runs another Polars version or worker contract. Upgrade one side. |

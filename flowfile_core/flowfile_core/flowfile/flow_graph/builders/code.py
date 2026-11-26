@@ -16,16 +16,19 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
+from flowfile_core.flowfile.flow_graph._root import root
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode, run_operation
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     validate_sql_query,
 )
+from flowfile_core.kernel.polars_code import kernel_script, owner_kernel
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import (
     HistoryActionType,
 )
+from shared.storage_config import is_server_mode
 
 
 def _user_code_engine(
@@ -62,11 +65,34 @@ class CodeBuildersMixin(GraphMixinBase):
         prediction (a run calls the function only while the node holds none), made over the predicted inputs' empty
         frames under its own job id (``_user_code_engine``). With the flag off the code runs in core to build the plan.
 
+        On a multi-user server (``is_server_mode``) neither happens: the sandbox cannot hold code that means to leave
+        it, so the code runs on the kernel of the person the node is stamped with (``kernel.polars_code``), whatever
+        the flag says. Its columns are then known only once it has run, as for any kernel node, and no prediction
+        runs it. Core checks the code against the sandbox's rules first, without running it, so code a server
+        refuses (a saved plan load among it) fails with the sandbox's message and reaches no kernel.
+
         Args:
             node_polars_code: The settings for the Polars code node.
         """
 
+        def _on_owners_kernel(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
+            node = self.get_node(node_polars_code.node_id)
+            if node.results.resulting_data is not None:
+                return FlowDataEngine.create_from_schema(node.node_schema.result_schema or [])
+            code = node_polars_code.polars_code_input.polars_code
+            polars_code_parser.validate_code(code)
+            return self._execute_on_kernel(
+                node_id=node_polars_code.node_id,
+                kernel_id=owner_kernel(node_polars_code.user_id, root().get_kernel_manager),
+                code=kernel_script(code),
+                output_names=["main"],
+                flow_data_engine=flowfile_tables,
+                named_inputs=False,
+            )
+
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
+            if is_server_mode():
+                return _on_owners_kernel(*flowfile_tables)
             if not FLOWFILE_COMPUTE_PROTOCOL:
                 return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
             node = self.get_node(node_polars_code.node_id)
@@ -80,18 +106,26 @@ class CodeBuildersMixin(GraphMixinBase):
             predicting = node.results.resulting_data is not None
             return _user_code_engine(current_context(self).backend, node, OperationKind.polars_code, job, predicting)
 
+        on_kernel = is_server_mode()
         self.add_node_step(
             node_id=node_polars_code.node_id,
             function=_func,
             node_type="polars_code",
             setting_input=node_polars_code,
             input_node_ids=node_polars_code.depending_on_ids,
+            # Lets a consumer's prediction read this node as having no columns yet.
+            schema_callback=(
+                self._make_blocked_prediction_callback(node_id=node_polars_code.node_id, on_kernel=True)
+                if on_kernel
+                else None
+            ),
         )
+        node = self.get_node(node_id=node_polars_code.node_id)
+        node._executes_on_kernel = on_kernel
 
         try:
             polars_code_parser.validate_code(node_polars_code.polars_code_input.polars_code)
         except Exception as e:
-            node = self.get_node(node_id=node_polars_code.node_id)
             node.results.errors = str(e)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)

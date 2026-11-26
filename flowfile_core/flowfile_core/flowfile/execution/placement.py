@@ -542,7 +542,7 @@ def _unmet(
     if requirements.python_function and PYTHON_FUNCTIONS in absent:
         reasons.append("its plan may carry a Python function, which this backend cannot run")
     if requirements.needs_kernel and "file" not in capabilities.write_schemes:
-        reasons.append("it runs on a notebook kernel, which reads its inputs from core's disk")
+        reasons.append("it runs on a kernel, which reads its inputs from core's disk")
     return reasons
 
 

@@ -119,6 +119,17 @@ def test_capabilities_name_the_operations_this_worker_runs(route_client, path):
 
 @pytest.mark.worker
 @both_routes
+@pytest.mark.parametrize("mode", ["docker", "server"])
+def test_a_server_worker_declares_what_a_desktop_worker_declares(route_client, path, mode, monkeypatch):
+    """Core keeps a backend's capabilities for the life of the process, so they never depend on the mode."""
+    on_a_desktop = declared(route_client, path).operations
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
+
+    assert declared(route_client, path).operations == on_a_desktop
+
+
+@pytest.mark.worker
+@both_routes
 def test_every_v1_operation_route_is_among_the_operations(route_client, path):
     routed = {p.removeprefix("/v1/ops/") for p in main.app.openapi()["paths"] if p.startswith("/v1/ops/")}
 

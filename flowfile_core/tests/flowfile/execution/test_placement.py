@@ -477,7 +477,20 @@ def test_a_python_script_node_is_refused_on_a_backend_off_cores_host(protocol_on
     run_info = graph.run_graph()
 
     assert_refused_before_any_node(
-        graph, run_info, backend, {2: ["it runs on a notebook kernel, which reads its inputs from core's disk"]}
+        graph, run_info, backend, {2: ["it runs on a kernel, which reads its inputs from core's disk"]}
+    )
+
+
+@pytest.mark.parametrize("mode", ["docker", "server"])
+def test_polars_code_on_a_server_is_refused_on_a_backend_off_cores_host(mode, protocol_on, declare, monkeypatch):
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
+    backend = declare(without(everything(), scheme="file"))
+    graph = code_flow(91461, "polars_code", "input_df", [{"id": 1}])
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(
+        graph, run_info, backend, {2: ["it runs on a kernel, which reads its inputs from core's disk"]}
     )
 
 
@@ -497,7 +510,7 @@ def test_a_run_flow_node_is_refused_for_what_a_node_of_its_child_flow_needs(prot
         graph,
         run_info,
         backend,
-        {2: ['node 2 of the flow it runs ("kernel_child")', "it runs on a notebook kernel"]},
+        {2: ['node 2 of the flow it runs ("kernel_child")', "it runs on a kernel"]},
     )
     assert backend.asked == 1
 
@@ -560,7 +573,7 @@ def test_a_run_flow_node_decides_its_child_s_gates_on_the_parent_parameters_it_f
         opening,
         opened,
         backend,
-        {2: ['node 3 of the flow it runs ("forward_string_child")', "it runs on a notebook kernel"]},
+        {2: ['node 3 of the flow it runs ("forward_string_child")', "it runs on a kernel"]},
     )
 
     closed = closing.run_graph()
@@ -593,7 +606,7 @@ def test_a_run_flow_node_forwarding_an_integer_parameter_is_refused_for_what_its
         graph,
         run_info,
         backend,
-        {2: ['node 2 of the flow it runs ("forward_integer_child")', "it runs on a notebook kernel"]},
+        {2: ['node 2 of the flow it runs ("forward_integer_child")', "it runs on a kernel"]},
     )
     assert [record.getMessage() for record in caplog.records if record.module == "placement"] == []
 
